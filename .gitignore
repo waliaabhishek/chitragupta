@@ -13,6 +13,10 @@ __pycache__/
 *.pyc
 *.egg-info/
 .venv/
+.coverage
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
 
 # OS files
 .DS_Store
