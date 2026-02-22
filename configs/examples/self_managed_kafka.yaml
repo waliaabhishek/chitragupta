@@ -1,0 +1,27 @@
+logging:
+  level: DEBUG
+
+features:
+  enable_periodic_refresh: true
+  refresh_interval: 900
+
+api:
+  host: "0.0.0.0"
+  port: 8081
+
+tenants:
+  on-prem-kafka:
+    ecosystem: self_managed_kafka
+    tenant_id: kafka-dc1
+    lookback_days: 180
+    cutoff_days: 3
+    retention_days: 365
+    storage:
+      backend: sqlmodel
+      connection_string: "sqlite:///data/kafka-dc1.db"
+    plugin_settings:
+      cost_model: constructed
+      bootstrap_servers: "${KAFKA_BOOTSTRAP_SERVERS:-localhost:9092}"
+      monthly_infrastructure_cost: 15000.00
+      metrics_source: prometheus
+      prometheus_url: "${PROMETHEUS_URL:-http://localhost:9090}"

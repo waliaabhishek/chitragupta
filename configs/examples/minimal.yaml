@@ -1,0 +1,4 @@
+tenants:
+  my-org:
+    ecosystem: confluent_cloud
+    tenant_id: org-12345

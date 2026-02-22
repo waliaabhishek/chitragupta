@@ -1,0 +1,40 @@
+logging:
+  level: INFO
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+features:
+  enable_periodic_refresh: true
+  refresh_interval: 3600
+
+api:
+  host: "0.0.0.0"
+  port: 8080
+
+tenants:
+  prod-ccloud:
+    ecosystem: confluent_cloud
+    tenant_id: "${CCLOUD_ORG_ID}"
+    lookback_days: 200
+    cutoff_days: 5
+    retention_days: 250
+    storage:
+      backend: sqlmodel
+      connection_string: "sqlite:///data/ccloud-prod.db"
+    plugin_settings:
+      api_key: "${CCLOUD_API_KEY}"
+      api_secret: "${CCLOUD_API_SECRET}"
+      billing_api_url: "https://api.confluent.cloud/billing/v1/costs"
+      core_api_url: "https://api.confluent.cloud"
+
+  staging-ccloud:
+    ecosystem: confluent_cloud
+    tenant_id: "${CCLOUD_STAGING_ORG_ID}"
+    lookback_days: 90
+    cutoff_days: 3
+    retention_days: 120
+    storage:
+      backend: sqlmodel
+      connection_string: "sqlite:///data/ccloud-staging.db"
+    plugin_settings:
+      api_key: "${CCLOUD_STAGING_API_KEY}"
+      api_secret: "${CCLOUD_STAGING_API_SECRET}"
