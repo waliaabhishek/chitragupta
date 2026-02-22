@@ -1,0 +1,12 @@
+# === NEVER COMMIT — Internal reference and tooling ===
+# These folders are for local development workflow only.
+# They must NEVER enter the git repository under any circumstances.
+# Do not use git add -f, do not remove these entries.
+backlog/
+.claude/
+ccloud-chargeback-helper-reference/
+
+CLAUDE.md
+
+# OS files
+.DS_Store
