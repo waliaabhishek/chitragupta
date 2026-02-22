@@ -8,5 +8,11 @@ ccloud-chargeback-helper-reference/
 
 CLAUDE.md
 
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+.venv/
+
 # OS files
 .DS_Store
