@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+import random
+import time
 from dataclasses import dataclass, field
 from typing import Any, Iterator
 from urllib import parse
@@ -68,19 +70,59 @@ class CCloudConnection:
         url: str,
         **kwargs: Any,
     ) -> dict[str, Any]:
-        """Execute HTTP request."""
+        """Execute HTTP request with retry logic for rate limits and timeouts."""
         kwargs.setdefault("auth", self._auth)
         kwargs.setdefault("timeout", self.timeout_seconds)
 
-        try:
-            resp = requests.request(method, url, **kwargs)
-        except requests.exceptions.RequestException as e:
-            raise CCloudConnectionError(str(e)) from e
+        last_exception: Exception | None = None
 
-        if resp.status_code == 200:
-            return resp.json()
-        elif resp.status_code == 404:
-            LOGGER.info(f"Resource not found: {url}")
-            return {"data": [], "metadata": {}}
+        for attempt in range(self.max_retries + 1):
+            try:
+                resp = requests.request(method, url, **kwargs)
+            except requests.exceptions.Timeout as e:
+                last_exception = CCloudApiError(408, f"Request timeout: {e}")
+                wait = self._calculate_backoff(attempt)
+                LOGGER.warning(f"Timeout on attempt {attempt + 1}, retrying in {wait:.2f}s")
+                time.sleep(wait)
+                continue
+            except requests.exceptions.RequestException as e:
+                raise CCloudConnectionError(str(e)) from e
+
+            if resp.status_code == 200:
+                return resp.json()
+            elif resp.status_code == 404:
+                LOGGER.info(f"Resource not found: {url}")
+                return {"data": [], "metadata": {}}
+            elif resp.status_code == 429:
+                last_exception = CCloudApiError(429, resp.text)
+                wait = self._get_rate_limit_wait(resp, attempt)
+                LOGGER.warning(f"Rate limited on attempt {attempt + 1}, retrying in {wait:.2f}s")
+                time.sleep(wait)
+                continue
+            else:
+                raise CCloudApiError(resp.status_code, resp.text)
+
+        # Max retries exhausted
+        if last_exception:
+            raise last_exception
+        raise CCloudApiError(0, "Max retries exhausted")
+
+    def _calculate_backoff(self, attempt: int) -> float:
+        """Calculate exponential backoff with jitter."""
+        base = self.base_backoff_seconds * (2**attempt)
+        jitter = random.uniform(0, 1)
+        return base + jitter
+
+    def _get_rate_limit_wait(self, response: requests.Response, attempt: int) -> float:
+        """Get wait time from rate limit headers or fall back to backoff."""
+        if "Retry-After" in response.headers:
+            wait = float(response.headers["Retry-After"])
+        elif "X-RateLimit-Reset" in response.headers:
+            reset_time = float(response.headers["X-RateLimit-Reset"])
+            wait = max(0.01, reset_time - time.time())
         else:
-            raise CCloudApiError(resp.status_code, resp.text)
+            wait = self._calculate_backoff(attempt)
+
+        # Add jitter (10-20%)
+        jitter_factor = 1.1 + 0.1 * random.random()
+        return wait * jitter_factor
