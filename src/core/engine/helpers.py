@@ -62,11 +62,11 @@ def allocate_by_usage_ratio(
     if not identity_values or total_value == 0:
         row = _make_row(
             ctx,
-            identity_id=ctx.billing_line.resource_id,
+            identity_id="UNALLOCATED",
             cost_type=CostType.SHARED,
             amount=ctx.split_amount,
             allocation_method="usage_ratio",
-            allocation_detail="no usage data; assigned to resource",
+            allocation_detail="no usage data; allocated to UNALLOCATED",
         )
         return AllocationResult(rows=[row])
 
@@ -105,11 +105,11 @@ def allocate_evenly(
     if not identity_ids:
         row = _make_row(
             ctx,
-            identity_id=ctx.billing_line.resource_id,
+            identity_id="UNALLOCATED",
             cost_type=CostType.SHARED,
             amount=ctx.split_amount,
             allocation_method="even_split",
-            allocation_detail="no identities; assigned to resource",
+            allocation_detail="no identities; allocated to UNALLOCATED",
         )
         return AllocationResult(rows=[row])
 

@@ -77,18 +77,19 @@ class TestAllocateByUsageRatio:
         assert len(result.rows) == 1
         assert result.rows[0].amount == Decimal("10.0000")
 
-    def test_empty_dict_fallback_to_resource(self) -> None:
+    def test_empty_dict_fallback_to_unallocated(self) -> None:
         ctx = make_ctx(split_amount=Decimal("5.00"))
         result = allocate_by_usage_ratio(ctx, {})
         assert len(result.rows) == 1
-        assert result.rows[0].identity_id == "lkc-abc123"
+        assert result.rows[0].identity_id == "UNALLOCATED"
         assert result.rows[0].cost_type == CostType.SHARED
-        assert "no usage data" in result.rows[0].allocation_detail
+        assert "UNALLOCATED" in result.rows[0].allocation_detail
 
-    def test_all_zero_values_fallback(self) -> None:
+    def test_all_zero_values_fallback_to_unallocated(self) -> None:
         ctx = make_ctx()
         result = allocate_by_usage_ratio(ctx, {"u-1": 0.0, "u-2": 0.0})
         assert len(result.rows) == 1
+        assert result.rows[0].identity_id == "UNALLOCATED"
         assert result.rows[0].cost_type == CostType.SHARED
 
     def test_sum_preservation(self) -> None:
@@ -133,12 +134,13 @@ class TestAllocateEvenly:
         assert sum(r.amount for r in result.rows) == Decimal("10.00")
         assert len(result.rows) == 3
 
-    def test_empty_list_fallback(self) -> None:
+    def test_empty_list_fallback_to_unallocated(self) -> None:
         ctx = make_ctx(split_amount=Decimal("5.00"))
         result = allocate_evenly(ctx, [])
         assert len(result.rows) == 1
-        assert result.rows[0].identity_id == "lkc-abc123"
+        assert result.rows[0].identity_id == "UNALLOCATED"
         assert result.rows[0].cost_type == CostType.SHARED
+        assert "UNALLOCATED" in result.rows[0].allocation_detail
 
     def test_single_identity_full_amount(self) -> None:
         ctx = make_ctx(split_amount=Decimal("7.50"))
