@@ -43,12 +43,11 @@ class WorkflowRunner:
             self._settings.features.max_parallel_tenants,
         )
         # GAP-002: global timeout = max of all tenant timeouts
-        # timeout=0 means no timeout (None)
         max_timeout = max(
             (c.tenant_execution_timeout_seconds for c in tenants.values()),
             default=3600,
         )
-        effective_timeout = max_timeout if max_timeout > 0 else None
+        effective_timeout = max_timeout if max_timeout > 0 else None  # 0 means no timeout
 
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = {
