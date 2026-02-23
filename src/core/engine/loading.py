@@ -76,7 +76,7 @@ def _validate_signature(obj: Any, protocol: type) -> None:
 
     try:
         proto_sig = inspect.signature(proto_call)
-    except ValueError, TypeError:  # noqa: UP039
+    except (ValueError, TypeError):
         return
 
     # Count positional parameters (excluding 'self')

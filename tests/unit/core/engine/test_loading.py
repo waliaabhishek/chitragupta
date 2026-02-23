@@ -155,6 +155,16 @@ class TestValidateSignatureDefensiveBranches:
             # Should not raise — returns early from except branch
             _validate_signature(lambda ctx: None, CostAllocator)
 
+    def test_protocol_signature_typeerror_caught(self) -> None:
+        """GAP-012: TypeError from inspect.signature must be caught."""
+
+        def patched_sig(obj, **kwargs):
+            raise TypeError("unsupported callable")
+
+        with patch("core.engine.loading.inspect.signature", side_effect=patched_sig):
+            # Before fix: TypeError propagated uncaught. After fix: returns early.
+            _validate_signature(lambda ctx: None, CostAllocator)
+
 
 class TestInitExports:
     """CT-004: Verify __init__.py exports correct types."""
