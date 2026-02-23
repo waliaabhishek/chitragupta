@@ -6,6 +6,7 @@ from plugins.confluent_cloud.config import CCloudPluginConfig
 from plugins.confluent_cloud.connections import CCloudConnection
 
 if TYPE_CHECKING:
+    from core.metrics.protocol import MetricsSource
     from core.plugin.protocols import CostInput, ServiceHandler
 
 
@@ -35,3 +36,7 @@ class ConfluentCloudPlugin:
     def get_cost_input(self) -> CostInput:
         """Return cost input. Not implemented yet (TD-017)."""
         raise NotImplementedError("CCloud cost input not implemented (chunk 2.2)")
+
+    def get_metrics_source(self) -> MetricsSource | None:
+        """Return metrics source. None until handlers need metrics (chunk 2.3+)."""
+        return None

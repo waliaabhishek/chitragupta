@@ -70,3 +70,11 @@ def test_plugin_creates_connection():
 
     assert plugin._connection is not None
     assert plugin._connection.api_key == "mykey"
+
+
+def test_plugin_get_metrics_source_returns_none():
+    """GAP-015+017: plugin owns metrics source; stub returns None."""
+    from plugins.confluent_cloud import ConfluentCloudPlugin
+
+    plugin = ConfluentCloudPlugin()
+    assert plugin.get_metrics_source() is None

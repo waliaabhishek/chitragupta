@@ -7,9 +7,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from core.config.models import AppSettings, StorageConfig, TenantConfig
+from core.config.models import AppSettings, FeaturesConfig, StorageConfig, TenantConfig
 from core.engine.orchestrator import PipelineRunResult
-from workflow_runner import WorkflowRunner, _create_metrics_source, _create_storage_backend
+from workflow_runner import WorkflowRunner, _create_storage_backend
 
 
 class TestCreateStorageBackend:
@@ -25,43 +25,42 @@ class TestCreateStorageBackend:
             _create_storage_backend(config)
 
 
-class TestCreateMetricsSource:
-    def test_no_metrics_config(self) -> None:
-        assert _create_metrics_source({}) is None
+def _make_settings(
+    tenants: dict[str, TenantConfig] | None = None,
+    **features_kwargs: Any,
+) -> AppSettings:
+    """Helper to build AppSettings with optional feature overrides."""
+    features = FeaturesConfig(**features_kwargs) if features_kwargs else FeaturesConfig()
+    return AppSettings(
+        tenants=tenants or {},
+        features=features,
+    )
 
-    def test_unknown_metrics_type(self) -> None:
-        with pytest.raises(ValueError, match="Unknown metrics type"):
-            _create_metrics_source({"metrics": {"type": "datadog"}})
 
-    def test_non_dict_metrics_raises(self) -> None:
-        with pytest.raises(TypeError, match="metrics config must be a dict"):
-            _create_metrics_source({"metrics": "not_a_dict"})
-
-    def test_prometheus_type_creates_source(self) -> None:
-        result = _create_metrics_source({"metrics": {"type": "prometheus", "url": "http://localhost:9090"}})
-        assert result is not None
-        from core.metrics.prometheus import PrometheusMetricsSource
-
-        assert isinstance(result, PrometheusMetricsSource)
+def _make_tenant(**overrides: Any) -> TenantConfig:
+    defaults: dict[str, Any] = {
+        "ecosystem": "eco",
+        "tenant_id": "tid",
+        "lookback_days": 30,
+        "cutoff_days": 5,
+    }
+    defaults.update(overrides)
+    return TenantConfig(**defaults)
 
 
 class TestWorkflowRunnerRunOnce:
     def test_no_tenants_returns_empty(self) -> None:
-        settings = AppSettings(tenants={})
-        registry = MagicMock()
-        runner = WorkflowRunner(settings, registry)
+        settings = _make_settings()
+        runner = WorkflowRunner(settings, MagicMock())
         assert runner.run_once() == {}
 
     @patch("workflow_runner.ChargebackOrchestrator")
     @patch("workflow_runner._create_storage_backend")
-    @patch("workflow_runner._create_metrics_source")
     def test_runs_tenant(
         self,
-        mock_metrics: MagicMock,
         mock_storage: MagicMock,
         mock_orch_cls: MagicMock,
     ) -> None:
-        mock_metrics.return_value = None
         mock_backend = MagicMock()
         mock_storage.return_value = mock_backend
         mock_orch = MagicMock()
@@ -74,29 +73,28 @@ class TestWorkflowRunnerRunOnce:
         )
         mock_orch_cls.return_value = mock_orch
 
-        settings = AppSettings(
-            tenants={"t1": TenantConfig(ecosystem="eco", tenant_id="tid1", lookback_days=30, cutoff_days=5)}
-        )
         registry = MagicMock()
-        registry.create.return_value = MagicMock()
+        plugin = MagicMock()
+        plugin.get_metrics_source.return_value = None
+        registry.create.return_value = plugin
 
+        settings = _make_settings(tenants={"t1": _make_tenant(tenant_id="tid1")})
         runner = WorkflowRunner(settings, registry)
         results = runner.run_once()
+
         assert "t1" in results
         assert results["t1"].dates_gathered == 3
         mock_backend.dispose.assert_called_once()
+        mock_backend.create_tables.assert_called_once()  # GAP-003
 
     @patch("workflow_runner.ChargebackOrchestrator")
     @patch("workflow_runner._create_storage_backend")
-    @patch("workflow_runner._create_metrics_source")
     def test_error_isolation(
         self,
-        mock_metrics: MagicMock,
         mock_storage: MagicMock,
         mock_orch_cls: MagicMock,
     ) -> None:
         """One tenant failure doesn't affect others."""
-        mock_metrics.return_value = None
         mock_backend = MagicMock()
         mock_storage.return_value = mock_backend
 
@@ -120,79 +118,243 @@ class TestWorkflowRunnerRunOnce:
 
         mock_orch_cls.side_effect = side_effect
 
-        settings = AppSettings(
+        registry = MagicMock()
+        plugin = MagicMock()
+        plugin.get_metrics_source.return_value = None
+        registry.create.return_value = plugin
+
+        settings = _make_settings(
             tenants={
-                "t1": TenantConfig(ecosystem="eco", tenant_id="tid1", lookback_days=30, cutoff_days=5),
-                "t2": TenantConfig(ecosystem="eco", tenant_id="tid2", lookback_days=30, cutoff_days=5),
+                "t1": _make_tenant(tenant_id="tid1"),
+                "t2": _make_tenant(tenant_id="tid2"),
             }
         )
-        registry = MagicMock()
-        registry.create.return_value = MagicMock()
-
         runner = WorkflowRunner(settings, registry)
         results = runner.run_once()
         assert len(results) == 2
-        # One should have errors, one should succeed
         error_tenants = [name for name, r in results.items() if r.errors]
         assert len(error_tenants) >= 1
 
 
-class TestWorkflowRunnerTimeout:
+class TestGap003StorageBootstrap:
+    """GAP-003: create_tables called before orchestrator runs."""
+
     @patch("workflow_runner.ChargebackOrchestrator")
     @patch("workflow_runner._create_storage_backend")
-    @patch("workflow_runner._create_metrics_source")
-    def test_tenant_timeout_captured(
+    def test_create_tables_called(
         self,
-        mock_metrics: MagicMock,
         mock_storage: MagicMock,
         mock_orch_cls: MagicMock,
     ) -> None:
-        """Tenant that exceeds timeout gets error result via future.result() TimeoutError."""
-        mock_metrics.return_value = None
         mock_backend = MagicMock()
         mock_storage.return_value = mock_backend
         mock_orch = MagicMock()
+        mock_orch.run.return_value = PipelineRunResult(
+            tenant_name="t1",
+            tenant_id="tid1",
+            dates_gathered=0,
+            dates_calculated=0,
+            chargeback_rows_written=0,
+        )
         mock_orch_cls.return_value = mock_orch
 
-        settings = AppSettings(
-            tenants={
-                "slow": TenantConfig(
-                    ecosystem="eco",
-                    tenant_id="tid",
-                    lookback_days=30,
-                    cutoff_days=5,
-                    tenant_execution_timeout_seconds=1,
-                )
-            }
-        )
         registry = MagicMock()
-        registry.create.return_value = MagicMock()
+        plugin = MagicMock()
+        plugin.get_metrics_source.return_value = None
+        registry.create.return_value = plugin
+
+        settings = _make_settings(tenants={"t1": _make_tenant(tenant_id="tid1")})
+        runner = WorkflowRunner(settings, registry)
+        runner.run_once()
+
+        mock_backend.create_tables.assert_called_once()
+
+
+class TestGap010BoundedConcurrency:
+    """GAP-010: max_parallel_tenants bounds thread pool size."""
+
+    def test_max_parallel_tenants_config_default(self) -> None:
+        cfg = FeaturesConfig()
+        assert cfg.max_parallel_tenants == 4
+
+    def test_max_parallel_tenants_config_bounds(self) -> None:
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            FeaturesConfig(max_parallel_tenants=0)
+        with pytest.raises(ValidationError):
+            FeaturesConfig(max_parallel_tenants=65)
+
+    @patch("workflow_runner.ThreadPoolExecutor")
+    @patch("workflow_runner._create_storage_backend")
+    def test_pool_size_capped(
+        self,
+        mock_storage: MagicMock,
+        mock_executor_cls: MagicMock,
+    ) -> None:
+        """With 10 tenants and max_parallel=3, pool uses 3."""
+        mock_backend = MagicMock()
+        mock_storage.return_value = mock_backend
+
+        # Make the executor context manager return a mock that submits properly
+        mock_executor = MagicMock()
+        mock_executor.__enter__ = MagicMock(return_value=mock_executor)
+        mock_executor.__exit__ = MagicMock(return_value=False)
+        mock_executor.submit.return_value = MagicMock()
+        mock_executor_cls.return_value = mock_executor
+
+        tenants = {f"t{i}": _make_tenant(tenant_id=f"tid{i}") for i in range(10)}
+        settings = _make_settings(tenants=tenants, max_parallel_tenants=3)
+        registry = MagicMock()
+        plugin = MagicMock()
+        plugin.get_metrics_source.return_value = None
+        registry.create.return_value = plugin
 
         runner = WorkflowRunner(settings, registry)
 
-        # Patch as_completed to return a future that raises TimeoutError
-        timeout_future = MagicMock()
-        timeout_future.result.side_effect = TimeoutError("timed out")
+        with patch("workflow_runner.wait", return_value=(set(), set())):
+            runner.run_once()
 
-        def patched_as_completed(fs: Any, **kwargs: Any) -> Any:
-            # Map the timeout_future to the same key as the real future
-            for real_future in fs:
-                fs[timeout_future] = fs.pop(real_future)
-                break
-            return [timeout_future]
+        mock_executor_cls.assert_called_once_with(max_workers=3)
 
-        with patch("workflow_runner.as_completed", side_effect=patched_as_completed):
+
+class TestGap002WaitTimeout:
+    """GAP-002: global timeout via wait() deadline."""
+
+    @patch("workflow_runner.ChargebackOrchestrator")
+    @patch("workflow_runner._create_storage_backend")
+    def test_timeout_zero_means_no_timeout(
+        self,
+        mock_storage: MagicMock,
+        mock_orch_cls: MagicMock,
+    ) -> None:
+        """timeout=0 → effective_timeout=None (no deadline)."""
+        mock_backend = MagicMock()
+        mock_storage.return_value = mock_backend
+        mock_orch = MagicMock()
+        mock_orch.run.return_value = PipelineRunResult(
+            tenant_name="t1",
+            tenant_id="tid1",
+            dates_gathered=0,
+            dates_calculated=0,
+            chargeback_rows_written=0,
+        )
+        mock_orch_cls.return_value = mock_orch
+
+        registry = MagicMock()
+        plugin = MagicMock()
+        plugin.get_metrics_source.return_value = None
+        registry.create.return_value = plugin
+
+        settings = _make_settings(
+            tenants={"t1": _make_tenant(tenant_id="tid1", tenant_execution_timeout_seconds=0)}
+        )
+        runner = WorkflowRunner(settings, registry)
+
+        from concurrent.futures import wait as real_wait
+
+        with patch("workflow_runner.wait", wraps=real_wait) as mock_wait:
+            runner.run_once()
+            _, kwargs = mock_wait.call_args
+            assert kwargs.get("timeout") is None
+
+    @patch("workflow_runner.ChargebackOrchestrator")
+    @patch("workflow_runner._create_storage_backend")
+    def test_not_done_futures_marked_timed_out(
+        self,
+        mock_storage: MagicMock,
+        mock_orch_cls: MagicMock,
+    ) -> None:
+        """Futures in not_done set get timeout error results."""
+        mock_backend = MagicMock()
+        mock_storage.return_value = mock_backend
+
+        registry = MagicMock()
+        plugin = MagicMock()
+        plugin.get_metrics_source.return_value = None
+        registry.create.return_value = plugin
+
+        settings = _make_settings(
+            tenants={"slow": _make_tenant(tenant_id="tid_slow", tenant_execution_timeout_seconds=1)}
+        )
+        runner = WorkflowRunner(settings, registry)
+
+        # Mock wait to return all futures as not_done
+        def fake_wait(futures: Any, timeout: Any = None) -> tuple[set[Any], set[Any]]:
+            return set(), set(futures)
+
+        with patch("workflow_runner.wait", side_effect=fake_wait):
             results = runner.run_once()
 
         assert "slow" in results
-        assert len(results["slow"].errors) >= 1
+        assert len(results["slow"].errors) == 1
         assert "timed out" in results["slow"].errors[0].lower()
+
+
+class TestGap005PeriodicRefresh:
+    """GAP-005: enable_periodic_refresh flag."""
+
+    def test_disabled_runs_single_cycle(self) -> None:
+        settings = _make_settings(enable_periodic_refresh=False)
+        registry = MagicMock()
+        runner = WorkflowRunner(settings, registry)
+
+        call_count = 0
+        original_run_once = runner.run_once
+
+        def counting_run_once() -> dict[str, PipelineRunResult]:
+            nonlocal call_count
+            call_count += 1
+            return original_run_once()
+
+        runner.run_once = counting_run_once  # type: ignore[assignment]
+        shutdown = threading.Event()
+        runner.run_loop(shutdown)
+        assert call_count == 1
+
+
+class TestGap015017PluginMetrics:
+    """GAP-015+017: plugin owns metrics source."""
+
+    @patch("workflow_runner.ChargebackOrchestrator")
+    @patch("workflow_runner._create_storage_backend")
+    def test_plugin_metrics_passed_to_orchestrator(
+        self,
+        mock_storage: MagicMock,
+        mock_orch_cls: MagicMock,
+    ) -> None:
+        mock_backend = MagicMock()
+        mock_storage.return_value = mock_backend
+        mock_orch = MagicMock()
+        mock_orch.run.return_value = PipelineRunResult(
+            tenant_name="t1",
+            tenant_id="tid1",
+            dates_gathered=0,
+            dates_calculated=0,
+            chargeback_rows_written=0,
+        )
+        mock_orch_cls.return_value = mock_orch
+
+        registry = MagicMock()
+        fake_metrics = MagicMock()
+        plugin = MagicMock()
+        plugin.get_metrics_source.return_value = fake_metrics
+        registry.create.return_value = plugin
+
+        settings = _make_settings(tenants={"t1": _make_tenant(tenant_id="tid1")})
+        runner = WorkflowRunner(settings, registry)
+        runner.run_once()
+
+        # Verify orchestrator was called with the plugin's metrics source
+        _, call_kwargs = mock_orch_cls.call_args
+        # Positional args: name, config, plugin, storage, metrics
+        call_args = mock_orch_cls.call_args[0]
+        assert call_args[4] is fake_metrics
 
 
 class TestWorkflowRunnerRunLoop:
     def test_shutdown_event_stops_loop(self) -> None:
-        settings = AppSettings(tenants={})
-        settings.features.refresh_interval = 1
+        settings = _make_settings(refresh_interval=1)
         registry = MagicMock()
         runner = WorkflowRunner(settings, registry)
 
@@ -210,15 +372,11 @@ class TestWorkflowRunnerRunLoop:
 
     @patch("workflow_runner.ChargebackOrchestrator")
     @patch("workflow_runner._create_storage_backend")
-    @patch("workflow_runner._create_metrics_source")
     def test_run_loop_processes_tenants(
         self,
-        mock_metrics: MagicMock,
         mock_storage: MagicMock,
         mock_orch_cls: MagicMock,
     ) -> None:
-        """run_loop executes run_once and processes results."""
-        mock_metrics.return_value = None
         mock_backend = MagicMock()
         mock_storage.return_value = mock_backend
         mock_orch = MagicMock()
@@ -231,13 +389,15 @@ class TestWorkflowRunnerRunLoop:
         )
         mock_orch_cls.return_value = mock_orch
 
-        settings = AppSettings(
-            tenants={"t1": TenantConfig(ecosystem="eco", tenant_id="tid1", lookback_days=30, cutoff_days=5)}
-        )
-        settings.features.refresh_interval = 1
         registry = MagicMock()
-        registry.create.return_value = MagicMock()
+        plugin = MagicMock()
+        plugin.get_metrics_source.return_value = None
+        registry.create.return_value = plugin
 
+        settings = _make_settings(
+            tenants={"t1": _make_tenant(tenant_id="tid1")},
+            refresh_interval=1,
+        )
         runner = WorkflowRunner(settings, registry)
         shutdown = threading.Event()
 
@@ -252,9 +412,7 @@ class TestWorkflowRunnerRunLoop:
         assert mock_orch.run.call_count >= 1
 
     def test_run_loop_handles_errors_in_results(self) -> None:
-        """run_loop logs warnings for tenants with errors."""
-        settings = AppSettings(tenants={})
-        settings.features.refresh_interval = 60
+        settings = _make_settings(refresh_interval=60)
         registry = MagicMock()
         runner = WorkflowRunner(settings, registry)
 

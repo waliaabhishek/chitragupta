@@ -90,6 +90,9 @@ class FakeEcosystemPlugin:
     def get_cost_input(self) -> CostInput:
         return FakeCostInput()
 
+    def get_metrics_source(self) -> None:
+        return None
+
 
 # --- Non-conforming implementations ---
 

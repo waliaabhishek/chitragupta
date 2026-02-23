@@ -8,6 +8,7 @@ if TYPE_CHECKING:
     # Runtime import not needed — protocols use string annotations via
     # __future__.annotations.
     from core.engine.allocation import AllocationContext, AllocationResult
+    from core.metrics.protocol import MetricsSource
     from core.models import (
         BillingLineItem,
         Identity,
@@ -72,3 +73,5 @@ class EcosystemPlugin(Protocol):
     def get_service_handlers(self) -> dict[str, ServiceHandler]: ...
 
     def get_cost_input(self) -> CostInput: ...
+
+    def get_metrics_source(self) -> MetricsSource | None: ...

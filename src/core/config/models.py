@@ -37,6 +37,7 @@ class LoggingConfig(BaseModel):
 class FeaturesConfig(BaseModel):
     enable_periodic_refresh: bool = True
     refresh_interval: int = Field(default=1800, gt=0)
+    max_parallel_tenants: int = Field(default=4, gt=0, le=64)
 
 
 class ApiConfig(BaseModel):
