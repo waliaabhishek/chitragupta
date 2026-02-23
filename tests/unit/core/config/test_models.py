@@ -148,8 +148,16 @@ class TestAppSettings:
     def test_multiple_tenants(self) -> None:
         cfg = AppSettings(
             tenants={
-                "org-a": TenantConfig(ecosystem="confluent_cloud", tenant_id="a"),
-                "org-b": TenantConfig(ecosystem="self_managed_kafka", tenant_id="b"),
+                "org-a": TenantConfig(
+                    ecosystem="confluent_cloud",
+                    tenant_id="a",
+                    storage=StorageConfig(connection_string="sqlite:///a.db"),
+                ),
+                "org-b": TenantConfig(
+                    ecosystem="self_managed_kafka",
+                    tenant_id="b",
+                    storage=StorageConfig(connection_string="sqlite:///b.db"),
+                ),
             }
         )
         assert len(cfg.tenants) == 2
@@ -168,3 +176,37 @@ class TestAppSettings:
         assert cfg.logging.level == "DEBUG"
         assert cfg.api.port == 9000
         assert cfg.tenants["t1"].tenant_id == "id1"
+
+    def test_duplicate_connection_string_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="share storage connection_string"):
+            AppSettings(
+                tenants={
+                    "t1": TenantConfig(
+                        ecosystem="eco",
+                        tenant_id="a",
+                        storage=StorageConfig(connection_string="sqlite:///shared.db"),
+                    ),
+                    "t2": TenantConfig(
+                        ecosystem="eco",
+                        tenant_id="b",
+                        storage=StorageConfig(connection_string="sqlite:///shared.db"),
+                    ),
+                }
+            )
+
+    def test_different_connection_strings_accepted(self) -> None:
+        cfg = AppSettings(
+            tenants={
+                "t1": TenantConfig(
+                    ecosystem="eco",
+                    tenant_id="a",
+                    storage=StorageConfig(connection_string="sqlite:///a.db"),
+                ),
+                "t2": TenantConfig(
+                    ecosystem="eco",
+                    tenant_id="b",
+                    storage=StorageConfig(connection_string="sqlite:///b.db"),
+                ),
+            }
+        )
+        assert len(cfg.tenants) == 2

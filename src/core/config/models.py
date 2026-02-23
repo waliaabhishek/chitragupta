@@ -75,3 +75,17 @@ class AppSettings(BaseModel):
     features: FeaturesConfig = Field(default_factory=FeaturesConfig)
     api: ApiConfig = Field(default_factory=ApiConfig)
     tenants: dict[str, TenantConfig] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_unique_connection_strings(self) -> AppSettings:
+        seen: dict[str, str] = {}  # connection_string → tenant_name
+        for name, config in self.tenants.items():
+            conn = config.storage.connection_string
+            if conn in seen:
+                raise ValueError(
+                    f"tenants {seen[conn]!r} and {name!r} share storage "
+                    f"connection_string {conn!r} — each tenant must use a "
+                    f"separate database until full tenant isolation is implemented"
+                )
+            seen[conn] = name
+        return self

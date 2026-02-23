@@ -38,12 +38,18 @@ def _make_settings(
     )
 
 
+_tenant_counter = 0
+
+
 def _make_tenant(**overrides: Any) -> TenantConfig:
+    global _tenant_counter  # noqa: PLW0603
+    _tenant_counter += 1
     defaults: dict[str, Any] = {
         "ecosystem": "eco",
         "tenant_id": "tid",
         "lookback_days": 30,
         "cutoff_days": 5,
+        "storage": StorageConfig(connection_string=f"sqlite:///test_{_tenant_counter}.db"),
     }
     defaults.update(overrides)
     return TenantConfig(**defaults)
