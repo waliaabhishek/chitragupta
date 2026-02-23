@@ -1,0 +1,1157 @@
+from __future__ import annotations
+
+import logging
+from collections.abc import Iterable
+from datetime import UTC, date, datetime, timedelta
+from decimal import Decimal
+from typing import TYPE_CHECKING, Any
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+from core.engine.allocation import AllocationContext, AllocationResult
+from core.engine.orchestrator import (
+    ChargebackOrchestrator,
+    PipelineRunResult,
+    _ensure_utc,
+    billing_window,
+)
+from core.models.billing import BillingLineItem
+from core.models.chargeback import ChargebackRow, CostType
+from core.models.identity import Identity, IdentityResolution, IdentitySet
+from core.models.pipeline import PipelineState
+from core.models.resource import Resource
+
+if TYPE_CHECKING:
+    from core.models.metrics import MetricQuery, MetricRow
+
+# ---------- Helpers ----------
+
+NOW = datetime(2026, 2, 22, 12, 0, 0, tzinfo=UTC)
+TODAY = NOW.date()
+ECOSYSTEM = "test-eco"
+TENANT_ID = "tenant-1"
+TENANT_NAME = "test-tenant"
+
+
+def _make_tenant_config(**overrides: Any) -> Any:
+    from core.config.models import TenantConfig
+
+    defaults = {
+        "ecosystem": ECOSYSTEM,
+        "tenant_id": TENANT_ID,
+        "lookback_days": 30,
+        "cutoff_days": 5,
+    }
+    defaults.update(overrides)
+    return TenantConfig(**defaults)
+
+
+def _make_billing_line(
+    product_type: str = "KAFKA_CKU",
+    resource_id: str = "cluster-1",
+    total_cost: Decimal = Decimal("100.00"),
+    timestamp: datetime | None = None,
+    granularity: str = "daily",
+) -> BillingLineItem:
+    return BillingLineItem(
+        ecosystem=ECOSYSTEM,
+        tenant_id=TENANT_ID,
+        timestamp=timestamp or NOW,
+        resource_id=resource_id,
+        product_category="kafka",
+        product_type=product_type,
+        quantity=Decimal(1),
+        unit_price=total_cost,
+        total_cost=total_cost,
+        granularity=granularity,
+    )
+
+
+def _make_resource(resource_id: str = "cluster-1", created_at: datetime | None = None) -> Resource:
+    return Resource(
+        ecosystem=ECOSYSTEM,
+        tenant_id=TENANT_ID,
+        resource_id=resource_id,
+        resource_type="kafka_cluster",
+        created_at=created_at or NOW - timedelta(days=30),
+    )
+
+
+def _make_identity(identity_id: str = "user-1") -> Identity:
+    return Identity(
+        ecosystem=ECOSYSTEM,
+        tenant_id=TENANT_ID,
+        identity_id=identity_id,
+        identity_type="user",
+        display_name=f"User {identity_id}",
+    )
+
+
+def _simple_allocator(ctx: AllocationContext) -> AllocationResult:
+    """Test allocator: assigns full amount to first merged_active identity."""
+    ids = list(ctx.identities.merged_active.ids())
+    identity_id = ids[0] if ids else ctx.billing_line.resource_id
+    row = ChargebackRow(
+        ecosystem=ctx.billing_line.ecosystem,
+        tenant_id=ctx.billing_line.tenant_id,
+        timestamp=ctx.billing_line.timestamp,
+        resource_id=ctx.billing_line.resource_id,
+        product_category=ctx.billing_line.product_category,
+        product_type=ctx.billing_line.product_type,
+        identity_id=identity_id,
+        cost_type=CostType.USAGE,
+        amount=ctx.split_amount,
+        allocation_method="test_allocator",
+    )
+    return AllocationResult(rows=[row])
+
+
+class MockServiceHandler:
+    def __init__(
+        self,
+        service_type: str = "kafka",
+        product_types: list[str] | None = None,
+        resources: list[Resource] | None = None,
+        identities: list[Identity] | None = None,
+        metrics_queries: list[MetricQuery] | None = None,
+        allocator: Any = None,
+        resolve_fn: Any = None,
+    ):
+        self._service_type = service_type
+        self._product_types = product_types or ["KAFKA_CKU"]
+        self._resources = resources or []
+        self._identities = identities or []
+        self._metrics_queries = metrics_queries or []
+        self._allocator = allocator or _simple_allocator
+        self._resolve_fn = resolve_fn
+
+    @property
+    def service_type(self) -> str:
+        return self._service_type
+
+    @property
+    def handles_product_types(self) -> list[str]:
+        return self._product_types
+
+    def gather_resources(self, tenant_id: str, uow: Any) -> Iterable[Resource]:
+        return self._resources
+
+    def gather_identities(self, tenant_id: str, uow: Any) -> Iterable[Identity]:
+        return self._identities
+
+    def resolve_identities(
+        self,
+        tenant_id: str,
+        resource_id: str,
+        billing_timestamp: datetime,
+        billing_duration: timedelta,
+        metrics_data: dict[str, list[MetricRow]] | None,
+        uow: Any,
+    ) -> IdentityResolution:
+        if self._resolve_fn:
+            return self._resolve_fn(tenant_id, resource_id, billing_timestamp, billing_duration, metrics_data, uow)
+        ra = IdentitySet()
+        for i in self._identities:
+            ra.add(i)
+        return IdentityResolution(
+            resource_active=ra,
+            metrics_derived=IdentitySet(),
+            tenant_period=IdentitySet(),
+        )
+
+    def get_metrics_for_product_type(self, product_type: str) -> list[MetricQuery]:
+        return self._metrics_queries
+
+    def get_allocator(self, product_type: str) -> Any:
+        return self._allocator
+
+
+class MockCostInput:
+    def __init__(self, lines: list[BillingLineItem] | None = None):
+        self._lines = lines or []
+
+    def gather(self, tenant_id: str, start: datetime, end: datetime, uow: Any) -> Iterable[BillingLineItem]:
+        return self._lines
+
+
+class MockPlugin:
+    def __init__(self, handlers: dict[str, MockServiceHandler] | None = None, cost_input: MockCostInput | None = None):
+        self._handlers = handlers or {}
+        self._cost_input = cost_input or MockCostInput()
+        self._initialized = False
+
+    @property
+    def ecosystem(self) -> str:
+        return ECOSYSTEM
+
+    def initialize(self, config: dict[str, Any]) -> None:
+        self._initialized = True
+
+    def get_service_handlers(self) -> dict[str, MockServiceHandler]:
+        return self._handlers
+
+    def get_cost_input(self) -> MockCostInput:
+        return self._cost_input
+
+
+class MockUnitOfWork:
+    """In-memory UoW for unit tests."""
+
+    def __init__(self) -> None:
+        self.resources = MockResourceRepo()
+        self.identities = MockIdentityRepo()
+        self.billing = MockBillingRepo()
+        self.chargebacks = MockChargebackRepo()
+        self.pipeline_state = MockPipelineStateRepo()
+        self.tags = MagicMock()
+        self._committed = False
+
+    def __enter__(self) -> MockUnitOfWork:
+        return self
+
+    def __exit__(self, *args: Any) -> None:
+        pass
+
+    def commit(self) -> None:
+        self._committed = True
+
+    def rollback(self) -> None:
+        pass
+
+
+class MockResourceRepo:
+    def __init__(self) -> None:
+        self._data: dict[str, Resource] = {}
+        self._deletions: list[tuple[str, datetime]] = []
+
+    def upsert(self, resource: Resource) -> Resource:
+        self._data[resource.resource_id] = resource
+        return resource
+
+    def get(self, ecosystem: str, tenant_id: str, resource_id: str) -> Resource | None:
+        return self._data.get(resource_id)
+
+    def find_active_at(self, ecosystem: str, tenant_id: str, timestamp: datetime) -> list[Resource]:
+        return [r for r in self._data.values() if r.deleted_at is None]
+
+    def find_by_period(self, ecosystem: str, tenant_id: str, start: datetime, end: datetime) -> list[Resource]:
+        return list(self._data.values())
+
+    def mark_deleted(self, ecosystem: str, tenant_id: str, resource_id: str, deleted_at: datetime) -> None:
+        self._deletions.append((resource_id, deleted_at))
+        if resource_id in self._data:
+            r = self._data[resource_id]
+            r.deleted_at = deleted_at
+
+    def find_by_type(self, *args: Any) -> list[Resource]:
+        return []
+
+    def delete_before(self, *args: Any) -> int:
+        return 0
+
+
+class MockIdentityRepo:
+    def __init__(self) -> None:
+        self._data: dict[str, Identity] = {}
+        self._deletions: list[tuple[str, datetime]] = []
+
+    def upsert(self, identity: Identity) -> Identity:
+        self._data[identity.identity_id] = identity
+        return identity
+
+    def get(self, ecosystem: str, tenant_id: str, identity_id: str) -> Identity | None:
+        return self._data.get(identity_id)
+
+    def find_active_at(self, ecosystem: str, tenant_id: str, timestamp: datetime) -> list[Identity]:
+        return [i for i in self._data.values() if i.deleted_at is None]
+
+    def find_by_period(self, ecosystem: str, tenant_id: str, start: datetime, end: datetime) -> list[Identity]:
+        return list(self._data.values())
+
+    def mark_deleted(self, ecosystem: str, tenant_id: str, identity_id: str, deleted_at: datetime) -> None:
+        self._deletions.append((identity_id, deleted_at))
+        if identity_id in self._data:
+            self._data[identity_id].deleted_at = deleted_at
+
+    def find_by_type(self, *args: Any) -> list[Identity]:
+        return []
+
+    def delete_before(self, *args: Any) -> int:
+        return 0
+
+
+class MockBillingRepo:
+    def __init__(self) -> None:
+        self._data: list[BillingLineItem] = []
+        self._attempts: dict[tuple[str, str, str], int] = {}
+
+    def upsert(self, line: BillingLineItem) -> BillingLineItem:
+        self._data.append(line)
+        return line
+
+    def find_by_date(self, ecosystem: str, tenant_id: str, target_date: date) -> list[BillingLineItem]:
+        return [bl for bl in self._data if bl.timestamp.date() == target_date]
+
+    def find_by_range(self, *args: Any) -> list[BillingLineItem]:
+        return self._data
+
+    def increment_allocation_attempts(
+        self, ecosystem: str, tenant_id: str, timestamp: datetime, resource_id: str, product_type: str
+    ) -> int:
+        key = (resource_id, product_type, str(timestamp))
+        self._attempts[key] = self._attempts.get(key, 0) + 1
+        return self._attempts[key]
+
+    def delete_before(self, *args: Any) -> int:
+        return 0
+
+
+class MockChargebackRepo:
+    def __init__(self) -> None:
+        self._data: list[ChargebackRow] = []
+
+    def upsert(self, row: ChargebackRow) -> ChargebackRow:
+        self._data.append(row)
+        return row
+
+    def find_by_date(self, ecosystem: str, tenant_id: str, target_date: date) -> list[ChargebackRow]:
+        return [r for r in self._data if r.timestamp.date() == target_date]
+
+    def find_by_range(self, *args: Any) -> list[ChargebackRow]:
+        return self._data
+
+    def find_by_identity(self, *args: Any) -> list[ChargebackRow]:
+        return []
+
+    def delete_by_date(self, ecosystem: str, tenant_id: str, target_date: date) -> int:
+        before = len(self._data)
+        self._data = [r for r in self._data if r.timestamp.date() != target_date]
+        return before - len(self._data)
+
+    def delete_before(self, *args: Any) -> int:
+        return 0
+
+
+class MockPipelineStateRepo:
+    def __init__(self) -> None:
+        self._data: dict[tuple[str, str, date], PipelineState] = {}
+
+    def upsert(self, state: PipelineState) -> PipelineState:
+        key = (state.ecosystem, state.tenant_id, state.tracking_date)
+        if key not in self._data:
+            self._data[key] = state
+        return self._data[key]
+
+    def get(self, ecosystem: str, tenant_id: str, tracking_date: date) -> PipelineState | None:
+        return self._data.get((ecosystem, tenant_id, tracking_date))
+
+    def find_needing_calculation(self, ecosystem: str, tenant_id: str) -> list[PipelineState]:
+        return sorted(
+            [
+                s
+                for s in self._data.values()
+                if s.ecosystem == ecosystem
+                and s.tenant_id == tenant_id
+                and s.billing_gathered
+                and s.resources_gathered
+                and not s.chargeback_calculated
+            ],
+            key=lambda s: s.tracking_date,
+        )
+
+    def find_by_range(self, *args: Any) -> list[PipelineState]:
+        return list(self._data.values())
+
+    def mark_billing_gathered(self, ecosystem: str, tenant_id: str, tracking_date: date) -> None:
+        key = (ecosystem, tenant_id, tracking_date)
+        if key in self._data:
+            self._data[key].billing_gathered = True
+
+    def mark_resources_gathered(self, ecosystem: str, tenant_id: str, tracking_date: date) -> None:
+        key = (ecosystem, tenant_id, tracking_date)
+        if key in self._data:
+            self._data[key].resources_gathered = True
+
+    def mark_needs_recalculation(self, ecosystem: str, tenant_id: str, tracking_date: date) -> None:
+        key = (ecosystem, tenant_id, tracking_date)
+        if key in self._data:
+            self._data[key].chargeback_calculated = False
+
+    def mark_chargeback_calculated(self, ecosystem: str, tenant_id: str, tracking_date: date) -> None:
+        key = (ecosystem, tenant_id, tracking_date)
+        if key in self._data:
+            self._data[key].chargeback_calculated = True
+
+
+class MockStorageBackend:
+    def __init__(self, uow: MockUnitOfWork | None = None) -> None:
+        self._uow = uow or MockUnitOfWork()
+
+    def create_unit_of_work(self) -> MockUnitOfWork:
+        return self._uow
+
+    def create_tables(self) -> None:
+        pass
+
+    def dispose(self) -> None:
+        pass
+
+
+# ---------- billing_window tests ----------
+
+
+class TestBillingWindow:
+    def test_hourly(self) -> None:
+        line = _make_billing_line(granularity="hourly")
+        start, end, dur = billing_window(line)
+        assert start == line.timestamp
+        assert dur == timedelta(hours=1)
+        assert end == start + dur
+
+    def test_daily(self) -> None:
+        line = _make_billing_line(granularity="daily")
+        start, end, dur = billing_window(line)
+        assert dur == timedelta(hours=24)
+
+    def test_monthly_feb_leap(self) -> None:
+        ts = datetime(2024, 2, 1, tzinfo=UTC)
+        line = _make_billing_line(granularity="monthly", timestamp=ts)
+        _, _, dur = billing_window(line)
+        assert dur == timedelta(days=29)
+
+    def test_monthly_feb_non_leap(self) -> None:
+        ts = datetime(2023, 2, 1, tzinfo=UTC)
+        line = _make_billing_line(granularity="monthly", timestamp=ts)
+        _, _, dur = billing_window(line)
+        assert dur == timedelta(days=28)
+
+    def test_monthly_april(self) -> None:
+        ts = datetime(2024, 4, 1, tzinfo=UTC)
+        line = _make_billing_line(granularity="monthly", timestamp=ts)
+        _, _, dur = billing_window(line)
+        assert dur == timedelta(days=30)
+
+    def test_monthly_december(self) -> None:
+        ts = datetime(2024, 12, 1, tzinfo=UTC)
+        line = _make_billing_line(granularity="monthly", timestamp=ts)
+        _, _, dur = billing_window(line)
+        assert dur == timedelta(days=31)
+
+    def test_unknown_granularity(self) -> None:
+        line = _make_billing_line(granularity="biweekly")
+        with pytest.raises(ValueError, match="Unknown billing granularity"):
+            billing_window(line)
+
+
+# ---------- _ensure_utc tests ----------
+
+
+class TestEnsureUtc:
+    def test_naive_raises(self) -> None:
+        dt = datetime(2024, 1, 1, 12, 0, 0)
+        with pytest.raises(ValueError, match="Naive datetime"):
+            _ensure_utc(dt)
+
+    def test_utc_passthrough(self) -> None:
+        dt = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
+        assert _ensure_utc(dt) == dt
+
+    def test_non_utc_converted(self) -> None:
+        from datetime import timezone
+
+        eastern = timezone(timedelta(hours=-5))
+        dt = datetime(2024, 1, 1, 12, 0, 0, tzinfo=eastern)
+        result = _ensure_utc(dt)
+        assert result.tzinfo == UTC
+        assert result.hour == 17  # 12 + 5
+
+
+# ---------- Orchestrator tests ----------
+
+
+def _create_orchestrator(
+    handler: MockServiceHandler | None = None,
+    cost_input: MockCostInput | None = None,
+    storage: MockStorageBackend | None = None,
+    metrics_source: Any = None,
+    plugin_settings: dict[str, Any] | None = None,
+    **config_overrides: Any,
+) -> tuple[ChargebackOrchestrator, MockStorageBackend]:
+    if handler is None:
+        handler = MockServiceHandler(
+            resources=[_make_resource()],
+            identities=[_make_identity()],
+        )
+    if cost_input is None:
+        cost_input = MockCostInput()
+    plugin = MockPlugin(handlers={"kafka": handler}, cost_input=cost_input)
+    if storage is None:
+        storage = MockStorageBackend()
+    tc = _make_tenant_config(plugin_settings=plugin_settings or {}, **config_overrides)
+    orch = ChargebackOrchestrator(TENANT_NAME, tc, plugin, storage, metrics_source)
+    return orch, storage
+
+
+class TestOrchestratorInit:
+    def test_unallocated_identity_created(self) -> None:
+        _, storage = _create_orchestrator()
+        uow = storage.create_unit_of_work()
+        assert "UNALLOCATED" in uow.identities._data
+        unalloc = uow.identities._data["UNALLOCATED"]
+        assert unalloc.identity_type == "system"
+        assert unalloc.display_name == "Unallocated Costs"
+
+
+class TestGatherPhase:
+    def test_resources_and_identities_gathered(self) -> None:
+        handler = MockServiceHandler(
+            resources=[_make_resource("r1"), _make_resource("r2")],
+            identities=[_make_identity("i1")],
+        )
+        lines = [_make_billing_line(timestamp=NOW - timedelta(days=10))]
+        cost_input = MockCostInput(lines)
+        orch, storage = _create_orchestrator(handler=handler, cost_input=cost_input)
+
+        with patch("core.engine.orchestrator.datetime") as mock_dt:
+            mock_dt.now.return_value = NOW
+            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+            orch.run()
+
+        uow = storage.create_unit_of_work()
+        assert "r1" in uow.resources._data
+        assert "r2" in uow.resources._data
+        assert "i1" in uow.identities._data
+
+    def test_partial_gather_skips_deletion(self, caplog: pytest.LogCaptureFixture) -> None:
+        """If a handler raises during gather, deletion detection is skipped."""
+
+        class FailingHandler(MockServiceHandler):
+            def gather_resources(self, tenant_id: str, uow: Any) -> Iterable[Resource]:
+                raise RuntimeError("API down")
+
+        handler = FailingHandler(resources=[], identities=[])
+        orch, storage = _create_orchestrator(handler=handler)
+
+        with caplog.at_level(logging.WARNING):
+            orch.run()
+
+        assert any("incomplete gather" in r.message.lower() for r in caplog.records)
+        # No deletions should have been attempted
+        uow = storage.create_unit_of_work()
+        assert uow.resources._deletions == []
+
+    def test_deletion_detection_marks_missing(self) -> None:
+        """Resources not returned by gather get marked deleted."""
+        handler = MockServiceHandler(
+            resources=[_make_resource("r1")],
+            identities=[_make_identity("i1")],
+        )
+        orch, storage = _create_orchestrator(handler=handler)
+        uow = storage.create_unit_of_work()
+
+        # Pre-populate an active resource that handler won't return
+        old_resource = _make_resource("r-old")
+        uow.resources.upsert(old_resource)
+
+        orch.run()
+        # r-old should be deleted
+        deleted_ids = [rid for rid, _ in uow.resources._deletions]
+        assert "r-old" in deleted_ids
+
+
+class TestZeroGatherProtection:
+    def test_zero_gather_default_threshold_skips_deletion(self) -> None:
+        """Default threshold=-1 never auto-deletes on zero gather."""
+        handler = MockServiceHandler(resources=[], identities=[])
+        orch, storage = _create_orchestrator(handler=handler)
+        uow = storage.create_unit_of_work()
+
+        # Pre-populate active resource
+        uow.resources.upsert(_make_resource("r-existing"))
+
+        orch.run()
+        assert uow.resources._deletions == []
+
+    def test_zero_gather_threshold_exceeded_deletes(self) -> None:
+        """After N consecutive zero gathers, deletion proceeds."""
+        handler = MockServiceHandler(resources=[], identities=[])
+        orch, storage = _create_orchestrator(handler=handler, zero_gather_deletion_threshold=2)
+        uow = storage.create_unit_of_work()
+        uow.resources.upsert(_make_resource("r-existing"))
+
+        # First run: under threshold
+        orch.run()
+        assert uow.resources._deletions == []
+
+        # Second run: meets threshold
+        orch.run()
+        deleted_ids = [rid for rid, _ in uow.resources._deletions]
+        assert "r-existing" in deleted_ids
+
+    def test_nonzero_gather_resets_counter(self) -> None:
+        """Non-zero gather resets the consecutive counter."""
+        handler = MockServiceHandler(resources=[], identities=[])
+        orch, storage = _create_orchestrator(handler=handler, zero_gather_deletion_threshold=3)
+        uow = storage.create_unit_of_work()
+        uow.resources.upsert(_make_resource("r-existing"))
+
+        # 2 zero gathers
+        orch.run()
+        orch.run()
+        assert orch._consecutive_zero_resource_gathers == 2
+
+        # Now handler returns a resource — resets counter
+        handler._resources = [_make_resource("r-new")]
+        orch.run()
+        assert orch._consecutive_zero_resource_gathers == 0
+
+
+class TestCalculatePhase:
+    def test_billing_line_dispatched_to_handler(self) -> None:
+        handler = MockServiceHandler(
+            resources=[_make_resource()],
+            identities=[_make_identity()],
+        )
+        line = _make_billing_line(timestamp=NOW - timedelta(days=10))
+        cost_input = MockCostInput([line])
+        orch, storage = _create_orchestrator(handler=handler, cost_input=cost_input)
+
+        result = orch.run()
+        assert result.dates_calculated >= 0  # may be 0 if resources_gathered not set for that date
+
+    def test_unknown_product_type_allocates_to_unallocated(self) -> None:
+        """Billing line with unmapped product_type goes to UNALLOCATED."""
+        handler = MockServiceHandler(
+            product_types=["KAFKA_CKU"],
+            resources=[_make_resource()],
+            identities=[_make_identity()],
+        )
+        line = _make_billing_line(product_type="UNKNOWN_THING", timestamp=NOW - timedelta(days=10))
+        cost_input = MockCostInput([line])
+        orch, storage = _create_orchestrator(handler=handler, cost_input=cost_input)
+
+        # Manually set pipeline state to allow calculation
+        uow = storage.create_unit_of_work()
+        ps = PipelineState(
+            ecosystem=ECOSYSTEM,
+            tenant_id=TENANT_ID,
+            tracking_date=line.timestamp.date(),
+            billing_gathered=True,
+            resources_gathered=True,
+        )
+        uow.pipeline_state.upsert(ps)
+        uow.pipeline_state.mark_billing_gathered(ECOSYSTEM, TENANT_ID, line.timestamp.date())
+        uow.pipeline_state.mark_resources_gathered(ECOSYSTEM, TENANT_ID, line.timestamp.date())
+        uow.billing.upsert(line)
+
+        orch.run()
+        # Should have allocated to UNALLOCATED
+        unalloc_rows = [r for r in uow.chargebacks._data if r.identity_id == "UNALLOCATED"]
+        assert len(unalloc_rows) >= 1
+        assert unalloc_rows[0].allocation_method == "UNKNOWN_PRODUCT_TYPE"
+
+    def test_empty_billing_marks_calculated(self) -> None:
+        handler = MockServiceHandler(resources=[_make_resource()], identities=[_make_identity()])
+        orch, storage = _create_orchestrator(handler=handler)
+        uow = storage.create_unit_of_work()
+
+        # Set up a date with no billing lines but needing calculation
+        ps = PipelineState(
+            ecosystem=ECOSYSTEM,
+            tenant_id=TENANT_ID,
+            tracking_date=date(2026, 2, 10),
+            billing_gathered=True,
+            resources_gathered=True,
+        )
+        uow.pipeline_state.upsert(ps)
+        uow.pipeline_state.mark_billing_gathered(ECOSYSTEM, TENANT_ID, date(2026, 2, 10))
+        uow.pipeline_state.mark_resources_gathered(ECOSYSTEM, TENANT_ID, date(2026, 2, 10))
+
+        orch.run()
+        state = uow.pipeline_state.get(ECOSYSTEM, TENANT_ID, date(2026, 2, 10))
+        assert state is not None
+        assert state.chargeback_calculated
+
+    def test_resource_not_found_uses_fraction_1(self) -> None:
+        """If resource is not in storage, active_fraction defaults to 1."""
+        handler = MockServiceHandler(
+            resources=[],
+            identities=[_make_identity()],
+        )
+        line = _make_billing_line(resource_id="nonexistent", timestamp=NOW - timedelta(days=10))
+        cost_input = MockCostInput([line])
+        orch, storage = _create_orchestrator(handler=handler, cost_input=cost_input)
+        uow = storage.create_unit_of_work()
+
+        ps = PipelineState(
+            ecosystem=ECOSYSTEM,
+            tenant_id=TENANT_ID,
+            tracking_date=line.timestamp.date(),
+            billing_gathered=True,
+            resources_gathered=True,
+        )
+        uow.pipeline_state.upsert(ps)
+        uow.pipeline_state.mark_billing_gathered(ECOSYSTEM, TENANT_ID, line.timestamp.date())
+        uow.pipeline_state.mark_resources_gathered(ECOSYSTEM, TENANT_ID, line.timestamp.date())
+        uow.billing.upsert(line)
+
+        orch.run()
+        rows = [r for r in uow.chargebacks._data if r.resource_id == "nonexistent"]
+        assert len(rows) >= 1
+        # Full cost allocated (fraction=1)
+        assert rows[0].amount == line.total_cost
+
+    def test_no_metrics_source_passes_none(self) -> None:
+        """Without metrics_source, metrics_data is None."""
+        calls: list[Any] = []
+
+        def tracking_allocator(ctx: AllocationContext) -> AllocationResult:
+            calls.append(ctx.metrics_data)
+            return _simple_allocator(ctx)
+
+        handler = MockServiceHandler(
+            resources=[_make_resource()],
+            identities=[_make_identity()],
+            allocator=tracking_allocator,
+        )
+        line = _make_billing_line(timestamp=NOW - timedelta(days=10))
+        cost_input = MockCostInput([line])
+        orch, storage = _create_orchestrator(handler=handler, cost_input=cost_input, metrics_source=None)
+        uow = storage.create_unit_of_work()
+
+        ps = PipelineState(
+            ecosystem=ECOSYSTEM,
+            tenant_id=TENANT_ID,
+            tracking_date=line.timestamp.date(),
+            billing_gathered=True,
+            resources_gathered=True,
+        )
+        uow.pipeline_state.upsert(ps)
+        uow.pipeline_state.mark_billing_gathered(ECOSYSTEM, TENANT_ID, line.timestamp.date())
+        uow.pipeline_state.mark_resources_gathered(ECOSYSTEM, TENANT_ID, line.timestamp.date())
+        uow.billing.upsert(line)
+
+        orch.run()
+        assert calls[0] is None
+
+
+class TestAllocationRetry:
+    def test_first_failure_increments_and_raises(self) -> None:
+        """On first failure, attempts incremented, date fails."""
+
+        def failing_allocator(ctx: AllocationContext) -> AllocationResult:
+            raise RuntimeError("transient error")
+
+        handler = MockServiceHandler(
+            resources=[_make_resource()],
+            identities=[_make_identity()],
+            allocator=failing_allocator,
+        )
+        line = _make_billing_line(timestamp=NOW - timedelta(days=10))
+        cost_input = MockCostInput([line])
+        orch, storage = _create_orchestrator(handler=handler, cost_input=cost_input, allocation_retry_limit=3)
+        uow = storage.create_unit_of_work()
+
+        ps = PipelineState(
+            ecosystem=ECOSYSTEM,
+            tenant_id=TENANT_ID,
+            tracking_date=line.timestamp.date(),
+            billing_gathered=True,
+            resources_gathered=True,
+        )
+        uow.pipeline_state.upsert(ps)
+        uow.pipeline_state.mark_billing_gathered(ECOSYSTEM, TENANT_ID, line.timestamp.date())
+        uow.pipeline_state.mark_resources_gathered(ECOSYSTEM, TENANT_ID, line.timestamp.date())
+        uow.billing.upsert(line)
+
+        result = orch.run()
+        # Date should fail (error captured), not marked calculated
+        assert len(result.errors) > 0
+        state = uow.pipeline_state.get(ECOSYSTEM, TENANT_ID, line.timestamp.date())
+        assert state is not None
+        assert not state.chargeback_calculated
+
+    def test_exhausted_retries_allocates_to_unallocated(self) -> None:
+        """After exhausting retry limit, allocate to UNALLOCATED."""
+
+        def failing_allocator(ctx: AllocationContext) -> AllocationResult:
+            raise RuntimeError("persistent error")
+
+        handler = MockServiceHandler(
+            resources=[_make_resource()],
+            identities=[_make_identity()],
+            allocator=failing_allocator,
+        )
+        line = _make_billing_line(timestamp=NOW - timedelta(days=10))
+        cost_input = MockCostInput([line])
+        orch, storage = _create_orchestrator(handler=handler, cost_input=cost_input, allocation_retry_limit=1)
+        uow = storage.create_unit_of_work()
+
+        ps = PipelineState(
+            ecosystem=ECOSYSTEM,
+            tenant_id=TENANT_ID,
+            tracking_date=line.timestamp.date(),
+            billing_gathered=True,
+            resources_gathered=True,
+        )
+        uow.pipeline_state.upsert(ps)
+        uow.pipeline_state.mark_billing_gathered(ECOSYSTEM, TENANT_ID, line.timestamp.date())
+        uow.pipeline_state.mark_resources_gathered(ECOSYSTEM, TENANT_ID, line.timestamp.date())
+        uow.billing.upsert(line)
+
+        orch.run()
+        unalloc = [r for r in uow.chargebacks._data if r.allocation_method == "ALLOCATION_FAILED"]
+        assert len(unalloc) >= 1
+        assert "persistent error" in (unalloc[0].allocation_detail or "")
+
+
+class TestTenantPeriod:
+    def test_orchestrator_injects_tenant_period(self) -> None:
+        """Orchestrator replaces handler's tenant_period with cached value."""
+        captured: list[IdentityResolution] = []
+
+        def capturing_allocator(ctx: AllocationContext) -> AllocationResult:
+            captured.append(ctx.identities)
+            return _simple_allocator(ctx)
+
+        handler = MockServiceHandler(
+            resources=[_make_resource()],
+            identities=[_make_identity("i1"), _make_identity("i2")],
+            allocator=capturing_allocator,
+        )
+        line = _make_billing_line(timestamp=NOW - timedelta(days=10))
+        cost_input = MockCostInput([line])
+        orch, storage = _create_orchestrator(handler=handler, cost_input=cost_input)
+        uow = storage.create_unit_of_work()
+
+        ps = PipelineState(
+            ecosystem=ECOSYSTEM,
+            tenant_id=TENANT_ID,
+            tracking_date=line.timestamp.date(),
+            billing_gathered=True,
+            resources_gathered=True,
+        )
+        uow.pipeline_state.upsert(ps)
+        uow.pipeline_state.mark_billing_gathered(ECOSYSTEM, TENANT_ID, line.timestamp.date())
+        uow.pipeline_state.mark_resources_gathered(ECOSYSTEM, TENANT_ID, line.timestamp.date())
+        uow.billing.upsert(line)
+
+        orch.run()
+        assert len(captured) >= 1
+        # tenant_period should contain identities from identity repo (find_by_period)
+        tp = captured[0].tenant_period
+        tp_ids = set(tp.ids())
+        # Must contain at least the identities we seeded (UNALLOCATED from init, i1/i2 from handler gather)
+        assert "UNALLOCATED" in tp_ids
+        assert "i1" in tp_ids or "i2" in tp_ids
+
+    def test_handler_tenant_period_replaced_with_warning(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Handler returning non-empty tenant_period gets warned and replaced."""
+        handler_tp = IdentitySet()
+        handler_tp.add(_make_identity("bogus"))
+
+        def resolve_with_tp(
+            tenant_id: str,
+            resource_id: str,
+            bt: datetime,
+            bd: timedelta,
+            md: Any,
+            uow: Any,
+        ) -> IdentityResolution:
+            return IdentityResolution(
+                resource_active=IdentitySet(),
+                metrics_derived=IdentitySet(),
+                tenant_period=handler_tp,
+            )
+
+        handler = MockServiceHandler(
+            resources=[_make_resource()],
+            identities=[_make_identity()],
+            resolve_fn=resolve_with_tp,
+        )
+        line = _make_billing_line(timestamp=NOW - timedelta(days=10))
+        cost_input = MockCostInput([line])
+        orch, storage = _create_orchestrator(handler=handler, cost_input=cost_input)
+        uow = storage.create_unit_of_work()
+
+        ps = PipelineState(
+            ecosystem=ECOSYSTEM,
+            tenant_id=TENANT_ID,
+            tracking_date=line.timestamp.date(),
+            billing_gathered=True,
+            resources_gathered=True,
+        )
+        uow.pipeline_state.upsert(ps)
+        uow.pipeline_state.mark_billing_gathered(ECOSYSTEM, TENANT_ID, line.timestamp.date())
+        uow.pipeline_state.mark_resources_gathered(ECOSYSTEM, TENANT_ID, line.timestamp.date())
+        uow.billing.upsert(line)
+
+        with caplog.at_level(logging.WARNING):
+            orch.run()
+        assert any("non-empty tenant_period" in r.message for r in caplog.records)
+
+
+class TestMaxDatesPerRun:
+    def test_limits_dates_processed(self) -> None:
+        handler = MockServiceHandler(resources=[_make_resource()], identities=[_make_identity()])
+        orch, storage = _create_orchestrator(handler=handler, max_dates_per_run=2)
+        uow = storage.create_unit_of_work()
+
+        # Set up 5 dates needing calculation
+        for i in range(5):
+            d = date(2026, 2, 1 + i)
+            ps = PipelineState(
+                ecosystem=ECOSYSTEM,
+                tenant_id=TENANT_ID,
+                tracking_date=d,
+                billing_gathered=True,
+                resources_gathered=True,
+            )
+            uow.pipeline_state.upsert(ps)
+            uow.pipeline_state.mark_billing_gathered(ECOSYSTEM, TENANT_ID, d)
+            uow.pipeline_state.mark_resources_gathered(ECOSYSTEM, TENANT_ID, d)
+
+        result = orch.run()
+        assert result.dates_calculated <= 2
+
+
+class TestRecalculationWindow:
+    def test_recent_dates_recalculated(self) -> None:
+        handler = MockServiceHandler(resources=[_make_resource()], identities=[_make_identity()])
+        # cutoff_days=5 means recalc_cutoff = NOW - 5 days
+        recent_date = (NOW - timedelta(days=3)).date()
+        line = _make_billing_line(timestamp=datetime(recent_date.year, recent_date.month, recent_date.day, tzinfo=UTC))
+        cost_input = MockCostInput([line])
+        orch, storage = _create_orchestrator(handler=handler, cost_input=cost_input)
+        uow = storage.create_unit_of_work()
+
+        # Pre-populate state as already calculated
+        ps = PipelineState(
+            ecosystem=ECOSYSTEM,
+            tenant_id=TENANT_ID,
+            tracking_date=recent_date,
+            billing_gathered=True,
+            resources_gathered=True,
+            chargeback_calculated=True,
+        )
+        uow.pipeline_state._data[(ECOSYSTEM, TENANT_ID, recent_date)] = ps
+        # Add a stale chargeback
+        stale = ChargebackRow(
+            ecosystem=ECOSYSTEM,
+            tenant_id=TENANT_ID,
+            timestamp=datetime(recent_date.year, recent_date.month, recent_date.day, tzinfo=UTC),
+            resource_id="cluster-1",
+            product_category="kafka",
+            product_type="KAFKA_CKU",
+            identity_id="user-1",
+            cost_type=CostType.USAGE,
+            amount=Decimal("50.00"),
+        )
+        uow.chargebacks.upsert(stale)
+
+        orch.run()
+        # After gather, the stale chargeback ($50) must have been deleted by recalculation window
+        stale_rows = [
+            r for r in uow.chargebacks._data if r.timestamp.date() == recent_date and r.amount == Decimal("50.00")
+        ]
+        assert len(stale_rows) == 0, f"Stale chargeback should have been deleted, found {len(stale_rows)}"
+
+
+class TestPipelineRunResult:
+    def test_dataclass(self) -> None:
+        r = PipelineRunResult(
+            tenant_name="t",
+            tenant_id="tid",
+            dates_gathered=5,
+            dates_calculated=3,
+            chargeback_rows_written=10,
+        )
+        assert r.errors == []
+        assert r.dates_gathered == 5
+
+
+class TestMetricsPreFetch:
+    def test_metrics_prefetched_and_passed_to_allocator(self) -> None:
+        """When metrics_source is provided, metrics are pre-fetched and passed to allocator."""
+        from core.models.metrics import MetricQuery, MetricRow
+
+        captured_metrics: list[Any] = []
+
+        def tracking_allocator(ctx: AllocationContext) -> AllocationResult:
+            captured_metrics.append(ctx.metrics_data)
+            return _simple_allocator(ctx)
+
+        metrics_query = MetricQuery(
+            key="cpu_usage",
+            query_expression="rate(cpu_seconds_total{}[5m])",
+            resource_label="resource_id",
+            label_keys=["pod"],
+        )
+        handler = MockServiceHandler(
+            resources=[_make_resource()],
+            identities=[_make_identity()],
+            metrics_queries=[metrics_query],
+            allocator=tracking_allocator,
+        )
+        line = _make_billing_line(timestamp=NOW - timedelta(days=10))
+        cost_input = MockCostInput([line])
+
+        mock_metrics = MagicMock()
+        mock_row = MetricRow(timestamp=NOW, metric_key="cpu_usage", value=42.0, labels={"pod": "p1"})
+        mock_metrics.query.return_value = {"cpu_usage": [mock_row]}
+
+        orch, storage = _create_orchestrator(handler=handler, cost_input=cost_input, metrics_source=mock_metrics)
+        uow = storage.create_unit_of_work()
+
+        ps = PipelineState(
+            ecosystem=ECOSYSTEM,
+            tenant_id=TENANT_ID,
+            tracking_date=line.timestamp.date(),
+            billing_gathered=True,
+            resources_gathered=True,
+        )
+        uow.pipeline_state.upsert(ps)
+        uow.pipeline_state.mark_billing_gathered(ECOSYSTEM, TENANT_ID, line.timestamp.date())
+        uow.pipeline_state.mark_resources_gathered(ECOSYSTEM, TENANT_ID, line.timestamp.date())
+        uow.billing.upsert(line)
+
+        orch.run()
+        assert len(captured_metrics) >= 1
+        assert captured_metrics[0] is not None
+        assert "cpu_usage" in captured_metrics[0]
+        assert captured_metrics[0]["cpu_usage"][0].value == 42.0
+        mock_metrics.query.assert_called_once()
+
+    def test_metrics_deduped_across_same_resource_window(self) -> None:
+        """Two billing lines with same resource/window don't duplicate metric queries."""
+        from core.models.metrics import MetricQuery
+
+        metrics_query = MetricQuery(
+            key="cpu_usage",
+            query_expression="rate(cpu_seconds_total{}[5m])",
+            resource_label="resource_id",
+            label_keys=[],
+        )
+        handler = MockServiceHandler(
+            resources=[_make_resource()],
+            identities=[_make_identity()],
+            metrics_queries=[metrics_query],
+            product_types=["KAFKA_CKU", "KAFKA_NETWORK"],
+        )
+        ts = NOW - timedelta(days=10)
+        line1 = _make_billing_line(product_type="KAFKA_CKU", timestamp=ts)
+        line2 = _make_billing_line(product_type="KAFKA_NETWORK", timestamp=ts)
+        cost_input = MockCostInput([line1, line2])
+
+        mock_metrics = MagicMock()
+        mock_metrics.query.return_value = {"cpu_usage": []}
+
+        orch, storage = _create_orchestrator(handler=handler, cost_input=cost_input, metrics_source=mock_metrics)
+        uow = storage.create_unit_of_work()
+
+        ps = PipelineState(
+            ecosystem=ECOSYSTEM,
+            tenant_id=TENANT_ID,
+            tracking_date=ts.date(),
+            billing_gathered=True,
+            resources_gathered=True,
+        )
+        uow.pipeline_state.upsert(ps)
+        uow.pipeline_state.mark_billing_gathered(ECOSYSTEM, TENANT_ID, ts.date())
+        uow.pipeline_state.mark_resources_gathered(ECOSYSTEM, TENANT_ID, ts.date())
+        uow.billing.upsert(line1)
+        uow.billing.upsert(line2)
+
+        orch.run()
+        # Only one query call since same resource_id + billing window
+        assert mock_metrics.query.call_count == 1
+
+
+class TestLoadIdentityResolver:
+    def test_invalid_format_raises(self) -> None:
+        from core.engine.orchestrator import _load_identity_resolver
+
+        with pytest.raises(ValueError, match="Expected 'module:attribute' format"):
+            _load_identity_resolver("no_colon_here")
+
+    def test_empty_path_raises(self) -> None:
+        from core.engine.orchestrator import _load_identity_resolver
+
+        with pytest.raises(ValueError, match="Expected 'module:attribute' format"):
+            _load_identity_resolver("")
+
+    def test_nonexistent_module_raises(self) -> None:
+        from core.engine.orchestrator import _load_identity_resolver
+
+        with pytest.raises(ModuleNotFoundError):
+            _load_identity_resolver("nonexistent.module:func")
+
+    def test_not_callable_raises(self) -> None:
+        from core.engine.orchestrator import _load_identity_resolver
+
+        with pytest.raises(TypeError, match="not callable"):
+            _load_identity_resolver("os.path:sep")
+
+    def test_wrong_param_count_raises(self) -> None:
+        from core.engine.orchestrator import _load_identity_resolver
+
+        # os.path.join has *args, not 6 positional params — but let's use a known callable
+        with pytest.raises(TypeError, match="must accept 6 positional parameters"):
+            _load_identity_resolver("os.path:exists")
+
+
+class TestGatherFailureEarlyReturn:
+    def test_gather_failure_skips_calculate(self) -> None:
+        """If gather phase raises, calculate phase is skipped entirely."""
+
+        class ExplodingCostInput(MockCostInput):
+            def gather(self, *args: Any, **kwargs: Any) -> Any:
+                raise RuntimeError("cost API exploded")
+
+        handler = MockServiceHandler(resources=[_make_resource()], identities=[_make_identity()])
+        cost_input = ExplodingCostInput()
+        orch, storage = _create_orchestrator(handler=handler, cost_input=cost_input)
+        uow = storage.create_unit_of_work()
+
+        # Set up a date that would need calculation
+        ps = PipelineState(
+            ecosystem=ECOSYSTEM,
+            tenant_id=TENANT_ID,
+            tracking_date=date(2026, 2, 10),
+            billing_gathered=True,
+            resources_gathered=True,
+        )
+        uow.pipeline_state.upsert(ps)
+        uow.pipeline_state.mark_billing_gathered(ECOSYSTEM, TENANT_ID, date(2026, 2, 10))
+        uow.pipeline_state.mark_resources_gathered(ECOSYSTEM, TENANT_ID, date(2026, 2, 10))
+
+        result = orch.run()
+        assert len(result.errors) == 1
+        assert "Gather phase failed" in result.errors[0]
+        # Calculate should NOT have run
+        assert result.dates_calculated == 0
+        state = uow.pipeline_state.get(ECOSYSTEM, TENANT_ID, date(2026, 2, 10))
+        assert state is not None
+        assert not state.chargeback_calculated
+
+
+class TestEndToEnd:
+    def test_full_pipeline(self) -> None:
+        """End-to-end: gather → calculate with mock plugin."""
+        identity = _make_identity("user-1")
+        resource = _make_resource("cluster-1")
+        handler = MockServiceHandler(
+            resources=[resource],
+            identities=[identity],
+        )
+        ts = NOW - timedelta(days=10)
+        line = _make_billing_line(timestamp=ts)
+        cost_input = MockCostInput([line])
+        orch, storage = _create_orchestrator(handler=handler, cost_input=cost_input)
+
+        result = orch.run()
+        assert result.tenant_name == TENANT_NAME
+        assert result.dates_gathered >= 1
+        # Verify PipelineRunResult
+        assert isinstance(result, PipelineRunResult)

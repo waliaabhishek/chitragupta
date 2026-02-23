@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Self
+from typing import TYPE_CHECKING, Self
 
 from sqlmodel import Session, SQLModel
 
@@ -15,6 +15,16 @@ from core.storage.backends.sqlmodel.repositories import (
     SQLModelTagRepository,
 )
 
+if TYPE_CHECKING:
+    from core.storage.interface import (
+        BillingRepository,
+        ChargebackRepository,
+        IdentityRepository,
+        PipelineStateRepository,
+        ResourceRepository,
+        TagRepository,
+    )
+
 logger = logging.getLogger(__name__)
 
 
@@ -25,12 +35,12 @@ class SQLModelUnitOfWork:
         self._engine = get_or_create_engine(connection_string)
         self._session: Session | None = None
         # Repo attributes initialized in __enter__
-        self.resources: SQLModelResourceRepository
-        self.identities: SQLModelIdentityRepository
-        self.billing: SQLModelBillingRepository
-        self.chargebacks: SQLModelChargebackRepository
-        self.pipeline_state: SQLModelPipelineStateRepository
-        self.tags: SQLModelTagRepository
+        self.resources: ResourceRepository
+        self.identities: IdentityRepository
+        self.billing: BillingRepository
+        self.chargebacks: ChargebackRepository
+        self.pipeline_state: PipelineStateRepository
+        self.tags: TagRepository
 
     def __enter__(self) -> Self:
         self._session = Session(self._engine)

@@ -450,7 +450,7 @@ class TestPipelineStateRepository:
 
     def test_find_needing_calculation(self, session: Session) -> None:
         repo = SQLModelPipelineStateRepository(session)
-        repo.upsert(self._make_state(billing_gathered=True, chargeback_calculated=False))
+        repo.upsert(self._make_state(billing_gathered=True, resources_gathered=True, chargeback_calculated=False))
         repo.upsert(self._make_state(tracking_date=date(2026, 1, 16), billing_gathered=False))
         session.commit()
         results = repo.find_needing_calculation("eco", "t1")

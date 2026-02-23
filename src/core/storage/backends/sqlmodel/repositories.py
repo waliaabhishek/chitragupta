@@ -215,6 +215,26 @@ class SQLModelBillingRepository:
         )
         return [billing_to_domain(r) for r in self._session.exec(stmt).all()]
 
+    def increment_allocation_attempts(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        timestamp: datetime,
+        resource_id: str,
+        product_type: str,
+    ) -> int:
+        row = self._session.get(BillingTable, (ecosystem, tenant_id, timestamp, resource_id, product_type))
+        if row is None:
+            msg = (
+                f"Billing line not found: ecosystem={ecosystem!r}, tenant_id={tenant_id!r}, "
+                f"timestamp={timestamp!r}, resource_id={resource_id!r}, product_type={product_type!r}"
+            )
+            raise KeyError(msg)
+        row.allocation_attempts += 1
+        self._session.add(row)
+        self._session.flush()
+        return row.allocation_attempts
+
     def delete_before(self, ecosystem: str, tenant_id: str, before: datetime) -> int:
         stmt = delete(BillingTable).where(
             col(BillingTable.ecosystem) == ecosystem,
@@ -368,11 +388,16 @@ class SQLModelPipelineStateRepository:
         return pipeline_state_to_domain(row) if row else None
 
     def find_needing_calculation(self, ecosystem: str, tenant_id: str) -> list[PipelineState]:
-        stmt = select(PipelineStateTable).where(
-            col(PipelineStateTable.ecosystem) == ecosystem,
-            col(PipelineStateTable.tenant_id) == tenant_id,
-            col(PipelineStateTable.billing_gathered) == True,  # noqa: E712
-            col(PipelineStateTable.chargeback_calculated) == False,  # noqa: E712
+        stmt = (
+            select(PipelineStateTable)
+            .where(
+                col(PipelineStateTable.ecosystem) == ecosystem,
+                col(PipelineStateTable.tenant_id) == tenant_id,
+                col(PipelineStateTable.billing_gathered) == True,  # noqa: E712
+                col(PipelineStateTable.resources_gathered) == True,  # noqa: E712
+                col(PipelineStateTable.chargeback_calculated) == False,  # noqa: E712
+            )
+            .order_by(col(PipelineStateTable.tracking_date).asc())
         )
         return [pipeline_state_to_domain(r) for r in self._session.exec(stmt).all()]
 
@@ -389,6 +414,20 @@ class SQLModelPipelineStateRepository:
         row = self._session.get(PipelineStateTable, (ecosystem, tenant_id, tracking_date))
         if row:
             row.billing_gathered = True
+            self._session.add(row)
+            self._session.flush()
+
+    def mark_resources_gathered(self, ecosystem: str, tenant_id: str, tracking_date: date) -> None:
+        row = self._session.get(PipelineStateTable, (ecosystem, tenant_id, tracking_date))
+        if row:
+            row.resources_gathered = True
+            self._session.add(row)
+            self._session.flush()
+
+    def mark_needs_recalculation(self, ecosystem: str, tenant_id: str, tracking_date: date) -> None:
+        row = self._session.get(PipelineStateTable, (ecosystem, tenant_id, tracking_date))
+        if row:
+            row.chargeback_calculated = False
             self._session.add(row)
             self._session.flush()
 

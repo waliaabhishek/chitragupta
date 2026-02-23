@@ -77,6 +77,21 @@ class BillingRepository(Protocol):
         self, ecosystem: str, tenant_id: str, start: datetime, end: datetime
     ) -> list[BillingLineItem]: ...
 
+    def increment_allocation_attempts(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        timestamp: datetime,
+        resource_id: str,
+        product_type: str,
+    ) -> int:
+        """Increments allocation_attempts in DB and returns the new value.
+
+        Identifies the billing line by its composite key. The domain model
+        (BillingLineItem) is not modified — it remains frozen.
+        """
+        ...
+
     def delete_before(self, ecosystem: str, tenant_id: str, before: datetime) -> int: ...
 
 
@@ -106,12 +121,23 @@ class PipelineStateRepository(Protocol):
     def get(self, ecosystem: str, tenant_id: str, tracking_date: date) -> PipelineState | None: ...
 
     def find_needing_calculation(self, ecosystem: str, tenant_id: str) -> list[PipelineState]:
-        """Returns states where billing_gathered=True AND chargeback_calculated=False."""
+        """Returns states where billing_gathered=True AND resources_gathered=True AND chargeback_calculated=False.
+
+        Results are ordered by tracking_date ascending (oldest first).
+        """
         ...
 
     def find_by_range(self, ecosystem: str, tenant_id: str, start: date, end: date) -> list[PipelineState]: ...
 
     def mark_billing_gathered(self, ecosystem: str, tenant_id: str, tracking_date: date) -> None: ...
+
+    def mark_resources_gathered(self, ecosystem: str, tenant_id: str, tracking_date: date) -> None:
+        """Sets resources_gathered=True for the given date."""
+        ...
+
+    def mark_needs_recalculation(self, ecosystem: str, tenant_id: str, tracking_date: date) -> None:
+        """Resets chargeback_calculated=False for the given date (for recalculation window)."""
+        ...
 
     def mark_chargeback_calculated(self, ecosystem: str, tenant_id: str, tracking_date: date) -> None: ...
 

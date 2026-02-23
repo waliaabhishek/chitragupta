@@ -53,6 +53,7 @@ class BillingTable(SQLModel, table=True):
     total_cost: str = ""
     currency: str = "USD"
     granularity: str = "daily"
+    allocation_attempts: int = Field(default=0)
     metadata_json: str | None = Field(default=None)
 
 
