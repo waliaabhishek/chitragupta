@@ -4,7 +4,7 @@ import calendar
 import inspect
 import logging
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from datetime import date as date_type
 from decimal import Decimal
@@ -137,7 +137,8 @@ class ChargebackOrchestrator:
         gather_failed = False
         try:
             with self._storage_backend.create_unit_of_work() as uow:
-                dates_gathered = self._gather(uow)
+                dates_gathered, gather_errors = self._gather(uow)
+                errors.extend(gather_errors)
                 uow.commit()
         except Exception as exc:
             logger.error("Gather phase failed for %s: %s", self._tenant_name, exc)
@@ -186,12 +187,13 @@ class ChargebackOrchestrator:
             errors=errors,
         )
 
-    def _gather(self, uow: UnitOfWork) -> int:
-        """Run gather phase. Returns count of billing dates gathered."""
+    def _gather(self, uow: UnitOfWork) -> tuple[int, list[str]]:
+        """Run gather phase. Returns (billing_dates_count, errors)."""
         now = datetime.now(UTC)
         all_gathered_resource_ids: set[str] = set()
         all_gathered_identity_ids: set[str] = set()
         gather_complete = True
+        gather_errors: list[str] = []
 
         # Gather resources and identities from each handler
         for handler in self._bundle.handlers.values():
@@ -206,15 +208,13 @@ class ChargebackOrchestrator:
                     exc,
                 )
                 gather_complete = False
+                gather_errors.append(f"Handler {handler.service_type} gather failed: {exc}")
 
         # Deletion detection
         if not gather_complete:
             logger.warning("Skipping deletion detection — incomplete gather for %s", self._tenant_id)
         else:
             self._detect_deletions(uow, now, all_gathered_resource_ids, all_gathered_identity_ids)
-            # Mark resources as gathered for today
-            _ensure_pipeline_state(uow, self._ecosystem, self._tenant_id, now.date())
-            uow.pipeline_state.mark_resources_gathered(self._ecosystem, self._tenant_id, now.date())
 
         # Billing gather
         start = now - timedelta(days=self._tenant_config.lookback_days)
@@ -223,18 +223,21 @@ class ChargebackOrchestrator:
         gathered_billing_dates: set[date_type] = set()
 
         for line in cost_input.gather(self._tenant_id, start, end, uow):
-            _ensure_utc(line.timestamp)
+            line = replace(line, timestamp=_ensure_utc(line.timestamp))
             uow.billing.upsert(line)
             gathered_billing_dates.add(line.timestamp.date())
 
+        # GAP-001: mark pipeline state per billing date (not just today)
         for billing_date in gathered_billing_dates:
             _ensure_pipeline_state(uow, self._ecosystem, self._tenant_id, billing_date)
             uow.pipeline_state.mark_billing_gathered(self._ecosystem, self._tenant_id, billing_date)
+            if gather_complete:
+                uow.pipeline_state.mark_resources_gathered(self._ecosystem, self._tenant_id, billing_date)
 
         # Recalculation window
         self._apply_recalculation_window(uow, gathered_billing_dates, now)
 
-        return len(gathered_billing_dates)
+        return len(gathered_billing_dates), gather_errors
 
     def _gather_resources_and_identities(
         self,
@@ -247,13 +250,13 @@ class ChargebackOrchestrator:
 
         for resource in handler.gather_resources(self._tenant_id, uow):
             if resource.created_at is not None:
-                _ensure_utc(resource.created_at)
+                resource = replace(resource, created_at=_ensure_utc(resource.created_at))
             uow.resources.upsert(resource)
             gathered_resource_ids.add(resource.resource_id)
 
         for identity in handler.gather_identities(self._tenant_id, uow):
             if identity.created_at is not None:
-                _ensure_utc(identity.created_at)
+                identity = replace(identity, created_at=_ensure_utc(identity.created_at))
             uow.identities.upsert(identity)
             gathered_identity_ids.add(identity.identity_id)
 

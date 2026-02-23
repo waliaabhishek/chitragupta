@@ -1136,6 +1136,165 @@ class TestGatherFailureEarlyReturn:
         assert not state.chargeback_calculated
 
 
+class TestGap004UtcReassignment:
+    """GAP-004: UTC canonicalization must reassign converted values before persistence."""
+
+    def test_gather_normalizes_utc_billing_timestamps(self) -> None:
+        """Non-UTC billing timestamps are converted to UTC before storage."""
+        from datetime import timezone
+
+        utc_plus5 = timezone(timedelta(hours=5))
+        # Billing line with UTC+5 timestamp (17:00+05 = 12:00 UTC)
+        line = _make_billing_line(
+            timestamp=datetime(2026, 2, 12, 17, 0, 0, tzinfo=utc_plus5),
+        )
+        handler = MockServiceHandler(
+            resources=[_make_resource()],
+            identities=[_make_identity()],
+        )
+        cost_input = MockCostInput([line])
+        orch, storage = _create_orchestrator(handler=handler, cost_input=cost_input)
+        uow = storage.create_unit_of_work()
+
+        orch.run()
+        # Stored billing line should have UTC timestamp
+        stored = uow.billing._data
+        assert len(stored) >= 1
+        stored_ts = stored[0].timestamp
+        assert stored_ts.tzinfo == UTC
+        assert stored_ts.hour == 12  # converted from 17:00+05
+
+    def test_gather_normalizes_utc_resource_created_at(self) -> None:
+        """Non-UTC resource created_at is converted to UTC before storage."""
+        from datetime import timezone
+
+        utc_plus5 = timezone(timedelta(hours=5))
+        resource = Resource(
+            ecosystem=ECOSYSTEM,
+            tenant_id=TENANT_ID,
+            resource_id="r-utc5",
+            resource_type="kafka_cluster",
+            created_at=datetime(2026, 2, 12, 17, 0, 0, tzinfo=utc_plus5),
+        )
+        handler = MockServiceHandler(
+            resources=[resource],
+            identities=[_make_identity()],
+        )
+        orch, storage = _create_orchestrator(handler=handler)
+        uow = storage.create_unit_of_work()
+
+        orch.run()
+        stored = uow.resources._data.get("r-utc5")
+        assert stored is not None
+        assert stored.created_at is not None
+        assert stored.created_at.tzinfo == UTC
+        assert stored.created_at.hour == 12
+
+
+class TestGap006ErrorPropagation:
+    """GAP-006: Partial handler gather errors must appear in PipelineRunResult.errors."""
+
+    def test_partial_handler_failure_surfaces_in_errors(self) -> None:
+        class FailingHandler(MockServiceHandler):
+            def gather_resources(self, tenant_id: str, uow: Any) -> Iterable[Resource]:
+                raise RuntimeError("API timeout")
+
+        handler = FailingHandler(resources=[], identities=[])
+        orch, storage = _create_orchestrator(handler=handler)
+
+        result = orch.run()
+        assert any("Handler kafka gather failed" in e for e in result.errors)
+        assert any("API timeout" in e for e in result.errors)
+
+    def test_multiple_handler_failures_all_surfaced(self) -> None:
+        class Failing1(MockServiceHandler):
+            def gather_resources(self, tenant_id: str, uow: Any) -> Iterable[Resource]:
+                raise RuntimeError("handler1 down")
+
+        class Failing2(MockServiceHandler):
+            def gather_resources(self, tenant_id: str, uow: Any) -> Iterable[Resource]:
+                raise RuntimeError("handler2 down")
+
+        h1 = Failing1(service_type="svc1", product_types=["P1"])
+        h2 = Failing2(service_type="svc2", product_types=["P2"])
+        plugin = MockPlugin(handlers={"svc1": h1, "svc2": h2})
+        storage = MockStorageBackend()
+        tc = _make_tenant_config(plugin_settings={})
+        orch = ChargebackOrchestrator(TENANT_NAME, tc, plugin, storage)
+
+        result = orch.run()
+        assert len([e for e in result.errors if "gather failed" in e]) == 2
+
+
+class TestGap001ResourcesGatheredPerDate:
+    """GAP-001: resources_gathered must be set for all billing dates, not just today."""
+
+    def test_gather_marks_resources_gathered_for_all_billing_dates(self) -> None:
+        handler = MockServiceHandler(
+            resources=[_make_resource()],
+            identities=[_make_identity()],
+        )
+        # Billing lines on historical dates
+        ts1 = NOW - timedelta(days=10)
+        ts2 = NOW - timedelta(days=15)
+        lines = [
+            _make_billing_line(timestamp=ts1),
+            _make_billing_line(timestamp=ts2),
+        ]
+        cost_input = MockCostInput(lines)
+        orch, storage = _create_orchestrator(handler=handler, cost_input=cost_input)
+
+        result = orch.run()
+        assert result.dates_gathered == 2
+
+        uow = storage.create_unit_of_work()
+        # Both historical dates should have resources_gathered=True
+        for ts in [ts1, ts2]:
+            state = uow.pipeline_state.get(ECOSYSTEM, TENANT_ID, ts.date())
+            assert state is not None, f"No pipeline state for {ts.date()}"
+            assert state.billing_gathered, f"billing_gathered not set for {ts.date()}"
+            assert state.resources_gathered, f"resources_gathered not set for {ts.date()}"
+
+    def test_partial_gather_skips_resources_gathered_for_billing_dates(self) -> None:
+        """If a handler fails, resources_gathered stays False for all dates."""
+
+        class FailingHandler(MockServiceHandler):
+            def gather_resources(self, tenant_id: str, uow: Any) -> Iterable[Resource]:
+                raise RuntimeError("API down")
+
+        handler = FailingHandler(resources=[], identities=[])
+        ts = NOW - timedelta(days=10)
+        lines = [_make_billing_line(timestamp=ts)]
+        cost_input = MockCostInput(lines)
+        orch, storage = _create_orchestrator(handler=handler, cost_input=cost_input)
+
+        orch.run()
+        uow = storage.create_unit_of_work()
+        state = uow.pipeline_state.get(ECOSYSTEM, TENANT_ID, ts.date())
+        assert state is not None
+        assert state.billing_gathered
+        assert not state.resources_gathered  # gather_complete was False
+
+    def test_both_flags_enable_calculation(self) -> None:
+        """Dates with both billing_gathered AND resources_gathered get calculated."""
+        handler = MockServiceHandler(
+            resources=[_make_resource()],
+            identities=[_make_identity()],
+        )
+        ts = NOW - timedelta(days=10)
+        lines = [_make_billing_line(timestamp=ts)]
+        cost_input = MockCostInput(lines)
+        orch, storage = _create_orchestrator(handler=handler, cost_input=cost_input)
+
+        result = orch.run()
+        # Date should have been calculated (both flags were set during gather)
+        assert result.dates_calculated >= 1
+        uow = storage.create_unit_of_work()
+        state = uow.pipeline_state.get(ECOSYSTEM, TENANT_ID, ts.date())
+        assert state is not None
+        assert state.chargeback_calculated
+
+
 class TestEndToEnd:
     def test_full_pipeline(self) -> None:
         """End-to-end: gather → calculate with mock plugin."""
