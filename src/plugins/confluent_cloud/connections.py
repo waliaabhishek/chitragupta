@@ -20,7 +20,7 @@ DEFAULT_PAGE_SIZE = 500
 
 @dataclass
 class CCloudConnection:
-    """HTTP client for Confluent Cloud API."""
+    """HTTP client for Confluent Cloud API with connection pooling."""
 
     api_key: str
     api_secret: SecretStr
@@ -29,10 +29,15 @@ class CCloudConnection:
     max_retries: int = 5
     base_backoff_seconds: float = 2.0
 
-    _auth: HTTPBasicAuth = field(init=False, repr=False, compare=False)
+    _session: requests.Session = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
-        self._auth = HTTPBasicAuth(self.api_key, self.api_secret.get_secret_value())
+        self._session = requests.Session()
+        self._session.auth = HTTPBasicAuth(self.api_key, self.api_secret.get_secret_value())
+
+    def close(self) -> None:
+        """Close the underlying HTTP session and release connections."""
+        self._session.close()
 
     def get(
         self,
@@ -59,11 +64,11 @@ class CCloudConnection:
 
             # Parse next page token
             query = parse.parse_qs(parse.urlsplit(next_url).query)
-            page_token_list = query.get("page_token", [])
-            if not page_token_list or not page_token_list[0]:
+            page_token = query.get("page_token", [""])[0]
+            if not page_token:
                 break
 
-            request_params["page_token"] = page_token_list[0]
+            request_params["page_token"] = page_token
 
     def post(
         self,
@@ -82,18 +87,17 @@ class CCloudConnection:
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Execute HTTP request with retry logic for rate limits and timeouts."""
-        kwargs.setdefault("auth", self._auth)
         kwargs.setdefault("timeout", self.timeout_seconds)
 
         last_exception: Exception | None = None
 
         for attempt in range(self.max_retries + 1):
             try:
-                resp = requests.request(method, url, **kwargs)
+                resp = self._session.request(method, url, **kwargs)
             except requests.exceptions.Timeout as e:
                 last_exception = CCloudApiError(408, f"Request timeout: {e}")
                 wait = self._calculate_backoff(attempt)
-                LOGGER.warning(f"Timeout on attempt {attempt + 1}, retrying in {wait:.2f}s")
+                LOGGER.warning("Timeout on attempt %d, retrying in %.2fs", attempt + 1, wait)
                 time.sleep(wait)
                 continue
             except requests.exceptions.RequestException as e:
@@ -102,21 +106,21 @@ class CCloudConnection:
             if resp.status_code == 200:
                 return cast("dict[str, Any]", resp.json())
             elif resp.status_code == 404:
-                LOGGER.info(f"Resource not found: {url}")
+                LOGGER.info("Resource not found: %s", url)
                 return {"data": [], "metadata": {}}
             elif resp.status_code == 429:
                 last_exception = CCloudApiError(429, resp.text)
                 wait = self._get_rate_limit_wait(resp, attempt)
-                LOGGER.warning(f"Rate limited on attempt {attempt + 1}, retrying in {wait:.2f}s")
+                LOGGER.warning("Rate limited on attempt %d, retrying in %.2fs", attempt + 1, wait)
                 time.sleep(wait)
                 continue
             else:
                 raise CCloudApiError(resp.status_code, resp.text)
 
-        # Max retries exhausted
-        if last_exception:
-            raise last_exception
-        raise CCloudApiError(0, "Max retries exhausted")
+        # Max retries exhausted — last_exception is always set since we only
+        # reach here after timeout (sets last_exception) or 429 (sets last_exception)
+        assert last_exception is not None  # unreachable: loop always sets last_exception
+        raise last_exception
 
     def _calculate_backoff(self, attempt: int) -> float:
         """Calculate exponential backoff with jitter."""
@@ -125,15 +129,26 @@ class CCloudConnection:
         return base + jitter
 
     def _get_rate_limit_wait(self, response: requests.Response, attempt: int) -> float:
-        """Get wait time from rate limit headers or fall back to backoff."""
+        """Get wait time from rate limit headers or fall back to backoff.
+
+        Confluent Cloud API uses these headers (per docs):
+        - Retry-After: seconds to wait (standard HTTP)
+        - rateLimit-reset: relative seconds until window resets (NOT Unix timestamp)
+
+        See: https://api.telemetry.confluent.cloud/docs
+        """
+        # Standard HTTP Retry-After header (seconds)
         if "Retry-After" in response.headers:
             wait = float(response.headers["Retry-After"])
-        elif "X-RateLimit-Reset" in response.headers:
-            reset_time = float(response.headers["X-RateLimit-Reset"])
-            wait = max(0.01, reset_time - time.time())
+        # Confluent-specific header: relative seconds until reset (lowercase)
+        elif "rateLimit-reset" in response.headers:
+            wait = float(response.headers["rateLimit-reset"])
+        # Legacy/alternative header name (some Confluent APIs may use this)
+        elif "RateLimit-Reset" in response.headers:
+            wait = float(response.headers["RateLimit-Reset"])
         else:
             wait = self._calculate_backoff(attempt)
 
-        # Add jitter (10-20%)
+        # Add jitter (10-20%) to avoid thundering herd
         jitter_factor = 1.1 + 0.1 * random.random()
         return wait * jitter_factor

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from core.models import Resource, ResourceStatus
@@ -12,7 +14,7 @@ def make_resource():
     def _make(
         resource_id: str = "res-001",
         resource_type: str = "generic",
-        metadata: dict | None = None,
+        metadata: dict[str, Any] | None = None,
         **kwargs,
     ) -> Resource:
         defaults = {

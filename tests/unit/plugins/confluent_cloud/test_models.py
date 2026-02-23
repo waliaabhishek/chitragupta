@@ -4,20 +4,16 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
+from plugins.confluent_cloud.models import CCloudConnector, CCloudFlinkPool, CCloudFlinkStatement
 
-def test_flink_statement_from_resource():
-    from core.models import Resource, ResourceStatus
-    from plugins.confluent_cloud.models import CCloudFlinkStatement
 
-    resource = Resource(
-        ecosystem="confluent_cloud",
-        tenant_id="org-123",
+def test_flink_statement_from_resource(make_resource):
+    resource = make_resource(
         resource_id="stmt-abc",
         resource_type="flink_statement",
         display_name="my-statement",
         parent_id="env-xyz",
         owner_id="sa-owner",
-        status=ResourceStatus.ACTIVE,
         metadata={
             "statement_name": "my-statement",
             "compute_pool_id": "pool-001",
@@ -35,36 +31,24 @@ def test_flink_statement_from_resource():
     assert stmt.is_stopped is False
 
 
-def test_flink_statement_missing_metadata_raises():
-    from core.models import Resource
-    from plugins.confluent_cloud.models import CCloudFlinkStatement
-
-    resource = Resource(
-        ecosystem="confluent_cloud",
-        tenant_id="org-123",
+def test_flink_statement_missing_metadata_raises(make_resource):
+    resource = make_resource(
         resource_id="stmt-abc",
         resource_type="flink_statement",
-        metadata={},  # Missing required keys
+        metadata={},
     )
 
     with pytest.raises(KeyError):
         CCloudFlinkStatement.from_resource(resource)
 
 
-def test_flink_statement_optional_fields():
-    from core.models import Resource
-    from plugins.confluent_cloud.models import CCloudFlinkStatement
-
-    resource = Resource(
-        ecosystem="confluent_cloud",
-        tenant_id="org-123",
+def test_flink_statement_optional_fields(make_resource):
+    resource = make_resource(
         resource_id="stmt-abc",
         resource_type="flink_statement",
-        # No parent_id, no owner_id
         metadata={
             "statement_name": "my-statement",
             "compute_pool_id": "pool-001",
-            # No is_stopped - should default to False
         },
     )
 
@@ -75,13 +59,8 @@ def test_flink_statement_optional_fields():
     assert stmt.is_stopped is False
 
 
-def test_flink_pool_from_resource():
-    from core.models import Resource
-    from plugins.confluent_cloud.models import CCloudFlinkPool
-
-    resource = Resource(
-        ecosystem="confluent_cloud",
-        tenant_id="org-123",
+def test_flink_pool_from_resource(make_resource):
+    resource = make_resource(
         resource_id="pool-001",
         resource_type="flink_compute_pool",
         display_name="my-pool",
@@ -102,17 +81,11 @@ def test_flink_pool_from_resource():
     assert pool.max_cfu == 10
 
 
-def test_flink_pool_optional_fields():
-    from core.models import Resource
-    from plugins.confluent_cloud.models import CCloudFlinkPool
-
-    resource = Resource(
-        ecosystem="confluent_cloud",
-        tenant_id="org-123",
+def test_flink_pool_optional_fields(make_resource):
+    resource = make_resource(
         resource_id="pool-001",
         resource_type="flink_compute_pool",
-        # No display_name, no parent_id
-        metadata={},  # No cloud, region, max_cfu
+        metadata={},
     )
 
     pool = CCloudFlinkPool.from_resource(resource)
@@ -124,13 +97,10 @@ def test_flink_pool_optional_fields():
     assert pool.max_cfu == 0
 
 
-def test_connector_from_resource():
-    from core.models import Resource, ResourceStatus
-    from plugins.confluent_cloud.models import CCloudConnector
+def test_connector_from_resource(make_resource):
+    from core.models import ResourceStatus
 
-    resource = Resource(
-        ecosystem="confluent_cloud",
-        tenant_id="org-123",
+    resource = make_resource(
         resource_id="conn-001",
         resource_type="connector",
         display_name="my-connector",
@@ -152,16 +122,10 @@ def test_connector_from_resource():
     assert conn.is_deleted is True
 
 
-def test_connector_active_status():
-    from core.models import Resource, ResourceStatus
-    from plugins.confluent_cloud.models import CCloudConnector
-
-    resource = Resource(
-        ecosystem="confluent_cloud",
-        tenant_id="org-123",
+def test_connector_active_status(make_resource):
+    resource = make_resource(
         resource_id="conn-001",
         resource_type="connector",
-        status=ResourceStatus.ACTIVE,
         metadata={},
     )
 
@@ -170,13 +134,8 @@ def test_connector_active_status():
     assert conn.is_deleted is False
 
 
-def test_views_are_frozen():
-    from core.models import Resource
-    from plugins.confluent_cloud.models import CCloudFlinkPool
-
-    resource = Resource(
-        ecosystem="confluent_cloud",
-        tenant_id="org-123",
+def test_views_are_frozen(make_resource):
+    resource = make_resource(
         resource_id="pool-001",
         resource_type="flink_compute_pool",
         metadata={"cloud": "aws", "region": "us-east-1", "max_cfu": 10},

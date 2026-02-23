@@ -1,16 +1,19 @@
 from __future__ import annotations
 
+import base64
 import time
+from unittest.mock import patch
 
 import pytest
 import requests
 import responses
 from pydantic import SecretStr
 
+from plugins.confluent_cloud.connections import CCloudConnection
+from plugins.confluent_cloud.exceptions import CCloudApiError, CCloudConnectionError
+
 
 def test_ccloud_connection_construction():
-    from plugins.confluent_cloud.connections import CCloudConnection
-
     conn = CCloudConnection(
         api_key="key123",
         api_secret=SecretStr("secret456"),
@@ -23,8 +26,6 @@ def test_ccloud_connection_construction():
 
 
 def test_ccloud_connection_custom_base_url():
-    from plugins.confluent_cloud.connections import CCloudConnection
-
     conn = CCloudConnection(
         api_key="key",
         api_secret=SecretStr("secret"),
@@ -35,8 +36,6 @@ def test_ccloud_connection_custom_base_url():
 
 @responses.activate
 def test_get_single_page():
-    from plugins.confluent_cloud.connections import CCloudConnection
-
     responses.add(
         responses.GET,
         "https://api.confluent.cloud/test/endpoint",
@@ -52,8 +51,6 @@ def test_get_single_page():
 
 @responses.activate
 def test_get_with_pagination():
-    from plugins.confluent_cloud.connections import CCloudConnection
-
     responses.add(
         responses.GET,
         "https://api.confluent.cloud/test/endpoint",
@@ -78,8 +75,6 @@ def test_get_with_pagination():
 
 @responses.activate
 def test_get_empty_response():
-    from plugins.confluent_cloud.connections import CCloudConnection
-
     responses.add(
         responses.GET,
         "https://api.confluent.cloud/test/endpoint",
@@ -95,8 +90,6 @@ def test_get_empty_response():
 
 @responses.activate
 def test_get_404_returns_empty():
-    from plugins.confluent_cloud.connections import CCloudConnection
-
     responses.add(
         responses.GET,
         "https://api.confluent.cloud/test/endpoint",
@@ -112,9 +105,6 @@ def test_get_404_returns_empty():
 
 @responses.activate
 def test_get_500_raises():
-    from plugins.confluent_cloud.connections import CCloudConnection
-    from plugins.confluent_cloud.exceptions import CCloudApiError
-
     responses.add(
         responses.GET,
         "https://api.confluent.cloud/test/endpoint",
@@ -132,8 +122,6 @@ def test_get_500_raises():
 
 @responses.activate
 def test_get_429_with_retry_after_header():
-    from plugins.confluent_cloud.connections import CCloudConnection
-
     responses.add(
         responses.GET,
         "https://api.confluent.cloud/test",
@@ -158,8 +146,6 @@ def test_get_429_with_retry_after_header():
 
 @responses.activate
 def test_get_429_with_exponential_backoff():
-    from plugins.confluent_cloud.connections import CCloudConnection
-
     # 429 without headers, then success
     responses.add(
         responses.GET,
@@ -186,9 +172,6 @@ def test_get_429_with_exponential_backoff():
 
 @responses.activate
 def test_get_max_retries_exhausted():
-    from plugins.confluent_cloud.connections import CCloudConnection
-    from plugins.confluent_cloud.exceptions import CCloudApiError
-
     # 6 responses: max_retries=5 means 6 total attempts
     for _ in range(6):
         responses.add(
@@ -213,8 +196,6 @@ def test_get_max_retries_exhausted():
 
 @responses.activate
 def test_get_timeout_then_success():
-    from plugins.confluent_cloud.connections import CCloudConnection
-
     # First call times out, second succeeds
     responses.add(
         responses.GET,
@@ -240,8 +221,6 @@ def test_get_timeout_then_success():
 
 @responses.activate
 def test_post_success():
-    from plugins.confluent_cloud.connections import CCloudConnection
-
     responses.add(
         responses.POST,
         "https://api.confluent.cloud/test/create",
@@ -257,9 +236,6 @@ def test_post_success():
 
 @responses.activate
 def test_post_error():
-    from plugins.confluent_cloud.connections import CCloudConnection
-    from plugins.confluent_cloud.exceptions import CCloudApiError
-
     responses.add(
         responses.POST,
         "https://api.confluent.cloud/test/create",
@@ -273,3 +249,128 @@ def test_post_error():
         conn.post("/test/create", json={})
 
     assert exc_info.value.status_code == 400
+
+
+@responses.activate
+def test_get_429_with_ratelimit_reset_header():
+    """Test Confluent-specific rateLimit-reset header (relative seconds, not Unix timestamp).
+
+    Per Confluent Cloud API docs: https://api.telemetry.confluent.cloud/docs
+    The rateLimit-reset header contains relative seconds until window resets.
+    """
+    responses.add(
+        responses.GET,
+        "https://api.confluent.cloud/test",
+        status=429,
+        headers={"rateLimit-reset": "0.05"},  # Relative seconds, per Confluent docs
+    )
+    responses.add(
+        responses.GET,
+        "https://api.confluent.cloud/test",
+        json={"data": [{"id": "1"}], "metadata": {}},
+        status=200,
+    )
+
+    conn = CCloudConnection(api_key="key", api_secret=SecretStr("secret"))
+    start = time.monotonic()
+    items = list(conn.get("/test"))
+    elapsed = time.monotonic() - start
+
+    assert items == [{"id": "1"}]
+    assert elapsed >= 0.05  # Waited for rateLimit-reset seconds
+
+
+@responses.activate
+def test_get_429_with_pascal_case_ratelimit_reset_header():
+    """Test RateLimit-Reset header variant (pascal-case).
+
+    Some Confluent APIs may use this casing. Defensive handling ensures we
+    respect rate limit signals regardless of header casing.
+    """
+    responses.add(
+        responses.GET,
+        "https://api.confluent.cloud/test",
+        status=429,
+        headers={"RateLimit-Reset": "0.05"},
+    )
+    responses.add(
+        responses.GET,
+        "https://api.confluent.cloud/test",
+        json={"data": [{"id": "1"}], "metadata": {}},
+        status=200,
+    )
+
+    conn = CCloudConnection(api_key="key", api_secret=SecretStr("secret"))
+    start = time.monotonic()
+    items = list(conn.get("/test"))
+    elapsed = time.monotonic() - start
+
+    assert items == [{"id": "1"}]
+    assert elapsed >= 0.05  # Waited for RateLimit-Reset seconds
+
+
+@responses.activate
+def test_connection_error_raises_ccloud_connection_error():
+    responses.add(
+        responses.GET,
+        "https://api.confluent.cloud/test",
+        body=requests.exceptions.ConnectionError("Connection refused"),
+    )
+
+    conn = CCloudConnection(api_key="key", api_secret=SecretStr("secret"))
+
+    with pytest.raises(CCloudConnectionError):
+        list(conn.get("/test"))
+
+
+@responses.activate
+def test_request_has_basic_auth_header():
+    responses.add(
+        responses.GET,
+        "https://api.confluent.cloud/test",
+        json={"data": [], "metadata": {}},
+        status=200,
+    )
+
+    conn = CCloudConnection(api_key="mykey", api_secret=SecretStr("mysecret"))
+    list(conn.get("/test"))
+
+    sent_request = responses.calls[0].request
+    expected = base64.b64encode(b"mykey:mysecret").decode()
+    assert sent_request.headers["Authorization"] == f"Basic {expected}"
+
+
+@responses.activate
+def test_get_data_null_returns_empty():
+    responses.add(
+        responses.GET,
+        "https://api.confluent.cloud/test",
+        json={"data": None, "metadata": {}},
+        status=200,
+    )
+
+    conn = CCloudConnection(api_key="key", api_secret=SecretStr("secret"))
+    items = list(conn.get("/test"))
+
+    assert items == []
+
+
+def test_connection_uses_session_for_pooling():
+    """Verify that CCloudConnection uses requests.Session for connection pooling."""
+    conn = CCloudConnection(api_key="key", api_secret=SecretStr("secret"))
+
+    # Verify session is created
+    assert hasattr(conn, "_session")
+    assert conn._session is not None
+
+    # Verify auth is set on session
+    assert conn._session.auth is not None
+
+
+def test_connection_close():
+    """Verify close() properly closes the underlying session."""
+    conn = CCloudConnection(api_key="key", api_secret=SecretStr("secret"))
+
+    with patch.object(conn._session, "close") as mock_close:
+        conn.close()
+        mock_close.assert_called_once()

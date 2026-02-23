@@ -1,9 +1,12 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from plugins.confluent_cloud.config import CCloudPluginConfig
 from plugins.confluent_cloud.connections import CCloudConnection
+
+if TYPE_CHECKING:
+    from core.plugin.protocols import CostInput, ServiceHandler
 
 
 class ConfluentCloudPlugin:
@@ -25,10 +28,10 @@ class ConfluentCloudPlugin:
             api_secret=self._config.ccloud_api.secret,
         )
 
-    def get_service_handlers(self) -> dict[str, Any]:
+    def get_service_handlers(self) -> dict[str, ServiceHandler]:
         """Return service handlers. Stub returns empty dict."""
         return {}
 
-    def get_cost_input(self) -> Any:
-        """Return cost input. Not implemented yet."""
+    def get_cost_input(self) -> CostInput:
+        """Return cost input. Not implemented yet (TD-017)."""
         raise NotImplementedError("CCloud cost input not implemented (chunk 2.2)")

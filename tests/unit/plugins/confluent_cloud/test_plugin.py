@@ -15,9 +15,11 @@ def test_plugin_initialize_validates_config():
     from plugins.confluent_cloud import ConfluentCloudPlugin
 
     plugin = ConfluentCloudPlugin()
-    plugin.initialize({
-        "ccloud_api": {"key": "k", "secret": "s"},
-    })
+    plugin.initialize(
+        {
+            "ccloud_api": {"key": "k", "secret": "s"},
+        }
+    )
 
     assert plugin._config is not None
     assert plugin._config.ccloud_api.key == "k"
@@ -53,14 +55,11 @@ def test_plugin_get_cost_input_not_implemented():
 
 
 def test_plugin_conforms_to_protocol():
+    from core.plugin.protocols import EcosystemPlugin
     from plugins.confluent_cloud import ConfluentCloudPlugin
 
     plugin = ConfluentCloudPlugin()
-    # Structural check: has required attributes
-    assert hasattr(plugin, "ecosystem")
-    assert hasattr(plugin, "initialize")
-    assert hasattr(plugin, "get_service_handlers")
-    assert hasattr(plugin, "get_cost_input")
+    assert isinstance(plugin, EcosystemPlugin)
 
 
 def test_plugin_creates_connection():

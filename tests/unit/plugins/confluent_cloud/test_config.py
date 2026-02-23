@@ -7,9 +7,11 @@ from pydantic import ValidationError
 def test_minimal_config():
     from plugins.confluent_cloud.config import CCloudPluginConfig
 
-    config = CCloudPluginConfig.from_plugin_settings({
-        "ccloud_api": {"key": "mykey", "secret": "mysecret"},
-    })
+    config = CCloudPluginConfig.from_plugin_settings(
+        {
+            "ccloud_api": {"key": "mykey", "secret": "mysecret"},
+        }
+    )
     assert config.ccloud_api.key == "mykey"
     assert config.ccloud_api.secret.get_secret_value() == "mysecret"
     assert config.billing_api.days_per_query == 15
@@ -18,22 +20,24 @@ def test_minimal_config():
 def test_full_config():
     from plugins.confluent_cloud.config import CCloudPluginConfig
 
-    config = CCloudPluginConfig.from_plugin_settings({
-        "ccloud_api": {"key": "k", "secret": "s"},
-        "billing_api": {"days_per_query": 7},
-        "metrics": {
-            "type": "prometheus",
-            "url": "http://prom:9090",
-            "auth_type": "basic",
-            "username": "user",
-            "password": "pass",
-        },
-        "flink": [
-            {"region_id": "us-east-1", "key": "fk1", "secret": "fs1"},
-            {"region_id": "us-west-2", "key": "fk2", "secret": "fs2"},
-        ],
-        "allocator_params": {"kafka_cku_shared_ratio": 0.3},
-    })
+    config = CCloudPluginConfig.from_plugin_settings(
+        {
+            "ccloud_api": {"key": "k", "secret": "s"},
+            "billing_api": {"days_per_query": 7},
+            "metrics": {
+                "type": "prometheus",
+                "url": "http://prom:9090",
+                "auth_type": "basic",
+                "username": "user",
+                "password": "pass",
+            },
+            "flink": [
+                {"region_id": "us-east-1", "key": "fk1", "secret": "fs1"},
+                {"region_id": "us-west-2", "key": "fk2", "secret": "fs2"},
+            ],
+            "allocator_params": {"kafka_cku_shared_ratio": 0.3},
+        }
+    )
     assert config.billing_api.days_per_query == 7
     assert config.metrics is not None
     assert config.metrics.url == "http://prom:9090"
@@ -52,39 +56,47 @@ def test_invalid_days_per_query():
     from plugins.confluent_cloud.config import CCloudPluginConfig
 
     with pytest.raises(ValidationError):
-        CCloudPluginConfig.from_plugin_settings({
-            "ccloud_api": {"key": "k", "secret": "s"},
-            "billing_api": {"days_per_query": 0},
-        })
+        CCloudPluginConfig.from_plugin_settings(
+            {
+                "ccloud_api": {"key": "k", "secret": "s"},
+                "billing_api": {"days_per_query": 0},
+            }
+        )
 
     with pytest.raises(ValidationError):
-        CCloudPluginConfig.from_plugin_settings({
-            "ccloud_api": {"key": "k", "secret": "s"},
-            "billing_api": {"days_per_query": 31},
-        })
+        CCloudPluginConfig.from_plugin_settings(
+            {
+                "ccloud_api": {"key": "k", "secret": "s"},
+                "billing_api": {"days_per_query": 31},
+            }
+        )
 
 
 def test_metrics_basic_auth_requires_credentials():
     from plugins.confluent_cloud.config import CCloudPluginConfig
 
     with pytest.raises(ValidationError):
-        CCloudPluginConfig.from_plugin_settings({
-            "ccloud_api": {"key": "k", "secret": "s"},
-            "metrics": {
-                "type": "prometheus",
-                "url": "http://prom:9090",
-                "auth_type": "basic",
-                # Missing username/password
-            },
-        })
+        CCloudPluginConfig.from_plugin_settings(
+            {
+                "ccloud_api": {"key": "k", "secret": "s"},
+                "metrics": {
+                    "type": "prometheus",
+                    "url": "http://prom:9090",
+                    "auth_type": "basic",
+                    # Missing username/password
+                },
+            }
+        )
 
 
 def test_secret_not_in_repr():
     from plugins.confluent_cloud.config import CCloudPluginConfig
 
-    config = CCloudPluginConfig.from_plugin_settings({
-        "ccloud_api": {"key": "mykey", "secret": "supersecret"},
-    })
+    config = CCloudPluginConfig.from_plugin_settings(
+        {
+            "ccloud_api": {"key": "mykey", "secret": "supersecret"},
+        }
+    )
     repr_str = repr(config)
     assert "supersecret" not in repr_str
 
@@ -93,34 +105,40 @@ def test_metrics_auth_none_with_credentials_raises():
     from plugins.confluent_cloud.config import CCloudPluginConfig
 
     with pytest.raises(ValidationError):
-        CCloudPluginConfig.from_plugin_settings({
-            "ccloud_api": {"key": "k", "secret": "s"},
-            "metrics": {
-                "type": "prometheus",
-                "url": "http://prom:9090",
-                "auth_type": "none",
-                "username": "user",  # Contradictory!
-            },
-        })
+        CCloudPluginConfig.from_plugin_settings(
+            {
+                "ccloud_api": {"key": "k", "secret": "s"},
+                "metrics": {
+                    "type": "prometheus",
+                    "url": "http://prom:9090",
+                    "auth_type": "none",
+                    "username": "user",  # Contradictory!
+                },
+            }
+        )
 
 
 def test_allocator_params_ratio_must_be_numeric():
     from plugins.confluent_cloud.config import CCloudPluginConfig
 
     with pytest.raises(ValidationError):
-        CCloudPluginConfig.from_plugin_settings({
-            "ccloud_api": {"key": "k", "secret": "s"},
-            "allocator_params": {"kafka_cku_shared_ratio": "0.3"},  # String, not float
-        })
+        CCloudPluginConfig.from_plugin_settings(
+            {
+                "ccloud_api": {"key": "k", "secret": "s"},
+                "allocator_params": {"kafka_cku_shared_ratio": "0.3"},  # String, not float
+            }
+        )
 
 
 def test_allocator_params_non_ratio_can_be_string():
     from plugins.confluent_cloud.config import CCloudPluginConfig
 
-    config = CCloudPluginConfig.from_plugin_settings({
-        "ccloud_api": {"key": "k", "secret": "s"},
-        "allocator_params": {"default_strategy": "usage_ratio"},  # String OK for non-ratio
-    })
+    config = CCloudPluginConfig.from_plugin_settings(
+        {
+            "ccloud_api": {"key": "k", "secret": "s"},
+            "allocator_params": {"default_strategy": "usage_ratio"},  # String OK for non-ratio
+        }
+    )
     assert config.allocator_params["default_strategy"] == "usage_ratio"
 
 
@@ -128,12 +146,14 @@ def test_metrics_bearer_auth_requires_token():
     from plugins.confluent_cloud.config import CCloudPluginConfig
 
     with pytest.raises(ValidationError):
-        CCloudPluginConfig.from_plugin_settings({
-            "ccloud_api": {"key": "k", "secret": "s"},
-            "metrics": {
-                "type": "prometheus",
-                "url": "http://prom:9090",
-                "auth_type": "bearer",
-                # Missing bearer_token
-            },
-        })
+        CCloudPluginConfig.from_plugin_settings(
+            {
+                "ccloud_api": {"key": "k", "secret": "s"},
+                "metrics": {
+                    "type": "prometheus",
+                    "url": "http://prom:9090",
+                    "auth_type": "bearer",
+                    # Missing bearer_token
+                },
+            }
+        )
