@@ -3,12 +3,13 @@ from __future__ import annotations
 import logging
 import random
 import time
+from collections.abc import Iterator
 from dataclasses import dataclass, field
-from typing import Any, Iterator
+from typing import Any, cast
 from urllib import parse
 
 import requests
-from pydantic import SecretStr
+from pydantic import SecretStr  # noqa: TC002 - runtime use in get_secret_value()
 from requests.auth import HTTPBasicAuth
 
 from plugins.confluent_cloud.exceptions import CCloudApiError, CCloudConnectionError
@@ -99,7 +100,7 @@ class CCloudConnection:
                 raise CCloudConnectionError(str(e)) from e
 
             if resp.status_code == 200:
-                return resp.json()
+                return cast("dict[str, Any]", resp.json())
             elif resp.status_code == 404:
                 LOGGER.info(f"Resource not found: {url}")
                 return {"data": [], "metadata": {}}
@@ -119,8 +120,8 @@ class CCloudConnection:
 
     def _calculate_backoff(self, attempt: int) -> float:
         """Calculate exponential backoff with jitter."""
-        base = self.base_backoff_seconds * (2**attempt)
-        jitter = random.uniform(0, 1)
+        base: float = self.base_backoff_seconds * (2**attempt)
+        jitter: float = random.uniform(0, 1)
         return base + jitter
 
     def _get_rate_limit_wait(self, response: requests.Response, attempt: int) -> float:

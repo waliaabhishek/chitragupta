@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import pytest
-
 
 def test_ccloud_api_error_has_status_code():
     from plugins.confluent_cloud.exceptions import CCloudApiError

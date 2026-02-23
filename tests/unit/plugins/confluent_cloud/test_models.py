@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-import pytest
 from dataclasses import FrozenInstanceError
+
+import pytest
 
 
 def test_flink_statement_from_resource():

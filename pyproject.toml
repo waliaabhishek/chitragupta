@@ -24,6 +24,7 @@ dev = [
     "mypy>=1.10",
     "types-pyyaml>=6.0",
     "types-requests>=2.32.4.20260107",
+    "responses>=0.25",
 ]
 
 [tool.hatch.build.targets.wheel]

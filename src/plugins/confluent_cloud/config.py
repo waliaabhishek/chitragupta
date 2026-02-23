@@ -36,9 +36,8 @@ class CCloudMetricsConfig(BaseModel):
         elif self.auth_type == "bearer":
             if not self.bearer_token:
                 raise ValueError("bearer_token required for bearer auth")
-        elif self.auth_type == "none":
-            if self.username or self.password or self.bearer_token:
-                raise ValueError("credentials provided but auth_type is 'none'")
+        elif self.auth_type == "none" and (self.username or self.password or self.bearer_token):
+            raise ValueError("credentials provided but auth_type is 'none'")
         return self
 
 
