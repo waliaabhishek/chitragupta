@@ -31,3 +31,15 @@ class ChargebackRow:
     allocation_detail: str | None = None
     tags: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class CustomTag:
+    """A user-defined tag attached to a chargeback dimension."""
+
+    tag_id: int | None
+    dimension_id: int
+    tag_key: str
+    tag_value: str
+    created_by: str
+    created_at: datetime | None = None

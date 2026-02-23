@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     # Runtime import not needed — protocols use string annotations via
-    # __future__.annotations.  These modules don't exist yet (see TD-001/002/003).
+    # __future__.annotations.  These modules don't exist yet (see TD-001/002).
     from core.engine.allocation import AllocationContext, AllocationResult  # type: ignore[import-not-found]
     from core.models import (
         BillingLineItem,
@@ -16,7 +16,7 @@ if TYPE_CHECKING:
         MetricRow,
         Resource,
     )
-    from core.storage.interface import UnitOfWork  # type: ignore[import-not-found]
+    from core.storage.interface import UnitOfWork
 
 
 @runtime_checkable
