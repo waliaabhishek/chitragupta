@@ -236,3 +236,40 @@ def test_get_timeout_then_success():
     items = list(conn.get("/test"))
 
     assert items == [{"id": "1"}]
+
+
+@responses.activate
+def test_post_success():
+    from plugins.confluent_cloud.connections import CCloudConnection
+
+    responses.add(
+        responses.POST,
+        "https://api.confluent.cloud/test/create",
+        json={"id": "new-123", "status": "created"},
+        status=200,
+    )
+
+    conn = CCloudConnection(api_key="key", api_secret=SecretStr("secret"))
+    result = conn.post("/test/create", json={"name": "test-resource"})
+
+    assert result == {"id": "new-123", "status": "created"}
+
+
+@responses.activate
+def test_post_error():
+    from plugins.confluent_cloud.connections import CCloudConnection
+    from plugins.confluent_cloud.exceptions import CCloudApiError
+
+    responses.add(
+        responses.POST,
+        "https://api.confluent.cloud/test/create",
+        status=400,
+        body="Bad Request",
+    )
+
+    conn = CCloudConnection(api_key="key", api_secret=SecretStr("secret"))
+
+    with pytest.raises(CCloudApiError) as exc_info:
+        conn.post("/test/create", json={})
+
+    assert exc_info.value.status_code == 400

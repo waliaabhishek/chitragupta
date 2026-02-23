@@ -64,6 +64,16 @@ class CCloudConnection:
 
             request_params["page_token"] = page_token_list[0]
 
+    def post(
+        self,
+        path: str,
+        json: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        """POST request. Returns JSON response."""
+        url = f"{self.base_url.rstrip('/')}{path}"
+        return self._request("POST", url, json=json, **kwargs)
+
     def _request(
         self,
         method: str,
