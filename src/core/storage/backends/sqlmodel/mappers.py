@@ -26,12 +26,26 @@ def ensure_utc(dt: datetime) -> datetime: ...
 @overload
 def ensure_utc(dt: None) -> None: ...
 def ensure_utc(dt: datetime | None) -> datetime | None:
-    """Ensure a datetime is UTC-aware. Naive datetimes are assumed UTC."""
+    """Read-path: ensure UTC. Naive datetimes assumed UTC (for DB compatibility)."""
     if dt is None:
         return None
     if dt.tzinfo is None:
         return dt.replace(tzinfo=UTC)
-    return dt
+    return dt.astimezone(UTC)
+
+
+@overload
+def ensure_utc_strict(dt: datetime) -> datetime: ...
+@overload
+def ensure_utc_strict(dt: None) -> None: ...
+def ensure_utc_strict(dt: datetime | None) -> datetime | None:
+    """Write-path: ensure UTC. Raises on naive datetimes."""
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        msg = f"Naive datetime not allowed — must be UTC-aware: {dt}"
+        raise ValueError(msg)
+    return dt.astimezone(UTC)
 
 
 def _metadata_to_json(metadata: dict[str, Any]) -> str | None:
@@ -66,9 +80,9 @@ def resource_to_table(r: Resource) -> ResourceTable:
         status=r.status.value,
         cloud=cloud,
         region=region,
-        created_at=ensure_utc(r.created_at),
-        deleted_at=ensure_utc(r.deleted_at),
-        last_seen_at=ensure_utc(r.last_seen_at),
+        created_at=ensure_utc_strict(r.created_at),
+        deleted_at=ensure_utc_strict(r.deleted_at),
+        last_seen_at=ensure_utc_strict(r.last_seen_at),
         metadata_json=_metadata_to_json(remaining),
     )
 
@@ -105,9 +119,9 @@ def identity_to_table(i: Identity) -> IdentityTable:
         identity_id=i.identity_id,
         identity_type=i.identity_type,
         display_name=i.display_name,
-        created_at=ensure_utc(i.created_at),
-        deleted_at=ensure_utc(i.deleted_at),
-        last_seen_at=ensure_utc(i.last_seen_at),
+        created_at=ensure_utc_strict(i.created_at),
+        deleted_at=ensure_utc_strict(i.deleted_at),
+        last_seen_at=ensure_utc_strict(i.last_seen_at),
         metadata_json=_metadata_to_json(i.metadata),
     )
 
@@ -133,7 +147,7 @@ def billing_to_table(b: BillingLineItem) -> BillingTable:
     return BillingTable(
         ecosystem=b.ecosystem,
         tenant_id=b.tenant_id,
-        timestamp=ensure_utc(b.timestamp),
+        timestamp=ensure_utc_strict(b.timestamp),
         resource_id=b.resource_id,
         product_type=b.product_type,
         product_category=b.product_category,
@@ -182,7 +196,7 @@ def chargeback_to_dimension(row: ChargebackRow) -> ChargebackDimensionTable:
 
 def chargeback_to_fact(row: ChargebackRow, dimension_id: int) -> ChargebackFactTable:
     return ChargebackFactTable(
-        timestamp=ensure_utc(row.timestamp),
+        timestamp=ensure_utc_strict(row.timestamp),
         dimension_id=dimension_id,
         amount=str(row.amount),
         tags_json=json.dumps(row.tags),

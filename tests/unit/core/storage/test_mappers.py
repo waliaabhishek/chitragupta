@@ -1,8 +1,10 @@
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timezone
 from decimal import Decimal
 from typing import Any
+
+import pytest
 
 from core.models.billing import BillingLineItem
 from core.models.chargeback import ChargebackRow, CostType, CustomTag
@@ -16,6 +18,7 @@ from core.storage.backends.sqlmodel.mappers import (
     chargeback_to_domain,
     chargeback_to_fact,
     ensure_utc,
+    ensure_utc_strict,
     identity_to_domain,
     identity_to_table,
     pipeline_state_to_domain,
@@ -44,7 +47,8 @@ class TestEnsureUtc:
     def test_utc_unchanged(self):
         dt = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
         result = ensure_utc(dt)
-        assert result is dt
+        assert result == dt
+        assert result.tzinfo is UTC
 
 
 class TestResourceMapper:
@@ -105,11 +109,11 @@ class TestResourceMapper:
         domain = resource_to_domain(table)
         assert domain.status == ResourceStatus.DELETED
 
-    def test_naive_datetime_becomes_utc(self):
+    def test_naive_datetime_raises_on_write(self):
+        """GAP-014: Write path rejects naive datetimes."""
         r = self._make_resource(created_at=datetime(2026, 1, 1))
-        table = resource_to_table(r)
-        assert table.created_at is not None
-        assert table.created_at.tzinfo is UTC
+        with pytest.raises(ValueError, match="Naive datetime"):
+            resource_to_table(r)
 
 
 class TestIdentityMapper:
@@ -297,3 +301,50 @@ class TestCustomTagMapper:
         )
         table = tag_to_table(tag)
         assert table.created_at is not None
+
+
+# --- GAP-014 regression tests ---
+
+_UTC5 = timezone(offset=__import__("datetime").timedelta(hours=5))
+
+
+class TestEnsureUtcStrictGap014:
+    """GAP-014: Write-path strict UTC enforcement."""
+
+    def test_raises_on_naive(self):
+        with pytest.raises(ValueError, match="Naive datetime"):
+            ensure_utc_strict(datetime(2026, 1, 1))
+
+    def test_converts_non_utc(self):
+        dt = datetime(2026, 1, 1, 17, 0, 0, tzinfo=_UTC5)
+        result = ensure_utc_strict(dt)
+        assert result is not None
+        assert result.tzinfo is UTC
+        assert result.hour == 12
+
+    def test_none_returns_none(self):
+        assert ensure_utc_strict(None) is None
+
+    def test_utc_passthrough(self):
+        dt = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
+        result = ensure_utc_strict(dt)
+        assert result == dt
+
+
+class TestReadPathPermissiveGap014:
+    """GAP-014: Read path tolerates naive datetimes from DB."""
+
+    def test_resource_to_domain_naive_created_at(self):
+        from core.storage.backends.sqlmodel.tables import ResourceTable
+
+        t = ResourceTable(
+            ecosystem="test",
+            tenant_id="t1",
+            resource_id="r1",
+            resource_type="kafka",
+            status="active",
+            created_at=datetime(2026, 1, 1),  # naive from DB
+        )
+        domain = resource_to_domain(t)
+        assert domain.created_at is not None
+        assert domain.created_at.tzinfo is UTC
