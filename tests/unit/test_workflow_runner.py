@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from typing import Any
@@ -48,6 +49,107 @@ def _make_tenant(**overrides: Any) -> TenantConfig:
     return TenantConfig(**defaults)
 
 
+class TestBootstrapStorage:
+    """GAP-003: create_tables called once at startup, not per-tenant per-cycle."""
+
+    @patch("workflow_runner._create_storage_backend")
+    def test_bootstrap_creates_tables_for_all_tenants(self, mock_storage: MagicMock) -> None:
+        backends: list[MagicMock] = []
+
+        def make_backend(config: Any) -> MagicMock:
+            b = MagicMock()
+            backends.append(b)
+            return b
+
+        mock_storage.side_effect = make_backend
+
+        settings = _make_settings(
+            tenants={
+                "t1": _make_tenant(tenant_id="tid1"),
+                "t2": _make_tenant(tenant_id="tid2"),
+            }
+        )
+        runner = WorkflowRunner(settings, MagicMock())
+        runner.bootstrap_storage()
+
+        assert len(backends) == 2
+        for b in backends:
+            b.create_tables.assert_called_once()
+            b.dispose.assert_called_once()
+
+    @patch("workflow_runner._create_storage_backend")
+    def test_bootstrap_only_runs_once(self, mock_storage: MagicMock) -> None:
+        mock_storage.return_value = MagicMock()
+        settings = _make_settings(tenants={"t1": _make_tenant(tenant_id="tid1")})
+        runner = WorkflowRunner(settings, MagicMock())
+
+        runner.bootstrap_storage()
+        runner.bootstrap_storage()
+
+        # Only one backend created — second call is a no-op via _bootstrapped flag
+        assert mock_storage.call_count == 1
+
+    @patch("workflow_runner.ChargebackOrchestrator")
+    @patch("workflow_runner._create_storage_backend")
+    def test_run_once_auto_bootstraps(self, mock_storage: MagicMock, mock_orch_cls: MagicMock) -> None:
+        """run_once calls bootstrap_storage on first call if not already done."""
+        mock_backend = MagicMock()
+        mock_storage.return_value = mock_backend
+        mock_orch = MagicMock()
+        mock_orch.run.return_value = PipelineRunResult(
+            tenant_name="t1",
+            tenant_id="tid1",
+            dates_gathered=0,
+            dates_calculated=0,
+            chargeback_rows_written=0,
+        )
+        mock_orch_cls.return_value = mock_orch
+
+        registry = MagicMock()
+        plugin = MagicMock()
+        plugin.get_metrics_source.return_value = None
+        registry.create.return_value = plugin
+
+        settings = _make_settings(tenants={"t1": _make_tenant(tenant_id="tid1")})
+        runner = WorkflowRunner(settings, registry)
+        runner.run_once()
+
+        # Bootstrap call (create_tables + dispose) + _run_tenant call (no create_tables, just dispose)
+        assert mock_backend.create_tables.call_count == 1
+        assert mock_backend.dispose.call_count == 2  # once from bootstrap, once from _run_tenant
+
+    @patch("workflow_runner.ChargebackOrchestrator")
+    @patch("workflow_runner._create_storage_backend")
+    def test_run_tenant_does_not_call_create_tables(self, mock_storage: MagicMock, mock_orch_cls: MagicMock) -> None:
+        """After bootstrap, _run_tenant does not call create_tables."""
+        mock_backend = MagicMock()
+        mock_storage.return_value = mock_backend
+        mock_orch = MagicMock()
+        mock_orch.run.return_value = PipelineRunResult(
+            tenant_name="t1",
+            tenant_id="tid1",
+            dates_gathered=0,
+            dates_calculated=0,
+            chargeback_rows_written=0,
+        )
+        mock_orch_cls.return_value = mock_orch
+
+        registry = MagicMock()
+        plugin = MagicMock()
+        plugin.get_metrics_source.return_value = None
+        registry.create.return_value = plugin
+
+        settings = _make_settings(tenants={"t1": _make_tenant(tenant_id="tid1")})
+        runner = WorkflowRunner(settings, registry)
+        runner.bootstrap_storage()
+        mock_backend.reset_mock()  # clear bootstrap calls
+
+        runner.run_once()
+
+        # _run_tenant should NOT call create_tables
+        mock_backend.create_tables.assert_not_called()
+
+
 class TestWorkflowRunnerRunOnce:
     def test_no_tenants_returns_empty(self) -> None:
         settings = _make_settings()
@@ -84,8 +186,6 @@ class TestWorkflowRunnerRunOnce:
 
         assert "t1" in results
         assert results["t1"].dates_gathered == 3
-        mock_backend.dispose.assert_called_once()
-        mock_backend.create_tables.assert_called_once()  # GAP-003
 
     @patch("workflow_runner.ChargebackOrchestrator")
     @patch("workflow_runner._create_storage_backend")
@@ -134,40 +234,6 @@ class TestWorkflowRunnerRunOnce:
         assert len(results) == 2
         error_tenants = [name for name, r in results.items() if r.errors]
         assert len(error_tenants) >= 1
-
-
-class TestGap003StorageBootstrap:
-    """GAP-003: create_tables called before orchestrator runs."""
-
-    @patch("workflow_runner.ChargebackOrchestrator")
-    @patch("workflow_runner._create_storage_backend")
-    def test_create_tables_called(
-        self,
-        mock_storage: MagicMock,
-        mock_orch_cls: MagicMock,
-    ) -> None:
-        mock_backend = MagicMock()
-        mock_storage.return_value = mock_backend
-        mock_orch = MagicMock()
-        mock_orch.run.return_value = PipelineRunResult(
-            tenant_name="t1",
-            tenant_id="tid1",
-            dates_gathered=0,
-            dates_calculated=0,
-            chargeback_rows_written=0,
-        )
-        mock_orch_cls.return_value = mock_orch
-
-        registry = MagicMock()
-        plugin = MagicMock()
-        plugin.get_metrics_source.return_value = None
-        registry.create.return_value = plugin
-
-        settings = _make_settings(tenants={"t1": _make_tenant(tenant_id="tid1")})
-        runner = WorkflowRunner(settings, registry)
-        runner.run_once()
-
-        mock_backend.create_tables.assert_called_once()
 
 
 class TestGap010BoundedConcurrency:
@@ -310,6 +376,45 @@ class TestGap005PeriodicRefresh:
         runner.run_loop(shutdown)
         assert call_count == 1
 
+    def test_disabled_single_cycle_logs_results(self) -> None:
+        """Single-cycle path logs results at parity with loop path."""
+        settings = _make_settings(enable_periodic_refresh=False)
+        registry = MagicMock()
+        runner = WorkflowRunner(settings, registry)
+
+        error_result = PipelineRunResult(
+            tenant_name="t1",
+            tenant_id="tid1",
+            dates_gathered=0,
+            dates_calculated=0,
+            chargeback_rows_written=0,
+            errors=["something broke"],
+        )
+        runner.run_once = lambda: {"t1": error_result}  # type: ignore[assignment]
+
+        records: list[logging.LogRecord] = []
+
+        class RecordingHandler(logging.Handler):
+            def emit(self, record: logging.LogRecord) -> None:
+                records.append(record)
+
+        handler = RecordingHandler(level=logging.DEBUG)
+        wf_logger = logging.getLogger("workflow_runner")
+        wf_logger.addHandler(handler)
+        orig_level = wf_logger.level
+        orig_disabled = wf_logger.disabled
+        wf_logger.setLevel(logging.WARNING)
+        wf_logger.disabled = False
+        try:
+            runner.run_loop(threading.Event())
+        finally:
+            wf_logger.removeHandler(handler)
+            wf_logger.setLevel(orig_level)
+            wf_logger.disabled = orig_disabled
+
+        logged_messages = [r.getMessage() for r in records]
+        assert any("completed with errors" in msg for msg in logged_messages)
+
 
 class TestGap015017PluginMetrics:
     """GAP-015+017: plugin owns metrics source."""
@@ -344,8 +449,6 @@ class TestGap015017PluginMetrics:
         runner.run_once()
 
         # Verify orchestrator was called with the plugin's metrics source
-        _, call_kwargs = mock_orch_cls.call_args
-        # Positional args: name, config, plugin, storage, metrics
         call_args = mock_orch_cls.call_args[0]
         assert call_args[4] is fake_metrics
 
@@ -432,8 +535,6 @@ class TestWorkflowRunnerRunLoop:
             return {"t1": error_result}
 
         runner.run_once = mock_run_once  # type: ignore[assignment]
-
-        import logging
 
         records: list[logging.LogRecord] = []
 

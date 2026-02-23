@@ -30,8 +30,24 @@ class WorkflowRunner:
     def __init__(self, settings: AppSettings, plugin_registry: PluginRegistry) -> None:
         self._settings = settings
         self._plugin_registry = plugin_registry
+        self._bootstrapped = False
+
+    def bootstrap_storage(self) -> None:
+        """Create tables for all tenant storage backends. Call once at startup."""
+        if self._bootstrapped:
+            return
+        for config in self._settings.tenants.values():
+            storage = _create_storage_backend(config.storage)
+            try:
+                storage.create_tables()
+            finally:
+                storage.dispose()
+        self._bootstrapped = True
 
     def run_once(self) -> dict[str, PipelineRunResult]:
+        if not self._bootstrapped:
+            self.bootstrap_storage()
+
         results: dict[str, PipelineRunResult] = {}
         tenants = self._settings.tenants
         if not tenants:
@@ -90,7 +106,6 @@ class WorkflowRunner:
     def _run_tenant(self, name: str, config: TenantConfig) -> PipelineRunResult:
         plugin = self._plugin_registry.create(config.ecosystem)
         storage = _create_storage_backend(config.storage)
-        storage.create_tables()  # GAP-003: ensure schema exists
         metrics = plugin.get_metrics_source()  # GAP-015+017: plugin owns metrics
         orchestrator = ChargebackOrchestrator(name, config, plugin, storage, metrics)
         try:
@@ -98,40 +113,31 @@ class WorkflowRunner:
         finally:
             storage.dispose()
 
+    def _log_results(self, results: dict[str, PipelineRunResult]) -> None:
+        for name, result in results.items():
+            if result.errors:
+                logger.warning("Tenant %s completed with errors: %s", name, result.errors)
+            else:
+                logger.info(
+                    "Tenant %s: gathered=%d, calculated=%d, rows=%d",
+                    name,
+                    result.dates_gathered,
+                    result.dates_calculated,
+                    result.chargeback_rows_written,
+                )
+
     def run_loop(self, shutdown_event: threading.Event) -> None:
         """Run orchestrator loop until shutdown_event is set."""
         # GAP-005: honor enable_periodic_refresh flag
         if not self._settings.features.enable_periodic_refresh:
             logger.info("Periodic refresh disabled — running single cycle")
-            results = self.run_once()
-            for name, result in results.items():
-                if result.errors:
-                    logger.warning("Tenant %s completed with errors: %s", name, result.errors)
-                else:
-                    logger.info(
-                        "Tenant %s: gathered=%d, calculated=%d, rows=%d",
-                        name,
-                        result.dates_gathered,
-                        result.dates_calculated,
-                        result.chargeback_rows_written,
-                    )
+            self._log_results(self.run_once())
             return
 
         interval = self._settings.features.refresh_interval
         while not shutdown_event.is_set():
             try:
-                results = self.run_once()
-                for name, result in results.items():
-                    if result.errors:
-                        logger.warning("Tenant %s completed with errors: %s", name, result.errors)
-                    else:
-                        logger.info(
-                            "Tenant %s: gathered=%d, calculated=%d, rows=%d",
-                            name,
-                            result.dates_gathered,
-                            result.dates_calculated,
-                            result.chargeback_rows_written,
-                        )
+                self._log_results(self.run_once())
             except Exception:
                 logger.exception("Unexpected error in run_loop")
 
