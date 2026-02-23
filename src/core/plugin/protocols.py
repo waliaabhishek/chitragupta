@@ -6,8 +6,8 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     # Runtime import not needed — protocols use string annotations via
-    # __future__.annotations.  These modules don't exist yet (see TD-001/002).
-    from core.engine.allocation import AllocationContext, AllocationResult  # type: ignore[import-not-found]
+    # __future__.annotations.
+    from core.engine.allocation import AllocationContext, AllocationResult
     from core.models import (
         BillingLineItem,
         Identity,
