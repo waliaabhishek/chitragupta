@@ -103,7 +103,18 @@ class WorkflowRunner:
         # GAP-005: honor enable_periodic_refresh flag
         if not self._settings.features.enable_periodic_refresh:
             logger.info("Periodic refresh disabled — running single cycle")
-            self.run_once()
+            results = self.run_once()
+            for name, result in results.items():
+                if result.errors:
+                    logger.warning("Tenant %s completed with errors: %s", name, result.errors)
+                else:
+                    logger.info(
+                        "Tenant %s: gathered=%d, calculated=%d, rows=%d",
+                        name,
+                        result.dates_gathered,
+                        result.dates_calculated,
+                        result.chargeback_rows_written,
+                    )
             return
 
         interval = self._settings.features.refresh_interval

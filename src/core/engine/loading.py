@@ -76,7 +76,7 @@ def _validate_signature(obj: Any, protocol: type) -> None:
 
     try:
         proto_sig = inspect.signature(proto_call)
-    except ValueError, TypeError:
+    except (ValueError, TypeError):  # fmt: skip  # parens required for 3.12/3.13 compat
         return
 
     # Count positional parameters (excluding 'self')
