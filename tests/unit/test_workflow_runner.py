@@ -246,9 +246,7 @@ class TestGap002WaitTimeout:
         plugin.get_metrics_source.return_value = None
         registry.create.return_value = plugin
 
-        settings = _make_settings(
-            tenants={"t1": _make_tenant(tenant_id="tid1", tenant_execution_timeout_seconds=0)}
-        )
+        settings = _make_settings(tenants={"t1": _make_tenant(tenant_id="tid1", tenant_execution_timeout_seconds=0)})
         runner = WorkflowRunner(settings, registry)
 
         from concurrent.futures import wait as real_wait

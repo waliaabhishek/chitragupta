@@ -52,8 +52,7 @@ class WorkflowRunner:
 
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = {
-                executor.submit(self._run_tenant, name, config): (name, config)
-                for name, config in tenants.items()
+                executor.submit(self._run_tenant, name, config): (name, config) for name, config in tenants.items()
             }
             done, not_done = wait(futures, timeout=effective_timeout)
 
