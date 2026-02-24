@@ -469,83 +469,84 @@ class TestResolveConnectorIdentity:
 
 
 class TestCreateSentinelFromId:
-    """Tests for _create_sentinel_from_id function."""
+    """Tests for create_sentinel_from_id function."""
 
     def test_sa_prefix_service_account(self) -> None:
         """sa- prefix creates service_account type."""
-        from plugins.confluent_cloud.handlers.connector_identity import (
-            _create_sentinel_from_id,
+        from plugins.confluent_cloud.handlers._identity_helpers import (
+            create_sentinel_from_id,
         )
 
-        result = _create_sentinel_from_id("sa-123", "org", "confluent_cloud")
+        result = create_sentinel_from_id("sa-123", "org", "confluent_cloud")
         assert result.identity_type == "service_account"
         assert result.identity_id == "sa-123"
         assert result.display_name == "Unknown service_account"
 
     def test_u_prefix_user(self) -> None:
         """u- prefix creates user type."""
-        from plugins.confluent_cloud.handlers.connector_identity import (
-            _create_sentinel_from_id,
+        from plugins.confluent_cloud.handlers._identity_helpers import (
+            create_sentinel_from_id,
         )
 
-        result = _create_sentinel_from_id("u-456", "org", "confluent_cloud")
+        result = create_sentinel_from_id("u-456", "org", "confluent_cloud")
         assert result.identity_type == "user"
         assert result.display_name == "Unknown user"
 
     def test_pool_prefix_identity_pool(self) -> None:
         """pool- prefix creates identity_pool type."""
-        from plugins.confluent_cloud.handlers.connector_identity import (
-            _create_sentinel_from_id,
+        from plugins.confluent_cloud.handlers._identity_helpers import (
+            create_sentinel_from_id,
         )
 
-        result = _create_sentinel_from_id("pool-789", "org", "confluent_cloud")
+        result = create_sentinel_from_id("pool-789", "org", "confluent_cloud")
         assert result.identity_type == "identity_pool"
 
     def test_unknown_prefix(self) -> None:
         """Unknown prefix creates unknown type."""
-        from plugins.confluent_cloud.handlers.connector_identity import (
-            _create_sentinel_from_id,
+        from plugins.confluent_cloud.handlers._identity_helpers import (
+            create_sentinel_from_id,
         )
 
-        result = _create_sentinel_from_id("xyz-123", "org", "confluent_cloud")
+        result = create_sentinel_from_id("xyz-123", "org", "confluent_cloud")
         assert result.identity_type == "unknown"
 
     def test_no_dash_unknown_type(self) -> None:
         """ID without dash creates unknown type."""
-        from plugins.confluent_cloud.handlers.connector_identity import (
-            _create_sentinel_from_id,
+        from plugins.confluent_cloud.handlers._identity_helpers import (
+            create_sentinel_from_id,
         )
 
-        result = _create_sentinel_from_id("nodash", "org", "confluent_cloud")
+        result = create_sentinel_from_id("nodash", "org", "confluent_cloud")
         assert result.identity_type == "unknown"
 
 
 class TestCreateConnectorSentinel:
-    """Tests for _create_connector_sentinel function."""
+    """Tests for create_connector_sentinel function."""
 
-    def test_creates_connector_credentials_type(self) -> None:
-        """Creates identity with connector_credentials type."""
-        from plugins.confluent_cloud.handlers.connector_identity import (
-            _create_connector_sentinel,
+    def test_creates_connector_credentials_type_unknown(self) -> None:
+        """Creates identity with connector_credentials type for unknown."""
+        from plugins.confluent_cloud.handlers._identity_helpers import (
+            create_connector_sentinel,
         )
 
-        result = _create_connector_sentinel(
-            "connector_credentials_unknown", "org-123", "confluent_cloud"
+        result = create_connector_sentinel(
+            "connector_credentials_unknown", "org-123", "confluent_cloud", is_masked=False
         )
         assert result.identity_type == "connector_credentials"
         assert result.identity_id == "connector_credentials_unknown"
         assert result.ecosystem == "confluent_cloud"
         assert result.tenant_id == "org-123"
+        assert result.display_name == "Connector Credentials Unknown"
 
     def test_creates_masked_sentinel(self) -> None:
         """Creates masked sentinel identity."""
-        from plugins.confluent_cloud.handlers.connector_identity import (
-            _create_connector_sentinel,
+        from plugins.confluent_cloud.handlers._identity_helpers import (
+            create_connector_sentinel,
         )
 
-        result = _create_connector_sentinel(
-            "connector_credentials_masked", "org-123", "confluent_cloud"
+        result = create_connector_sentinel(
+            "connector_credentials_masked", "org-123", "confluent_cloud", is_masked=True
         )
         assert result.identity_type == "connector_credentials"
         assert result.identity_id == "connector_credentials_masked"
-        assert result.display_name == "Unknown connector_credentials"
+        assert result.display_name == "Connector Credentials Masked"

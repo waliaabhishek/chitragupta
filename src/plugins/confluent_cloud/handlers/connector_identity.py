@@ -9,9 +9,12 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from core.models import Identity, IdentityResolution, IdentitySet
+from core.models import IdentityResolution, IdentitySet
+
+from ._identity_helpers import create_connector_sentinel, create_sentinel_from_id
 
 if TYPE_CHECKING:
+    from core.models import Identity
     from core.storage.interface import UnitOfWork
 
 
@@ -67,9 +70,7 @@ def resolve_connector_identity(
 
     # Resource not found -> masked sentinel
     if connector is None:
-        sentinel = _create_connector_sentinel(
-            CONNECTOR_CREDENTIALS_MASKED, tenant_id, ecosystem
-        )
+        sentinel = create_connector_sentinel(CONNECTOR_CREDENTIALS_MASKED, tenant_id, ecosystem, is_masked=True)
         resource_active.add(sentinel)
         return IdentityResolution(
             resource_active=resource_active,
@@ -97,14 +98,10 @@ def resolve_connector_identity(
         # Direct owner from service account ID
         sa_id = connector.metadata.get("kafka_service_account_id")
         if sa_id:
-            owner = identity_by_id.get(sa_id) or _create_sentinel_from_id(
-                sa_id, tenant_id, ecosystem
-            )
+            owner = identity_by_id.get(sa_id) or create_sentinel_from_id(sa_id, tenant_id, ecosystem)
         else:
             # No service account ID in metadata
-            owner = _create_connector_sentinel(
-                CONNECTOR_CREDENTIALS_UNKNOWN, tenant_id, ecosystem
-            )
+            owner = create_connector_sentinel(CONNECTOR_CREDENTIALS_UNKNOWN, tenant_id, ecosystem, is_masked=False)
 
     elif auth_mode == "KAFKA_API_KEY":
         # Look up API key, then resolve its owner
@@ -114,30 +111,22 @@ def resolve_connector_identity(
             if api_key:
                 owner_id = api_key.metadata.get("owner_id")
                 if owner_id:
-                    owner = identity_by_id.get(owner_id) or _create_sentinel_from_id(
-                        owner_id, tenant_id, ecosystem
-                    )
+                    owner = identity_by_id.get(owner_id) or create_sentinel_from_id(owner_id, tenant_id, ecosystem)
                 else:
                     # API key has no owner_id
-                    owner = _create_connector_sentinel(
-                        CONNECTOR_CREDENTIALS_UNKNOWN, tenant_id, ecosystem
+                    owner = create_connector_sentinel(
+                        CONNECTOR_CREDENTIALS_UNKNOWN, tenant_id, ecosystem, is_masked=False
                     )
             else:
                 # API key not found in DB
-                owner = _create_connector_sentinel(
-                    CONNECTOR_CREDENTIALS_UNKNOWN, tenant_id, ecosystem
-                )
+                owner = create_connector_sentinel(CONNECTOR_CREDENTIALS_UNKNOWN, tenant_id, ecosystem, is_masked=False)
         else:
             # No API key in metadata
-            owner = _create_connector_sentinel(
-                CONNECTOR_CREDENTIALS_UNKNOWN, tenant_id, ecosystem
-            )
+            owner = create_connector_sentinel(CONNECTOR_CREDENTIALS_UNKNOWN, tenant_id, ecosystem, is_masked=False)
 
     else:
         # UNKNOWN mode or missing auth_mode
-        owner = _create_connector_sentinel(
-            CONNECTOR_CREDENTIALS_UNKNOWN, tenant_id, ecosystem
-        )
+        owner = create_connector_sentinel(CONNECTOR_CREDENTIALS_UNKNOWN, tenant_id, ecosystem, is_masked=False)
 
     resource_active.add(owner)
 
@@ -145,60 +134,4 @@ def resolve_connector_identity(
         resource_active=resource_active,
         metrics_derived=metrics_derived,
         tenant_period=tenant_period,
-    )
-
-
-def _create_sentinel_from_id(
-    identity_id: str, tenant_id: str, ecosystem: str
-) -> Identity:
-    """Create a sentinel identity for unknown identity IDs.
-
-    Parses the identity type from the ID prefix:
-    - sa-xxx -> service_account
-    - u-xxx -> user
-    - pool-xxx -> identity_pool
-    - other -> unknown
-
-    Args:
-        identity_id: The identity ID to create sentinel for.
-        tenant_id: The tenant ID.
-        ecosystem: The ecosystem name.
-
-    Returns:
-        A sentinel Identity object.
-    """
-    prefix = identity_id.split("-")[0] if "-" in identity_id else ""
-    identity_type_map = {"sa": "service_account", "u": "user", "pool": "identity_pool"}
-    identity_type = identity_type_map.get(prefix, "unknown")
-
-    return Identity(
-        ecosystem=ecosystem,
-        tenant_id=tenant_id,
-        identity_id=identity_id,
-        identity_type=identity_type,
-        display_name=f"Unknown {identity_type}",
-    )
-
-
-def _create_connector_sentinel(
-    identity_id: str, tenant_id: str, ecosystem: str
-) -> Identity:
-    """Create a connector-specific sentinel identity.
-
-    Used for connector_credentials_unknown and connector_credentials_masked.
-
-    Args:
-        identity_id: The sentinel identity ID.
-        tenant_id: The tenant ID.
-        ecosystem: The ecosystem name.
-
-    Returns:
-        A connector_credentials sentinel Identity.
-    """
-    return Identity(
-        ecosystem=ecosystem,
-        tenant_id=tenant_id,
-        identity_id=identity_id,
-        identity_type="connector_credentials",
-        display_name="Unknown connector_credentials",
     )

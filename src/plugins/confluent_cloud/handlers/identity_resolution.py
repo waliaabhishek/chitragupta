@@ -9,7 +9,9 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from core.models import Identity, IdentityResolution, IdentitySet
+from core.models import IdentityResolution, IdentitySet
+
+from ._identity_helpers import create_sentinel_from_id
 
 if TYPE_CHECKING:
     from core.models import MetricRow
@@ -67,14 +69,14 @@ def resolve_kafka_sr_identities(
             continue
         owner_id = identity.metadata.get("owner_id")
         if owner_id:
-            owner = identity_by_id.get(owner_id) or _create_sentinel(owner_id, tenant_id, ecosystem)
+            owner = identity_by_id.get(owner_id) or create_sentinel_from_id(owner_id, tenant_id, ecosystem)
             resource_active.add(owner)
 
     # 3. Extract principals from metrics
     if metrics_data:
         principals = _extract_principals_from_metrics(metrics_data)
         for principal_id in principals:
-            identity = identity_by_id.get(principal_id) or _create_sentinel(principal_id, tenant_id, ecosystem)
+            identity = identity_by_id.get(principal_id) or create_sentinel_from_id(principal_id, tenant_id, ecosystem)
             metrics_derived.add(identity)
 
     return IdentityResolution(
@@ -102,34 +104,3 @@ def _extract_principals_from_metrics(
             if principal_id:
                 principals.add(principal_id)
     return principals
-
-
-def _create_sentinel(identity_id: str, tenant_id: str, ecosystem: str) -> Identity:
-    """Create a sentinel identity for unknown identity IDs.
-
-    Parses the identity type from the ID prefix:
-    - sa-xxx -> service_account
-    - u-xxx -> user
-    - pool-xxx -> identity_pool
-    - other -> unknown
-
-    Args:
-        identity_id: The identity ID to create sentinel for.
-        tenant_id: The tenant ID.
-        ecosystem: The ecosystem name.
-
-    Returns:
-        A sentinel Identity object.
-    """
-    # Parse type from prefix
-    prefix = identity_id.split("-")[0] if "-" in identity_id else ""
-    identity_type_map = {"sa": "service_account", "u": "user", "pool": "identity_pool"}
-    identity_type = identity_type_map.get(prefix, "unknown")
-
-    return Identity(
-        ecosystem=ecosystem,
-        tenant_id=tenant_id,
-        identity_id=identity_id,
-        identity_type=identity_type,
-        display_name=f"Unknown {identity_type}",
-    )

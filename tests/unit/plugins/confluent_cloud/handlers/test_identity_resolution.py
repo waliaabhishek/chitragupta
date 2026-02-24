@@ -203,15 +203,15 @@ class TestResolveKafkaSrIdentities:
 
 
 class TestCreateSentinel:
-    """Tests for _create_sentinel function."""
+    """Tests for create_sentinel_from_id function."""
 
     def test_sa_prefix_service_account(self) -> None:
         """sa- prefix creates service_account type."""
-        from plugins.confluent_cloud.handlers.identity_resolution import (
-            _create_sentinel,
+        from plugins.confluent_cloud.handlers._identity_helpers import (
+            create_sentinel_from_id,
         )
 
-        result = _create_sentinel("sa-123", "org", "confluent_cloud")
+        result = create_sentinel_from_id("sa-123", "org", "confluent_cloud")
         assert result.identity_type == "service_account"
         assert result.identity_id == "sa-123"
         assert result.ecosystem == "confluent_cloud"
@@ -219,38 +219,38 @@ class TestCreateSentinel:
 
     def test_u_prefix_user(self) -> None:
         """u- prefix creates user type."""
-        from plugins.confluent_cloud.handlers.identity_resolution import (
-            _create_sentinel,
+        from plugins.confluent_cloud.handlers._identity_helpers import (
+            create_sentinel_from_id,
         )
 
-        result = _create_sentinel("u-456", "org", "confluent_cloud")
+        result = create_sentinel_from_id("u-456", "org", "confluent_cloud")
         assert result.identity_type == "user"
 
     def test_pool_prefix_identity_pool(self) -> None:
         """pool- prefix creates identity_pool type."""
-        from plugins.confluent_cloud.handlers.identity_resolution import (
-            _create_sentinel,
+        from plugins.confluent_cloud.handlers._identity_helpers import (
+            create_sentinel_from_id,
         )
 
-        result = _create_sentinel("pool-789", "org", "confluent_cloud")
+        result = create_sentinel_from_id("pool-789", "org", "confluent_cloud")
         assert result.identity_type == "identity_pool"
 
     def test_unknown_prefix_unknown_type(self) -> None:
         """Unknown prefix creates unknown type."""
-        from plugins.confluent_cloud.handlers.identity_resolution import (
-            _create_sentinel,
+        from plugins.confluent_cloud.handlers._identity_helpers import (
+            create_sentinel_from_id,
         )
 
-        result = _create_sentinel("xyz-123", "org", "confluent_cloud")
+        result = create_sentinel_from_id("xyz-123", "org", "confluent_cloud")
         assert result.identity_type == "unknown"
 
     def test_no_dash_unknown_type(self) -> None:
         """ID without dash creates unknown type."""
-        from plugins.confluent_cloud.handlers.identity_resolution import (
-            _create_sentinel,
+        from plugins.confluent_cloud.handlers._identity_helpers import (
+            create_sentinel_from_id,
         )
 
-        result = _create_sentinel("nohyphen", "org", "confluent_cloud")
+        result = create_sentinel_from_id("nohyphen", "org", "confluent_cloud")
         assert result.identity_type == "unknown"
 
 

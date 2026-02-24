@@ -9,8 +9,10 @@ import pytest
 
 @pytest.fixture
 def mock_uow() -> MagicMock:
-    """Mock UnitOfWork with identities repository."""
+    """Mock UnitOfWork with identities and resources repositories."""
     uow = MagicMock()
     uow.identities = MagicMock()
     uow.identities.find_by_period.return_value = []
+    uow.resources = MagicMock()
+    uow.resources.find_by_period.return_value = []
     return uow
