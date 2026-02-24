@@ -6,6 +6,7 @@ from plugins.confluent_cloud.config import CCloudPluginConfig
 from plugins.confluent_cloud.connections import CCloudConnection
 from plugins.confluent_cloud.cost_input import CCloudBillingCostInput
 from plugins.confluent_cloud.handlers.connectors import ConnectorHandler
+from plugins.confluent_cloud.handlers.flink import FlinkHandler
 from plugins.confluent_cloud.handlers.kafka import KafkaHandler
 from plugins.confluent_cloud.handlers.ksqldb import KsqldbHandler
 from plugins.confluent_cloud.handlers.schema_registry import SchemaRegistryHandler
@@ -42,6 +43,7 @@ class ConfluentCloudPlugin:
             "schema_registry": SchemaRegistryHandler(self._connection, self._config, self.ecosystem),
             "connector": ConnectorHandler(self._connection, self._config, self.ecosystem),
             "ksqldb": KsqldbHandler(self._connection, self._config, self.ecosystem),
+            "flink": FlinkHandler(self._connection, self._config, self.ecosystem),
         }
 
         # Initialize metrics source if configured

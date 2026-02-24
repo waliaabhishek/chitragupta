@@ -40,6 +40,27 @@ def create_sentinel_from_id(identity_id: str, tenant_id: str, ecosystem: str) ->
     )
 
 
+def create_flink_sentinel(identity_id: str, tenant_id: str, ecosystem: str, display_name: str) -> Identity:
+    """Create a Flink-specific sentinel identity.
+
+    Args:
+        identity_id: The sentinel identity ID.
+        tenant_id: The tenant ID.
+        ecosystem: The ecosystem name.
+        display_name: Human-readable display name.
+
+    Returns:
+        A flink_statement_owner sentinel Identity.
+    """
+    return Identity(
+        ecosystem=ecosystem,
+        tenant_id=tenant_id,
+        identity_id=identity_id,
+        identity_type="flink_statement_owner",
+        display_name=display_name,
+    )
+
+
 def create_connector_sentinel(identity_id: str, tenant_id: str, ecosystem: str, *, is_masked: bool) -> Identity:
     """Create a connector-specific sentinel identity.
 

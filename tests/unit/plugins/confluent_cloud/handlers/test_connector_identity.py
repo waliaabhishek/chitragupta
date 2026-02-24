@@ -54,9 +54,7 @@ class TestResolveConnectorIdentity:
         assert owner is not None
         assert owner.display_name == "My SA"
 
-    def test_kafka_api_key_mode_resolves_api_key_owner(
-        self, mock_uow: MagicMock
-    ) -> None:
+    def test_kafka_api_key_mode_resolves_api_key_owner(self, mock_uow: MagicMock) -> None:
         """KAFKA_API_KEY auth mode looks up API key and resolves its owner."""
         from plugins.confluent_cloud.handlers.connector_identity import (
             resolve_connector_identity,
@@ -136,9 +134,7 @@ class TestResolveConnectorIdentity:
         assert sentinel is not None
         assert sentinel.identity_type == "connector_credentials"
 
-    def test_resource_not_found_creates_masked_sentinel(
-        self, mock_uow: MagicMock
-    ) -> None:
+    def test_resource_not_found_creates_masked_sentinel(self, mock_uow: MagicMock) -> None:
         """Missing connector resource creates connector_credentials_masked sentinel."""
         from plugins.confluent_cloud.handlers.connector_identity import (
             resolve_connector_identity,
@@ -162,9 +158,7 @@ class TestResolveConnectorIdentity:
         assert sentinel is not None
         assert sentinel.identity_type == "connector_credentials"
 
-    def test_service_account_mode_owner_not_in_db_creates_sentinel(
-        self, mock_uow: MagicMock
-    ) -> None:
+    def test_service_account_mode_owner_not_in_db_creates_sentinel(self, mock_uow: MagicMock) -> None:
         """SERVICE_ACCOUNT mode with owner not in DB creates sentinel identity."""
         from plugins.confluent_cloud.handlers.connector_identity import (
             resolve_connector_identity,
@@ -200,9 +194,7 @@ class TestResolveConnectorIdentity:
         assert sentinel.identity_type == "service_account"
         assert sentinel.display_name == "Unknown service_account"
 
-    def test_kafka_api_key_mode_api_key_not_in_db_creates_unknown_sentinel(
-        self, mock_uow: MagicMock
-    ) -> None:
+    def test_kafka_api_key_mode_api_key_not_in_db_creates_unknown_sentinel(self, mock_uow: MagicMock) -> None:
         """KAFKA_API_KEY mode with API key not found creates unknown sentinel."""
         from plugins.confluent_cloud.handlers.connector_identity import (
             resolve_connector_identity,
@@ -235,9 +227,7 @@ class TestResolveConnectorIdentity:
         assert len(result.resource_active) == 1
         assert "connector_credentials_unknown" in result.resource_active.ids()
 
-    def test_kafka_api_key_mode_api_key_missing_owner_creates_unknown_sentinel(
-        self, mock_uow: MagicMock
-    ) -> None:
+    def test_kafka_api_key_mode_api_key_missing_owner_creates_unknown_sentinel(self, mock_uow: MagicMock) -> None:
         """KAFKA_API_KEY mode with API key lacking owner_id creates unknown sentinel."""
         from plugins.confluent_cloud.handlers.connector_identity import (
             resolve_connector_identity,
@@ -277,9 +267,7 @@ class TestResolveConnectorIdentity:
         assert len(result.resource_active) == 1
         assert "connector_credentials_unknown" in result.resource_active.ids()
 
-    def test_missing_auth_mode_creates_unknown_sentinel(
-        self, mock_uow: MagicMock
-    ) -> None:
+    def test_missing_auth_mode_creates_unknown_sentinel(self, mock_uow: MagicMock) -> None:
         """Missing kafka_auth_mode in metadata creates unknown sentinel."""
         from plugins.confluent_cloud.handlers.connector_identity import (
             resolve_connector_identity,
@@ -308,9 +296,7 @@ class TestResolveConnectorIdentity:
         assert len(result.resource_active) == 1
         assert "connector_credentials_unknown" in result.resource_active.ids()
 
-    def test_service_account_mode_missing_sa_id_creates_unknown_sentinel(
-        self, mock_uow: MagicMock
-    ) -> None:
+    def test_service_account_mode_missing_sa_id_creates_unknown_sentinel(self, mock_uow: MagicMock) -> None:
         """SERVICE_ACCOUNT mode without kafka_service_account_id creates unknown sentinel."""
         from plugins.confluent_cloud.handlers.connector_identity import (
             resolve_connector_identity,
@@ -339,9 +325,7 @@ class TestResolveConnectorIdentity:
         assert len(result.resource_active) == 1
         assert "connector_credentials_unknown" in result.resource_active.ids()
 
-    def test_kafka_api_key_mode_missing_api_key_in_metadata_creates_unknown_sentinel(
-        self, mock_uow: MagicMock
-    ) -> None:
+    def test_kafka_api_key_mode_missing_api_key_in_metadata_creates_unknown_sentinel(self, mock_uow: MagicMock) -> None:
         """KAFKA_API_KEY mode without kafka_api_key in metadata creates unknown sentinel."""
         from plugins.confluent_cloud.handlers.connector_identity import (
             resolve_connector_identity,
@@ -370,9 +354,7 @@ class TestResolveConnectorIdentity:
         assert len(result.resource_active) == 1
         assert "connector_credentials_unknown" in result.resource_active.ids()
 
-    def test_tenant_period_and_metrics_derived_are_empty(
-        self, mock_uow: MagicMock
-    ) -> None:
+    def test_tenant_period_and_metrics_derived_are_empty(self, mock_uow: MagicMock) -> None:
         """tenant_period and metrics_derived are returned empty."""
         from plugins.confluent_cloud.handlers.connector_identity import (
             resolve_connector_identity,
@@ -411,9 +393,7 @@ class TestResolveConnectorIdentity:
         assert len(result.tenant_period) == 0
         assert len(result.metrics_derived) == 0
 
-    def test_filters_to_correct_connector_resource(
-        self, mock_uow: MagicMock
-    ) -> None:
+    def test_filters_to_correct_connector_resource(self, mock_uow: MagicMock) -> None:
         """Only the matching connector resource_id is used."""
         from plugins.confluent_cloud.handlers.connector_identity import (
             resolve_connector_identity,
@@ -544,9 +524,7 @@ class TestCreateConnectorSentinel:
             create_connector_sentinel,
         )
 
-        result = create_connector_sentinel(
-            "connector_credentials_masked", "org-123", "confluent_cloud", is_masked=True
-        )
+        result = create_connector_sentinel("connector_credentials_masked", "org-123", "confluent_cloud", is_masked=True)
         assert result.identity_type == "connector_credentials"
         assert result.identity_id == "connector_credentials_masked"
         assert result.display_name == "Connector Credentials Masked"

@@ -35,9 +35,10 @@ def test_plugin_initialize_invalid_config_raises():
 
 
 def test_plugin_get_service_handlers_returns_all_handlers():
-    """get_service_handlers returns all 4 handlers."""
+    """get_service_handlers returns all 5 handlers."""
     from plugins.confluent_cloud import ConfluentCloudPlugin
     from plugins.confluent_cloud.handlers.connectors import ConnectorHandler
+    from plugins.confluent_cloud.handlers.flink import FlinkHandler
     from plugins.confluent_cloud.handlers.kafka import KafkaHandler
     from plugins.confluent_cloud.handlers.ksqldb import KsqldbHandler
     from plugins.confluent_cloud.handlers.schema_registry import SchemaRegistryHandler
@@ -47,19 +48,21 @@ def test_plugin_get_service_handlers_returns_all_handlers():
 
     handlers = plugin.get_service_handlers()
 
-    assert len(handlers) == 4
+    assert len(handlers) == 5
     assert "kafka" in handlers
     assert "schema_registry" in handlers
     assert "connector" in handlers
     assert "ksqldb" in handlers
+    assert "flink" in handlers
     assert isinstance(handlers["kafka"], KafkaHandler)
     assert isinstance(handlers["schema_registry"], SchemaRegistryHandler)
     assert isinstance(handlers["connector"], ConnectorHandler)
     assert isinstance(handlers["ksqldb"], KsqldbHandler)
+    assert isinstance(handlers["flink"], FlinkHandler)
 
 
 def test_plugin_get_service_handlers_correct_order():
-    """Handlers are returned in correct order: kafka, schema_registry, connector, ksqldb."""
+    """Handlers are returned in correct order: kafka, schema_registry, connector, ksqldb, flink."""
     from plugins.confluent_cloud import ConfluentCloudPlugin
 
     plugin = ConfluentCloudPlugin()
@@ -69,7 +72,7 @@ def test_plugin_get_service_handlers_correct_order():
     handler_keys = list(handlers.keys())
 
     # Exact order matters: Kafka first (gathers environments), then dependent handlers
-    assert handler_keys == ["kafka", "schema_registry", "connector", "ksqldb"]
+    assert handler_keys == ["kafka", "schema_registry", "connector", "ksqldb", "flink"]
 
 
 def test_plugin_handlers_have_correct_service_types():
