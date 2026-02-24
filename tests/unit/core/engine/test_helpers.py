@@ -7,7 +7,7 @@ import pytest
 
 from core.engine.allocation import AllocationContext, AllocationResult
 from core.engine.helpers import (
-    _make_row,
+    make_row,
     allocate_by_usage_ratio,
     allocate_evenly,
     allocate_hybrid,
@@ -162,11 +162,11 @@ class TestAllocateEvenly:
 
 
 def _passthrough_usage(ctx: AllocationContext) -> AllocationResult:
-    return AllocationResult(rows=[_make_row(ctx, "u-1", CostType.USAGE, ctx.split_amount, "test")])
+    return AllocationResult(rows=[make_row(ctx, "u-1", CostType.USAGE, ctx.split_amount, "test")])
 
 
 def _passthrough_shared(ctx: AllocationContext) -> AllocationResult:
-    return AllocationResult(rows=[_make_row(ctx, "u-1", CostType.SHARED, ctx.split_amount, "test")])
+    return AllocationResult(rows=[make_row(ctx, "u-1", CostType.SHARED, ctx.split_amount, "test")])
 
 
 def _empty_allocator(ctx: AllocationContext) -> AllocationResult:

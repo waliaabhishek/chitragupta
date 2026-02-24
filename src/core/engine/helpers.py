@@ -11,7 +11,7 @@ from core.models import ChargebackRow, CostType, Resource
 _CENT = Decimal("0.0001")
 
 
-def _make_row(
+def make_row(
     ctx: AllocationContext,
     identity_id: str,
     cost_type: CostType,
@@ -60,7 +60,7 @@ def allocate_by_usage_ratio(
     """Allocate cost proportionally based on per-identity usage values."""
     total_value = sum(identity_values.values())
     if not identity_values or total_value == 0:
-        row = _make_row(
+        row = make_row(
             ctx,
             identity_id="UNALLOCATED",
             cost_type=CostType.SHARED,
@@ -84,7 +84,7 @@ def allocate_by_usage_ratio(
         idx += 1
 
     rows = [
-        _make_row(
+        make_row(
             ctx,
             identity_id=ident,
             cost_type=CostType.USAGE,
@@ -103,7 +103,7 @@ def allocate_evenly(
 ) -> AllocationResult:
     """Allocate cost evenly across identities."""
     if not identity_ids:
-        row = _make_row(
+        row = make_row(
             ctx,
             identity_id="UNALLOCATED",
             cost_type=CostType.SHARED,
@@ -115,7 +115,7 @@ def allocate_evenly(
 
     amounts = split_amount_evenly(ctx.split_amount, len(identity_ids))
     rows = [
-        _make_row(
+        make_row(
             ctx,
             identity_id=ident,
             cost_type=CostType.SHARED,
@@ -159,7 +159,7 @@ def allocate_to_owner(
     if not owner_id:
         msg = "owner_id must not be empty"
         raise ValueError(msg)
-    row = _make_row(
+    row = make_row(
         ctx,
         identity_id=owner_id,
         cost_type=CostType.USAGE,
@@ -171,7 +171,7 @@ def allocate_to_owner(
 
 def allocate_to_resource(ctx: AllocationContext) -> AllocationResult:
     """Allocate full cost to the resource itself."""
-    row = _make_row(
+    row = make_row(
         ctx,
         identity_id=ctx.billing_line.resource_id,
         cost_type=CostType.SHARED,

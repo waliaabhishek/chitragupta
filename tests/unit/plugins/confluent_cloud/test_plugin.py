@@ -35,12 +35,14 @@ def test_plugin_initialize_invalid_config_raises():
 
 
 def test_plugin_get_service_handlers_returns_all_handlers():
-    """get_service_handlers returns all 5 handlers."""
+    """get_service_handlers returns all 7 handlers."""
     from plugins.confluent_cloud import ConfluentCloudPlugin
     from plugins.confluent_cloud.handlers.connectors import ConnectorHandler
+    from plugins.confluent_cloud.handlers.default import DefaultHandler
     from plugins.confluent_cloud.handlers.flink import FlinkHandler
     from plugins.confluent_cloud.handlers.kafka import KafkaHandler
     from plugins.confluent_cloud.handlers.ksqldb import KsqldbHandler
+    from plugins.confluent_cloud.handlers.org_wide import OrgWideCostHandler
     from plugins.confluent_cloud.handlers.schema_registry import SchemaRegistryHandler
 
     plugin = ConfluentCloudPlugin()
@@ -48,21 +50,25 @@ def test_plugin_get_service_handlers_returns_all_handlers():
 
     handlers = plugin.get_service_handlers()
 
-    assert len(handlers) == 5
+    assert len(handlers) == 7
     assert "kafka" in handlers
     assert "schema_registry" in handlers
     assert "connector" in handlers
     assert "ksqldb" in handlers
     assert "flink" in handlers
+    assert "org_wide" in handlers
+    assert "default" in handlers
     assert isinstance(handlers["kafka"], KafkaHandler)
     assert isinstance(handlers["schema_registry"], SchemaRegistryHandler)
     assert isinstance(handlers["connector"], ConnectorHandler)
     assert isinstance(handlers["ksqldb"], KsqldbHandler)
     assert isinstance(handlers["flink"], FlinkHandler)
+    assert isinstance(handlers["org_wide"], OrgWideCostHandler)
+    assert isinstance(handlers["default"], DefaultHandler)
 
 
 def test_plugin_get_service_handlers_correct_order():
-    """Handlers are returned in correct order: kafka, schema_registry, connector, ksqldb, flink."""
+    """Handlers are returned in correct order: kafka first, default last."""
     from plugins.confluent_cloud import ConfluentCloudPlugin
 
     plugin = ConfluentCloudPlugin()
@@ -71,8 +77,16 @@ def test_plugin_get_service_handlers_correct_order():
     handlers = plugin.get_service_handlers()
     handler_keys = list(handlers.keys())
 
-    # Exact order matters: Kafka first (gathers environments), then dependent handlers
-    assert handler_keys == ["kafka", "schema_registry", "connector", "ksqldb", "flink"]
+    # Exact order matters: Kafka first (gathers environments), default last (catch-all)
+    assert handler_keys == [
+        "kafka",
+        "schema_registry",
+        "connector",
+        "ksqldb",
+        "flink",
+        "org_wide",
+        "default",
+    ]
 
 
 def test_plugin_handlers_have_correct_service_types():
@@ -88,6 +102,9 @@ def test_plugin_handlers_have_correct_service_types():
     assert handlers["schema_registry"].service_type == "schema_registry"
     assert handlers["connector"].service_type == "connector"
     assert handlers["ksqldb"].service_type == "ksqldb"
+    assert handlers["flink"].service_type == "flink"
+    assert handlers["org_wide"].service_type == "org_wide"
+    assert handlers["default"].service_type == "default"
 
 
 def test_plugin_get_service_handlers_raises_before_initialize():

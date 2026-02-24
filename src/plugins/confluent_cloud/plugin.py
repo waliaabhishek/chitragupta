@@ -6,9 +6,11 @@ from plugins.confluent_cloud.config import CCloudPluginConfig
 from plugins.confluent_cloud.connections import CCloudConnection
 from plugins.confluent_cloud.cost_input import CCloudBillingCostInput
 from plugins.confluent_cloud.handlers.connectors import ConnectorHandler
+from plugins.confluent_cloud.handlers.default import DefaultHandler
 from plugins.confluent_cloud.handlers.flink import FlinkHandler
 from plugins.confluent_cloud.handlers.kafka import KafkaHandler
 from plugins.confluent_cloud.handlers.ksqldb import KsqldbHandler
+from plugins.confluent_cloud.handlers.org_wide import OrgWideCostHandler
 from plugins.confluent_cloud.handlers.schema_registry import SchemaRegistryHandler
 
 if TYPE_CHECKING:
@@ -17,7 +19,21 @@ if TYPE_CHECKING:
 
 
 class ConfluentCloudPlugin:
-    """Confluent Cloud ecosystem plugin."""
+    """Confluent Cloud ecosystem plugin.
+
+    Handler ordering requirements:
+    - Kafka MUST be first: it gathers environments that other handlers
+      (connector, ksqldb) depend on for resource discovery.
+    - schema_registry, connector, ksqldb, flink: order among these is not
+      critical, but kept consistent for predictable iteration.
+    - org_wide: no resource/identity gathering, placed after resource handlers.
+    - default: catch-all for known remaining types, placed last.
+
+    Note: Kafka and schema_registry both call gather_environments(), resulting
+    in duplicate API calls. This is an intentional tradeoff — deduplicating
+    would require cross-handler state sharing that adds complexity without
+    meaningful benefit (TD-028).
+    """
 
     def __init__(self) -> None:
         self._config: CCloudPluginConfig | None = None
@@ -44,6 +60,8 @@ class ConfluentCloudPlugin:
             "connector": ConnectorHandler(self._connection, self._config, self.ecosystem),
             "ksqldb": KsqldbHandler(self._connection, self._config, self.ecosystem),
             "flink": FlinkHandler(self._connection, self._config, self.ecosystem),
+            "org_wide": OrgWideCostHandler(self._connection, self._config, self.ecosystem),
+            "default": DefaultHandler(self._connection, self._config, self.ecosystem),
         }
 
         # Initialize metrics source if configured
