@@ -15,6 +15,7 @@ from core.models import (
     IdentityResolution,
     IdentitySet,
 )
+from plugins.confluent_cloud.allocators.ksqldb_allocators import ksqldb_csu_allocator
 
 
 @pytest.fixture
@@ -53,10 +54,6 @@ class TestKsqldbCsuAllocator:
 
     def test_even_split_two_identities(self, ksqldb_billing_line: BillingLineItem) -> None:
         """Even split across two identities with USAGE cost type."""
-        from plugins.confluent_cloud.allocators.ksqldb_allocators import (
-            ksqldb_csu_allocator,
-        )
-
         resolution = IdentityResolution(
             resource_active=make_identity_set("sa-1", "sa-2"),
             metrics_derived=IdentitySet(),
@@ -81,10 +78,6 @@ class TestKsqldbCsuAllocator:
 
     def test_no_identities_unallocated(self, ksqldb_billing_line: BillingLineItem) -> None:
         """Without identities, allocates to UNALLOCATED with USAGE cost type."""
-        from plugins.confluent_cloud.allocators.ksqldb_allocators import (
-            ksqldb_csu_allocator,
-        )
-
         resolution = IdentityResolution(
             resource_active=IdentitySet(),
             metrics_derived=IdentitySet(),
@@ -108,10 +101,6 @@ class TestKsqldbCsuAllocator:
 
     def test_fallback_to_tenant_period(self, ksqldb_billing_line: BillingLineItem) -> None:
         """Falls back to tenant_period when merged_active is empty."""
-        from plugins.confluent_cloud.allocators.ksqldb_allocators import (
-            ksqldb_csu_allocator,
-        )
-
         resolution = IdentityResolution(
             resource_active=IdentitySet(),
             metrics_derived=IdentitySet(),
@@ -134,10 +123,6 @@ class TestKsqldbCsuAllocator:
 
     def test_three_way_split_with_remainder(self, ksqldb_billing_line: BillingLineItem) -> None:
         """Three identities splitting $10 handles remainder correctly."""
-        from plugins.confluent_cloud.allocators.ksqldb_allocators import (
-            ksqldb_csu_allocator,
-        )
-
         resolution = IdentityResolution(
             resource_active=make_identity_set("sa-1", "sa-2", "sa-3"),
             metrics_derived=IdentitySet(),
@@ -164,10 +149,6 @@ class TestKsqldbCsuAllocator:
 
     def test_uses_merged_active_over_tenant_period(self, ksqldb_billing_line: BillingLineItem) -> None:
         """Merged active identities take precedence over tenant_period."""
-        from plugins.confluent_cloud.allocators.ksqldb_allocators import (
-            ksqldb_csu_allocator,
-        )
-
         resolution = IdentityResolution(
             resource_active=make_identity_set("sa-active"),
             metrics_derived=IdentitySet(),
@@ -192,10 +173,6 @@ class TestKsqldbCsuAllocator:
 
     def test_single_identity_full_amount(self, ksqldb_billing_line: BillingLineItem) -> None:
         """Single identity gets full amount with USAGE cost type."""
-        from plugins.confluent_cloud.allocators.ksqldb_allocators import (
-            ksqldb_csu_allocator,
-        )
-
         resolution = IdentityResolution(
             resource_active=make_identity_set("sa-only"),
             metrics_derived=IdentitySet(),

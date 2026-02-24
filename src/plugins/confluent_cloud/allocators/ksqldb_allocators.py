@@ -35,8 +35,8 @@ def ksqldb_csu_allocator(ctx: AllocationContext) -> AllocationResult:
 
     result = allocate_evenly(ctx, identity_ids)
 
-    # allocate_evenly uses SHARED cost type, but CSU should be USAGE
-    # Create new rows with USAGE cost type
+    # Override cost type: allocate_evenly defaults to SHARED, but CSU represents
+    # compute consumption billed to specific users, so USAGE is semantically correct.
     result.rows = [replace(row, cost_type=CostType.USAGE) for row in result.rows]
 
     return result
