@@ -34,10 +34,12 @@ def test_plugin_initialize_invalid_config_raises():
         plugin.initialize({})  # Missing required ccloud_api
 
 
-def test_plugin_get_service_handlers_returns_kafka_and_sr():
-    """get_service_handlers returns KafkaHandler and SchemaRegistryHandler."""
+def test_plugin_get_service_handlers_returns_all_handlers():
+    """get_service_handlers returns all 4 handlers."""
     from plugins.confluent_cloud import ConfluentCloudPlugin
+    from plugins.confluent_cloud.handlers.connectors import ConnectorHandler
     from plugins.confluent_cloud.handlers.kafka import KafkaHandler
+    from plugins.confluent_cloud.handlers.ksqldb import KsqldbHandler
     from plugins.confluent_cloud.handlers.schema_registry import SchemaRegistryHandler
 
     plugin = ConfluentCloudPlugin()
@@ -45,14 +47,19 @@ def test_plugin_get_service_handlers_returns_kafka_and_sr():
 
     handlers = plugin.get_service_handlers()
 
+    assert len(handlers) == 4
     assert "kafka" in handlers
     assert "schema_registry" in handlers
+    assert "connector" in handlers
+    assert "ksqldb" in handlers
     assert isinstance(handlers["kafka"], KafkaHandler)
     assert isinstance(handlers["schema_registry"], SchemaRegistryHandler)
+    assert isinstance(handlers["connector"], ConnectorHandler)
+    assert isinstance(handlers["ksqldb"], KsqldbHandler)
 
 
 def test_plugin_get_service_handlers_correct_order():
-    """Handlers are returned in correct order (Kafka first)."""
+    """Handlers are returned in correct order: kafka, schema_registry, connector, ksqldb."""
     from plugins.confluent_cloud import ConfluentCloudPlugin
 
     plugin = ConfluentCloudPlugin()
@@ -61,8 +68,23 @@ def test_plugin_get_service_handlers_correct_order():
     handlers = plugin.get_service_handlers()
     handler_keys = list(handlers.keys())
 
-    # Kafka must come before schema_registry for environment gathering
-    assert handler_keys.index("kafka") < handler_keys.index("schema_registry")
+    # Exact order matters: Kafka first (gathers environments), then dependent handlers
+    assert handler_keys == ["kafka", "schema_registry", "connector", "ksqldb"]
+
+
+def test_plugin_handlers_have_correct_service_types():
+    """Each handler has the correct service_type property."""
+    from plugins.confluent_cloud import ConfluentCloudPlugin
+
+    plugin = ConfluentCloudPlugin()
+    plugin.initialize({"ccloud_api": {"key": "k", "secret": "s"}})
+
+    handlers = plugin.get_service_handlers()
+
+    assert handlers["kafka"].service_type == "kafka"
+    assert handlers["schema_registry"].service_type == "schema_registry"
+    assert handlers["connector"].service_type == "connector"
+    assert handlers["ksqldb"].service_type == "ksqldb"
 
 
 def test_plugin_get_service_handlers_raises_before_initialize():

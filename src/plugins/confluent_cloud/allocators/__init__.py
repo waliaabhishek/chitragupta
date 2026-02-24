@@ -12,6 +12,7 @@ from plugins.confluent_cloud.allocators.kafka_allocators import (
     kafka_network_allocator,
     kafka_num_cku_allocator,
 )
+from plugins.confluent_cloud.allocators.ksqldb_allocators import ksqldb_csu_allocator
 from plugins.confluent_cloud.allocators.sr_allocators import schema_registry_allocator
 
 __all__ = [
@@ -21,5 +22,6 @@ __all__ = [
     "kafka_base_allocator",
     "kafka_network_allocator",
     "kafka_num_cku_allocator",
+    "ksqldb_csu_allocator",
     "schema_registry_allocator",
 ]
