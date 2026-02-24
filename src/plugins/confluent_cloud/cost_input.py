@@ -17,6 +17,7 @@ from core.plugin.protocols import CostInput
 LOGGER = logging.getLogger(__name__)
 BILLING_API_PATH = "/billing/v1/costs"
 BILLING_PAGE_SIZE = 2000
+# Billing is inherently CCloud-specific; constant avoids parameter threading
 ECOSYSTEM = "confluent_cloud"
 
 
@@ -39,9 +40,7 @@ def _parse_billing_date(date_str: str) -> datetime:
     try:
         return datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=UTC)
     except ValueError as exc:
-        raise ValueError(
-            f"Invalid billing date format '{date_str}': expected YYYY-MM-DD"
-        ) from exc
+        raise ValueError(f"Invalid billing date format '{date_str}': expected YYYY-MM-DD") from exc
 
 
 def _safe_decimal(value: Any) -> Decimal:
@@ -50,10 +49,8 @@ def _safe_decimal(value: Any) -> Decimal:
         return Decimal("0")
     try:
         return Decimal(str(value))
-    except (InvalidOperation, ValueError):
-        LOGGER.warning(
-            "Could not convert billing value to Decimal: %r — defaulting to 0", value
-        )
+    except InvalidOperation:
+        LOGGER.warning("Could not convert billing value to Decimal: %r — defaulting to 0", value)
         return Decimal("0")
 
 
@@ -110,9 +107,9 @@ class CCloudBillingCostInput(CostInput):
     def gather(
         self,
         tenant_id: str,
-        period_start: datetime,
-        period_end: datetime,
-        uow: UnitOfWork | None,  # Not used by billing API cost input
+        start: datetime,
+        end: datetime,
+        uow: UnitOfWork,
     ) -> Iterable[BillingLineItem]:
         """Gather billing line items from CCloud Billing API.
 
@@ -121,9 +118,7 @@ class CCloudBillingCostInput(CostInput):
         """
         days_per_query = self._config.billing_api.days_per_query
 
-        for window_start, window_end in _generate_date_windows(
-            period_start, period_end, days_per_query
-        ):
+        for window_start, window_end in _generate_date_windows(start, end, days_per_query):
             yield from self._fetch_window(tenant_id, window_start, window_end)
 
     def _fetch_window(
@@ -150,4 +145,3 @@ class CCloudBillingCostInput(CostInput):
                     resource_id,
                     exc,
                 )
-                continue

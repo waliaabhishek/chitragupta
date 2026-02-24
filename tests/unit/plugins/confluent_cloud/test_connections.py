@@ -485,7 +485,7 @@ class TestProactiveThrottling:
         elapsed = time.time() - start
 
         # Should take at least 200ms (2 intervals) but allow some tolerance
-        assert elapsed >= 0.18, f"Expected >= 180ms, got {elapsed*1000:.0f}ms"
+        assert elapsed >= 0.18, f"Expected >= 180ms, got {elapsed * 1000:.0f}ms"
 
     @responses.activate
     def test_throttling_disabled_when_zero(self):
@@ -511,7 +511,7 @@ class TestProactiveThrottling:
         elapsed = time.time() - start
 
         # Should be fast (< 100ms total)
-        assert elapsed < 0.1, f"Expected < 100ms, got {elapsed*1000:.0f}ms"
+        assert elapsed < 0.1, f"Expected < 100ms, got {elapsed * 1000:.0f}ms"
 
     def test_default_throttling_interval(self):
         """Default request_interval_seconds is 0.1 (100ms)."""

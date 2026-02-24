@@ -135,8 +135,9 @@ class CCloudConnection:
             except requests.exceptions.RequestException as e:
                 raise CCloudConnectionError(str(e)) from e
 
+            self._last_request_time = time.time()
+
             if resp.status_code == 200:
-                self._last_request_time = time.time()
                 return cast("dict[str, Any]", resp.json())
             elif resp.status_code == 404:
                 LOGGER.info("Resource not found: %s", url)
@@ -182,6 +183,8 @@ class CCloudConnection:
         else:
             wait = self._calculate_backoff(attempt)
 
+        # Floor guard: never wait less than 1 second
+        wait = max(wait, 1.0)
         # Add jitter (10-20%) to avoid thundering herd
         jitter_factor = 1.1 + 0.1 * random.random()
         return wait * jitter_factor

@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
+import uuid
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -38,18 +39,14 @@ def _make_settings(
     )
 
 
-_tenant_counter = 0
-
-
 def _make_tenant(**overrides: Any) -> TenantConfig:
-    global _tenant_counter  # noqa: PLW0603
-    _tenant_counter += 1
+    unique = uuid.uuid4().hex[:8]
     defaults: dict[str, Any] = {
         "ecosystem": "eco",
         "tenant_id": "tid",
         "lookback_days": 30,
         "cutoff_days": 5,
-        "storage": StorageConfig(connection_string=f"sqlite:///test_{_tenant_counter}.db"),
+        "storage": StorageConfig(connection_string=f"sqlite:///test_{unique}.db"),
     }
     defaults.update(overrides)
     return TenantConfig(**defaults)

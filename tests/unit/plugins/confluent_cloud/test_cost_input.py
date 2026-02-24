@@ -212,12 +212,8 @@ class TestCCloudBillingCostInput:
             status=200,
         )
 
-        conn = CCloudConnection(
-            api_key="k", api_secret=SecretStr("s"), request_interval_seconds=0
-        )
-        config = CCloudPluginConfig.from_plugin_settings(
-            {"ccloud_api": {"key": "k", "secret": "s"}}
-        )
+        conn = CCloudConnection(api_key="k", api_secret=SecretStr("s"), request_interval_seconds=0)
+        config = CCloudPluginConfig.from_plugin_settings({"ccloud_api": {"key": "k", "secret": "s"}})
         cost_input = CCloudBillingCostInput(conn, config)
 
         items = list(
@@ -261,9 +257,7 @@ class TestCCloudBillingCostInput:
                 status=200,
             )
 
-        conn = CCloudConnection(
-            api_key="k", api_secret=SecretStr("s"), request_interval_seconds=0
-        )
+        conn = CCloudConnection(api_key="k", api_secret=SecretStr("s"), request_interval_seconds=0)
         config = CCloudPluginConfig.from_plugin_settings(
             {
                 "ccloud_api": {"key": "k", "secret": "s"},
@@ -290,12 +284,8 @@ class TestCCloudBillingCostInput:
         from plugins.confluent_cloud.connections import CCloudConnection
         from plugins.confluent_cloud.cost_input import CCloudBillingCostInput
 
-        conn = CCloudConnection(
-            api_key="k", api_secret=SecretStr("s"), request_interval_seconds=0
-        )
-        config = CCloudPluginConfig.from_plugin_settings(
-            {"ccloud_api": {"key": "k", "secret": "s"}}
-        )
+        conn = CCloudConnection(api_key="k", api_secret=SecretStr("s"), request_interval_seconds=0)
+        config = CCloudPluginConfig.from_plugin_settings({"ccloud_api": {"key": "k", "secret": "s"}})
         cost_input = CCloudBillingCostInput(conn, config)
 
         items = list(
@@ -348,12 +338,8 @@ class TestCCloudBillingCostInput:
             status=200,
         )
 
-        conn = CCloudConnection(
-            api_key="k", api_secret=SecretStr("s"), request_interval_seconds=0
-        )
-        config = CCloudPluginConfig.from_plugin_settings(
-            {"ccloud_api": {"key": "k", "secret": "s"}}
-        )
+        conn = CCloudConnection(api_key="k", api_secret=SecretStr("s"), request_interval_seconds=0)
+        config = CCloudPluginConfig.from_plugin_settings({"ccloud_api": {"key": "k", "secret": "s"}})
         cost_input = CCloudBillingCostInput(conn, config)
 
         items = list(

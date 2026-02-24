@@ -34,9 +34,7 @@ class TestGatherEnvironments:
             status=200,
         )
 
-        conn = CCloudConnection(
-            api_key="k", api_secret=SecretStr("s"), request_interval_seconds=0
-        )
+        conn = CCloudConnection(api_key="k", api_secret=SecretStr("s"), request_interval_seconds=0)
         envs = list(gather_environments(conn, "confluent_cloud", "org-123"))
 
         assert len(envs) == 1
@@ -59,9 +57,7 @@ class TestGatherEnvironments:
             status=200,
         )
 
-        conn = CCloudConnection(
-            api_key="k", api_secret=SecretStr("s"), request_interval_seconds=0
-        )
+        conn = CCloudConnection(api_key="k", api_secret=SecretStr("s"), request_interval_seconds=0)
         envs = list(gather_environments(conn, "confluent_cloud", "org-123"))
 
         assert envs == []
@@ -87,9 +83,7 @@ class TestGatherEnvironments:
             status=200,
         )
 
-        conn = CCloudConnection(
-            api_key="k", api_secret=SecretStr("s"), request_interval_seconds=0
-        )
+        conn = CCloudConnection(api_key="k", api_secret=SecretStr("s"), request_interval_seconds=0)
         envs = list(gather_environments(conn, "confluent_cloud", "org-123"))
 
         assert len(envs) == 1
@@ -128,12 +122,8 @@ class TestGatherKafkaClusters:
             status=200,
         )
 
-        conn = CCloudConnection(
-            api_key="k", api_secret=SecretStr("s"), request_interval_seconds=0
-        )
-        clusters = list(
-            gather_kafka_clusters(conn, "confluent_cloud", "org-123", ["env-abc"])
-        )
+        conn = CCloudConnection(api_key="k", api_secret=SecretStr("s"), request_interval_seconds=0)
+        clusters = list(gather_kafka_clusters(conn, "confluent_cloud", "org-123", ["env-abc"]))
 
         assert len(clusters) == 1
         assert clusters[0].ecosystem == "confluent_cloud"
@@ -195,14 +185,8 @@ class TestGatherKafkaClusters:
             status=200,
         )
 
-        conn = CCloudConnection(
-            api_key="k", api_secret=SecretStr("s"), request_interval_seconds=0
-        )
-        clusters = list(
-            gather_kafka_clusters(
-                conn, "confluent_cloud", "org-123", ["env-1", "env-2"]
-            )
-        )
+        conn = CCloudConnection(api_key="k", api_secret=SecretStr("s"), request_interval_seconds=0)
+        clusters = list(gather_kafka_clusters(conn, "confluent_cloud", "org-123", ["env-1", "env-2"]))
 
         assert len(clusters) == 2
         assert {c.resource_id for c in clusters} == {"lkc-1", "lkc-2"}
@@ -219,12 +203,8 @@ class TestGatherKafkaClusters:
             status=200,
         )
 
-        conn = CCloudConnection(
-            api_key="k", api_secret=SecretStr("s"), request_interval_seconds=0
-        )
-        clusters = list(
-            gather_kafka_clusters(conn, "confluent_cloud", "org-123", ["env-empty"])
-        )
+        conn = CCloudConnection(api_key="k", api_secret=SecretStr("s"), request_interval_seconds=0)
+        clusters = list(gather_kafka_clusters(conn, "confluent_cloud", "org-123", ["env-empty"]))
 
         assert clusters == []
 
@@ -233,12 +213,8 @@ class TestGatherKafkaClusters:
         """No environments = no API calls, empty result."""
         from plugins.confluent_cloud.gathering import gather_kafka_clusters
 
-        conn = CCloudConnection(
-            api_key="k", api_secret=SecretStr("s"), request_interval_seconds=0
-        )
-        clusters = list(
-            gather_kafka_clusters(conn, "confluent_cloud", "org-123", [])
-        )
+        conn = CCloudConnection(api_key="k", api_secret=SecretStr("s"), request_interval_seconds=0)
+        clusters = list(gather_kafka_clusters(conn, "confluent_cloud", "org-123", []))
 
         assert clusters == []
         assert len(responses.calls) == 0
@@ -271,9 +247,7 @@ class TestGatherConnectors:
             status=200,
         )
 
-        conn = CCloudConnection(
-            api_key="k", api_secret=SecretStr("s"), request_interval_seconds=0
-        )
+        conn = CCloudConnection(api_key="k", api_secret=SecretStr("s"), request_interval_seconds=0)
         connectors = list(
             gather_connectors(
                 conn,
@@ -314,9 +288,7 @@ class TestGatherConnectors:
             status=200,
         )
 
-        conn = CCloudConnection(
-            api_key="k", api_secret=SecretStr("s"), request_interval_seconds=0
-        )
+        conn = CCloudConnection(api_key="k", api_secret=SecretStr("s"), request_interval_seconds=0)
         connectors = list(
             gather_connectors(
                 conn,
@@ -342,9 +314,7 @@ class TestGatherConnectors:
             status=200,
         )
 
-        conn = CCloudConnection(
-            api_key="k", api_secret=SecretStr("s"), request_interval_seconds=0
-        )
+        conn = CCloudConnection(api_key="k", api_secret=SecretStr("s"), request_interval_seconds=0)
         connectors = list(
             gather_connectors(
                 conn,
@@ -386,9 +356,7 @@ class TestGatherConnectors:
             status=200,
         )
 
-        conn = CCloudConnection(
-            api_key="k", api_secret=SecretStr("s"), request_interval_seconds=0
-        )
+        conn = CCloudConnection(api_key="k", api_secret=SecretStr("s"), request_interval_seconds=0)
         connectors = list(
             gather_connectors(
                 conn,
@@ -434,12 +402,8 @@ class TestGatherSchemaRegistries:
             status=200,
         )
 
-        conn = CCloudConnection(
-            api_key="k", api_secret=SecretStr("s"), request_interval_seconds=0
-        )
-        srs = list(
-            gather_schema_registries(conn, "confluent_cloud", "org-123", ["env-abc"])
-        )
+        conn = CCloudConnection(api_key="k", api_secret=SecretStr("s"), request_interval_seconds=0)
+        srs = list(gather_schema_registries(conn, "confluent_cloud", "org-123", ["env-abc"]))
 
         assert len(srs) == 1
         assert srs[0].resource_id == "lsrc-abc"
@@ -461,12 +425,8 @@ class TestGatherSchemaRegistries:
             status=200,
         )
 
-        conn = CCloudConnection(
-            api_key="k", api_secret=SecretStr("s"), request_interval_seconds=0
-        )
-        srs = list(
-            gather_schema_registries(conn, "confluent_cloud", "org-123", ["env-abc"])
-        )
+        conn = CCloudConnection(api_key="k", api_secret=SecretStr("s"), request_interval_seconds=0)
+        srs = list(gather_schema_registries(conn, "confluent_cloud", "org-123", ["env-abc"]))
 
         assert srs == []
 
@@ -502,12 +462,8 @@ class TestGatherKsqldbClusters:
             status=200,
         )
 
-        conn = CCloudConnection(
-            api_key="k", api_secret=SecretStr("s"), request_interval_seconds=0
-        )
-        ksqls = list(
-            gather_ksqldb_clusters(conn, "confluent_cloud", "org-123", ["env-abc"])
-        )
+        conn = CCloudConnection(api_key="k", api_secret=SecretStr("s"), request_interval_seconds=0)
+        ksqls = list(gather_ksqldb_clusters(conn, "confluent_cloud", "org-123", ["env-abc"]))
 
         assert len(ksqls) == 1
         assert ksqls[0].resource_id == "lksqlc-123"
@@ -542,12 +498,8 @@ class TestGatherKsqldbClusters:
             status=200,
         )
 
-        conn = CCloudConnection(
-            api_key="k", api_secret=SecretStr("s"), request_interval_seconds=0
-        )
-        ksqls = list(
-            gather_ksqldb_clusters(conn, "confluent_cloud", "org-123", ["env-abc"])
-        )
+        conn = CCloudConnection(api_key="k", api_secret=SecretStr("s"), request_interval_seconds=0)
+        ksqls = list(gather_ksqldb_clusters(conn, "confluent_cloud", "org-123", ["env-abc"]))
 
         assert ksqls[0].owner_id == "ksqldb_owner_unknown"  # Sentinel fallback
 
@@ -582,16 +534,10 @@ class TestGatherFlinkComputePools:
             status=200,
         )
 
-        conn = CCloudConnection(
-            api_key="k", api_secret=SecretStr("s"), request_interval_seconds=0
-        )
+        conn = CCloudConnection(api_key="k", api_secret=SecretStr("s"), request_interval_seconds=0)
         # flink_regions: region_id -> (api_key, api_secret) - lowercase keys
         flink_regions = {"us-east-1": ("flink-key", "flink-secret")}
-        pools = list(
-            gather_flink_compute_pools(
-                conn, "confluent_cloud", "org-123", ["env-abc"], flink_regions
-            )
-        )
+        pools = list(gather_flink_compute_pools(conn, "confluent_cloud", "org-123", ["env-abc"], flink_regions))
 
         assert len(pools) == 1
         assert pools[0].resource_id == "lfcp-abc"
@@ -625,16 +571,10 @@ class TestGatherFlinkComputePools:
             status=200,
         )
 
-        conn = CCloudConnection(
-            api_key="k", api_secret=SecretStr("s"), request_interval_seconds=0
-        )
+        conn = CCloudConnection(api_key="k", api_secret=SecretStr("s"), request_interval_seconds=0)
         # Config uses lowercase keys
         flink_regions = {"us-east-1": ("flink-key", "flink-secret")}
-        pools = list(
-            gather_flink_compute_pools(
-                conn, "confluent_cloud", "org-123", ["env-abc"], flink_regions
-            )
-        )
+        pools = list(gather_flink_compute_pools(conn, "confluent_cloud", "org-123", ["env-abc"], flink_regions))
 
         assert len(pools) == 1
         assert pools[0].metadata["cloud"] == "aws"
@@ -666,16 +606,10 @@ class TestGatherFlinkComputePools:
             status=200,
         )
 
-        conn = CCloudConnection(
-            api_key="k", api_secret=SecretStr("s"), request_interval_seconds=0
-        )
+        conn = CCloudConnection(api_key="k", api_secret=SecretStr("s"), request_interval_seconds=0)
         # No matching region config
         flink_regions = {"us-east-1": ("key", "secret")}
-        pools = list(
-            gather_flink_compute_pools(
-                conn, "confluent_cloud", "org-123", ["env-abc"], flink_regions
-            )
-        )
+        pools = list(gather_flink_compute_pools(conn, "confluent_cloud", "org-123", ["env-abc"], flink_regions))
 
         assert pools[0].metadata["is_allocatable"] is False
 
@@ -937,9 +871,7 @@ class TestGatherServiceAccounts:
             status=200,
         )
 
-        conn = CCloudConnection(
-            api_key="k", api_secret=SecretStr("s"), request_interval_seconds=0
-        )
+        conn = CCloudConnection(api_key="k", api_secret=SecretStr("s"), request_interval_seconds=0)
         sas = list(gather_service_accounts(conn, "confluent_cloud", "org-123"))
 
         assert len(sas) == 1
@@ -976,9 +908,7 @@ class TestGatherUsers:
             status=200,
         )
 
-        conn = CCloudConnection(
-            api_key="k", api_secret=SecretStr("s"), request_interval_seconds=0
-        )
+        conn = CCloudConnection(api_key="k", api_secret=SecretStr("s"), request_interval_seconds=0)
         users = list(gather_users(conn, "confluent_cloud", "org-123"))
 
         assert len(users) == 1
@@ -1016,9 +946,7 @@ class TestGatherApiKeys:
             status=200,
         )
 
-        conn = CCloudConnection(
-            api_key="k", api_secret=SecretStr("s"), request_interval_seconds=0
-        )
+        conn = CCloudConnection(api_key="k", api_secret=SecretStr("s"), request_interval_seconds=0)
         keys = list(gather_api_keys(conn, "confluent_cloud", "org-123"))
 
         assert len(keys) == 1
@@ -1055,9 +983,7 @@ class TestGatherIdentityProviders:
             status=200,
         )
 
-        conn = CCloudConnection(
-            api_key="k", api_secret=SecretStr("s"), request_interval_seconds=0
-        )
+        conn = CCloudConnection(api_key="k", api_secret=SecretStr("s"), request_interval_seconds=0)
         providers = list(gather_identity_providers(conn, "confluent_cloud", "org-123"))
 
         assert len(providers) == 1
@@ -1092,12 +1018,8 @@ class TestGatherIdentityPools:
             status=200,
         )
 
-        conn = CCloudConnection(
-            api_key="k", api_secret=SecretStr("s"), request_interval_seconds=0
-        )
-        pools = list(
-            gather_identity_pools(conn, "confluent_cloud", "org-123", ["op-abc"])
-        )
+        conn = CCloudConnection(api_key="k", api_secret=SecretStr("s"), request_interval_seconds=0)
+        pools = list(gather_identity_pools(conn, "confluent_cloud", "org-123", ["op-abc"]))
 
         assert len(pools) == 1
         assert pools[0].identity_id == "pool-xyz"
@@ -1128,12 +1050,8 @@ class TestGatherIdentityPools:
             status=200,
         )
 
-        conn = CCloudConnection(
-            api_key="k", api_secret=SecretStr("s"), request_interval_seconds=0
-        )
-        pools = list(
-            gather_identity_pools(conn, "confluent_cloud", "org-123", ["op-1", "op-2"])
-        )
+        conn = CCloudConnection(api_key="k", api_secret=SecretStr("s"), request_interval_seconds=0)
+        pools = list(gather_identity_pools(conn, "confluent_cloud", "org-123", ["op-1", "op-2"]))
 
         assert len(pools) == 2
         assert {p.identity_id for p in pools} == {"pool-1", "pool-2"}

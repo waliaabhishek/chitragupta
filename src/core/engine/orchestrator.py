@@ -8,7 +8,7 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from datetime import date as date_type
 from decimal import Decimal
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from core.engine.allocation import AllocationContext, AllocatorRegistry
 from core.engine.helpers import compute_active_fraction
@@ -597,7 +597,5 @@ def _load_identity_resolver(dotted_path: str) -> Callable[..., IdentityResolutio
             f"(tenant_id, resource_id, billing_timestamp, billing_duration, metrics_data, uow), "
             f"got {len(params)}"
         )
-
-    from typing import cast
 
     return cast("Callable[..., IdentityResolution]", obj)

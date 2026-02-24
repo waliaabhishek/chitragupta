@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 from collections.abc import Iterable
 from datetime import UTC, datetime
@@ -32,8 +33,7 @@ def _parse_iso_datetime(value: str | None) -> datetime | None:
         return None
 
     try:
-        # Python 3.11+ fromisoformat handles Z suffix
-        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        dt = datetime.fromisoformat(value)
 
         # Ensure UTC-aware (handle naive datetimes defensively)
         if dt.tzinfo is None:
@@ -138,12 +138,11 @@ def gather_connectors(
             }
 
             if auth_mode == "SERVICE_ACCOUNT":
-                metadata["kafka_service_account_id"] = config.get(
-                    "kafka.service.account.id"
-                )
+                metadata["kafka_service_account_id"] = config.get("kafka.service.account.id")
             elif auth_mode == "KAFKA_API_KEY":
                 metadata["kafka_api_key"] = config.get("kafka.api.key")
 
+            # Connector API does not include created_at in response
             yield Resource(
                 ecosystem=ecosystem,
                 tenant_id=tenant_id,
@@ -297,9 +296,8 @@ def gather_flink_statements(
     # for every pool in the same region with the same credentials
     conn_cache: dict[tuple[str, str, str], CCloudConnection] = {}
 
-    def get_or_create_connection(
-        region: str, cloud: str, api_key: str, api_secret: str
-    ) -> CCloudConnection:
+    def get_or_create_connection(region: str, cloud: str, api_key: str, api_secret: str) -> CCloudConnection:
+        # api_key uniquely identifies credential pair
         cache_key = (region, cloud, api_key)
         if cache_key not in conn_cache:
             regional_base_url = f"https://flink.{region}.{cloud}.confluent.cloud"
@@ -336,7 +334,7 @@ def gather_flink_statements(
                 resource_id = meta.get("uid") or item.get("name")
                 if not resource_id:
                     # Deterministic sentinel based on pool_id + item content hash
-                    hash_input = f"{pool.resource_id}:{item}"
+                    hash_input = f"{pool.resource_id}:{json.dumps(item, sort_keys=True)}"
                     hash_digest = hashlib.sha256(hash_input.encode()).hexdigest()[:12]
                     resource_id = f"flink_stmt_unknown_{hash_digest}"
 
@@ -351,9 +349,7 @@ def gather_flink_statements(
                     status=ResourceStatus.ACTIVE,
                     metadata={
                         "statement_name": item.get("name"),
-                        "compute_pool_id": spec.get("compute_pool", {}).get(
-                            "id", pool.resource_id
-                        ),
+                        "compute_pool_id": spec.get("compute_pool", {}).get("id", pool.resource_id),
                         "is_stopped": phase in STOPPED_PHASES,
                     },
                 )

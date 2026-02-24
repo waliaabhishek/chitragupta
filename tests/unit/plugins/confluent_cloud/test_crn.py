@@ -4,9 +4,7 @@ from plugins.confluent_cloud.crn import parse_ccloud_crn
 
 
 def test_full_crn():
-    result = parse_ccloud_crn(
-        "crn://confluent.cloud/organization=abc/environment=env-xyz/kafka=lkc-123"
-    )
+    result = parse_ccloud_crn("crn://confluent.cloud/organization=abc/environment=env-xyz/kafka=lkc-123")
     assert result == {"organization": "abc", "environment": "env-xyz", "kafka": "lkc-123"}
 
 
