@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING, Any
 
 from plugins.confluent_cloud.config import CCloudPluginConfig
 from plugins.confluent_cloud.connections import CCloudConnection
+from plugins.confluent_cloud.cost_input import CCloudBillingCostInput
 
 if TYPE_CHECKING:
     from core.metrics.protocol import MetricsSource
@@ -34,8 +35,10 @@ class ConfluentCloudPlugin:
         return {}
 
     def get_cost_input(self) -> CostInput:
-        """Return cost input. Not implemented yet (TD-017)."""
-        raise NotImplementedError("CCloud cost input not implemented (chunk 2.2)")
+        """Return cost input backed by CCloud Billing API."""
+        if self._config is None or self._connection is None:
+            raise RuntimeError("Plugin not initialized. Call initialize() first.")
+        return CCloudBillingCostInput(self._connection, self._config)
 
     def get_metrics_source(self) -> MetricsSource | None:
         """Return metrics source. None until handlers need metrics (chunk 2.3+)."""

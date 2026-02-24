@@ -374,3 +374,146 @@ def test_connection_close():
     with patch.object(conn._session, "close") as mock_close:
         conn.close()
         mock_close.assert_called_once()
+
+
+# =============================================================================
+# get_raw() tests (Chunk 2.2)
+# =============================================================================
+
+
+class TestGetRaw:
+    """Tests for CCloudConnection.get_raw() method."""
+
+    @responses.activate
+    def test_get_raw_returns_full_response(self):
+        """get_raw() returns the full JSON response without pagination."""
+        responses.add(
+            responses.GET,
+            "https://api.confluent.cloud/test/raw",
+            json={"my-connector": {"info": {"config": {"name": "my-connector"}}}},
+            status=200,
+        )
+
+        conn = CCloudConnection(api_key="key", api_secret=SecretStr("secret"))
+        result = conn.get_raw("/test/raw")
+
+        assert "my-connector" in result
+        assert result["my-connector"]["info"]["config"]["name"] == "my-connector"
+
+    @responses.activate
+    def test_get_raw_retries_on_429(self):
+        """get_raw() retries on rate limit just like get()."""
+        responses.add(responses.GET, "https://api.confluent.cloud/test/raw", status=429)
+        responses.add(
+            responses.GET,
+            "https://api.confluent.cloud/test/raw",
+            json={"data": "ok"},
+            status=200,
+        )
+
+        conn = CCloudConnection(
+            api_key="key",
+            api_secret=SecretStr("secret"),
+            base_backoff_seconds=0.01,
+        )
+        result = conn.get_raw("/test/raw")
+        assert result == {"data": "ok"}
+
+    @responses.activate
+    def test_get_raw_returns_empty_dict_on_404(self):
+        """get_raw() returns {} on 404 (not the standard envelope)."""
+        responses.add(
+            responses.GET,
+            "https://api.confluent.cloud/test/missing",
+            status=404,
+            body="Not found",
+        )
+
+        conn = CCloudConnection(api_key="key", api_secret=SecretStr("secret"))
+        result = conn.get_raw("/test/missing")
+
+        # Should return {} for non-standard endpoints, not the envelope
+        assert result == {}
+
+    @responses.activate
+    def test_get_raw_with_params(self):
+        """get_raw() passes query parameters correctly."""
+        responses.add(
+            responses.GET,
+            "https://api.confluent.cloud/test/endpoint",
+            json={"result": "ok"},
+            status=200,
+        )
+
+        conn = CCloudConnection(api_key="key", api_secret=SecretStr("secret"))
+        result = conn.get_raw("/test/endpoint", params={"expand": "info,status"})
+
+        assert result == {"result": "ok"}
+        assert "expand=info" in responses.calls[0].request.url
+
+
+# =============================================================================
+# Proactive throttling tests (Chunk 2.2)
+# =============================================================================
+
+
+class TestProactiveThrottling:
+    """Tests for request_interval_seconds proactive throttling."""
+
+    @responses.activate
+    def test_throttling_spaces_requests(self):
+        """request_interval_seconds introduces delay between requests."""
+        for _ in range(3):
+            responses.add(
+                responses.GET,
+                "https://api.confluent.cloud/test",
+                json={"data": [], "metadata": {}},
+                status=200,
+            )
+
+        # 100ms interval between requests
+        conn = CCloudConnection(
+            api_key="key",
+            api_secret=SecretStr("secret"),
+            request_interval_seconds=0.1,
+        )
+
+        start = time.time()
+        list(conn.get("/test"))  # 1st request
+        list(conn.get("/test"))  # 2nd request (should wait ~100ms)
+        list(conn.get("/test"))  # 3rd request (should wait ~100ms)
+        elapsed = time.time() - start
+
+        # Should take at least 200ms (2 intervals) but allow some tolerance
+        assert elapsed >= 0.18, f"Expected >= 180ms, got {elapsed*1000:.0f}ms"
+
+    @responses.activate
+    def test_throttling_disabled_when_zero(self):
+        """request_interval_seconds=0 disables throttling."""
+        for _ in range(3):
+            responses.add(
+                responses.GET,
+                "https://api.confluent.cloud/test",
+                json={"data": [], "metadata": {}},
+                status=200,
+            )
+
+        conn = CCloudConnection(
+            api_key="key",
+            api_secret=SecretStr("secret"),
+            request_interval_seconds=0.0,  # Disabled
+        )
+
+        start = time.time()
+        list(conn.get("/test"))
+        list(conn.get("/test"))
+        list(conn.get("/test"))
+        elapsed = time.time() - start
+
+        # Should be fast (< 100ms total)
+        assert elapsed < 0.1, f"Expected < 100ms, got {elapsed*1000:.0f}ms"
+
+    def test_default_throttling_interval(self):
+        """Default request_interval_seconds is 0.1 (100ms)."""
+        conn = CCloudConnection(api_key="key", api_secret=SecretStr("secret"))
+        assert conn.request_interval_seconds == 0.1

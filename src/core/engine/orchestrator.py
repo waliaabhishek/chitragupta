@@ -82,8 +82,7 @@ class ChargebackOrchestrator:
         self._ecosystem = tenant_config.ecosystem
         self._tenant_id = tenant_config.tenant_id
 
-        # Initialize plugin
-        plugin.initialize(tenant_config.plugin_settings)
+        # Plugin should already be initialized by caller (workflow_runner)
         self._bundle = EcosystemBundle.build(plugin)
 
         # Allocator overrides

@@ -459,6 +459,56 @@ class TestGap015017PluginMetrics:
         assert call_args[4] is fake_metrics
 
 
+class TestTd020PluginInitialization:
+    """TD-020 regression: plugin.initialize() called before any method calls."""
+
+    @patch("workflow_runner.ChargebackOrchestrator")
+    @patch("workflow_runner._create_storage_backend")
+    def test_plugin_initialized_before_get_metrics_source(
+        self,
+        mock_storage: MagicMock,
+        mock_orch_cls: MagicMock,
+    ) -> None:
+        """TD-020: plugin.initialize() must be called before get_metrics_source()."""
+        mock_backend = MagicMock()
+        mock_storage.return_value = mock_backend
+        mock_orch = MagicMock()
+        mock_orch.run.return_value = PipelineRunResult(
+            tenant_name="t1",
+            tenant_id="tid1",
+            dates_gathered=0,
+            dates_calculated=0,
+            chargeback_rows_written=0,
+        )
+        mock_orch_cls.return_value = mock_orch
+
+        registry = MagicMock()
+        plugin = MagicMock()
+
+        # Track call order
+        call_order: list[str] = []
+
+        def track_initialize(*args: Any, **kwargs: Any) -> None:
+            call_order.append("initialize")
+
+        def track_get_metrics() -> None:
+            call_order.append("get_metrics_source")
+            return None
+
+        plugin.initialize.side_effect = track_initialize
+        plugin.get_metrics_source.side_effect = track_get_metrics
+        registry.create.return_value = plugin
+
+        settings = _make_settings(tenants={"t1": _make_tenant(tenant_id="tid1")})
+        runner = WorkflowRunner(settings, registry)
+        runner.run_once()
+
+        # Verify initialize() was called before get_metrics_source()
+        assert "initialize" in call_order
+        assert "get_metrics_source" in call_order
+        assert call_order.index("initialize") < call_order.index("get_metrics_source")
+
+
 class TestWorkflowRunnerRunLoop:
     def test_shutdown_event_stops_loop(self) -> None:
         settings = _make_settings(refresh_interval=1)

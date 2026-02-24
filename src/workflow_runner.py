@@ -105,6 +105,7 @@ class WorkflowRunner:
 
     def _run_tenant(self, name: str, config: TenantConfig) -> PipelineRunResult:
         plugin = self._plugin_registry.create(config.ecosystem)
+        plugin.initialize(config.plugin_settings)  # TD-020: Initialize before any method calls
         storage = _create_storage_backend(config.storage)
         metrics = plugin.get_metrics_source()  # GAP-015+017: plugin owns metrics
         orchestrator = ChargebackOrchestrator(name, config, plugin, storage, metrics)

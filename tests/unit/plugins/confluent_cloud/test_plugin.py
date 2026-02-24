@@ -44,13 +44,25 @@ def test_plugin_get_service_handlers_empty():
     assert handlers == {}  # Stub returns empty dict
 
 
-def test_plugin_get_cost_input_not_implemented():
+def test_plugin_get_cost_input_returns_billing_cost_input():
+    """get_cost_input() returns CCloudBillingCostInput after initialization."""
     from plugins.confluent_cloud import ConfluentCloudPlugin
+    from plugins.confluent_cloud.cost_input import CCloudBillingCostInput
 
     plugin = ConfluentCloudPlugin()
     plugin.initialize({"ccloud_api": {"key": "k", "secret": "s"}})
 
-    with pytest.raises(NotImplementedError):
+    cost_input = plugin.get_cost_input()
+    assert isinstance(cost_input, CCloudBillingCostInput)
+
+
+def test_plugin_get_cost_input_raises_before_initialize():
+    """get_cost_input() raises RuntimeError if called before initialize()."""
+    from plugins.confluent_cloud import ConfluentCloudPlugin
+
+    plugin = ConfluentCloudPlugin()
+
+    with pytest.raises(RuntimeError, match="not initialized"):
         plugin.get_cost_input()
 
 

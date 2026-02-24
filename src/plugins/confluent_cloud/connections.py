@@ -20,7 +20,7 @@ DEFAULT_PAGE_SIZE = 500
 
 @dataclass
 class CCloudConnection:
-    """HTTP client for Confluent Cloud API with connection pooling."""
+    """HTTP client for Confluent Cloud API with connection pooling and throttling."""
 
     api_key: str
     api_secret: SecretStr
@@ -28,8 +28,10 @@ class CCloudConnection:
     timeout_seconds: int = 30
     max_retries: int = 5
     base_backoff_seconds: float = 2.0
+    request_interval_seconds: float = 0.1  # Proactive throttling: 100ms = 10 req/s max
 
     _session: requests.Session = field(init=False, repr=False, compare=False)
+    _last_request_time: float = field(init=False, default=0.0, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         self._session = requests.Session()
@@ -70,6 +72,30 @@ class CCloudConnection:
 
             request_params["page_token"] = page_token
 
+    def get_raw(
+        self,
+        path: str,
+        params: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        """GET returning full JSON response without pagination.
+
+        Use for endpoints that don't follow the standard
+        {"data": [...], "metadata": {...}} envelope (e.g., connector list API).
+
+        Returns {} on 404 (unlike get() which returns the standard empty envelope).
+        This allows callers to safely iterate response.values() without special handling.
+        """
+        url = f"{self.base_url.rstrip('/')}{path}"
+        result = self._request("GET", url, params=params or {}, **kwargs)
+        # _request() returns {"data": [], "metadata": {}} on 404, which doesn't
+        # make sense for non-standard endpoints. Return empty dict instead.
+        # Use semantic check (empty data array with metadata present) to handle
+        # variations in the exact envelope structure.
+        if result.get("data") == [] and "metadata" in result:
+            return {}
+        return result
+
     def post(
         self,
         path: str,
@@ -86,8 +112,14 @@ class CCloudConnection:
         url: str,
         **kwargs: Any,
     ) -> dict[str, Any]:
-        """Execute HTTP request with retry logic for rate limits and timeouts."""
+        """Execute HTTP request with retry logic, rate limits, and proactive throttling."""
         kwargs.setdefault("timeout", self.timeout_seconds)
+
+        # Proactive throttling: ensure minimum interval between requests
+        if self.request_interval_seconds > 0:
+            elapsed = time.time() - self._last_request_time
+            if elapsed < self.request_interval_seconds:
+                time.sleep(self.request_interval_seconds - elapsed)
 
         last_exception: Exception | None = None
 
@@ -104,6 +136,7 @@ class CCloudConnection:
                 raise CCloudConnectionError(str(e)) from e
 
             if resp.status_code == 200:
+                self._last_request_time = time.time()
                 return cast("dict[str, Any]", resp.json())
             elif resp.status_code == 404:
                 LOGGER.info("Resource not found: %s", url)
