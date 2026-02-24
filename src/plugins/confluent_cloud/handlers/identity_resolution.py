@@ -1,0 +1,135 @@
+"""Identity resolution helper for Kafka and Schema Registry handlers.
+
+This module provides temporal identity resolution for CCloud billing allocation.
+The critical fix from reference code: filter by billing window, not current state.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime
+from typing import TYPE_CHECKING
+
+from core.models import Identity, IdentityResolution, IdentitySet
+
+if TYPE_CHECKING:
+    from core.models import MetricRow
+    from core.storage.interface import UnitOfWork
+
+
+def resolve_kafka_sr_identities(
+    tenant_id: str,
+    resource_id: str,
+    billing_start: datetime,
+    billing_end: datetime,
+    metrics_data: dict[str, list[MetricRow]] | None,
+    uow: UnitOfWork,
+    ecosystem: str,
+) -> IdentityResolution:
+    """Resolve identities for Kafka/SR billing with temporal awareness.
+
+    Args:
+        tenant_id: The tenant ID.
+        resource_id: The Kafka cluster ID (lkc-xxx) or SR ID (lsrc-xxx).
+        billing_start: Start of billing window.
+        billing_end: End of billing window.
+        metrics_data: Prometheus metrics data (may be None).
+        uow: Unit of work for database access.
+        ecosystem: The ecosystem name.
+
+    Returns:
+        IdentityResolution with:
+        - resource_active: API key owners for this resource during billing window
+        - metrics_derived: Principal IDs from metrics (sentinels if not in DB)
+        - tenant_period: Empty (orchestrator fills this)
+    """
+    resource_active = IdentitySet()
+    metrics_derived = IdentitySet()
+    tenant_period = IdentitySet()  # Orchestrator fills this
+
+    # 1. Get all identities in billing window (single query)
+    all_identities = list(
+        uow.identities.find_by_period(
+            ecosystem=ecosystem,
+            tenant_id=tenant_id,
+            start=billing_start,
+            end=billing_end,
+        )
+    )
+
+    # Build lookup dict for O(1) owner resolution
+    identity_by_id = {i.identity_id: i for i in all_identities}
+
+    # 2. Filter to API keys for this cluster (metadata.resource_id per gathering.py)
+    for identity in all_identities:
+        if identity.identity_type != "api_key":
+            continue
+        if identity.metadata.get("resource_id") != resource_id:
+            continue
+        owner_id = identity.metadata.get("owner_id")
+        if owner_id:
+            owner = identity_by_id.get(owner_id) or _create_sentinel(owner_id, tenant_id, ecosystem)
+            resource_active.add(owner)
+
+    # 3. Extract principals from metrics
+    if metrics_data:
+        principals = _extract_principals_from_metrics(metrics_data)
+        for principal_id in principals:
+            identity = identity_by_id.get(principal_id) or _create_sentinel(principal_id, tenant_id, ecosystem)
+            metrics_derived.add(identity)
+
+    return IdentityResolution(
+        resource_active=resource_active,
+        metrics_derived=metrics_derived,
+        tenant_period=tenant_period,
+    )
+
+
+def _extract_principals_from_metrics(
+    metrics_data: dict[str, list[MetricRow]],
+) -> set[str]:
+    """Extract unique principal IDs from metrics labels.
+
+    Args:
+        metrics_data: Dict mapping metric key to list of MetricRow.
+
+    Returns:
+        Set of unique principal_id values.
+    """
+    principals: set[str] = set()
+    for rows in metrics_data.values():
+        for row in rows:
+            principal_id = row.labels.get("principal_id")
+            if principal_id:
+                principals.add(principal_id)
+    return principals
+
+
+def _create_sentinel(identity_id: str, tenant_id: str, ecosystem: str) -> Identity:
+    """Create a sentinel identity for unknown identity IDs.
+
+    Parses the identity type from the ID prefix:
+    - sa-xxx -> service_account
+    - u-xxx -> user
+    - pool-xxx -> identity_pool
+    - other -> unknown
+
+    Args:
+        identity_id: The identity ID to create sentinel for.
+        tenant_id: The tenant ID.
+        ecosystem: The ecosystem name.
+
+    Returns:
+        A sentinel Identity object.
+    """
+    # Parse type from prefix
+    prefix = identity_id.split("-")[0] if "-" in identity_id else ""
+    identity_type_map = {"sa": "service_account", "u": "user", "pool": "identity_pool"}
+    identity_type = identity_type_map.get(prefix, "unknown")
+
+    return Identity(
+        ecosystem=ecosystem,
+        tenant_id=tenant_id,
+        identity_id=identity_id,
+        identity_type=identity_type,
+        display_name=f"Unknown {identity_type}",
+    )

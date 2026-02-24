@@ -155,6 +155,7 @@ class TestBillingItemMapping:
 
     def test_parse_billing_date_invalid(self):
         import pytest
+
         from plugins.confluent_cloud.cost_input import _parse_billing_date
 
         with pytest.raises(ValueError, match="Invalid billing date"):

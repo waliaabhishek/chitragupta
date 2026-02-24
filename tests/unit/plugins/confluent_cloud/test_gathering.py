@@ -619,8 +619,8 @@ class TestGatherFlinkStatements:
 
     @responses.activate
     def test_gather_flink_statements_standard(self):
-        from plugins.confluent_cloud.gathering import gather_flink_statements
         from core.models import Resource, ResourceStatus
+        from plugins.confluent_cloud.gathering import gather_flink_statements
 
         # Regional Flink API
         responses.add(
@@ -668,8 +668,8 @@ class TestGatherFlinkStatements:
 
     @responses.activate
     def test_gather_flink_statements_stopped(self):
-        from plugins.confluent_cloud.gathering import gather_flink_statements
         from core.models import Resource, ResourceStatus
+        from plugins.confluent_cloud.gathering import gather_flink_statements
 
         responses.add(
             responses.GET,
@@ -711,8 +711,8 @@ class TestGatherFlinkStatements:
     @responses.activate
     def test_gather_flink_statements_regional_url(self):
         """Verify correct regional base URL is constructed."""
-        from plugins.confluent_cloud.gathering import gather_flink_statements
         from core.models import Resource, ResourceStatus
+        from plugins.confluent_cloud.gathering import gather_flink_statements
 
         # Expect request to eu-central-1.gcp regional URL
         responses.add(
@@ -747,8 +747,8 @@ class TestGatherFlinkStatements:
     @responses.activate
     def test_gather_flink_statements_missing_id_uses_sentinel(self):
         """Verify deterministic sentinel fallback when uid and name are missing."""
-        from plugins.confluent_cloud.gathering import gather_flink_statements
         from core.models import Resource, ResourceStatus
+        from plugins.confluent_cloud.gathering import gather_flink_statements
 
         responses.add(
             responses.GET,
@@ -793,8 +793,8 @@ class TestGatherFlinkStatements:
     @responses.activate
     def test_gather_flink_statements_connection_reuse(self):
         """Verify connections are reused for pools in the same region."""
-        from plugins.confluent_cloud.gathering import gather_flink_statements
         from core.models import Resource, ResourceStatus
+        from plugins.confluent_cloud.gathering import gather_flink_statements
 
         # Two pools in same region should reuse connection
         responses.add(
