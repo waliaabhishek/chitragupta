@@ -161,15 +161,15 @@ class TestKafkaHandlerGetMetrics:
         assert metrics == []
 
     def test_metrics_have_correct_structure(self) -> None:
-        """Metrics have correct query structure with placeholders."""
+        """Metrics have correct query structure with {} placeholder for resource filter."""
         from plugins.confluent_cloud.handlers.kafka import KafkaHandler
 
         handler = KafkaHandler(connection=None, config=None, ecosystem="confluent_cloud")
         metrics = handler.get_metrics_for_product_type("KAFKA_NUM_CKU")
 
         for metric in metrics:
-            assert "{resource_id}" in metric.query_expression
-            assert "{step}" in metric.query_expression
+            # {} placeholder gets replaced by _inject_resource_filter with {kafka_id="lkc-xxx"}
+            assert "{}" in metric.query_expression
             assert "principal_id" in metric.label_keys
             assert metric.resource_label == "kafka_id"
 

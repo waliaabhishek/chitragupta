@@ -39,15 +39,11 @@ _KAFKA_PRODUCT_TYPES: tuple[str, ...] = (
     "KAFKA_NETWORK_WRITE",
 )
 
-# Prometheus metrics for usage-based allocation
-# Placeholders {resource_id} and {step} resolved by orchestrator before query
-_BYTES_IN_QUERY = (
-    "sum by (kafka_id, principal_id)"
-    '(increase(confluent_kafka_server_received_bytes{{kafka_id="{resource_id}"}}[{step}]))'
-)
-_BYTES_OUT_QUERY = (
-    'sum by (kafka_id, principal_id)(increase(confluent_kafka_server_sent_bytes{{kafka_id="{resource_id}"}}[{step}]))'
-)
+# Prometheus metrics for usage-based allocation.
+# {} placeholder is replaced by _inject_resource_filter with {kafka_id="lkc-xxx"}.
+# Reference uses request_bytes (produce/write) and response_bytes (consume/read).
+_BYTES_IN_QUERY = "sum by (kafka_id, principal_id) (confluent_kafka_server_request_bytes{})"
+_BYTES_OUT_QUERY = "sum by (kafka_id, principal_id) (confluent_kafka_server_response_bytes{})"
 
 _KAFKA_USAGE_METRICS: list[MetricQuery] = [
     MetricQuery(
