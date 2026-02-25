@@ -43,6 +43,9 @@ class FeaturesConfig(BaseModel):
 class ApiConfig(BaseModel):
     host: str = "0.0.0.0"
     port: int = Field(default=8080, gt=0, le=65535)
+    enable_cors: bool = False
+    cors_origins: list[str] = Field(default_factory=list)
+    request_timeout_seconds: int = Field(default=30, gt=0, le=300)
 
 
 class StorageConfig(BaseModel):

@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import delete, or_
+from sqlalchemy import delete, func, or_
 from sqlmodel import Session, col, select
 
 if TYPE_CHECKING:
@@ -113,6 +113,28 @@ class SQLModelResourceRepository:
         )
         return [resource_to_domain(r) for r in self._session.exec(stmt).all()]
 
+    def find_paginated(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        limit: int,
+        offset: int,
+        resource_type: str | None = None,
+        status: str | None = None,
+    ) -> tuple[list[Resource], int]:
+        where = [col(ResourceTable.ecosystem) == ecosystem, col(ResourceTable.tenant_id) == tenant_id]
+        if resource_type is not None:
+            where.append(col(ResourceTable.resource_type) == resource_type)
+        if status is not None:
+            where.append(col(ResourceTable.status) == status)
+
+        count_stmt = select(func.count()).select_from(ResourceTable).where(*where)
+        total: int = self._session.exec(count_stmt).one()
+
+        stmt = select(ResourceTable).where(*where).offset(offset).limit(limit)
+        items = [resource_to_domain(r) for r in self._session.exec(stmt).all()]
+        return items, total
+
     def mark_deleted(self, ecosystem: str, tenant_id: str, resource_id: str, deleted_at: datetime) -> None:
         row = self._session.get(ResourceTable, (ecosystem, tenant_id, resource_id))
         if row:
@@ -164,6 +186,25 @@ class SQLModelIdentityRepository:
             col(IdentityTable.identity_type) == identity_type,
         )
         return [identity_to_domain(r) for r in self._session.exec(stmt).all()]
+
+    def find_paginated(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        limit: int,
+        offset: int,
+        identity_type: str | None = None,
+    ) -> tuple[list[Identity], int]:
+        where = [col(IdentityTable.ecosystem) == ecosystem, col(IdentityTable.tenant_id) == tenant_id]
+        if identity_type is not None:
+            where.append(col(IdentityTable.identity_type) == identity_type)
+
+        count_stmt = select(func.count()).select_from(IdentityTable).where(*where)
+        total: int = self._session.exec(count_stmt).one()
+
+        stmt = select(IdentityTable).where(*where).offset(offset).limit(limit)
+        items = [identity_to_domain(r) for r in self._session.exec(stmt).all()]
+        return items, total
 
     def mark_deleted(self, ecosystem: str, tenant_id: str, identity_id: str, deleted_at: datetime) -> None:
         row = self._session.get(IdentityTable, (ecosystem, tenant_id, identity_id))
@@ -234,6 +275,34 @@ class SQLModelBillingRepository:
         self._session.add(row)
         self._session.flush()
         return row.allocation_attempts
+
+    def find_by_filters(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        product_type: str | None = None,
+        resource_id: str | None = None,
+        limit: int = 1000,
+        offset: int = 0,
+    ) -> tuple[list[BillingLineItem], int]:
+        where: list[Any] = [col(BillingTable.ecosystem) == ecosystem, col(BillingTable.tenant_id) == tenant_id]
+        if start is not None:
+            where.append(col(BillingTable.timestamp) >= start)
+        if end is not None:
+            where.append(col(BillingTable.timestamp) < end)
+        if product_type is not None:
+            where.append(col(BillingTable.product_type) == product_type)
+        if resource_id is not None:
+            where.append(col(BillingTable.resource_id) == resource_id)
+
+        count_stmt = select(func.count()).select_from(BillingTable).where(*where)
+        total: int = self._session.exec(count_stmt).one()
+
+        stmt = select(BillingTable).where(*where).offset(offset).limit(limit)
+        items = [billing_to_domain(r) for r in self._session.exec(stmt).all()]
+        return items, total
 
     def delete_before(self, ecosystem: str, tenant_id: str, before: datetime) -> int:
         stmt = delete(BillingTable).where(
@@ -342,6 +411,57 @@ class SQLModelChargebackRepository:
         self._session.flush()
         return result.rowcount  # type: ignore[attr-defined, no-any-return]  # CursorResult always has rowcount
 
+    def find_by_filters(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        identity_id: str | None = None,
+        product_type: str | None = None,
+        resource_id: str | None = None,
+        cost_type: str | None = None,
+        limit: int = 1000,
+        offset: int = 0,
+    ) -> tuple[list[ChargebackRow], int]:
+        where: list[Any] = [
+            col(ChargebackDimensionTable.ecosystem) == ecosystem,
+            col(ChargebackDimensionTable.tenant_id) == tenant_id,
+        ]
+        if start is not None:
+            where.append(col(ChargebackFactTable.timestamp) >= start)
+        if end is not None:
+            where.append(col(ChargebackFactTable.timestamp) < end)
+        if identity_id is not None:
+            where.append(col(ChargebackDimensionTable.identity_id) == identity_id)
+        if product_type is not None:
+            where.append(col(ChargebackDimensionTable.product_type) == product_type)
+        if resource_id is not None:
+            where.append(col(ChargebackDimensionTable.resource_id) == resource_id)
+        if cost_type is not None:
+            where.append(col(ChargebackDimensionTable.cost_type) == cost_type)
+
+        join_clause = col(ChargebackDimensionTable.dimension_id) == col(ChargebackFactTable.dimension_id)
+
+        count_stmt = (
+            select(func.count())
+            .select_from(ChargebackDimensionTable)
+            .join(ChargebackFactTable, join_clause)
+            .where(*where)
+        )
+        total: int = self._session.exec(count_stmt).one()
+
+        stmt = (
+            select(ChargebackDimensionTable, ChargebackFactTable)
+            .join(ChargebackFactTable, join_clause)
+            .where(*where)
+            .offset(offset)
+            .limit(limit)
+        )
+        results = self._session.execute(stmt).all()
+        items = [chargeback_to_domain(dim, fact) for dim, fact in results]
+        return items, total
+
     def delete_before(self, ecosystem: str, tenant_id: str, before: datetime) -> int:
         # Get dimension IDs for this ecosystem+tenant
         dim_stmt = select(ChargebackDimensionTable.dimension_id).where(
@@ -437,6 +557,40 @@ class SQLModelPipelineStateRepository:
             row.chargeback_calculated = True
             self._session.add(row)
             self._session.flush()
+
+    def count_pending(self, ecosystem: str, tenant_id: str) -> int:
+        stmt = (
+            select(func.count())
+            .select_from(PipelineStateTable)
+            .where(
+                col(PipelineStateTable.ecosystem) == ecosystem,
+                col(PipelineStateTable.tenant_id) == tenant_id,
+                col(PipelineStateTable.billing_gathered) == True,  # noqa: E712
+                col(PipelineStateTable.resources_gathered) == True,  # noqa: E712
+                col(PipelineStateTable.chargeback_calculated) == False,  # noqa: E712
+            )
+        )
+        return self._session.exec(stmt).one()  # type: ignore[return-value]
+
+    def count_calculated(self, ecosystem: str, tenant_id: str) -> int:
+        stmt = (
+            select(func.count())
+            .select_from(PipelineStateTable)
+            .where(
+                col(PipelineStateTable.ecosystem) == ecosystem,
+                col(PipelineStateTable.tenant_id) == tenant_id,
+                col(PipelineStateTable.chargeback_calculated) == True,  # noqa: E712
+            )
+        )
+        return self._session.exec(stmt).one()  # type: ignore[return-value]
+
+    def get_last_calculated_date(self, ecosystem: str, tenant_id: str) -> date | None:
+        stmt = select(func.max(PipelineStateTable.tracking_date)).where(
+            col(PipelineStateTable.ecosystem) == ecosystem,
+            col(PipelineStateTable.tenant_id) == tenant_id,
+            col(PipelineStateTable.chargeback_calculated) == True,  # noqa: E712
+        )
+        return self._session.exec(stmt).one()  # type: ignore[return-value]
 
 
 # --- TagRepository ---

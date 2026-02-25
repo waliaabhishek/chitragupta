@@ -36,6 +36,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=False,
         help="Run pipeline once and exit (no loop)",
     )
+    parser.add_argument(
+        "--mode",
+        choices=["worker", "api", "both"],
+        default="worker",
+        help="Run mode: worker (pipeline), api (HTTP server), or both",
+    )
     return parser.parse_args(argv)
 
 
@@ -47,12 +53,18 @@ def setup_logging(settings: AppSettings) -> None:
         logging.getLogger(module).setLevel(level)
 
 
-def main(argv: list[str] | None = None) -> None:
-    args = parse_args(argv)
-    settings = load_config(args.config_file, env_file=args.env_file)
-    setup_logging(settings)
+def run_api(settings: AppSettings) -> None:
+    """Start the FastAPI server."""
+    import uvicorn
 
-    # Discover and register plugins
+    from core.api.app import create_app
+
+    app = create_app(settings)
+    uvicorn.run(app, host=settings.api.host, port=settings.api.port)
+
+
+def run_worker(settings: AppSettings, *, run_once: bool = False) -> None:
+    """Run the pipeline worker."""
     plugins_path = Path("plugins")
     registry = PluginRegistry()
     for ecosystem, factory in discover_plugins(plugins_path):
@@ -60,7 +72,7 @@ def main(argv: list[str] | None = None) -> None:
 
     runner = WorkflowRunner(settings, registry)
 
-    if args.run_once:
+    if run_once:
         results = runner.run_once()
         for name, result in results.items():
             if result.errors:
@@ -84,9 +96,27 @@ def main(argv: list[str] | None = None) -> None:
     signal.signal(signal.SIGINT, _signal_handler)
     signal.signal(signal.SIGTERM, _signal_handler)
 
-    logger.info("Starting chargeback engine...")
+    logger.info("Starting chargeback engine worker...")
     runner.run_loop(shutdown_event)
-    logger.info("Chargeback engine stopped.")
+    logger.info("Chargeback engine worker stopped.")
+
+
+def main(argv: list[str] | None = None) -> None:
+    args = parse_args(argv)
+    settings = load_config(args.config_file, env_file=args.env_file)
+    setup_logging(settings)
+
+    mode = args.mode
+
+    if mode == "api":
+        run_api(settings)
+    elif mode == "both":
+        worker_thread = threading.Thread(target=run_worker, args=(settings,), kwargs={"run_once": args.run_once})
+        worker_thread.daemon = True
+        worker_thread.start()
+        run_api(settings)
+    else:
+        run_worker(settings, run_once=args.run_once)
 
 
 if __name__ == "__main__":

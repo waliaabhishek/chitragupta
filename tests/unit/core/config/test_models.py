@@ -81,6 +81,26 @@ class TestApiConfig:
         with pytest.raises(ValidationError):
             ApiConfig(port=65536)
 
+    def test_cors_defaults(self) -> None:
+        cfg = ApiConfig()
+        assert cfg.enable_cors is False
+        assert cfg.cors_origins == []
+        assert cfg.request_timeout_seconds == 30
+
+    def test_cors_fields(self) -> None:
+        cfg = ApiConfig(enable_cors=True, cors_origins=["http://localhost:3000"], request_timeout_seconds=60)
+        assert cfg.enable_cors is True
+        assert cfg.cors_origins == ["http://localhost:3000"]
+        assert cfg.request_timeout_seconds == 60
+
+    def test_timeout_bounds(self) -> None:
+        with pytest.raises(ValidationError):
+            ApiConfig(request_timeout_seconds=0)
+        with pytest.raises(ValidationError):
+            ApiConfig(request_timeout_seconds=301)
+        cfg = ApiConfig(request_timeout_seconds=300)
+        assert cfg.request_timeout_seconds == 300
+
 
 class TestStorageConfig:
     def test_defaults(self) -> None:

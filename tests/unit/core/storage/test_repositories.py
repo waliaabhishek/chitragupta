@@ -499,6 +499,234 @@ class TestPipelineStateRepository:
         assert got is not None
         assert got.chargeback_calculated is True
 
+    def test_count_pending(self, session: Session) -> None:
+        repo = SQLModelPipelineStateRepository(session)
+        repo.upsert(self._make_state(billing_gathered=True, resources_gathered=True, chargeback_calculated=False))
+        repo.upsert(
+            self._make_state(
+                tracking_date=date(2026, 1, 16),
+                billing_gathered=True,
+                resources_gathered=True,
+                chargeback_calculated=True,
+            )
+        )
+        repo.upsert(self._make_state(tracking_date=date(2026, 1, 17), billing_gathered=False))
+        session.commit()
+        assert repo.count_pending("eco", "t1") == 1
+
+    def test_count_calculated(self, session: Session) -> None:
+        repo = SQLModelPipelineStateRepository(session)
+        repo.upsert(self._make_state(chargeback_calculated=True))
+        repo.upsert(self._make_state(tracking_date=date(2026, 1, 16), chargeback_calculated=True))
+        repo.upsert(self._make_state(tracking_date=date(2026, 1, 17), chargeback_calculated=False))
+        session.commit()
+        assert repo.count_calculated("eco", "t1") == 2
+
+    def test_get_last_calculated_date(self, session: Session) -> None:
+        repo = SQLModelPipelineStateRepository(session)
+        repo.upsert(self._make_state(tracking_date=date(2026, 1, 10), chargeback_calculated=True))
+        repo.upsert(self._make_state(tracking_date=date(2026, 1, 20), chargeback_calculated=True))
+        repo.upsert(self._make_state(tracking_date=date(2026, 1, 25), chargeback_calculated=False))
+        session.commit()
+        result = repo.get_last_calculated_date("eco", "t1")
+        assert result == date(2026, 1, 20)
+
+    def test_get_last_calculated_date_none(self, session: Session) -> None:
+        repo = SQLModelPipelineStateRepository(session)
+        assert repo.get_last_calculated_date("eco", "t1") is None
+
+
+# --- Paginated Repository Methods ---
+
+
+class TestResourceFindPaginated:
+    def _make_resource(self, **overrides: Any) -> Resource:
+        defaults = dict(
+            ecosystem="eco",
+            tenant_id="t1",
+            resource_id="r1",
+            resource_type="kafka",
+            status=ResourceStatus.ACTIVE,
+            created_at=datetime(2026, 1, 10, tzinfo=UTC),
+            metadata={},
+        )
+        defaults.update(overrides)
+        return Resource(**defaults)
+
+    def test_basic_pagination(self, session: Session) -> None:
+        repo = SQLModelResourceRepository(session)
+        for i in range(5):
+            repo.upsert(self._make_resource(resource_id=f"r{i}"))
+        session.commit()
+        items, total = repo.find_paginated("eco", "t1", limit=2, offset=0)
+        assert total == 5
+        assert len(items) == 2
+
+    def test_with_type_filter(self, session: Session) -> None:
+        repo = SQLModelResourceRepository(session)
+        repo.upsert(self._make_resource(resource_id="r1", resource_type="kafka"))
+        repo.upsert(self._make_resource(resource_id="r2", resource_type="ksql"))
+        session.commit()
+        items, total = repo.find_paginated("eco", "t1", limit=10, offset=0, resource_type="kafka")
+        assert total == 1
+        assert items[0].resource_type == "kafka"
+
+    def test_with_status_filter(self, session: Session) -> None:
+        repo = SQLModelResourceRepository(session)
+        repo.upsert(self._make_resource(resource_id="r1", status=ResourceStatus.ACTIVE))
+        repo.upsert(self._make_resource(resource_id="r2", status=ResourceStatus.DELETED))
+        session.commit()
+        items, total = repo.find_paginated("eco", "t1", limit=10, offset=0, status="active")
+        assert total == 1
+
+    def test_returns_correct_total(self, session: Session) -> None:
+        repo = SQLModelResourceRepository(session)
+        for i in range(10):
+            repo.upsert(self._make_resource(resource_id=f"r{i}"))
+        session.commit()
+        items, total = repo.find_paginated("eco", "t1", limit=3, offset=6)
+        assert total == 10
+        assert len(items) == 3
+
+
+class TestIdentityFindPaginated:
+    def test_basic(self, session: Session) -> None:
+        repo = SQLModelIdentityRepository(session)
+        for i in range(3):
+            repo.upsert(
+                Identity(
+                    ecosystem="eco",
+                    tenant_id="t1",
+                    identity_id=f"u{i}",
+                    identity_type="user",
+                    created_at=datetime(2026, 1, 1, tzinfo=UTC),
+                )
+            )
+        session.commit()
+        items, total = repo.find_paginated("eco", "t1", limit=2, offset=0)
+        assert total == 3
+        assert len(items) == 2
+
+    def test_with_type_filter(self, session: Session) -> None:
+        repo = SQLModelIdentityRepository(session)
+        repo.upsert(
+            Identity(
+                ecosystem="eco",
+                tenant_id="t1",
+                identity_id="u1",
+                identity_type="user",
+                created_at=datetime(2026, 1, 1, tzinfo=UTC),
+            )
+        )
+        repo.upsert(
+            Identity(
+                ecosystem="eco",
+                tenant_id="t1",
+                identity_id="sa1",
+                identity_type="service_account",
+                created_at=datetime(2026, 1, 1, tzinfo=UTC),
+            )
+        )
+        session.commit()
+        items, total = repo.find_paginated("eco", "t1", limit=10, offset=0, identity_type="service_account")
+        assert total == 1
+        assert items[0].identity_id == "sa1"
+
+
+class TestBillingFindByFilters:
+    def _make_billing(self, **overrides: Any) -> BillingLineItem:
+        defaults = dict(
+            ecosystem="eco",
+            tenant_id="t1",
+            timestamp=datetime(2026, 1, 15, tzinfo=UTC),
+            resource_id="r1",
+            product_category="compute",
+            product_type="kafka",
+            quantity=Decimal("100"),
+            unit_price=Decimal("0.01"),
+            total_cost=Decimal("1.00"),
+        )
+        defaults.update(overrides)
+        return BillingLineItem(**defaults)
+
+    def test_all_filters(self, session: Session) -> None:
+        repo = SQLModelBillingRepository(session)
+        repo.upsert(self._make_billing())
+        repo.upsert(self._make_billing(resource_id="r2", product_type="connect"))
+        session.commit()
+        items, total = repo.find_by_filters(
+            "eco",
+            "t1",
+            start=datetime(2026, 1, 1, tzinfo=UTC),
+            end=datetime(2026, 2, 1, tzinfo=UTC),
+            product_type="kafka",
+            resource_id="r1",
+        )
+        assert total == 1
+        assert items[0].resource_id == "r1"
+
+    def test_pagination(self, session: Session) -> None:
+        repo = SQLModelBillingRepository(session)
+        for i in range(5):
+            repo.upsert(self._make_billing(resource_id=f"r{i}"))
+        session.commit()
+        items, total = repo.find_by_filters("eco", "t1", limit=2, offset=0)
+        assert total == 5
+        assert len(items) == 2
+
+
+class TestChargebackFindByFilters:
+    def _make_row(self, **overrides: Any) -> ChargebackRow:
+        defaults = dict(
+            ecosystem="eco",
+            tenant_id="t1",
+            timestamp=datetime(2026, 1, 15, tzinfo=UTC),
+            resource_id="r1",
+            product_category="compute",
+            product_type="kafka",
+            identity_id="u1",
+            cost_type=CostType.USAGE,
+            amount=Decimal("50.00"),
+            allocation_method="direct",
+            tags=[],
+        )
+        defaults.update(overrides)
+        return ChargebackRow(**defaults)
+
+    def test_all_filters(self, session: Session) -> None:
+        repo = SQLModelChargebackRepository(session)
+        repo.upsert(self._make_row())
+        repo.upsert(self._make_row(identity_id="u2", cost_type=CostType.SHARED))
+        session.commit()
+        items, total = repo.find_by_filters(
+            "eco",
+            "t1",
+            start=datetime(2026, 1, 1, tzinfo=UTC),
+            end=datetime(2026, 2, 1, tzinfo=UTC),
+            identity_id="u1",
+            product_type="kafka",
+            cost_type="usage",
+        )
+        assert total == 1
+        assert items[0].identity_id == "u1"
+
+    def test_partial_filters(self, session: Session) -> None:
+        repo = SQLModelChargebackRepository(session)
+        repo.upsert(self._make_row())
+        repo.upsert(self._make_row(identity_id="u2"))
+        session.commit()
+        items, total = repo.find_by_filters("eco", "t1", identity_id="u2")
+        assert total == 1
+
+    def test_pagination(self, session: Session) -> None:
+        repo = SQLModelChargebackRepository(session)
+        for i in range(5):
+            repo.upsert(self._make_row(timestamp=datetime(2026, 1, 15, i, tzinfo=UTC), resource_id=f"r{i}"))
+        session.commit()
+        items, total = repo.find_by_filters("eco", "t1", limit=2, offset=0)
+        assert total == 5
+        assert len(items) == 2
+
 
 # --- Tag Repository ---
 

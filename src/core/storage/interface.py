@@ -37,6 +37,18 @@ class ResourceRepository(Protocol):
 
     def find_by_type(self, ecosystem: str, tenant_id: str, resource_type: str) -> list[Resource]: ...
 
+    def find_paginated(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        limit: int,
+        offset: int,
+        resource_type: str | None = None,
+        status: str | None = None,
+    ) -> tuple[list[Resource], int]:
+        """Returns (items, total_count) for pagination. Database-level LIMIT/OFFSET."""
+        ...
+
     def mark_deleted(self, ecosystem: str, tenant_id: str, resource_id: str, deleted_at: datetime) -> None: ...
 
     def delete_before(self, ecosystem: str, tenant_id: str, before: datetime) -> int: ...
@@ -59,6 +71,17 @@ class IdentityRepository(Protocol):
         ...
 
     def find_by_type(self, ecosystem: str, tenant_id: str, identity_type: str) -> list[Identity]: ...
+
+    def find_paginated(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        limit: int,
+        offset: int,
+        identity_type: str | None = None,
+    ) -> tuple[list[Identity], int]:
+        """Returns (items, total_count) for pagination. Database-level LIMIT/OFFSET."""
+        ...
 
     def mark_deleted(self, ecosystem: str, tenant_id: str, identity_id: str, deleted_at: datetime) -> None: ...
 
@@ -94,6 +117,20 @@ class BillingRepository(Protocol):
 
     def delete_before(self, ecosystem: str, tenant_id: str, before: datetime) -> int: ...
 
+    def find_by_filters(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        product_type: str | None = None,
+        resource_id: str | None = None,
+        limit: int = 1000,
+        offset: int = 0,
+    ) -> tuple[list[BillingLineItem], int]:
+        """Returns (items, total_count). Filters applied at SQL level."""
+        ...
+
 
 @runtime_checkable
 class ChargebackRepository(Protocol):
@@ -110,6 +147,22 @@ class ChargebackRepository(Protocol):
     def delete_by_date(self, ecosystem: str, tenant_id: str, date: date) -> int: ...
 
     def delete_before(self, ecosystem: str, tenant_id: str, before: datetime) -> int: ...
+
+    def find_by_filters(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        identity_id: str | None = None,
+        product_type: str | None = None,
+        resource_id: str | None = None,
+        cost_type: str | None = None,
+        limit: int = 1000,
+        offset: int = 0,
+    ) -> tuple[list[ChargebackRow], int]:
+        """Returns (items, total_count). Filters and pagination at SQL level."""
+        ...
 
 
 @runtime_checkable
@@ -140,6 +193,18 @@ class PipelineStateRepository(Protocol):
         ...
 
     def mark_chargeback_calculated(self, ecosystem: str, tenant_id: str, tracking_date: date) -> None: ...
+
+    def count_pending(self, ecosystem: str, tenant_id: str) -> int:
+        """Count dates where billing+resources gathered but chargeback not calculated."""
+        ...
+
+    def count_calculated(self, ecosystem: str, tenant_id: str) -> int:
+        """Count dates where chargeback has been calculated."""
+        ...
+
+    def get_last_calculated_date(self, ecosystem: str, tenant_id: str) -> date | None:
+        """Return the most recent tracking_date where chargeback_calculated=True, or None."""
+        ...
 
 
 @runtime_checkable
