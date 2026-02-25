@@ -43,3 +43,29 @@ class CustomTag:
     tag_value: str
     created_by: str
     created_at: datetime | None = None
+
+
+@dataclass
+class ChargebackDimensionInfo:
+    """Dimension row with ownership info for tenant isolation checks."""
+
+    dimension_id: int
+    ecosystem: str
+    tenant_id: str
+    resource_id: str | None
+    product_category: str
+    product_type: str
+    identity_id: str
+    cost_type: str
+    allocation_method: str | None
+    allocation_detail: str | None
+
+
+@dataclass
+class AggregationRow:
+    """A single bucket from a server-side aggregation query."""
+
+    dimensions: dict[str, str]
+    time_bucket: str
+    total_amount: Decimal
+    row_count: int

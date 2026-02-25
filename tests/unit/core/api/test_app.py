@@ -49,6 +49,14 @@ class TestCreateApp:
         assert "/api/v1/tenants/{tenant_name}/chargebacks" in routes
         assert "/api/v1/tenants/{tenant_name}/resources" in routes
         assert "/api/v1/tenants/{tenant_name}/identities" in routes
+        # Chunk 3.2 routes
+        assert "/api/v1/tenants/{tenant_name}/chargebacks/{dimension_id}" in routes
+        assert "/api/v1/tenants/{tenant_name}/chargebacks/{dimension_id}/tags" in routes
+        assert "/api/v1/tenants/{tenant_name}/tags/{tag_id}" in routes
+        assert "/api/v1/tenants/{tenant_name}/pipeline/run" in routes
+        assert "/api/v1/tenants/{tenant_name}/pipeline/status" in routes
+        assert "/api/v1/tenants/{tenant_name}/chargebacks/aggregate" in routes
+        assert "/api/v1/tenants/{tenant_name}/export" in routes
 
     def test_cors_disabled_by_default(self) -> None:
         settings = _make_settings(enable_cors=False)

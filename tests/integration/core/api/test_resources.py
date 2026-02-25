@@ -171,9 +171,7 @@ class TestListResources:
         assert response.status_code == 400
         assert "period_start" in response.json()["detail"]
 
-    def test_list_resources_pagination(
-        self, app_with_backend: TestClient, in_memory_backend: SQLModelBackend
-    ) -> None:
+    def test_list_resources_pagination(self, app_with_backend: TestClient, in_memory_backend: SQLModelBackend) -> None:
         with in_memory_backend.create_unit_of_work() as uow:
             for i in range(15):
                 uow.resources.upsert(

@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Protocol, Self, runtime_checkable
 
 if TYPE_CHECKING:
     from core.models.billing import BillingLineItem
-    from core.models.chargeback import ChargebackRow, CustomTag
+    from core.models.chargeback import AggregationRow, ChargebackDimensionInfo, ChargebackRow, CustomTag
     from core.models.identity import Identity
     from core.models.pipeline import PipelineState
     from core.models.resource import Resource
@@ -164,6 +164,23 @@ class ChargebackRepository(Protocol):
         """Returns (items, total_count). Filters and pagination at SQL level."""
         ...
 
+    def get_dimension(self, dimension_id: int) -> ChargebackDimensionInfo | None:
+        """Get a single dimension by ID for tenant isolation checks."""
+        ...
+
+    def aggregate(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        group_by: list[str],
+        time_bucket: str,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        limit: int = 10000,
+    ) -> list[AggregationRow]:
+        """Server-side aggregation with GROUP BY. Returns pre-aggregated buckets."""
+        ...
+
 
 @runtime_checkable
 class PipelineStateRepository(Protocol):
@@ -213,7 +230,19 @@ class TagRepository(Protocol):
 
     def add_tag(self, dimension_id: int, tag_key: str, tag_value: str, created_by: str) -> CustomTag: ...
 
+    def get_tag(self, tag_id: int) -> CustomTag | None: ...
+
     def get_tags(self, dimension_id: int) -> list[CustomTag]: ...
+
+    def find_tags_for_tenant(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> tuple[list[CustomTag], int]:
+        """Find all tags for dimensions belonging to a tenant. Returns (items, total)."""
+        ...
 
     def delete_tag(self, tag_id: int) -> None: ...
 

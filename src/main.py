@@ -53,13 +53,13 @@ def setup_logging(settings: AppSettings) -> None:
         logging.getLogger(module).setLevel(level)
 
 
-def run_api(settings: AppSettings) -> None:
+def run_api(settings: AppSettings, runner: WorkflowRunner | None = None) -> None:
     """Start the FastAPI server."""
     import uvicorn
 
     from core.api.app import create_app
 
-    app = create_app(settings)
+    app = create_app(settings, workflow_runner=runner)
     uvicorn.run(app, host=settings.api.host, port=settings.api.port)
 
 
@@ -111,10 +111,16 @@ def main(argv: list[str] | None = None) -> None:
     if mode == "api":
         run_api(settings)
     elif mode == "both":
+        plugins_path = Path("plugins")
+        registry = PluginRegistry()
+        for ecosystem, factory in discover_plugins(plugins_path):
+            registry.register(ecosystem, factory)
+        runner = WorkflowRunner(settings, registry)
+
         worker_thread = threading.Thread(target=run_worker, args=(settings,), kwargs={"run_once": args.run_once})
         worker_thread.daemon = True
         worker_thread.start()
-        run_api(settings)
+        run_api(settings, runner=runner)
     else:
         run_worker(settings, run_once=args.run_once)
 

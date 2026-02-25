@@ -145,6 +145,121 @@ class ChargebackResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+# --- Tag ---
+
+
+class TagResponse(BaseModel):
+    """Response for a single custom tag."""
+
+    tag_id: int
+    dimension_id: int
+    tag_key: str
+    tag_value: str
+    created_by: str
+    created_at: datetime | None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class TagCreateRequest(BaseModel):
+    """Request to create a custom tag."""
+
+    tag_key: str = Field(min_length=1, max_length=100)
+    tag_value: str = Field(min_length=1, max_length=500)
+    created_by: str = Field(min_length=1, max_length=100)
+
+
+# --- Pipeline ---
+
+
+class PipelineResultSummary(BaseModel):
+    """Summary of a completed pipeline run."""
+
+    dates_gathered: int
+    dates_calculated: int
+    chargeback_rows_written: int
+    errors: list[str]
+    completed_at: datetime
+
+
+class PipelineRunResponse(BaseModel):
+    """Response when triggering a pipeline run."""
+
+    tenant_name: str
+    status: str
+    message: str
+
+
+class PipelineStatusResponse(BaseModel):
+    """Response for pipeline run status."""
+
+    tenant_name: str
+    is_running: bool
+    last_run: datetime | None
+    last_result: PipelineResultSummary | None
+
+
+# --- Aggregation ---
+
+
+class AggregationBucket(BaseModel):
+    """A single bucket in an aggregation response."""
+
+    dimensions: dict[str, str]
+    time_bucket: str
+    total_amount: Decimal
+    row_count: int
+
+
+class AggregationResponse(BaseModel):
+    """Response for server-side aggregation."""
+
+    buckets: list[AggregationBucket]
+    total_amount: Decimal
+    total_rows: int
+
+
+# --- Export ---
+
+
+class ExportRequest(BaseModel):
+    """Request for CSV export."""
+
+    start_date: date | None = None
+    end_date: date | None = None
+    columns: list[str] | None = None
+    filters: dict[str, str] | None = None
+
+
+# --- Chargeback Dimension ---
+
+
+class ChargebackDimensionResponse(BaseModel):
+    """Response for a chargeback dimension."""
+
+    dimension_id: int
+    ecosystem: str
+    tenant_id: str
+    resource_id: str | None
+    product_category: str
+    product_type: str
+    identity_id: str
+    cost_type: str
+    allocation_method: str | None
+    allocation_detail: str | None
+    tags: list[TagResponse]
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ChargebackDimensionUpdateRequest(BaseModel):
+    """Request to update tags/annotations on a chargeback dimension."""
+
+    tags: list[TagCreateRequest] | None = None
+    add_tags: list[TagCreateRequest] | None = None
+    remove_tag_ids: list[int] | None = None
+
+
 # --- Health ---
 
 

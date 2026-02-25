@@ -798,3 +798,164 @@ class TestTagRepository:
         session.commit()
         tags = repo.get_tags(dim.dimension_id)  # type: ignore[arg-type]
         assert len(tags) == 2
+
+    def test_get_tag_found(self, session: Session) -> None:
+        from core.storage.backends.sqlmodel.tables import ChargebackDimensionTable
+
+        dim = ChargebackDimensionTable(
+            ecosystem="eco",
+            tenant_id="t1",
+            product_category="compute",
+            product_type="kafka",
+            identity_id="u1",
+            cost_type="usage",
+        )
+        session.add(dim)
+        session.flush()
+
+        repo = SQLModelTagRepository(session)
+        tag = repo.add_tag(dim.dimension_id, "env", "prod", "admin")  # type: ignore[arg-type]
+        session.commit()
+        got = repo.get_tag(tag.tag_id)  # type: ignore[arg-type]
+        assert got is not None
+        assert got.tag_key == "env"
+        assert got.tag_value == "prod"
+
+    def test_get_tag_not_found(self, session: Session) -> None:
+        repo = SQLModelTagRepository(session)
+        assert repo.get_tag(99999) is None
+
+    def test_find_tags_for_tenant(self, session: Session) -> None:
+        from core.storage.backends.sqlmodel.tables import ChargebackDimensionTable
+
+        dim = ChargebackDimensionTable(
+            ecosystem="eco",
+            tenant_id="t1",
+            product_category="compute",
+            product_type="kafka",
+            identity_id="u1",
+            cost_type="usage",
+        )
+        session.add(dim)
+        session.flush()
+
+        repo = SQLModelTagRepository(session)
+        repo.add_tag(dim.dimension_id, "team", "platform", "admin")  # type: ignore[arg-type]
+        repo.add_tag(dim.dimension_id, "env", "prod", "admin")  # type: ignore[arg-type]
+        session.commit()
+
+        items, total = repo.find_tags_for_tenant("eco", "t1")
+        assert total == 2
+        assert len(items) == 2
+
+    def test_find_tags_for_tenant_empty(self, session: Session) -> None:
+        repo = SQLModelTagRepository(session)
+        items, total = repo.find_tags_for_tenant("eco", "no-tenant")
+        assert total == 0
+        assert items == []
+
+
+# --- Chargeback Repository: get_dimension + aggregate ---
+
+
+class TestChargebackRepositoryExtensions:
+    def _make_chargeback(self, **overrides: Any) -> ChargebackRow:
+        defaults = dict(
+            ecosystem="eco",
+            tenant_id="t1",
+            timestamp=datetime(2026, 2, 15, tzinfo=UTC),
+            resource_id="r1",
+            product_category="compute",
+            product_type="kafka",
+            identity_id="user-1",
+            cost_type=CostType.USAGE,
+            amount=Decimal("10.00"),
+            allocation_method="direct",
+            allocation_detail=None,
+            tags=[],
+            metadata={},
+        )
+        defaults.update(overrides)
+        return ChargebackRow(**defaults)
+
+    def test_get_dimension_found(self, session: Session) -> None:
+        repo = SQLModelChargebackRepository(session)
+        repo.upsert(self._make_chargeback())
+        session.commit()
+        dim = repo.get_dimension(1)
+        assert dim is not None
+        assert dim.ecosystem == "eco"
+        assert dim.tenant_id == "t1"
+        assert dim.identity_id == "user-1"
+
+    def test_get_dimension_not_found(self, session: Session) -> None:
+        repo = SQLModelChargebackRepository(session)
+        assert repo.get_dimension(99999) is None
+
+    def test_aggregate_single_group(self, session: Session) -> None:
+        repo = SQLModelChargebackRepository(session)
+        for i, uid in enumerate(["user-1", "user-1", "user-2"]):
+            repo.upsert(
+                self._make_chargeback(
+                    timestamp=datetime(2026, 2, 15, i, tzinfo=UTC),
+                    resource_id=f"r-{i}",
+                    identity_id=uid,
+                )
+            )
+        session.commit()
+
+        rows = repo.aggregate(
+            ecosystem="eco",
+            tenant_id="t1",
+            group_by=["identity_id"],
+            time_bucket="day",
+            start=datetime(2026, 2, 1, tzinfo=UTC),
+            end=datetime(2026, 3, 1, tzinfo=UTC),
+        )
+        assert len(rows) >= 1
+        dims = {r.dimensions["identity_id"] for r in rows}
+        assert "user-1" in dims
+        assert "user-2" in dims
+
+    def test_aggregate_multi_group(self, session: Session) -> None:
+        repo = SQLModelChargebackRepository(session)
+        repo.upsert(self._make_chargeback())
+        session.commit()
+
+        rows = repo.aggregate(
+            ecosystem="eco",
+            tenant_id="t1",
+            group_by=["identity_id", "product_type"],
+            time_bucket="day",
+            start=datetime(2026, 2, 1, tzinfo=UTC),
+            end=datetime(2026, 3, 1, tzinfo=UTC),
+        )
+        assert len(rows) == 1
+        assert "identity_id" in rows[0].dimensions
+        assert "product_type" in rows[0].dimensions
+
+    def test_aggregate_time_buckets(self, session: Session) -> None:
+        repo = SQLModelChargebackRepository(session)
+        repo.upsert(self._make_chargeback())
+        session.commit()
+
+        for bucket in ["hour", "day", "week", "month"]:
+            rows = repo.aggregate(
+                ecosystem="eco",
+                tenant_id="t1",
+                group_by=["identity_id"],
+                time_bucket=bucket,
+                start=datetime(2026, 2, 1, tzinfo=UTC),
+                end=datetime(2026, 3, 1, tzinfo=UTC),
+            )
+            assert len(rows) >= 1, f"No results for time_bucket={bucket}"
+
+    def test_aggregate_empty(self, session: Session) -> None:
+        repo = SQLModelChargebackRepository(session)
+        rows = repo.aggregate(
+            ecosystem="eco",
+            tenant_id="t1",
+            group_by=["identity_id"],
+            time_bucket="day",
+        )
+        assert rows == []

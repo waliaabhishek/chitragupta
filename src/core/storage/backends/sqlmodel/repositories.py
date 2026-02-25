@@ -8,7 +8,7 @@ from sqlmodel import Session, col, select
 
 if TYPE_CHECKING:
     from core.models.billing import BillingLineItem
-    from core.models.chargeback import ChargebackRow, CustomTag
+    from core.models.chargeback import AggregationRow, ChargebackDimensionInfo, ChargebackRow, CustomTag
     from core.models.identity import Identity
     from core.models.pipeline import PipelineState
     from core.models.resource import Resource
@@ -489,6 +489,101 @@ class SQLModelChargebackRepository:
         self._session.flush()
         return deleted_count
 
+    def get_dimension(self, dimension_id: int) -> ChargebackDimensionInfo | None:
+        from core.models.chargeback import ChargebackDimensionInfo
+
+        row = self._session.get(ChargebackDimensionTable, dimension_id)
+        if row is None:
+            return None
+        return ChargebackDimensionInfo(
+            dimension_id=row.dimension_id,  # type: ignore[arg-type]  # PK always set
+            ecosystem=row.ecosystem,
+            tenant_id=row.tenant_id,
+            resource_id=row.resource_id,
+            product_category=row.product_category,
+            product_type=row.product_type,
+            identity_id=row.identity_id,
+            cost_type=row.cost_type,
+            allocation_method=row.allocation_method,
+            allocation_detail=row.allocation_detail,
+        )
+
+    def aggregate(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        group_by: list[str],
+        time_bucket: str,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        limit: int = 10000,
+    ) -> list[AggregationRow]:
+        from decimal import Decimal
+
+        from sqlalchemy import Float, cast
+        from sqlalchemy.types import String
+
+        from core.models.chargeback import AggregationRow
+
+        # Build dimension group columns
+        group_cols = []
+        group_labels = []
+        for gb in group_by:
+            col_ref = getattr(ChargebackDimensionTable, gb)
+            label = f"dim_{gb}"
+            group_cols.append(cast(col(col_ref), String).label(label))
+            group_labels.append(label)
+
+        # SQLite strftime-based time bucketing
+        bucket_formats: dict[str, str] = {
+            "hour": "%Y-%m-%dT%H:00:00",
+            "day": "%Y-%m-%d",
+            "week": "%Y-W%W",
+            "month": "%Y-%m",
+        }
+        fmt = bucket_formats[time_bucket]
+        time_expr = func.strftime(fmt, ChargebackFactTable.timestamp)
+
+        join_clause = col(ChargebackDimensionTable.dimension_id) == col(ChargebackFactTable.dimension_id)
+
+        where: list[Any] = [
+            col(ChargebackDimensionTable.ecosystem) == ecosystem,
+            col(ChargebackDimensionTable.tenant_id) == tenant_id,
+        ]
+        if start is not None:
+            where.append(col(ChargebackFactTable.timestamp) >= start)
+        if end is not None:
+            where.append(col(ChargebackFactTable.timestamp) < end)
+
+        select_cols = [
+            *group_cols,
+            time_expr.label("time_bucket"),
+            func.sum(cast(col(ChargebackFactTable.amount), Float)).label("total_amount"),
+            func.count().label("row_count"),
+        ]
+        group_by_labels = [*group_labels, "time_bucket"]
+
+        stmt = (
+            select(*select_cols)
+            .select_from(ChargebackDimensionTable)
+            .join(ChargebackFactTable, join_clause)
+            .where(*where)
+            .group_by(*group_by_labels)
+            .order_by("time_bucket", *group_labels)
+            .limit(limit)
+        )
+
+        results = self._session.execute(stmt).all()
+        return [
+            AggregationRow(
+                dimensions={gb: str(getattr(r, f"dim_{gb}", "") or "") for gb in group_by},
+                time_bucket=str(r.time_bucket),
+                total_amount=Decimal(str(r.total_amount or 0)),
+                row_count=int(r.row_count),
+            )
+            for r in results
+        ]
+
 
 # --- PipelineStateRepository ---
 
@@ -570,7 +665,7 @@ class SQLModelPipelineStateRepository:
                 col(PipelineStateTable.chargeback_calculated) == False,  # noqa: E712
             )
         )
-        return self._session.exec(stmt).one()  # type: ignore[return-value]
+        return self._session.exec(stmt).one()
 
     def count_calculated(self, ecosystem: str, tenant_id: str) -> int:
         stmt = (
@@ -582,7 +677,7 @@ class SQLModelPipelineStateRepository:
                 col(PipelineStateTable.chargeback_calculated) == True,  # noqa: E712
             )
         )
-        return self._session.exec(stmt).one()  # type: ignore[return-value]
+        return self._session.exec(stmt).one()
 
     def get_last_calculated_date(self, ecosystem: str, tenant_id: str) -> date | None:
         stmt = select(func.max(PipelineStateTable.tracking_date)).where(
@@ -590,7 +685,7 @@ class SQLModelPipelineStateRepository:
             col(PipelineStateTable.tenant_id) == tenant_id,
             col(PipelineStateTable.chargeback_calculated) == True,  # noqa: E712
         )
-        return self._session.exec(stmt).one()  # type: ignore[return-value]
+        return self._session.exec(stmt).one()
 
 
 # --- TagRepository ---
@@ -615,9 +710,37 @@ class SQLModelTagRepository:
         self._session.flush()
         return tag_to_domain(row)
 
+    def get_tag(self, tag_id: int) -> CustomTag | None:
+        row = self._session.get(CustomTagTable, tag_id)
+        return tag_to_domain(row) if row else None
+
     def get_tags(self, dimension_id: int) -> list[CustomTag]:
         stmt = select(CustomTagTable).where(col(CustomTagTable.dimension_id) == dimension_id)
         return [tag_to_domain(r) for r in self._session.exec(stmt).all()]
+
+    def find_tags_for_tenant(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> tuple[list[CustomTag], int]:
+        join_clause = col(CustomTagTable.dimension_id) == col(ChargebackDimensionTable.dimension_id)
+        where = [
+            col(ChargebackDimensionTable.ecosystem) == ecosystem,
+            col(ChargebackDimensionTable.tenant_id) == tenant_id,
+        ]
+
+        count_stmt = (
+            select(func.count()).select_from(CustomTagTable).join(ChargebackDimensionTable, join_clause).where(*where)
+        )
+        total: int = self._session.exec(count_stmt).one()
+
+        stmt = (
+            select(CustomTagTable).join(ChargebackDimensionTable, join_clause).where(*where).offset(offset).limit(limit)
+        )
+        items = [tag_to_domain(r) for r in self._session.exec(stmt).all()]
+        return items, total
 
     def delete_tag(self, tag_id: int) -> None:
         row = self._session.get(CustomTagTable, tag_id)

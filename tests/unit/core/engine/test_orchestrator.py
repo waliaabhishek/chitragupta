@@ -950,7 +950,11 @@ class TestRecalculationWindow:
         )
         uow.chargebacks.upsert(stale)
 
-        orch.run()
+        with patch("core.engine.orchestrator.datetime") as mock_dt:
+            mock_dt.now.return_value = NOW
+            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+            orch.run()
+
         # After gather, the stale chargeback ($50) must have been deleted by recalculation window
         stale_rows = [
             r for r in uow.chargebacks._data if r.timestamp.date() == recent_date and r.amount == Decimal("50.00")
