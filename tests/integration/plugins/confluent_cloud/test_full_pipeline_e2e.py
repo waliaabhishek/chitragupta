@@ -203,7 +203,7 @@ class TestUnknownProductTypeToUnallocated:
         plugin = _initialized_plugin()
         handlers = plugin.get_service_handlers()
 
-        for name, handler in handlers.items():
+        for _name, handler in handlers.items():
             with pytest.raises(ValueError):
                 handler.get_allocator("TOTALLY_UNKNOWN_XYZ")
 

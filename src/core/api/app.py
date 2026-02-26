@@ -59,12 +59,14 @@ def create_app(settings: AppSettings, workflow_runner: WorkflowRunner | None = N
     app.include_router(health.router)
     app.include_router(tenants.router, prefix="/api/v1")
     app.include_router(billing.router, prefix="/api/v1")
+    # aggregation must be registered before chargebacks so static /chargebacks/aggregate
+    # takes precedence over the dynamic /chargebacks/{dimension_id} GET route
+    app.include_router(aggregation.router, prefix="/api/v1")
     app.include_router(chargebacks.router, prefix="/api/v1")
     app.include_router(resources.router, prefix="/api/v1")
     app.include_router(identities.router, prefix="/api/v1")
     app.include_router(tags.router, prefix="/api/v1")
     app.include_router(pipeline.router, prefix="/api/v1")
-    app.include_router(aggregation.router, prefix="/api/v1")
     app.include_router(export.router, prefix="/api/v1")
 
     return app

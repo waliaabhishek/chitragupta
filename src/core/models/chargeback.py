@@ -31,6 +31,7 @@ class ChargebackRow:
     allocation_detail: str | None = None
     tags: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
+    dimension_id: int | None = None
 
 
 @dataclass

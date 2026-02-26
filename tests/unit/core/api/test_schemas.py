@@ -5,12 +5,14 @@ from decimal import Decimal
 
 from core.api.schemas import (
     BillingLineResponse,
+    ChargebackDimensionResponse,
     ChargebackResponse,
     HealthResponse,
     IdentityResponse,
     PaginatedResponse,
     PipelineStateResponse,
     ResourceResponse,
+    TagResponse,
     TenantListResponse,
     TenantStatusDetailResponse,
     TenantStatusSummary,
@@ -141,6 +143,7 @@ class TestBillingLineResponse:
 class TestChargebackResponse:
     def test_all_fields(self) -> None:
         c = ChargebackResponse(
+            dimension_id=42,
             ecosystem="eco",
             tenant_id="t1",
             timestamp=datetime(2026, 1, 15, tzinfo=UTC),
@@ -157,6 +160,53 @@ class TestChargebackResponse:
         )
         assert c.cost_type == "usage"
         assert c.tags == ["tag1"]
+
+
+class TestChargebackDimensionResponse:
+    def test_all_fields(self) -> None:
+        tag = TagResponse(
+            tag_id=1,
+            dimension_id=42,
+            tag_key="env",
+            tag_value="prod",
+            created_by="ui",
+            created_at=None,
+        )
+        d = ChargebackDimensionResponse(
+            dimension_id=42,
+            ecosystem="ccloud",
+            tenant_id="t-001",
+            resource_id="r-001",
+            product_category="KAFKA",
+            product_type="KAFKA_NUM_BYTES",
+            identity_id="user@example.com",
+            cost_type="usage",
+            allocation_method="ratio",
+            allocation_detail=None,
+            tags=[tag],
+        )
+        assert d.dimension_id == 42
+        assert d.product_type == "KAFKA_NUM_BYTES"
+        assert len(d.tags) == 1
+        assert d.tags[0].tag_key == "env"
+
+    def test_empty_tags(self) -> None:
+        d = ChargebackDimensionResponse(
+            dimension_id=1,
+            ecosystem="ccloud",
+            tenant_id="t-001",
+            resource_id=None,
+            product_category="KAFKA",
+            product_type="KAFKA_NUM_BYTES",
+            identity_id="user@example.com",
+            cost_type="usage",
+            allocation_method=None,
+            allocation_detail=None,
+            tags=[],
+        )
+        assert d.tags == []
+        assert d.resource_id is None
+        assert d.allocation_method is None
 
 
 class TestHealthResponse:

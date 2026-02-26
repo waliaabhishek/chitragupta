@@ -27,9 +27,8 @@ def create_admin_client(config: ResourceSourceConfig) -> Any:
     """
     try:
         # kafka-python is an optional dependency with no type stubs.
-        # import-not-found: package absent from env (runtime handled by try/except).
-        # If kafka-python is installed without stubs, change to import-untyped.
-        from kafka import KafkaAdminClient  # type: ignore[import-not-found]
+        # --ignore-missing-imports suppresses mypy errors for this import globally.
+        from kafka import KafkaAdminClient
     except ImportError as exc:
         raise ImportError(
             "kafka-python is required for admin_api resource discovery. Install it with: uv add kafka-python"

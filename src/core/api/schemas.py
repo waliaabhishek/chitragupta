@@ -128,6 +128,7 @@ class BillingLineResponse(BaseModel):
 class ChargebackResponse(BaseModel):
     """Response for a single chargeback row."""
 
+    dimension_id: int | None
     ecosystem: str
     tenant_id: str
     timestamp: datetime

@@ -90,6 +90,7 @@ export interface BillingLineResponse {
 // --- Chargeback ---
 
 export interface ChargebackResponse {
+  dimension_id: number | null;
   ecosystem: string;
   tenant_id: string;
   timestamp: string;

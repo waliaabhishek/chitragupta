@@ -33,7 +33,7 @@ async def list_chargebacks(
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=1000)] = 100,
 ) -> PaginatedResponse[ChargebackResponse]:
-    today = date.today()
+    today = datetime.now(UTC).date()
     effective_end = end_date or today
     effective_start = start_date or (today - timedelta(days=30))
 
@@ -64,6 +64,7 @@ async def list_chargebacks(
     return PaginatedResponse[ChargebackResponse](
         items=[
             ChargebackResponse(
+                dimension_id=c.dimension_id,
                 ecosystem=c.ecosystem,
                 tenant_id=c.tenant_id,
                 timestamp=c.timestamp,
@@ -71,7 +72,7 @@ async def list_chargebacks(
                 product_category=c.product_category,
                 product_type=c.product_type,
                 identity_id=c.identity_id,
-                cost_type=c.cost_type.value if hasattr(c.cost_type, "value") else str(c.cost_type),
+                cost_type=c.cost_type.value,
                 amount=c.amount,
                 allocation_method=c.allocation_method,
                 allocation_detail=c.allocation_detail,
@@ -90,7 +91,8 @@ async def list_chargebacks(
 def _build_dimension_response(uow: UnitOfWork, dimension_id: int) -> ChargebackDimensionResponse:
     """Build ChargebackDimensionResponse with tags for a given dimension."""
     dim = uow.chargebacks.get_dimension(dimension_id)
-    assert dim is not None  # caller must ensure dimension exists
+    if dim is None:
+        raise RuntimeError(f"Dimension {dimension_id} disappeared between existence check and fetch")
     tags = uow.tags.get_tags(dimension_id)
     return ChargebackDimensionResponse(
         dimension_id=dim.dimension_id,
@@ -115,6 +117,23 @@ def _build_dimension_response(uow: UnitOfWork, dimension_id: int) -> ChargebackD
             for t in tags
         ],
     )
+
+
+@router.get(
+    "/tenants/{tenant_name}/chargebacks/{dimension_id}",
+    response_model=ChargebackDimensionResponse,
+)
+async def get_chargeback_dimension(
+    tenant_config: Annotated[TenantConfig, Depends(get_tenant_config)],
+    uow: Annotated[UnitOfWork, Depends(get_unit_of_work)],
+    dimension_id: Annotated[int, Path(description="Chargeback dimension ID")],
+) -> ChargebackDimensionResponse:
+    """Get a single chargeback dimension with its tags."""
+    with uow:
+        dim = uow.chargebacks.get_dimension(dimension_id)
+        if dim is None or dim.ecosystem != tenant_config.ecosystem or dim.tenant_id != tenant_config.tenant_id:
+            raise HTTPException(status_code=404, detail=f"Dimension {dimension_id} not found")
+        return _build_dimension_response(uow, dimension_id)
 
 
 @router.patch(

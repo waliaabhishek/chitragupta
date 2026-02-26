@@ -59,7 +59,7 @@ def _json_to_metadata(json_str: str | None) -> dict[str, Any]:
     """Deserialize JSON string to metadata dict. None/empty → {}."""
     if not json_str:
         return {}
-    return json.loads(json_str)  # type: ignore[no-any-return]
+    return json.loads(json_str)  # type: ignore[no-any-return]  # json.loads returns Any; callers expect dict[str, Any]
 
 
 # --- Resource ---
@@ -218,6 +218,7 @@ def chargeback_to_domain(dim: ChargebackDimensionTable, fact: ChargebackFactTabl
         allocation_detail=dim.allocation_detail,
         tags=json.loads(fact.tags_json),
         metadata={},
+        dimension_id=dim.dimension_id,
     )
 
 

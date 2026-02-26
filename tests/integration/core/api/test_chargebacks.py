@@ -180,3 +180,58 @@ class TestListChargebacks:
         )
         assert response.status_code == 400
         assert "start_date" in response.json()["detail"]
+
+    def test_list_chargebacks_includes_dimension_id(
+        self, app_with_backend: TestClient, in_memory_backend: SQLModelBackend, sample_chargeback: ChargebackRow
+    ) -> None:
+        with in_memory_backend.create_unit_of_work() as uow:
+            uow.chargebacks.upsert(sample_chargeback)
+            uow.commit()
+
+        response = app_with_backend.get("/api/v1/tenants/test-tenant/chargebacks")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["total"] == 1
+        item = data["items"][0]
+        assert "dimension_id" in item
+        assert item["dimension_id"] is not None
+        assert isinstance(item["dimension_id"], int)
+
+
+class TestGetChargebackDimension:
+    def test_get_dimension_not_found(self, app_with_backend: TestClient) -> None:
+        response = app_with_backend.get("/api/v1/tenants/test-tenant/chargebacks/9999")
+        assert response.status_code == 404
+
+    def test_get_dimension_success(
+        self, app_with_backend: TestClient, in_memory_backend: SQLModelBackend, sample_chargeback: ChargebackRow
+    ) -> None:
+        with in_memory_backend.create_unit_of_work() as uow:
+            uow.chargebacks.upsert(sample_chargeback)
+            uow.commit()
+
+        # Get the dimension_id from list endpoint
+        list_resp = app_with_backend.get("/api/v1/tenants/test-tenant/chargebacks")
+        dimension_id = list_resp.json()["items"][0]["dimension_id"]
+
+        response = app_with_backend.get(f"/api/v1/tenants/test-tenant/chargebacks/{dimension_id}")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["dimension_id"] == dimension_id
+        assert data["identity_id"] == "user-1"
+        assert data["product_type"] == "kafka"
+        assert "tags" in data
+
+    def test_get_dimension_wrong_tenant(
+        self, app_with_backend: TestClient, in_memory_backend: SQLModelBackend, sample_chargeback: ChargebackRow
+    ) -> None:
+        with in_memory_backend.create_unit_of_work() as uow:
+            uow.chargebacks.upsert(sample_chargeback)
+            uow.commit()
+
+        list_resp = app_with_backend.get("/api/v1/tenants/test-tenant/chargebacks")
+        dimension_id = list_resp.json()["items"][0]["dimension_id"]
+
+        # Try to access via a different tenant name (not configured → 404 from tenant resolution)
+        response = app_with_backend.get(f"/api/v1/tenants/other-tenant/chargebacks/{dimension_id}")
+        assert response.status_code == 404
