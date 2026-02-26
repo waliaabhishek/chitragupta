@@ -1,0 +1,11 @@
+apiVersion: 1
+
+datasources:
+  - name: Chargeback SQLite
+    type: frser-sqlite-datasource
+    access: proxy
+    uid: chargeback-sqlite
+    isDefault: true
+    editable: true
+    jsonData:
+      path: /var/lib/grafana/data/chargeback.db

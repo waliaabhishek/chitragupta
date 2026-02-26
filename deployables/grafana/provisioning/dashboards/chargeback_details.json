@@ -1,0 +1,767 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "chargeback-sqlite"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "footer": {
+              "reducers": []
+            },
+            "hideFrom": {
+              "viz": false
+            },
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "amount"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "currencyUSD"
+              },
+              {
+                "id": "custom.width",
+                "value": 120
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ecosystem"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 120
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "product_category"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 150
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "allocation_detail"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 200
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 12,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "options": {
+        "cellHeight": "sm",
+        "enablePagination": true,
+        "showHeader": true,
+        "sortBy": [
+          {
+            "desc": true,
+            "displayName": "amount"
+          }
+        ]
+      },
+      "pluginVersion": "10.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "chargeback-sqlite"
+          },
+          "queryText": "SELECT\n  d.ecosystem,\n  d.tenant_id,\n  COALESCE(r.parent_id, '') AS environment,\n  COALESCE(r.display_name, d.resource_id) AS resource_name,\n  d.resource_id,\n  d.product_category,\n  d.product_type,\n  COALESCE(i.display_name, d.identity_id) AS identity_name,\n  d.identity_id,\n  d.cost_type,\n  d.allocation_method,\n  d.allocation_detail,\n  f.timestamp,\n  CAST(f.amount AS REAL) AS amount\nFROM chargeback_facts f\nJOIN chargeback_dimensions d ON d.dimension_id = f.dimension_id\nLEFT JOIN resources r ON r.ecosystem = d.ecosystem\n  AND r.tenant_id = d.tenant_id\n  AND r.resource_id = d.resource_id\nLEFT JOIN identities i ON i.ecosystem = d.ecosystem\n  AND i.tenant_id = d.tenant_id\n  AND i.identity_id = d.identity_id\nWHERE d.ecosystem = '${ecosystem}'\n  AND d.tenant_id IN (${tenant_id:sqlstring})\n  AND ('${environment}' = '$__all' OR r.parent_id IN (${environment:sqlstring}))\n  AND d.product_category IN (${product_category:sqlstring})\n  AND d.product_type IN (${product_type:sqlstring})\n  AND f.timestamp BETWEEN datetime($__from/1000, 'unixepoch')\n                      AND datetime($__to/1000, 'unixepoch')\nORDER BY f.timestamp DESC, amount DESC\nLIMIT 1000",
+          "queryType": "table",
+          "rawQueryText": "SELECT\n  d.ecosystem,\n  d.tenant_id,\n  COALESCE(r.parent_id, '') AS environment,\n  COALESCE(r.display_name, d.resource_id) AS resource_name,\n  d.resource_id,\n  d.product_category,\n  d.product_type,\n  COALESCE(i.display_name, d.identity_id) AS identity_name,\n  d.identity_id,\n  d.cost_type,\n  d.allocation_method,\n  d.allocation_detail,\n  f.timestamp,\n  CAST(f.amount AS REAL) AS amount\nFROM chargeback_facts f\nJOIN chargeback_dimensions d ON d.dimension_id = f.dimension_id\nLEFT JOIN resources r ON r.ecosystem = d.ecosystem\n  AND r.tenant_id = d.tenant_id\n  AND r.resource_id = d.resource_id\nLEFT JOIN identities i ON i.ecosystem = d.ecosystem\n  AND i.tenant_id = d.tenant_id\n  AND i.identity_id = d.identity_id\nWHERE d.ecosystem = '${ecosystem}'\n  AND d.tenant_id IN (${tenant_id:sqlstring})\n  AND ('${environment}' = '$__all' OR r.parent_id IN (${environment:sqlstring}))\n  AND d.product_category IN (${product_category:sqlstring})\n  AND d.product_type IN (${product_type:sqlstring})\n  AND f.timestamp BETWEEN datetime($__from/1000, 'unixepoch')\n                      AND datetime($__to/1000, 'unixepoch')\nORDER BY f.timestamp DESC, amount DESC\nLIMIT 1000",
+          "refId": "A",
+          "timeColumns": ["time", "ts"]
+        }
+      ],
+      "title": "Chargeback Details",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "chargeback-sqlite"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "footer": {
+              "reducers": []
+            },
+            "hideFrom": {
+              "viz": false
+            },
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "total"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "currencyUSD"
+              },
+              {
+                "id": "custom.width",
+                "value": 120
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 12,
+        "w": 24,
+        "x": 0,
+        "y": 12
+      },
+      "id": 2,
+      "options": {
+        "cellHeight": "sm",
+        "enablePagination": true,
+        "showHeader": true,
+        "sortBy": [
+          {
+            "desc": true,
+            "displayName": "total"
+          }
+        ]
+      },
+      "pluginVersion": "10.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "chargeback-sqlite"
+          },
+          "queryText": "SELECT\n  b.ecosystem,\n  b.tenant_id,\n  b.resource_id,\n  b.product_category,\n  b.product_type,\n  SUM(b.quantity) AS quantity,\n  SUM(CAST(b.total AS REAL)) AS total\nFROM billing b\nWHERE b.ecosystem = '${ecosystem}'\n  AND b.tenant_id IN (${tenant_id:sqlstring})\n  AND b.product_category IN (${product_category:sqlstring})\n  AND b.product_type IN (${product_type:sqlstring})\n  AND b.timestamp BETWEEN datetime($__from/1000, 'unixepoch')\n                      AND datetime($__to/1000, 'unixepoch')\nGROUP BY b.ecosystem, b.tenant_id, b.resource_id, b.product_category, b.product_type\nORDER BY total DESC\nLIMIT 1000",
+          "queryType": "table",
+          "rawQueryText": "SELECT\n  b.ecosystem,\n  b.tenant_id,\n  b.resource_id,\n  b.product_category,\n  b.product_type,\n  SUM(b.quantity) AS quantity,\n  SUM(CAST(b.total AS REAL)) AS total\nFROM billing b\nWHERE b.ecosystem = '${ecosystem}'\n  AND b.tenant_id IN (${tenant_id:sqlstring})\n  AND b.product_category IN (${product_category:sqlstring})\n  AND b.product_type IN (${product_type:sqlstring})\n  AND b.timestamp BETWEEN datetime($__from/1000, 'unixepoch')\n                      AND datetime($__to/1000, 'unixepoch')\nGROUP BY b.ecosystem, b.tenant_id, b.resource_id, b.product_category, b.product_type\nORDER BY total DESC\nLIMIT 1000",
+          "refId": "A",
+          "timeColumns": ["time", "ts"]
+        }
+      ],
+      "title": "Billing Data",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "chargeback-sqlite"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "footer": {
+              "reducers": ["sum"]
+            },
+            "hideFrom": {
+              "viz": false
+            },
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "amount"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "currencyUSD"
+              },
+              {
+                "id": "custom.width",
+                "value": 120
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 12,
+        "w": 24,
+        "x": 0,
+        "y": 24
+      },
+      "id": 3,
+      "options": {
+        "cellHeight": "sm",
+        "enablePagination": true,
+        "showHeader": true,
+        "sortBy": [
+          {
+            "desc": true,
+            "displayName": "amount"
+          }
+        ]
+      },
+      "pluginVersion": "10.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "chargeback-sqlite"
+          },
+          "queryText": "SELECT\n  d.ecosystem,\n  d.tenant_id,\n  d.resource_id,\n  d.product_category,\n  d.product_type,\n  d.cost_type,\n  f.timestamp,\n  CAST(f.amount AS REAL) AS amount\nFROM chargeback_facts f\nJOIN chargeback_dimensions d ON d.dimension_id = f.dimension_id\nWHERE d.ecosystem = '${ecosystem}'\n  AND d.tenant_id IN (${tenant_id:sqlstring})\n  AND d.identity_id = 'UNALLOCATED'\n  AND d.product_category IN (${product_category:sqlstring})\n  AND d.product_type IN (${product_type:sqlstring})\n  AND f.timestamp BETWEEN datetime($__from/1000, 'unixepoch')\n                      AND datetime($__to/1000, 'unixepoch')\nORDER BY f.timestamp DESC, amount DESC\nLIMIT 1000",
+          "queryType": "table",
+          "rawQueryText": "SELECT\n  d.ecosystem,\n  d.tenant_id,\n  d.resource_id,\n  d.product_category,\n  d.product_type,\n  d.cost_type,\n  f.timestamp,\n  CAST(f.amount AS REAL) AS amount\nFROM chargeback_facts f\nJOIN chargeback_dimensions d ON d.dimension_id = f.dimension_id\nWHERE d.ecosystem = '${ecosystem}'\n  AND d.tenant_id IN (${tenant_id:sqlstring})\n  AND d.identity_id = 'UNALLOCATED'\n  AND d.product_category IN (${product_category:sqlstring})\n  AND d.product_type IN (${product_type:sqlstring})\n  AND f.timestamp BETWEEN datetime($__from/1000, 'unixepoch')\n                      AND datetime($__to/1000, 'unixepoch')\nORDER BY f.timestamp DESC, amount DESC\nLIMIT 1000",
+          "refId": "A",
+          "timeColumns": ["time", "ts"]
+        }
+      ],
+      "title": "Unallocated Costs",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "chargeback-sqlite"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "footer": {
+              "reducers": ["sum"]
+            },
+            "hideFrom": {
+              "viz": false
+            },
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "total_cost"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "currencyUSD"
+              },
+              {
+                "id": "custom.width",
+                "value": 120
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "issue_reason"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 250
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "row_count"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 90
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 12,
+        "w": 24,
+        "x": 0,
+        "y": 36
+      },
+      "id": 4,
+      "options": {
+        "cellHeight": "sm",
+        "enablePagination": true,
+        "showHeader": true,
+        "sortBy": [
+          {
+            "desc": true,
+            "displayName": "total_cost"
+          }
+        ]
+      },
+      "pluginVersion": "10.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "chargeback-sqlite"
+          },
+          "queryText": "SELECT\n  d.ecosystem,\n  d.tenant_id,\n  COALESCE(r.parent_id, '') AS environment,\n  COALESCE(r.display_name, d.resource_id) AS resource_name,\n  d.product_category,\n  d.product_type,\n  d.identity_id,\n  d.allocation_detail AS issue_reason,\n  COUNT(*) AS row_count,\n  SUM(CAST(f.amount AS REAL)) AS total_cost\nFROM chargeback_facts f\nJOIN chargeback_dimensions d ON d.dimension_id = f.dimension_id\nLEFT JOIN resources r ON r.ecosystem = d.ecosystem\n  AND r.tenant_id = d.tenant_id\n  AND r.resource_id = d.resource_id\nWHERE d.ecosystem = '${ecosystem}'\n  AND d.tenant_id IN (${tenant_id:sqlstring})\n  AND ('${environment}' = '$__all' OR r.parent_id IN (${environment:sqlstring}))\n  AND d.allocation_detail IS NOT NULL\n  AND d.allocation_detail != ''\n  AND f.timestamp BETWEEN datetime($__from/1000, 'unixepoch')\n                      AND datetime($__to/1000, 'unixepoch')\nGROUP BY d.ecosystem, d.tenant_id, r.parent_id, r.display_name,\n         d.resource_id, d.product_category, d.product_type,\n         d.identity_id, d.allocation_detail\nORDER BY total_cost DESC",
+          "queryType": "table",
+          "rawQueryText": "SELECT\n  d.ecosystem,\n  d.tenant_id,\n  COALESCE(r.parent_id, '') AS environment,\n  COALESCE(r.display_name, d.resource_id) AS resource_name,\n  d.product_category,\n  d.product_type,\n  d.identity_id,\n  d.allocation_detail AS issue_reason,\n  COUNT(*) AS row_count,\n  SUM(CAST(f.amount AS REAL)) AS total_cost\nFROM chargeback_facts f\nJOIN chargeback_dimensions d ON d.dimension_id = f.dimension_id\nLEFT JOIN resources r ON r.ecosystem = d.ecosystem\n  AND r.tenant_id = d.tenant_id\n  AND r.resource_id = d.resource_id\nWHERE d.ecosystem = '${ecosystem}'\n  AND d.tenant_id IN (${tenant_id:sqlstring})\n  AND ('${environment}' = '$__all' OR r.parent_id IN (${environment:sqlstring}))\n  AND d.allocation_detail IS NOT NULL\n  AND d.allocation_detail != ''\n  AND f.timestamp BETWEEN datetime($__from/1000, 'unixepoch')\n                      AND datetime($__to/1000, 'unixepoch')\nGROUP BY d.ecosystem, d.tenant_id, r.parent_id, r.display_name,\n         d.resource_id, d.product_category, d.product_type,\n         d.identity_id, d.allocation_detail\nORDER BY total_cost DESC",
+          "refId": "A",
+          "timeColumns": ["time", "ts"]
+        }
+      ],
+      "title": "Allocation Issues",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "chargeback-sqlite"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "footer": {
+              "reducers": []
+            },
+            "hideFrom": {
+              "viz": false
+            },
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "display_name"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 200
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "resource_id"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 200
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "parent_id"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 150
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 12,
+        "w": 24,
+        "x": 0,
+        "y": 48
+      },
+      "id": 5,
+      "options": {
+        "cellHeight": "sm",
+        "enablePagination": true,
+        "showHeader": true,
+        "sortBy": []
+      },
+      "pluginVersion": "10.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "chargeback-sqlite"
+          },
+          "queryText": "SELECT\n  r.ecosystem,\n  r.tenant_id,\n  r.resource_id,\n  r.display_name,\n  r.resource_type,\n  r.parent_id,\n  r.status,\n  r.updated_at\nFROM resources r\nWHERE r.ecosystem = '${ecosystem}'\n  AND r.tenant_id IN (${tenant_id:sqlstring})\n  AND ('${environment}' = '$__all' OR r.parent_id IN (${environment:sqlstring}))\nORDER BY r.tenant_id, r.resource_type, r.display_name",
+          "queryType": "table",
+          "rawQueryText": "SELECT\n  r.ecosystem,\n  r.tenant_id,\n  r.resource_id,\n  r.display_name,\n  r.resource_type,\n  r.parent_id,\n  r.status,\n  r.updated_at\nFROM resources r\nWHERE r.ecosystem = '${ecosystem}'\n  AND r.tenant_id IN (${tenant_id:sqlstring})\n  AND ('${environment}' = '$__all' OR r.parent_id IN (${environment:sqlstring}))\nORDER BY r.tenant_id, r.resource_type, r.display_name",
+          "refId": "A",
+          "timeColumns": ["time", "ts"]
+        }
+      ],
+      "title": "Resources",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "chargeback-sqlite"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "footer": {
+              "reducers": []
+            },
+            "hideFrom": {
+              "viz": false
+            },
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "display_name"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 200
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "identity_id"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 200
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "identity_type"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 150
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 12,
+        "w": 24,
+        "x": 0,
+        "y": 60
+      },
+      "id": 6,
+      "options": {
+        "cellHeight": "sm",
+        "enablePagination": true,
+        "showHeader": true,
+        "sortBy": []
+      },
+      "pluginVersion": "10.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "chargeback-sqlite"
+          },
+          "queryText": "SELECT\n  i.ecosystem,\n  i.tenant_id,\n  i.identity_id,\n  i.display_name,\n  i.identity_type,\n  i.updated_at\nFROM identities i\nWHERE i.ecosystem = '${ecosystem}'\n  AND i.tenant_id IN (${tenant_id:sqlstring})\nORDER BY i.tenant_id, i.identity_type, i.display_name",
+          "queryType": "table",
+          "rawQueryText": "SELECT\n  i.ecosystem,\n  i.tenant_id,\n  i.identity_id,\n  i.display_name,\n  i.identity_type,\n  i.updated_at\nFROM identities i\nWHERE i.ecosystem = '${ecosystem}'\n  AND i.tenant_id IN (${tenant_id:sqlstring})\nORDER BY i.tenant_id, i.identity_type, i.display_name",
+          "refId": "A",
+          "timeColumns": ["time", "ts"]
+        }
+      ],
+      "title": "Identities",
+      "type": "table"
+    }
+  ],
+  "preload": false,
+  "refresh": "auto",
+  "schemaVersion": 39,
+  "tags": ["chargeback"],
+  "templating": {
+    "list": [
+      {
+        "datasource": {
+          "type": "frser-sqlite-datasource",
+          "uid": "chargeback-sqlite"
+        },
+        "allowCustomValue": false,
+        "current": {},
+        "definition": "SELECT DISTINCT ecosystem FROM chargeback_dimensions",
+        "description": "Ecosystem filter (required)",
+        "includeAll": false,
+        "multi": false,
+        "name": "ecosystem",
+        "options": [],
+        "query": "SELECT DISTINCT ecosystem FROM chargeback_dimensions",
+        "refresh": 2,
+        "regex": "",
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "datasource": {
+          "type": "frser-sqlite-datasource",
+          "uid": "chargeback-sqlite"
+        },
+        "allowCustomValue": false,
+        "current": {
+          "text": "All",
+          "value": ["$__all"]
+        },
+        "definition": "SELECT DISTINCT tenant_id FROM chargeback_dimensions WHERE ecosystem = '${ecosystem}'",
+        "description": "Tenant filter (cascades from ecosystem)",
+        "includeAll": true,
+        "multi": true,
+        "name": "tenant_id",
+        "options": [],
+        "query": "SELECT DISTINCT tenant_id FROM chargeback_dimensions WHERE ecosystem = '${ecosystem}'",
+        "refresh": 2,
+        "regex": "",
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "datasource": {
+          "type": "frser-sqlite-datasource",
+          "uid": "chargeback-sqlite"
+        },
+        "allowCustomValue": false,
+        "current": {
+          "text": "All",
+          "value": ["$__all"]
+        },
+        "definition": "SELECT DISTINCT r.parent_id AS environment\nFROM resources r\nWHERE r.ecosystem = '${ecosystem}'\n  AND r.tenant_id IN (${tenant_id:sqlstring})\n  AND r.parent_id IS NOT NULL",
+        "description": "Environment filter (cascades from tenant)",
+        "includeAll": true,
+        "multi": true,
+        "name": "environment",
+        "options": [],
+        "query": "SELECT DISTINCT r.parent_id AS environment\nFROM resources r\nWHERE r.ecosystem = '${ecosystem}'\n  AND r.tenant_id IN (${tenant_id:sqlstring})\n  AND r.parent_id IS NOT NULL",
+        "refresh": 2,
+        "regex": "",
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "datasource": {
+          "type": "frser-sqlite-datasource",
+          "uid": "chargeback-sqlite"
+        },
+        "allowCustomValue": false,
+        "current": {
+          "text": "All",
+          "value": ["$__all"]
+        },
+        "definition": "SELECT DISTINCT product_category\nFROM chargeback_dimensions\nWHERE ecosystem = '${ecosystem}'\n  AND tenant_id IN (${tenant_id:sqlstring})",
+        "description": "Product category filter (cascades from tenant)",
+        "includeAll": true,
+        "multi": true,
+        "name": "product_category",
+        "options": [],
+        "query": "SELECT DISTINCT product_category\nFROM chargeback_dimensions\nWHERE ecosystem = '${ecosystem}'\n  AND tenant_id IN (${tenant_id:sqlstring})",
+        "refresh": 2,
+        "regex": "",
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "datasource": {
+          "type": "frser-sqlite-datasource",
+          "uid": "chargeback-sqlite"
+        },
+        "allowCustomValue": false,
+        "current": {
+          "text": "All",
+          "value": ["$__all"]
+        },
+        "definition": "SELECT DISTINCT product_type\nFROM chargeback_dimensions\nWHERE ecosystem = '${ecosystem}'\n  AND tenant_id IN (${tenant_id:sqlstring})\n  AND product_category IN (${product_category:sqlstring})",
+        "description": "Product type filter (cascades from product category)",
+        "includeAll": true,
+        "multi": true,
+        "name": "product_type",
+        "options": [],
+        "query": "SELECT DISTINCT product_type\nFROM chargeback_dimensions\nWHERE ecosystem = '${ecosystem}'\n  AND tenant_id IN (${tenant_id:sqlstring})\n  AND product_category IN (${product_category:sqlstring})",
+        "refresh": 2,
+        "regex": "",
+        "sort": 1,
+        "type": "query"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-30d",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Chargeback Details",
+  "uid": "chargeback-details",
+  "version": 1
+}

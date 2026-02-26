@@ -1,0 +1,13 @@
+services:
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: password
+      GF_INSTALL_PLUGINS: frser-sqlite-datasource
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ${CHARGEBACK_DB_PATH:-./data/chargeback.db}:/var/lib/grafana/data/chargeback.db:ro
+    restart: unless-stopped
