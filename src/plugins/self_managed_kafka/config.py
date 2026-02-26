@@ -1,0 +1,125 @@
+"""Configuration models for the self-managed Kafka plugin."""
+
+from __future__ import annotations
+
+from decimal import Decimal
+from typing import Any, Literal
+
+from pydantic import BaseModel, Field, SecretStr, model_validator
+
+
+class CostRateOverride(BaseModel):
+    """Override cost rates for a specific region."""
+
+    compute_hourly_rate: Decimal | None = None
+    storage_per_gb_hourly: Decimal | None = None
+    network_ingress_per_gb: Decimal | None = None
+    network_egress_per_gb: Decimal | None = None
+
+
+class CostModelConfig(BaseModel):
+    """Infrastructure cost model for self-managed Kafka."""
+
+    compute_hourly_rate: Decimal  # Per broker-hour
+    storage_per_gb_hourly: Decimal  # Per GB-hour
+    network_ingress_per_gb: Decimal  # Per GB
+    network_egress_per_gb: Decimal  # Per GB
+    region_overrides: dict[str, CostRateOverride] = {}
+
+
+class MetricsConfig(BaseModel):
+    """Prometheus metrics configuration (plugin-local, not shared with CCloud)."""
+
+    type: Literal["prometheus"] = "prometheus"
+    url: str
+    auth_type: Literal["basic", "bearer", "none"] = "none"
+    username: str | None = None
+    password: SecretStr | None = None
+    bearer_token: SecretStr | None = None
+
+    @model_validator(mode="after")
+    def validate_auth_credentials(self) -> MetricsConfig:
+        if self.auth_type == "basic":
+            if not self.username or not self.password:
+                raise ValueError("username and password required for basic auth")
+        elif self.auth_type == "bearer":
+            if not self.bearer_token:
+                raise ValueError("bearer_token required for bearer auth")
+        elif self.auth_type == "none" and (self.username or self.password or self.bearer_token):
+            raise ValueError("credentials provided but auth_type is 'none'")
+        return self
+
+
+class StaticIdentityConfig(BaseModel):
+    """A statically-defined identity (no Prometheus discovery needed)."""
+
+    identity_id: str  # e.g., "User:alice" or "team-data-eng"
+    identity_type: str  # "principal", "team", "service_account"
+    display_name: str | None = None
+    team: str | None = None  # Optional team mapping
+
+
+class IdentitySourceConfig(BaseModel):
+    """Configuration for identity discovery."""
+
+    source: Literal["prometheus", "static", "both"] = "prometheus"
+    principal_to_team: dict[str, str] = {}  # "User:alice" → "team-data"
+    default_team: str = "UNASSIGNED"
+    static_identities: list[StaticIdentityConfig] = []  # For source="static" or "both"
+
+
+class ResourceSourceConfig(BaseModel):
+    """Configuration for resource discovery."""
+
+    source: Literal["prometheus", "admin_api"] = "prometheus"
+    # Admin API settings (only used if source="admin_api")
+    bootstrap_servers: str | None = None
+    sasl_mechanism: Literal["PLAIN", "SCRAM-SHA-256", "SCRAM-SHA-512"] | None = None
+    sasl_username: str | None = None
+    sasl_password: SecretStr | None = None
+    security_protocol: Literal["PLAINTEXT", "SSL", "SASL_PLAINTEXT", "SASL_SSL"] = "PLAINTEXT"
+
+    @model_validator(mode="after")
+    def validate_admin_api_settings(self) -> ResourceSourceConfig:
+        """If source=admin_api, require bootstrap_servers."""
+        if self.source == "admin_api" and not self.bootstrap_servers:
+            raise ValueError("bootstrap_servers required when source='admin_api'")
+        return self
+
+
+class SelfManagedKafkaConfig(BaseModel):
+    """Validates plugin_settings for ecosystem='self_managed_kafka'."""
+
+    cluster_id: str  # Logical identifier for this cluster (used as resource_id in billing)
+    broker_count: int = Field(gt=0)  # Used for compute cost calculation
+    region: str | None = None  # Optional region for cost overrides
+    cost_model: CostModelConfig
+    identity_source: IdentitySourceConfig = Field(default_factory=IdentitySourceConfig)
+    resource_source: ResourceSourceConfig = Field(default_factory=ResourceSourceConfig)
+    metrics: MetricsConfig  # Required for cost construction + allocation
+
+    @classmethod
+    def from_plugin_settings(cls, settings: dict[str, Any]) -> SelfManagedKafkaConfig:
+        """Validate and parse plugin_settings dict."""
+        return cls.model_validate(settings)
+
+    def get_effective_cost_model(self) -> CostModelConfig:
+        """Return cost model with region overrides applied, if applicable."""
+        if self.region is None or self.region not in self.cost_model.region_overrides:
+            return self.cost_model
+
+        override = self.cost_model.region_overrides[self.region]
+        return CostModelConfig(
+            compute_hourly_rate=override.compute_hourly_rate
+            if override.compute_hourly_rate is not None
+            else self.cost_model.compute_hourly_rate,
+            storage_per_gb_hourly=override.storage_per_gb_hourly
+            if override.storage_per_gb_hourly is not None
+            else self.cost_model.storage_per_gb_hourly,
+            network_ingress_per_gb=override.network_ingress_per_gb
+            if override.network_ingress_per_gb is not None
+            else self.cost_model.network_ingress_per_gb,
+            network_egress_per_gb=override.network_egress_per_gb
+            if override.network_egress_per_gb is not None
+            else self.cost_model.network_egress_per_gb,
+        )
