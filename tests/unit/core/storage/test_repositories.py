@@ -819,7 +819,9 @@ class TestTagRepository:
         got = repo.get_tag(tag.tag_id)  # type: ignore[arg-type]
         assert got is not None
         assert got.tag_key == "env"
-        assert got.tag_value == "prod"
+        assert got.display_name == "prod"
+        # tag_value is auto-generated UUID
+        assert len(got.tag_value) == 36
 
     def test_get_tag_not_found(self, session: Session) -> None:
         repo = SQLModelTagRepository(session)

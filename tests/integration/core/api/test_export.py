@@ -9,9 +9,9 @@ from core.models.chargeback import ChargebackRow, CostType
 from core.storage.backends.sqlmodel.unit_of_work import SQLModelBackend  # noqa: TC001
 
 
-def _seed_chargeback(backend: SQLModelBackend) -> None:
+def _seed_chargeback(backend: SQLModelBackend, *, with_custom_tag: bool = False) -> None:
     with backend.create_unit_of_work() as uow:
-        uow.chargebacks.upsert(
+        row = uow.chargebacks.upsert(
             ChargebackRow(
                 ecosystem="test-eco",
                 tenant_id="test-tenant",
@@ -24,10 +24,12 @@ def _seed_chargeback(backend: SQLModelBackend) -> None:
                 amount=Decimal("10.00"),
                 allocation_method="direct",
                 allocation_detail=None,
-                tags=["env:prod"],
+                tags=[],
                 metadata={},
             )
         )
+        if with_custom_tag and row.dimension_id is not None:
+            uow.tags.add_tag(row.dimension_id, "env", "prod", "test")
         uow.commit()
 
 
@@ -57,7 +59,7 @@ class TestExportChargebacks:
         assert "identity_id" in header
 
     def test_export_custom_columns(self, app_with_backend: TestClient, in_memory_backend: SQLModelBackend) -> None:
-        _seed_chargeback(in_memory_backend)
+        _seed_chargeback(in_memory_backend, with_custom_tag=True)
         response = app_with_backend.post(
             "/api/v1/tenants/test-tenant/export",
             json={
@@ -70,7 +72,7 @@ class TestExportChargebacks:
         lines = response.text.strip().split("\n")
         assert lines[0] == "identity_id,amount,tags"
         assert "user-1" in lines[1]
-        assert "env:prod" in lines[1]
+        assert "prod" in lines[1]  # custom tag display_name
 
     def test_export_with_filters(self, app_with_backend: TestClient, in_memory_backend: SQLModelBackend) -> None:
         _seed_chargeback(in_memory_backend)

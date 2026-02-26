@@ -4,13 +4,13 @@ import type { TagResponse } from "../../types/api";
 
 interface TagEditorProps {
   tags: TagResponse[];
-  onAdd: (key: string, value: string) => Promise<void>;
+  onAdd: (key: string, displayName: string) => Promise<void>;
   onRemove: (tagId: number) => Promise<void>;
 }
 
 interface TagFormValues {
   key: string;
-  value: string;
+  displayName: string;
 }
 
 export function TagEditor({ tags, onAdd, onRemove }: TagEditorProps): JSX.Element {
@@ -20,7 +20,7 @@ export function TagEditor({ tags, onAdd, onRemove }: TagEditorProps): JSX.Elemen
   const handleSubmit = async (values: TagFormValues): Promise<void> => {
     setLoading(true);
     try {
-      await onAdd(values.key, values.value);
+      await onAdd(values.key, values.displayName);
       form.resetFields();
     } finally {
       setLoading(false);
@@ -39,7 +39,7 @@ export function TagEditor({ tags, onAdd, onRemove }: TagEditorProps): JSX.Elemen
               void onRemove(tag.tag_id);
             }}
           >
-            {tag.tag_key}: {tag.tag_value}
+            {tag.display_name}
           </Tag>
         ))}
       </Space>
@@ -48,10 +48,10 @@ export function TagEditor({ tags, onAdd, onRemove }: TagEditorProps): JSX.Elemen
           <Input placeholder="Key" maxLength={100} style={{ width: 140 }} />
         </Form.Item>
         <Form.Item
-          name="value"
-          rules={[{ required: true, message: "Value required" }]}
+          name="displayName"
+          rules={[{ required: true, message: "Display name required" }]}
         >
-          <Input placeholder="Value" maxLength={500} style={{ width: 180 }} />
+          <Input placeholder="Display Name" maxLength={500} style={{ width: 180 }} />
         </Form.Item>
         <Form.Item>
           <Button type="primary" htmlType="submit" loading={loading}>

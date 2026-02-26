@@ -14,6 +14,7 @@ import { BillingListPage } from "./pages/billing/list";
 import { ResourceListPage } from "./pages/resources/list";
 import { IdentityListPage } from "./pages/identities/list";
 import { PipelineStatusPage } from "./pages/pipeline/status";
+import { TagManagementPage } from "./pages/tags/list";
 
 export function App(): JSX.Element {
   return (
@@ -30,6 +31,7 @@ export function App(): JSX.Element {
                 { name: "resources", list: "/resources" },
                 { name: "identities", list: "/identities" },
                 { name: "pipeline", list: "/pipeline" },
+                { name: "tags", list: "/tags" },
               ]}
               options={{ syncWithLocation: true }}
             >
@@ -51,6 +53,7 @@ export function App(): JSX.Element {
                     path="/pipeline"
                     element={<PipelineStatusPage />}
                   />
+                  <Route path="/tags" element={<TagManagementPage />} />
                 </Routes>
               </AppLayout>
             </Refine>

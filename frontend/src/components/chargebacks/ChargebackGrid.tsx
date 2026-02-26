@@ -1,9 +1,9 @@
 import "ag-grid-community/styles/ag-grid.css";
 import "ag-grid-community/styles/ag-theme-alpine.css";
-import type { ColDef, IDatasource, IGetRowsParams } from "ag-grid-community";
+import type { ColDef, IDatasource, IGetRowsParams, SelectionChangedEvent } from "ag-grid-community";
 import { AgGridReact } from "ag-grid-react";
 import { Tag } from "antd";
-import { forwardRef, useMemo } from "react";
+import { forwardRef, useMemo, useCallback } from "react";
 import { API_URL } from "../../config";
 import type { ChargebackResponse, PaginatedResponse } from "../../types/api";
 
@@ -11,6 +11,8 @@ interface ChargebackGridProps {
   tenantName: string;
   filters: Record<string, string>;
   onRowClick: (dimensionId: number) => void;
+  onSelectionChange?: (ids: number[]) => void;
+  onSelectAll?: (total: number) => void;
 }
 
 function dateFormatter(params: { value: string }): string {
@@ -43,6 +45,12 @@ function TagsCellRenderer(props: { value: string[] }): JSX.Element {
 }
 
 const columnDefs: ColDef[] = [
+  {
+    headerCheckboxSelection: true,
+    checkboxSelection: true,
+    width: 50,
+    pinned: "left",
+  },
   {
     field: "timestamp",
     headerName: "Date",
@@ -98,10 +106,53 @@ function createDatasource(
 }
 
 export const ChargebackGrid = forwardRef<AgGridReact, ChargebackGridProps>(
-  ({ tenantName, filters, onRowClick }, ref) => {
+  ({ tenantName, filters, onRowClick, onSelectionChange, onSelectAll }, ref) => {
     const datasource = useMemo(
       () => createDatasource(tenantName, filters),
       [tenantName, filters],
+    );
+
+    const handleSelectionChanged = useCallback(
+      (event: SelectionChangedEvent) => {
+        if (!onSelectionChange) return;
+        const selectedRows = event.api.getSelectedRows() as ChargebackResponse[];
+        const ids = selectedRows
+          .filter((r) => r.dimension_id != null)
+          .map((r) => r.dimension_id as number);
+        onSelectionChange(ids);
+      },
+      [onSelectionChange],
+    );
+
+    const handleHeaderCheckboxChange = useCallback(
+      async (event: SelectionChangedEvent) => {
+        // Check if all visible rows are selected (header checkbox)
+        if (!onSelectAll) return;
+        const selectedCount = event.api.getSelectedRows().length;
+        if (selectedCount === 0) return;
+
+        // Fetch total count matching current filters
+        const url = new URL(
+          `${window.location.origin}${API_URL}/tenants/${tenantName}/chargebacks`,
+        );
+        url.searchParams.set("page", "1");
+        url.searchParams.set("page_size", "1");
+        for (const [k, v] of Object.entries(filters)) {
+          url.searchParams.set(k, v);
+        }
+        try {
+          const resp = await fetch(url.toString());
+          if (resp.ok) {
+            const data = (await resp.json()) as { total: number };
+            if (selectedCount > 0 && data.total > selectedCount) {
+              onSelectAll(data.total);
+            }
+          }
+        } catch {
+          // ignore
+        }
+      },
+      [tenantName, filters, onSelectAll],
     );
 
     return (
@@ -113,6 +164,12 @@ export const ChargebackGrid = forwardRef<AgGridReact, ChargebackGridProps>(
           datasource={datasource}
           cacheBlockSize={100}
           maxBlocksInCache={10}
+          rowSelection="multiple"
+          suppressRowClickSelection
+          onSelectionChanged={(e) => {
+            void handleHeaderCheckboxChange(e);
+            handleSelectionChanged(e);
+          }}
           onRowClicked={(e) => {
             const row = e.data as ChargebackResponse | undefined;
             if (row?.dimension_id != null) {

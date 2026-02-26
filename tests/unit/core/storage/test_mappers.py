@@ -279,14 +279,17 @@ class TestCustomTagMapper:
             dimension_id=42,
             tag_key="team",
             tag_value="platform",
+            display_name="Platform Team",
             created_by="admin",
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
         table = tag_to_table(tag)
         assert table.tag_key == "team"
+        assert table.display_name == "Platform Team"
         domain = tag_to_domain(table)
         assert domain.tag_id == 1
         assert domain.tag_key == "team"
+        assert domain.display_name == "Platform Team"
         assert domain.created_at is not None
         assert domain.created_at.tzinfo is UTC
 
@@ -296,6 +299,7 @@ class TestCustomTagMapper:
             dimension_id=42,
             tag_key="k",
             tag_value="v",
+            display_name="Value",
             created_by="admin",
             created_at=None,
         )

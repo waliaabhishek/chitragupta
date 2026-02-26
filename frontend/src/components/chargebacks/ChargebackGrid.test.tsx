@@ -195,4 +195,130 @@ describe("ChargebackGrid", () => {
       expect(failCallback).toHaveBeenCalled();
     });
   });
+
+  it("calls onSelectionChange when selection changes", async () => {
+    let capturedOnSelectionChanged: ((e: unknown) => void) | undefined;
+
+    const { AgGridReact } = await import("ag-grid-react");
+    vi.mocked(AgGridReact).mockImplementationOnce(({ onSelectionChanged }: { onSelectionChanged?: (e: unknown) => void }) => {
+      capturedOnSelectionChanged = onSelectionChanged;
+      return <div data-testid="ag-grid" />;
+    });
+
+    const onSelectionChange = vi.fn();
+
+    render(
+      <ChargebackGrid
+        tenantName="acme"
+        filters={{}}
+        onRowClick={vi.fn()}
+        onSelectionChange={onSelectionChange}
+      />,
+    );
+
+    expect(capturedOnSelectionChanged).toBeDefined();
+
+    // Simulate selection change event
+    const mockEvent = {
+      api: {
+        getSelectedRows: () => [
+          { dimension_id: 1, identity_id: "user1" },
+          { dimension_id: 2, identity_id: "user2" },
+        ],
+      },
+    };
+
+    await capturedOnSelectionChanged!(mockEvent);
+
+    expect(onSelectionChange).toHaveBeenCalledWith([1, 2]);
+  });
+
+  it("calls onSelectAll when header checkbox triggers selection", async () => {
+    let capturedOnSelectionChanged: ((e: unknown) => void) | undefined;
+
+    const { AgGridReact } = await import("ag-grid-react");
+    vi.mocked(AgGridReact).mockImplementationOnce(({ onSelectionChanged }: { onSelectionChanged?: (e: unknown) => void }) => {
+      capturedOnSelectionChanged = onSelectionChanged;
+      return <div data-testid="ag-grid" />;
+    });
+
+    server.use(
+      http.get("/api/v1/tenants/acme/chargebacks", () => {
+        return HttpResponse.json({
+          items: [],
+          total: 500,
+          page: 1,
+          page_size: 1,
+          pages: 500,
+        });
+      }),
+    );
+
+    const onSelectAll = vi.fn();
+
+    render(
+      <ChargebackGrid
+        tenantName="acme"
+        filters={{}}
+        onRowClick={vi.fn()}
+        onSelectAll={onSelectAll}
+      />,
+    );
+
+    expect(capturedOnSelectionChanged).toBeDefined();
+
+    // Simulate header checkbox selection (some rows selected)
+    const mockEvent = {
+      api: {
+        getSelectedRows: () => [
+          { dimension_id: 1 },
+          { dimension_id: 2 },
+          { dimension_id: 3 },
+        ],
+      },
+    };
+
+    await capturedOnSelectionChanged!(mockEvent);
+
+    await vi.waitFor(() => {
+      expect(onSelectAll).toHaveBeenCalledWith(500);
+    });
+  });
+
+  it("filters null dimension_ids from selection", async () => {
+    let capturedOnSelectionChanged: ((e: unknown) => void) | undefined;
+
+    const { AgGridReact } = await import("ag-grid-react");
+    vi.mocked(AgGridReact).mockImplementationOnce(({ onSelectionChanged }: { onSelectionChanged?: (e: unknown) => void }) => {
+      capturedOnSelectionChanged = onSelectionChanged;
+      return <div data-testid="ag-grid" />;
+    });
+
+    const onSelectionChange = vi.fn();
+
+    render(
+      <ChargebackGrid
+        tenantName="acme"
+        filters={{}}
+        onRowClick={vi.fn()}
+        onSelectionChange={onSelectionChange}
+      />,
+    );
+
+    // Mix of valid and null dimension_ids
+    const mockEvent = {
+      api: {
+        getSelectedRows: () => [
+          { dimension_id: 1, identity_id: "user1" },
+          { dimension_id: null, identity_id: "user2" },
+          { dimension_id: 3, identity_id: "user3" },
+        ],
+      },
+    };
+
+    await capturedOnSelectionChanged!(mockEvent);
+
+    // Should only include valid dimension_ids
+    expect(onSelectionChange).toHaveBeenCalledWith([1, 3]);
+  });
 });

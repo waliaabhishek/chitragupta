@@ -108,11 +108,13 @@ class PipelineStateTable(SQLModel, table=True):
 
 class CustomTagTable(SQLModel, table=True):
     __tablename__ = "custom_tags"
+    __table_args__ = (UniqueConstraint("dimension_id", "tag_key", name="uq_custom_tag_dimension_key"),)
 
     tag_id: int | None = Field(default=None, primary_key=True)
     dimension_id: int = Field(foreign_key="chargeback_dimensions.dimension_id", index=True)
     tag_key: str = ""
     tag_value: str = ""
+    display_name: str = ""
     created_by: str = ""
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),

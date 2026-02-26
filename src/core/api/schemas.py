@@ -156,18 +156,75 @@ class TagResponse(BaseModel):
     dimension_id: int
     tag_key: str
     tag_value: str
+    display_name: str
     created_by: str
     created_at: datetime | None
 
     model_config = ConfigDict(from_attributes=True)
 
 
+class TagWithDimensionResponse(BaseModel):
+    """Extended tag response with denormalized dimension context for display."""
+
+    tag_id: int
+    dimension_id: int
+    tag_key: str
+    tag_value: str
+    display_name: str
+    created_by: str
+    created_at: datetime | None
+    # Denormalized dimension context
+    identity_id: str
+    product_type: str
+    resource_id: str | None
+
+
 class TagCreateRequest(BaseModel):
-    """Request to create a custom tag."""
+    """Request to create a custom tag. Backend auto-generates tag_value = uuid4()."""
 
     tag_key: str = Field(min_length=1, max_length=100)
-    tag_value: str = Field(min_length=1, max_length=500)
+    display_name: str = Field(min_length=1, max_length=500)
     created_by: str = Field(min_length=1, max_length=100)
+
+
+class TagUpdateRequest(BaseModel):
+    """Request to update a tag's display name."""
+
+    display_name: str = Field(min_length=1, max_length=500)
+
+
+class BulkTagRequest(BaseModel):
+    """Request to bulk-add tags by dimension IDs."""
+
+    dimension_ids: list[int] = Field(min_length=1, max_length=1000)
+    tag_key: str = Field(min_length=1, max_length=100)
+    display_name: str = Field(min_length=1, max_length=500)
+    created_by: str = Field(min_length=1, max_length=100)
+    override_existing: bool = False
+
+
+class BulkTagByFilterRequest(BaseModel):
+    """Request to bulk-add tags by chargeback filters."""
+
+    start_date: date | None = None
+    end_date: date | None = None
+    identity_id: str | None = None
+    product_type: str | None = None
+    resource_id: str | None = None
+    cost_type: str | None = None
+    tag_key: str = Field(min_length=1, max_length=100)
+    display_name: str = Field(min_length=1, max_length=500)
+    created_by: str = Field(min_length=1, max_length=100)
+    override_existing: bool = False
+
+
+class BulkTagResponse(BaseModel):
+    """Result of a bulk tag operation."""
+
+    created_count: int
+    updated_count: int
+    skipped_count: int
+    errors: list[str]
 
 
 # --- Pipeline ---

@@ -18,6 +18,7 @@ export default defineConfig({
         "src/components/charts/**/*.{ts,tsx}",
         "src/pages/chargebacks/**/*.{ts,tsx}",
         "src/pages/dashboard/**/*.{ts,tsx}",
+        "src/pages/tags/**/*.{ts,tsx}",
         "src/utils/aggregation.ts",
       ],
       thresholds: {

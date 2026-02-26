@@ -3,6 +3,7 @@ import {
   CloudServerOutlined,
   DashboardOutlined,
   DollarOutlined,
+  TagsOutlined,
   TeamOutlined,
   ThunderboltOutlined,
 } from "@ant-design/icons";
@@ -59,6 +60,12 @@ export function AppLayout({ children }: AppLayoutProps): JSX.Element {
       key: "/identities",
       icon: <TeamOutlined />,
       label: "Identities",
+      disabled: tenantRequired,
+    },
+    {
+      key: "/tags",
+      icon: <TagsOutlined />,
+      label: "Tags",
       disabled: tenantRequired,
     },
     {

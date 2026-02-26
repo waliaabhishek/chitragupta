@@ -26,7 +26,8 @@ async function patchDimension(
   tenantName: string,
   dimensionId: number,
   body: {
-    add_tags?: { tag_key: string; tag_value: string; created_by: string }[];
+    add_tags?: { tag_key: string; display_name: string; created_by: string }[];
+    tags?: { tag_key: string; display_name: string; created_by: string }[];
     remove_tag_ids?: number[];
   },
 ): Promise<void> {
@@ -73,11 +74,11 @@ export function ChargebackDetailDrawer({
       .finally(() => setLoading(false));
   }, [dimensionId, currentTenant]);
 
-  const handleAddTag = async (key: string, value: string): Promise<void> => {
+  const handleAddTag = async (key: string, displayName: string): Promise<void> => {
     if (!currentTenant || dimensionId === null) return;
     try {
       await patchDimension(currentTenant.tenant_name, dimensionId, {
-        add_tags: [{ tag_key: key, tag_value: value, created_by: "ui" }],
+        add_tags: [{ tag_key: key, display_name: displayName, created_by: "ui" }],
       });
       onTagsChanged();
       const updated = await fetchDimension(

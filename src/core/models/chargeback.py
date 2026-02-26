@@ -42,6 +42,7 @@ class CustomTag:
     dimension_id: int
     tag_key: str
     tag_value: str
+    display_name: str
     created_by: str
     created_at: datetime | None = None
 

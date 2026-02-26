@@ -168,6 +168,24 @@ class ChargebackRepository(Protocol):
         """Get a single dimension by ID for tenant isolation checks."""
         ...
 
+    def get_dimensions_batch(self, dimension_ids: list[int]) -> dict[int, ChargebackDimensionInfo]:
+        """Batch fetch dimensions by IDs. Returns dict keyed by dimension_id."""
+        ...
+
+    def find_dimension_ids_by_filters(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        start: datetime,
+        end: datetime,
+        identity_id: str | None = None,
+        product_type: str | None = None,
+        resource_id: str | None = None,
+        cost_type: str | None = None,
+    ) -> list[int]:
+        """Return distinct dimension_ids matching filters. No pagination."""
+        ...
+
     def aggregate(
         self,
         ecosystem: str,
@@ -232,7 +250,9 @@ class PipelineStateRepository(Protocol):
 class TagRepository(Protocol):
     """Repository for custom tags on chargeback dimensions."""
 
-    def add_tag(self, dimension_id: int, tag_key: str, tag_value: str, created_by: str) -> CustomTag: ...
+    def add_tag(self, dimension_id: int, tag_key: str, display_name: str, created_by: str) -> CustomTag:
+        """Create tag. Backend auto-generates tag_value = uuid4()."""
+        ...
 
     def get_tag(self, tag_id: int) -> CustomTag | None: ...
 
@@ -244,8 +264,20 @@ class TagRepository(Protocol):
         tenant_id: str,
         limit: int = 100,
         offset: int = 0,
+        search: str | None = None,
     ) -> tuple[list[CustomTag], int]:
-        """Find all tags for dimensions belonging to a tenant. Returns (items, total)."""
+        """Find all tags for dimensions belonging to a tenant. Returns (items, total).
+
+        search: case-insensitive LIKE on tag_key, tag_value, or display_name.
+        """
+        ...
+
+    def update_display_name(self, tag_id: int, display_name: str) -> CustomTag:
+        """Update display_name only. tag_value remains immutable."""
+        ...
+
+    def find_by_dimension_and_key(self, dimension_id: int, tag_key: str) -> CustomTag | None:
+        """Find existing tag by dimension and key. Used for upsert/override logic."""
         ...
 
     def delete_tag(self, tag_id: int) -> None: ...

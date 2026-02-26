@@ -256,6 +256,7 @@ def tag_to_table(tag: CustomTag) -> CustomTagTable:
         dimension_id=tag.dimension_id,
         tag_key=tag.tag_key,
         tag_value=tag.tag_value,
+        display_name=tag.display_name,
         created_by=tag.created_by,
         created_at=tag.created_at or datetime.now(UTC),
     )
@@ -267,6 +268,7 @@ def tag_to_domain(t: CustomTagTable) -> CustomTag:
         dimension_id=t.dimension_id,
         tag_key=t.tag_key,
         tag_value=t.tag_value,
+        display_name=t.display_name,
         created_by=t.created_by,
         created_at=ensure_utc(t.created_at),
     )

@@ -44,8 +44,8 @@ class TestPatchDimension:
             f"/api/v1/tenants/test-tenant/chargebacks/{dim_id}",
             json={
                 "add_tags": [
-                    {"tag_key": "env", "tag_value": "prod", "created_by": "admin"},
-                    {"tag_key": "team", "tag_value": "platform", "created_by": "admin"},
+                    {"tag_key": "env", "display_name": "prod", "created_by": "admin"},
+                    {"tag_key": "team", "display_name": "platform", "created_by": "admin"},
                 ]
             },
         )
@@ -61,12 +61,12 @@ class TestPatchDimension:
         # Add initial tag
         app_with_backend.patch(
             f"/api/v1/tenants/test-tenant/chargebacks/{dim_id}",
-            json={"add_tags": [{"tag_key": "old", "tag_value": "value", "created_by": "admin"}]},
+            json={"add_tags": [{"tag_key": "old", "display_name": "value", "created_by": "admin"}]},
         )
         # Replace all tags
         response = app_with_backend.patch(
             f"/api/v1/tenants/test-tenant/chargebacks/{dim_id}",
-            json={"tags": [{"tag_key": "new", "tag_value": "value", "created_by": "admin"}]},
+            json={"tags": [{"tag_key": "new", "display_name": "value", "created_by": "admin"}]},
         )
         assert response.status_code == 200
         data = response.json()
@@ -82,8 +82,8 @@ class TestPatchDimension:
             f"/api/v1/tenants/test-tenant/chargebacks/{dim_id}",
             json={
                 "add_tags": [
-                    {"tag_key": "env", "tag_value": "prod", "created_by": "admin"},
-                    {"tag_key": "team", "tag_value": "platform", "created_by": "admin"},
+                    {"tag_key": "env", "display_name": "prod", "created_by": "admin"},
+                    {"tag_key": "team", "display_name": "platform", "created_by": "admin"},
                 ]
             },
         )
@@ -99,13 +99,13 @@ class TestPatchDimension:
     def test_patch_dimension_not_found(self, app_with_backend: TestClient) -> None:
         response = app_with_backend.patch(
             "/api/v1/tenants/test-tenant/chargebacks/99999",
-            json={"add_tags": [{"tag_key": "env", "tag_value": "prod", "created_by": "admin"}]},
+            json={"add_tags": [{"tag_key": "env", "display_name": "prod", "created_by": "admin"}]},
         )
         assert response.status_code == 404
 
     def test_patch_dimension_wrong_tenant(self, app_with_backend: TestClient) -> None:
         response = app_with_backend.patch(
             "/api/v1/tenants/no-such-tenant/chargebacks/1",
-            json={"add_tags": [{"tag_key": "env", "tag_value": "prod", "created_by": "admin"}]},
+            json={"add_tags": [{"tag_key": "env", "display_name": "prod", "created_by": "admin"}]},
         )
         assert response.status_code == 404

@@ -111,6 +111,7 @@ def _build_dimension_response(uow: UnitOfWork, dimension_id: int) -> ChargebackD
                 dimension_id=t.dimension_id,
                 tag_key=t.tag_key,
                 tag_value=t.tag_value,
+                display_name=t.display_name,
                 created_by=t.created_by,
                 created_at=t.created_at,
             )
@@ -159,12 +160,12 @@ async def update_chargeback_dimension(
                 if existing_tag.tag_id is not None:
                     uow.tags.delete_tag(existing_tag.tag_id)
             for new_tag in body.tags:
-                uow.tags.add_tag(dimension_id, new_tag.tag_key, new_tag.tag_value, new_tag.created_by)
+                uow.tags.add_tag(dimension_id, new_tag.tag_key, new_tag.display_name, new_tag.created_by)
 
         # Add tags
         if body.add_tags is not None:
             for add_tag in body.add_tags:
-                uow.tags.add_tag(dimension_id, add_tag.tag_key, add_tag.tag_value, add_tag.created_by)
+                uow.tags.add_tag(dimension_id, add_tag.tag_key, add_tag.display_name, add_tag.created_by)
 
         # Remove specific tags
         if body.remove_tag_ids is not None:

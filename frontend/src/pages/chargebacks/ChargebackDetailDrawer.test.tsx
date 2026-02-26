@@ -190,7 +190,8 @@ const dimensionFixture: ChargebackDimensionResponse = {
       tag_id: 1,
       dimension_id: 42,
       tag_key: "env",
-      tag_value: "prod",
+      tag_value: "uuid-prod",
+      display_name: "prod",
       created_by: "ui",
       created_at: null,
     },
@@ -325,9 +326,9 @@ describe("ChargebackDetailDrawer", () => {
 
     // Find the add button in TagEditor and click it via form submit
     const keyInput = screen.getByPlaceholderText("Key");
-    const valueInput = screen.getByPlaceholderText("Value");
+    const valueInput = screen.getByPlaceholderText("Display Name");
     fireEvent.change(keyInput, { target: { value: "newkey" } });
-    fireEvent.change(valueInput, { target: { value: "newval" } });
+    fireEvent.change(valueInput, { target: { value: "New Value" } });
     fireEvent.click(screen.getByText("Add"));
 
     await waitFor(() => {
@@ -347,7 +348,7 @@ describe("ChargebackDetailDrawer", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("env: prod")).toBeTruthy();
+      expect(screen.getByText("prod")).toBeTruthy();
     });
 
     const removeBtn = screen.getByLabelText("remove");

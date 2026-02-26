@@ -8,7 +8,8 @@ const sampleTags: TagResponse[] = [
     tag_id: 1,
     dimension_id: 10,
     tag_key: "env",
-    tag_value: "prod",
+    tag_value: "uuid-aaa",
+    display_name: "Production",
     created_by: "ui",
     created_at: null,
   },
@@ -16,14 +17,15 @@ const sampleTags: TagResponse[] = [
     tag_id: 2,
     dimension_id: 10,
     tag_key: "team",
-    tag_value: "platform",
+    tag_value: "uuid-bbb",
+    display_name: "Platform",
     created_by: "ui",
     created_at: null,
   },
 ];
 
 describe("TagEditor", () => {
-  it("renders existing tags", () => {
+  it("renders existing tags with display_name", () => {
     render(
       <TagEditor
         tags={sampleTags}
@@ -32,20 +34,20 @@ describe("TagEditor", () => {
       />,
     );
 
-    expect(screen.getByText("env: prod")).toBeTruthy();
-    expect(screen.getByText("team: platform")).toBeTruthy();
+    expect(screen.getByText("Production")).toBeTruthy();
+    expect(screen.getByText("Platform")).toBeTruthy();
   });
 
-  it("renders empty state with no tags", () => {
+  it("renders empty state with Key and Display Name fields", () => {
     render(
       <TagEditor tags={[]} onAdd={vi.fn()} onRemove={vi.fn()} />,
     );
     expect(screen.getByText("Tags")).toBeTruthy();
     expect(screen.getByPlaceholderText("Key")).toBeTruthy();
-    expect(screen.getByPlaceholderText("Value")).toBeTruthy();
+    expect(screen.getByPlaceholderText("Display Name")).toBeTruthy();
   });
 
-  it("calls onAdd with key and value on form submit", async () => {
+  it("calls onAdd with key and displayName on form submit", async () => {
     const onAdd = vi.fn().mockResolvedValue(undefined);
     render(
       <TagEditor tags={[]} onAdd={onAdd} onRemove={vi.fn()} />,
@@ -54,15 +56,15 @@ describe("TagEditor", () => {
     fireEvent.change(screen.getByPlaceholderText("Key"), {
       target: { value: "env" },
     });
-    fireEvent.change(screen.getByPlaceholderText("Value"), {
-      target: { value: "staging" },
+    fireEvent.change(screen.getByPlaceholderText("Display Name"), {
+      target: { value: "Staging" },
     });
 
     await act(async () => {
       fireEvent.click(screen.getByText("Add"));
     });
 
-    expect(onAdd).toHaveBeenCalledWith("env", "staging");
+    expect(onAdd).toHaveBeenCalledWith("env", "Staging");
   });
 
   it("does not call onAdd when form fields are empty", async () => {
@@ -75,7 +77,6 @@ describe("TagEditor", () => {
       fireEvent.click(screen.getByText("Add"));
     });
 
-    // onAdd should not be called with empty values
     expect(onAdd).not.toHaveBeenCalled();
   });
 
@@ -85,7 +86,6 @@ describe("TagEditor", () => {
       <TagEditor tags={sampleTags} onAdd={vi.fn()} onRemove={onRemove} />,
     );
 
-    // Ant Design Tag close buttons are rendered as .ant-tag-close-icon spans
     const closeButtons = document.querySelectorAll(".ant-tag-close-icon");
     expect(closeButtons.length).toBeGreaterThan(0);
 
@@ -110,12 +110,11 @@ describe("TagEditor", () => {
     fireEvent.change(screen.getByPlaceholderText("Key"), {
       target: { value: "k" },
     });
-    fireEvent.change(screen.getByPlaceholderText("Value"), {
+    fireEvent.change(screen.getByPlaceholderText("Display Name"), {
       target: { value: "v" },
     });
     fireEvent.click(screen.getByText("Add"));
 
-    // Button should be in loading state
     await waitFor(() => {
       const btn = screen.getByRole("button", { name: /add/i });
       expect(btn.classList.contains("ant-btn-loading")).toBe(true);

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
@@ -464,6 +465,20 @@ class SQLModelChargebackRepository:
         )
         results = self._session.execute(stmt).all()
         items = [chargeback_to_domain(dim, fact) for dim, fact in results]
+
+        # Overlay custom tag display_names onto each row
+        dim_ids = [row.dimension_id for row in items if row.dimension_id is not None]
+        if dim_ids:
+            tag_rows = self._session.exec(
+                select(CustomTagTable).where(col(CustomTagTable.dimension_id).in_(dim_ids))
+            ).all()
+            tags_by_dim: dict[int, list[str]] = {}
+            for t in tag_rows:
+                tags_by_dim.setdefault(t.dimension_id, []).append(t.display_name)
+            for row in items:
+                if row.dimension_id is not None:
+                    row.tags = tags_by_dim.get(row.dimension_id, [])
+
         return items, total
 
     def delete_before(self, ecosystem: str, tenant_id: str, before: datetime) -> int:
@@ -511,6 +526,65 @@ class SQLModelChargebackRepository:
             allocation_method=row.allocation_method,
             allocation_detail=row.allocation_detail,
         )
+
+    def get_dimensions_batch(self, dimension_ids: list[int]) -> dict[int, ChargebackDimensionInfo]:
+        from core.models.chargeback import ChargebackDimensionInfo
+
+        if not dimension_ids:
+            return {}
+        stmt = select(ChargebackDimensionTable).where(col(ChargebackDimensionTable.dimension_id).in_(dimension_ids))
+        result: dict[int, ChargebackDimensionInfo] = {}
+        for row in self._session.exec(stmt).all():
+            if row.dimension_id is not None:
+                result[row.dimension_id] = ChargebackDimensionInfo(
+                    dimension_id=row.dimension_id,
+                    ecosystem=row.ecosystem,
+                    tenant_id=row.tenant_id,
+                    resource_id=row.resource_id,
+                    product_category=row.product_category,
+                    product_type=row.product_type,
+                    identity_id=row.identity_id,
+                    cost_type=row.cost_type,
+                    allocation_method=row.allocation_method,
+                    allocation_detail=row.allocation_detail,
+                )
+        return result
+
+    def find_dimension_ids_by_filters(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        start: datetime,
+        end: datetime,
+        identity_id: str | None = None,
+        product_type: str | None = None,
+        resource_id: str | None = None,
+        cost_type: str | None = None,
+    ) -> list[int]:
+        where: list[Any] = [
+            col(ChargebackDimensionTable.ecosystem) == ecosystem,
+            col(ChargebackDimensionTable.tenant_id) == tenant_id,
+            col(ChargebackFactTable.timestamp) >= start,
+            col(ChargebackFactTable.timestamp) < end,
+        ]
+        if identity_id is not None:
+            where.append(col(ChargebackDimensionTable.identity_id) == identity_id)
+        if product_type is not None:
+            where.append(col(ChargebackDimensionTable.product_type) == product_type)
+        if resource_id is not None:
+            where.append(col(ChargebackDimensionTable.resource_id) == resource_id)
+        if cost_type is not None:
+            where.append(col(ChargebackDimensionTable.cost_type) == cost_type)
+
+        join_clause = col(ChargebackDimensionTable.dimension_id) == col(ChargebackFactTable.dimension_id)
+        stmt = (
+            select(ChargebackDimensionTable.dimension_id)
+            .select_from(ChargebackDimensionTable)
+            .join(ChargebackFactTable, join_clause)
+            .where(*where)
+            .distinct()
+        )
+        return [row for row in self._session.exec(stmt).all() if row is not None]
 
     def aggregate(
         self,
@@ -704,14 +778,16 @@ class SQLModelTagRepository:
     def __init__(self, session: Session) -> None:
         self._session = session
 
-    def add_tag(self, dimension_id: int, tag_key: str, tag_value: str, created_by: str) -> CustomTag:
+    def add_tag(self, dimension_id: int, tag_key: str, display_name: str, created_by: str) -> CustomTag:
+        """Create tag. Backend auto-generates tag_value = uuid4()."""
         from core.models.chargeback import CustomTag as CustomTagDomain
 
         domain_tag = CustomTagDomain(
             tag_id=None,
             dimension_id=dimension_id,
             tag_key=tag_key,
-            tag_value=tag_value,
+            tag_value=str(uuid.uuid4()),
+            display_name=display_name,
             created_by=created_by,
         )
         row = tag_to_table(domain_tag)
@@ -733,12 +809,22 @@ class SQLModelTagRepository:
         tenant_id: str,
         limit: int = 100,
         offset: int = 0,
+        search: str | None = None,
     ) -> tuple[list[CustomTag], int]:
         join_clause = col(CustomTagTable.dimension_id) == col(ChargebackDimensionTable.dimension_id)
-        where = [
+        where: list[Any] = [
             col(ChargebackDimensionTable.ecosystem) == ecosystem,
             col(ChargebackDimensionTable.tenant_id) == tenant_id,
         ]
+        if search:
+            pattern = f"%{search}%"
+            where.append(
+                or_(
+                    col(CustomTagTable.tag_key).ilike(pattern),
+                    col(CustomTagTable.tag_value).ilike(pattern),
+                    col(CustomTagTable.display_name).ilike(pattern),
+                )
+            )
 
         count_stmt = (
             select(func.count()).select_from(CustomTagTable).join(ChargebackDimensionTable, join_clause).where(*where)
@@ -750,6 +836,26 @@ class SQLModelTagRepository:
         )
         items = [tag_to_domain(r) for r in self._session.exec(stmt).all()]
         return items, total
+
+    def update_display_name(self, tag_id: int, display_name: str) -> CustomTag:
+        """Update display_name only. tag_value remains immutable."""
+        row = self._session.get(CustomTagTable, tag_id)
+        if row is None:
+            msg = f"Tag {tag_id} not found"
+            raise KeyError(msg)
+        row.display_name = display_name
+        self._session.add(row)
+        self._session.flush()
+        return tag_to_domain(row)
+
+    def find_by_dimension_and_key(self, dimension_id: int, tag_key: str) -> CustomTag | None:
+        """Find existing tag by dimension and key."""
+        stmt = select(CustomTagTable).where(
+            col(CustomTagTable.dimension_id) == dimension_id,
+            col(CustomTagTable.tag_key) == tag_key,
+        )
+        row = self._session.exec(stmt).first()
+        return tag_to_domain(row) if row else None
 
     def delete_tag(self, tag_id: int) -> None:
         row = self._session.get(CustomTagTable, tag_id)

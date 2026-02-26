@@ -1,8 +1,10 @@
 import { http, HttpResponse } from "msw";
 import type {
   AggregationResponse,
-  TenantListResponse,
+  BulkTagResponse,
   PaginatedResponse,
+  TagWithDimensionResponse,
+  TenantListResponse,
 } from "../../types/api";
 
 const BASE = "/api/v1";
@@ -141,5 +143,80 @@ export const handlers = [
 
   http.delete(`${BASE}/tenants/:tenant/chargebacks/:id`, () => {
     return HttpResponse.json({ ok: true });
+  }),
+
+  // Tags endpoints
+  http.get(`${BASE}/tenants/:tenant/tags`, ({ request }) => {
+    const url = new URL(request.url);
+    const page = Number(url.searchParams.get("page") ?? "1");
+    const pageSize = Number(url.searchParams.get("page_size") ?? "100");
+    const tags: TagWithDimensionResponse[] = [
+      {
+        tag_id: 1,
+        dimension_id: 10,
+        tag_key: "env",
+        tag_value: "uuid-1",
+        display_name: "Production",
+        created_by: "ui",
+        created_at: null,
+        identity_id: "user@example.com",
+        product_type: "KAFKA_NUM_BYTES",
+      },
+    ];
+    const response: PaginatedResponse<TagWithDimensionResponse> = {
+      items: tags,
+      total: 1,
+      page,
+      page_size: pageSize,
+      pages: 1,
+    };
+    return HttpResponse.json(response);
+  }),
+
+  http.patch(`${BASE}/tenants/:tenant/tags/:id`, async ({ request }) => {
+    const body = (await request.json()) as { display_name: string };
+    const tag: TagWithDimensionResponse = {
+      tag_id: 1,
+      dimension_id: 10,
+      tag_key: "env",
+      tag_value: "uuid-1",
+      display_name: body.display_name,
+      created_by: "ui",
+      created_at: null,
+      identity_id: "user@example.com",
+      product_type: "KAFKA_NUM_BYTES",
+    };
+    return HttpResponse.json(tag);
+  }),
+
+  http.delete(`${BASE}/tenants/:tenant/tags/:id`, () => {
+    return new HttpResponse(null, { status: 204 });
+  }),
+
+  http.post(`${BASE}/tenants/:tenant/tags/bulk`, async () => {
+    const result: BulkTagResponse = {
+      created_count: 3,
+      updated_count: 0,
+      skipped_count: 0,
+      errors: [],
+    };
+    return HttpResponse.json(result);
+  }),
+
+  http.post(`${BASE}/tenants/:tenant/tags/bulk-by-filter`, async () => {
+    const result: BulkTagResponse = {
+      created_count: 5,
+      updated_count: 0,
+      skipped_count: 0,
+      errors: [],
+    };
+    return HttpResponse.json(result);
+  }),
+
+  // Export endpoint — returns CSV blob
+  http.post(`${BASE}/tenants/:tenant/export`, () => {
+    return new HttpResponse("date,amount\n2024-01-01,12.50\n", {
+      headers: { "Content-Type": "text/csv" },
+    });
   }),
 ];

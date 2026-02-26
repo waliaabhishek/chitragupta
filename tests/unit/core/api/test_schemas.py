@@ -169,6 +169,7 @@ class TestChargebackDimensionResponse:
             dimension_id=42,
             tag_key="env",
             tag_value="prod",
+            display_name="Production",
             created_by="ui",
             created_at=None,
         )

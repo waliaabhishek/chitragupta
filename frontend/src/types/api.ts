@@ -113,14 +113,60 @@ export interface TagResponse {
   dimension_id: number;
   tag_key: string;
   tag_value: string;
+  display_name: string;
   created_by: string;
   created_at: string | null;
 }
 
-export interface TagCreateRequest {
+export interface TagWithDimensionResponse {
+  tag_id: number;
+  dimension_id: number;
   tag_key: string;
   tag_value: string;
+  display_name: string;
   created_by: string;
+  created_at: string | null;
+  identity_id: string;
+  product_type: string;
+  resource_id: string | null;
+}
+
+export interface TagCreateRequest {
+  tag_key: string;
+  display_name: string;
+  created_by: string;
+}
+
+export interface TagUpdateRequest {
+  display_name: string;
+}
+
+export interface BulkTagRequest {
+  dimension_ids: number[];
+  tag_key: string;
+  display_name: string;
+  created_by: string;
+  override_existing?: boolean;
+}
+
+export interface BulkTagByFilterRequest {
+  start_date?: string | null;
+  end_date?: string | null;
+  identity_id?: string | null;
+  product_type?: string | null;
+  resource_id?: string | null;
+  cost_type?: string | null;
+  tag_key: string;
+  display_name: string;
+  created_by: string;
+  override_existing?: boolean;
+}
+
+export interface BulkTagResponse {
+  created_count: number;
+  updated_count: number;
+  skipped_count: number;
+  errors: string[];
 }
 
 // --- Pipeline ---
