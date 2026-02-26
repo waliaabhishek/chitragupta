@@ -1,0 +1,94 @@
+import { describe, expect, it } from "vitest";
+import type { AggregationBucket } from "../types/api";
+import { aggregateByDimension, aggregateByTime, formatCurrency } from "./aggregation";
+
+function makeBucket(overrides: Partial<AggregationBucket> = {}): AggregationBucket {
+  return {
+    dimensions: { identity_id: "user-1" },
+    time_bucket: "2026-02-01",
+    total_amount: "10.00",
+    row_count: 1,
+    ...overrides,
+  };
+}
+
+describe("aggregateByTime", () => {
+  it("returns empty array for empty input", () => {
+    expect(aggregateByTime([])).toEqual([]);
+  });
+
+  it("sums amounts for same time_bucket", () => {
+    const buckets = [
+      makeBucket({ time_bucket: "2026-02-01", total_amount: "10.00" }),
+      makeBucket({ time_bucket: "2026-02-01", total_amount: "5.00" }),
+    ];
+    const result = aggregateByTime(buckets);
+    expect(result).toHaveLength(1);
+    expect(result[0].amount).toBeCloseTo(15.0);
+  });
+
+  it("keeps separate entries for different time_buckets", () => {
+    const buckets = [
+      makeBucket({ time_bucket: "2026-02-01", total_amount: "10.00" }),
+      makeBucket({ time_bucket: "2026-02-02", total_amount: "5.00" }),
+    ];
+    const result = aggregateByTime(buckets);
+    expect(result).toHaveLength(2);
+  });
+
+  it("sorts results by time ascending", () => {
+    const buckets = [
+      makeBucket({ time_bucket: "2026-02-03", total_amount: "30.00" }),
+      makeBucket({ time_bucket: "2026-02-01", total_amount: "10.00" }),
+      makeBucket({ time_bucket: "2026-02-02", total_amount: "20.00" }),
+    ];
+    const result = aggregateByTime(buckets);
+    expect(result.map((r) => r.time)).toEqual([
+      "2026-02-01",
+      "2026-02-02",
+      "2026-02-03",
+    ]);
+  });
+});
+
+describe("aggregateByDimension", () => {
+  it("returns empty array for empty input", () => {
+    expect(aggregateByDimension([], "identity_id")).toEqual([]);
+  });
+
+  it("sums amounts for same dimension value", () => {
+    const buckets = [
+      makeBucket({ dimensions: { identity_id: "user-1" }, total_amount: "10.00" }),
+      makeBucket({ dimensions: { identity_id: "user-1" }, total_amount: "5.00" }),
+    ];
+    const result = aggregateByDimension(buckets, "identity_id");
+    expect(result).toHaveLength(1);
+    expect(result[0].key).toBe("user-1");
+    expect(result[0].amount).toBeCloseTo(15.0);
+  });
+
+  it("keeps separate entries for different dimension values", () => {
+    const buckets = [
+      makeBucket({ dimensions: { identity_id: "user-1" }, total_amount: "10.00" }),
+      makeBucket({ dimensions: { identity_id: "user-2" }, total_amount: "5.00" }),
+    ];
+    const result = aggregateByDimension(buckets, "identity_id");
+    expect(result).toHaveLength(2);
+  });
+
+  it("uses 'Unknown' for missing dimension key", () => {
+    const bucket = makeBucket({ dimensions: {} });
+    const result = aggregateByDimension([bucket], "identity_id");
+    expect(result[0].key).toBe("Unknown");
+  });
+});
+
+describe("formatCurrency", () => {
+  it("formats zero", () => {
+    expect(formatCurrency(0)).toBe("$0.00");
+  });
+
+  it("formats a positive amount with 2 decimal places", () => {
+    expect(formatCurrency(12.5)).toMatch(/^\$12\.50$/);
+  });
+});

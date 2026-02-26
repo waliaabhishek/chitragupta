@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta
+from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import delete, func, or_
+from sqlalchemy import cast, delete, func, or_
+from sqlalchemy.types import String
 from sqlmodel import Session, col, select
+
+from core.models.chargeback import AggregationRow
 
 if TYPE_CHECKING:
     from core.models.billing import BillingLineItem
-    from core.models.chargeback import AggregationRow, ChargebackDimensionInfo, ChargebackRow, CustomTag
+    from core.models.chargeback import ChargebackDimensionInfo, ChargebackRow, CustomTag
     from core.models.identity import Identity
     from core.models.pipeline import PipelineState
     from core.models.resource import Resource
@@ -516,15 +520,12 @@ class SQLModelChargebackRepository:
         time_bucket: str,
         start: datetime | None = None,
         end: datetime | None = None,
+        identity_id: str | None = None,
+        product_type: str | None = None,
+        resource_id: str | None = None,
+        cost_type: str | None = None,
         limit: int = 10000,
     ) -> list[AggregationRow]:
-        from decimal import Decimal
-
-        from sqlalchemy import Float, cast
-        from sqlalchemy.types import String
-
-        from core.models.chargeback import AggregationRow
-
         # Build dimension group columns
         group_cols = []
         group_labels = []
@@ -554,11 +555,19 @@ class SQLModelChargebackRepository:
             where.append(col(ChargebackFactTable.timestamp) >= start)
         if end is not None:
             where.append(col(ChargebackFactTable.timestamp) < end)
+        if identity_id is not None:
+            where.append(col(ChargebackDimensionTable.identity_id) == identity_id)
+        if product_type is not None:
+            where.append(col(ChargebackDimensionTable.product_type) == product_type)
+        if resource_id is not None:
+            where.append(col(ChargebackDimensionTable.resource_id) == resource_id)
+        if cost_type is not None:
+            where.append(col(ChargebackDimensionTable.cost_type) == cost_type)
 
         select_cols = [
             *group_cols,
             time_expr.label("time_bucket"),
-            func.sum(cast(col(ChargebackFactTable.amount), Float)).label("total_amount"),
+            func.sum(col(ChargebackFactTable.amount)).label("total_amount"),
             func.count().label("row_count"),
         ]
         group_by_labels = [*group_labels, "time_bucket"]

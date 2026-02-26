@@ -1,0 +1,189 @@
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import type { ReactNode } from "react";
+import { MemoryRouter } from "react-router-dom";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { CostDashboardPage } from "./index";
+
+// Mock echarts-for-react globally for all chart components
+vi.mock("echarts-for-react", () => ({
+  default: vi.fn(() => <div data-testid="echarts" />),
+}));
+
+// Mock chart components to avoid deep ECharts rendering
+vi.mock("../../components/charts/ProductChartTypeToggle", () => ({
+  ProductChartTypeToggle: vi.fn(() => <div data-testid="product-chart-type-toggle" />),
+}));
+vi.mock("../../components/charts/CostTrendChart", () => ({
+  CostTrendChart: vi.fn(() => <div data-testid="cost-trend-chart" />),
+}));
+vi.mock("../../components/charts/CostByIdentityChart", () => ({
+  CostByIdentityChart: vi.fn(() => <div data-testid="cost-by-identity-chart" />),
+}));
+vi.mock("../../components/charts/CostByProductChart", () => ({
+  CostByProductChart: vi.fn(() => <div data-testid="cost-by-product-chart" />),
+}));
+vi.mock("../../components/charts/CostByResourceChart", () => ({
+  CostByResourceChart: vi.fn(() => <div data-testid="cost-by-resource-chart" />),
+}));
+
+// Mock FilterPanel
+vi.mock("../../components/chargebacks/FilterPanel", () => ({
+  FilterPanel: vi.fn(({ onReset }: { onReset: () => void }) => (
+    <div data-testid="filter-panel">
+      <button onClick={onReset}>Reset</button>
+    </div>
+  )),
+}));
+
+// Mock ChartCard — just render children
+vi.mock("../../components/charts/ChartCard", () => ({
+  ChartCard: vi.fn(
+    ({ title, children, loading }: { title: string; children: ReactNode; loading?: boolean }) =>
+      loading ? (
+        <div data-testid="chart-card-loading">{title}</div>
+      ) : (
+        <div data-testid="chart-card">
+          <span>{title}</span>
+          {children}
+        </div>
+      ),
+  ),
+}));
+
+// Mock antd
+vi.mock("antd", () => ({
+  Typography: {
+    Title: ({ children }: { children: ReactNode; level?: number }) => <h3>{children}</h3>,
+    Text: ({ children }: { children: ReactNode; type?: string }) => <span>{children}</span>,
+  },
+  Row: ({ children }: { children: ReactNode; gutter?: number | number[] }) => <div>{children}</div>,
+  Col: ({ children }: { children: ReactNode; span?: number; xs?: number; md?: number }) => (
+    <div>{children}</div>
+  ),
+  Radio: {
+    Group: ({
+      children,
+      value,
+      onChange,
+    }: {
+      children: ReactNode;
+      value: string;
+      onChange: (e: { target: { value: string } }) => void;
+    }) => (
+      <div data-testid="time-bucket-selector" data-value={value}>
+        {children}
+        <button
+          onClick={() => onChange({ target: { value: "week" } })}
+          data-testid="select-week"
+        >
+          Week
+        </button>
+      </div>
+    ),
+    Button: ({ children, value }: { children: ReactNode; value: string }) => (
+      <button data-value={value}>{children}</button>
+    ),
+  },
+}));
+
+const mockTenant = {
+  tenant_name: "acme",
+  tenant_id: "t-001",
+  ecosystem: "ccloud",
+  dates_pending: 0,
+  dates_calculated: 10,
+  last_calculated_date: null,
+};
+
+vi.mock("../../providers/TenantContext", () => ({
+  useTenant: vi.fn(() => ({
+    currentTenant: null,
+    tenants: [],
+    setCurrentTenant: vi.fn(),
+    isLoading: false,
+    error: null,
+    refetch: vi.fn(),
+  })),
+}));
+
+function wrapper({ children }: { children: ReactNode }): JSX.Element {
+  return (
+    <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+      {children}
+    </MemoryRouter>
+  );
+}
+
+describe("CostDashboardPage", () => {
+  beforeEach(async () => {
+    const { useTenant } = await import("../../providers/TenantContext");
+    vi.mocked(useTenant).mockReturnValue({
+      currentTenant: null,
+      tenants: [],
+      setCurrentTenant: vi.fn(),
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("shows placeholder when no tenant selected", () => {
+    render(<CostDashboardPage />, { wrapper });
+    expect(screen.getByText("Cost Dashboard")).toBeInTheDocument();
+    expect(screen.getByText("Select a tenant to view cost analytics.")).toBeInTheDocument();
+    expect(screen.queryByTestId("filter-panel")).toBeNull();
+    expect(screen.queryByTestId("time-bucket-selector")).toBeNull();
+    expect(screen.queryByText("Cost Trend Over Time")).toBeNull();
+  });
+
+  it("renders all four chart cards when tenant is selected", async () => {
+    const { useTenant } = await import("../../providers/TenantContext");
+    vi.mocked(useTenant).mockReturnValue({
+      currentTenant: mockTenant,
+      tenants: [mockTenant],
+      setCurrentTenant: vi.fn(),
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    render(<CostDashboardPage />, { wrapper });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("filter-panel")).toBeInTheDocument();
+      expect(screen.getByTestId("time-bucket-selector")).toBeInTheDocument();
+    });
+
+    expect(screen.getByText("Cost Trend Over Time")).toBeInTheDocument();
+    expect(screen.getByText("Cost by Identity")).toBeInTheDocument();
+    expect(screen.getByText("Cost by Product Type")).toBeInTheDocument();
+    expect(screen.getByText("Cost by Resource")).toBeInTheDocument();
+  });
+
+  it("changes time bucket when selector is clicked", async () => {
+    const { useTenant } = await import("../../providers/TenantContext");
+    vi.mocked(useTenant).mockReturnValue({
+      currentTenant: mockTenant,
+      tenants: [mockTenant],
+      setCurrentTenant: vi.fn(),
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    render(<CostDashboardPage />, { wrapper });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("time-bucket-selector")).toBeInTheDocument();
+    });
+
+    expect(screen.getByTestId("time-bucket-selector").getAttribute("data-value")).toBe("day");
+    await userEvent.click(screen.getByTestId("select-week"));
+    expect(screen.getByTestId("time-bucket-selector").getAttribute("data-value")).toBe("week");
+  });
+});

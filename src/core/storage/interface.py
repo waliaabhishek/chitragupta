@@ -176,6 +176,10 @@ class ChargebackRepository(Protocol):
         time_bucket: str,
         start: datetime | None = None,
         end: datetime | None = None,
+        identity_id: str | None = None,
+        product_type: str | None = None,
+        resource_id: str | None = None,
+        cost_type: str | None = None,
         limit: int = 10000,
     ) -> list[AggregationRow]:
         """Server-side aggregation with GROUP BY. Returns pre-aggregated buckets."""

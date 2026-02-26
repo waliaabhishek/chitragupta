@@ -1,5 +1,9 @@
 import { http, HttpResponse } from "msw";
-import type { TenantListResponse, PaginatedResponse } from "../../types/api";
+import type {
+  AggregationResponse,
+  TenantListResponse,
+  PaginatedResponse,
+} from "../../types/api";
 
 const BASE = "/api/v1";
 
@@ -92,6 +96,29 @@ export const handlers = [
       page_size: 100,
       pages: 0,
     });
+  }),
+
+  // Must be before /:id to prevent "aggregate" being captured as an ID param
+  http.get(`${BASE}/tenants/:tenant/chargebacks/aggregate`, () => {
+    const response: AggregationResponse = {
+      buckets: [
+        {
+          dimensions: { identity_id: "user-1" },
+          time_bucket: "2026-02-15",
+          total_amount: "10.00",
+          row_count: 1,
+        },
+        {
+          dimensions: { identity_id: "user-2" },
+          time_bucket: "2026-02-15",
+          total_amount: "5.00",
+          row_count: 1,
+        },
+      ],
+      total_amount: "15.00",
+      total_rows: 2,
+    };
+    return HttpResponse.json(response);
   }),
 
   http.get(`${BASE}/tenants/:tenant/chargebacks/:id`, ({ params }) => {

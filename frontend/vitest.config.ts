@@ -15,7 +15,10 @@ export default defineConfig({
         "src/providers/**/*.{ts,tsx}",
         "src/hooks/**/*.{ts,tsx}",
         "src/components/chargebacks/**/*.{ts,tsx}",
+        "src/components/charts/**/*.{ts,tsx}",
         "src/pages/chargebacks/**/*.{ts,tsx}",
+        "src/pages/dashboard/**/*.{ts,tsx}",
+        "src/utils/aggregation.ts",
       ],
       thresholds: {
         lines: 80,

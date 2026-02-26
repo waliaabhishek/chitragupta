@@ -8,6 +8,7 @@ import { dataProvider } from "./providers/dataProvider";
 import { TenantProvider } from "./providers/TenantContext";
 import { AppLayout } from "./components/Layout";
 import { DashboardPage } from "./pages/index";
+import { CostDashboardPage } from "./pages/dashboard/index";
 import { ChargebackListPage } from "./pages/chargebacks/list";
 import { BillingListPage } from "./pages/billing/list";
 import { ResourceListPage } from "./pages/resources/list";
@@ -35,6 +36,7 @@ export function App(): JSX.Element {
               <AppLayout>
                 <Routes>
                   <Route path="/" element={<DashboardPage />} />
+                  <Route path="/dashboard" element={<CostDashboardPage />} />
                   <Route
                     path="/chargebacks"
                     element={<ChargebackListPage />}

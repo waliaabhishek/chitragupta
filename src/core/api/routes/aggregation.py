@@ -38,6 +38,10 @@ async def aggregate_chargebacks(
     time_bucket: Annotated[str, Query(description="Time bucket: hour, day, week, month")] = "day",
     start_date: Annotated[date | None, Query()] = None,
     end_date: Annotated[date | None, Query()] = None,
+    identity_id: Annotated[str | None, Query()] = None,
+    product_type: Annotated[str | None, Query()] = None,
+    resource_id: Annotated[str | None, Query()] = None,
+    cost_type: Annotated[str | None, Query()] = None,
 ) -> AggregationResponse:
     if group_by is None:
         group_by = ["identity_id"]
@@ -76,6 +80,10 @@ async def aggregate_chargebacks(
             time_bucket=time_bucket,
             start=start_dt,
             end=end_dt,
+            identity_id=identity_id,
+            product_type=product_type,
+            resource_id=resource_id,
+            cost_type=cost_type,
             limit=10000,
         )
 

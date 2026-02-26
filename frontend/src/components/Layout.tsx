@@ -32,9 +32,10 @@ export function AppLayout({ children }: AppLayoutProps): JSX.Element {
   const tenantRequired = !currentTenant;
   const menuItems = [
     {
-      key: "/",
+      key: "/dashboard",
       icon: <DashboardOutlined />,
       label: "Dashboard",
+      disabled: tenantRequired,
     },
     {
       key: "/chargebacks",
