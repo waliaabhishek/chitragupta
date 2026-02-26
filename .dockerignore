@@ -1,0 +1,37 @@
+# Version control
+.git
+.gitignore
+
+# Python artifacts
+__pycache__
+*.pyc
+*.pyo
+.venv
+.mypy_cache
+.pytest_cache
+.ruff_cache
+*.egg-info
+
+# IDE
+.idea
+.vscode
+*.swp
+.DS_Store
+
+# Project files not needed in image
+tests/
+backlog/
+ccloud-chargeback-helper-reference/
+deployables/
+configs/
+docs/
+*.md
+!README.md
+
+# Local data
+*.db
+data/
+
+# Environment files (secrets)
+.env
+*.env

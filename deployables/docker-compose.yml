@@ -1,13 +1,36 @@
 services:
+  chargeback-engine:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    volumes:
+      - ./config:/app/config:ro
+      - ./data:/app/data:rw
+    env_file:
+      - ./config/.env
+    command: ["--config-file", "/app/config/config.yaml", "--mode", "both"]
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
   grafana:
-    image: grafana/grafana:latest
+    image: grafana/grafana:12.4.0
     ports:
       - "3000:3000"
     environment:
       GF_SECURITY_ADMIN_USER: admin
-      GF_SECURITY_ADMIN_PASSWORD: password
+      GF_SECURITY_ADMIN_PASSWORD: ${GF_ADMIN_PASSWORD:-password}
       GF_INSTALL_PLUGINS: frser-sqlite-datasource
     volumes:
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
-      - ${CHARGEBACK_DB_PATH:-./data/chargeback.db}:/var/lib/grafana/data/chargeback.db:ro
+      - ./data:/var/lib/grafana/data/chargeback:ro
     restart: unless-stopped
+    depends_on:
+      chargeback-engine:
+        condition: service_healthy

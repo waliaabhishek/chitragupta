@@ -1,0 +1,25 @@
+logging:
+  level: INFO
+
+features:
+  enable_periodic_refresh: true
+  refresh_interval: 3600
+
+api:
+  host: "0.0.0.0"
+  port: 8080
+
+tenants:
+  ccloud-prod:
+    ecosystem: confluent_cloud
+    tenant_id: "${CCLOUD_ORG_ID}"
+    lookback_days: 90
+    cutoff_days: 5
+    storage:
+      backend: sqlmodel
+      connection_string: "sqlite:////app/data/chargeback.db"
+    plugin_settings:
+      api_key: "${CCLOUD_API_KEY}"
+      api_secret: "${CCLOUD_API_SECRET}"
+      billing_api_url: "https://api.confluent.cloud/billing/v1/costs"
+      core_api_url: "https://api.confluent.cloud"
