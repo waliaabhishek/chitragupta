@@ -8,7 +8,7 @@ from typing import Any, overload
 from core.models.billing import BillingLineItem
 from core.models.chargeback import ChargebackRow, CostType, CustomTag
 from core.models.identity import Identity
-from core.models.pipeline import PipelineState
+from core.models.pipeline import PipelineRun, PipelineState
 from core.models.resource import Resource, ResourceStatus
 from core.storage.backends.sqlmodel.tables import (
     BillingTable,
@@ -16,6 +16,7 @@ from core.storage.backends.sqlmodel.tables import (
     ChargebackFactTable,
     CustomTagTable,
     IdentityTable,
+    PipelineRunTable,
     PipelineStateTable,
     ResourceTable,
 )
@@ -244,6 +245,37 @@ def pipeline_state_to_domain(t: PipelineStateTable) -> PipelineState:
         billing_gathered=t.billing_gathered,
         resources_gathered=t.resources_gathered,
         chargeback_calculated=t.chargeback_calculated,
+    )
+
+
+# --- PipelineRun ---
+
+
+def pipeline_run_to_table(run: PipelineRun) -> PipelineRunTable:
+    return PipelineRunTable(
+        id=run.id,
+        tenant_name=run.tenant_name,
+        started_at=ensure_utc_strict(run.started_at),
+        ended_at=ensure_utc_strict(run.ended_at),
+        status=run.status,
+        dates_gathered=run.dates_gathered,
+        dates_calculated=run.dates_calculated,
+        rows_written=run.rows_written,
+        error_message=run.error_message,
+    )
+
+
+def pipeline_run_to_domain(t: PipelineRunTable) -> PipelineRun:
+    return PipelineRun(
+        id=t.id,
+        tenant_name=t.tenant_name,
+        started_at=ensure_utc(t.started_at),
+        ended_at=ensure_utc(t.ended_at),
+        status=t.status,
+        dates_gathered=t.dates_gathered,
+        dates_calculated=t.dates_calculated,
+        rows_written=t.rows_written,
+        error_message=t.error_message,
     )
 
 

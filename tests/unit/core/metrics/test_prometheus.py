@@ -3,9 +3,11 @@ from __future__ import annotations
 import json
 import logging
 from datetime import UTC, datetime, timedelta
-from unittest.mock import MagicMock, patch
+from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
+import requests
 
 from core.metrics.prometheus import (
     AuthConfig,
@@ -16,6 +18,22 @@ from core.metrics.prometheus import (
 )
 from core.metrics.protocol import MetricsQueryError
 from core.models.metrics import MetricQuery, MetricRow
+
+
+@pytest.fixture
+def mock_session() -> MagicMock:
+    """Create a mock requests.Session for testing PrometheusMetricsSource."""
+    session = MagicMock(spec=requests.Session)
+    return session
+
+
+def _make_source_with_mock(mock_post: MagicMock, **config_overrides: Any) -> tuple[PrometheusMetricsSource, MagicMock]:
+    """Helper to create a PrometheusMetricsSource with a mocked session."""
+    session = MagicMock(spec=requests.Session)
+    session.post = mock_post
+    src = PrometheusMetricsSource(_make_config(**config_overrides), session=session)
+    return src, session
+
 
 # ---------------------------------------------------------------------------
 # Fixtures & constants
@@ -104,6 +122,11 @@ def _mock_response(text: str, status_code: int = 200) -> MagicMock:
     resp.text = text
     resp.status_code = status_code
     return resp
+
+
+def _mock_session() -> MagicMock:
+    """Create a mock requests.Session for injection."""
+    return MagicMock()
 
 
 # ===========================================================================
@@ -286,60 +309,54 @@ class TestAuth:
 
 
 class TestRetry:
-    @patch("core.metrics.prometheus.requests.post")
-    def test_transient_then_success(self, mock_post: MagicMock) -> None:
-        mock_post.side_effect = [
-            _mock_response("", 503),
-            _mock_response(_RANGE_RESPONSE, 200),
-        ]
-        src = PrometheusMetricsSource(_make_config(max_retries=3, base_delay=0.0))
+    def test_transient_then_success(self) -> None:
+        mock_post = MagicMock(
+            side_effect=[
+                _mock_response("", 503),
+                _mock_response(_RANGE_RESPONSE, 200),
+            ]
+        )
+        src, _ = _make_source_with_mock(mock_post, max_retries=3, base_delay=0.0)
         result = src.query([_QUERY], _START, _END, _STEP)
         assert "bytes_in" in result
         assert mock_post.call_count == 2
 
-    @patch("core.metrics.prometheus.requests.post")
-    def test_all_retries_exhausted(self, mock_post: MagicMock) -> None:
-        mock_post.return_value = _mock_response("", 503)
-        src = PrometheusMetricsSource(_make_config(max_retries=2, base_delay=0.0))
+    def test_all_retries_exhausted(self) -> None:
+        mock_post = MagicMock(return_value=_mock_response("", 503))
+        src, _ = _make_source_with_mock(mock_post, max_retries=2, base_delay=0.0)
         with pytest.raises(MetricsQueryError, match="Exhausted"):
             src.query([_QUERY], _START, _END, _STEP)
 
-    @patch("core.metrics.prometheus.requests.post")
-    def test_non_transient_immediate_fail(self, mock_post: MagicMock) -> None:
-        mock_post.return_value = _mock_response("Forbidden", 403)
-        src = PrometheusMetricsSource(_make_config(max_retries=3, base_delay=0.0))
+    def test_non_transient_immediate_fail(self) -> None:
+        mock_post = MagicMock(return_value=_mock_response("Forbidden", 403))
+        src, _ = _make_source_with_mock(mock_post, max_retries=3, base_delay=0.0)
         with pytest.raises(MetricsQueryError, match="403"):
             src.query([_QUERY], _START, _END, _STEP)
         assert mock_post.call_count == 1
 
-    @patch("core.metrics.prometheus.requests.post")
-    def test_exhausted_retries_chains_last_exception(self, mock_post: MagicMock) -> None:
-        import requests as req
-
-        mock_post.side_effect = req.ConnectionError("refused")
-        src = PrometheusMetricsSource(_make_config(max_retries=2, base_delay=0.0))
+    def test_exhausted_retries_chains_last_exception(self) -> None:
+        mock_post = MagicMock(side_effect=requests.ConnectionError("refused"))
+        src, _ = _make_source_with_mock(mock_post, max_retries=2, base_delay=0.0)
         with pytest.raises(MetricsQueryError, match="Exhausted") as exc_info:
             src.query([_QUERY], _START, _END, _STEP)
-        assert isinstance(exc_info.value.__cause__, req.ConnectionError)
+        assert isinstance(exc_info.value.__cause__, requests.ConnectionError)
 
-    @patch("core.metrics.prometheus.requests.post")
-    def test_exhausted_retries_transient_status_no_chain(self, mock_post: MagicMock) -> None:
+    def test_exhausted_retries_transient_status_no_chain(self) -> None:
         """Transient HTTP status (no RequestException) → no chained cause."""
-        mock_post.return_value = _mock_response("", 503)
-        src = PrometheusMetricsSource(_make_config(max_retries=2, base_delay=0.0))
+        mock_post = MagicMock(return_value=_mock_response("", 503))
+        src, _ = _make_source_with_mock(mock_post, max_retries=2, base_delay=0.0)
         with pytest.raises(MetricsQueryError, match="Exhausted") as exc_info:
             src.query([_QUERY], _START, _END, _STEP)
         assert exc_info.value.__cause__ is None
 
-    @patch("core.metrics.prometheus.requests.post")
-    def test_connection_error_retries(self, mock_post: MagicMock) -> None:
-        import requests as req
-
-        mock_post.side_effect = [
-            req.ConnectionError("refused"),
-            _mock_response(_RANGE_RESPONSE, 200),
-        ]
-        src = PrometheusMetricsSource(_make_config(max_retries=3, base_delay=0.0))
+    def test_connection_error_retries(self) -> None:
+        mock_post = MagicMock(
+            side_effect=[
+                requests.ConnectionError("refused"),
+                _mock_response(_RANGE_RESPONSE, 200),
+            ]
+        )
+        src, _ = _make_source_with_mock(mock_post, max_retries=3, base_delay=0.0)
         result = src.query([_QUERY], _START, _END, _STEP)
         assert "bytes_in" in result
 
@@ -350,30 +367,28 @@ class TestRetry:
 
 
 class TestParallelExecution:
-    @patch("core.metrics.prometheus.requests.post")
-    def test_multiple_queries_all_succeed(self, mock_post: MagicMock) -> None:
-        mock_post.return_value = _mock_response(_RANGE_RESPONSE, 200)
+    def test_multiple_queries_all_succeed(self) -> None:
+        mock_post = MagicMock(return_value=_mock_response(_RANGE_RESPONSE, 200))
         q2 = MetricQuery(
             key="bytes_out",
             query_expression="kafka_bytesout{}",
             label_keys=("topic",),
             resource_label="kafka_id",
         )
-        src = PrometheusMetricsSource(_make_config())
+        src, _ = _make_source_with_mock(mock_post)
         result = src.query([_QUERY, q2], _START, _END, _STEP)
         assert "bytes_in" in result
         assert "bytes_out" in result
 
-    @patch("core.metrics.prometheus.requests.post")
-    def test_multiple_failures_logs_additional_errors(
-        self, mock_post: MagicMock, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    def test_multiple_failures_logs_additional_errors(self, caplog: pytest.LogCaptureFixture) -> None:
         """When 2+ queries fail, first is raised and extras are logged."""
-        mock_post.side_effect = [
-            _mock_response(_RANGE_RESPONSE, 200),
-            _mock_response("Forbidden", 403),
-            _mock_response("Forbidden", 403),
-        ]
+        mock_post = MagicMock(
+            side_effect=[
+                _mock_response(_RANGE_RESPONSE, 200),
+                _mock_response("Forbidden", 403),
+                _mock_response("Forbidden", 403),
+            ]
+        )
         q2 = MetricQuery(
             key="bytes_out",
             query_expression="kafka_bytesout{}",
@@ -386,24 +401,25 @@ class TestParallelExecution:
             label_keys=("method",),
             resource_label="instance",
         )
-        src = PrometheusMetricsSource(_make_config())
+        src, _ = _make_source_with_mock(mock_post)
         with caplog.at_level(logging.ERROR), pytest.raises(MetricsQueryError):
             src.query([_QUERY, q2, q3], _START, _END, _STEP)
         assert "Additional query error" in caplog.text
 
-    @patch("core.metrics.prometheus.requests.post")
-    def test_one_fails_others_succeed(self, mock_post: MagicMock) -> None:
-        mock_post.side_effect = [
-            _mock_response(_RANGE_RESPONSE, 200),
-            _mock_response("Forbidden", 403),
-        ]
+    def test_one_fails_others_succeed(self) -> None:
+        mock_post = MagicMock(
+            side_effect=[
+                _mock_response(_RANGE_RESPONSE, 200),
+                _mock_response("Forbidden", 403),
+            ]
+        )
         q2 = MetricQuery(
             key="bytes_out",
             query_expression="kafka_bytesout{}",
             label_keys=("topic",),
             resource_label="kafka_id",
         )
-        src = PrometheusMetricsSource(_make_config())
+        src, _ = _make_source_with_mock(mock_post)
         with pytest.raises(MetricsQueryError):
             src.query([_QUERY, q2], _START, _END, _STEP)
 
@@ -414,38 +430,34 @@ class TestParallelExecution:
 
 
 class TestCache:
-    @patch("core.metrics.prometheus.requests.post")
-    def test_same_params_one_call(self, mock_post: MagicMock) -> None:
-        mock_post.return_value = _mock_response(_RANGE_RESPONSE, 200)
-        src = PrometheusMetricsSource(_make_config(cache_ttl_seconds=300.0))
+    def test_same_params_one_call(self) -> None:
+        mock_post = MagicMock(return_value=_mock_response(_RANGE_RESPONSE, 200))
+        src, _ = _make_source_with_mock(mock_post, cache_ttl_seconds=300.0)
         src.query([_QUERY], _START, _END, _STEP)
         src.query([_QUERY], _START, _END, _STEP)
         assert mock_post.call_count == 1
 
-    @patch("core.metrics.prometheus.requests.post")
-    def test_different_params_separate_calls(self, mock_post: MagicMock) -> None:
-        mock_post.return_value = _mock_response(_RANGE_RESPONSE, 200)
-        src = PrometheusMetricsSource(_make_config())
+    def test_different_params_separate_calls(self) -> None:
+        mock_post = MagicMock(return_value=_mock_response(_RANGE_RESPONSE, 200))
+        src, _ = _make_source_with_mock(mock_post)
         src.query([_QUERY], _START, _END, _STEP)
         other_end = datetime(2026, 1, 3, tzinfo=UTC)
         src.query([_QUERY], _START, other_end, _STEP)
         assert mock_post.call_count == 2
 
-    @patch("core.metrics.prometheus.requests.post")
-    def test_ttl_expiry(self, mock_post: MagicMock) -> None:
-        mock_post.return_value = _mock_response(_RANGE_RESPONSE, 200)
-        src = PrometheusMetricsSource(_make_config(cache_ttl_seconds=0.0))
+    def test_ttl_expiry(self) -> None:
+        mock_post = MagicMock(return_value=_mock_response(_RANGE_RESPONSE, 200))
+        src, _ = _make_source_with_mock(mock_post, cache_ttl_seconds=0.0)
 
         src.query([_QUERY], _START, _END, _STEP)
         # TTL is 0 so the next call should re-fetch
         src.query([_QUERY], _START, _END, _STEP)
         assert mock_post.call_count == 2
 
-    @patch("core.metrics.prometheus.requests.post")
-    def test_cache_full_evicts_expired(self, mock_post: MagicMock) -> None:
+    def test_cache_full_evicts_expired(self) -> None:
         """When cache is full and entries are expired, eviction makes room."""
-        mock_post.return_value = _mock_response(_RANGE_RESPONSE, 200)
-        src = PrometheusMetricsSource(_make_config(cache_maxsize=1, cache_ttl_seconds=0.0))
+        mock_post = MagicMock(return_value=_mock_response(_RANGE_RESPONSE, 200))
+        src, _ = _make_source_with_mock(mock_post, cache_maxsize=1, cache_ttl_seconds=0.0)
 
         # First query fills cache; TTL=0 means it expires immediately
         src.query([_QUERY], _START, _END, _STEP)
@@ -455,11 +467,10 @@ class TestCache:
         # Both should have made HTTP calls (no cache hit)
         assert mock_post.call_count == 2
 
-    @patch("core.metrics.prometheus.requests.post")
-    def test_cache_full_non_expired_skips_caching(self, mock_post: MagicMock) -> None:
+    def test_cache_full_non_expired_skips_caching(self) -> None:
         """When cache is full with non-expired entries, new results are not cached."""
-        mock_post.return_value = _mock_response(_RANGE_RESPONSE, 200)
-        src = PrometheusMetricsSource(_make_config(cache_maxsize=1, cache_ttl_seconds=300.0))
+        mock_post = MagicMock(return_value=_mock_response(_RANGE_RESPONSE, 200))
+        src, _ = _make_source_with_mock(mock_post, cache_maxsize=1, cache_ttl_seconds=300.0)
 
         # Fill cache with 1 entry (long TTL, won't expire)
         src.query([_QUERY], _START, _END, _STEP)
@@ -477,11 +488,9 @@ class TestCache:
 
 
 class TestStepGuard:
-    @patch("core.metrics.prometheus.requests.post")
-    def test_zero_step_defaults_to_config(self, mock_post: MagicMock, caplog: pytest.LogCaptureFixture) -> None:
-        mock_post.return_value = _mock_response(_RANGE_RESPONSE, 200)
-        cfg = _make_config(step_seconds=900)
-        src = PrometheusMetricsSource(cfg)
+    def test_zero_step_defaults_to_config(self, caplog: pytest.LogCaptureFixture) -> None:
+        mock_post = MagicMock(return_value=_mock_response(_RANGE_RESPONSE, 200))
+        src, _ = _make_source_with_mock(mock_post, step_seconds=900)
         with caplog.at_level(logging.WARNING):
             src.query([_QUERY], _START, _END, step=timedelta(seconds=0))
         assert "non-positive" in caplog.text
@@ -489,11 +498,9 @@ class TestStepGuard:
         call_data = mock_post.call_args.kwargs["data"]
         assert call_data["step"] == "900"
 
-    @patch("core.metrics.prometheus.requests.post")
-    def test_negative_step_defaults_to_config(self, mock_post: MagicMock, caplog: pytest.LogCaptureFixture) -> None:
-        mock_post.return_value = _mock_response(_RANGE_RESPONSE, 200)
-        cfg = _make_config(step_seconds=600)
-        src = PrometheusMetricsSource(cfg)
+    def test_negative_step_defaults_to_config(self, caplog: pytest.LogCaptureFixture) -> None:
+        mock_post = MagicMock(return_value=_mock_response(_RANGE_RESPONSE, 200))
+        src, _ = _make_source_with_mock(mock_post, step_seconds=600)
         with caplog.at_level(logging.WARNING):
             src.query([_QUERY], _START, _END, step=timedelta(seconds=-10))
         assert "non-positive" in caplog.text
@@ -505,23 +512,22 @@ class TestStepGuard:
 
 
 class TestQueryIntegration:
-    @patch("core.metrics.prometheus.requests.post")
-    def test_query_multiple_metric_queries(self, mock_post: MagicMock) -> None:
-        mock_post.return_value = _mock_response(_RANGE_RESPONSE, 200)
+    def test_query_multiple_metric_queries(self) -> None:
+        mock_post = MagicMock(return_value=_mock_response(_RANGE_RESPONSE, 200))
         q2 = MetricQuery(
             key="requests",
             query_expression="http_requests_total{}",
             label_keys=("method",),
             resource_label="instance",
         )
-        src = PrometheusMetricsSource(_make_config())
+        src, _ = _make_source_with_mock(mock_post)
         result = src.query([_QUERY, q2], _START, _END, _STEP)
         assert isinstance(result, dict)
         assert len(result) == 2
 
-    @patch("core.metrics.prometheus.requests.post")
-    def test_query_empty_list(self, mock_post: MagicMock) -> None:
-        src = PrometheusMetricsSource(_make_config())
+    def test_query_empty_list(self) -> None:
+        mock_post = MagicMock()
+        src, _ = _make_source_with_mock(mock_post)
         result = src.query([], _START, _END, _STEP)
         assert result == {}
         mock_post.assert_not_called()

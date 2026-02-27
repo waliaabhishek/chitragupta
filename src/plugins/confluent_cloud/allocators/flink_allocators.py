@@ -33,8 +33,10 @@ def flink_cfu_allocator(ctx: AllocationContext) -> AllocationResult:
     2. merged_active even split (USAGE cost type)
     3. tenant_period even split (USAGE cost type)
     4. UNALLOCATED
+
+    See also: core.models.FlinkContextDict for typed context shape.
     """
-    # Try usage-ratio allocation from statement owner CFU map
+    # TD-032: Context shape documented in core.models.FlinkContextDict
     stmt_owner_cfu: dict[str, float] = ctx.identities.context.get("stmt_owner_cfu", {})
     if stmt_owner_cfu:
         # allocate_by_usage_ratio already uses USAGE cost type

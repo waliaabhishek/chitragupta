@@ -187,7 +187,7 @@ class TestResolveFlinkIdentityWithStatements:
             resource_type="flink_statement",
             display_name="stmt-a",
             owner_id="sa-1",
-            metadata={"statement_name": "stmt-a"},
+            metadata={"statement_name": "stmt-a", "compute_pool_id": "lfcp-pool-1"},
         )
         stmt_b = Resource(
             ecosystem="confluent_cloud",
@@ -196,7 +196,7 @@ class TestResolveFlinkIdentityWithStatements:
             resource_type="flink_statement",
             display_name="stmt-b",
             owner_id="sa-2",
-            metadata={"statement_name": "stmt-b"},
+            metadata={"statement_name": "stmt-b", "compute_pool_id": "lfcp-pool-1"},
         )
         sa_1 = Identity(
             ecosystem="confluent_cloud",
@@ -257,7 +257,7 @@ class TestResolveFlinkIdentityWithStatements:
             resource_type="flink_statement",
             display_name="stmt-x",
             owner_id="sa-same",
-            metadata={"statement_name": "stmt-x"},
+            metadata={"statement_name": "stmt-x", "compute_pool_id": "lfcp-pool-1"},
         )
         stmt_y = Resource(
             ecosystem="confluent_cloud",
@@ -266,7 +266,7 @@ class TestResolveFlinkIdentityWithStatements:
             resource_type="flink_statement",
             display_name="stmt-y",
             owner_id="sa-same",
-            metadata={"statement_name": "stmt-y"},
+            metadata={"statement_name": "stmt-y", "compute_pool_id": "lfcp-pool-1"},
         )
         sa = Identity(
             ecosystem="confluent_cloud",
@@ -350,7 +350,7 @@ class TestResolveFlinkIdentityWithStatements:
             resource_type="flink_statement",
             display_name="orphan-stmt",
             owner_id=None,
-            metadata={"statement_name": "orphan-stmt"},
+            metadata={"statement_name": "orphan-stmt", "compute_pool_id": "lfcp-pool-1"},
         )
 
         mock_uow.resources.find_by_period.return_value = [stmt]
@@ -391,7 +391,7 @@ class TestResolveFlinkIdentityWithStatements:
             resource_type="flink_statement",
             display_name="stmt-z",
             owner_id="sa-unknown-999",
-            metadata={"statement_name": "stmt-z"},
+            metadata={"statement_name": "stmt-z", "compute_pool_id": "lfcp-pool-1"},
         )
 
         mock_uow.resources.find_by_period.return_value = [stmt]
@@ -435,7 +435,7 @@ class TestResolveFlinkIdentityWithStatements:
             resource_type="flink_statement",
             display_name="stmt-1",
             owner_id="sa-1",
-            metadata={"statement_name": "stmt-1"},
+            metadata={"statement_name": "stmt-1", "compute_pool_id": "lfcp-pool-1"},
         )
         sa = Identity(
             ecosystem="confluent_cloud",
@@ -489,7 +489,7 @@ class TestResolveFlinkIdentityWithStatements:
             resource_type="flink_statement",
             display_name="stmt-1",
             owner_id="sa-1",
-            metadata={"statement_name": "stmt-1"},
+            metadata={"statement_name": "stmt-1", "compute_pool_id": "lfcp-pool-1"},
         )
         sa = Identity(
             ecosystem="confluent_cloud",

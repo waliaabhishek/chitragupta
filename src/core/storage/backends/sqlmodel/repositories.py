@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     from core.models.billing import BillingLineItem
     from core.models.chargeback import ChargebackDimensionInfo, ChargebackRow, CustomTag
     from core.models.identity import Identity
-    from core.models.pipeline import PipelineState
+    from core.models.pipeline import PipelineRun, PipelineState
     from core.models.resource import Resource
 
 from core.storage.backends.sqlmodel.mappers import (
@@ -26,6 +26,8 @@ from core.storage.backends.sqlmodel.mappers import (
     chargeback_to_fact,
     identity_to_domain,
     identity_to_table,
+    pipeline_run_to_domain,
+    pipeline_run_to_table,
     pipeline_state_to_domain,
     pipeline_state_to_table,
     resource_to_domain,
@@ -39,6 +41,7 @@ from core.storage.backends.sqlmodel.tables import (
     ChargebackFactTable,
     CustomTagTable,
     IdentityTable,
+    PipelineRunTable,
     PipelineStateTable,
     ResourceTable,
 )
@@ -769,6 +772,52 @@ class SQLModelPipelineStateRepository:
             col(PipelineStateTable.chargeback_calculated) == True,  # noqa: E712
         )
         return self._session.exec(stmt).one()
+
+
+# --- PipelineRunRepository ---
+
+
+class SQLModelPipelineRunRepository:
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def create_run(self, tenant_name: str, started_at: datetime) -> PipelineRun:
+        from core.models.pipeline import PipelineRun
+
+        run = PipelineRun(tenant_name=tenant_name, started_at=started_at, status="running")
+        table_obj = pipeline_run_to_table(run)
+        self._session.add(table_obj)
+        self._session.flush()
+        return pipeline_run_to_domain(table_obj)
+
+    def update_run(self, run: PipelineRun) -> PipelineRun:
+        table_obj = pipeline_run_to_table(run)
+        merged = self._session.merge(table_obj)
+        self._session.flush()
+        return pipeline_run_to_domain(merged)
+
+    def get_run(self, run_id: int) -> PipelineRun | None:
+        row = self._session.get(PipelineRunTable, run_id)
+        return pipeline_run_to_domain(row) if row else None
+
+    def list_runs_for_tenant(self, tenant_name: str, limit: int = 100) -> list[PipelineRun]:
+        stmt = (
+            select(PipelineRunTable)
+            .where(col(PipelineRunTable.tenant_name) == tenant_name)
+            .order_by(col(PipelineRunTable.started_at).desc())
+            .limit(limit)
+        )
+        return [pipeline_run_to_domain(r) for r in self._session.exec(stmt).all()]
+
+    def get_latest_run(self, tenant_name: str) -> PipelineRun | None:
+        stmt = (
+            select(PipelineRunTable)
+            .where(col(PipelineRunTable.tenant_name) == tenant_name)
+            .order_by(col(PipelineRunTable.started_at).desc())
+            .limit(1)
+        )
+        row = self._session.exec(stmt).first()
+        return pipeline_run_to_domain(row) if row else None
 
 
 # --- TagRepository ---

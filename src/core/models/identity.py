@@ -3,7 +3,17 @@ from __future__ import annotations
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any
+from typing import Any, TypedDict
+
+
+class FlinkContextDict(TypedDict, total=False):
+    """TypedDict for Flink handler's IdentityResolution.context.
+
+    Used by flink_cfu_allocator to distribute costs by statement owner.
+    """
+
+    stmt_owner_cfu: dict[str, float]
+    """Maps owner identity_id to total CFU usage."""
 
 
 @dataclass

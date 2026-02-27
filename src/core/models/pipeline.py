@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import date
+from dataclasses import dataclass, field
+from datetime import date, datetime
+from typing import Literal
 
 
 @dataclass
@@ -14,3 +15,18 @@ class PipelineState:
     billing_gathered: bool = False
     resources_gathered: bool = False
     chargeback_calculated: bool = False
+
+
+@dataclass
+class PipelineRun:
+    """Tracks a single pipeline execution for a tenant."""
+
+    tenant_name: str
+    started_at: datetime
+    status: Literal["running", "completed", "failed"]
+    id: int | None = field(default=None)
+    ended_at: datetime | None = None
+    dates_gathered: int = 0
+    dates_calculated: int = 0
+    rows_written: int = 0
+    error_message: str | None = None

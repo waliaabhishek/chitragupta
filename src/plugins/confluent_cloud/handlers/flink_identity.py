@@ -105,9 +105,13 @@ def resolve_flink_identity(
     )
 
     # Build statement_name -> owner_id map from flink_statement resources
+    # TD-033: Filter by compute_pool_id to avoid cross-pool collisions
     stmt_name_to_owner: dict[str, str | None] = {}
     for r in resources:
         if r.resource_type == "flink_statement":
+            pool_id = r.metadata.get("compute_pool_id", "")
+            if pool_id != resource_id:
+                continue  # Statement belongs to different pool
             display_name = r.display_name or r.metadata.get("statement_name", "")
             if display_name:
                 stmt_name_to_owner[display_name] = r.owner_id

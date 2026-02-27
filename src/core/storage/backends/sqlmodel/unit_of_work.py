@@ -10,6 +10,7 @@ from core.storage.backends.sqlmodel.repositories import (
     SQLModelBillingRepository,
     SQLModelChargebackRepository,
     SQLModelIdentityRepository,
+    SQLModelPipelineRunRepository,
     SQLModelPipelineStateRepository,
     SQLModelResourceRepository,
     SQLModelTagRepository,
@@ -20,6 +21,7 @@ if TYPE_CHECKING:
         BillingRepository,
         ChargebackRepository,
         IdentityRepository,
+        PipelineRunRepository,
         PipelineStateRepository,
         ResourceRepository,
         TagRepository,
@@ -40,6 +42,7 @@ class SQLModelUnitOfWork:
         self.billing: BillingRepository
         self.chargebacks: ChargebackRepository
         self.pipeline_state: PipelineStateRepository
+        self.pipeline_runs: PipelineRunRepository
         self.tags: TagRepository
 
     def __enter__(self) -> Self:
@@ -50,6 +53,7 @@ class SQLModelUnitOfWork:
         self.billing = SQLModelBillingRepository(self._session)
         self.chargebacks = SQLModelChargebackRepository(self._session)
         self.pipeline_state = SQLModelPipelineStateRepository(self._session)
+        self.pipeline_runs = SQLModelPipelineRunRepository(self._session)
         self.tags = SQLModelTagRepository(self._session)
         return self
 

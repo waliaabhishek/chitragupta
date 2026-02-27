@@ -214,6 +214,90 @@ class TestKafkaHandlerGatherResources:
         assert result == [env_resource, cluster_resource]
 
 
+class TestKafkaHandlerGatherIdentities:
+    """Tests for gather_identities method (TD-029)."""
+
+    def test_returns_empty_when_connection_is_none(self, mock_uow: MagicMock) -> None:
+        """gather_identities yields nothing when connection is None."""
+        from plugins.confluent_cloud.handlers.kafka import KafkaHandler
+
+        handler = KafkaHandler(connection=None, config=None, ecosystem="confluent_cloud")
+        result = list(handler.gather_identities("org-123", mock_uow))
+        assert result == []
+
+    def test_calls_all_three_gathering_functions(self, mock_uow: MagicMock) -> None:
+        """gather_identities calls SA, users, and API keys gathering."""
+        from unittest.mock import patch
+
+        from plugins.confluent_cloud.handlers.kafka import KafkaHandler
+
+        mock_conn = MagicMock()
+        sa = Identity(
+            ecosystem="confluent_cloud", tenant_id="org-123", identity_id="sa-1", identity_type="service_account"
+        )
+        user = Identity(ecosystem="confluent_cloud", tenant_id="org-123", identity_id="u-1", identity_type="user")
+        api_key = Identity(
+            ecosystem="confluent_cloud", tenant_id="org-123", identity_id="key-1", identity_type="api_key"
+        )
+
+        with (
+            patch(
+                "plugins.confluent_cloud.gathering.gather_service_accounts",
+                return_value=[sa],
+            ) as mock_sas,
+            patch(
+                "plugins.confluent_cloud.gathering.gather_users",
+                return_value=[user],
+            ) as mock_users,
+            patch(
+                "plugins.confluent_cloud.gathering.gather_api_keys",
+                return_value=[api_key],
+            ) as mock_keys,
+        ):
+            handler = KafkaHandler(connection=mock_conn, config=None, ecosystem="confluent_cloud")
+            result = list(handler.gather_identities("org-123", mock_uow))
+
+        mock_sas.assert_called_once_with(mock_conn, "confluent_cloud", "org-123")
+        mock_users.assert_called_once_with(mock_conn, "confluent_cloud", "org-123")
+        mock_keys.assert_called_once_with(mock_conn, "confluent_cloud", "org-123")
+        assert result == [sa, user, api_key]
+
+    def test_aggregates_results_from_all_sources(self, mock_uow: MagicMock) -> None:
+        """gather_identities yields all identities from all 3 gathering functions."""
+        from unittest.mock import patch
+
+        from plugins.confluent_cloud.handlers.kafka import KafkaHandler
+
+        mock_conn = MagicMock()
+        sas = [
+            Identity(
+                ecosystem="confluent_cloud", tenant_id="org-123", identity_id="sa-1", identity_type="service_account"
+            ),
+            Identity(
+                ecosystem="confluent_cloud", tenant_id="org-123", identity_id="sa-2", identity_type="service_account"
+            ),
+        ]
+        users = [
+            Identity(ecosystem="confluent_cloud", tenant_id="org-123", identity_id="u-1", identity_type="user"),
+        ]
+        api_keys = [
+            Identity(ecosystem="confluent_cloud", tenant_id="org-123", identity_id="key-1", identity_type="api_key"),
+            Identity(ecosystem="confluent_cloud", tenant_id="org-123", identity_id="key-2", identity_type="api_key"),
+        ]
+
+        with (
+            patch("plugins.confluent_cloud.gathering.gather_service_accounts", return_value=sas),
+            patch("plugins.confluent_cloud.gathering.gather_users", return_value=users),
+            patch("plugins.confluent_cloud.gathering.gather_api_keys", return_value=api_keys),
+        ):
+            handler = KafkaHandler(connection=mock_conn, config=None, ecosystem="confluent_cloud")
+            result = list(handler.gather_identities("org-123", mock_uow))
+
+        assert len(result) == 5
+        identity_ids = {i.identity_id for i in result}
+        assert identity_ids == {"sa-1", "sa-2", "u-1", "key-1", "key-2"}
+
+
 class TestKafkaHandlerResolveIdentities:
     """Tests for resolve_identities method."""
 

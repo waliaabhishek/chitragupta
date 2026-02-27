@@ -106,6 +106,20 @@ class PipelineStateTable(SQLModel, table=True):
     chargeback_calculated: bool = False
 
 
+class PipelineRunTable(SQLModel, table=True):
+    __tablename__ = "pipeline_runs"
+
+    id: int | None = Field(default=None, primary_key=True)
+    tenant_name: str = Field(index=True)
+    started_at: datetime = Field(sa_column=Column(DateTime(timezone=True)))
+    ended_at: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True)))
+    status: str  # "running" | "completed" | "failed"
+    dates_gathered: int = 0
+    dates_calculated: int = 0
+    rows_written: int = 0
+    error_message: str | None = None
+
+
 class CustomTagTable(SQLModel, table=True):
     __tablename__ = "custom_tags"
     __table_args__ = (UniqueConstraint("dimension_id", "tag_key", name="uq_custom_tag_dimension_key"),)

@@ -109,3 +109,13 @@ class ConfluentCloudPlugin:
     def get_metrics_source(self) -> MetricsSource | None:
         """Return metrics source if configured, None otherwise."""
         return self._metrics_source
+
+    def close(self) -> None:
+        """Release plugin resources (HTTP connections).
+
+        TD-018/TD-024: Explicit cleanup instead of relying on GC.
+        Called by WorkflowRunner after each tenant run completes.
+        """
+        if self._connection is not None:
+            self._connection.close()
+            self._connection = None

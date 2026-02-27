@@ -17,6 +17,7 @@ from core.storage.backends.sqlmodel.repositories import (
     SQLModelBillingRepository,
     SQLModelChargebackRepository,
     SQLModelIdentityRepository,
+    SQLModelPipelineRunRepository,
     SQLModelPipelineStateRepository,
     SQLModelResourceRepository,
     SQLModelTagRepository,
@@ -961,3 +962,106 @@ class TestChargebackRepositoryExtensions:
             time_bucket="day",
         )
         assert rows == []
+
+
+# --- PipelineRun Repository ---
+
+
+class TestPipelineRunRepository:
+    def test_create_run_sets_status_running(self, session: Session) -> None:
+        repo = SQLModelPipelineRunRepository(session)
+        run = repo.create_run("my-tenant", datetime(2026, 2, 26, 10, 0, tzinfo=UTC))
+        session.commit()
+        assert run.id is not None
+        assert run.tenant_name == "my-tenant"
+        assert run.status == "running"
+        assert run.ended_at is None
+        assert run.dates_gathered == 0
+
+    def test_get_run_found(self, session: Session) -> None:
+        repo = SQLModelPipelineRunRepository(session)
+        run = repo.create_run("my-tenant", datetime(2026, 2, 26, 10, 0, tzinfo=UTC))
+        session.commit()
+        got = repo.get_run(run.id)  # type: ignore[arg-type]
+        assert got is not None
+        assert got.id == run.id
+        assert got.tenant_name == "my-tenant"
+
+    def test_get_run_not_found(self, session: Session) -> None:
+        repo = SQLModelPipelineRunRepository(session)
+        assert repo.get_run(99999) is None
+
+    def test_update_run_persists_changes(self, session: Session) -> None:
+        repo = SQLModelPipelineRunRepository(session)
+        run = repo.create_run("my-tenant", datetime(2026, 2, 26, 10, 0, tzinfo=UTC))
+        session.commit()
+
+        run.status = "completed"
+        run.ended_at = datetime(2026, 2, 26, 11, 0, tzinfo=UTC)
+        run.dates_gathered = 5
+        run.dates_calculated = 3
+        run.rows_written = 100
+        updated = repo.update_run(run)
+        session.commit()
+
+        assert updated.status == "completed"
+        assert updated.dates_gathered == 5
+        assert updated.rows_written == 100
+        assert updated.ended_at is not None
+
+    def test_update_run_failed_state(self, session: Session) -> None:
+        repo = SQLModelPipelineRunRepository(session)
+        run = repo.create_run("my-tenant", datetime(2026, 2, 26, 10, 0, tzinfo=UTC))
+        session.commit()
+
+        run.status = "failed"
+        run.ended_at = datetime(2026, 2, 26, 10, 30, tzinfo=UTC)
+        run.error_message = "Pipeline execution failed"
+        updated = repo.update_run(run)
+        session.commit()
+
+        assert updated.status == "failed"
+        assert updated.error_message == "Pipeline execution failed"
+
+    def test_get_latest_run_returns_most_recent(self, session: Session) -> None:
+        repo = SQLModelPipelineRunRepository(session)
+        repo.create_run("my-tenant", datetime(2026, 2, 24, 10, 0, tzinfo=UTC))
+        run2 = repo.create_run("my-tenant", datetime(2026, 2, 26, 10, 0, tzinfo=UTC))
+        session.commit()
+
+        latest = repo.get_latest_run("my-tenant")
+        assert latest is not None
+        assert latest.id == run2.id
+
+    def test_get_latest_run_none_when_empty(self, session: Session) -> None:
+        repo = SQLModelPipelineRunRepository(session)
+        assert repo.get_latest_run("no-such-tenant") is None
+
+    def test_list_runs_for_tenant(self, session: Session) -> None:
+        repo = SQLModelPipelineRunRepository(session)
+        for day in [24, 25, 26]:
+            repo.create_run("my-tenant", datetime(2026, 2, day, 10, 0, tzinfo=UTC))
+        repo.create_run("other-tenant", datetime(2026, 2, 26, 10, 0, tzinfo=UTC))
+        session.commit()
+
+        runs = repo.list_runs_for_tenant("my-tenant")
+        assert len(runs) == 3
+        # Ordered descending by started_at
+        assert runs[0].started_at > runs[1].started_at
+
+    def test_list_runs_for_tenant_limit(self, session: Session) -> None:
+        repo = SQLModelPipelineRunRepository(session)
+        for day in range(1, 11):
+            repo.create_run("my-tenant", datetime(2026, 2, 1, day, 0, tzinfo=UTC))
+        session.commit()
+
+        runs = repo.list_runs_for_tenant("my-tenant", limit=5)
+        assert len(runs) == 5
+
+    def test_tenant_isolation(self, session: Session) -> None:
+        repo = SQLModelPipelineRunRepository(session)
+        repo.create_run("tenant-a", datetime(2026, 2, 26, 10, 0, tzinfo=UTC))
+        session.commit()
+
+        assert repo.get_latest_run("tenant-b") is None
+        assert repo.list_runs_for_tenant("tenant-b") == []

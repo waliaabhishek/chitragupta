@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
-    "test": "vitest run --coverage"
+    "test": "vitest run --coverage",
+    "generate:types": "openapi-typescript http://localhost:8080/openapi.json -o src/types/api.generated.ts"
   },
   "dependencies": {
     "@refinedev/antd": "^5.46.2",
@@ -44,6 +45,7 @@
     "typescript": "^5.6.3",
     "typescript-eslint": "^8.56.1",
     "vite": "^5.4.10",
-    "vitest": "^2.1.4"
+    "vitest": "^2.1.4",
+    "openapi-typescript": "^7.7.0"
   }
 }

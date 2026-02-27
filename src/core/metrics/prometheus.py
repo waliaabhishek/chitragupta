@@ -51,6 +51,9 @@ class PrometheusConfig:
     cache_maxsize: int = 512
     cache_ttl_seconds: float = 300.0
     step_seconds: int = 3600
+    """Fallback step (seconds) if caller-provided step resolves to ≤0.
+    Protocol default timedelta(hours=1) takes precedence in normal operation.
+    Rarely needed — exists for edge case protection only."""
     max_retries: int = 4
     base_delay: float = 1.0
     extra_headers: dict[str, str] = field(default_factory=dict)
@@ -63,7 +66,11 @@ class PrometheusConfig:
 class PrometheusMetricsSource:
     """Ecosystem-agnostic Prometheus client implementing MetricsSource."""
 
-    def __init__(self, config: PrometheusConfig) -> None:
+    def __init__(
+        self,
+        config: PrometheusConfig,
+        session: requests.Session | None = None,
+    ) -> None:
         self._config = config
         self._url_range = urljoin(config.url, "/api/v1/query_range")
         self._extra_headers = dict(config.extra_headers)
@@ -72,6 +79,16 @@ class PrometheusMetricsSource:
             self._extra_headers["Authorization"] = f"Bearer {self._config.auth.token or ''}"
         self._cache: dict[tuple[str, ...], tuple[float, str]] = {}
         self._cache_lock = threading.Lock()
+        # TD-010: Connection pooling via requests.Session (injectable for testing)
+        self._session = session if session is not None else requests.Session()
+        self._owns_session = session is None  # Track if we own the session for cleanup
+        if self._auth and self._owns_session:
+            self._session.auth = self._auth
+
+    def close(self) -> None:
+        """Close HTTP session and release pooled connections."""
+        if self._owns_session:
+            self._session.close()
 
     def query(
         self,
@@ -191,11 +208,10 @@ class PrometheusMetricsSource:
         last_exc: requests.RequestException | None = None
         while True:
             try:
-                resp = requests.post(
+                resp = self._session.post(
                     url,
                     data=data,
                     headers=headers,
-                    auth=self._auth,
                     timeout=self._config.timeout,
                 )
                 if resp.status_code not in _TRANSIENT_STATUS:

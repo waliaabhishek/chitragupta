@@ -7,7 +7,7 @@ if TYPE_CHECKING:
     from core.models.billing import BillingLineItem
     from core.models.chargeback import AggregationRow, ChargebackDimensionInfo, ChargebackRow, CustomTag
     from core.models.identity import Identity
-    from core.models.pipeline import PipelineState
+    from core.models.pipeline import PipelineRun, PipelineState
     from core.models.resource import Resource
 
 
@@ -284,6 +284,29 @@ class TagRepository(Protocol):
 
 
 @runtime_checkable
+class PipelineRunRepository(Protocol):
+    """Repository for persisted pipeline run history."""
+
+    def create_run(self, tenant_name: str, started_at: datetime) -> PipelineRun:
+        """Insert a new run record with status='running'. Returns the persisted run with id set."""
+        ...
+
+    def update_run(self, run: PipelineRun) -> PipelineRun:
+        """Persist updated run state (status, ended_at, counters, error_message)."""
+        ...
+
+    def get_run(self, run_id: int) -> PipelineRun | None: ...
+
+    def list_runs_for_tenant(self, tenant_name: str, limit: int = 100) -> list[PipelineRun]:
+        """List runs for a tenant ordered by started_at descending."""
+        ...
+
+    def get_latest_run(self, tenant_name: str) -> PipelineRun | None:
+        """Return the most recently started run for this tenant, or None."""
+        ...
+
+
+@runtime_checkable
 class UnitOfWork(Protocol):
     """Transaction coordinator. Provides repository access and commit/rollback."""
 
@@ -292,6 +315,7 @@ class UnitOfWork(Protocol):
     billing: BillingRepository
     chargebacks: ChargebackRepository
     pipeline_state: PipelineStateRepository
+    pipeline_runs: PipelineRunRepository
     tags: TagRepository
 
     def __enter__(self) -> Self: ...

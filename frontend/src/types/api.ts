@@ -1,4 +1,11 @@
-// TypeScript types matching src/core/api/schemas.py
+/**
+ * TypeScript types matching src/core/api/schemas.py
+ *
+ * TD-040: These types are manually maintained. To auto-generate from OpenAPI:
+ *   1. Start the backend: `uv run python -m main --mode api`
+ *   2. Run: `npm run generate:types`
+ *   3. Generated types will be in `src/types/api.generated.ts`
+ */
 
 // --- Pagination ---
 

@@ -4,6 +4,7 @@ import logging
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, wait
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 from core.engine.orchestrator import ChargebackOrchestrator, PipelineRunResult
@@ -43,6 +44,26 @@ class WorkflowRunner:
             finally:
                 storage.dispose()
         self._bootstrapped = True
+
+    def run_tenant(self, tenant_name: str) -> PipelineRunResult:
+        """Run pipeline for a single tenant.
+
+        TD-039: Single-tenant execution to avoid running all tenants
+        when API triggers a specific tenant.
+        """
+        config = self._settings.tenants.get(tenant_name)
+        if config is None:
+            raise ValueError(f"Unknown tenant: {tenant_name}")
+
+        # Bootstrap only this tenant's storage if needed
+        if not self._bootstrapped:
+            storage = _create_storage_backend(config.storage)
+            try:
+                storage.create_tables()
+            finally:
+                storage.dispose()
+
+        return self._run_tenant(tenant_name, config)
 
     def run_once(self) -> dict[str, PipelineRunResult]:
         if not self._bootstrapped:
@@ -113,6 +134,12 @@ class WorkflowRunner:
             return orchestrator.run()
         finally:
             storage.dispose()
+            # TD-018/TD-024: Close plugin resources (HTTP sessions)
+            if hasattr(plugin, "close"):
+                plugin.close()
+            # TD-010: Close metrics source HTTP session
+            if metrics is not None and hasattr(metrics, "close"):
+                metrics.close()
 
     def _log_results(self, results: dict[str, PipelineRunResult]) -> None:
         for name, result in results.items():
@@ -127,6 +154,39 @@ class WorkflowRunner:
                     result.chargeback_rows_written,
                 )
 
+    def _cleanup_retention(self) -> None:
+        """Delete data older than retention_days for each tenant.
+
+        TD-016: Wire up delete_before() calls for retention cleanup.
+        Called after each run cycle to prevent unbounded storage growth.
+        """
+        for name, config in self._settings.tenants.items():
+            if config.retention_days <= 0:
+                continue  # 0 = disabled
+
+            cutoff = datetime.now(UTC) - timedelta(days=config.retention_days)
+            storage = _create_storage_backend(config.storage)
+            try:
+                with storage.unit_of_work() as uow:
+                    deleted_billing = uow.billing.delete_before(config.ecosystem, config.tenant_id, cutoff)
+                    deleted_resources = uow.resources.delete_before(config.ecosystem, config.tenant_id, cutoff)
+                    deleted_identities = uow.identities.delete_before(config.ecosystem, config.tenant_id, cutoff)
+                    deleted_chargebacks = uow.chargebacks.delete_before(config.ecosystem, config.tenant_id, cutoff)
+                    uow.commit()
+
+                total_deleted = deleted_billing + deleted_resources + deleted_identities + deleted_chargebacks
+                if total_deleted > 0:
+                    logger.info(
+                        "Tenant %s: retention cleanup deleted %d records (before %s)",
+                        name,
+                        total_deleted,
+                        cutoff.date(),
+                    )
+            except Exception:
+                logger.exception("Tenant %s: retention cleanup failed", name)
+            finally:
+                storage.dispose()
+
     def run_loop(self, shutdown_event: threading.Event) -> None:
         """Run orchestrator loop until shutdown_event is set."""
         # GAP-005: honor enable_periodic_refresh flag
@@ -139,6 +199,7 @@ class WorkflowRunner:
         while not shutdown_event.is_set():
             try:
                 self._log_results(self.run_once())
+                self._cleanup_retention()  # TD-016: Retention cleanup after each cycle
             except Exception:
                 logger.exception("Unexpected error in run_loop")
 

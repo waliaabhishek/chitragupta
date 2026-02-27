@@ -10,6 +10,7 @@ metrics identify active statements, then statement resources provide owner info.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterable, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
@@ -17,6 +18,7 @@ from typing import TYPE_CHECKING
 from plugins.confluent_cloud.allocators.flink_allocators import flink_cfu_allocator
 from plugins.confluent_cloud.handlers.flink_identity import resolve_flink_identity
 
+_LOGGER = logging.getLogger(__name__)
 _EPOCH_START = datetime(2000, 1, 1, tzinfo=UTC)
 
 if TYPE_CHECKING:
@@ -109,12 +111,19 @@ class FlinkHandler:
         yield from pools
 
         # Phase 2: Gather statements from allocatable pools
+        # TD-036: Log pools skipped due to missing regional credentials
         allocatable_pools: list[tuple[Resource, str, str]] = []
         for pool in pools:
             region = pool.metadata.get("region", "")
             if region in self._flink_regions:
                 api_key, api_secret = self._flink_regions[region]
                 allocatable_pools.append((pool, api_key, api_secret))
+            elif region:
+                _LOGGER.info(
+                    "Flink pool %s in region %s skipped: no regional credentials configured",
+                    pool.resource_id,
+                    region,
+                )
 
         yield from gather_flink_statements(self._ecosystem, tenant_id, allocatable_pools)
 

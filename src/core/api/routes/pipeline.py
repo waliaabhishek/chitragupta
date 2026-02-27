@@ -2,100 +2,92 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from core.api.dependencies import get_settings, get_tenant_config
+from core.api.dependencies import get_or_create_backend, get_settings, get_tenant_config
 from core.api.schemas import PipelineResultSummary, PipelineRunResponse, PipelineStatusResponse
 from core.config.models import AppSettings, TenantConfig  # noqa: TC001  # FastAPI evaluates annotations at runtime
+from core.storage.interface import StorageBackend  # noqa: TC001
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["pipeline"])
 
 
-@dataclass
-class PipelineRunState:
-    """Tracks the state of a pipeline run for a tenant."""
-
-    is_running: bool = False
-    task: asyncio.Task[None] | None = field(default=None, repr=False)
-    last_run: datetime | None = None
-    last_result: PipelineResultSummary | None = None
+def _get_pipeline_tasks(request: Request) -> dict[str, asyncio.Task[None]]:
+    """Get or initialize the in-memory task tracking dict."""
+    if not hasattr(request.app.state, "pipeline_tasks"):
+        request.app.state.pipeline_tasks = {}
+    return request.app.state.pipeline_tasks  # type: ignore[no-any-return]
 
 
-def _get_pipeline_runs(request: Request) -> dict[str, PipelineRunState]:
-    """Get or initialize the pipeline_runs dict from app state."""
-    if not hasattr(request.app.state, "pipeline_runs"):
-        request.app.state.pipeline_runs = {}
-    return request.app.state.pipeline_runs  # type: ignore[no-any-return]
+def _get_backends(request: Request) -> dict[str, StorageBackend]:
+    if not hasattr(request.app.state, "backends"):
+        request.app.state.backends = {}
+    return request.app.state.backends  # type: ignore[no-any-return]
 
 
 async def _run_pipeline(
     tenant_name: str,
     settings: AppSettings,
-    runs: dict[str, PipelineRunState],
+    run_id: int,
+    backend: StorageBackend,
     request: Request,
 ) -> None:
-    """Background task that runs the pipeline for a single tenant."""
-    state = runs[tenant_name]
+    """Background task that runs the pipeline for a single tenant and persists results."""
     try:
         logger.info("Pipeline run started for tenant %s", tenant_name)
 
         workflow_runner = getattr(request.app.state, "workflow_runner", None)
         if workflow_runner is not None:
-            # Real execution via WorkflowRunner
-            results = await asyncio.to_thread(workflow_runner.run_once)
-            result = results.get(tenant_name)
-            if result is not None:
-                state.last_result = PipelineResultSummary(
-                    dates_gathered=result.dates_gathered,
-                    dates_calculated=result.dates_calculated,
-                    chargeback_rows_written=result.chargeback_rows_written,
-                    errors=result.errors,
-                    completed_at=datetime.now(UTC),
-                )
-            else:
-                state.last_result = PipelineResultSummary(
-                    dates_gathered=0,
-                    dates_calculated=0,
-                    chargeback_rows_written=0,
-                    errors=[f"Tenant {tenant_name!r} not found in run results"],
-                    completed_at=datetime.now(UTC),
-                )
+            # TD-039: Run single tenant instead of all tenants
+            result = await asyncio.to_thread(workflow_runner.run_tenant, tenant_name)
+            dates_gathered = result.dates_gathered
+            dates_calculated = result.dates_calculated
+            rows_written = result.chargeback_rows_written
+            errors = result.errors
         else:
             # TD-039: No WorkflowRunner available (API-only mode).
-            # Pipeline trigger is a no-op without a configured plugin registry.
             logger.warning(
                 "No WorkflowRunner available for tenant %s — "
                 "pipeline trigger requires 'both' mode or a configured plugin registry",
                 tenant_name,
             )
-            state.last_result = PipelineResultSummary(
-                dates_gathered=0,
-                dates_calculated=0,
-                chargeback_rows_written=0,
-                errors=["No WorkflowRunner available — run in 'both' mode to enable pipeline triggers"],
-                completed_at=datetime.now(UTC),
-            )
+            dates_gathered = 0
+            dates_calculated = 0
+            rows_written = 0
+            errors = ["No WorkflowRunner available — run in 'both' mode to enable pipeline triggers"]
+
+        with backend.create_unit_of_work() as uow:
+            run = uow.pipeline_runs.get_run(run_id)
+            if run is not None:
+                run.status = "completed"
+                run.ended_at = datetime.now(UTC)
+                run.dates_gathered = dates_gathered
+                run.dates_calculated = dates_calculated
+                run.rows_written = rows_written
+                run.error_message = errors[0] if errors else None
+                uow.pipeline_runs.update_run(run)
+                uow.commit()
 
         logger.info("Pipeline run completed for tenant %s", tenant_name)
     except Exception:
-        state.last_result = PipelineResultSummary(
-            dates_gathered=0,
-            dates_calculated=0,
-            chargeback_rows_written=0,
-            errors=["Pipeline execution failed"],
-            completed_at=datetime.now(UTC),
-        )
         logger.exception("Pipeline run failed for tenant %s", tenant_name)
-    finally:
-        state.is_running = False
-        state.last_run = datetime.now(UTC)
-        state.task = None
+        try:
+            with backend.create_unit_of_work() as uow:
+                run = uow.pipeline_runs.get_run(run_id)
+                if run is not None:
+                    run.status = "failed"
+                    run.ended_at = datetime.now(UTC)
+                    run.error_message = "Pipeline execution failed"
+                    uow.pipeline_runs.update_run(run)
+                    uow.commit()
+        except Exception:
+            logger.exception("Failed to persist pipeline failure state for tenant %s", tenant_name)
+            raise
 
 
 @router.post(
@@ -109,17 +101,22 @@ async def trigger_pipeline(
     tenant_config: Annotated[TenantConfig, Depends(get_tenant_config)],
     settings: Annotated[AppSettings, Depends(get_settings)],
 ) -> PipelineRunResponse:
-    runs = _get_pipeline_runs(request)
+    tasks = _get_pipeline_tasks(request)
 
-    if tenant_name in runs and runs[tenant_name].is_running:
+    if tenant_name in tasks and not tasks[tenant_name].done():
         raise HTTPException(
             status_code=409,
             detail=f"Pipeline is already running for tenant {tenant_name!r}",
         )
 
-    state = PipelineRunState(is_running=True)
-    runs[tenant_name] = state
-    state.task = asyncio.create_task(_run_pipeline(tenant_name, settings, runs, request))
+    backend = get_or_create_backend(_get_backends(request), tenant_name, tenant_config.storage.connection_string)
+
+    with backend.create_unit_of_work() as uow:
+        run = uow.pipeline_runs.create_run(tenant_name, datetime.now(UTC))
+        uow.commit()
+
+    task = asyncio.create_task(_run_pipeline(tenant_name, settings, run.id, backend, request))  # type: ignore[arg-type]  # id is set after flush
+    tasks[tenant_name] = task
 
     return PipelineRunResponse(
         tenant_name=tenant_name,
@@ -137,15 +134,31 @@ async def pipeline_status(
     tenant_config: Annotated[TenantConfig, Depends(get_tenant_config)],
     tenant_name: str,
 ) -> PipelineStatusResponse:
-    runs = _get_pipeline_runs(request)
-    state = runs.get(tenant_name)
+    backend = get_or_create_backend(_get_backends(request), tenant_name, tenant_config.storage.connection_string)
 
-    if state is None:
+    with backend.create_unit_of_work() as uow:
+        latest = uow.pipeline_runs.get_latest_run(tenant_name)
+
+    if latest is None:
         return PipelineStatusResponse(tenant_name=tenant_name, is_running=False, last_run=None, last_result=None)
+
+    is_running = latest.status == "running"
+    last_run = latest.ended_at or latest.started_at
+    last_result: PipelineResultSummary | None = None
+
+    if latest.status in ("completed", "failed"):
+        errors = [latest.error_message] if latest.error_message else []
+        last_result = PipelineResultSummary(
+            dates_gathered=latest.dates_gathered,
+            dates_calculated=latest.dates_calculated,
+            chargeback_rows_written=latest.rows_written,
+            errors=errors,
+            completed_at=latest.ended_at or latest.started_at,
+        )
 
     return PipelineStatusResponse(
         tenant_name=tenant_name,
-        is_running=state.is_running,
-        last_run=state.last_run,
-        last_result=state.last_result,
+        is_running=is_running,
+        last_run=last_run,
+        last_result=last_result,
     )
