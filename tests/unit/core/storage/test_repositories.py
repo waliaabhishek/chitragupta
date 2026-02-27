@@ -81,15 +81,17 @@ class TestResourceRepository:
         # Resource created Jan 10, active at Jan 15
         repo.upsert(self._make_resource(created_at=datetime(2026, 1, 10, tzinfo=UTC)))
         session.commit()
-        results = repo.find_active_at("eco", "t1", datetime(2026, 1, 15, tzinfo=UTC))
+        results, total = repo.find_active_at("eco", "t1", datetime(2026, 1, 15, tzinfo=UTC))
         assert len(results) == 1
+        assert total == 1
 
     def test_find_active_at_before_creation(self, session: Session) -> None:
         repo = SQLModelResourceRepository(session)
         repo.upsert(self._make_resource(created_at=datetime(2026, 1, 10, tzinfo=UTC)))
         session.commit()
-        results = repo.find_active_at("eco", "t1", datetime(2026, 1, 5, tzinfo=UTC))
+        results, total = repo.find_active_at("eco", "t1", datetime(2026, 1, 5, tzinfo=UTC))
         assert len(results) == 0
+        assert total == 0
 
     def test_find_active_at_deleted_before(self, session: Session) -> None:
         repo = SQLModelResourceRepository(session)
@@ -100,15 +102,17 @@ class TestResourceRepository:
             )
         )
         session.commit()
-        results = repo.find_active_at("eco", "t1", datetime(2026, 1, 15, tzinfo=UTC))
+        results, total = repo.find_active_at("eco", "t1", datetime(2026, 1, 15, tzinfo=UTC))
         assert len(results) == 0
+        assert total == 0
 
     def test_find_active_at_null_created(self, session: Session) -> None:
         repo = SQLModelResourceRepository(session)
         repo.upsert(self._make_resource(created_at=None))
         session.commit()
-        results = repo.find_active_at("eco", "t1", datetime(2026, 1, 1, tzinfo=UTC))
+        results, total = repo.find_active_at("eco", "t1", datetime(2026, 1, 1, tzinfo=UTC))
         assert len(results) == 1
+        assert total == 1
 
     def test_find_active_at_null_deleted(self, session: Session) -> None:
         repo = SQLModelResourceRepository(session)
@@ -119,8 +123,9 @@ class TestResourceRepository:
             )
         )
         session.commit()
-        results = repo.find_active_at("eco", "t1", datetime(2026, 6, 1, tzinfo=UTC))
+        results, total = repo.find_active_at("eco", "t1", datetime(2026, 6, 1, tzinfo=UTC))
         assert len(results) == 1
+        assert total == 1
 
     def test_find_by_period(self, session: Session) -> None:
         repo = SQLModelResourceRepository(session)
@@ -132,15 +137,21 @@ class TestResourceRepository:
         )
         session.commit()
         # Period [Jan 10, Jan 15) — resource overlaps
-        results = repo.find_by_period("eco", "t1", datetime(2026, 1, 10, tzinfo=UTC), datetime(2026, 1, 15, tzinfo=UTC))
+        results, total = repo.find_by_period(
+            "eco", "t1", datetime(2026, 1, 10, tzinfo=UTC), datetime(2026, 1, 15, tzinfo=UTC)
+        )
         assert len(results) == 1
+        assert total == 1
 
     def test_find_by_period_created_after(self, session: Session) -> None:
         repo = SQLModelResourceRepository(session)
         repo.upsert(self._make_resource(created_at=datetime(2026, 2, 1, tzinfo=UTC)))
         session.commit()
-        results = repo.find_by_period("eco", "t1", datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 1, 31, tzinfo=UTC))
+        results, total = repo.find_by_period(
+            "eco", "t1", datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 1, 31, tzinfo=UTC)
+        )
         assert len(results) == 0
+        assert total == 0
 
     def test_find_by_period_deleted_before_start(self, session: Session) -> None:
         repo = SQLModelResourceRepository(session)
@@ -151,8 +162,11 @@ class TestResourceRepository:
             )
         )
         session.commit()
-        results = repo.find_by_period("eco", "t1", datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 1, 31, tzinfo=UTC))
+        results, total = repo.find_by_period(
+            "eco", "t1", datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 1, 31, tzinfo=UTC)
+        )
         assert len(results) == 0
+        assert total == 0
 
     def test_find_by_period_created_and_deleted_within(self, session: Session) -> None:
         repo = SQLModelResourceRepository(session)
@@ -163,8 +177,11 @@ class TestResourceRepository:
             )
         )
         session.commit()
-        results = repo.find_by_period("eco", "t1", datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 1, 31, tzinfo=UTC))
+        results, total = repo.find_by_period(
+            "eco", "t1", datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 1, 31, tzinfo=UTC)
+        )
         assert len(results) == 1
+        assert total == 1
 
     def test_find_by_type(self, session: Session) -> None:
         repo = SQLModelResourceRepository(session)
@@ -202,6 +219,58 @@ class TestResourceRepository:
         assert repo.get("eco", "t1", "old") is None
         assert repo.get("eco", "t1", "recent") is not None
 
+    def test_find_active_at_filter_by_resource_type(self, session: Session) -> None:
+        repo = SQLModelResourceRepository(session)
+        repo.upsert(self._make_resource(resource_id="r1", resource_type="kafka"))
+        repo.upsert(self._make_resource(resource_id="r2", resource_type="ksql"))
+        session.commit()
+        results, total = repo.find_active_at("eco", "t1", datetime(2026, 1, 15, tzinfo=UTC), resource_type="kafka")
+        assert len(results) == 1
+        assert total == 1
+        assert results[0].resource_id == "r1"
+
+    def test_find_active_at_limit_offset(self, session: Session) -> None:
+        repo = SQLModelResourceRepository(session)
+        repo.upsert(self._make_resource(resource_id="r1"))
+        repo.upsert(self._make_resource(resource_id="r2"))
+        repo.upsert(self._make_resource(resource_id="r3"))
+        session.commit()
+        ts = datetime(2026, 1, 15, tzinfo=UTC)
+        all_results, total = repo.find_active_at("eco", "t1", ts)
+        assert total == 3
+        page1, _ = repo.find_active_at("eco", "t1", ts, limit=2, offset=0)
+        page2, _ = repo.find_active_at("eco", "t1", ts, limit=2, offset=2)
+        assert len(page1) == 2
+        assert len(page2) == 1
+        assert {r.resource_id for r in page1 + page2} == {"r1", "r2", "r3"}
+
+    def test_find_by_period_filter_by_resource_type(self, session: Session) -> None:
+        repo = SQLModelResourceRepository(session)
+        repo.upsert(self._make_resource(resource_id="r1", resource_type="kafka"))
+        repo.upsert(self._make_resource(resource_id="r2", resource_type="ksql"))
+        session.commit()
+        results, total = repo.find_by_period(
+            "eco",
+            "t1",
+            datetime(2026, 1, 1, tzinfo=UTC),
+            datetime(2026, 2, 1, tzinfo=UTC),
+            resource_type="ksql",
+        )
+        assert len(results) == 1
+        assert total == 1
+        assert results[0].resource_id == "r2"
+
+    def test_find_by_period_limit_offset(self, session: Session) -> None:
+        repo = SQLModelResourceRepository(session)
+        for i in range(1, 5):
+            repo.upsert(self._make_resource(resource_id=f"r{i}"))
+        session.commit()
+        start, end = datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 2, 1, tzinfo=UTC)
+        _, total = repo.find_by_period("eco", "t1", start, end)
+        assert total == 4
+        page, _ = repo.find_by_period("eco", "t1", start, end, limit=2, offset=0)
+        assert len(page) == 2
+
 
 # --- Identity Repository ---
 
@@ -230,8 +299,9 @@ class TestIdentityRepository:
         repo = SQLModelIdentityRepository(session)
         repo.upsert(self._make_identity(created_at=datetime(2026, 1, 1, tzinfo=UTC)))
         session.commit()
-        results = repo.find_active_at("eco", "t1", datetime(2026, 1, 15, tzinfo=UTC))
+        results, total = repo.find_active_at("eco", "t1", datetime(2026, 1, 15, tzinfo=UTC))
         assert len(results) == 1
+        assert total == 1
 
     def test_find_by_period(self, session: Session) -> None:
         repo = SQLModelIdentityRepository(session)
@@ -242,8 +312,11 @@ class TestIdentityRepository:
             )
         )
         session.commit()
-        results = repo.find_by_period("eco", "t1", datetime(2026, 1, 5, tzinfo=UTC), datetime(2026, 1, 15, tzinfo=UTC))
+        results, total = repo.find_by_period(
+            "eco", "t1", datetime(2026, 1, 5, tzinfo=UTC), datetime(2026, 1, 15, tzinfo=UTC)
+        )
         assert len(results) == 1
+        assert total == 1
 
     def test_find_by_type(self, session: Session) -> None:
         repo = SQLModelIdentityRepository(session)
@@ -271,6 +344,44 @@ class TestIdentityRepository:
         count = repo.delete_before("eco", "t1", datetime(2026, 1, 1, tzinfo=UTC))
         session.commit()
         assert count == 1
+
+    def test_find_active_at_filter_by_identity_type(self, session: Session) -> None:
+        repo = SQLModelIdentityRepository(session)
+        repo.upsert(self._make_identity(identity_id="u1", identity_type="user"))
+        repo.upsert(self._make_identity(identity_id="sa1", identity_type="service_account"))
+        session.commit()
+        results, total = repo.find_active_at(
+            "eco", "t1", datetime(2026, 1, 15, tzinfo=UTC), identity_type="service_account"
+        )
+        assert len(results) == 1
+        assert total == 1
+        assert results[0].identity_id == "sa1"
+
+    def test_find_by_period_filter_by_identity_type(self, session: Session) -> None:
+        repo = SQLModelIdentityRepository(session)
+        repo.upsert(self._make_identity(identity_id="u1", identity_type="user"))
+        repo.upsert(self._make_identity(identity_id="sa1", identity_type="service_account"))
+        session.commit()
+        results, total = repo.find_by_period(
+            "eco",
+            "t1",
+            datetime(2026, 1, 1, tzinfo=UTC),
+            datetime(2026, 2, 1, tzinfo=UTC),
+            identity_type="user",
+        )
+        assert len(results) == 1
+        assert total == 1
+        assert results[0].identity_id == "u1"
+
+    def test_find_active_at_total_count_independent_of_limit(self, session: Session) -> None:
+        repo = SQLModelIdentityRepository(session)
+        for i in range(1, 4):
+            repo.upsert(self._make_identity(identity_id=f"u{i}"))
+        session.commit()
+        ts = datetime(2026, 1, 15, tzinfo=UTC)
+        paged, total = repo.find_active_at("eco", "t1", ts, limit=1, offset=0)
+        assert total == 3  # total reflects all matching, not just page
+        assert len(paged) == 1
 
 
 # --- Billing Repository ---
@@ -535,6 +646,30 @@ class TestPipelineStateRepository:
     def test_get_last_calculated_date_none(self, session: Session) -> None:
         repo = SQLModelPipelineStateRepository(session)
         assert repo.get_last_calculated_date("eco", "t1") is None
+
+    def test_mark_needs_recalculation(self, session: Session) -> None:
+        """CT-004: mark_needs_recalculation resets chargeback_calculated to False."""
+        repo = SQLModelPipelineStateRepository(session)
+        repo.upsert(self._make_state(chargeback_calculated=True))
+        session.commit()
+
+        got = repo.get("eco", "t1", date(2026, 1, 15))
+        assert got is not None
+        assert got.chargeback_calculated is True
+
+        repo.mark_needs_recalculation("eco", "t1", date(2026, 1, 15))
+        session.commit()
+
+        got = repo.get("eco", "t1", date(2026, 1, 15))
+        assert got is not None
+        assert got.chargeback_calculated is False
+
+    def test_mark_needs_recalculation_nonexistent_date_is_noop(self, session: Session) -> None:
+        """mark_needs_recalculation on missing date does not raise."""
+        repo = SQLModelPipelineStateRepository(session)
+        # No state inserted — should not raise
+        repo.mark_needs_recalculation("eco", "t1", date(2026, 6, 1))
+        session.commit()
 
 
 # --- Paginated Repository Methods ---

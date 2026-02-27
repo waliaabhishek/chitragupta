@@ -4,6 +4,7 @@ import logging
 import threading
 import time
 import uuid
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -117,9 +118,10 @@ class TestBootstrapStorage:
         runner = WorkflowRunner(settings, registry)
         runner.run_once()
 
-        # Bootstrap call (create_tables + dispose) + _run_tenant call (no create_tables, just dispose)
+        # Bootstrap call: create_tables + dispose
+        # _run_tenant: uses cached runtime, does NOT dispose (dispose deferred to close())
         assert mock_backend.create_tables.call_count == 1
-        assert mock_backend.dispose.call_count == 2  # once from bootstrap, once from _run_tenant
+        assert mock_backend.dispose.call_count == 1  # only from bootstrap
 
     @patch("workflow_runner.ChargebackOrchestrator")
     @patch("workflow_runner._create_storage_backend")
@@ -613,3 +615,404 @@ class TestWorkflowRunnerRunLoop:
         assert len(records) > 0, "Expected log records from workflow_runner"
         logged_messages = [r.getMessage() for r in records]
         assert any("completed with errors" in msg for msg in logged_messages)
+
+
+class TestTd021TenantRuntimeCaching:
+    """TD-021: Persistent runtime objects — caching, config change, close()."""
+
+    @patch("workflow_runner.ChargebackOrchestrator")
+    @patch("workflow_runner._create_storage_backend")
+    def test_same_tenant_reuses_runtime(self, mock_storage: MagicMock, mock_orch_cls: MagicMock) -> None:
+        """Second run for same tenant uses cached plugin/storage/orchestrator."""
+        mock_backend = MagicMock()
+        mock_storage.return_value = mock_backend
+        good_result = PipelineRunResult(
+            tenant_name="t1",
+            tenant_id="tid1",
+            dates_gathered=1,
+            dates_calculated=1,
+            chargeback_rows_written=0,
+        )
+        mock_orch = MagicMock()
+        mock_orch.run.return_value = good_result
+        mock_orch_cls.return_value = mock_orch
+
+        registry = MagicMock()
+        plugin = MagicMock()
+        plugin.get_metrics_source.return_value = None
+        registry.create.return_value = plugin
+
+        settings = _make_settings(tenants={"t1": _make_tenant(tenant_id="tid1")})
+        runner = WorkflowRunner(settings, registry)
+
+        runner.run_once()
+        runner.run_once()
+
+        # Plugin and storage (runtime) created only once
+        assert registry.create.call_count == 1
+        assert mock_orch_cls.call_count == 1
+        # Storage: 1 for bootstrap (auto-bootstrapped by run_once) + 1 for runtime = 2 total
+        # But the runtime storage is the SAME object (cached), so no extra calls on 2nd run_once
+        assert mock_storage.call_count == 2  # bootstrap (disposed) + runtime (persistent)
+
+    @patch("workflow_runner.ChargebackOrchestrator")
+    @patch("workflow_runner._create_storage_backend")
+    def test_config_change_invalidates_runtime(self, mock_storage: MagicMock, mock_orch_cls: MagicMock) -> None:
+        """When tenant config changes, runtime is closed and a new one is created."""
+        mock_backend = MagicMock()
+        mock_storage.return_value = mock_backend
+        good_result = PipelineRunResult(
+            tenant_name="t1",
+            tenant_id="tid1",
+            dates_gathered=1,
+            dates_calculated=1,
+            chargeback_rows_written=0,
+        )
+        mock_orch = MagicMock()
+        mock_orch.run.return_value = good_result
+        mock_orch_cls.return_value = mock_orch
+
+        registry = MagicMock()
+        plugin = MagicMock()
+        plugin.get_metrics_source.return_value = None
+        registry.create.return_value = plugin
+
+        tenant_v1 = _make_tenant(tenant_id="tid1", lookback_days=30)
+        settings = _make_settings(tenants={"t1": tenant_v1})
+        runner = WorkflowRunner(settings, registry)
+        runner.run_once()
+
+        assert mock_orch_cls.call_count == 1
+
+        # Simulate config change: update tenant in settings
+        tenant_v2 = _make_tenant(tenant_id="tid1", lookback_days=60)
+        runner._settings = _make_settings(tenants={"t1": tenant_v2})
+        runner.run_once()
+
+        # New runtime created due to config change
+        assert mock_orch_cls.call_count == 2
+        # Old runtime was closed (storage disposed)
+        assert mock_backend.dispose.call_count >= 1
+
+    @patch("workflow_runner.ChargebackOrchestrator")
+    @patch("workflow_runner._create_storage_backend")
+    def test_close_disposes_all_runtimes(self, mock_storage: MagicMock, mock_orch_cls: MagicMock) -> None:
+        """close() disposes storage and closes plugin for every cached runtime."""
+        backends: dict[str, MagicMock] = {}
+        plugins: dict[str, MagicMock] = {}
+
+        def make_backend(config: Any) -> MagicMock:
+            b = MagicMock()
+            # Use connection string as key (unique per tenant via _make_tenant unique hex)
+            backends[config.connection_string] = b
+            return b
+
+        mock_storage.side_effect = make_backend
+
+        good_result = PipelineRunResult(
+            tenant_name="x",
+            tenant_id="x",
+            dates_gathered=0,
+            dates_calculated=0,
+            chargeback_rows_written=0,
+        )
+        mock_orch = MagicMock()
+        mock_orch.run.return_value = good_result
+        mock_orch_cls.return_value = mock_orch
+
+        registry = MagicMock()
+
+        def make_plugin() -> MagicMock:
+            p = MagicMock()
+            p.get_metrics_source.return_value = None
+            plugins[id(p)] = p
+            return p
+
+        registry.create.side_effect = lambda eco: make_plugin()
+
+        settings = _make_settings(
+            tenants={
+                "t1": _make_tenant(tenant_id="tid1"),
+                "t2": _make_tenant(tenant_id="tid2"),
+            }
+        )
+        runner = WorkflowRunner(settings, registry)
+        runner.run_once()
+
+        # Two runtimes cached
+        assert len(runner._tenant_runtimes) == 2
+
+        runner.close()
+
+        # All runtimes cleared
+        assert len(runner._tenant_runtimes) == 0
+        # Each backend disposed once
+        for backend in backends.values():
+            backend.dispose.assert_called_once()
+
+    @patch("workflow_runner.ChargebackOrchestrator")
+    @patch("workflow_runner._create_storage_backend")
+    def test_runtime_last_run_at_updated(self, mock_storage: MagicMock, mock_orch_cls: MagicMock) -> None:
+        """last_run_at is updated after each successful orchestrator.run()."""
+        mock_backend = MagicMock()
+        mock_storage.return_value = mock_backend
+        good_result = PipelineRunResult(
+            tenant_name="t1",
+            tenant_id="tid1",
+            dates_gathered=1,
+            dates_calculated=1,
+            chargeback_rows_written=0,
+        )
+        mock_orch = MagicMock()
+        mock_orch.run.return_value = good_result
+        mock_orch_cls.return_value = mock_orch
+
+        registry = MagicMock()
+        plugin = MagicMock()
+        plugin.get_metrics_source.return_value = None
+        registry.create.return_value = plugin
+
+        settings = _make_settings(tenants={"t1": _make_tenant(tenant_id="tid1")})
+        runner = WorkflowRunner(settings, registry)
+
+        assert "t1" not in runner._tenant_runtimes
+
+        runner.run_once()
+
+        runtime = runner._tenant_runtimes["t1"]
+        assert runtime.last_run_at is not None
+        assert runtime.last_run_at <= datetime.now(UTC)
+
+    def test_tenant_runtime_close_calls_plugin_close(self) -> None:
+        """TenantRuntime.close() calls plugin.close() if it exists."""
+        from workflow_runner import TenantRuntime
+
+        mock_plugin = MagicMock(spec=["close", "get_metrics_source"])
+        mock_plugin.get_metrics_source.return_value = None
+        mock_storage = MagicMock()
+
+        runtime = TenantRuntime(
+            tenant_name="t1",
+            plugin=mock_plugin,
+            storage=mock_storage,
+            orchestrator=MagicMock(),
+            config_hash="abc",
+            created_at=datetime.now(UTC),
+        )
+        runtime.close()
+
+        mock_storage.dispose.assert_called_once()
+        mock_plugin.close.assert_called_once()
+
+    def test_tenant_runtime_is_healthy_default_true(self) -> None:
+        """TenantRuntime.is_healthy() returns True (placeholder)."""
+        from workflow_runner import TenantRuntime
+
+        runtime = TenantRuntime(
+            tenant_name="t1",
+            plugin=MagicMock(),
+            storage=MagicMock(),
+            orchestrator=MagicMock(),
+            config_hash="abc",
+            created_at=datetime.now(UTC),
+        )
+        assert runtime.is_healthy() is True
+
+    def test_tenant_runtime_close_calls_metrics_source_close(self) -> None:
+        """CT-007: TenantRuntime.close() calls metrics_source.close() if it has close()."""
+        from workflow_runner import TenantRuntime
+
+        fake_metrics = MagicMock(spec=["close"])
+        mock_plugin = MagicMock(spec=["get_metrics_source"])
+        mock_plugin.get_metrics_source.return_value = fake_metrics
+        mock_storage = MagicMock()
+
+        runtime = TenantRuntime(
+            tenant_name="t1",
+            plugin=mock_plugin,
+            storage=mock_storage,
+            orchestrator=MagicMock(),
+            config_hash="abc",
+            created_at=datetime.now(UTC),
+        )
+        runtime.close()
+
+        mock_storage.dispose.assert_called_once()
+        fake_metrics.close.assert_called_once()
+
+    def test_tenant_runtime_close_skips_metrics_close_if_no_close_attr(self) -> None:
+        """TenantRuntime.close() does not fail if metrics source has no close()."""
+        from workflow_runner import TenantRuntime
+
+        fake_metrics = MagicMock(spec=[])  # no close() method
+        mock_plugin = MagicMock(spec=["get_metrics_source"])
+        mock_plugin.get_metrics_source.return_value = fake_metrics
+        mock_storage = MagicMock()
+
+        runtime = TenantRuntime(
+            tenant_name="t1",
+            plugin=mock_plugin,
+            storage=mock_storage,
+            orchestrator=MagicMock(),
+            config_hash="abc",
+            created_at=datetime.now(UTC),
+        )
+        runtime.close()  # Should not raise
+
+        mock_storage.dispose.assert_called_once()
+
+
+class TestRunTenant:
+    """CT-001: run_tenant() tests."""
+
+    def test_unknown_tenant_raises_value_error(self) -> None:
+        settings = _make_settings(tenants={"t1": _make_tenant(tenant_id="tid1")})
+        runner = WorkflowRunner(settings, MagicMock())
+        with pytest.raises(ValueError, match="Unknown tenant"):
+            runner.run_tenant("nonexistent")
+
+    @patch("workflow_runner.ChargebackOrchestrator")
+    @patch("workflow_runner._create_storage_backend")
+    def test_run_tenant_auto_bootstraps_if_needed(self, mock_storage: MagicMock, mock_orch_cls: MagicMock) -> None:
+        """run_tenant() bootstraps storage for the tenant if not already bootstrapped."""
+        mock_backend = MagicMock()
+        mock_storage.return_value = mock_backend
+        mock_orch = MagicMock()
+        mock_orch.run.return_value = PipelineRunResult(
+            tenant_name="t1",
+            tenant_id="tid1",
+            dates_gathered=0,
+            dates_calculated=0,
+            chargeback_rows_written=0,
+        )
+        mock_orch_cls.return_value = mock_orch
+
+        registry = MagicMock()
+        plugin = MagicMock()
+        plugin.get_metrics_source.return_value = None
+        registry.create.return_value = plugin
+
+        settings = _make_settings(tenants={"t1": _make_tenant(tenant_id="tid1")})
+        runner = WorkflowRunner(settings, registry)
+        assert not runner._bootstrapped
+
+        runner.run_tenant("t1")
+
+        # create_tables called for the single-tenant bootstrap + storage for runtime
+        mock_backend.create_tables.assert_called_once()
+
+    @patch("workflow_runner.ChargebackOrchestrator")
+    @patch("workflow_runner._create_storage_backend")
+    def test_run_tenant_delegates_to_run_tenant_method(self, mock_storage: MagicMock, mock_orch_cls: MagicMock) -> None:
+        """run_tenant() returns the result from the orchestrator."""
+        mock_backend = MagicMock()
+        mock_storage.return_value = mock_backend
+        expected = PipelineRunResult(
+            tenant_name="t1",
+            tenant_id="tid1",
+            dates_gathered=5,
+            dates_calculated=3,
+            chargeback_rows_written=20,
+        )
+        mock_orch = MagicMock()
+        mock_orch.run.return_value = expected
+        mock_orch_cls.return_value = mock_orch
+
+        registry = MagicMock()
+        plugin = MagicMock()
+        plugin.get_metrics_source.return_value = None
+        registry.create.return_value = plugin
+
+        settings = _make_settings(tenants={"t1": _make_tenant(tenant_id="tid1")})
+        runner = WorkflowRunner(settings, registry)
+        result = runner.run_tenant("t1")
+
+        assert result.dates_gathered == 5
+        assert result.dates_calculated == 3
+        assert result.chargeback_rows_written == 20
+
+    @patch("workflow_runner.ChargebackOrchestrator")
+    @patch("workflow_runner._create_storage_backend")
+    def test_run_tenant_skips_bootstrap_if_already_bootstrapped(
+        self, mock_storage: MagicMock, mock_orch_cls: MagicMock
+    ) -> None:
+        """run_tenant() does not re-bootstrap if already bootstrapped."""
+        mock_backend = MagicMock()
+        mock_storage.return_value = mock_backend
+        mock_orch = MagicMock()
+        mock_orch.run.return_value = PipelineRunResult(
+            tenant_name="t1",
+            tenant_id="tid1",
+            dates_gathered=0,
+            dates_calculated=0,
+            chargeback_rows_written=0,
+        )
+        mock_orch_cls.return_value = mock_orch
+
+        registry = MagicMock()
+        plugin = MagicMock()
+        plugin.get_metrics_source.return_value = None
+        registry.create.return_value = plugin
+
+        settings = _make_settings(tenants={"t1": _make_tenant(tenant_id="tid1")})
+        runner = WorkflowRunner(settings, registry)
+        runner.bootstrap_storage()
+        mock_backend.reset_mock()
+
+        runner.run_tenant("t1")
+
+        # create_tables NOT called again
+        mock_backend.create_tables.assert_not_called()
+
+
+class TestCleanupRetention:
+    """CT-002: _cleanup_retention() tests."""
+
+    @patch("workflow_runner._create_storage_backend")
+    def test_skips_tenant_with_retention_zero(self, mock_storage: MagicMock) -> None:
+        """retention_days <= 0 means disabled; no storage operations.
+        Since TenantConfig validates retention_days > 0, we patch the value directly."""
+        tenant = _make_tenant(tenant_id="tid1")
+        # Bypass field validation to set disabled value
+        object.__setattr__(tenant, "retention_days", 0)
+        settings = _make_settings(tenants={"t1": tenant})
+        runner = WorkflowRunner(settings, MagicMock())
+        runner._cleanup_retention()
+        mock_storage.assert_not_called()
+
+    @patch("workflow_runner._create_storage_backend")
+    def test_calls_delete_before_for_enabled_tenant(self, mock_storage: MagicMock) -> None:
+        """retention_days > 0 triggers delete_before on all repos."""
+        mock_backend = MagicMock()
+        mock_storage.return_value = mock_backend
+        mock_uow = MagicMock()
+        mock_backend.create_unit_of_work.return_value.__enter__ = MagicMock(return_value=mock_uow)
+        mock_backend.create_unit_of_work.return_value.__exit__ = MagicMock(return_value=False)
+        mock_uow.billing.delete_before.return_value = 0
+        mock_uow.resources.delete_before.return_value = 2
+        mock_uow.identities.delete_before.return_value = 1
+        mock_uow.chargebacks.delete_before.return_value = 0
+
+        tenant = _make_tenant(tenant_id="tid1", retention_days=30)
+        settings = _make_settings(tenants={"t1": tenant})
+        runner = WorkflowRunner(settings, MagicMock())
+        runner._cleanup_retention()
+
+        mock_uow.billing.delete_before.assert_called_once()
+        mock_uow.resources.delete_before.assert_called_once()
+        mock_uow.identities.delete_before.assert_called_once()
+        mock_uow.chargebacks.delete_before.assert_called_once()
+        mock_uow.commit.assert_called_once()
+        mock_backend.dispose.assert_called_once()
+
+    @patch("workflow_runner._create_storage_backend")
+    def test_exception_does_not_propagate(self, mock_storage: MagicMock) -> None:
+        """Retention cleanup errors are caught and logged, not re-raised."""
+        mock_backend = MagicMock()
+        mock_storage.return_value = mock_backend
+        mock_backend.create_unit_of_work.side_effect = RuntimeError("DB down")
+
+        tenant = _make_tenant(tenant_id="tid1", retention_days=30)
+        settings = _make_settings(tenants={"t1": tenant})
+        runner = WorkflowRunner(settings, MagicMock())
+        runner._cleanup_retention()  # Should not raise

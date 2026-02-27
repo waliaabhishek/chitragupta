@@ -190,7 +190,7 @@ class TestSchemaRegistryHandlerResolveIdentities:
             identity_type="service_account",
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        mock_uow.identities.find_by_period.return_value = [api_key, sa_owner]
+        mock_uow.identities.find_by_period.return_value = ([api_key, sa_owner], 2)
 
         handler = SchemaRegistryHandler(connection=None, config=None, ecosystem="confluent_cloud")
         result = handler.resolve_identities(
@@ -211,7 +211,7 @@ class TestSchemaRegistryHandlerResolveIdentities:
             SchemaRegistryHandler,
         )
 
-        mock_uow.identities.find_by_period.return_value = []
+        mock_uow.identities.find_by_period.return_value = ([], 0)
 
         handler = SchemaRegistryHandler(connection=None, config=None, ecosystem="confluent_cloud")
         result = handler.resolve_identities(

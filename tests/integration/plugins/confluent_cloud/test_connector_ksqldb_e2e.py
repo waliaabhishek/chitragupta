@@ -50,10 +50,10 @@ def mock_uow_for_connector() -> MagicMock:
     )
 
     uow.resources = MagicMock()
-    uow.resources.find_by_period.return_value = [connector]
+    uow.resources.find_by_period.return_value = ([connector], 1)
 
     uow.identities = MagicMock()
-    uow.identities.find_by_period.return_value = [sa_xxx]
+    uow.identities.find_by_period.return_value = ([sa_xxx], 1)
 
     return uow
 
@@ -98,10 +98,10 @@ def mock_uow_for_connector_api_key() -> MagicMock:
     )
 
     uow.resources = MagicMock()
-    uow.resources.find_by_period.return_value = [connector]
+    uow.resources.find_by_period.return_value = ([connector], 1)
 
     uow.identities = MagicMock()
-    uow.identities.find_by_period.return_value = [api_key, sa_owner]
+    uow.identities.find_by_period.return_value = ([api_key, sa_owner], 2)
 
     return uow
 
@@ -125,10 +125,10 @@ def mock_uow_for_connector_unknown_mode() -> MagicMock:
     )
 
     uow.resources = MagicMock()
-    uow.resources.find_by_period.return_value = [connector]
+    uow.resources.find_by_period.return_value = ([connector], 1)
 
     uow.identities = MagicMock()
-    uow.identities.find_by_period.return_value = []
+    uow.identities.find_by_period.return_value = ([], 0)
 
     return uow
 
@@ -162,10 +162,10 @@ def mock_uow_for_ksqldb() -> MagicMock:
     )
 
     uow.resources = MagicMock()
-    uow.resources.find_by_period.return_value = [ksqldb_app]
+    uow.resources.find_by_period.return_value = ([ksqldb_app], 1)
 
     uow.identities = MagicMock()
-    uow.identities.find_by_period.return_value = [sa_owner]
+    uow.identities.find_by_period.return_value = ([sa_owner], 1)
 
     return uow
 
@@ -187,10 +187,10 @@ def mock_uow_for_ksqldb_missing_owner() -> MagicMock:
     )
 
     uow.resources = MagicMock()
-    uow.resources.find_by_period.return_value = [ksqldb_app]
+    uow.resources.find_by_period.return_value = ([ksqldb_app], 1)
 
     uow.identities = MagicMock()
-    uow.identities.find_by_period.return_value = []
+    uow.identities.find_by_period.return_value = ([], 0)
 
     return uow
 

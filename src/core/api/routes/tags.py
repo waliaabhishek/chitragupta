@@ -205,7 +205,7 @@ def _run_bulk_tag(
         existing = uow.tags.find_by_dimension_and_key(dim_id, tag_key)
         if existing is not None:
             if override_existing:
-                uow.tags.update_display_name(existing.tag_id, display_name)  # type: ignore[arg-type]
+                uow.tags.update_display_name(existing.tag_id, display_name)  # type: ignore[arg-type]  # tag_id is UUID but protocol accepts int; SQLModel repo handles both
                 updated_count += 1
             else:
                 skipped_count += 1

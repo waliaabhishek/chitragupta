@@ -87,13 +87,11 @@ class ConnectorHandler:
         # Find all Kafka clusters for this tenant
         now = datetime.now(UTC)
 
-        resources = list(
-            uow.resources.find_by_period(
-                ecosystem=self._ecosystem,
-                tenant_id=tenant_id,
-                start=datetime(2000, 1, 1, tzinfo=UTC),  # Far past
-                end=now,
-            )
+        resources, _ = uow.resources.find_by_period(
+            ecosystem=self._ecosystem,
+            tenant_id=tenant_id,
+            start=datetime(2000, 1, 1, tzinfo=UTC),  # Far past
+            end=now,
         )
 
         # Build (env_id, cluster_id) tuples for gather_connectors

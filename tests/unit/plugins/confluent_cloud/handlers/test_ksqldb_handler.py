@@ -119,7 +119,7 @@ class TestKsqldbHandlerGatherResources:
             parent_id="env-001",
             metadata={},
         )
-        mock_uow.resources.find_by_period.return_value = [environment, other_resource]
+        mock_uow.resources.find_by_period.return_value = ([environment, other_resource], 2)
 
         ksqldb_resource = MagicMock()
 
@@ -164,7 +164,7 @@ class TestKsqldbHandlerGatherResources:
             status=ResourceStatus.ACTIVE,
             metadata={},
         )
-        mock_uow.resources.find_by_period.return_value = [env1, env2]
+        mock_uow.resources.find_by_period.return_value = ([env1, env2], 2)
 
         with patch(
             "plugins.confluent_cloud.gathering.gather_ksqldb_clusters",
@@ -184,7 +184,7 @@ class TestKsqldbHandlerGatherResources:
         from plugins.confluent_cloud.handlers.ksqldb import KsqldbHandler
 
         mock_conn = MagicMock()
-        mock_uow.resources.find_by_period.return_value = []
+        mock_uow.resources.find_by_period.return_value = ([], 0)
 
         with patch(
             "plugins.confluent_cloud.gathering.gather_ksqldb_clusters",

@@ -3,7 +3,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from decimal import Decimal
 
-import responses
+import httpx
+import respx
 from pydantic import SecretStr
 
 
@@ -183,34 +184,34 @@ class TestBillingItemMapping:
 class TestCCloudBillingCostInput:
     """Tests for CCloudBillingCostInput.gather()."""
 
-    @responses.activate
+    @respx.mock
     def test_gather_single_window(self):
         from plugins.confluent_cloud.config import CCloudPluginConfig
         from plugins.confluent_cloud.connections import CCloudConnection
         from plugins.confluent_cloud.cost_input import CCloudBillingCostInput
 
-        responses.add(
-            responses.GET,
-            "https://api.confluent.cloud/billing/v1/costs",
-            json={
-                "data": [
-                    {
-                        "start_date": "2024-01-15",
-                        "resource": {
-                            "id": "lkc-abc",
-                            "display_name": "cl",
-                            "environment": {"id": "env-1"},
-                        },
-                        "product": "KAFKA",
-                        "line_type": "KAFKA_NUM_CKU",
-                        "quantity": 1,
-                        "price": 100,
-                        "amount": 100,
-                    }
-                ],
-                "metadata": {},
-            },
-            status=200,
+        respx.get("https://api.confluent.cloud/billing/v1/costs").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "data": [
+                        {
+                            "start_date": "2024-01-15",
+                            "resource": {
+                                "id": "lkc-abc",
+                                "display_name": "cl",
+                                "environment": {"id": "env-1"},
+                            },
+                            "product": "KAFKA",
+                            "line_type": "KAFKA_NUM_CKU",
+                            "quantity": 1,
+                            "price": 100,
+                            "amount": 100,
+                        }
+                    ],
+                    "metadata": {},
+                },
+            )
         )
 
         conn = CCloudConnection(api_key="k", api_secret=SecretStr("s"), request_interval_seconds=0)
@@ -230,33 +231,33 @@ class TestCCloudBillingCostInput:
         assert items[0].resource_id == "lkc-abc"
         assert items[0].total_cost == Decimal("100")
 
-    @responses.activate
+    @respx.mock
     def test_gather_multiple_windows(self):
         from plugins.confluent_cloud.config import CCloudPluginConfig
         from plugins.confluent_cloud.connections import CCloudConnection
         from plugins.confluent_cloud.cost_input import CCloudBillingCostInput
 
         # days_per_query=5, range=12 days → 3 API calls
-        for _ in range(3):
-            responses.add(
-                responses.GET,
-                "https://api.confluent.cloud/billing/v1/costs",
-                json={
-                    "data": [
-                        {
-                            "start_date": "2024-01-01",
-                            "resource": {"id": "lkc-1"},
-                            "product": "KAFKA",
-                            "line_type": "KAFKA_BASE",
-                            "quantity": 1,
-                            "price": 10,
-                            "amount": 10,
-                        }
-                    ],
-                    "metadata": {},
-                },
-                status=200,
-            )
+        billing_response = {
+            "data": [
+                {
+                    "start_date": "2024-01-01",
+                    "resource": {"id": "lkc-1"},
+                    "product": "KAFKA",
+                    "line_type": "KAFKA_BASE",
+                    "quantity": 1,
+                    "price": 10,
+                    "amount": 10,
+                }
+            ],
+            "metadata": {},
+        }
+        route = respx.get("https://api.confluent.cloud/billing/v1/costs")
+        route.side_effect = [
+            httpx.Response(200, json=billing_response),
+            httpx.Response(200, json=billing_response),
+            httpx.Response(200, json=billing_response),
+        ]
 
         conn = CCloudConnection(api_key="k", api_secret=SecretStr("s"), request_interval_seconds=0)
         config = CCloudPluginConfig.from_plugin_settings(
@@ -277,9 +278,9 @@ class TestCCloudBillingCostInput:
         )
 
         assert len(items) == 3
-        assert len(responses.calls) == 3
+        assert len(respx.calls) == 3
 
-    @responses.activate
+    @respx.mock
     def test_gather_empty_range(self):
         from plugins.confluent_cloud.config import CCloudPluginConfig
         from plugins.confluent_cloud.connections import CCloudConnection
@@ -299,9 +300,9 @@ class TestCCloudBillingCostInput:
         )
 
         assert items == []
-        assert len(responses.calls) == 0
+        assert len(respx.calls) == 0
 
-    @responses.activate
+    @respx.mock
     def test_gather_skips_malformed_items(self):
         """Malformed billing items should be skipped with warning, not fail gather."""
         from plugins.confluent_cloud.config import CCloudPluginConfig
@@ -309,34 +310,34 @@ class TestCCloudBillingCostInput:
         from plugins.confluent_cloud.cost_input import CCloudBillingCostInput
 
         # Use date range within single window (<=15 days)
-        responses.add(
-            responses.GET,
-            "https://api.confluent.cloud/billing/v1/costs",
-            json={
-                "data": [
-                    # Valid item
-                    {
-                        "start_date": "2024-01-15",
-                        "resource": {"id": "lkc-good"},
-                        "product": "KAFKA",
-                        "line_type": "KAFKA_BASE",
-                        "quantity": 1,
-                        "price": 10,
-                        "amount": 10,
-                    },
-                    # Invalid item - missing start_date
-                    {
-                        "resource": {"id": "lkc-bad"},
-                        "product": "KAFKA",
-                        "line_type": "KAFKA_BASE",
-                        "quantity": 1,
-                        "price": 10,
-                        "amount": 10,
-                    },
-                ],
-                "metadata": {},
-            },
-            status=200,
+        respx.get("https://api.confluent.cloud/billing/v1/costs").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "data": [
+                        # Valid item
+                        {
+                            "start_date": "2024-01-15",
+                            "resource": {"id": "lkc-good"},
+                            "product": "KAFKA",
+                            "line_type": "KAFKA_BASE",
+                            "quantity": 1,
+                            "price": 10,
+                            "amount": 10,
+                        },
+                        # Invalid item - missing start_date
+                        {
+                            "resource": {"id": "lkc-bad"},
+                            "product": "KAFKA",
+                            "line_type": "KAFKA_BASE",
+                            "quantity": 1,
+                            "price": 10,
+                            "amount": 10,
+                        },
+                    ],
+                    "metadata": {},
+                },
+            )
         )
 
         conn = CCloudConnection(api_key="k", api_secret=SecretStr("s"), request_interval_seconds=0)

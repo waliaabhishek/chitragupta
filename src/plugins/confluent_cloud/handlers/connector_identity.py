@@ -52,13 +52,11 @@ def resolve_connector_identity(
     tenant_period = IdentitySet()
 
     # Find the connector resource in the billing period
-    resources = list(
-        uow.resources.find_by_period(
-            ecosystem=ecosystem,
-            tenant_id=tenant_id,
-            start=billing_start,
-            end=billing_end,
-        )
+    resources, _ = uow.resources.find_by_period(
+        ecosystem=ecosystem,
+        tenant_id=tenant_id,
+        start=billing_start,
+        end=billing_end,
     )
 
     # Filter to the specific connector resource
@@ -82,13 +80,11 @@ def resolve_connector_identity(
     auth_mode = connector.metadata.get("kafka_auth_mode")
 
     # Get all identities in billing window for lookup
-    all_identities = list(
-        uow.identities.find_by_period(
-            ecosystem=ecosystem,
-            tenant_id=tenant_id,
-            start=billing_start,
-            end=billing_end,
-        )
+    all_identities, _ = uow.identities.find_by_period(
+        ecosystem=ecosystem,
+        tenant_id=tenant_id,
+        start=billing_start,
+        end=billing_end,
     )
     identity_by_id = {i.identity_id: i for i in all_identities}
 

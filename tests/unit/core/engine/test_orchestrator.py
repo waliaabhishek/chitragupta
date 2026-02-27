@@ -232,11 +232,17 @@ class MockResourceRepo:
     def get(self, ecosystem: str, tenant_id: str, resource_id: str) -> Resource | None:
         return self._data.get(resource_id)
 
-    def find_active_at(self, ecosystem: str, tenant_id: str, timestamp: datetime) -> list[Resource]:
-        return [r for r in self._data.values() if r.deleted_at is None]
+    def find_active_at(
+        self, ecosystem: str, tenant_id: str, timestamp: datetime, **kwargs: Any
+    ) -> tuple[list[Resource], int]:
+        items = [r for r in self._data.values() if r.deleted_at is None]
+        return items, len(items)
 
-    def find_by_period(self, ecosystem: str, tenant_id: str, start: datetime, end: datetime) -> list[Resource]:
-        return list(self._data.values())
+    def find_by_period(
+        self, ecosystem: str, tenant_id: str, start: datetime, end: datetime, **kwargs: Any
+    ) -> tuple[list[Resource], int]:
+        items = list(self._data.values())
+        return items, len(items)
 
     def mark_deleted(self, ecosystem: str, tenant_id: str, resource_id: str, deleted_at: datetime) -> None:
         self._deletions.append((resource_id, deleted_at))
@@ -263,11 +269,17 @@ class MockIdentityRepo:
     def get(self, ecosystem: str, tenant_id: str, identity_id: str) -> Identity | None:
         return self._data.get(identity_id)
 
-    def find_active_at(self, ecosystem: str, tenant_id: str, timestamp: datetime) -> list[Identity]:
-        return [i for i in self._data.values() if i.deleted_at is None]
+    def find_active_at(
+        self, ecosystem: str, tenant_id: str, timestamp: datetime, **kwargs: Any
+    ) -> tuple[list[Identity], int]:
+        items = [i for i in self._data.values() if i.deleted_at is None]
+        return items, len(items)
 
-    def find_by_period(self, ecosystem: str, tenant_id: str, start: datetime, end: datetime) -> list[Identity]:
-        return list(self._data.values())
+    def find_by_period(
+        self, ecosystem: str, tenant_id: str, start: datetime, end: datetime, **kwargs: Any
+    ) -> tuple[list[Identity], int]:
+        items = list(self._data.values())
+        return items, len(items)
 
     def mark_deleted(self, ecosystem: str, tenant_id: str, identity_id: str, deleted_at: datetime) -> None:
         self._deletions.append((identity_id, deleted_at))

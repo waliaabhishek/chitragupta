@@ -109,7 +109,7 @@ class TestFlinkHandlerGatherResources:
             status=ResourceStatus.ACTIVE,
             metadata={},
         )
-        mock_uow.resources.find_by_period.return_value = [environment]
+        mock_uow.resources.find_by_period.return_value = ([environment], 1)
 
         pool_resource = Resource(
             ecosystem="confluent_cloud",

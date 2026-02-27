@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any, cast
 from core.engine.allocation import AllocationContext, AllocatorRegistry
 from core.engine.helpers import compute_active_fraction
 from core.engine.loading import load_protocol_callable
-from core.models.chargeback import ChargebackRow, CostType
+from core.models.chargeback import AllocationDetail, ChargebackRow, CostType
 from core.models.identity import Identity, IdentityResolution, IdentitySet
 from core.models.pipeline import PipelineState
 from core.plugin.registry import EcosystemBundle
@@ -272,7 +272,7 @@ class ChargebackOrchestrator:
         threshold = self._tenant_config.zero_gather_deletion_threshold
 
         # Resource deletions
-        active_resources = uow.resources.find_active_at(self._ecosystem, self._tenant_id, now)
+        active_resources, _ = uow.resources.find_active_at(self._ecosystem, self._tenant_id, now)
         if len(gathered_resource_ids) == 0 and len(active_resources) > 0:
             self._consecutive_zero_resource_gathers += 1
             if threshold == -1 or self._consecutive_zero_resource_gathers < threshold:
@@ -297,7 +297,7 @@ class ChargebackOrchestrator:
                     uow.resources.mark_deleted(self._ecosystem, self._tenant_id, r.resource_id, now)
 
         # Identity deletions
-        active_identities = uow.identities.find_active_at(self._ecosystem, self._tenant_id, now)
+        active_identities, _ = uow.identities.find_active_at(self._ecosystem, self._tenant_id, now)
         if len(gathered_identity_ids) == 0 and len(active_identities) > 0:
             self._consecutive_zero_identity_gathers += 1
             if threshold == -1 or self._consecutive_zero_identity_gathers < threshold:
@@ -381,7 +381,7 @@ class ChargebackOrchestrator:
         # Pre-compute tenant_period cache
         tenant_period_cache: dict[tuple[datetime, datetime], IdentitySet] = {}
         for b_start, b_end in billing_windows:
-            identities = uow.identities.find_by_period(self._ecosystem, self._tenant_id, b_start, b_end)
+            identities, _ = uow.identities.find_by_period(self._ecosystem, self._tenant_id, b_start, b_end)
             tp = IdentitySet()
             for identity in identities:
                 tp.add(identity)
@@ -425,7 +425,7 @@ class ChargebackOrchestrator:
                 row = self._allocate_to_unallocated(
                     line,
                     reason="UNKNOWN_PRODUCT_TYPE",
-                    detail=f"No handler claims product_type: {line.product_type}",
+                    detail=AllocationDetail.USING_UNKNOWN_ALLOCATOR,
                 )
                 uow.chargebacks.upsert(row)
                 return 1

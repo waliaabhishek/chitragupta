@@ -42,21 +42,26 @@ async def list_resources(
 
     with uow:
         if active_at:
-            all_items = uow.resources.find_active_at(eco, tid, active_at)
-            if resource_type:
-                all_items = [r for r in all_items if r.resource_type == resource_type]
-            if status:
-                all_items = [r for r in all_items if r.status == status]
-            total = len(all_items)
-            items = all_items[offset : offset + page_size]
+            items, total = uow.resources.find_active_at(
+                eco,
+                tid,
+                active_at,
+                resource_type=resource_type,
+                status=status,
+                limit=page_size,
+                offset=offset,
+            )
         elif period_start and period_end:
-            all_items = uow.resources.find_by_period(eco, tid, period_start, period_end)
-            if resource_type:
-                all_items = [r for r in all_items if r.resource_type == resource_type]
-            if status:
-                all_items = [r for r in all_items if r.status == status]
-            total = len(all_items)
-            items = all_items[offset : offset + page_size]
+            items, total = uow.resources.find_by_period(
+                eco,
+                tid,
+                period_start,
+                period_end,
+                resource_type=resource_type,
+                status=status,
+                limit=page_size,
+                offset=offset,
+            )
         else:
             items, total = uow.resources.find_paginated(
                 eco, tid, limit=page_size, offset=offset, resource_type=resource_type, status=status

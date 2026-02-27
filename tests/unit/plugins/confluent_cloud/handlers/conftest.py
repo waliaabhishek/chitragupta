@@ -12,7 +12,7 @@ def mock_uow() -> MagicMock:
     """Mock UnitOfWork with identities and resources repositories."""
     uow = MagicMock()
     uow.identities = MagicMock()
-    uow.identities.find_by_period.return_value = []
+    uow.identities.find_by_period.return_value = ([], 0)
     uow.resources = MagicMock()
-    uow.resources.find_by_period.return_value = []
+    uow.resources.find_by_period.return_value = ([], 0)
     return uow

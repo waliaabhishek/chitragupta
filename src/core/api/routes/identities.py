@@ -40,17 +40,24 @@ async def list_identities(
 
     with uow:
         if active_at:
-            all_items = uow.identities.find_active_at(eco, tid, active_at)
-            if identity_type:
-                all_items = [i for i in all_items if i.identity_type == identity_type]
-            total = len(all_items)
-            items = all_items[offset : offset + page_size]
+            items, total = uow.identities.find_active_at(
+                eco,
+                tid,
+                active_at,
+                identity_type=identity_type,
+                limit=page_size,
+                offset=offset,
+            )
         elif period_start and period_end:
-            all_items = uow.identities.find_by_period(eco, tid, period_start, period_end)
-            if identity_type:
-                all_items = [i for i in all_items if i.identity_type == identity_type]
-            total = len(all_items)
-            items = all_items[offset : offset + page_size]
+            items, total = uow.identities.find_by_period(
+                eco,
+                tid,
+                period_start,
+                period_end,
+                identity_type=identity_type,
+                limit=page_size,
+                offset=offset,
+            )
         else:
             items, total = uow.identities.find_paginated(
                 eco, tid, limit=page_size, offset=offset, identity_type=identity_type

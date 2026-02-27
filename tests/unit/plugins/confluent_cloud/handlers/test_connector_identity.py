@@ -36,8 +36,8 @@ class TestResolveConnectorIdentity:
             display_name="My SA",
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        mock_uow.resources.find_by_period.return_value = [connector]
-        mock_uow.identities.find_by_period.return_value = [sa_owner]
+        mock_uow.resources.find_by_period.return_value = ([connector], 1)
+        mock_uow.identities.find_by_period.return_value = ([sa_owner], 1)
 
         result = resolve_connector_identity(
             tenant_id="org-123",
@@ -87,8 +87,8 @@ class TestResolveConnectorIdentity:
             display_name="Human User",
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        mock_uow.resources.find_by_period.return_value = [connector]
-        mock_uow.identities.find_by_period.return_value = [api_key, user_owner]
+        mock_uow.resources.find_by_period.return_value = ([connector], 1)
+        mock_uow.identities.find_by_period.return_value = ([api_key, user_owner], 2)
 
         result = resolve_connector_identity(
             tenant_id="org-123",
@@ -116,8 +116,8 @@ class TestResolveConnectorIdentity:
             metadata={"kafka_auth_mode": "UNKNOWN"},
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        mock_uow.resources.find_by_period.return_value = [connector]
-        mock_uow.identities.find_by_period.return_value = []
+        mock_uow.resources.find_by_period.return_value = ([connector], 1)
+        mock_uow.identities.find_by_period.return_value = ([], 0)
 
         result = resolve_connector_identity(
             tenant_id="org-123",
@@ -140,8 +140,8 @@ class TestResolveConnectorIdentity:
             resolve_connector_identity,
         )
 
-        mock_uow.resources.find_by_period.return_value = []
-        mock_uow.identities.find_by_period.return_value = []
+        mock_uow.resources.find_by_period.return_value = ([], 0)
+        mock_uow.identities.find_by_period.return_value = ([], 0)
 
         result = resolve_connector_identity(
             tenant_id="org-123",
@@ -175,8 +175,8 @@ class TestResolveConnectorIdentity:
             },
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        mock_uow.resources.find_by_period.return_value = [connector]
-        mock_uow.identities.find_by_period.return_value = []
+        mock_uow.resources.find_by_period.return_value = ([connector], 1)
+        mock_uow.identities.find_by_period.return_value = ([], 0)
 
         result = resolve_connector_identity(
             tenant_id="org-123",
@@ -211,8 +211,8 @@ class TestResolveConnectorIdentity:
             },
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        mock_uow.resources.find_by_period.return_value = [connector]
-        mock_uow.identities.find_by_period.return_value = []
+        mock_uow.resources.find_by_period.return_value = ([connector], 1)
+        mock_uow.identities.find_by_period.return_value = ([], 0)
 
         result = resolve_connector_identity(
             tenant_id="org-123",
@@ -252,8 +252,8 @@ class TestResolveConnectorIdentity:
             metadata={},  # No owner_id
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        mock_uow.resources.find_by_period.return_value = [connector]
-        mock_uow.identities.find_by_period.return_value = [api_key]
+        mock_uow.resources.find_by_period.return_value = ([connector], 1)
+        mock_uow.identities.find_by_period.return_value = ([api_key], 1)
 
         result = resolve_connector_identity(
             tenant_id="org-123",
@@ -281,8 +281,8 @@ class TestResolveConnectorIdentity:
             metadata={},  # No kafka_auth_mode
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        mock_uow.resources.find_by_period.return_value = [connector]
-        mock_uow.identities.find_by_period.return_value = []
+        mock_uow.resources.find_by_period.return_value = ([connector], 1)
+        mock_uow.identities.find_by_period.return_value = ([], 0)
 
         result = resolve_connector_identity(
             tenant_id="org-123",
@@ -310,8 +310,8 @@ class TestResolveConnectorIdentity:
             metadata={"kafka_auth_mode": "SERVICE_ACCOUNT"},  # No kafka_service_account_id
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        mock_uow.resources.find_by_period.return_value = [connector]
-        mock_uow.identities.find_by_period.return_value = []
+        mock_uow.resources.find_by_period.return_value = ([connector], 1)
+        mock_uow.identities.find_by_period.return_value = ([], 0)
 
         result = resolve_connector_identity(
             tenant_id="org-123",
@@ -339,8 +339,8 @@ class TestResolveConnectorIdentity:
             metadata={"kafka_auth_mode": "KAFKA_API_KEY"},  # No kafka_api_key
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        mock_uow.resources.find_by_period.return_value = [connector]
-        mock_uow.identities.find_by_period.return_value = []
+        mock_uow.resources.find_by_period.return_value = ([connector], 1)
+        mock_uow.identities.find_by_period.return_value = ([], 0)
 
         result = resolve_connector_identity(
             tenant_id="org-123",
@@ -378,8 +378,8 @@ class TestResolveConnectorIdentity:
             identity_type="service_account",
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        mock_uow.resources.find_by_period.return_value = [connector]
-        mock_uow.identities.find_by_period.return_value = [sa_owner]
+        mock_uow.resources.find_by_period.return_value = ([connector], 1)
+        mock_uow.identities.find_by_period.return_value = ([sa_owner], 1)
 
         result = resolve_connector_identity(
             tenant_id="org-123",
@@ -428,11 +428,11 @@ class TestResolveConnectorIdentity:
             identity_type="service_account",
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        mock_uow.resources.find_by_period.return_value = [
-            connector_match,
-            connector_other,
-        ]
-        mock_uow.identities.find_by_period.return_value = [sa_correct]
+        mock_uow.resources.find_by_period.return_value = (
+            [connector_match, connector_other],
+            2,
+        )
+        mock_uow.identities.find_by_period.return_value = ([sa_correct], 1)
 
         result = resolve_connector_identity(
             tenant_id="org-123",

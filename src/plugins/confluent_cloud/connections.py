@@ -8,9 +8,8 @@ from dataclasses import dataclass, field
 from typing import Any, cast
 from urllib import parse
 
-import requests
+import httpx
 from pydantic import SecretStr  # noqa: TC002 - runtime use in get_secret_value()
-from requests.auth import HTTPBasicAuth
 
 from plugins.confluent_cloud.exceptions import CCloudApiError, CCloudConnectionError
 
@@ -30,16 +29,18 @@ class CCloudConnection:
     base_backoff_seconds: float = 2.0
     request_interval_seconds: float = 0.1  # Proactive throttling: 100ms = 10 req/s max
 
-    _session: requests.Session = field(init=False, repr=False, compare=False)
+    _client: httpx.Client = field(init=False, repr=False, compare=False)
     _last_request_time: float = field(init=False, default=0.0, repr=False, compare=False)
 
     def __post_init__(self) -> None:
-        self._session = requests.Session()
-        self._session.auth = HTTPBasicAuth(self.api_key, self.api_secret.get_secret_value())
+        self._client = httpx.Client(
+            auth=httpx.BasicAuth(self.api_key, self.api_secret.get_secret_value()),
+            timeout=httpx.Timeout(float(self.timeout_seconds)),
+        )
 
     def close(self) -> None:
-        """Close the underlying HTTP session and release connections."""
-        self._session.close()
+        """Close the underlying HTTP client and release connections."""
+        self._client.close()
 
     def get(
         self,
@@ -113,8 +114,6 @@ class CCloudConnection:
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Execute HTTP request with retry logic, rate limits, and proactive throttling."""
-        kwargs.setdefault("timeout", self.timeout_seconds)
-
         # Proactive throttling: ensure minimum interval between requests
         if self.request_interval_seconds > 0:
             elapsed = time.time() - self._last_request_time
@@ -125,14 +124,14 @@ class CCloudConnection:
 
         for attempt in range(self.max_retries + 1):
             try:
-                resp = self._session.request(method, url, **kwargs)
-            except requests.exceptions.Timeout as e:
+                resp = self._client.request(method, url, **kwargs)
+            except httpx.TimeoutException as e:
                 last_exception = CCloudApiError(408, f"Request timeout: {e}")
                 wait = self._calculate_backoff(attempt)
                 LOGGER.warning("Timeout on attempt %d, retrying in %.2fs", attempt + 1, wait)
                 time.sleep(wait)
                 continue
-            except requests.exceptions.RequestException as e:
+            except httpx.RequestError as e:
                 raise CCloudConnectionError(str(e)) from e
 
             self._last_request_time = time.time()
@@ -153,7 +152,8 @@ class CCloudConnection:
 
         # Max retries exhausted — last_exception is always set since we only
         # reach here after timeout (sets last_exception) or 429 (sets last_exception)
-        assert last_exception is not None  # unreachable: loop always sets last_exception
+        if last_exception is None:
+            raise RuntimeError("Max retries exhausted but no exception was recorded (unreachable)")
         raise last_exception
 
     def _calculate_backoff(self, attempt: int) -> float:
@@ -162,7 +162,7 @@ class CCloudConnection:
         jitter: float = random.uniform(0, 1)
         return base + jitter
 
-    def _get_rate_limit_wait(self, response: requests.Response, attempt: int) -> float:
+    def _get_rate_limit_wait(self, response: httpx.Response, attempt: int) -> float:
         """Get wait time from rate limit headers or fall back to backoff.
 
         Confluent Cloud API uses these headers (per docs):

@@ -142,8 +142,8 @@ class TestResolveFlinkIdentityWithStatements:
             display_name="Statement Owner",
         )
 
-        mock_uow.resources.find_by_period.return_value = [stmt_resource]
-        mock_uow.identities.find_by_period.return_value = [owner]
+        mock_uow.resources.find_by_period.return_value = ([stmt_resource], 1)
+        mock_uow.identities.find_by_period.return_value = ([owner], 1)
 
         result = resolve_flink_identity(
             tenant_id="org-123",
@@ -211,8 +211,8 @@ class TestResolveFlinkIdentityWithStatements:
             identity_type="service_account",
         )
 
-        mock_uow.resources.find_by_period.return_value = [stmt_a, stmt_b]
-        mock_uow.identities.find_by_period.return_value = [sa_1, sa_2]
+        mock_uow.resources.find_by_period.return_value = ([stmt_a, stmt_b], 2)
+        mock_uow.identities.find_by_period.return_value = ([sa_1, sa_2], 2)
 
         result = resolve_flink_identity(
             tenant_id="org-123",
@@ -275,8 +275,8 @@ class TestResolveFlinkIdentityWithStatements:
             identity_type="service_account",
         )
 
-        mock_uow.resources.find_by_period.return_value = [stmt_x, stmt_y]
-        mock_uow.identities.find_by_period.return_value = [sa]
+        mock_uow.resources.find_by_period.return_value = ([stmt_x, stmt_y], 2)
+        mock_uow.identities.find_by_period.return_value = ([sa], 1)
 
         result = resolve_flink_identity(
             tenant_id="org-123",
@@ -309,8 +309,8 @@ class TestResolveFlinkIdentityWithStatements:
             ]
         }
 
-        mock_uow.resources.find_by_period.return_value = []
-        mock_uow.identities.find_by_period.return_value = []
+        mock_uow.resources.find_by_period.return_value = ([], 0)
+        mock_uow.identities.find_by_period.return_value = ([], 0)
 
         result = resolve_flink_identity(
             tenant_id="org-123",
@@ -353,8 +353,8 @@ class TestResolveFlinkIdentityWithStatements:
             metadata={"statement_name": "orphan-stmt", "compute_pool_id": "lfcp-pool-1"},
         )
 
-        mock_uow.resources.find_by_period.return_value = [stmt]
-        mock_uow.identities.find_by_period.return_value = []
+        mock_uow.resources.find_by_period.return_value = ([stmt], 1)
+        mock_uow.identities.find_by_period.return_value = ([], 0)
 
         result = resolve_flink_identity(
             tenant_id="org-123",
@@ -394,8 +394,8 @@ class TestResolveFlinkIdentityWithStatements:
             metadata={"statement_name": "stmt-z", "compute_pool_id": "lfcp-pool-1"},
         )
 
-        mock_uow.resources.find_by_period.return_value = [stmt]
-        mock_uow.identities.find_by_period.return_value = []
+        mock_uow.resources.find_by_period.return_value = ([stmt], 1)
+        mock_uow.identities.find_by_period.return_value = ([], 0)
 
         result = resolve_flink_identity(
             tenant_id="org-123",
@@ -444,8 +444,8 @@ class TestResolveFlinkIdentityWithStatements:
             identity_type="service_account",
         )
 
-        mock_uow.resources.find_by_period.return_value = [stmt]
-        mock_uow.identities.find_by_period.return_value = [sa]
+        mock_uow.resources.find_by_period.return_value = ([stmt], 1)
+        mock_uow.identities.find_by_period.return_value = ([sa], 1)
 
         result = resolve_flink_identity(
             tenant_id="org-123",
@@ -498,8 +498,8 @@ class TestResolveFlinkIdentityWithStatements:
             identity_type="service_account",
         )
 
-        mock_uow.resources.find_by_period.return_value = [stmt]
-        mock_uow.identities.find_by_period.return_value = [sa]
+        mock_uow.resources.find_by_period.return_value = ([stmt], 1)
+        mock_uow.identities.find_by_period.return_value = ([sa], 1)
 
         result = resolve_flink_identity(
             tenant_id="org-123",

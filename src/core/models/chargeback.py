@@ -14,6 +14,43 @@ class CostType(StrEnum):
     SHARED = "shared"
 
 
+class AllocationDetail(StrEnum):
+    """Standardized reason codes for allocation decisions.
+
+    Values are stored as VARCHAR in the DB; existing free-form strings
+    from older data remain valid (they just won't match enum values).
+    """
+
+    # Default/fallback allocators
+    USING_DEFAULT_ALLOCATOR = "using_default_allocator"
+    USING_UNKNOWN_ALLOCATOR = "using_unknown_allocator"
+
+    # Identity resolution failures
+    NO_IDENTITIES_LOCATED = "no_identities_located"
+    NO_ACTIVE_IDENTITIES_LOCATED = "no_active_identities_located"
+
+    # Metrics failures
+    NO_METRICS_LOCATED = "no_metrics_located"
+    NO_USAGE_FOR_ACTIVE_IDENTITIES = "no_usage_for_active_identities"
+
+    # Combined failures
+    NO_METRICS_NO_ACTIVE_IDENTITIES = "no_metrics_no_active_identities"
+    METRICS_PRESENT_NO_ACTIVE_IDENTITIES = "metrics_present_no_active_identities"
+
+    # Flink-specific
+    NO_FLINK_STMT_NAME_TO_OWNER_MAP = "no_flink_stmt_name_to_owner_map"
+    FAILED_TO_LOCATE_FLINK_STATEMENT_OWNER = "failed_to_locate_flink_statement_owner"
+
+    # Cluster linking
+    CLUSTER_LINKING_COST = "cluster_linking_cost"
+
+    # Usage-based allocation (success)
+    USAGE_RATIO_ALLOCATION = "usage_ratio_allocation"
+
+    # Even split (success)
+    EVEN_SPLIT_ALLOCATION = "even_split_allocation"
+
+
 @dataclass
 class ChargebackRow:
     """A single row of chargeback output."""

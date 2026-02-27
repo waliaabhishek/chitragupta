@@ -49,13 +49,11 @@ def resolve_kafka_sr_identities(
     tenant_period = IdentitySet()  # Orchestrator fills this
 
     # 1. Get all identities in billing window (single query)
-    all_identities = list(
-        uow.identities.find_by_period(
-            ecosystem=ecosystem,
-            tenant_id=tenant_id,
-            start=billing_start,
-            end=billing_end,
-        )
+    all_identities, _ = uow.identities.find_by_period(
+        ecosystem=ecosystem,
+        tenant_id=tenant_id,
+        start=billing_start,
+        end=billing_end,
     )
 
     # Build lookup dict for O(1) owner resolution

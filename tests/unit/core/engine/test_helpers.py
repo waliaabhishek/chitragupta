@@ -17,6 +17,7 @@ from core.engine.helpers import (
     split_amount_evenly,
 )
 from core.models import CostType, Resource, ResourceStatus
+from core.models.chargeback import AllocationDetail
 
 from .conftest import make_ctx
 
@@ -83,7 +84,7 @@ class TestAllocateByUsageRatio:
         assert len(result.rows) == 1
         assert result.rows[0].identity_id == "UNALLOCATED"
         assert result.rows[0].cost_type == CostType.SHARED
-        assert "UNALLOCATED" in result.rows[0].allocation_detail
+        assert result.rows[0].allocation_detail == AllocationDetail.NO_USAGE_FOR_ACTIVE_IDENTITIES
 
     def test_all_zero_values_fallback_to_unallocated(self) -> None:
         ctx = make_ctx()
@@ -117,6 +118,11 @@ class TestAllocateByUsageRatio:
         result = allocate_by_usage_ratio(ctx, {"u-1": 1.0})
         assert all(r.allocation_method == "usage_ratio" for r in result.rows)
 
+    def test_allocation_detail_on_success(self) -> None:
+        ctx = make_ctx()
+        result = allocate_by_usage_ratio(ctx, {"u-1": 1.0})
+        assert all(r.allocation_detail == AllocationDetail.USAGE_RATIO_ALLOCATION for r in result.rows)
+
 
 # --- allocate_evenly ---
 
@@ -140,7 +146,7 @@ class TestAllocateEvenly:
         assert len(result.rows) == 1
         assert result.rows[0].identity_id == "UNALLOCATED"
         assert result.rows[0].cost_type == CostType.SHARED
-        assert "UNALLOCATED" in result.rows[0].allocation_detail
+        assert result.rows[0].allocation_detail == AllocationDetail.NO_IDENTITIES_LOCATED
 
     def test_single_identity_full_amount(self) -> None:
         ctx = make_ctx(split_amount=Decimal("7.50"))
@@ -156,6 +162,11 @@ class TestAllocateEvenly:
         ctx = make_ctx()
         result = allocate_evenly(ctx, ["u-1"])
         assert result.rows[0].allocation_method == "even_split"
+
+    def test_allocation_detail_on_success(self) -> None:
+        ctx = make_ctx()
+        result = allocate_evenly(ctx, ["u-1", "u-2"])
+        assert all(r.allocation_detail == AllocationDetail.EVEN_SPLIT_ALLOCATION for r in result.rows)
 
 
 # --- allocate_hybrid ---

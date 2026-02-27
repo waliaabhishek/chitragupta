@@ -190,11 +190,11 @@ class TestEndToEndPipeline:
 
         # Verify data persisted in real DB
         with storage.create_unit_of_work() as uow:
-            resources = uow.resources.find_active_at(ECOSYSTEM, TENANT_ID, NOW)
+            resources, _ = uow.resources.find_active_at(ECOSYSTEM, TENANT_ID, NOW)
             resource_ids = {r.resource_id for r in resources}
             assert "cluster-1" in resource_ids
 
-            identities = uow.identities.find_active_at(ECOSYSTEM, TENANT_ID, NOW)
+            identities, _ = uow.identities.find_active_at(ECOSYSTEM, TENANT_ID, NOW)
             identity_ids = {i.identity_id for i in identities}
             assert "user-1" in identity_ids
             assert "UNALLOCATED" in identity_ids

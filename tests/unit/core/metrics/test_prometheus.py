@@ -6,8 +6,8 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import MagicMock
 
+import httpx
 import pytest
-import requests
 
 from core.metrics.prometheus import (
     AuthConfig,
@@ -20,19 +20,12 @@ from core.metrics.protocol import MetricsQueryError
 from core.models.metrics import MetricQuery, MetricRow
 
 
-@pytest.fixture
-def mock_session() -> MagicMock:
-    """Create a mock requests.Session for testing PrometheusMetricsSource."""
-    session = MagicMock(spec=requests.Session)
-    return session
-
-
 def _make_source_with_mock(mock_post: MagicMock, **config_overrides: Any) -> tuple[PrometheusMetricsSource, MagicMock]:
-    """Helper to create a PrometheusMetricsSource with a mocked session."""
-    session = MagicMock(spec=requests.Session)
-    session.post = mock_post
-    src = PrometheusMetricsSource(_make_config(**config_overrides), session=session)
-    return src, session
+    """Helper to create a PrometheusMetricsSource with a mocked httpx.Client."""
+    client = MagicMock(spec=httpx.Client)
+    client.post = mock_post
+    src = PrometheusMetricsSource(_make_config(**config_overrides), client=client)
+    return src, client
 
 
 # ---------------------------------------------------------------------------
@@ -122,11 +115,6 @@ def _mock_response(text: str, status_code: int = 200) -> MagicMock:
     resp.text = text
     resp.status_code = status_code
     return resp
-
-
-def _mock_session() -> MagicMock:
-    """Create a mock requests.Session for injection."""
-    return MagicMock()
 
 
 # ===========================================================================
@@ -283,18 +271,14 @@ class TestAuth:
         assert src._auth is None
 
     def test_basic_auth(self) -> None:
-        from requests.auth import HTTPBasicAuth
-
         cfg = _make_config(auth=AuthConfig(type="basic", username="u", password="p"))
         src = PrometheusMetricsSource(cfg)
-        assert isinstance(src._auth, HTTPBasicAuth)
+        assert isinstance(src._auth, httpx.BasicAuth)
 
     def test_digest_auth(self) -> None:
-        from requests.auth import HTTPDigestAuth
-
         cfg = _make_config(auth=AuthConfig(type="digest", username="u", password="p"))
         src = PrometheusMetricsSource(cfg)
-        assert isinstance(src._auth, HTTPDigestAuth)
+        assert isinstance(src._auth, httpx.DigestAuth)
 
     def test_bearer_auth(self) -> None:
         cfg = _make_config(auth=AuthConfig(type="bearer", token="mytoken"))
@@ -335,14 +319,14 @@ class TestRetry:
         assert mock_post.call_count == 1
 
     def test_exhausted_retries_chains_last_exception(self) -> None:
-        mock_post = MagicMock(side_effect=requests.ConnectionError("refused"))
+        mock_post = MagicMock(side_effect=httpx.ConnectError("refused"))
         src, _ = _make_source_with_mock(mock_post, max_retries=2, base_delay=0.0)
         with pytest.raises(MetricsQueryError, match="Exhausted") as exc_info:
             src.query([_QUERY], _START, _END, _STEP)
-        assert isinstance(exc_info.value.__cause__, requests.ConnectionError)
+        assert isinstance(exc_info.value.__cause__, httpx.ConnectError)
 
     def test_exhausted_retries_transient_status_no_chain(self) -> None:
-        """Transient HTTP status (no RequestException) → no chained cause."""
+        """Transient HTTP status (no RequestError) → no chained cause."""
         mock_post = MagicMock(return_value=_mock_response("", 503))
         src, _ = _make_source_with_mock(mock_post, max_retries=2, base_delay=0.0)
         with pytest.raises(MetricsQueryError, match="Exhausted") as exc_info:
@@ -352,7 +336,7 @@ class TestRetry:
     def test_connection_error_retries(self) -> None:
         mock_post = MagicMock(
             side_effect=[
-                requests.ConnectionError("refused"),
+                httpx.ConnectError("refused"),
                 _mock_response(_RANGE_RESPONSE, 200),
             ]
         )

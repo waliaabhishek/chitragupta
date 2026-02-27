@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 
 from core.engine.helpers import allocate_evenly, make_row
 from core.models import CostType
+from core.models.chargeback import AllocationDetail
 
 if TYPE_CHECKING:
     from core.engine.allocation import AllocationContext, AllocationResult
@@ -44,6 +45,6 @@ def cluster_linking_allocator(ctx: AllocationContext) -> AllocationResult:
         cost_type=CostType.USAGE,
         amount=ctx.split_amount,
         allocation_method="cluster_linking",
-        allocation_detail="no identity resolution; allocated to UNALLOCATED",
+        allocation_detail=AllocationDetail.CLUSTER_LINKING_COST,
     )
     return AllocationResult(rows=[row])

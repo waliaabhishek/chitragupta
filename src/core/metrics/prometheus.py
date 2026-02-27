@@ -12,8 +12,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Literal
 from urllib.parse import urljoin
 
-import requests
-from requests.auth import HTTPBasicAuth, HTTPDigestAuth
+import httpx
 
 from core.metrics.protocol import MetricsQueryError
 from core.models.metrics import MetricQuery, MetricRow  # noqa: TC001 — used at runtime in _parse_response
@@ -69,7 +68,7 @@ class PrometheusMetricsSource:
     def __init__(
         self,
         config: PrometheusConfig,
-        session: requests.Session | None = None,
+        client: httpx.Client | None = None,
     ) -> None:
         self._config = config
         self._url_range = urljoin(config.url, "/api/v1/query_range")
@@ -79,16 +78,21 @@ class PrometheusMetricsSource:
             self._extra_headers["Authorization"] = f"Bearer {self._config.auth.token or ''}"
         self._cache: dict[tuple[str, ...], tuple[float, str]] = {}
         self._cache_lock = threading.Lock()
-        # TD-010: Connection pooling via requests.Session (injectable for testing)
-        self._session = session if session is not None else requests.Session()
-        self._owns_session = session is None  # Track if we own the session for cleanup
-        if self._auth and self._owns_session:
-            self._session.auth = self._auth
+        # Connection pooling via httpx.Client (injectable for testing)
+        if client is not None:
+            self._client = client
+            self._owns_client = False
+        else:
+            self._client = httpx.Client(
+                auth=self._auth,
+                timeout=httpx.Timeout(self._config.timeout),
+            )
+            self._owns_client = True
 
     def close(self) -> None:
-        """Close HTTP session and release pooled connections."""
-        if self._owns_session:
-            self._session.close()
+        """Close HTTP client and release pooled connections."""
+        if self._owns_client:
+            self._client.close()
 
     def query(
         self,
@@ -205,14 +209,13 @@ class PrometheusMetricsSource:
     ) -> str:
         """POST with exponential backoff + jitter on transient failures."""
         attempt = 0
-        last_exc: requests.RequestException | None = None
+        last_exc: httpx.RequestError | None = None
         while True:
             try:
-                resp = self._session.post(
+                resp = self._client.post(
                     url,
                     data=data,
                     headers=headers,
-                    timeout=self._config.timeout,
                 )
                 if resp.status_code not in _TRANSIENT_STATUS:
                     if resp.status_code >= 400:
@@ -229,7 +232,7 @@ class PrometheusMetricsSource:
                     attempt + 1,
                     self._config.max_retries,
                 )
-            except requests.RequestException as exc:
+            except httpx.RequestError as exc:
                 last_exc = exc
                 LOGGER.warning(
                     "Request error: %s, attempt %s/%s",
@@ -295,18 +298,18 @@ class PrometheusMetricsSource:
 
         return rows
 
-    def _build_auth(self) -> HTTPBasicAuth | HTTPDigestAuth | None:
-        """Build requests auth object from config."""
+    def _build_auth(self) -> httpx.BasicAuth | httpx.DigestAuth | None:
+        """Build httpx auth object from config."""
         auth_cfg = self._config.auth
         if auth_cfg is None:
             return None
 
         if auth_cfg.type == "basic":
-            return HTTPBasicAuth(auth_cfg.username or "", auth_cfg.password or "")
+            return httpx.BasicAuth(auth_cfg.username or "", auth_cfg.password or "")
         if auth_cfg.type == "digest":
-            return HTTPDigestAuth(auth_cfg.username or "", auth_cfg.password or "")
+            return httpx.DigestAuth(auth_cfg.username or "", auth_cfg.password or "")
         if auth_cfg.type == "bearer":
-            # Bearer is handled via extra headers in __init__, not requests auth
+            # Bearer is handled via extra headers in __init__, not httpx auth
             return None
 
         return None  # pragma: no cover

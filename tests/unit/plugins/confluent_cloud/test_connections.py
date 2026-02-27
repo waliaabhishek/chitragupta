@@ -4,13 +4,21 @@ import base64
 import time
 from unittest.mock import patch
 
+import httpx
 import pytest
-import requests
-import responses
+import respx
 from pydantic import SecretStr
 
 from plugins.confluent_cloud.connections import CCloudConnection
 from plugins.confluent_cloud.exceptions import CCloudApiError, CCloudConnectionError
+
+
+def _resp(json_data: object = None, status: int = 200, text: str = "", headers: dict | None = None) -> httpx.Response:
+    """Build a mock httpx.Response."""
+    import json as _json
+
+    content = _json.dumps(json_data).encode() if json_data is not None else text.encode()
+    return httpx.Response(status, content=content, headers=headers or {})
 
 
 def test_ccloud_connection_construction():
@@ -34,13 +42,10 @@ def test_ccloud_connection_custom_base_url():
     assert conn.base_url == "https://custom.api.com"
 
 
-@responses.activate
+@respx.mock
 def test_get_single_page():
-    responses.add(
-        responses.GET,
-        "https://api.confluent.cloud/test/endpoint",
-        json={"data": [{"id": "1"}, {"id": "2"}], "metadata": {}},
-        status=200,
+    respx.get("https://api.confluent.cloud/test/endpoint").mock(
+        return_value=_resp({"data": [{"id": "1"}, {"id": "2"}], "metadata": {}})
     )
 
     conn = CCloudConnection(api_key="key", api_secret=SecretStr("secret"))
@@ -49,23 +54,18 @@ def test_get_single_page():
     assert items == [{"id": "1"}, {"id": "2"}]
 
 
-@responses.activate
+@respx.mock
 def test_get_with_pagination():
-    responses.add(
-        responses.GET,
-        "https://api.confluent.cloud/test/endpoint",
-        json={
-            "data": [{"id": "1"}],
-            "metadata": {"next": "https://api.confluent.cloud/test/endpoint?page_token=abc"},
-        },
-        status=200,
-    )
-    responses.add(
-        responses.GET,
-        "https://api.confluent.cloud/test/endpoint",
-        json={"data": [{"id": "2"}], "metadata": {}},
-        status=200,
-    )
+    route = respx.get("https://api.confluent.cloud/test/endpoint")
+    route.side_effect = [
+        _resp(
+            {
+                "data": [{"id": "1"}],
+                "metadata": {"next": "https://api.confluent.cloud/test/endpoint?page_token=abc"},
+            }
+        ),
+        _resp({"data": [{"id": "2"}], "metadata": {}}),
+    ]
 
     conn = CCloudConnection(api_key="key", api_secret=SecretStr("secret"))
     items = list(conn.get("/test/endpoint"))
@@ -73,14 +73,9 @@ def test_get_with_pagination():
     assert items == [{"id": "1"}, {"id": "2"}]
 
 
-@responses.activate
+@respx.mock
 def test_get_empty_response():
-    responses.add(
-        responses.GET,
-        "https://api.confluent.cloud/test/endpoint",
-        json={"data": [], "metadata": {}},
-        status=200,
-    )
+    respx.get("https://api.confluent.cloud/test/endpoint").mock(return_value=_resp({"data": [], "metadata": {}}))
 
     conn = CCloudConnection(api_key="key", api_secret=SecretStr("secret"))
     items = list(conn.get("/test/endpoint"))
@@ -88,14 +83,9 @@ def test_get_empty_response():
     assert items == []
 
 
-@responses.activate
+@respx.mock
 def test_get_404_returns_empty():
-    responses.add(
-        responses.GET,
-        "https://api.confluent.cloud/test/endpoint",
-        status=404,
-        body="Not found",
-    )
+    respx.get("https://api.confluent.cloud/test/endpoint").mock(return_value=httpx.Response(404, text="Not found"))
 
     conn = CCloudConnection(api_key="key", api_secret=SecretStr("secret"))
     items = list(conn.get("/test/endpoint"))
@@ -103,13 +93,10 @@ def test_get_404_returns_empty():
     assert items == []
 
 
-@responses.activate
+@respx.mock
 def test_get_500_raises():
-    responses.add(
-        responses.GET,
-        "https://api.confluent.cloud/test/endpoint",
-        status=500,
-        body="Internal Server Error",
+    respx.get("https://api.confluent.cloud/test/endpoint").mock(
+        return_value=httpx.Response(500, text="Internal Server Error")
     )
 
     conn = CCloudConnection(api_key="key", api_secret=SecretStr("secret"))
@@ -120,20 +107,13 @@ def test_get_500_raises():
     assert exc_info.value.status_code == 500
 
 
-@responses.activate
+@respx.mock
 def test_get_429_with_retry_after_header():
-    responses.add(
-        responses.GET,
-        "https://api.confluent.cloud/test",
-        status=429,
-        headers={"Retry-After": "0.05"},
-    )
-    responses.add(
-        responses.GET,
-        "https://api.confluent.cloud/test",
-        json={"data": [{"id": "1"}], "metadata": {}},
-        status=200,
-    )
+    route = respx.get("https://api.confluent.cloud/test")
+    route.side_effect = [
+        httpx.Response(429, text="", headers={"Retry-After": "0.05"}),
+        _resp({"data": [{"id": "1"}], "metadata": {}}),
+    ]
 
     conn = CCloudConnection(api_key="key", api_secret=SecretStr("secret"))
     start = time.monotonic()
@@ -144,21 +124,13 @@ def test_get_429_with_retry_after_header():
     assert elapsed >= 0.05  # Waited for Retry-After
 
 
-@responses.activate
+@respx.mock
 def test_get_429_with_exponential_backoff():
-    # 429 without headers, then success
-    responses.add(
-        responses.GET,
-        "https://api.confluent.cloud/test",
-        status=429,
-        body="Rate limited",
-    )
-    responses.add(
-        responses.GET,
-        "https://api.confluent.cloud/test",
-        json={"data": [{"id": "1"}], "metadata": {}},
-        status=200,
-    )
+    route = respx.get("https://api.confluent.cloud/test")
+    route.side_effect = [
+        httpx.Response(429, text="Rate limited"),
+        _resp({"data": [{"id": "1"}], "metadata": {}}),
+    ]
 
     conn = CCloudConnection(
         api_key="key",
@@ -170,16 +142,10 @@ def test_get_429_with_exponential_backoff():
     assert items == [{"id": "1"}]
 
 
-@responses.activate
+@respx.mock
 def test_get_max_retries_exhausted():
-    # 6 responses: max_retries=5 means 6 total attempts
-    for _ in range(6):
-        responses.add(
-            responses.GET,
-            "https://api.confluent.cloud/test",
-            status=429,
-            body="Rate limited",
-        )
+    # max_retries=5 means 6 total attempts
+    respx.get("https://api.confluent.cloud/test").mock(side_effect=[httpx.Response(429, text="Rate limited")] * 6)
 
     conn = CCloudConnection(
         api_key="key",
@@ -194,20 +160,13 @@ def test_get_max_retries_exhausted():
     assert exc_info.value.status_code == 429
 
 
-@responses.activate
+@respx.mock
 def test_get_timeout_then_success():
-    # First call times out, second succeeds
-    responses.add(
-        responses.GET,
-        "https://api.confluent.cloud/test",
-        body=requests.exceptions.Timeout("Connection timed out"),
-    )
-    responses.add(
-        responses.GET,
-        "https://api.confluent.cloud/test",
-        json={"data": [{"id": "1"}], "metadata": {}},
-        status=200,
-    )
+    route = respx.get("https://api.confluent.cloud/test")
+    route.side_effect = [
+        httpx.TimeoutException("Connection timed out"),
+        _resp({"data": [{"id": "1"}], "metadata": {}}),
+    ]
 
     conn = CCloudConnection(
         api_key="key",
@@ -219,13 +178,10 @@ def test_get_timeout_then_success():
     assert items == [{"id": "1"}]
 
 
-@responses.activate
+@respx.mock
 def test_post_success():
-    responses.add(
-        responses.POST,
-        "https://api.confluent.cloud/test/create",
-        json={"id": "new-123", "status": "created"},
-        status=200,
+    respx.post("https://api.confluent.cloud/test/create").mock(
+        return_value=_resp({"id": "new-123", "status": "created"})
     )
 
     conn = CCloudConnection(api_key="key", api_secret=SecretStr("secret"))
@@ -234,14 +190,9 @@ def test_post_success():
     assert result == {"id": "new-123", "status": "created"}
 
 
-@responses.activate
+@respx.mock
 def test_post_error():
-    responses.add(
-        responses.POST,
-        "https://api.confluent.cloud/test/create",
-        status=400,
-        body="Bad Request",
-    )
+    respx.post("https://api.confluent.cloud/test/create").mock(return_value=httpx.Response(400, text="Bad Request"))
 
     conn = CCloudConnection(api_key="key", api_secret=SecretStr("secret"))
 
@@ -251,25 +202,14 @@ def test_post_error():
     assert exc_info.value.status_code == 400
 
 
-@responses.activate
+@respx.mock
 def test_get_429_with_ratelimit_reset_header():
-    """Test Confluent-specific rateLimit-reset header (relative seconds, not Unix timestamp).
-
-    Per Confluent Cloud API docs: https://api.telemetry.confluent.cloud/docs
-    The rateLimit-reset header contains relative seconds until window resets.
-    """
-    responses.add(
-        responses.GET,
-        "https://api.confluent.cloud/test",
-        status=429,
-        headers={"rateLimit-reset": "0.05"},  # Relative seconds, per Confluent docs
-    )
-    responses.add(
-        responses.GET,
-        "https://api.confluent.cloud/test",
-        json={"data": [{"id": "1"}], "metadata": {}},
-        status=200,
-    )
+    """Test Confluent-specific rateLimit-reset header (relative seconds, not Unix timestamp)."""
+    route = respx.get("https://api.confluent.cloud/test")
+    route.side_effect = [
+        httpx.Response(429, text="", headers={"rateLimit-reset": "0.05"}),
+        _resp({"data": [{"id": "1"}], "metadata": {}}),
+    ]
 
     conn = CCloudConnection(api_key="key", api_secret=SecretStr("secret"))
     start = time.monotonic()
@@ -280,25 +220,14 @@ def test_get_429_with_ratelimit_reset_header():
     assert elapsed >= 0.05  # Waited for rateLimit-reset seconds
 
 
-@responses.activate
+@respx.mock
 def test_get_429_with_pascal_case_ratelimit_reset_header():
-    """Test RateLimit-Reset header variant (pascal-case).
-
-    Some Confluent APIs may use this casing. Defensive handling ensures we
-    respect rate limit signals regardless of header casing.
-    """
-    responses.add(
-        responses.GET,
-        "https://api.confluent.cloud/test",
-        status=429,
-        headers={"RateLimit-Reset": "0.05"},
-    )
-    responses.add(
-        responses.GET,
-        "https://api.confluent.cloud/test",
-        json={"data": [{"id": "1"}], "metadata": {}},
-        status=200,
-    )
+    """Test RateLimit-Reset header variant (pascal-case)."""
+    route = respx.get("https://api.confluent.cloud/test")
+    route.side_effect = [
+        httpx.Response(429, text="", headers={"RateLimit-Reset": "0.05"}),
+        _resp({"data": [{"id": "1"}], "metadata": {}}),
+    ]
 
     conn = CCloudConnection(api_key="key", api_secret=SecretStr("secret"))
     start = time.monotonic()
@@ -309,13 +238,9 @@ def test_get_429_with_pascal_case_ratelimit_reset_header():
     assert elapsed >= 0.05  # Waited for RateLimit-Reset seconds
 
 
-@responses.activate
+@respx.mock
 def test_connection_error_raises_ccloud_connection_error():
-    responses.add(
-        responses.GET,
-        "https://api.confluent.cloud/test",
-        body=requests.exceptions.ConnectionError("Connection refused"),
-    )
+    respx.get("https://api.confluent.cloud/test").mock(side_effect=httpx.ConnectError("Connection refused"))
 
     conn = CCloudConnection(api_key="key", api_secret=SecretStr("secret"))
 
@@ -323,31 +248,21 @@ def test_connection_error_raises_ccloud_connection_error():
         list(conn.get("/test"))
 
 
-@responses.activate
+@respx.mock
 def test_request_has_basic_auth_header():
-    responses.add(
-        responses.GET,
-        "https://api.confluent.cloud/test",
-        json={"data": [], "metadata": {}},
-        status=200,
-    )
+    respx.get("https://api.confluent.cloud/test").mock(return_value=_resp({"data": [], "metadata": {}}))
 
     conn = CCloudConnection(api_key="mykey", api_secret=SecretStr("mysecret"))
     list(conn.get("/test"))
 
-    sent_request = responses.calls[0].request
+    sent_request = respx.calls[0].request
     expected = base64.b64encode(b"mykey:mysecret").decode()
     assert sent_request.headers["Authorization"] == f"Basic {expected}"
 
 
-@responses.activate
+@respx.mock
 def test_get_data_null_returns_empty():
-    responses.add(
-        responses.GET,
-        "https://api.confluent.cloud/test",
-        json={"data": None, "metadata": {}},
-        status=200,
-    )
+    respx.get("https://api.confluent.cloud/test").mock(return_value=_resp({"data": None, "metadata": {}}))
 
     conn = CCloudConnection(api_key="key", api_secret=SecretStr("secret"))
     items = list(conn.get("/test"))
@@ -355,43 +270,38 @@ def test_get_data_null_returns_empty():
     assert items == []
 
 
-def test_connection_uses_session_for_pooling():
-    """Verify that CCloudConnection uses requests.Session for connection pooling."""
+def test_connection_uses_client_for_pooling():
+    """Verify that CCloudConnection uses httpx.Client for connection pooling."""
     conn = CCloudConnection(api_key="key", api_secret=SecretStr("secret"))
 
-    # Verify session is created
-    assert hasattr(conn, "_session")
-    assert conn._session is not None
-
-    # Verify auth is set on session
-    assert conn._session.auth is not None
+    assert hasattr(conn, "_client")
+    assert conn._client is not None
+    assert isinstance(conn._client, httpx.Client)
+    assert isinstance(conn._client.auth, httpx.BasicAuth)
 
 
 def test_connection_close():
-    """Verify close() properly closes the underlying session."""
+    """Verify close() properly closes the underlying client."""
     conn = CCloudConnection(api_key="key", api_secret=SecretStr("secret"))
 
-    with patch.object(conn._session, "close") as mock_close:
+    with patch.object(conn._client, "close") as mock_close:
         conn.close()
         mock_close.assert_called_once()
 
 
 # =============================================================================
-# get_raw() tests (Chunk 2.2)
+# get_raw() tests
 # =============================================================================
 
 
 class TestGetRaw:
     """Tests for CCloudConnection.get_raw() method."""
 
-    @responses.activate
+    @respx.mock
     def test_get_raw_returns_full_response(self):
         """get_raw() returns the full JSON response without pagination."""
-        responses.add(
-            responses.GET,
-            "https://api.confluent.cloud/test/raw",
-            json={"my-connector": {"info": {"config": {"name": "my-connector"}}}},
-            status=200,
+        respx.get("https://api.confluent.cloud/test/raw").mock(
+            return_value=_resp({"my-connector": {"info": {"config": {"name": "my-connector"}}}})
         )
 
         conn = CCloudConnection(api_key="key", api_secret=SecretStr("secret"))
@@ -400,16 +310,14 @@ class TestGetRaw:
         assert "my-connector" in result
         assert result["my-connector"]["info"]["config"]["name"] == "my-connector"
 
-    @responses.activate
+    @respx.mock
     def test_get_raw_retries_on_429(self):
         """get_raw() retries on rate limit just like get()."""
-        responses.add(responses.GET, "https://api.confluent.cloud/test/raw", status=429)
-        responses.add(
-            responses.GET,
-            "https://api.confluent.cloud/test/raw",
-            json={"data": "ok"},
-            status=200,
-        )
+        route = respx.get("https://api.confluent.cloud/test/raw")
+        route.side_effect = [
+            httpx.Response(429, text=""),
+            _resp({"data": "ok"}),
+        ]
 
         conn = CCloudConnection(
             api_key="key",
@@ -419,57 +327,40 @@ class TestGetRaw:
         result = conn.get_raw("/test/raw")
         assert result == {"data": "ok"}
 
-    @responses.activate
+    @respx.mock
     def test_get_raw_returns_empty_dict_on_404(self):
         """get_raw() returns {} on 404 (not the standard envelope)."""
-        responses.add(
-            responses.GET,
-            "https://api.confluent.cloud/test/missing",
-            status=404,
-            body="Not found",
-        )
+        respx.get("https://api.confluent.cloud/test/missing").mock(return_value=httpx.Response(404, text="Not found"))
 
         conn = CCloudConnection(api_key="key", api_secret=SecretStr("secret"))
         result = conn.get_raw("/test/missing")
 
-        # Should return {} for non-standard endpoints, not the envelope
         assert result == {}
 
-    @responses.activate
+    @respx.mock
     def test_get_raw_with_params(self):
         """get_raw() passes query parameters correctly."""
-        responses.add(
-            responses.GET,
-            "https://api.confluent.cloud/test/endpoint",
-            json={"result": "ok"},
-            status=200,
-        )
+        respx.get("https://api.confluent.cloud/test/endpoint").mock(return_value=_resp({"result": "ok"}))
 
         conn = CCloudConnection(api_key="key", api_secret=SecretStr("secret"))
         result = conn.get_raw("/test/endpoint", params={"expand": "info,status"})
 
         assert result == {"result": "ok"}
-        assert "expand=info" in responses.calls[0].request.url
+        assert "expand=info" in str(respx.calls[0].request.url)
 
 
 # =============================================================================
-# Proactive throttling tests (Chunk 2.2)
+# Proactive throttling tests
 # =============================================================================
 
 
 class TestProactiveThrottling:
     """Tests for request_interval_seconds proactive throttling."""
 
-    @responses.activate
+    @respx.mock
     def test_throttling_spaces_requests(self):
         """request_interval_seconds introduces delay between requests."""
-        for _ in range(3):
-            responses.add(
-                responses.GET,
-                "https://api.confluent.cloud/test",
-                json={"data": [], "metadata": {}},
-                status=200,
-            )
+        respx.get("https://api.confluent.cloud/test").mock(return_value=_resp({"data": [], "metadata": {}}))
 
         # 100ms interval between requests
         conn = CCloudConnection(
@@ -487,16 +378,10 @@ class TestProactiveThrottling:
         # Should take at least 200ms (2 intervals) but allow some tolerance
         assert elapsed >= 0.18, f"Expected >= 180ms, got {elapsed * 1000:.0f}ms"
 
-    @responses.activate
+    @respx.mock
     def test_throttling_disabled_when_zero(self):
         """request_interval_seconds=0 disables throttling."""
-        for _ in range(3):
-            responses.add(
-                responses.GET,
-                "https://api.confluent.cloud/test",
-                json={"data": [], "metadata": {}},
-                status=200,
-            )
+        respx.get("https://api.confluent.cloud/test").mock(return_value=_resp({"data": [], "metadata": {}}))
 
         conn = CCloudConnection(
             api_key="key",

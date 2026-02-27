@@ -4,9 +4,11 @@ from collections.abc import Callable, Sequence
 from dataclasses import replace
 from datetime import datetime
 from decimal import ROUND_HALF_UP, Decimal
+from typing import Any
 
 from core.engine.allocation import AllocationContext, AllocationResult
 from core.models import ChargebackRow, CostType, Resource
+from core.models.chargeback import AllocationDetail
 
 _CENT = Decimal("0.0001")
 
@@ -18,6 +20,7 @@ def make_row(
     amount: Decimal,
     allocation_method: str,
     allocation_detail: str | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> ChargebackRow:
     """Build a ChargebackRow from AllocationContext fields."""
     bl = ctx.billing_line
@@ -33,6 +36,7 @@ def make_row(
         amount=amount,
         allocation_method=allocation_method,
         allocation_detail=allocation_detail,
+        metadata=metadata or {},
     )
 
 
@@ -66,7 +70,7 @@ def allocate_by_usage_ratio(
             cost_type=CostType.SHARED,
             amount=ctx.split_amount,
             allocation_method="usage_ratio",
-            allocation_detail="no usage data; allocated to UNALLOCATED",
+            allocation_detail=AllocationDetail.NO_USAGE_FOR_ACTIVE_IDENTITIES,
         )
         return AllocationResult(rows=[row])
 
@@ -90,7 +94,8 @@ def allocate_by_usage_ratio(
             cost_type=CostType.USAGE,
             amount=amt,
             allocation_method="usage_ratio",
-            allocation_detail=f"ratio={ratio:.6f}",
+            allocation_detail=AllocationDetail.USAGE_RATIO_ALLOCATION,
+            metadata={"ratio": ratio},
         )
         for ident, amt, ratio in zip(ids, quantized, ratios, strict=True)
     ]
@@ -109,7 +114,7 @@ def allocate_evenly(
             cost_type=CostType.SHARED,
             amount=ctx.split_amount,
             allocation_method="even_split",
-            allocation_detail="no identities; allocated to UNALLOCATED",
+            allocation_detail=AllocationDetail.NO_IDENTITIES_LOCATED,
         )
         return AllocationResult(rows=[row])
 
@@ -121,6 +126,7 @@ def allocate_evenly(
             cost_type=CostType.SHARED,
             amount=amt,
             allocation_method="even_split",
+            allocation_detail=AllocationDetail.EVEN_SPLIT_ALLOCATION,
         )
         for ident, amt in zip(identity_ids, amounts, strict=True)
     ]

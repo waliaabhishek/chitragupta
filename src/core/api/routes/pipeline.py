@@ -21,13 +21,13 @@ def _get_pipeline_tasks(request: Request) -> dict[str, asyncio.Task[None]]:
     """Get or initialize the in-memory task tracking dict."""
     if not hasattr(request.app.state, "pipeline_tasks"):
         request.app.state.pipeline_tasks = {}
-    return request.app.state.pipeline_tasks  # type: ignore[no-any-return]
+    return request.app.state.pipeline_tasks  # type: ignore[no-any-return]  # app.state is untyped Starlette state dict
 
 
 def _get_backends(request: Request) -> dict[str, StorageBackend]:
     if not hasattr(request.app.state, "backends"):
         request.app.state.backends = {}
-    return request.app.state.backends  # type: ignore[no-any-return]
+    return request.app.state.backends  # type: ignore[no-any-return]  # app.state is untyped Starlette state dict
 
 
 async def _run_pipeline(

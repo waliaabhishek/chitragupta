@@ -33,8 +33,8 @@ class TestResolveKsqldbIdentity:
             display_name="My SA",
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        mock_uow.resources.find_by_period.return_value = [ksqldb_app]
-        mock_uow.identities.find_by_period.return_value = [sa_owner]
+        mock_uow.resources.find_by_period.return_value = ([ksqldb_app], 1)
+        mock_uow.identities.find_by_period.return_value = ([sa_owner], 1)
 
         result = resolve_ksqldb_identity(
             tenant_id="org-123",
@@ -58,8 +58,8 @@ class TestResolveKsqldbIdentity:
             resolve_ksqldb_identity,
         )
 
-        mock_uow.resources.find_by_period.return_value = []
-        mock_uow.identities.find_by_period.return_value = []
+        mock_uow.resources.find_by_period.return_value = ([], 0)
+        mock_uow.identities.find_by_period.return_value = ([], 0)
 
         result = resolve_ksqldb_identity(
             tenant_id="org-123",
@@ -91,8 +91,8 @@ class TestResolveKsqldbIdentity:
             metadata={},  # No owner_id
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        mock_uow.resources.find_by_period.return_value = [ksqldb_app]
-        mock_uow.identities.find_by_period.return_value = []
+        mock_uow.resources.find_by_period.return_value = ([ksqldb_app], 1)
+        mock_uow.identities.find_by_period.return_value = ([], 0)
 
         result = resolve_ksqldb_identity(
             tenant_id="org-123",
@@ -124,8 +124,8 @@ class TestResolveKsqldbIdentity:
             metadata={"owner_id": "sa-unknown-999"},
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        mock_uow.resources.find_by_period.return_value = [ksqldb_app]
-        mock_uow.identities.find_by_period.return_value = []  # Owner not in DB
+        mock_uow.resources.find_by_period.return_value = ([ksqldb_app], 1)
+        mock_uow.identities.find_by_period.return_value = ([], 0)  # Owner not in DB
 
         result = resolve_ksqldb_identity(
             tenant_id="org-123",
@@ -157,8 +157,8 @@ class TestResolveKsqldbIdentity:
             metadata={"owner_id": "sa-12345"},
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        mock_uow.resources.find_by_period.return_value = [ksqldb_app]
-        mock_uow.identities.find_by_period.return_value = []
+        mock_uow.resources.find_by_period.return_value = ([ksqldb_app], 1)
+        mock_uow.identities.find_by_period.return_value = ([], 0)
 
         result = resolve_ksqldb_identity(
             tenant_id="org-123",
@@ -187,8 +187,8 @@ class TestResolveKsqldbIdentity:
             metadata={"owner_id": "u-user-456"},
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        mock_uow.resources.find_by_period.return_value = [ksqldb_app]
-        mock_uow.identities.find_by_period.return_value = []
+        mock_uow.resources.find_by_period.return_value = ([ksqldb_app], 1)
+        mock_uow.identities.find_by_period.return_value = ([], 0)
 
         result = resolve_ksqldb_identity(
             tenant_id="org-123",
@@ -217,8 +217,8 @@ class TestResolveKsqldbIdentity:
             metadata={"owner_id": "pool-abc-789"},
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        mock_uow.resources.find_by_period.return_value = [ksqldb_app]
-        mock_uow.identities.find_by_period.return_value = []
+        mock_uow.resources.find_by_period.return_value = ([ksqldb_app], 1)
+        mock_uow.identities.find_by_period.return_value = ([], 0)
 
         result = resolve_ksqldb_identity(
             tenant_id="org-123",
@@ -247,8 +247,8 @@ class TestResolveKsqldbIdentity:
             metadata={"owner_id": "xyz-mystery-123"},
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        mock_uow.resources.find_by_period.return_value = [ksqldb_app]
-        mock_uow.identities.find_by_period.return_value = []
+        mock_uow.resources.find_by_period.return_value = ([ksqldb_app], 1)
+        mock_uow.identities.find_by_period.return_value = ([], 0)
 
         result = resolve_ksqldb_identity(
             tenant_id="org-123",
@@ -284,8 +284,8 @@ class TestResolveKsqldbIdentity:
             identity_type="service_account",
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        mock_uow.resources.find_by_period.return_value = [ksqldb_app]
-        mock_uow.identities.find_by_period.return_value = [sa_owner]
+        mock_uow.resources.find_by_period.return_value = ([ksqldb_app], 1)
+        mock_uow.identities.find_by_period.return_value = ([sa_owner], 1)
 
         result = resolve_ksqldb_identity(
             tenant_id="org-123",
@@ -328,11 +328,11 @@ class TestResolveKsqldbIdentity:
             identity_type="service_account",
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        mock_uow.resources.find_by_period.return_value = [
-            ksqldb_match,
-            ksqldb_other,
-        ]
-        mock_uow.identities.find_by_period.return_value = [sa_correct]
+        mock_uow.resources.find_by_period.return_value = (
+            [ksqldb_match, ksqldb_other],
+            2,
+        )
+        mock_uow.identities.find_by_period.return_value = ([sa_correct], 1)
 
         result = resolve_ksqldb_identity(
             tenant_id="org-123",
@@ -369,8 +369,8 @@ class TestResolveKsqldbIdentity:
             display_name="Human User",
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        mock_uow.resources.find_by_period.return_value = [ksqldb_app]
-        mock_uow.identities.find_by_period.return_value = [user_owner]
+        mock_uow.resources.find_by_period.return_value = ([ksqldb_app], 1)
+        mock_uow.identities.find_by_period.return_value = ([user_owner], 1)
 
         result = resolve_ksqldb_identity(
             tenant_id="org-123",

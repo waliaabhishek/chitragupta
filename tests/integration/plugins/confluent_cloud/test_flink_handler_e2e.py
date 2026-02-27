@@ -64,10 +64,10 @@ def mock_uow_for_flink_with_owners() -> MagicMock:
     )
 
     uow.resources = MagicMock()
-    uow.resources.find_by_period.return_value = [stmt_a, stmt_b]
+    uow.resources.find_by_period.return_value = ([stmt_a, stmt_b], 2)
 
     uow.identities = MagicMock()
-    uow.identities.find_by_period.return_value = [sa_alice, sa_bob]
+    uow.identities.find_by_period.return_value = ([sa_alice, sa_bob], 2)
 
     return uow
 
@@ -77,9 +77,9 @@ def mock_uow_for_flink_no_statements() -> MagicMock:
     """Mock UnitOfWork with no statement resources."""
     uow = MagicMock()
     uow.resources = MagicMock()
-    uow.resources.find_by_period.return_value = []
+    uow.resources.find_by_period.return_value = ([], 0)
     uow.identities = MagicMock()
-    uow.identities.find_by_period.return_value = []
+    uow.identities.find_by_period.return_value = ([], 0)
     return uow
 
 

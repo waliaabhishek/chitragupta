@@ -95,13 +95,11 @@ def resolve_flink_identity(
         )
 
     # Step 2: Look up statement resources to find owners
-    resources = list(
-        uow.resources.find_by_period(
-            ecosystem=ecosystem,
-            tenant_id=tenant_id,
-            start=billing_start,
-            end=billing_end,
-        )
+    resources, _ = uow.resources.find_by_period(
+        ecosystem=ecosystem,
+        tenant_id=tenant_id,
+        start=billing_start,
+        end=billing_end,
     )
 
     # Build statement_name -> owner_id map from flink_statement resources
@@ -117,13 +115,11 @@ def resolve_flink_identity(
                 stmt_name_to_owner[display_name] = r.owner_id
 
     # Get all identities in billing window for lookup
-    all_identities = list(
-        uow.identities.find_by_period(
-            ecosystem=ecosystem,
-            tenant_id=tenant_id,
-            start=billing_start,
-            end=billing_end,
-        )
+    all_identities, _ = uow.identities.find_by_period(
+        ecosystem=ecosystem,
+        tenant_id=tenant_id,
+        start=billing_start,
+        end=billing_end,
     )
     identity_by_id = {i.identity_id: i for i in all_identities}
 

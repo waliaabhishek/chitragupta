@@ -19,19 +19,44 @@ class ResourceRepository(Protocol):
 
     def get(self, ecosystem: str, tenant_id: str, resource_id: str) -> Resource | None: ...
 
-    def find_active_at(self, ecosystem: str, tenant_id: str, timestamp: datetime) -> list[Resource]:
+    def find_active_at(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        timestamp: datetime,
+        *,
+        resource_type: str | None = None,
+        status: str | None = None,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> tuple[list[Resource], int]:
         """Point-in-time query: resources active at the given timestamp.
 
         Active means: (created_at IS NULL OR created_at <= timestamp)
                   AND (deleted_at IS NULL OR deleted_at > timestamp)
+
+        Returns (page_of_resources, total_count). Filters and pagination applied at SQL level.
         """
         ...
 
-    def find_by_period(self, ecosystem: str, tenant_id: str, start: datetime, end: datetime) -> list[Resource]:
+    def find_by_period(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        start: datetime,
+        end: datetime,
+        *,
+        resource_type: str | None = None,
+        status: str | None = None,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> tuple[list[Resource], int]:
         """Half-open interval [start, end): resources that overlapped this period.
 
         Overlapped means: (created_at IS NULL OR created_at < end)
                       AND (deleted_at IS NULL OR deleted_at >= start)
+
+        Returns (page_of_resources, total_count). Filters and pagination applied at SQL level.
         """
         ...
 
@@ -62,12 +87,37 @@ class IdentityRepository(Protocol):
 
     def get(self, ecosystem: str, tenant_id: str, identity_id: str) -> Identity | None: ...
 
-    def find_active_at(self, ecosystem: str, tenant_id: str, timestamp: datetime) -> list[Identity]:
-        """Point-in-time query. Same semantics as ResourceRepository.find_active_at."""
+    def find_active_at(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        timestamp: datetime,
+        *,
+        identity_type: str | None = None,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> tuple[list[Identity], int]:
+        """Point-in-time query. Same semantics as ResourceRepository.find_active_at.
+
+        Returns (page_of_identities, total_count). Filters and pagination applied at SQL level.
+        """
         ...
 
-    def find_by_period(self, ecosystem: str, tenant_id: str, start: datetime, end: datetime) -> list[Identity]:
-        """Half-open interval [start, end). Same semantics as ResourceRepository.find_by_period."""
+    def find_by_period(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        start: datetime,
+        end: datetime,
+        *,
+        identity_type: str | None = None,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> tuple[list[Identity], int]:
+        """Half-open interval [start, end). Same semantics as ResourceRepository.find_by_period.
+
+        Returns (page_of_identities, total_count). Filters and pagination applied at SQL level.
+        """
         ...
 
     def find_by_type(self, ecosystem: str, tenant_id: str, identity_type: str) -> list[Identity]: ...

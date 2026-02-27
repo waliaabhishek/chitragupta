@@ -26,6 +26,8 @@ def create_app(settings: AppSettings, workflow_runner: WorkflowRunner | None = N
         yield
         for backend in app.state.backends.values():
             backend.dispose()
+        if workflow_runner is not None:
+            workflow_runner.close()
 
     app = FastAPI(
         title="Chargeback Engine API",

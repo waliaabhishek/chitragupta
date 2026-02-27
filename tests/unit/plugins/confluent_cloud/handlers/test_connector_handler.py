@@ -157,7 +157,7 @@ class TestConnectorHandlerGatherResources:
             status=ResourceStatus.ACTIVE,
             metadata={},
         )
-        mock_uow.resources.find_by_period.return_value = [kafka_cluster, other_resource]
+        mock_uow.resources.find_by_period.return_value = ([kafka_cluster, other_resource], 2)
 
         connector_resource = MagicMock()
 
@@ -204,7 +204,7 @@ class TestConnectorHandlerGatherResources:
             parent_id="env-002",
             metadata={},
         )
-        mock_uow.resources.find_by_period.return_value = [cluster1, cluster2]
+        mock_uow.resources.find_by_period.return_value = ([cluster1, cluster2], 2)
 
         with patch(
             "plugins.confluent_cloud.gathering.gather_connectors",
@@ -224,7 +224,7 @@ class TestConnectorHandlerGatherResources:
         from plugins.confluent_cloud.handlers.connectors import ConnectorHandler
 
         mock_conn = MagicMock()
-        mock_uow.resources.find_by_period.return_value = []
+        mock_uow.resources.find_by_period.return_value = ([], 0)
 
         with patch(
             "plugins.confluent_cloud.gathering.gather_connectors",

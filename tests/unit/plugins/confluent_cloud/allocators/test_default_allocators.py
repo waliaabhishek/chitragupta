@@ -7,6 +7,7 @@ from decimal import Decimal
 
 from core.engine.allocation import AllocationContext
 from core.models import BillingLineItem, CostType, IdentityResolution, IdentitySet
+from core.models.chargeback import AllocationDetail
 
 
 def _make_ctx(product_type: str = "TABLEFLOW_STORAGE", amount: Decimal = Decimal("50")) -> AllocationContext:
@@ -74,6 +75,7 @@ class TestClusterLinkingAllocator:
         assert len(result.rows) == 1
         assert result.rows[0].identity_id == "UNALLOCATED"
         assert result.rows[0].amount == Decimal("30")
+        assert result.rows[0].allocation_detail == AllocationDetail.CLUSTER_LINKING_COST
 
     def test_cost_type_is_usage(self) -> None:
         """Cluster-linking costs are USAGE (direct resource usage)."""

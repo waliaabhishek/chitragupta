@@ -79,13 +79,11 @@ class KsqldbHandler:
         # Find all environments for this tenant
         now = datetime.now(UTC)
 
-        resources = list(
-            uow.resources.find_by_period(
-                ecosystem=self._ecosystem,
-                tenant_id=tenant_id,
-                start=datetime(2000, 1, 1, tzinfo=UTC),  # Far past
-                end=now,
-            )
+        resources, _ = uow.resources.find_by_period(
+            ecosystem=self._ecosystem,
+            tenant_id=tenant_id,
+            start=datetime(2000, 1, 1, tzinfo=UTC),  # Far past
+            end=now,
         )
 
         # Extract environment IDs

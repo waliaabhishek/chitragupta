@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, wait
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
@@ -15,6 +18,42 @@ if TYPE_CHECKING:
     from core.storage.interface import StorageBackend
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class TenantRuntime:
+    """Persistent runtime objects for a single tenant."""
+
+    tenant_name: str
+    plugin: object  # EcosystemPlugin protocol — avoid circular import
+    storage: StorageBackend
+    orchestrator: ChargebackOrchestrator
+    config_hash: str
+    created_at: datetime
+    last_run_at: datetime | None = field(default=None)
+
+    def is_healthy(self) -> bool:
+        """Check if runtime is still usable. Placeholder — always healthy for now."""
+        return True
+
+    def close(self) -> None:
+        """Clean up all resources."""
+        self.storage.dispose()
+        if hasattr(self.plugin, "close"):
+            self.plugin.close()
+        metrics = self.plugin.get_metrics_source() if hasattr(self.plugin, "get_metrics_source") else None
+        if metrics is not None and hasattr(metrics, "close"):
+            metrics.close()
+
+
+def _config_hash(config: TenantConfig) -> str:
+    """Stable hash of tenant config for change detection."""
+    try:
+        raw = json.dumps(config.model_dump(), sort_keys=True, default=str)
+    except Exception:
+        logger.debug("Failed to JSON-serialize config for hashing; falling back to repr()", exc_info=True)
+        raw = repr(config)
+    return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
 
 def _create_storage_backend(config: StorageConfig) -> StorageBackend:
@@ -32,6 +71,49 @@ class WorkflowRunner:
         self._settings = settings
         self._plugin_registry = plugin_registry
         self._bootstrapped = False
+        self._tenant_runtimes: dict[str, TenantRuntime] = {}
+
+    def close(self) -> None:
+        """Clean up all tenant runtimes."""
+        for runtime in self._tenant_runtimes.values():
+            runtime.close()
+        self._tenant_runtimes.clear()
+
+    def _get_or_create_runtime(self, tenant_name: str, config: TenantConfig) -> TenantRuntime:
+        """Get cached runtime or create new one. Recreates if unhealthy or config changed."""
+        current_hash = _config_hash(config)
+
+        if tenant_name in self._tenant_runtimes:
+            runtime = self._tenant_runtimes[tenant_name]
+            if runtime.config_hash == current_hash and runtime.is_healthy():
+                return runtime
+            # Config changed or unhealthy — close and recreate
+            logger.info(
+                "Tenant %s: recreating runtime (config_changed=%s, healthy=%s)",
+                tenant_name,
+                runtime.config_hash != current_hash,
+                runtime.is_healthy(),
+            )
+            runtime.close()
+            del self._tenant_runtimes[tenant_name]
+
+        plugin = self._plugin_registry.create(config.ecosystem)
+        plugin.initialize(config.plugin_settings)
+        storage = _create_storage_backend(config.storage)
+        metrics = plugin.get_metrics_source()
+        orchestrator = ChargebackOrchestrator(tenant_name, config, plugin, storage, metrics)
+
+        runtime = TenantRuntime(
+            tenant_name=tenant_name,
+            plugin=plugin,
+            storage=storage,
+            orchestrator=orchestrator,
+            config_hash=current_hash,
+            created_at=datetime.now(UTC),
+        )
+        self._tenant_runtimes[tenant_name] = runtime
+        logger.debug("Tenant %s: created new runtime", tenant_name)
+        return runtime
 
     def bootstrap_storage(self) -> None:
         """Create tables for all tenant storage backends. Call once at startup."""
@@ -125,21 +207,10 @@ class WorkflowRunner:
         return results
 
     def _run_tenant(self, name: str, config: TenantConfig) -> PipelineRunResult:
-        plugin = self._plugin_registry.create(config.ecosystem)
-        plugin.initialize(config.plugin_settings)  # TD-020: Initialize before any method calls
-        storage = _create_storage_backend(config.storage)
-        metrics = plugin.get_metrics_source()  # GAP-015+017: plugin owns metrics
-        orchestrator = ChargebackOrchestrator(name, config, plugin, storage, metrics)
-        try:
-            return orchestrator.run()
-        finally:
-            storage.dispose()
-            # TD-018/TD-024: Close plugin resources (HTTP sessions)
-            if hasattr(plugin, "close"):
-                plugin.close()
-            # TD-010: Close metrics source HTTP session
-            if metrics is not None and hasattr(metrics, "close"):
-                metrics.close()
+        runtime = self._get_or_create_runtime(name, config)
+        result = runtime.orchestrator.run()
+        runtime.last_run_at = datetime.now(UTC)
+        return result
 
     def _log_results(self, results: dict[str, PipelineRunResult]) -> None:
         for name, result in results.items():
@@ -167,7 +238,7 @@ class WorkflowRunner:
             cutoff = datetime.now(UTC) - timedelta(days=config.retention_days)
             storage = _create_storage_backend(config.storage)
             try:
-                with storage.unit_of_work() as uow:
+                with storage.create_unit_of_work() as uow:
                     deleted_billing = uow.billing.delete_before(config.ecosystem, config.tenant_id, cutoff)
                     deleted_resources = uow.resources.delete_before(config.ecosystem, config.tenant_id, cutoff)
                     deleted_identities = uow.identities.delete_before(config.ecosystem, config.tenant_id, cutoff)

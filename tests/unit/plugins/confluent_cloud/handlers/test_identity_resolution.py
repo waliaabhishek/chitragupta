@@ -33,7 +33,7 @@ class TestResolveKafkaSrIdentities:
             display_name="My SA",
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        mock_uow.identities.find_by_period.return_value = [api_key, sa_owner]
+        mock_uow.identities.find_by_period.return_value = ([api_key, sa_owner], 2)
 
         result = resolve_kafka_sr_identities(
             tenant_id="org-123",
@@ -54,7 +54,7 @@ class TestResolveKafkaSrIdentities:
             resolve_kafka_sr_identities,
         )
 
-        mock_uow.identities.find_by_period.return_value = []
+        mock_uow.identities.find_by_period.return_value = ([], 0)
         metrics_data = {
             "bytes_in": [
                 MetricRow(
@@ -94,7 +94,7 @@ class TestResolveKafkaSrIdentities:
             metadata={"resource_id": "lkc-OTHER", "owner_id": "sa-owner"},
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        mock_uow.identities.find_by_period.return_value = [api_key]
+        mock_uow.identities.find_by_period.return_value = ([api_key], 1)
 
         result = resolve_kafka_sr_identities(
             tenant_id="org-123",
@@ -122,7 +122,7 @@ class TestResolveKafkaSrIdentities:
             metadata={"resource_id": "lkc-abc"},  # No owner_id
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        mock_uow.identities.find_by_period.return_value = [api_key]
+        mock_uow.identities.find_by_period.return_value = ([api_key], 1)
 
         result = resolve_kafka_sr_identities(
             tenant_id="org-123",
@@ -142,7 +142,7 @@ class TestResolveKafkaSrIdentities:
             resolve_kafka_sr_identities,
         )
 
-        mock_uow.identities.find_by_period.return_value = []
+        mock_uow.identities.find_by_period.return_value = ([], 0)
 
         result = resolve_kafka_sr_identities(
             tenant_id="org-123",
@@ -182,11 +182,10 @@ class TestResolveKafkaSrIdentities:
             identity_id="sa-owner",
             identity_type="service_account",
         )
-        mock_uow.identities.find_by_period.return_value = [
-            api_key_1,
-            api_key_2,
-            sa_owner,
-        ]
+        mock_uow.identities.find_by_period.return_value = (
+            [api_key_1, api_key_2, sa_owner],
+            3,
+        )
 
         result = resolve_kafka_sr_identities(
             tenant_id="org-123",

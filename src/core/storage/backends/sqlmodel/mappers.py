@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Any, overload
+from typing import Any, Literal, cast, overload
 
 from core.models.billing import BillingLineItem
 from core.models.chargeback import ChargebackRow, CostType, CustomTag
@@ -271,7 +271,7 @@ def pipeline_run_to_domain(t: PipelineRunTable) -> PipelineRun:
         tenant_name=t.tenant_name,
         started_at=ensure_utc(t.started_at),
         ended_at=ensure_utc(t.ended_at),
-        status=t.status,
+        status=cast("Literal['running', 'completed', 'failed']", t.status),
         dates_gathered=t.dates_gathered,
         dates_calculated=t.dates_calculated,
         rows_written=t.rows_written,

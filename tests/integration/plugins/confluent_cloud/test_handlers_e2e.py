@@ -43,7 +43,7 @@ def mock_uow_with_identities() -> MagicMock:
         created_at=datetime(2026, 1, 1, tzinfo=UTC),
     )
     uow.identities = MagicMock()
-    uow.identities.find_by_period.return_value = [api_key, sa_owner]
+    uow.identities.find_by_period.return_value = ([api_key, sa_owner], 2)
     return uow
 
 
@@ -191,11 +191,9 @@ class TestKafkaNetworkEndToEnd:
             identity_id="sa-owner-2",
             identity_type="service_account",
         )
-        existing = mock_uow_with_identities.identities.find_by_period.return_value
-        mock_uow_with_identities.identities.find_by_period.return_value = existing + [
-            api_key_2,
-            sa_owner_2,
-        ]
+        existing_items, _ = mock_uow_with_identities.identities.find_by_period.return_value
+        new_items = existing_items + [api_key_2, sa_owner_2]
+        mock_uow_with_identities.identities.find_by_period.return_value = (new_items, len(new_items))
 
         billing_line = BillingLineItem(
             ecosystem="confluent_cloud",
@@ -286,10 +284,10 @@ class TestSchemaRegistryEndToEnd:
             identity_id="sa-owner-1",
             identity_type="service_account",
         )
-        mock_uow_with_identities.identities.find_by_period.return_value = [
-            api_key,
-            sa_owner,
-        ]
+        mock_uow_with_identities.identities.find_by_period.return_value = (
+            [api_key, sa_owner],
+            2,
+        )
 
         sr_billing = BillingLineItem(
             ecosystem="confluent_cloud",

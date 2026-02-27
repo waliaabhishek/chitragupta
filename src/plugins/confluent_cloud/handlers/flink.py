@@ -94,13 +94,11 @@ class FlinkHandler:
 
         # Find all environments for this tenant
         now = datetime.now(UTC)
-        resources = list(
-            uow.resources.find_by_period(
-                ecosystem=self._ecosystem,
-                tenant_id=tenant_id,
-                start=_EPOCH_START,
-                end=now,
-            )
+        resources, _ = uow.resources.find_by_period(
+            ecosystem=self._ecosystem,
+            tenant_id=tenant_id,
+            start=_EPOCH_START,
+            end=now,
         )
         env_ids: list[str] = [r.resource_id for r in resources if r.resource_type == "environment"]
 

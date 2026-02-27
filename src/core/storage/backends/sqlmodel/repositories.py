@@ -105,13 +105,62 @@ class SQLModelResourceRepository:
         row = self._session.get(ResourceTable, (ecosystem, tenant_id, resource_id))
         return resource_to_domain(row) if row else None
 
-    def find_active_at(self, ecosystem: str, tenant_id: str, timestamp: datetime) -> list[Resource]:
-        stmt = select(ResourceTable).where(*_temporal_active_at_filter(ResourceTable, ecosystem, tenant_id, timestamp))
-        return [resource_to_domain(r) for r in self._session.exec(stmt).all()]
+    def find_active_at(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        timestamp: datetime,
+        *,
+        resource_type: str | None = None,
+        status: str | None = None,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> tuple[list[Resource], int]:
+        where = _temporal_active_at_filter(ResourceTable, ecosystem, tenant_id, timestamp)
+        if resource_type is not None:
+            where.append(col(ResourceTable.resource_type) == resource_type)
+        if status is not None:
+            where.append(col(ResourceTable.status) == status)
 
-    def find_by_period(self, ecosystem: str, tenant_id: str, start: datetime, end: datetime) -> list[Resource]:
-        stmt = select(ResourceTable).where(*_temporal_by_period_filter(ResourceTable, ecosystem, tenant_id, start, end))
-        return [resource_to_domain(r) for r in self._session.exec(stmt).all()]
+        count_stmt = select(func.count()).select_from(ResourceTable).where(*where)
+        total: int = self._session.exec(count_stmt).one()
+
+        stmt = select(ResourceTable).where(*where).order_by(col(ResourceTable.resource_id))
+        if offset:
+            stmt = stmt.offset(offset)
+        if limit is not None:
+            stmt = stmt.limit(limit)
+
+        return [resource_to_domain(r) for r in self._session.exec(stmt).all()], total
+
+    def find_by_period(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        start: datetime,
+        end: datetime,
+        *,
+        resource_type: str | None = None,
+        status: str | None = None,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> tuple[list[Resource], int]:
+        where = _temporal_by_period_filter(ResourceTable, ecosystem, tenant_id, start, end)
+        if resource_type is not None:
+            where.append(col(ResourceTable.resource_type) == resource_type)
+        if status is not None:
+            where.append(col(ResourceTable.status) == status)
+
+        count_stmt = select(func.count()).select_from(ResourceTable).where(*where)
+        total: int = self._session.exec(count_stmt).one()
+
+        stmt = select(ResourceTable).where(*where).order_by(col(ResourceTable.resource_id))
+        if offset:
+            stmt = stmt.offset(offset)
+        if limit is not None:
+            stmt = stmt.limit(limit)
+
+        return [resource_to_domain(r) for r in self._session.exec(stmt).all()], total
 
     def find_by_type(self, ecosystem: str, tenant_id: str, resource_type: str) -> list[Resource]:
         stmt = select(ResourceTable).where(
@@ -179,13 +228,56 @@ class SQLModelIdentityRepository:
         row = self._session.get(IdentityTable, (ecosystem, tenant_id, identity_id))
         return identity_to_domain(row) if row else None
 
-    def find_active_at(self, ecosystem: str, tenant_id: str, timestamp: datetime) -> list[Identity]:
-        stmt = select(IdentityTable).where(*_temporal_active_at_filter(IdentityTable, ecosystem, tenant_id, timestamp))
-        return [identity_to_domain(r) for r in self._session.exec(stmt).all()]
+    def find_active_at(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        timestamp: datetime,
+        *,
+        identity_type: str | None = None,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> tuple[list[Identity], int]:
+        where = _temporal_active_at_filter(IdentityTable, ecosystem, tenant_id, timestamp)
+        if identity_type is not None:
+            where.append(col(IdentityTable.identity_type) == identity_type)
 
-    def find_by_period(self, ecosystem: str, tenant_id: str, start: datetime, end: datetime) -> list[Identity]:
-        stmt = select(IdentityTable).where(*_temporal_by_period_filter(IdentityTable, ecosystem, tenant_id, start, end))
-        return [identity_to_domain(r) for r in self._session.exec(stmt).all()]
+        count_stmt = select(func.count()).select_from(IdentityTable).where(*where)
+        total: int = self._session.exec(count_stmt).one()
+
+        stmt = select(IdentityTable).where(*where).order_by(col(IdentityTable.identity_id))
+        if offset:
+            stmt = stmt.offset(offset)
+        if limit is not None:
+            stmt = stmt.limit(limit)
+
+        return [identity_to_domain(r) for r in self._session.exec(stmt).all()], total
+
+    def find_by_period(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        start: datetime,
+        end: datetime,
+        *,
+        identity_type: str | None = None,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> tuple[list[Identity], int]:
+        where = _temporal_by_period_filter(IdentityTable, ecosystem, tenant_id, start, end)
+        if identity_type is not None:
+            where.append(col(IdentityTable.identity_type) == identity_type)
+
+        count_stmt = select(func.count()).select_from(IdentityTable).where(*where)
+        total: int = self._session.exec(count_stmt).one()
+
+        stmt = select(IdentityTable).where(*where).order_by(col(IdentityTable.identity_id))
+        if offset:
+            stmt = stmt.offset(offset)
+        if limit is not None:
+            stmt = stmt.limit(limit)
+
+        return [identity_to_domain(r) for r in self._session.exec(stmt).all()], total
 
     def find_by_type(self, ecosystem: str, tenant_id: str, identity_type: str) -> list[Identity]:
         stmt = select(IdentityTable).where(
