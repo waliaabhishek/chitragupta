@@ -1726,3 +1726,172 @@ class TestGatherFailureEscalation:
 
         with pytest.raises(GatherFailureThresholdError, match="2 consecutive times"):
             orch.run()
+
+
+# ---------- GAP-07: Resource Lookup Cache ----------
+
+
+class TestResourceLookupCache:
+    def test_resource_lookup_cache_eliminates_redundant_get_calls(self) -> None:
+        """_calculate_date must pre-fetch resources via find_by_period, never call get per line.
+
+        With 10 billing lines sharing the same resource_id and billing window:
+        - uow.resources.get must be called 0 times (cache replaces per-line get)
+        - uow.resources.find_by_period must be called 1 time (1 unique window)
+        """
+        resource_id = "cluster-cache-test"
+        resource = _make_resource(resource_id)
+        identity = _make_identity("user-1")
+
+        # All 10 lines share same resource_id and same billing window (daily at NOW)
+        lines = [
+            _make_billing_line(
+                product_type="KAFKA_CKU",
+                resource_id=resource_id,
+                total_cost=Decimal("10.00"),
+                timestamp=NOW,
+            )
+            for _ in range(10)
+        ]
+
+        uow = MockUnitOfWork()
+        uow.resources.upsert(resource)
+        uow.identities.upsert(identity)
+        for line in lines:
+            uow.billing.upsert(line)
+
+        handler = MockServiceHandler(
+            product_types=["KAFKA_CKU"],
+            resources=[resource],
+            identities=[identity],
+        )
+        storage = MockStorageBackend(uow)
+        orch, _ = _create_orchestrator(handler=handler, storage=storage)
+
+        # Spy on get and find_by_period while preserving real behavior
+        original_get = uow.resources.get
+        original_find_by_period = uow.resources.find_by_period
+        uow.resources.get = MagicMock(side_effect=original_get)
+        uow.resources.find_by_period = MagicMock(side_effect=original_find_by_period)
+
+        orch._calculate_date(uow, TODAY)
+
+        # Cache must eliminate all per-line get() calls
+        assert uow.resources.get.call_count == 0, (
+            f"Expected 0 calls to uow.resources.get, got {uow.resources.get.call_count}"
+        )
+        # find_by_period called once — all 10 lines share the same billing window
+        assert uow.resources.find_by_period.call_count == 1, (
+            f"Expected 1 call to uow.resources.find_by_period, got {uow.resources.find_by_period.call_count}"
+        )
+
+    def test_resource_lookup_cache_miss_preserves_active_fraction_one(self) -> None:
+        """Cache miss (resource_id absent from resource_cache) falls back to active_fraction=Decimal(1).
+
+        _process_billing_line must accept a resource_cache param and use dict.get() instead of
+        uow.resources.get(). A cache miss for a deleted resource must preserve the existing
+        fallback: active_fraction = Decimal(1), so split_amount == total_cost.
+        """
+        resource_id = "lkc-deleted"
+        total_cost = Decimal("75.00")
+        line = _make_billing_line(resource_id=resource_id, total_cost=total_cost, timestamp=NOW)
+
+        uow = MockUnitOfWork()
+        identity = _make_identity("user-1")
+        uow.identities.upsert(identity)
+        # Intentionally NOT upserting a resource — simulates resource deleted before billing period
+
+        b_start, b_end, _b_duration = billing_window(line)
+        resource_cache: dict[str, Resource] = {}  # empty — cache miss for deleted resource
+
+        tp_set = IdentitySet()
+        tp_set.add(identity)
+        tenant_period_cache: dict[tuple[datetime, datetime], IdentitySet] = {(b_start, b_end): tp_set}
+        prefetched_metrics: dict[tuple[str, datetime, datetime], dict[str, list[Any]]] = {}
+
+        handler = MockServiceHandler(
+            product_types=["KAFKA_CKU"],
+            resources=[],
+            identities=[identity],
+        )
+        storage = MockStorageBackend(uow)
+        orch, _ = _create_orchestrator(handler=handler, storage=storage)
+
+        # Spy on uow.resources.get — must NOT be called when cache is used
+        uow.resources.get = MagicMock(side_effect=uow.resources.get)
+
+        # _process_billing_line must accept resource_cache kwarg (will fail with TypeError currently)
+        orch._process_billing_line(
+            line,
+            uow,
+            prefetched_metrics,
+            tenant_period_cache,
+            orch._tenant_config.allocation_retry_limit,
+            resource_cache=resource_cache,
+        )
+
+        # Cache miss: resource_id not in cache, so uow.resources.get must not be called
+        assert resource_id not in resource_cache
+        assert uow.resources.get.call_count == 0, (
+            f"Expected uow.resources.get not called (cache used), got {uow.resources.get.call_count} calls"
+        )
+        # With active_fraction=1 on cache miss, full cost must be allocated
+        rows = [r for r in uow.chargebacks._data if r.resource_id == resource_id]
+        assert len(rows) == 1
+        total_allocated = sum(r.amount for r in rows)
+        assert total_allocated == total_cost
+
+    def test_resource_lookup_cache_find_by_period_called_once_per_unique_window(self) -> None:
+        """find_by_period must be called exactly once per unique billing window.
+
+        With N billing lines across N distinct billing windows, find_by_period is called N times
+        (one per window), not once per line.
+        """
+        resource_id = "cluster-multi-window"
+        resource = _make_resource(resource_id)
+        identity = _make_identity("user-1")
+
+        # 3 billing lines at 3 distinct hourly windows on TODAY
+        # hourly granularity: each timestamp produces a unique 1-hour window
+        hour_offsets = [0, 1, 2]
+        lines = [
+            _make_billing_line(
+                product_type="KAFKA_CKU",
+                resource_id=resource_id,
+                total_cost=Decimal("5.00"),
+                timestamp=datetime(TODAY.year, TODAY.month, TODAY.day, h, 0, 0, tzinfo=UTC),
+                granularity="hourly",
+            )
+            for h in hour_offsets
+        ]
+        expected_windows = len(hour_offsets)  # 3 unique windows → 3 find_by_period calls
+
+        uow = MockUnitOfWork()
+        uow.resources.upsert(resource)
+        uow.identities.upsert(identity)
+        for line in lines:
+            uow.billing.upsert(line)
+
+        handler = MockServiceHandler(
+            product_types=["KAFKA_CKU"],
+            resources=[resource],
+            identities=[identity],
+        )
+        storage = MockStorageBackend(uow)
+        orch, _ = _create_orchestrator(handler=handler, storage=storage)
+
+        original_find_by_period = uow.resources.find_by_period
+        uow.resources.get = MagicMock(side_effect=uow.resources.get)
+        uow.resources.find_by_period = MagicMock(side_effect=original_find_by_period)
+
+        orch._calculate_date(uow, TODAY)
+
+        # get() must never be called — cache replaces all per-line lookups
+        assert uow.resources.get.call_count == 0, (
+            f"Expected 0 calls to uow.resources.get, got {uow.resources.get.call_count}"
+        )
+        # find_by_period called once per unique billing window, not once per line
+        assert uow.resources.find_by_period.call_count == expected_windows, (
+            f"Expected {expected_windows} calls to find_by_period "
+            f"(one per unique window), got {uow.resources.find_by_period.call_count}"
+        )

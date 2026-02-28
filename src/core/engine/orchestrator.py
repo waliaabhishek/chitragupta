@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from core.metrics.protocol import MetricsSource
     from core.models.billing import BillingLineItem
     from core.models.metrics import MetricQuery, MetricRow
+    from core.models.resource import Resource
     from core.plugin.protocols import CostAllocator, EcosystemPlugin, ServiceHandler
     from core.storage.interface import StorageBackend, UnitOfWork
 
@@ -427,6 +428,13 @@ class ChargebackOrchestrator:
                 tp.add(identity)
             tenant_period_cache[(b_start, b_end)] = tp
 
+        # Pre-fetch all resources for this date's billing windows into a flat lookup
+        resource_cache: dict[str, Resource] = {}
+        for b_start, b_end in billing_windows:
+            resources, _ = uow.resources.find_by_period(self._ecosystem, self._tenant_id, b_start, b_end)
+            for r in resources:
+                resource_cache.setdefault(r.resource_id, r)
+
         # Per-line processing
         allocation_retry_limit = self._tenant_config.allocation_retry_limit
         total_rows = 0
@@ -438,6 +446,7 @@ class ChargebackOrchestrator:
                 prefetched_metrics,
                 tenant_period_cache,
                 allocation_retry_limit,
+                resource_cache=resource_cache,
             )
             total_rows += rows
 
@@ -451,6 +460,7 @@ class ChargebackOrchestrator:
         prefetched_metrics: dict[tuple[str, datetime, datetime], dict[str, list[MetricRow]]],
         tenant_period_cache: dict[tuple[datetime, datetime], IdentitySet],
         allocation_retry_limit: int,
+        resource_cache: dict[str, Resource],
     ) -> int:
         """Process a single billing line. Returns number of chargeback rows written."""
         try:
@@ -474,7 +484,7 @@ class ChargebackOrchestrator:
             metrics_data = prefetched_metrics.get((line.resource_id, b_start, b_end))
 
             # Active fraction
-            resource = uow.resources.get(self._ecosystem, self._tenant_id, line.resource_id)
+            resource = resource_cache.get(line.resource_id)
             active_fraction = Decimal(1) if resource is None else compute_active_fraction(resource, b_start, b_end)
             split_amount = line.total_cost * active_fraction
 
