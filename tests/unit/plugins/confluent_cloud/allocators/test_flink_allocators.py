@@ -143,52 +143,7 @@ class TestFlinkCfuAllocatorFallback:
     """Tests for fallback allocation paths (TD-034/TD-035: UNALLOCATED with detail codes)."""
 
     def test_no_metrics_data_uses_no_metrics_located_detail(self, flink_billing_line: BillingLineItem) -> None:
-        """Without metrics_data, falls back to UNALLOCATED with NO_METRICS_LOCATED."""
-        from core.models.chargeback import AllocationDetail
-
-        resolution = _make_resolution(resource_active=make_identity_set("sa-1", "sa-2"))
-        ctx = AllocationContext(
-            timeslice=flink_billing_line.timestamp,
-            billing_line=flink_billing_line,
-            identities=resolution,
-            split_amount=Decimal("100"),
-            metrics_data=None,
-            params={},
-        )
-
-        result = flink_cfu_allocator(ctx)
-
-        assert len(result.rows) == 1
-        assert result.rows[0].identity_id == "UNALLOCATED"
-        assert result.rows[0].amount == Decimal("100")
-        assert result.rows[0].cost_type == CostType.USAGE
-        assert result.rows[0].allocation_detail == AllocationDetail.NO_METRICS_LOCATED
-
-    def test_metrics_present_but_no_owner_map_uses_no_flink_stmt_detail(
-        self, flink_billing_line: BillingLineItem
-    ) -> None:
-        """metrics_data present but no stmt_owner_cfu → NO_FLINK_STMT_NAME_TO_OWNER_MAP."""
-        from core.models.chargeback import AllocationDetail
-
-        resolution = _make_resolution(resource_active=make_identity_set("sa-1"))
-        ctx = AllocationContext(
-            timeslice=flink_billing_line.timestamp,
-            billing_line=flink_billing_line,
-            identities=resolution,
-            split_amount=Decimal("100"),
-            metrics_data={"confluent_flink_num_cfu": []},  # present but no owner map in context
-            params={},
-        )
-
-        result = flink_cfu_allocator(ctx)
-
-        assert len(result.rows) == 1
-        assert result.rows[0].identity_id == "UNALLOCATED"
-        assert result.rows[0].cost_type == CostType.USAGE
-        assert result.rows[0].allocation_detail == AllocationDetail.NO_FLINK_STMT_NAME_TO_OWNER_MAP
-
-    def test_no_identities_unallocated_no_metrics(self, flink_billing_line: BillingLineItem) -> None:
-        """Without any identities and no metrics, falls back to UNALLOCATED."""
+        """Without metrics_data and no identities, falls back to UNALLOCATED with NO_METRICS_LOCATED."""
         from core.models.chargeback import AllocationDetail
 
         resolution = _make_resolution()
@@ -209,11 +164,34 @@ class TestFlinkCfuAllocatorFallback:
         assert result.rows[0].cost_type == CostType.USAGE
         assert result.rows[0].allocation_detail == AllocationDetail.NO_METRICS_LOCATED
 
-    def test_empty_stmt_cfu_with_no_metrics_uses_no_metrics_detail(self, flink_billing_line: BillingLineItem) -> None:
-        """Empty stmt_owner_cfu context + no metrics_data → NO_METRICS_LOCATED."""
+    def test_metrics_present_but_no_owner_map_uses_no_flink_stmt_detail(
+        self, flink_billing_line: BillingLineItem
+    ) -> None:
+        """metrics_data present but no stmt_owner_cfu and no identities → NO_FLINK_STMT_NAME_TO_OWNER_MAP."""
         from core.models.chargeback import AllocationDetail
 
-        resolution = _make_resolution(resource_active=make_identity_set("sa-1"), stmt_owner_cfu={})
+        resolution = _make_resolution()
+        ctx = AllocationContext(
+            timeslice=flink_billing_line.timestamp,
+            billing_line=flink_billing_line,
+            identities=resolution,
+            split_amount=Decimal("100"),
+            metrics_data={"confluent_flink_num_cfu": []},  # present but no owner map in context
+            params={},
+        )
+
+        result = flink_cfu_allocator(ctx)
+
+        assert len(result.rows) == 1
+        assert result.rows[0].identity_id == "UNALLOCATED"
+        assert result.rows[0].cost_type == CostType.USAGE
+        assert result.rows[0].allocation_detail == AllocationDetail.NO_FLINK_STMT_NAME_TO_OWNER_MAP
+
+    def test_empty_stmt_cfu_with_no_metrics_uses_no_metrics_detail(self, flink_billing_line: BillingLineItem) -> None:
+        """Empty stmt_owner_cfu context + no metrics_data + no identities → NO_METRICS_LOCATED."""
+        from core.models.chargeback import AllocationDetail
+
+        resolution = _make_resolution(stmt_owner_cfu={})
         ctx = AllocationContext(
             timeslice=flink_billing_line.timestamp,
             billing_line=flink_billing_line,
@@ -229,3 +207,57 @@ class TestFlinkCfuAllocatorFallback:
         assert result.rows[0].identity_id == "UNALLOCATED"
         assert result.rows[0].cost_type == CostType.USAGE
         assert result.rows[0].allocation_detail == AllocationDetail.NO_METRICS_LOCATED
+
+
+class TestFlinkCfuAllocatorZeroCfuFallback:
+    """Tests for zero-CFU even-split fallback (sub-gap B fix).
+
+    When metrics are present but stmt_owner_cfu is empty (all CFU values zero),
+    the allocator should even-split across merged_active instead of going UNALLOCATED.
+    """
+
+    def test_zero_cfu_two_identities_even_split_usage(self, flink_billing_line: BillingLineItem) -> None:
+        """Metrics present but zero CFU → even split across 2 identities, USAGE cost type."""
+        resolution = _make_resolution(
+            resource_active=make_identity_set("sa-1", "sa-2"),
+        )
+        ctx = AllocationContext(
+            timeslice=flink_billing_line.timestamp,
+            billing_line=flink_billing_line,
+            identities=resolution,
+            split_amount=Decimal("100"),
+            metrics_data={"confluent_flink_num_cfu": []},
+            params={},
+        )
+
+        result = flink_cfu_allocator(ctx)
+
+        assert len(result.rows) == 2
+        assert sum(r.amount for r in result.rows) == Decimal("100")
+        identity_ids = {r.identity_id for r in result.rows}
+        assert identity_ids == {"sa-1", "sa-2"}
+        assert all(r.cost_type == CostType.USAGE for r in result.rows)
+        assert "UNALLOCATED" not in identity_ids
+
+    def test_zero_cfu_three_identities_even_split_usage(self, flink_billing_line: BillingLineItem) -> None:
+        """Metrics present but zero CFU → even split across 3 identities, totals match."""
+        resolution = _make_resolution(
+            resource_active=make_identity_set("sa-1", "sa-2", "sa-3"),
+        )
+        ctx = AllocationContext(
+            timeslice=flink_billing_line.timestamp,
+            billing_line=flink_billing_line,
+            identities=resolution,
+            split_amount=Decimal("99"),
+            metrics_data={"confluent_flink_num_cfu": []},
+            params={},
+        )
+
+        result = flink_cfu_allocator(ctx)
+
+        assert len(result.rows) == 3
+        assert sum(r.amount for r in result.rows) == Decimal("99")
+        identity_ids = {r.identity_id for r in result.rows}
+        assert identity_ids == {"sa-1", "sa-2", "sa-3"}
+        assert all(r.cost_type == CostType.USAGE for r in result.rows)
+        assert "UNALLOCATED" not in identity_ids

@@ -512,3 +512,197 @@ class TestResolveFlinkIdentityWithStatements:
         )
 
         assert result.context["stmt_owner_cfu"] == {"sa-1": 8.0}
+
+
+class TestFlinkFallbackFromRunningStatements:
+    """Tests for no-metrics fallback: query running statements from resource DB."""
+
+    def test_no_metrics_running_statements_attributed_to_owners(self, mock_uow: MagicMock) -> None:
+        """No metrics, running statements in DB → owners appear in resource_active with weight 1.0."""
+        from plugins.confluent_cloud.handlers.flink_identity import resolve_flink_identity
+
+        running_stmt = Resource(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            resource_id="stmt-uid-run1",
+            resource_type="flink_statement",
+            display_name="running-stmt",
+            owner_id="sa-owner-1",
+            metadata={"compute_pool_id": "lfcp-pool-1", "status": "RUNNING"},
+        )
+        owner = Identity(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            identity_id="sa-owner-1",
+            identity_type="service_account",
+            display_name="Owner 1",
+        )
+
+        mock_uow.resources.find_by_period.return_value = ([running_stmt], 1)
+        mock_uow.identities.find_by_period.return_value = ([owner], 1)
+
+        result = resolve_flink_identity(
+            tenant_id="org-123",
+            resource_id="lfcp-pool-1",
+            billing_start=datetime(2026, 2, 1, tzinfo=UTC),
+            billing_end=datetime(2026, 2, 2, tzinfo=UTC),
+            metrics_data=None,
+            uow=mock_uow,
+            ecosystem="confluent_cloud",
+        )
+
+        assert len(result.resource_active) == 1
+        assert "sa-owner-1" in result.resource_active.ids()
+        assert "stmt_owner_cfu" in result.context
+        assert result.context["stmt_owner_cfu"] == {"sa-owner-1": 1.0}
+
+    def test_stopped_statements_excluded_only_running_owner_returned(self, mock_uow: MagicMock) -> None:
+        """COMPLETED/FAILED/STOPPED statements excluded; only RUNNING statement owner appears."""
+        from plugins.confluent_cloud.handlers.flink_identity import resolve_flink_identity
+
+        running_stmt = Resource(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            resource_id="stmt-run",
+            resource_type="flink_statement",
+            display_name="running-stmt",
+            owner_id="sa-running",
+            metadata={"compute_pool_id": "lfcp-pool-1", "status": "RUNNING"},
+        )
+        stopped_stmt = Resource(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            resource_id="stmt-stop",
+            resource_type="flink_statement",
+            display_name="stopped-stmt",
+            owner_id="sa-stopped",
+            metadata={"compute_pool_id": "lfcp-pool-1", "status": "STOPPED"},
+        )
+        completed_stmt = Resource(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            resource_id="stmt-done",
+            resource_type="flink_statement",
+            display_name="completed-stmt",
+            owner_id="sa-completed",
+            metadata={"compute_pool_id": "lfcp-pool-1", "status": "COMPLETED"},
+        )
+        failed_stmt = Resource(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            resource_id="stmt-fail",
+            resource_type="flink_statement",
+            display_name="failed-stmt",
+            owner_id="sa-failed",
+            metadata={"compute_pool_id": "lfcp-pool-1", "status": "FAILED"},
+        )
+        running_owner = Identity(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            identity_id="sa-running",
+            identity_type="service_account",
+        )
+
+        mock_uow.resources.find_by_period.return_value = (
+            [running_stmt, stopped_stmt, completed_stmt, failed_stmt],
+            4,
+        )
+        mock_uow.identities.find_by_period.return_value = ([running_owner], 1)
+
+        result = resolve_flink_identity(
+            tenant_id="org-123",
+            resource_id="lfcp-pool-1",
+            billing_start=datetime(2026, 2, 1, tzinfo=UTC),
+            billing_end=datetime(2026, 2, 2, tzinfo=UTC),
+            metrics_data=None,
+            uow=mock_uow,
+            ecosystem="confluent_cloud",
+        )
+
+        assert len(result.resource_active) == 1
+        assert "sa-running" in result.resource_active.ids()
+        assert result.context["stmt_owner_cfu"] == {"sa-running": 1.0}
+
+    def test_no_metrics_no_running_statements_returns_empty_and_queries_db(self, mock_uow: MagicMock) -> None:
+        """No metrics, no running statements → empty result; secondary DB lookup still attempted."""
+        from plugins.confluent_cloud.handlers.flink_identity import resolve_flink_identity
+
+        mock_uow.resources.find_by_period.return_value = ([], 0)
+        mock_uow.identities.find_by_period.return_value = ([], 0)
+
+        result = resolve_flink_identity(
+            tenant_id="org-123",
+            resource_id="lfcp-pool-1",
+            billing_start=datetime(2026, 2, 1, tzinfo=UTC),
+            billing_end=datetime(2026, 2, 2, tzinfo=UTC),
+            metrics_data=None,
+            uow=mock_uow,
+            ecosystem="confluent_cloud",
+        )
+
+        assert len(result.resource_active) == 0
+        assert "stmt_owner_cfu" not in result.context
+        # Secondary path must query the resource DB (not short-circuit before looking)
+        mock_uow.resources.find_by_period.assert_called_once()
+
+    def test_no_metrics_statements_for_different_pool_returns_empty(self, mock_uow: MagicMock) -> None:
+        """No metrics; DB has running statements but for a different compute pool → empty result."""
+        from plugins.confluent_cloud.handlers.flink_identity import resolve_flink_identity
+
+        other_pool_stmt = Resource(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            resource_id="stmt-other",
+            resource_type="flink_statement",
+            display_name="other-stmt",
+            owner_id="sa-other",
+            metadata={"compute_pool_id": "lfcp-OTHER", "status": "RUNNING"},
+        )
+
+        mock_uow.resources.find_by_period.return_value = ([other_pool_stmt], 1)
+        mock_uow.identities.find_by_period.return_value = ([], 0)
+
+        result = resolve_flink_identity(
+            tenant_id="org-123",
+            resource_id="lfcp-pool-1",
+            billing_start=datetime(2026, 2, 1, tzinfo=UTC),
+            billing_end=datetime(2026, 2, 2, tzinfo=UTC),
+            metrics_data=None,
+            uow=mock_uow,
+            ecosystem="confluent_cloud",
+        )
+
+        assert len(result.resource_active) == 0
+        assert "stmt_owner_cfu" not in result.context
+        mock_uow.resources.find_by_period.assert_called_once()
+
+    def test_fallback_unknown_owner_creates_sentinel(self, mock_uow: MagicMock) -> None:
+        """Running statement with owner_id not in identities table creates sentinel."""
+        from plugins.confluent_cloud.handlers.flink_identity import resolve_flink_identity
+
+        stmt = Resource(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            resource_id="stmt-uid",
+            resource_type="flink_statement",
+            display_name="my-stmt",
+            owner_id="sa-unknown-xyz",
+            metadata={"compute_pool_id": "lfcp-pool-1", "status": "RUNNING"},
+        )
+        mock_uow.resources.find_by_period.return_value = ([stmt], 1)
+        mock_uow.identities.find_by_period.return_value = ([], 0)  # No matching identity
+
+        result = resolve_flink_identity(
+            tenant_id="org-123",
+            resource_id="lfcp-pool-1",
+            billing_start=datetime(2026, 2, 1, tzinfo=UTC),
+            billing_end=datetime(2026, 2, 2, tzinfo=UTC),
+            metrics_data=None,
+            uow=mock_uow,
+            ecosystem="confluent_cloud",
+        )
+
+        assert "sa-unknown-xyz" in result.resource_active.ids()
+        sentinel = result.resource_active.get("sa-unknown-xyz")
+        assert sentinel.identity_type == "service_account"  # inferred from "sa-" prefix
+        assert result.context["stmt_owner_cfu"] == {"sa-unknown-xyz": 1.0}

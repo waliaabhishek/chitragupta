@@ -49,52 +49,83 @@ def _extract_active_statements(
     return stmt_cfu
 
 
-def resolve_flink_identity(
+def _fallback_from_running_statements(
+    compute_pool_id: str,
     tenant_id: str,
-    resource_id: str,
     billing_start: datetime,
     billing_end: datetime,
-    metrics_data: dict[str, list[MetricRow]] | None,
     uow: UnitOfWork,
     ecosystem: str,
-) -> IdentityResolution:
-    """Resolve identities for a Flink compute pool.
+) -> tuple[dict[str, float], IdentitySet]:
+    """Find running statements for a compute pool when metrics are unavailable.
 
-    Two-step process:
-    1. Extract active statement names from metrics where compute_pool_id matches resource_id
-    2. Look up flink_statement resources by display_name to find owner (principal)
+    Queries the resources table for flink_statement resources whose
+    metadata.compute_pool_id matches the given pool. Assigns equal CFU
+    weight to each running statement (since we don't have actual metrics).
 
-    Returns IdentityResolution with:
-    - resource_active: owners of statements with CFU usage in billing window
-    - metrics_derived: empty
-    - tenant_period: empty (orchestrator fills this)
-    - context["stmt_owner_cfu"]: dict[str, float] mapping owner_id -> total CFU
+    Implicit allocatability guard: if no Flink API credentials are configured
+    for the pool's region, the gathering phase will not have fetched any
+    flink_statement resources for that pool. This query then returns empty,
+    producing the same gate as the old `is_chargeback_allocatable` check
+    without requiring an explicit credential check here.
     """
+    all_resources, _ = uow.resources.find_by_period(
+        ecosystem=ecosystem,
+        tenant_id=tenant_id,
+        start=billing_start,
+        end=billing_end,
+    )
+
+    # Filter to running statements belonging to this compute pool
+    pool_stmts = [
+        s
+        for s in all_resources
+        if s.resource_type == "flink_statement"
+        and s.metadata.get("compute_pool_id") == compute_pool_id
+        and s.metadata.get("status", "") not in ("COMPLETED", "FAILED", "STOPPED")
+    ]
+
+    if not pool_stmts:
+        return {}, IdentitySet()
+
+    all_identities, _ = uow.identities.find_by_period(
+        ecosystem=ecosystem,
+        tenant_id=tenant_id,
+        start=billing_start,
+        end=billing_end,
+    )
+    identity_by_id = {i.identity_id: i for i in all_identities}
+
+    # Equal weight per statement (no metrics to differentiate)
     resource_active = IdentitySet()
-    stmt_owner_cfu: dict[str, float] = {}
+    owner_weight: dict[str, float] = {}
+    for stmt in pool_stmts:
+        owner_id = stmt.owner_id or stmt.metadata.get("owner_id")
+        if owner_id:
+            owner_weight[owner_id] = owner_weight.get(owner_id, 0.0) + 1.0
+            identity = identity_by_id.get(owner_id)
+            if identity:
+                resource_active.add(identity)
+            else:
+                sentinel = create_sentinel_from_id(owner_id, tenant_id, ecosystem)
+                resource_active.add(sentinel)
 
-    # No metrics -> no statements can be identified
-    if not metrics_data:
-        return IdentityResolution(
-            resource_active=resource_active,
-            metrics_derived=IdentitySet(),
-            tenant_period=IdentitySet(),
-            context={},
-        )
+    return owner_weight, resource_active
 
-    # Step 1: Extract active statement names and CFU usage from metrics
-    stmt_cfu = _extract_active_statements(metrics_data, resource_id)
 
-    # No active statements found in metrics
-    if not stmt_cfu:
-        return IdentityResolution(
-            resource_active=resource_active,
-            metrics_derived=IdentitySet(),
-            tenant_period=IdentitySet(),
-            context={},
-        )
+def _resolve_statement_owners(
+    stmt_cfu: dict[str, float],
+    resource_id: str,
+    tenant_id: str,
+    billing_start: datetime,
+    billing_end: datetime,
+    uow: UnitOfWork,
+    ecosystem: str,
+) -> tuple[dict[str, float], IdentitySet]:
+    """Resolve statement owners from resource DB for the metrics-driven primary path.
 
-    # Step 2: Look up statement resources to find owners
+    Returns (stmt_owner_cfu mapping owner_id->cfu, resource_active IdentitySet).
+    """
     resources, _ = uow.resources.find_by_period(
         ecosystem=ecosystem,
         tenant_id=tenant_id,
@@ -114,7 +145,6 @@ def resolve_flink_identity(
             if display_name:
                 stmt_name_to_owner[display_name] = r.owner_id
 
-    # Get all identities in billing window for lookup
     all_identities, _ = uow.identities.find_by_period(
         ecosystem=ecosystem,
         tenant_id=tenant_id,
@@ -123,7 +153,8 @@ def resolve_flink_identity(
     )
     identity_by_id = {i.identity_id: i for i in all_identities}
 
-    # Step 3: Map statement CFU to owners
+    resource_active = IdentitySet()
+    owner_cfu: dict[str, float] = {}
     for stmt_name, cfu_value in stmt_cfu.items():
         owner_id = stmt_name_to_owner.get(stmt_name)
 
@@ -137,20 +168,75 @@ def resolve_flink_identity(
             )
             resource_active.add(sentinel)
             key = FLINK_STMT_OWNER_UNKNOWN
-            stmt_owner_cfu[key] = stmt_owner_cfu.get(key, 0.0) + cfu_value
+            owner_cfu[key] = owner_cfu.get(key, 0.0) + cfu_value
             continue
 
-        # Resolve owner identity
         owner = identity_by_id.get(owner_id)
         if owner is None:
             owner = create_sentinel_from_id(owner_id, tenant_id, ecosystem)
 
         resource_active.add(owner)
-        stmt_owner_cfu[owner.identity_id] = stmt_owner_cfu.get(owner.identity_id, 0.0) + cfu_value
+        owner_cfu[owner.identity_id] = owner_cfu.get(owner.identity_id, 0.0) + cfu_value
 
+    return owner_cfu, resource_active
+
+
+def resolve_flink_identity(
+    tenant_id: str,
+    resource_id: str,
+    billing_start: datetime,
+    billing_end: datetime,
+    metrics_data: dict[str, list[MetricRow]] | None,
+    uow: UnitOfWork,
+    ecosystem: str,
+) -> IdentityResolution:
+    """Resolve identities for a Flink compute pool.
+
+    Two-step process:
+    1. Extract active statement names from metrics where compute_pool_id matches resource_id
+    2. Look up flink_statement resources by display_name to find owner (principal)
+
+    Falls back to querying running statements from the resource DB when metrics are absent.
+
+    Returns IdentityResolution with:
+    - resource_active: owners of statements with CFU usage in billing window
+    - metrics_derived: empty
+    - tenant_period: empty (orchestrator fills this)
+    - context["stmt_owner_cfu"]: dict[str, float] mapping owner_id -> total CFU
+    """
+    # Primary path: extract from metrics
+    if metrics_data:
+        active_stmts = _extract_active_statements(metrics_data, resource_id)
+
+        if active_stmts:
+            stmt_owner_cfu, resource_active = _resolve_statement_owners(
+                active_stmts, resource_id, tenant_id, billing_start, billing_end, uow, ecosystem
+            )
+            if stmt_owner_cfu:
+                return IdentityResolution(
+                    resource_active=resource_active,
+                    metrics_derived=IdentitySet(),
+                    tenant_period=IdentitySet(),
+                    context={"stmt_owner_cfu": stmt_owner_cfu},
+                )
+
+    # Secondary path: no metrics or no active statements from metrics
+    # Find running Flink statements for this compute pool from resource DB
+    stmt_owner_cfu, resource_active = _fallback_from_running_statements(
+        resource_id, tenant_id, billing_start, billing_end, uow, ecosystem
+    )
+    if stmt_owner_cfu:
+        return IdentityResolution(
+            resource_active=resource_active,
+            metrics_derived=IdentitySet(),
+            tenant_period=IdentitySet(),
+            context={"stmt_owner_cfu": stmt_owner_cfu},
+        )
+
+    # No statements found at all
     return IdentityResolution(
-        resource_active=resource_active,
+        resource_active=IdentitySet(),
         metrics_derived=IdentitySet(),
         tenant_period=IdentitySet(),
-        context={"stmt_owner_cfu": stmt_owner_cfu},
+        context={},
     )
