@@ -4,8 +4,8 @@ Handles known product types that lack meaningful identity resolution:
 - TABLEFLOW_*: Tableflow processing/storage costs
 - CLUSTER_LINKING_*: Cluster linking costs
 
-TABLEFLOW types use the default_allocator (SHARED cost type, UNALLOCATED identity).
-CLUSTER_LINKING types use the cluster_linking_allocator (USAGE cost type, UNALLOCATED identity).
+TABLEFLOW types use the default_allocator (SHARED cost type, resource_id identity).
+CLUSTER_LINKING types use the cluster_linking_allocator (USAGE cost type, resource_id identity).
 
 Note: truly unknown product types (not listed here) bypass this handler
 entirely and go to the orchestrator's fallback UNALLOCATED path.

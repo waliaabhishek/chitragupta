@@ -296,7 +296,7 @@ class TestDefaultHandlerEndToEnd:
     """End-to-end tests for default handler allocations."""
 
     def test_tableflow_to_unallocated(self) -> None:
-        """TABLEFLOW_STORAGE -> UNALLOCATED, SHARED."""
+        """TABLEFLOW_STORAGE -> resource_id, SHARED."""
         plugin = _initialized_plugin()
         default = plugin.get_service_handlers()["default"]
 
@@ -322,12 +322,12 @@ class TestDefaultHandlerEndToEnd:
         result = allocator(ctx)
 
         assert len(result.rows) == 1
-        assert result.rows[0].identity_id == "UNALLOCATED"
+        assert result.rows[0].identity_id == billing_line.resource_id
         assert result.rows[0].amount == Decimal("25")
         assert result.rows[0].cost_type == CostType.SHARED
 
     def test_cluster_linking_to_unallocated(self) -> None:
-        """CLUSTER_LINKING_READ -> UNALLOCATED, SHARED."""
+        """CLUSTER_LINKING_READ -> resource_id, USAGE."""
         plugin = _initialized_plugin()
         default = plugin.get_service_handlers()["default"]
 
@@ -353,7 +353,7 @@ class TestDefaultHandlerEndToEnd:
         result = allocator(ctx)
 
         assert len(result.rows) == 1
-        assert result.rows[0].identity_id == "UNALLOCATED"
+        assert result.rows[0].identity_id == billing_line.resource_id
         assert result.rows[0].amount == Decimal("40")
 
 
