@@ -6,6 +6,7 @@ Unlike Kafka/SR which use API key lookups, connectors have direct owner informat
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from typing import TYPE_CHECKING
 
@@ -17,10 +18,13 @@ if TYPE_CHECKING:
     from core.models import Identity
     from core.storage.interface import UnitOfWork
 
+LOGGER = logging.getLogger(__name__)
 
 # Sentinel identity IDs for unknown connector owners
 CONNECTOR_CREDENTIALS_UNKNOWN = "connector_credentials_unknown"
 CONNECTOR_CREDENTIALS_MASKED = "connector_credentials_masked"
+CONNECTOR_API_KEY_MASKED = "connector_api_key_masked"
+CONNECTOR_API_KEY_NOT_FOUND = "connector_api_key_not_found"
 
 
 def resolve_connector_identity(
@@ -102,27 +106,48 @@ def resolve_connector_identity(
     elif auth_mode == "KAFKA_API_KEY":
         # Look up API key, then resolve its owner
         api_key_id = connector.metadata.get("kafka_api_key")
-        if api_key_id:
-            api_key = identity_by_id.get(api_key_id)
-            if api_key:
-                owner_id = api_key.metadata.get("owner_id")
-                if owner_id:
-                    owner = identity_by_id.get(owner_id) or create_sentinel_from_id(owner_id, tenant_id, ecosystem)
-                else:
-                    # API key has no owner_id
-                    owner = create_connector_sentinel(
-                        CONNECTOR_CREDENTIALS_UNKNOWN, tenant_id, ecosystem, is_masked=False
-                    )
+        if api_key_id is not None:
+            # Check for masked key (Confluent masks keys with asterisks; empty string also treated as masked)
+            if all(ch == "*" for ch in api_key_id):
+                LOGGER.warning("Connector %s API key is masked", connector.resource_id)
+                owner = create_connector_sentinel(
+                    CONNECTOR_API_KEY_MASKED,
+                    tenant_id,
+                    ecosystem,
+                    is_masked=True,
+                )
             else:
-                # API key not found in DB
-                owner = create_connector_sentinel(CONNECTOR_CREDENTIALS_UNKNOWN, tenant_id, ecosystem, is_masked=False)
+                api_key = identity_by_id.get(api_key_id)
+                if api_key is None:
+                    LOGGER.warning("Connector %s API key %s not found in DB", connector.resource_id, api_key_id)
+                    owner = create_connector_sentinel(
+                        CONNECTOR_API_KEY_NOT_FOUND,
+                        tenant_id,
+                        ecosystem,
+                        is_masked=False,
+                    )
+                else:
+                    owner_id = api_key.metadata.get("owner_id")
+                    if owner_id:
+                        owner = identity_by_id.get(owner_id) or create_sentinel_from_id(owner_id, tenant_id, ecosystem)
+                    else:
+                        # API key has no owner_id
+                        owner = create_connector_sentinel(
+                            CONNECTOR_CREDENTIALS_UNKNOWN, tenant_id, ecosystem, is_masked=False
+                        )
         else:
             # No API key in metadata
             owner = create_connector_sentinel(CONNECTOR_CREDENTIALS_UNKNOWN, tenant_id, ecosystem, is_masked=False)
 
     else:
-        # UNKNOWN mode or missing auth_mode
-        owner = create_connector_sentinel(CONNECTOR_CREDENTIALS_UNKNOWN, tenant_id, ecosystem, is_masked=False)
+        # UNKNOWN mode or missing auth_mode — use connector_id for per-connector attribution
+        LOGGER.warning("Connector %s has unknown auth mode", connector.resource_id)
+        owner = create_connector_sentinel(
+            connector.resource_id,
+            tenant_id,
+            ecosystem,
+            is_masked=False,
+        )
 
     resource_active.add(owner)
 

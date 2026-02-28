@@ -358,6 +358,82 @@ class TestGatherConnectors:
         assert len(connectors) == 2
         assert {c.resource_id for c in connectors} == {"lcc-1", "lcc-2"}
 
+    @respx.mock
+    def test_gather_connectors_probes_api_key_when_no_auth_mode(self):
+        """No kafka.auth.mode but kafka.api.key present → auth_mode resolved as KAFKA_API_KEY."""
+        from plugins.confluent_cloud.gathering import gather_connectors
+
+        respx.get("https://api.confluent.cloud/connect/v1/environments/env-abc/clusters/lkc-123/connectors").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "probe-connector": {
+                        "info": {
+                            "config": {
+                                "name": "probe-connector",
+                                "connector.class": "S3Sink",
+                                # No kafka.auth.mode field
+                                "kafka.api.key": "PROBE_KEY_123",
+                            }
+                        },
+                        "id": {"id": "lcc-probe1"},
+                    },
+                },
+            )
+        )
+
+        conn = CCloudConnection(api_key="k", api_secret=SecretStr("s"), request_interval_seconds=0)
+        connectors = list(
+            gather_connectors(
+                conn,
+                "confluent_cloud",
+                "org-123",
+                clusters=[("env-abc", "lkc-123")],
+            )
+        )
+
+        assert len(connectors) == 1
+        assert connectors[0].metadata["kafka_auth_mode"] == "KAFKA_API_KEY"
+        assert connectors[0].metadata["kafka_api_key"] == "PROBE_KEY_123"
+
+    @respx.mock
+    def test_gather_connectors_probes_service_account_when_no_auth_mode(self):
+        """No kafka.auth.mode but kafka.service.account.id present → auth_mode resolved as SERVICE_ACCOUNT."""
+        from plugins.confluent_cloud.gathering import gather_connectors
+
+        respx.get("https://api.confluent.cloud/connect/v1/environments/env-abc/clusters/lkc-123/connectors").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "sa-probe-connector": {
+                        "info": {
+                            "config": {
+                                "name": "sa-probe-connector",
+                                "connector.class": "S3Source",
+                                # No kafka.auth.mode field
+                                "kafka.service.account.id": "sa-probed-456",
+                            }
+                        },
+                        "id": {"id": "lcc-probe2"},
+                    },
+                },
+            )
+        )
+
+        conn = CCloudConnection(api_key="k", api_secret=SecretStr("s"), request_interval_seconds=0)
+        connectors = list(
+            gather_connectors(
+                conn,
+                "confluent_cloud",
+                "org-123",
+                clusters=[("env-abc", "lkc-123")],
+            )
+        )
+
+        assert len(connectors) == 1
+        assert connectors[0].metadata["kafka_auth_mode"] == "SERVICE_ACCOUNT"
+        assert connectors[0].metadata["kafka_service_account_id"] == "sa-probed-456"
+
 
 class TestGatherSchemaRegistries:
     """Tests for gather_schema_registries()."""

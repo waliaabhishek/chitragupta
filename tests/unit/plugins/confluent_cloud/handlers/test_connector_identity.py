@@ -103,7 +103,7 @@ class TestResolveConnectorIdentity:
         assert "u-user-456" in result.resource_active.ids()
 
     def test_unknown_mode_creates_sentinel(self, mock_uow: MagicMock) -> None:
-        """UNKNOWN auth mode creates connector_credentials_unknown sentinel."""
+        """UNKNOWN auth mode creates per-connector sentinel using connector_id."""
         from plugins.confluent_cloud.handlers.connector_identity import (
             resolve_connector_identity,
         )
@@ -129,8 +129,9 @@ class TestResolveConnectorIdentity:
         )
 
         assert len(result.resource_active) == 1
-        assert "connector_credentials_unknown" in result.resource_active.ids()
-        sentinel = result.resource_active.get("connector_credentials_unknown")
+        assert "connector-abc" in result.resource_active.ids()
+        assert "connector_credentials_unknown" not in result.resource_active.ids()
+        sentinel = result.resource_active.get("connector-abc")
         assert sentinel is not None
         assert sentinel.identity_type == "connector_credentials"
 
@@ -194,8 +195,8 @@ class TestResolveConnectorIdentity:
         assert sentinel.identity_type == "service_account"
         assert sentinel.display_name == "Unknown service_account"
 
-    def test_kafka_api_key_mode_api_key_not_in_db_creates_unknown_sentinel(self, mock_uow: MagicMock) -> None:
-        """KAFKA_API_KEY mode with API key not found creates unknown sentinel."""
+    def test_kafka_api_key_mode_api_key_not_in_db_creates_not_found_sentinel(self, mock_uow: MagicMock) -> None:
+        """KAFKA_API_KEY mode with API key not found creates connector_api_key_not_found sentinel."""
         from plugins.confluent_cloud.handlers.connector_identity import (
             resolve_connector_identity,
         )
@@ -223,9 +224,10 @@ class TestResolveConnectorIdentity:
             ecosystem="confluent_cloud",
         )
 
-        # API key not found means we can't determine owner -> unknown sentinel
+        # API key found in metadata but not in DB → distinct not-found sentinel
         assert len(result.resource_active) == 1
-        assert "connector_credentials_unknown" in result.resource_active.ids()
+        assert "connector_api_key_not_found" in result.resource_active.ids()
+        assert "connector_credentials_unknown" not in result.resource_active.ids()
 
     def test_kafka_api_key_mode_api_key_missing_owner_creates_unknown_sentinel(self, mock_uow: MagicMock) -> None:
         """KAFKA_API_KEY mode with API key lacking owner_id creates unknown sentinel."""
@@ -268,7 +270,7 @@ class TestResolveConnectorIdentity:
         assert "connector_credentials_unknown" in result.resource_active.ids()
 
     def test_missing_auth_mode_creates_unknown_sentinel(self, mock_uow: MagicMock) -> None:
-        """Missing kafka_auth_mode in metadata creates unknown sentinel."""
+        """Missing kafka_auth_mode in metadata uses connector_id as per-connector sentinel."""
         from plugins.confluent_cloud.handlers.connector_identity import (
             resolve_connector_identity,
         )
@@ -294,7 +296,8 @@ class TestResolveConnectorIdentity:
         )
 
         assert len(result.resource_active) == 1
-        assert "connector_credentials_unknown" in result.resource_active.ids()
+        assert "connector-abc" in result.resource_active.ids()
+        assert "connector_credentials_unknown" not in result.resource_active.ids()
 
     def test_service_account_mode_missing_sa_id_creates_unknown_sentinel(self, mock_uow: MagicMock) -> None:
         """SERVICE_ACCOUNT mode without kafka_service_account_id creates unknown sentinel."""
@@ -446,6 +449,135 @@ class TestResolveConnectorIdentity:
         assert len(result.resource_active) == 1
         assert "sa-correct" in result.resource_active.ids()
         assert "sa-wrong" not in result.resource_active.ids()
+
+    def test_kafka_api_key_mode_masked_key_creates_masked_sentinel(self, mock_uow: MagicMock) -> None:
+        """Masked API key (all asterisks) → identity is connector_api_key_masked, not connector_credentials_unknown."""
+        from plugins.confluent_cloud.handlers.connector_identity import (
+            resolve_connector_identity,
+        )
+
+        connector = Resource(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            resource_id="connector-abc",
+            resource_type="connector",
+            metadata={
+                "kafka_auth_mode": "KAFKA_API_KEY",
+                "kafka_api_key": "****",
+            },
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        )
+        mock_uow.resources.find_by_period.return_value = ([connector], 1)
+        mock_uow.identities.find_by_period.return_value = ([], 0)
+
+        result = resolve_connector_identity(
+            tenant_id="org-123",
+            resource_id="connector-abc",
+            billing_start=datetime(2026, 2, 1, tzinfo=UTC),
+            billing_end=datetime(2026, 2, 2, tzinfo=UTC),
+            uow=mock_uow,
+            ecosystem="confluent_cloud",
+        )
+
+        assert len(result.resource_active) == 1
+        assert "connector_api_key_masked" in result.resource_active.ids()
+        assert "connector_credentials_unknown" not in result.resource_active.ids()
+
+    def test_kafka_api_key_mode_empty_key_creates_masked_sentinel(self, mock_uow: MagicMock) -> None:
+        """Empty-string API key → identity is connector_api_key_masked (all() on empty iter = True)."""
+        from plugins.confluent_cloud.handlers.connector_identity import (
+            resolve_connector_identity,
+        )
+
+        connector = Resource(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            resource_id="connector-abc",
+            resource_type="connector",
+            metadata={
+                "kafka_auth_mode": "KAFKA_API_KEY",
+                "kafka_api_key": "",
+            },
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        )
+        mock_uow.resources.find_by_period.return_value = ([connector], 1)
+        mock_uow.identities.find_by_period.return_value = ([], 0)
+
+        result = resolve_connector_identity(
+            tenant_id="org-123",
+            resource_id="connector-abc",
+            billing_start=datetime(2026, 2, 1, tzinfo=UTC),
+            billing_end=datetime(2026, 2, 2, tzinfo=UTC),
+            uow=mock_uow,
+            ecosystem="confluent_cloud",
+        )
+
+        assert len(result.resource_active) == 1
+        assert "connector_api_key_masked" in result.resource_active.ids()
+        assert "connector_credentials_unknown" not in result.resource_active.ids()
+
+    def test_kafka_api_key_mode_key_not_in_db_creates_not_found_sentinel(self, mock_uow: MagicMock) -> None:
+        """API key present in metadata but not found in DB → identity is connector_api_key_not_found."""
+        from plugins.confluent_cloud.handlers.connector_identity import (
+            resolve_connector_identity,
+        )
+
+        connector = Resource(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            resource_id="connector-abc",
+            resource_type="connector",
+            metadata={
+                "kafka_auth_mode": "KAFKA_API_KEY",
+                "kafka_api_key": "api-key-real-but-missing",
+            },
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        )
+        mock_uow.resources.find_by_period.return_value = ([connector], 1)
+        mock_uow.identities.find_by_period.return_value = ([], 0)
+
+        result = resolve_connector_identity(
+            tenant_id="org-123",
+            resource_id="connector-abc",
+            billing_start=datetime(2026, 2, 1, tzinfo=UTC),
+            billing_end=datetime(2026, 2, 2, tzinfo=UTC),
+            uow=mock_uow,
+            ecosystem="confluent_cloud",
+        )
+
+        assert len(result.resource_active) == 1
+        assert "connector_api_key_not_found" in result.resource_active.ids()
+        assert "connector_credentials_unknown" not in result.resource_active.ids()
+
+    def test_unknown_auth_mode_uses_connector_id_as_identity(self, mock_uow: MagicMock) -> None:
+        """UNKNOWN auth mode → identity uses connector.resource_id, not shared connector_credentials_unknown."""
+        from plugins.confluent_cloud.handlers.connector_identity import (
+            resolve_connector_identity,
+        )
+
+        connector = Resource(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            resource_id="connector-abc",
+            resource_type="connector",
+            metadata={"kafka_auth_mode": "UNKNOWN"},
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        )
+        mock_uow.resources.find_by_period.return_value = ([connector], 1)
+        mock_uow.identities.find_by_period.return_value = ([], 0)
+
+        result = resolve_connector_identity(
+            tenant_id="org-123",
+            resource_id="connector-abc",
+            billing_start=datetime(2026, 2, 1, tzinfo=UTC),
+            billing_end=datetime(2026, 2, 2, tzinfo=UTC),
+            uow=mock_uow,
+            ecosystem="confluent_cloud",
+        )
+
+        assert len(result.resource_active) == 1
+        assert "connector-abc" in result.resource_active.ids()
+        assert "connector_credentials_unknown" not in result.resource_active.ids()
 
 
 class TestCreateSentinelFromId:

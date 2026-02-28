@@ -329,10 +329,7 @@ class TestConnectorBillingToChargebackEndToEnd:
         assert result.rows[0].amount == Decimal("50")
 
     def test_connector_unknown_mode_fallback_e2e(self, mock_uow_for_connector_unknown_mode: MagicMock) -> None:
-        """Connector with UNKNOWN auth mode falls back to sentinel identity."""
-        from plugins.confluent_cloud.handlers.connector_identity import (
-            CONNECTOR_CREDENTIALS_UNKNOWN,
-        )
+        """Connector with UNKNOWN auth mode uses connector_id for per-connector attribution."""
         from plugins.confluent_cloud.handlers.connectors import ConnectorHandler
 
         handler = ConnectorHandler(connection=None, config=None, ecosystem="confluent_cloud")
@@ -360,9 +357,10 @@ class TestConnectorBillingToChargebackEndToEnd:
             uow=mock_uow_for_connector_unknown_mode,
         )
 
-        # Should fall back to sentinel identity
+        # UNKNOWN mode uses connector_id as per-connector sentinel for individual attribution
         assert len(identity_res.resource_active) == 1
-        assert CONNECTOR_CREDENTIALS_UNKNOWN in identity_res.merged_active.ids()
+        assert "connector-ghi" in identity_res.merged_active.ids()
+        assert "connector_credentials_unknown" not in identity_res.merged_active.ids()
 
         # Allocate
         allocator = handler.get_allocator("CONNECT_CAPACITY")
@@ -376,9 +374,9 @@ class TestConnectorBillingToChargebackEndToEnd:
         )
         result = allocator(ctx)
 
-        # Verify allocation to sentinel
+        # Verify allocation to per-connector sentinel
         assert len(result.rows) == 1
-        assert result.rows[0].identity_id == CONNECTOR_CREDENTIALS_UNKNOWN
+        assert result.rows[0].identity_id == "connector-ghi"
         assert result.rows[0].amount == Decimal("75")
 
 

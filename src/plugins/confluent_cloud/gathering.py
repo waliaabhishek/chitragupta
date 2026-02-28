@@ -130,7 +130,16 @@ def gather_connectors(
             connector_id_obj = connector_data.get("id", {})
 
             # Extract auth mode and credentials for later identity resolution
-            auth_mode = config.get("kafka.auth.mode", "UNKNOWN")
+            # Fallback: probe for credential fields when auth mode is absent
+            auth_mode = config.get("kafka.auth.mode")
+            if auth_mode is None:
+                if config.get("kafka.api.key") is not None:
+                    auth_mode = "KAFKA_API_KEY"
+                elif config.get("kafka.service.account.id") is not None:
+                    auth_mode = "SERVICE_ACCOUNT"
+                else:
+                    LOGGER.warning("Connector %s has no auth mode and no credential fields", connector_name)
+                    auth_mode = "UNKNOWN"
             metadata: dict[str, Any] = {
                 "kafka_auth_mode": auth_mode,
                 "connector_class": config.get("connector.class"),
