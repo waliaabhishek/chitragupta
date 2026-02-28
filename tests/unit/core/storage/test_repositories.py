@@ -443,6 +443,52 @@ class TestBillingRepository:
         session.commit()
         assert count == 1
 
+    def test_upsert_detects_billing_revision_and_logs_warning(
+        self, session: Session, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        import logging
+
+        repo = SQLModelBillingRepository(session)
+        repo.upsert(self._make_billing(total_cost=Decimal("1.00")))
+        session.commit()
+
+        with caplog.at_level(logging.WARNING):
+            repo.upsert(self._make_billing(total_cost=Decimal("9.99")))
+            session.commit()
+
+        assert "Billing revision detected" in caplog.text
+        results = repo.find_by_date("eco", "t1", date(2026, 1, 15))
+        assert len(results) == 1
+        assert results[0].total_cost == Decimal("9.99")
+
+    def test_upsert_no_warning_when_same_total_cost(
+        self, session: Session, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        import logging
+
+        repo = SQLModelBillingRepository(session)
+        repo.upsert(self._make_billing(total_cost=Decimal("1.00")))
+        session.commit()
+
+        with caplog.at_level(logging.WARNING):
+            repo.upsert(self._make_billing(total_cost=Decimal("1.00")))
+            session.commit()
+
+        assert "Billing revision detected" not in caplog.text
+
+    def test_upsert_new_record_no_warning(
+        self, session: Session, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        import logging
+
+        repo = SQLModelBillingRepository(session)
+
+        with caplog.at_level(logging.WARNING):
+            repo.upsert(self._make_billing())
+            session.commit()
+
+        assert "Billing revision detected" not in caplog.text
+
 
 # --- Chargeback Repository ---
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
@@ -45,6 +46,8 @@ from core.storage.backends.sqlmodel.tables import (
     PipelineStateTable,
     ResourceTable,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _date_to_range(d: date) -> tuple[datetime, datetime]:
@@ -333,6 +336,30 @@ class SQLModelBillingRepository:
 
     def upsert(self, line: BillingLineItem) -> BillingLineItem:
         table_obj = billing_to_table(line)
+
+        # Check for existing record
+        existing = self._session.get(
+            BillingTable,
+            (
+                table_obj.ecosystem,
+                table_obj.tenant_id,
+                table_obj.timestamp,
+                table_obj.resource_id,
+                table_obj.product_type,
+            ),
+        )
+
+        if existing is not None and existing.total_cost != table_obj.total_cost:
+            # Detect and log billing revisions
+            logger.warning(
+                "Billing revision detected: %s/%s/%s cost changed %s → %s",
+                table_obj.resource_id,
+                table_obj.product_type,
+                table_obj.timestamp.date(),
+                existing.total_cost,
+                table_obj.total_cost,
+            )
+
         merged = self._session.merge(table_obj)
         self._session.flush()
         return billing_to_domain(merged)
