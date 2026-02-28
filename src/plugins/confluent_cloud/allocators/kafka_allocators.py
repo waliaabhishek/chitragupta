@@ -8,19 +8,14 @@ These allocators handle various Kafka product types:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
+from core.engine.allocation import AllocationContext, AllocationResult
 from core.engine.helpers import (
     allocate_by_usage_ratio,
-    allocate_evenly,
     allocate_hybrid,
+    make_row,
+    split_amount_evenly,
 )
-
-if TYPE_CHECKING:
-    # AllocationContext/AllocationResult are runtime-available but imported under
-    # TYPE_CHECKING for lightweight module loading. Works because
-    # `from __future__ import annotations` makes all annotations strings.
-    from core.engine.allocation import AllocationContext, AllocationResult
+from core.models.chargeback import AllocationDetail, CostType
 
 
 def kafka_num_cku_allocator(ctx: AllocationContext) -> AllocationResult:
@@ -39,14 +34,14 @@ def kafka_num_cku_allocator(ctx: AllocationContext) -> AllocationResult:
         usage_ratio,
         shared_ratio,
         _kafka_usage_allocation,
-        _kafka_shared_allocation,
+        _fallback_no_metrics,
     )
 
 
 def kafka_network_allocator(ctx: AllocationContext) -> AllocationResult:
     """Pure usage-based allocation by bytes produced/consumed.
 
-    Falls back to even split if no metrics, then to UNALLOCATED.
+    Falls back to even split if no metrics, then to resource.
     """
     return _kafka_usage_allocation(ctx)
 
@@ -56,45 +51,90 @@ def kafka_base_allocator(ctx: AllocationContext) -> AllocationResult:
 
     Used for KAFKA_BASE, KAFKA_PARTITION, KAFKA_STORAGE.
     """
-    return _kafka_shared_allocation(ctx)
+    return _fallback_no_metrics(ctx)
 
 
 def _kafka_usage_allocation(ctx: AllocationContext) -> AllocationResult:
-    """Allocate by bytes in/out ratio from metrics.
-
-    Falls back to even split when:
-    - No metrics_data
-    - Metrics present but no non-zero usage values
-    """
+    """Allocate network costs by bytes with tiered fallback."""
     if not ctx.metrics_data:
-        # No metrics — fall back to even split
-        return _kafka_shared_allocation(ctx)
+        return _fallback_no_metrics(ctx)
 
-    # Sum bytes per principal from bytes_in and bytes_out
     identity_bytes: dict[str, float] = {}
+    has_metric_rows = False
     for key in ("bytes_in", "bytes_out"):
         for row in ctx.metrics_data.get(key, []):
+            has_metric_rows = True
             principal = row.labels.get("principal_id")
             if principal and row.value > 0:
                 identity_bytes[principal] = identity_bytes.get(principal, 0.0) + row.value
 
-    if not identity_bytes:
-        # Metrics present but no non-zero usage — fall back to even split
-        return _kafka_shared_allocation(ctx)
+    if identity_bytes:
+        return allocate_by_usage_ratio(ctx, identity_bytes)
 
-    return allocate_by_usage_ratio(ctx, identity_bytes)
+    if has_metric_rows:
+        return _fallback_zero_usage(ctx)
+
+    return _fallback_no_metrics(ctx)
 
 
-def _kafka_shared_allocation(ctx: AllocationContext) -> AllocationResult:
-    """Even split across merged active identities.
+def _fallback_no_metrics(ctx: AllocationContext) -> AllocationResult:
+    """Tier 2: Prometheus returned no data for this cluster/timeslice."""
+    merged_active = list(ctx.identities.merged_active.ids())
+    if merged_active:
+        return _even_split_with_detail(ctx, merged_active, AllocationDetail.NO_METRICS_LOCATED)
+    all_merged = list(ctx.identities.tenant_period.ids())
+    if all_merged:
+        return _even_split_with_detail(ctx, all_merged, AllocationDetail.NO_METRICS_NO_ACTIVE_IDENTITIES_LOCATED)
+    return _to_resource_with_detail(ctx, AllocationDetail.NO_IDENTITIES_LOCATED)
 
-    Fallback chain:
-    1. merged_active (resource_active ∪ metrics_derived)
-    2. tenant_period (all tenant identities in billing window)
-    3. UNALLOCATED (no identities found)
-    """
-    identity_ids = list(ctx.identities.merged_active.ids())
-    if not identity_ids:
-        # Fall back to tenant_period
-        identity_ids = list(ctx.identities.tenant_period.ids())
-    return allocate_evenly(ctx, identity_ids)
+
+def _fallback_zero_usage(ctx: AllocationContext) -> AllocationResult:
+    """Tier 3: Metrics rows exist but all usage values were zero."""
+    merged_active = list(ctx.identities.merged_active.ids())
+    if merged_active:
+        return _even_split_with_detail(
+            ctx, merged_active, AllocationDetail.NO_METRICS_PRESENT_MERGED_IDENTITIES_LOCATED
+        )
+    all_merged = list(ctx.identities.tenant_period.ids())
+    if all_merged:
+        return _even_split_with_detail(
+            ctx, all_merged, AllocationDetail.NO_METRICS_PRESENT_PENALTY_ALLOCATION_FOR_EVERYONE
+        )
+    return _to_resource_with_detail(ctx, AllocationDetail.NO_IDENTITIES_LOCATED)
+
+
+def _even_split_with_detail(
+    ctx: AllocationContext,
+    identities: list[str],
+    detail: AllocationDetail,
+) -> AllocationResult:
+    """Split cost evenly with a custom allocation detail code."""
+    amounts = split_amount_evenly(ctx.split_amount, len(identities))
+    rows = [
+        make_row(
+            ctx,
+            identity_id=iid,
+            cost_type=CostType.SHARED,
+            amount=amt,
+            allocation_method="even_split",
+            allocation_detail=detail,
+        )
+        for iid, amt in zip(identities, amounts, strict=True)
+    ]
+    return AllocationResult(rows=rows)
+
+
+def _to_resource_with_detail(ctx: AllocationContext, detail: AllocationDetail) -> AllocationResult:
+    """Assign full cost to the billing resource with a specific detail code."""
+    return AllocationResult(
+        rows=[
+            make_row(
+                ctx,
+                identity_id=ctx.billing_line.resource_id,
+                cost_type=CostType.SHARED,
+                amount=ctx.split_amount,
+                allocation_method="to_resource",
+                allocation_detail=detail,
+            )
+        ]
+    )

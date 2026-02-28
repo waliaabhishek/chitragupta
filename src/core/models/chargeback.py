@@ -50,6 +50,13 @@ class AllocationDetail(StrEnum):
     # Even split (success)
     EVEN_SPLIT_ALLOCATION = "even_split_allocation"
 
+    # Network allocator — Tier 2 (no metrics, active identities absent)
+    NO_METRICS_NO_ACTIVE_IDENTITIES_LOCATED = "no_metrics_no_active_identities_located"
+
+    # Network allocator — Tier 3 (metrics present but zero usage)
+    NO_METRICS_PRESENT_MERGED_IDENTITIES_LOCATED = "no_metrics_present_merged_identities_located"
+    NO_METRICS_PRESENT_PENALTY_ALLOCATION_FOR_EVERYONE = "no_metrics_present_penalty_allocation_for_everyone"
+
 
 @dataclass
 class ChargebackRow:
