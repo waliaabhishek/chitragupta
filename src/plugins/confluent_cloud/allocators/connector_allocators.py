@@ -12,7 +12,7 @@ from dataclasses import replace
 from typing import TYPE_CHECKING
 
 from core.engine.helpers import allocate_evenly
-from core.models import CostType
+from core.models import OWNER_IDENTITY_TYPES, CostType
 
 if TYPE_CHECKING:
     from core.engine.allocation import AllocationContext, AllocationResult
@@ -25,12 +25,12 @@ def connect_capacity_allocator(ctx: AllocationContext) -> AllocationResult:
 
     Fallback chain:
     1. merged_active (resource_active union metrics_derived)
-    2. tenant_period (all tenant identities in billing window)
+    2. tenant_period filtered to owner types (SAs, users, pools — not API keys)
     3. UNALLOCATED (no identities found)
     """
     identity_ids = list(ctx.identities.merged_active.ids())
     if not identity_ids:
-        identity_ids = list(ctx.identities.tenant_period.ids())
+        identity_ids = list(ctx.identities.tenant_period.ids_by_type(*OWNER_IDENTITY_TYPES))
     return allocate_evenly(ctx, identity_ids)
 
 
@@ -41,12 +41,12 @@ def connect_tasks_allocator(ctx: AllocationContext) -> AllocationResult:
 
     Fallback chain:
     1. merged_active (resource_active union metrics_derived)
-    2. tenant_period (all tenant identities in billing window)
+    2. tenant_period filtered to owner types (SAs, users, pools — not API keys)
     3. UNALLOCATED (no identities found)
     """
     identity_ids = list(ctx.identities.merged_active.ids())
     if not identity_ids:
-        identity_ids = list(ctx.identities.tenant_period.ids())
+        identity_ids = list(ctx.identities.tenant_period.ids_by_type(*OWNER_IDENTITY_TYPES))
 
     result = allocate_evenly(ctx, identity_ids)
 

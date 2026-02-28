@@ -5,6 +5,9 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, TypedDict
 
+# Types that represent "owners" (not API keys or system identities)
+OWNER_IDENTITY_TYPES: tuple[str, ...] = ("service_account", "user", "identity_pool")
+
 
 class FlinkContextDict(TypedDict, total=False):
     """TypedDict for Flink handler's IdentityResolution.context.
@@ -48,6 +51,10 @@ class IdentitySet:
     def ids(self) -> frozenset[str]:
         """Return all identity IDs as a frozenset."""
         return frozenset(self._entries.keys())
+
+    def ids_by_type(self, *types: str) -> frozenset[str]:
+        """Return identity IDs matching the given types."""
+        return frozenset(i.identity_id for i in self._entries.values() if i.identity_type in types)
 
     def __len__(self) -> int:
         return len(self._entries)

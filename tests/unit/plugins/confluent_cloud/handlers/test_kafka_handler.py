@@ -298,6 +298,135 @@ class TestKafkaHandlerGatherIdentities:
         assert identity_ids == {"sa-1", "sa-2", "u-1", "key-1", "key-2"}
 
 
+class TestKafkaHandlerGatherIdentitiesProviderPools:
+    """Tests for GAP-10: gather_identities must also gather identity providers and pools."""
+
+    def test_calls_gather_identity_providers(self, mock_uow: MagicMock) -> None:
+        """gather_identities calls gather_identity_providers."""
+        from unittest.mock import patch
+
+        from plugins.confluent_cloud.handlers.kafka import KafkaHandler
+
+        mock_conn = MagicMock()
+        provider = Identity(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            identity_id="op-1",
+            identity_type="identity_provider",
+        )
+
+        with (
+            patch("plugins.confluent_cloud.gathering.gather_service_accounts", return_value=[]),
+            patch("plugins.confluent_cloud.gathering.gather_users", return_value=[]),
+            patch("plugins.confluent_cloud.gathering.gather_api_keys", return_value=[]),
+            patch(
+                "plugins.confluent_cloud.gathering.gather_identity_providers",
+                return_value=[provider],
+            ) as mock_providers,
+            patch("plugins.confluent_cloud.gathering.gather_identity_pools", return_value=[]),
+        ):
+            handler = KafkaHandler(connection=mock_conn, config=None, ecosystem="confluent_cloud")
+            result = list(handler.gather_identities("org-123", mock_uow))
+
+        mock_providers.assert_called_once_with(mock_conn, "confluent_cloud", "org-123")
+        assert provider in result
+
+    def test_passes_provider_ids_to_gather_identity_pools(self, mock_uow: MagicMock) -> None:
+        """Provider IDs from gather_identity_providers are passed to gather_identity_pools."""
+        from unittest.mock import patch
+
+        from plugins.confluent_cloud.handlers.kafka import KafkaHandler
+
+        mock_conn = MagicMock()
+        provider1 = Identity(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            identity_id="op-aaa",
+            identity_type="identity_provider",
+        )
+        provider2 = Identity(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            identity_id="op-bbb",
+            identity_type="identity_provider",
+        )
+        pool = Identity(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            identity_id="pool-1",
+            identity_type="identity_pool",
+        )
+
+        with (
+            patch("plugins.confluent_cloud.gathering.gather_service_accounts", return_value=[]),
+            patch("plugins.confluent_cloud.gathering.gather_users", return_value=[]),
+            patch("plugins.confluent_cloud.gathering.gather_api_keys", return_value=[]),
+            patch(
+                "plugins.confluent_cloud.gathering.gather_identity_providers",
+                return_value=[provider1, provider2],
+            ),
+            patch(
+                "plugins.confluent_cloud.gathering.gather_identity_pools",
+                return_value=[pool],
+            ) as mock_pools,
+        ):
+            handler = KafkaHandler(connection=mock_conn, config=None, ecosystem="confluent_cloud")
+            result = list(handler.gather_identities("org-123", mock_uow))
+
+        mock_pools.assert_called_once()
+        provider_ids_arg = mock_pools.call_args.args[3]
+        assert set(provider_ids_arg) == {"op-aaa", "op-bbb"}
+        assert pool in result
+
+    def test_yields_identity_pool_type_identities(self, mock_uow: MagicMock) -> None:
+        """gather_identities yields identity_pool type identities from pools."""
+        from unittest.mock import patch
+
+        from plugins.confluent_cloud.handlers.kafka import KafkaHandler
+
+        mock_conn = MagicMock()
+        provider = Identity(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            identity_id="op-1",
+            identity_type="identity_provider",
+        )
+        pool1 = Identity(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            identity_id="pool-1",
+            identity_type="identity_pool",
+        )
+        pool2 = Identity(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            identity_id="pool-2",
+            identity_type="identity_pool",
+        )
+
+        with (
+            patch("plugins.confluent_cloud.gathering.gather_service_accounts", return_value=[]),
+            patch("plugins.confluent_cloud.gathering.gather_users", return_value=[]),
+            patch("plugins.confluent_cloud.gathering.gather_api_keys", return_value=[]),
+            patch(
+                "plugins.confluent_cloud.gathering.gather_identity_providers",
+                return_value=[provider],
+            ),
+            patch(
+                "plugins.confluent_cloud.gathering.gather_identity_pools",
+                return_value=[pool1, pool2],
+            ),
+        ):
+            handler = KafkaHandler(connection=mock_conn, config=None, ecosystem="confluent_cloud")
+            result = list(handler.gather_identities("org-123", mock_uow))
+
+        identity_types = {i.identity_type for i in result}
+        assert "identity_provider" in identity_types
+        assert "identity_pool" in identity_types
+        pool_ids = {i.identity_id for i in result if i.identity_type == "identity_pool"}
+        assert pool_ids == {"pool-1", "pool-2"}
+
+
 class TestKafkaHandlerResolveIdentities:
     """Tests for resolve_identities method."""
 

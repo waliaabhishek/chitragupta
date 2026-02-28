@@ -119,6 +119,49 @@ class TestIdentitySet:
         assert s.ids() == frozenset()
 
 
+class TestIdentitySetIdsByType:
+    def test_ids_by_type_single_type_matches(self) -> None:
+        s = IdentitySet()
+        s.add(_make_id("sa-1", identity_type="service_account"))
+        s.add(_make_id("u-1", identity_type="user"))
+        result = s.ids_by_type("service_account")
+        assert result == frozenset({"sa-1"})
+
+    def test_ids_by_type_multiple_types(self) -> None:
+        s = IdentitySet()
+        s.add(_make_id("sa-1", identity_type="service_account"))
+        s.add(_make_id("u-1", identity_type="user"))
+        s.add(_make_id("key-1", identity_type="api_key"))
+        result = s.ids_by_type("service_account", "user")
+        assert result == frozenset({"sa-1", "u-1"})
+
+    def test_ids_by_type_no_matches_returns_empty(self) -> None:
+        s = IdentitySet()
+        s.add(_make_id("sa-1", identity_type="service_account"))
+        result = s.ids_by_type("identity_pool")
+        assert result == frozenset()
+
+    def test_ids_by_type_excludes_api_key_and_system(self) -> None:
+        s = IdentitySet()
+        s.add(_make_id("sa-1", identity_type="service_account"))
+        s.add(_make_id("pool-1", identity_type="identity_pool"))
+        s.add(_make_id("key-1", identity_type="api_key"))
+        s.add(_make_id("sys-1", identity_type="system"))
+        result = s.ids_by_type("service_account", "user", "identity_pool")
+        assert result == frozenset({"sa-1", "pool-1"})
+
+    def test_ids_by_type_returns_frozenset(self) -> None:
+        s = IdentitySet()
+        s.add(_make_id("sa-1", identity_type="service_account"))
+        result = s.ids_by_type("service_account")
+        assert isinstance(result, frozenset)
+
+    def test_ids_by_type_empty_set_returns_empty(self) -> None:
+        s = IdentitySet()
+        result = s.ids_by_type("service_account")
+        assert result == frozenset()
+
+
 class TestIdentityResolution:
     def test_construction(self) -> None:
         ra = IdentitySet()

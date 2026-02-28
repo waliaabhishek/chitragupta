@@ -130,6 +130,8 @@ class KafkaHandler:
         """
         from plugins.confluent_cloud.gathering import (
             gather_api_keys,
+            gather_identity_pools,
+            gather_identity_providers,
             gather_service_accounts,
             gather_users,
         )
@@ -140,6 +142,12 @@ class KafkaHandler:
         yield from gather_service_accounts(self._connection, self._ecosystem, tenant_id)
         yield from gather_users(self._connection, self._ecosystem, tenant_id)
         yield from gather_api_keys(self._connection, self._ecosystem, tenant_id)
+
+        # NEW: identity providers + pools
+        providers = list(gather_identity_providers(self._connection, self._ecosystem, tenant_id))
+        yield from providers
+        provider_ids = [p.identity_id for p in providers]
+        yield from gather_identity_pools(self._connection, self._ecosystem, tenant_id, provider_ids)
 
     def resolve_identities(
         self,
