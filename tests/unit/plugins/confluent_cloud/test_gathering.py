@@ -1084,3 +1084,92 @@ class TestParseIsoDatetime:
         result = _parse_iso_datetime("2024-01-15T10:30:00")
         assert result is not None
         assert result.tzinfo == UTC
+
+
+class TestPageSizeOverrides:
+    """Tests for GAP-05: per-endpoint page_size tuning."""
+
+    @respx.mock
+    def test_flink_compute_pools_uses_page_size_50(self) -> None:
+        from plugins.confluent_cloud.gathering import gather_flink_compute_pools
+
+        respx.get("https://api.confluent.cloud/fcpm/v2/compute-pools").mock(
+            return_value=httpx.Response(200, json={"data": [], "metadata": {}})
+        )
+
+        conn = CCloudConnection(api_key="k", api_secret=SecretStr("s"), request_interval_seconds=0)
+        list(gather_flink_compute_pools(conn, "confluent_cloud", "org-123", ["env-abc"], {}))
+
+        assert len(respx.calls) == 1
+        url_params = str(respx.calls[0].request.url)
+        assert "page_size=50&" in url_params or url_params.endswith("page_size=50")
+
+    @respx.mock
+    def test_flink_statements_uses_page_size_50(self) -> None:
+        from core.models import Resource, ResourceStatus
+        from plugins.confluent_cloud.gathering import gather_flink_statements
+
+        respx.get(
+            "https://flink.us-east-1.aws.confluent.cloud/sql/v1/organizations/org-123/environments/env-abc/statements"
+        ).mock(return_value=httpx.Response(200, json={"data": [], "metadata": {}}))
+
+        pool = Resource(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            resource_id="lfcp-abc",
+            resource_type="flink_compute_pool",
+            parent_id="env-abc",
+            status=ResourceStatus.ACTIVE,
+            metadata={"cloud": "aws", "region": "us-east-1", "is_allocatable": True},
+        )
+
+        list(gather_flink_statements("confluent_cloud", "org-123", allocatable_pools=[(pool, "k", "s")]))
+
+        assert len(respx.calls) == 1
+        url_params = str(respx.calls[0].request.url)
+        assert "page_size=50&" in url_params or url_params.endswith("page_size=50")
+
+    @respx.mock
+    def test_ksqldb_uses_page_size_100(self) -> None:
+        from plugins.confluent_cloud.gathering import gather_ksqldb_clusters
+
+        respx.get("https://api.confluent.cloud/ksqldbcm/v2/clusters").mock(
+            return_value=httpx.Response(200, json={"data": [], "metadata": {}})
+        )
+
+        conn = CCloudConnection(api_key="k", api_secret=SecretStr("s"), request_interval_seconds=0)
+        list(gather_ksqldb_clusters(conn, "confluent_cloud", "org-123", ["env-abc"]))
+
+        assert len(respx.calls) == 1
+        url_params = str(respx.calls[0].request.url)
+        assert "page_size=100&" in url_params or url_params.endswith("page_size=100")
+
+    @respx.mock
+    def test_api_keys_uses_page_size_100(self) -> None:
+        from plugins.confluent_cloud.gathering import gather_api_keys
+
+        respx.get("https://api.confluent.cloud/iam/v2/api-keys").mock(
+            return_value=httpx.Response(200, json={"data": [], "metadata": {}})
+        )
+
+        conn = CCloudConnection(api_key="k", api_secret=SecretStr("s"), request_interval_seconds=0)
+        list(gather_api_keys(conn, "confluent_cloud", "org-123"))
+
+        assert len(respx.calls) == 1
+        url_params = str(respx.calls[0].request.url)
+        assert "page_size=100&" in url_params or url_params.endswith("page_size=100")
+
+    @respx.mock
+    def test_schema_registry_uses_page_size_50(self) -> None:
+        from plugins.confluent_cloud.gathering import gather_schema_registries
+
+        respx.get("https://api.confluent.cloud/srcm/v3/clusters").mock(
+            return_value=httpx.Response(200, json={"data": [], "metadata": {}})
+        )
+
+        conn = CCloudConnection(api_key="k", api_secret=SecretStr("s"), request_interval_seconds=0)
+        list(gather_schema_registries(conn, "confluent_cloud", "org-123", ["env-abc"]))
+
+        assert len(respx.calls) == 1
+        url_params = str(respx.calls[0].request.url)
+        assert "page_size=50&" in url_params or url_params.endswith("page_size=50")

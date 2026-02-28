@@ -166,7 +166,7 @@ def gather_schema_registries(
     Endpoint: GET /srcm/v3/clusters?environment={env_id}
     """
     for env_id in environment_ids:
-        for item in conn.get("/srcm/v3/clusters", params={"environment": env_id}):
+        for item in conn.get("/srcm/v3/clusters", params={"environment": env_id, "page_size": 50}):
             spec = item.get("spec", {})
             metadata_obj = item.get("metadata", {})
 
@@ -203,7 +203,7 @@ def gather_ksqldb_clusters(
     Endpoint: GET /ksqldbcm/v2/clusters?environment={env_id}
     """
     for env_id in environment_ids:
-        for item in conn.get("/ksqldbcm/v2/clusters", params={"environment": env_id}):
+        for item in conn.get("/ksqldbcm/v2/clusters", params={"environment": env_id, "page_size": 100}):
             spec = item.get("spec", {})
             metadata_obj = item.get("metadata", {})
 
@@ -247,7 +247,7 @@ def gather_flink_compute_pools(
     Endpoint: GET /fcpm/v2/compute-pools?environment={env_id}
     """
     for env_id in environment_ids:
-        for item in conn.get("/fcpm/v2/compute-pools", params={"environment": env_id}):
+        for item in conn.get("/fcpm/v2/compute-pools", params={"environment": env_id, "page_size": 50}):
             spec = item.get("spec", {})
             metadata_obj = item.get("metadata", {})
 
@@ -324,7 +324,7 @@ def gather_flink_statements(
             regional_conn = get_or_create_connection(region, cloud, api_key, api_secret)
 
             path = f"/sql/v1/organizations/{org_id}/environments/{env_id}/statements"
-            for item in regional_conn.get(path):
+            for item in regional_conn.get(path, params={"page_size": 50}):
                 meta = item.get("metadata", {})
                 spec = item.get("spec", {})
                 status = item.get("status", {})
@@ -422,7 +422,7 @@ def gather_api_keys(
     Stores owner reference for later resolution.
     Endpoint: GET /iam/v2/api-keys
     """
-    for item in conn.get("/iam/v2/api-keys"):
+    for item in conn.get("/iam/v2/api-keys", params={"page_size": 100}):
         spec = item.get("spec", {})
         metadata_obj = item.get("metadata", {})
         yield Identity(
