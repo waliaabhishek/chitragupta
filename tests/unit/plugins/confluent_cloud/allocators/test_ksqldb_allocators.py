@@ -77,7 +77,7 @@ class TestKsqldbCsuAllocator:
         assert all(r.allocation_method == "even_split" for r in result.rows)
 
     def test_no_identities_unallocated(self, ksqldb_billing_line: BillingLineItem) -> None:
-        """Without identities, allocates to UNALLOCATED with USAGE cost type."""
+        """Without identities, allocates to resource_id with SHARED cost type."""
         resolution = IdentityResolution(
             resource_active=IdentitySet(),
             metrics_derived=IdentitySet(),
@@ -95,12 +95,12 @@ class TestKsqldbCsuAllocator:
         result = ksqldb_csu_allocator(ctx)
 
         assert len(result.rows) == 1
-        assert result.rows[0].identity_id == "UNALLOCATED"
+        assert result.rows[0].identity_id == ksqldb_billing_line.resource_id
         assert result.rows[0].amount == Decimal("100")
-        assert result.rows[0].cost_type == CostType.USAGE
+        assert result.rows[0].cost_type == CostType.SHARED
 
     def test_fallback_to_tenant_period(self, ksqldb_billing_line: BillingLineItem) -> None:
-        """Falls back to tenant_period when merged_active is empty."""
+        """Falls back to tenant_period with SHARED cost type when merged_active is empty."""
         resolution = IdentityResolution(
             resource_active=IdentitySet(),
             metrics_derived=IdentitySet(),
@@ -119,7 +119,7 @@ class TestKsqldbCsuAllocator:
 
         assert len(result.rows) == 1
         assert result.rows[0].identity_id == "sa-tenant"
-        assert result.rows[0].cost_type == CostType.USAGE
+        assert result.rows[0].cost_type == CostType.SHARED
 
     def test_three_way_split_with_remainder(self, ksqldb_billing_line: BillingLineItem) -> None:
         """Three identities splitting $10 handles remainder correctly."""
