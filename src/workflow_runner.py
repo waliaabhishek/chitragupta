@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
-from core.engine.orchestrator import ChargebackOrchestrator, PipelineRunResult
+from core.engine.orchestrator import ChargebackOrchestrator, GatherFailureThresholdError, PipelineRunResult
 
 if TYPE_CHECKING:
     from core.config.models import AppSettings, StorageConfig, TenantConfig
@@ -208,7 +208,13 @@ class WorkflowRunner:
 
     def _run_tenant(self, name: str, config: TenantConfig) -> PipelineRunResult:
         runtime = self._get_or_create_runtime(name, config)
-        result = runtime.orchestrator.run()
+        try:
+            result = runtime.orchestrator.run()
+        except GatherFailureThresholdError as exc:
+            logger.critical("FATAL: %s", exc)
+            import sys
+
+            sys.exit(1)
         runtime.last_run_at = datetime.now(UTC)
         return result
 

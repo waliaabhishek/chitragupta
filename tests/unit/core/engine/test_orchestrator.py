@@ -12,6 +12,7 @@ import pytest
 from core.engine.allocation import AllocationContext, AllocationResult
 from core.engine.orchestrator import (
     ChargebackOrchestrator,
+    GatherFailureThresholdError,
     PipelineRunResult,
     _ensure_utc,
     billing_window,
@@ -588,7 +589,9 @@ class TestZeroGatherProtection:
     def test_zero_gather_threshold_exceeded_deletes(self) -> None:
         """After N consecutive zero gathers, deletion proceeds."""
         handler = MockServiceHandler(resources=[], identities=[])
-        orch, storage = _create_orchestrator(handler=handler, zero_gather_deletion_threshold=2)
+        orch, storage = _create_orchestrator(
+            handler=handler, zero_gather_deletion_threshold=2, plugin_settings={"min_refresh_gap_seconds": 0}
+        )
         uow = storage.create_unit_of_work()
         uow.resources.upsert(_make_resource("r-existing"))
 
@@ -604,7 +607,9 @@ class TestZeroGatherProtection:
     def test_nonzero_gather_resets_counter(self) -> None:
         """Non-zero gather resets the consecutive counter."""
         handler = MockServiceHandler(resources=[], identities=[])
-        orch, storage = _create_orchestrator(handler=handler, zero_gather_deletion_threshold=3)
+        orch, storage = _create_orchestrator(
+            handler=handler, zero_gather_deletion_threshold=3, plugin_settings={"min_refresh_gap_seconds": 0}
+        )
         uow = storage.create_unit_of_work()
         uow.resources.upsert(_make_resource("r-existing"))
 
@@ -1468,3 +1473,256 @@ class TestOrchestratorInvariants:
         # The recalculation logic should have processed the cutoff date
         # Note: exact behavior depends on orchestrator implementation details
         assert result is not None  # Basic sanity check
+
+
+class TestRefreshThrottle:
+    """GAP-04: API object refresh throttle — resource/billing gather skipped within min_refresh_gap."""
+
+    def test_second_run_within_gap_skips_gather(self) -> None:
+        """Two run() calls within 30 minutes → second skips handler gather AND billing gather."""
+        gather_calls: list[str] = []
+
+        class TrackingHandler(MockServiceHandler):
+            def gather_resources(self, tenant_id: str, uow: Any) -> Iterable[Resource]:
+                gather_calls.append("gather_resources")
+                return self._resources
+
+            def gather_identities(self, tenant_id: str, uow: Any) -> Iterable[Identity]:
+                gather_calls.append("gather_identities")
+                return self._identities
+
+        billing_gather_calls: list[str] = []
+
+        class TrackingCostInput(MockCostInput):
+            def gather(self, tenant_id: str, start: datetime, end: datetime, uow: Any) -> Iterable[BillingLineItem]:
+                billing_gather_calls.append("billing_gather")
+                return self._lines
+
+        handler = TrackingHandler(
+            resources=[_make_resource()],
+            identities=[_make_identity()],
+        )
+        cost_input = TrackingCostInput()
+        orch, storage = _create_orchestrator(handler=handler, cost_input=cost_input)
+
+        t1 = NOW
+        t2 = NOW + timedelta(minutes=15)  # within 30 min gap
+
+        with patch("core.engine.orchestrator.datetime") as mock_dt:
+            mock_dt.now.return_value = t1
+            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+            orch.run()
+
+        first_resource_calls = gather_calls.count("gather_resources")
+        first_billing_calls = len(billing_gather_calls)
+        assert first_resource_calls >= 1, "First run must gather resources"
+        assert first_billing_calls >= 1, "First run must gather billing"
+
+        gather_calls.clear()
+        billing_gather_calls.clear()
+
+        with patch("core.engine.orchestrator.datetime") as mock_dt:
+            mock_dt.now.return_value = t2
+            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+            orch.run()
+
+        assert gather_calls.count("gather_resources") == 0, "Second run within gap must skip handler gather"
+        assert len(billing_gather_calls) == 0, "Second run within gap must skip billing gather"
+
+    def test_second_run_after_gap_does_gather(self) -> None:
+        """Two run() calls 31 minutes apart → second call does handler gather AND billing gather."""
+        gather_calls: list[str] = []
+
+        class TrackingHandler(MockServiceHandler):
+            def gather_resources(self, tenant_id: str, uow: Any) -> Iterable[Resource]:
+                gather_calls.append("gather_resources")
+                return self._resources
+
+            def gather_identities(self, tenant_id: str, uow: Any) -> Iterable[Identity]:
+                gather_calls.append("gather_identities")
+                return self._identities
+
+        billing_gather_calls: list[str] = []
+
+        class TrackingCostInput(MockCostInput):
+            def gather(self, tenant_id: str, start: datetime, end: datetime, uow: Any) -> Iterable[BillingLineItem]:
+                billing_gather_calls.append("billing_gather")
+                return self._lines
+
+        handler = TrackingHandler(
+            resources=[_make_resource()],
+            identities=[_make_identity()],
+        )
+        cost_input = TrackingCostInput()
+        orch, storage = _create_orchestrator(handler=handler, cost_input=cost_input)
+
+        t1 = NOW
+        t2 = NOW + timedelta(minutes=31)  # beyond 30 min gap
+
+        with patch("core.engine.orchestrator.datetime") as mock_dt:
+            mock_dt.now.return_value = t1
+            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+            orch.run()
+
+        gather_calls.clear()
+        billing_gather_calls.clear()
+
+        with patch("core.engine.orchestrator.datetime") as mock_dt:
+            mock_dt.now.return_value = t2
+            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+            orch.run()
+
+        assert gather_calls.count("gather_resources") >= 1, "Second run after gap must do handler gather"
+        assert len(billing_gather_calls) >= 1, "Second run after gap must do billing gather"
+
+    def test_first_run_always_gathers(self) -> None:
+        """First run() always does handler gather regardless of any state."""
+        gather_calls: list[str] = []
+
+        class TrackingHandler(MockServiceHandler):
+            def gather_resources(self, tenant_id: str, uow: Any) -> Iterable[Resource]:
+                gather_calls.append("gather_resources")
+                return self._resources
+
+        handler = TrackingHandler(
+            resources=[_make_resource()],
+            identities=[_make_identity()],
+        )
+        orch, storage = _create_orchestrator(handler=handler)
+
+        orch.run()
+        assert gather_calls.count("gather_resources") >= 1, "First run must always gather"
+
+    def test_min_refresh_gap_loaded_from_plugin_settings(self) -> None:
+        """_min_refresh_gap is read from plugin_settings['min_refresh_gap_seconds'] in _load_overrides()."""
+        orch, _ = _create_orchestrator(
+            plugin_settings={"min_refresh_gap_seconds": 900},
+        )
+        assert hasattr(orch, "_min_refresh_gap"), "Orchestrator must have _min_refresh_gap attribute"
+        assert orch._min_refresh_gap == timedelta(seconds=900), (
+            f"Expected timedelta(seconds=900), got {orch._min_refresh_gap}"
+        )
+
+    def test_min_refresh_gap_default_1800(self) -> None:
+        """Without explicit setting, _min_refresh_gap defaults to 1800 seconds (30 min)."""
+        orch, _ = _create_orchestrator(plugin_settings={})
+        assert hasattr(orch, "_min_refresh_gap"), "Orchestrator must have _min_refresh_gap attribute"
+        assert orch._min_refresh_gap == timedelta(seconds=1800), (
+            f"Expected timedelta(seconds=1800), got {orch._min_refresh_gap}"
+        )
+
+    def test_deletion_detection_skipped_when_throttled(self) -> None:
+        """Deletion detection is skipped when should_refresh_resources is False."""
+        handler = MockServiceHandler(
+            resources=[_make_resource("r1")],
+            identities=[_make_identity("i1")],
+        )
+        orch, storage = _create_orchestrator(handler=handler)
+        uow = storage.create_unit_of_work()
+
+        # Pre-populate a resource that would be "missing" on second gather
+        # if gather were to actually run
+        old_resource = _make_resource("r-stale")
+        uow.resources.upsert(old_resource)
+
+        t1 = NOW
+        t2 = NOW + timedelta(minutes=10)  # within gap
+
+        # First run — gathers, r-stale not returned by handler, so normally deleted
+        with patch("core.engine.orchestrator.datetime") as mock_dt:
+            mock_dt.now.return_value = t1
+            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+            orch.run()
+
+        # Reset handler to NOT return r1 (simulating it disappearing)
+        handler._resources = []
+
+        uow.resources._deletions.clear()
+
+        # Second run within gap — should skip deletion detection entirely
+        with patch("core.engine.orchestrator.datetime") as mock_dt:
+            mock_dt.now.return_value = t2
+            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+            orch.run()
+
+        # No new deletions should have occurred (gather was skipped)
+        assert uow.resources._deletions == [], (
+            f"Deletion detection should be skipped when throttled, but got: {uow.resources._deletions}"
+        )
+
+
+class TestGatherFailureEscalation:
+    """Consecutive gather failure tracking with threshold-based exception."""
+
+    def _make_failing_cost_input(self) -> MockCostInput:
+        """Create a cost_input whose gather raises."""
+
+        class FailingCostInput(MockCostInput):
+            def gather(self, tenant_id: str, start: datetime, end: datetime, uow: Any) -> Iterable[BillingLineItem]:
+                raise RuntimeError("API unavailable")
+
+        return FailingCostInput()
+
+    def test_gather_failure_increments_counter(self) -> None:
+        """Counter increments on each gather exception."""
+        cost_input = self._make_failing_cost_input()
+        orch, _ = _create_orchestrator(
+            cost_input=cost_input,
+            plugin_settings={"min_refresh_gap_seconds": 0},
+        )
+
+        assert orch._consecutive_gather_failures == 0
+        orch.run()
+        assert orch._consecutive_gather_failures == 1
+        orch.run()
+        assert orch._consecutive_gather_failures == 2
+
+    def test_gather_failure_threshold_exceeded_raises(self) -> None:
+        """Exception raised after N consecutive failures (default threshold=5)."""
+        cost_input = self._make_failing_cost_input()
+        orch, _ = _create_orchestrator(
+            cost_input=cost_input,
+            plugin_settings={"min_refresh_gap_seconds": 0},
+        )
+
+        # First 4 should not raise GatherFailureThresholdError
+        for _ in range(4):
+            orch.run()
+        assert orch._consecutive_gather_failures == 4
+
+        # 5th should raise
+        with pytest.raises(GatherFailureThresholdError, match="5 consecutive times"):
+            orch.run()
+
+    def test_gather_success_resets_failure_counter(self) -> None:
+        """Counter resets to 0 on successful gather."""
+        cost_input = self._make_failing_cost_input()
+        orch, _ = _create_orchestrator(
+            cost_input=cost_input,
+            plugin_settings={"min_refresh_gap_seconds": 0},
+        )
+
+        # Accumulate 3 failures
+        for _ in range(3):
+            orch.run()
+        assert orch._consecutive_gather_failures == 3
+
+        # Replace cost_input with working one so gather succeeds
+        orch._bundle.plugin._cost_input = MockCostInput()
+        orch.run()
+        assert orch._consecutive_gather_failures == 0
+
+    def test_gather_failure_threshold_configurable(self) -> None:
+        """gather_failure_threshold from TenantConfig is used."""
+        cost_input = self._make_failing_cost_input()
+        orch, _ = _create_orchestrator(
+            cost_input=cost_input,
+            plugin_settings={"min_refresh_gap_seconds": 0},
+            gather_failure_threshold=2,
+        )
+
+        orch.run()
+        assert orch._consecutive_gather_failures == 1
+
+        with pytest.raises(GatherFailureThresholdError, match="2 consecutive times"):
+            orch.run()

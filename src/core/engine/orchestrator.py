@@ -28,6 +28,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
+class GatherFailureThresholdError(Exception):
+    """Raised when consecutive gather failures exceed threshold."""
+
+
 GRANULARITY_DURATION: dict[str, timedelta] = {
     "hourly": timedelta(hours=1),
     "daily": timedelta(hours=24),
@@ -91,6 +96,12 @@ class ChargebackOrchestrator:
         self._allocator_params: dict[str, Any] = {}
         self._load_overrides(tenant_config.plugin_settings)
 
+        # GAP-04: API object refresh throttle
+        self._last_resource_gather_at: datetime | None = None
+
+        # Consecutive gather failure tracking
+        self._consecutive_gather_failures: int = 0
+
         # Zero-gather counters (in-memory, reset on restart)
         self._consecutive_zero_resource_gathers = 0
         self._consecutive_zero_identity_gathers = 0
@@ -114,6 +125,9 @@ class ChargebackOrchestrator:
         for service_type, dotted_path in identity_overrides.items():
             fn = _load_identity_resolver(dotted_path)
             self._identity_overrides[service_type] = fn
+
+        # GAP-04: configurable refresh throttle (default 30 min)
+        self._min_refresh_gap = timedelta(seconds=plugin_settings.get("min_refresh_gap_seconds", 1800))
 
     def _ensure_unallocated_identity(self, uow: UnitOfWork) -> None:
         """Upsert the UNALLOCATED identity for this tenant (idempotent)."""
@@ -139,10 +153,20 @@ class ChargebackOrchestrator:
                 dates_gathered, gather_errors = self._gather(uow)
                 errors.extend(gather_errors)
                 uow.commit()
+            # Reset on success
+            self._consecutive_gather_failures = 0
         except Exception as exc:
             logger.error("Gather phase failed for %s: %s", self._tenant_name, exc)
             errors.append(f"Gather phase failed: {exc}")
             gather_failed = True
+            # Increment and check threshold
+            self._consecutive_gather_failures += 1
+            threshold = self._tenant_config.gather_failure_threshold
+            if self._consecutive_gather_failures >= threshold:
+                raise GatherFailureThresholdError(
+                    f"Tenant {self._tenant_name} gather failed {self._consecutive_gather_failures} "
+                    f"consecutive times (threshold: {threshold}). Exiting for operator attention."
+                ) from exc
 
         if gather_failed:
             return PipelineRunResult(
@@ -189,6 +213,19 @@ class ChargebackOrchestrator:
     def _gather(self, uow: UnitOfWork) -> tuple[int, list[str]]:
         """Run gather phase. Returns (billing_dates_count, errors)."""
         now = datetime.now(UTC)
+
+        # GAP-04: throttle resource/billing refresh
+        should_refresh_resources = (
+            self._last_resource_gather_at is None or (now - self._last_resource_gather_at) >= self._min_refresh_gap
+        )
+
+        if not should_refresh_resources:
+            logger.debug(
+                "Skipping resource/billing refresh — last gather was %s ago",
+                now - self._last_resource_gather_at,
+            )
+            return 0, []
+
         all_gathered_resource_ids: set[str] = set()
         all_gathered_identity_ids: set[str] = set()
         gather_complete = True
@@ -235,6 +272,9 @@ class ChargebackOrchestrator:
 
         # Recalculation window
         self._apply_recalculation_window(uow, gathered_billing_dates, now)
+
+        # GAP-04: update last gather timestamp on success
+        self._last_resource_gather_at = now
 
         return len(gathered_billing_dates), gather_errors
 

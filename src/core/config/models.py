@@ -62,6 +62,7 @@ class TenantConfig(BaseModel):
     allocation_retry_limit: int = Field(default=3, gt=0, le=10)
     max_dates_per_run: int = Field(default=15, gt=0, le=365)
     zero_gather_deletion_threshold: int = Field(default=-1, ge=-1)
+    gather_failure_threshold: int = Field(default=5, gt=0)
     tenant_execution_timeout_seconds: int = Field(default=3600, ge=0)
     storage: StorageConfig = Field(default_factory=StorageConfig)
     plugin_settings: dict[str, Any] = Field(default_factory=dict)
