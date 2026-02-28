@@ -461,9 +461,7 @@ class TestBillingRepository:
         assert len(results) == 1
         assert results[0].total_cost == Decimal("9.99")
 
-    def test_upsert_no_warning_when_same_total_cost(
-        self, session: Session, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    def test_upsert_no_warning_when_same_total_cost(self, session: Session, caplog: pytest.LogCaptureFixture) -> None:
         import logging
 
         repo = SQLModelBillingRepository(session)
@@ -476,9 +474,7 @@ class TestBillingRepository:
 
         assert "Billing revision detected" not in caplog.text
 
-    def test_upsert_new_record_no_warning(
-        self, session: Session, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    def test_upsert_new_record_no_warning(self, session: Session, caplog: pytest.LogCaptureFixture) -> None:
         import logging
 
         repo = SQLModelBillingRepository(session)

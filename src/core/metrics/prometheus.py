@@ -5,6 +5,7 @@ import logging
 import random
 import threading
 import time
+from collections import OrderedDict
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -48,7 +49,7 @@ class PrometheusConfig:
     timeout: float = 30.0
     max_workers: int = 10
     cache_maxsize: int = 512
-    cache_ttl_seconds: float = 300.0
+    cache_ttl_seconds: float | None = 3600.0
     step_seconds: int = 3600
     """Fallback step (seconds) if caller-provided step resolves to ≤0.
     Protocol default timedelta(hours=1) takes precedence in normal operation.
@@ -76,7 +77,7 @@ class PrometheusMetricsSource:
         self._auth = self._build_auth()
         if self._config.auth and self._config.auth.type == "bearer":
             self._extra_headers["Authorization"] = f"Bearer {self._config.auth.token or ''}"
-        self._cache: dict[tuple[str, ...], tuple[float, str]] = {}
+        self._cache: OrderedDict[tuple[str, ...], tuple[float | None, str]] = OrderedDict()
         self._cache_lock = threading.Lock()
         # Connection pooling via httpx.Client (injectable for testing)
         if client is not None:
@@ -168,8 +169,11 @@ class PrometheusMetricsSource:
             cached = self._cache.get(cache_key)
             if cached is not None:
                 expiry, text = cached
-                if time.monotonic() < expiry:
+                if expiry is None or time.monotonic() < expiry:
+                    self._cache.move_to_end(cache_key)
                     return text
+                # Expired — remove it
+                del self._cache[cache_key]
 
         data = {
             "query": query_expression,
@@ -182,22 +186,19 @@ class PrometheusMetricsSource:
 
         response_text = self._post_with_retry(self._url_range, data, headers)
 
-        # Cache the result (thread-safe)
+        # Cache the result with LRU eviction (thread-safe)
         with self._cache_lock:
-            # Evict expired entries if cache is full
-            if len(self._cache) >= self._config.cache_maxsize:
-                now = time.monotonic()
-                expired_keys = [k for k, (exp, _) in self._cache.items() if now >= exp]
-                for k in expired_keys:
-                    del self._cache[k]
-
-            # If still at capacity after eviction, skip caching
-            if len(self._cache) >= self._config.cache_maxsize:
-                LOGGER.debug("Cache full with non-expired entries; skipping cache for query")
-                return response_text
-
-            expiry = time.monotonic() + self._config.cache_ttl_seconds
-            self._cache[cache_key] = (expiry, response_text)
+            if cache_key in self._cache:
+                self._cache.move_to_end(cache_key)
+            else:
+                if len(self._cache) >= self._config.cache_maxsize:
+                    self._cache.popitem(last=False)
+                expiry = (
+                    None
+                    if self._config.cache_ttl_seconds is None
+                    else time.monotonic() + self._config.cache_ttl_seconds
+                )
+                self._cache[cache_key] = (expiry, response_text)
 
         return response_text
 

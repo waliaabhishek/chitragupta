@@ -128,7 +128,7 @@ class TestPrometheusConfig:
         assert cfg.timeout == 30.0
         assert cfg.max_workers == 10
         assert cfg.cache_maxsize == 512
-        assert cfg.cache_ttl_seconds == 300.0
+        assert cfg.cache_ttl_seconds == 3600.0
         assert cfg.step_seconds == 3600
         assert cfg.max_retries == 4
         assert cfg.base_delay == 1.0
@@ -451,19 +451,19 @@ class TestCache:
         # Both should have made HTTP calls (no cache hit)
         assert mock_post.call_count == 2
 
-    def test_cache_full_non_expired_skips_caching(self) -> None:
-        """When cache is full with non-expired entries, new results are not cached."""
+    def test_cache_full_non_expired_evicts_lru(self) -> None:
+        """When cache is full with non-expired entries, LRU entry is evicted to make room."""
         mock_post = MagicMock(return_value=_mock_response(_RANGE_RESPONSE, 200))
         src, _ = _make_source_with_mock(mock_post, cache_maxsize=1, cache_ttl_seconds=300.0)
 
         # Fill cache with 1 entry (long TTL, won't expire)
         src.query([_QUERY], _START, _END, _STEP)
-        # Different params — cache full, nothing expired, result NOT cached
+        # Different params — cache full, LRU evicted, new result cached
         end2 = datetime(2026, 1, 3, tzinfo=UTC)
         src.query([_QUERY], _START, end2, _STEP)
-        # Same params as step 2 — should make another HTTP call since step 2 wasn't cached
+        # Same params as step 2 — should be a cache hit now (LRU eviction made room)
         src.query([_QUERY], _START, end2, _STEP)
-        assert mock_post.call_count == 3
+        assert mock_post.call_count == 2
 
 
 # ===========================================================================
