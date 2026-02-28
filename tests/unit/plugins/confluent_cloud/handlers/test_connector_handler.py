@@ -30,8 +30,24 @@ class TestConnectorHandlerProperties:
             "CONNECT_NUM_TASKS",
             "CONNECT_THROUGHPUT",
             "CUSTOM_CONNECT_PLUGIN",
+            "CUSTOM_CONNECT_NUM_TASKS",
+            "CUSTOM_CONNECT_THROUGHPUT",
         )
         assert handler.handles_product_types == expected
+
+    def test_handles_custom_connect_num_tasks(self) -> None:
+        """CUSTOM_CONNECT_NUM_TASKS is in handles_product_types."""
+        from plugins.confluent_cloud.handlers.connectors import ConnectorHandler
+
+        handler = ConnectorHandler(connection=None, config=None, ecosystem="confluent_cloud")
+        assert "CUSTOM_CONNECT_NUM_TASKS" in handler.handles_product_types
+
+    def test_handles_custom_connect_throughput(self) -> None:
+        """CUSTOM_CONNECT_THROUGHPUT is in handles_product_types."""
+        from plugins.confluent_cloud.handlers.connectors import ConnectorHandler
+
+        handler = ConnectorHandler(connection=None, config=None, ecosystem="confluent_cloud")
+        assert "CUSTOM_CONNECT_THROUGHPUT" in handler.handles_product_types
 
 
 class TestConnectorHandlerGetAllocator:
@@ -76,6 +92,26 @@ class TestConnectorHandlerGetAllocator:
 
         handler = ConnectorHandler(connection=None, config=None, ecosystem="confluent_cloud")
         assert handler.get_allocator("CUSTOM_CONNECT_PLUGIN") is connect_capacity_allocator
+
+    def test_custom_num_tasks_allocator(self) -> None:
+        """CUSTOM_CONNECT_NUM_TASKS returns connect_tasks_allocator (USAGE cost type)."""
+        from plugins.confluent_cloud.allocators.connector_allocators import (
+            connect_tasks_allocator,
+        )
+        from plugins.confluent_cloud.handlers.connectors import ConnectorHandler
+
+        handler = ConnectorHandler(connection=None, config=None, ecosystem="confluent_cloud")
+        assert handler.get_allocator("CUSTOM_CONNECT_NUM_TASKS") is connect_tasks_allocator
+
+    def test_custom_throughput_allocator(self) -> None:
+        """CUSTOM_CONNECT_THROUGHPUT returns connect_tasks_allocator (USAGE cost type)."""
+        from plugins.confluent_cloud.allocators.connector_allocators import (
+            connect_tasks_allocator,
+        )
+        from plugins.confluent_cloud.handlers.connectors import ConnectorHandler
+
+        handler = ConnectorHandler(connection=None, config=None, ecosystem="confluent_cloud")
+        assert handler.get_allocator("CUSTOM_CONNECT_THROUGHPUT") is connect_tasks_allocator
 
     def test_unknown_product_type_raises(self) -> None:
         """Unknown product type raises ValueError."""

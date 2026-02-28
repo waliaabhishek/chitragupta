@@ -4,6 +4,8 @@ Handles all Kafka Connect-related product types:
 - CONNECT_CAPACITY: Infrastructure cost (even split)
 - CONNECT_NUM_TASKS: Task-based cost (even split)
 - CONNECT_THROUGHPUT: Throughput-based cost (even split)
+- CUSTOM_CONNECT_NUM_TASKS: Custom connector task-based cost (even split)
+- CUSTOM_CONNECT_THROUGHPUT: Custom connector throughput cost (even split)
 - CUSTOM_CONNECT_PLUGIN: Custom plugin cost (infrastructure, even split)
 """
 
@@ -34,6 +36,8 @@ _CONNECTOR_PRODUCT_TYPES: tuple[str, ...] = (
     "CONNECT_NUM_TASKS",
     "CONNECT_THROUGHPUT",
     "CUSTOM_CONNECT_PLUGIN",
+    "CUSTOM_CONNECT_NUM_TASKS",
+    "CUSTOM_CONNECT_THROUGHPUT",
 )
 
 # Map product types to allocator functions.
@@ -42,6 +46,8 @@ _ALLOCATOR_MAP: dict[str, CostAllocator] = {
     "CONNECT_CAPACITY": connect_capacity_allocator,
     "CONNECT_NUM_TASKS": connect_tasks_allocator,
     "CONNECT_THROUGHPUT": connect_throughput_allocator,
+    "CUSTOM_CONNECT_NUM_TASKS": connect_tasks_allocator,
+    "CUSTOM_CONNECT_THROUGHPUT": connect_tasks_allocator,
     "CUSTOM_CONNECT_PLUGIN": connect_capacity_allocator,  # Infrastructure cost
 }
 
