@@ -204,9 +204,13 @@ def resolve_flink_identity(
     - tenant_period: empty (orchestrator fills this)
     - context["stmt_owner_cfu"]: dict[str, float] mapping owner_id -> total CFU
     """
-    # Primary path: extract from metrics
+    # Primary path: extract from metrics — prefer flink_cfu_primary, fall back to flink_cfu_fallback
     if metrics_data:
-        active_stmts = _extract_active_statements(metrics_data, resource_id)
+        cfu_data = metrics_data.get("flink_cfu_primary", [])
+        if not cfu_data:
+            cfu_data = metrics_data.get("flink_cfu_fallback", [])
+        filtered_metrics: dict[str, list[MetricRow]] = {"flink_cfu_active": cfu_data} if cfu_data else {}
+        active_stmts = _extract_active_statements(filtered_metrics, resource_id) if filtered_metrics else {}
 
         if active_stmts:
             stmt_owner_cfu, resource_active = _resolve_statement_owners(

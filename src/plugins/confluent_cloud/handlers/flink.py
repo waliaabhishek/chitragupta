@@ -15,6 +15,7 @@ from collections.abc import Iterable, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
+from core.models import MetricQuery
 from plugins.confluent_cloud.allocators.flink_allocators import flink_cfu_allocator
 from plugins.confluent_cloud.handlers.flink_identity import resolve_flink_identity
 
@@ -22,11 +23,27 @@ _LOGGER = logging.getLogger(__name__)
 _EPOCH_START = datetime(2000, 1, 1, tzinfo=UTC)
 
 if TYPE_CHECKING:
-    from core.models import Identity, IdentityResolution, MetricQuery, MetricRow, Resource
+    from core.models import Identity, IdentityResolution, MetricRow, Resource
     from core.plugin.protocols import CostAllocator
     from core.storage.interface import UnitOfWork
     from plugins.confluent_cloud.config import CCloudPluginConfig
     from plugins.confluent_cloud.connections import CCloudConnection
+
+_FLINK_METRICS_PRIMARY = MetricQuery(
+    key="flink_cfu_primary",
+    query_expression='sum by (compute_pool_id, flink_statement_name)(confluent_flink_num_cfu{resource_id=~"lfcp-.+"})',
+    label_keys=("compute_pool_id", "flink_statement_name"),
+    resource_label="compute_pool_id",
+)
+_FLINK_METRICS_FALLBACK = MetricQuery(
+    key="flink_cfu_fallback",
+    query_expression=(
+        "sum by (compute_pool_id, flink_statement_name)"
+        '(confluent_flink_statement_utilization_cfu_minutes_consumed{resource_id=~"lfcp-.+"})'
+    ),
+    label_keys=("compute_pool_id", "flink_statement_name"),
+    resource_label="compute_pool_id",
+)
 
 _FLINK_PRODUCT_TYPES: tuple[str, ...] = (
     "FLINK_NUM_CFU",
@@ -160,22 +177,12 @@ class FlinkHandler:
         )
 
     def get_metrics_for_product_type(self, product_type: str) -> list[MetricQuery]:
-        """Return CFU metrics query for Flink product types.
+        """Return CFU metrics queries for Flink product types.
 
-        Flink needs metrics to identify active statements and their CFU usage.
+        Returns primary (new metric name) and fallback (legacy metric name) so
+        tenants still exporting the legacy metric name are covered.
         """
-        from core.models import MetricQuery
-
-        return [
-            MetricQuery(
-                key="confluent_flink_num_cfu",
-                query_expression=(
-                    'sum by (compute_pool_id, flink_statement_name)(confluent_flink_num_cfu{resource_id=~"lfcp-.+"})'
-                ),
-                label_keys=("compute_pool_id", "flink_statement_name"),
-                resource_label="compute_pool_id",
-            )
-        ]
+        return [_FLINK_METRICS_PRIMARY, _FLINK_METRICS_FALLBACK]
 
     def get_allocator(self, product_type: str) -> CostAllocator:
         """Return allocator function for this product type."""

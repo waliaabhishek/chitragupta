@@ -103,7 +103,7 @@ def flink_billing_line() -> BillingLineItem:
 def flink_metrics_two_owners() -> dict[str, list[MetricRow]]:
     """Metrics data with two statement owners."""
     return {
-        "confluent_flink_num_cfu": [
+        "flink_cfu_primary": [
             MetricRow(
                 timestamp=datetime(2026, 2, 1, tzinfo=UTC),
                 metric_key="confluent_flink_num_cfu",
@@ -140,8 +140,10 @@ class TestFlinkBillingToChargebackEndToEnd:
 
         # Step 1: Verify metrics are needed
         metrics_queries = handler.get_metrics_for_product_type("FLINK_NUM_CFU")
-        assert len(metrics_queries) == 1
-        assert metrics_queries[0].key == "confluent_flink_num_cfu"
+        assert len(metrics_queries) == 2
+        keys = {mq.key for mq in metrics_queries}
+        assert "flink_cfu_primary" in keys
+        assert "flink_cfu_fallback" in keys
 
         # Step 2: Resolve identities with metrics
         identity_res = handler.resolve_identities(
@@ -260,5 +262,7 @@ class TestPluginHandlerIntegrationFlink:
         flink_handler = handlers["flink"]
 
         queries = flink_handler.get_metrics_for_product_type("FLINK_NUM_CFU")
-        assert len(queries) > 0
-        assert queries[0].key == "confluent_flink_num_cfu"
+        assert len(queries) == 2
+        keys = {mq.key for mq in queries}
+        assert "flink_cfu_primary" in keys
+        assert "flink_cfu_fallback" in keys

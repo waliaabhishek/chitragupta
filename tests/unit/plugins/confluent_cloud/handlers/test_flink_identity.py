@@ -55,7 +55,7 @@ class TestResolveFlinkIdentityMetricsNoMatch:
         from plugins.confluent_cloud.handlers.flink_identity import resolve_flink_identity
 
         metrics = {
-            "confluent_flink_num_cfu": [
+            "flink_cfu_primary": [
                 MetricRow(
                     timestamp=datetime(2026, 2, 1, tzinfo=UTC),
                     metric_key="confluent_flink_num_cfu",
@@ -83,7 +83,7 @@ class TestResolveFlinkIdentityMetricsNoMatch:
         from plugins.confluent_cloud.handlers.flink_identity import resolve_flink_identity
 
         metrics = {
-            "confluent_flink_num_cfu": [
+            "flink_cfu_primary": [
                 MetricRow(
                     timestamp=datetime(2026, 2, 1, tzinfo=UTC),
                     metric_key="confluent_flink_num_cfu",
@@ -115,7 +115,7 @@ class TestResolveFlinkIdentityWithStatements:
         from plugins.confluent_cloud.handlers.flink_identity import resolve_flink_identity
 
         metrics = {
-            "confluent_flink_num_cfu": [
+            "flink_cfu_primary": [
                 MetricRow(
                     timestamp=datetime(2026, 2, 1, tzinfo=UTC),
                     metric_key="confluent_flink_num_cfu",
@@ -164,7 +164,7 @@ class TestResolveFlinkIdentityWithStatements:
         from plugins.confluent_cloud.handlers.flink_identity import resolve_flink_identity
 
         metrics = {
-            "confluent_flink_num_cfu": [
+            "flink_cfu_primary": [
                 MetricRow(
                     timestamp=datetime(2026, 2, 1, tzinfo=UTC),
                     metric_key="confluent_flink_num_cfu",
@@ -234,7 +234,7 @@ class TestResolveFlinkIdentityWithStatements:
         from plugins.confluent_cloud.handlers.flink_identity import resolve_flink_identity
 
         metrics = {
-            "confluent_flink_num_cfu": [
+            "flink_cfu_primary": [
                 MetricRow(
                     timestamp=datetime(2026, 2, 1, tzinfo=UTC),
                     metric_key="confluent_flink_num_cfu",
@@ -299,7 +299,7 @@ class TestResolveFlinkIdentityWithStatements:
         )
 
         metrics = {
-            "confluent_flink_num_cfu": [
+            "flink_cfu_primary": [
                 MetricRow(
                     timestamp=datetime(2026, 2, 1, tzinfo=UTC),
                     metric_key="confluent_flink_num_cfu",
@@ -333,7 +333,7 @@ class TestResolveFlinkIdentityWithStatements:
         )
 
         metrics = {
-            "confluent_flink_num_cfu": [
+            "flink_cfu_primary": [
                 MetricRow(
                     timestamp=datetime(2026, 2, 1, tzinfo=UTC),
                     metric_key="confluent_flink_num_cfu",
@@ -374,7 +374,7 @@ class TestResolveFlinkIdentityWithStatements:
         from plugins.confluent_cloud.handlers.flink_identity import resolve_flink_identity
 
         metrics = {
-            "confluent_flink_num_cfu": [
+            "flink_cfu_primary": [
                 MetricRow(
                     timestamp=datetime(2026, 2, 1, tzinfo=UTC),
                     metric_key="confluent_flink_num_cfu",
@@ -418,7 +418,7 @@ class TestResolveFlinkIdentityWithStatements:
         from plugins.confluent_cloud.handlers.flink_identity import resolve_flink_identity
 
         metrics = {
-            "confluent_flink_num_cfu": [
+            "flink_cfu_primary": [
                 MetricRow(
                     timestamp=datetime(2026, 2, 1, tzinfo=UTC),
                     metric_key="confluent_flink_num_cfu",
@@ -466,7 +466,7 @@ class TestResolveFlinkIdentityWithStatements:
         from plugins.confluent_cloud.handlers.flink_identity import resolve_flink_identity
 
         metrics = {
-            "confluent_flink_num_cfu": [
+            "flink_cfu_primary": [
                 MetricRow(
                     timestamp=datetime(2026, 2, 1, 0, tzinfo=UTC),
                     metric_key="confluent_flink_num_cfu",

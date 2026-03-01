@@ -67,21 +67,25 @@ class TestFlinkHandlerGetMetrics:
         handler = FlinkHandler(connection=None, config=None, ecosystem="confluent_cloud")
         metrics = handler.get_metrics_for_product_type("FLINK_NUM_CFU")
 
-        assert len(metrics) == 1
-        mq = metrics[0]
-        assert mq.key == "confluent_flink_num_cfu"
-        assert "compute_pool_id" in mq.label_keys
-        assert "flink_statement_name" in mq.label_keys
-        assert mq.resource_label == "compute_pool_id"
+        assert len(metrics) == 2
+        keys = {mq.key for mq in metrics}
+        assert "flink_cfu_primary" in keys
+        assert "flink_cfu_fallback" in keys
+        primary = next(mq for mq in metrics if mq.key == "flink_cfu_primary")
+        assert "compute_pool_id" in primary.label_keys
+        assert "flink_statement_name" in primary.label_keys
+        assert primary.resource_label == "compute_pool_id"
 
     def test_cfus_returns_metric_query(self) -> None:
-        """FLINK_NUM_CFUS returns same CFU metric query."""
+        """FLINK_NUM_CFUS returns primary and fallback CFU metric queries."""
         from plugins.confluent_cloud.handlers.flink import FlinkHandler
 
         handler = FlinkHandler(connection=None, config=None, ecosystem="confluent_cloud")
         metrics = handler.get_metrics_for_product_type("FLINK_NUM_CFUS")
-        assert len(metrics) == 1
-        assert metrics[0].key == "confluent_flink_num_cfu"
+        assert len(metrics) == 2
+        keys = {mq.key for mq in metrics}
+        assert "flink_cfu_primary" in keys
+        assert "flink_cfu_fallback" in keys
 
 
 class TestFlinkHandlerGatherResources:
