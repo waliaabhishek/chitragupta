@@ -61,6 +61,27 @@ def create_flink_sentinel(identity_id: str, tenant_id: str, ecosystem: str, disp
     )
 
 
+def create_ksqldb_sentinel(identity_id: str, tenant_id: str, ecosystem: str, display_name: str) -> Identity:
+    """Create a ksqlDB-specific sentinel identity.
+
+    Args:
+        identity_id: The sentinel identity ID.
+        tenant_id: The tenant ID.
+        ecosystem: The ecosystem name.
+        display_name: Display name for the sentinel.
+
+    Returns:
+        A ksqldb_credentials sentinel Identity.
+    """
+    return Identity(
+        ecosystem=ecosystem,
+        tenant_id=tenant_id,
+        identity_id=identity_id,
+        identity_type="ksqldb_credentials",
+        display_name=display_name,
+    )
+
+
 def create_connector_sentinel(identity_id: str, tenant_id: str, ecosystem: str, *, is_masked: bool) -> Identity:
     """Create a connector-specific sentinel identity.
 

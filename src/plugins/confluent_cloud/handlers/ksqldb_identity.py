@@ -9,9 +9,9 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from core.models import Identity, IdentityResolution, IdentitySet
+from core.models import IdentityResolution, IdentitySet
 
-from ._identity_helpers import create_sentinel_from_id
+from ._identity_helpers import create_ksqldb_sentinel, create_sentinel_from_id
 
 if TYPE_CHECKING:
     from core.storage.interface import UnitOfWork
@@ -20,27 +20,6 @@ if TYPE_CHECKING:
 # Sentinel identity IDs for ksqlDB
 KSQLDB_DELETED_SENTINEL = "ksqldb_deleted_when_calc_started"
 KSQLDB_OWNER_UNKNOWN = "ksqldb_owner_unknown"
-
-
-def _create_ksqldb_sentinel(identity_id: str, tenant_id: str, ecosystem: str, display_name: str) -> Identity:
-    """Create a ksqlDB-specific sentinel identity.
-
-    Args:
-        identity_id: The sentinel identity ID.
-        tenant_id: The tenant ID.
-        ecosystem: The ecosystem name.
-        display_name: Display name for the sentinel.
-
-    Returns:
-        A ksqldb_credentials sentinel Identity.
-    """
-    return Identity(
-        ecosystem=ecosystem,
-        tenant_id=tenant_id,
-        identity_id=identity_id,
-        identity_type="ksqldb_credentials",
-        display_name=display_name,
-    )
 
 
 def resolve_ksqldb_identity(
@@ -53,7 +32,7 @@ def resolve_ksqldb_identity(
 ) -> IdentityResolution:
     """Resolve identity for a ksqlDB app.
 
-    ksqlDB apps have direct owner_id in resource metadata (credential_identity from CCloud API).
+    ksqlDB apps have direct owner_id field on Resource (credential_identity from CCloud API).
 
     Args:
         tenant_id: The tenant ID.
@@ -82,15 +61,11 @@ def resolve_ksqldb_identity(
     )
 
     # Filter to the specific ksqlDB resource
-    ksqldb_app = None
-    for r in resources:
-        if r.resource_id == resource_id:
-            ksqldb_app = r
-            break
+    ksqldb_app = next((r for r in resources if r.resource_id == resource_id), None)
 
     # Resource not found -> deleted sentinel
     if ksqldb_app is None:
-        sentinel = _create_ksqldb_sentinel(
+        sentinel = create_ksqldb_sentinel(
             KSQLDB_DELETED_SENTINEL,
             tenant_id,
             ecosystem,
@@ -103,12 +78,12 @@ def resolve_ksqldb_identity(
             tenant_period=tenant_period,
         )
 
-    # Get owner_id from metadata
-    owner_id = ksqldb_app.metadata.get("owner_id")
+    # Get owner_id from top-level field (metadata fallback for legacy)
+    owner_id = ksqldb_app.owner_id or ksqldb_app.metadata.get("owner_id")
 
     # No owner_id -> unknown sentinel
     if not owner_id:
-        sentinel = _create_ksqldb_sentinel(
+        sentinel = create_ksqldb_sentinel(
             KSQLDB_OWNER_UNKNOWN,
             tenant_id,
             ecosystem,

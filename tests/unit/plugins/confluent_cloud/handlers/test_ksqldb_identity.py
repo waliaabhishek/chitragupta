@@ -387,3 +387,288 @@ class TestResolveKsqldbIdentity:
         assert owner is not None
         assert owner.display_name == "Human User"
         assert owner.identity_type == "user"
+
+    # --- GAP-15 tests: owner_id direct field (not metadata) ---
+
+    def test_resource_found_owner_id_direct_field_resolves_owner(self, mock_uow: MagicMock) -> None:
+        """owner_id set on Resource.owner_id field (not metadata) resolves correctly."""
+        from plugins.confluent_cloud.handlers.ksqldb_identity import (
+            resolve_ksqldb_identity,
+        )
+
+        ksqldb_app = Resource(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            resource_id="ksqldb-app-abc",
+            resource_type="ksqldb",
+            owner_id="sa-direct-456",  # set on direct field, NOT in metadata
+            metadata={},
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        )
+        sa_owner = Identity(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            identity_id="sa-direct-456",
+            identity_type="service_account",
+            display_name="Direct Field SA",
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        )
+        mock_uow.resources.find_by_period.return_value = ([ksqldb_app], 1)
+        mock_uow.identities.find_by_period.return_value = ([sa_owner], 1)
+
+        result = resolve_ksqldb_identity(
+            tenant_id="org-123",
+            resource_id="ksqldb-app-abc",
+            billing_start=datetime(2026, 2, 1, tzinfo=UTC),
+            billing_end=datetime(2026, 2, 2, tzinfo=UTC),
+            uow=mock_uow,
+            ecosystem="confluent_cloud",
+        )
+
+        assert len(result.resource_active) == 1
+        assert "sa-direct-456" in result.resource_active.ids()
+        owner = result.resource_active.get("sa-direct-456")
+        assert owner is not None
+        assert owner.display_name == "Direct Field SA"
+        assert owner.identity_type == "service_account"
+
+    def test_resource_direct_owner_id_takes_precedence_over_metadata(self, mock_uow: MagicMock) -> None:
+        """Resource.owner_id direct field takes precedence over metadata['owner_id']."""
+        from plugins.confluent_cloud.handlers.ksqldb_identity import (
+            resolve_ksqldb_identity,
+        )
+
+        ksqldb_app = Resource(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            resource_id="ksqldb-app-abc",
+            resource_type="ksqldb",
+            owner_id="sa-direct-primary",  # direct field — should win
+            metadata={"owner_id": "sa-metadata-secondary"},  # metadata — should lose
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        )
+        sa_primary = Identity(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            identity_id="sa-direct-primary",
+            identity_type="service_account",
+            display_name="Primary SA",
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        )
+        sa_secondary = Identity(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            identity_id="sa-metadata-secondary",
+            identity_type="service_account",
+            display_name="Secondary SA",
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        )
+        mock_uow.resources.find_by_period.return_value = ([ksqldb_app], 1)
+        mock_uow.identities.find_by_period.return_value = ([sa_primary, sa_secondary], 2)
+
+        result = resolve_ksqldb_identity(
+            tenant_id="org-123",
+            resource_id="ksqldb-app-abc",
+            billing_start=datetime(2026, 2, 1, tzinfo=UTC),
+            billing_end=datetime(2026, 2, 2, tzinfo=UTC),
+            uow=mock_uow,
+            ecosystem="confluent_cloud",
+        )
+
+        assert len(result.resource_active) == 1
+        assert "sa-direct-primary" in result.resource_active.ids()
+        assert "sa-metadata-secondary" not in result.resource_active.ids()
+
+    def test_resource_direct_owner_id_none_falls_back_to_metadata(self, mock_uow: MagicMock) -> None:
+        """When Resource.owner_id is None, metadata['owner_id'] is used as fallback."""
+        from plugins.confluent_cloud.handlers.ksqldb_identity import (
+            resolve_ksqldb_identity,
+        )
+
+        ksqldb_app = Resource(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            resource_id="ksqldb-app-abc",
+            resource_type="ksqldb",
+            owner_id=None,  # no direct field
+            metadata={"owner_id": "sa-meta-fallback"},
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        )
+        sa_owner = Identity(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            identity_id="sa-meta-fallback",
+            identity_type="service_account",
+            display_name="Metadata Fallback SA",
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        )
+        mock_uow.resources.find_by_period.return_value = ([ksqldb_app], 1)
+        mock_uow.identities.find_by_period.return_value = ([sa_owner], 1)
+
+        result = resolve_ksqldb_identity(
+            tenant_id="org-123",
+            resource_id="ksqldb-app-abc",
+            billing_start=datetime(2026, 2, 1, tzinfo=UTC),
+            billing_end=datetime(2026, 2, 2, tzinfo=UTC),
+            uow=mock_uow,
+            ecosystem="confluent_cloud",
+        )
+
+        assert len(result.resource_active) == 1
+        assert "sa-meta-fallback" in result.resource_active.ids()
+        owner = result.resource_active.get("sa-meta-fallback")
+        assert owner is not None
+        assert owner.display_name == "Metadata Fallback SA"
+
+    def test_resource_both_owner_id_fields_absent_returns_unknown_sentinel(self, mock_uow: MagicMock) -> None:
+        """When both Resource.owner_id and metadata['owner_id'] are absent, unknown sentinel returned."""
+        from plugins.confluent_cloud.handlers.ksqldb_identity import (
+            resolve_ksqldb_identity,
+        )
+
+        ksqldb_app = Resource(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            resource_id="ksqldb-app-abc",
+            resource_type="ksqldb",
+            owner_id=None,  # no direct field
+            metadata={},  # no metadata owner_id either
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        )
+        mock_uow.resources.find_by_period.return_value = ([ksqldb_app], 1)
+        mock_uow.identities.find_by_period.return_value = ([], 0)
+
+        result = resolve_ksqldb_identity(
+            tenant_id="org-123",
+            resource_id="ksqldb-app-abc",
+            billing_start=datetime(2026, 2, 1, tzinfo=UTC),
+            billing_end=datetime(2026, 2, 2, tzinfo=UTC),
+            uow=mock_uow,
+            ecosystem="confluent_cloud",
+        )
+
+        assert len(result.resource_active) == 1
+        assert "ksqldb_owner_unknown" in result.resource_active.ids()
+        sentinel = result.resource_active.get("ksqldb_owner_unknown")
+        assert sentinel is not None
+        assert sentinel.identity_type == "ksqldb_credentials"
+
+    # --- GAP-15 verification tests (named per design doc) ---
+
+    def test_toplevel_owner_id_resolves_to_identity(self, mock_uow: MagicMock) -> None:
+        """Resource with top-level owner_id (no metadata owner_id) resolves correctly."""
+        from plugins.confluent_cloud.handlers.ksqldb_identity import (
+            resolve_ksqldb_identity,
+        )
+
+        ksqldb_app = Resource(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            resource_id="ksqldb-app-abc",
+            resource_type="ksqldb",
+            owner_id="sa-12345",  # TOP-LEVEL field only
+            metadata={"kafka_cluster_id": "lkc-xxx", "csu_count": 4},  # NO owner_id in metadata
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        )
+        sa_owner = Identity(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            identity_id="sa-12345",
+            identity_type="service_account",
+            display_name="Top-Level SA",
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        )
+        mock_uow.resources.find_by_period.return_value = ([ksqldb_app], 1)
+        mock_uow.identities.find_by_period.return_value = ([sa_owner], 1)
+
+        result = resolve_ksqldb_identity(
+            tenant_id="org-123",
+            resource_id="ksqldb-app-abc",
+            billing_start=datetime(2026, 2, 1, tzinfo=UTC),
+            billing_end=datetime(2026, 2, 2, tzinfo=UTC),
+            uow=mock_uow,
+            ecosystem="confluent_cloud",
+        )
+
+        assert len(result.resource_active) == 1
+        assert "sa-12345" in result.resource_active.ids()
+        owner = result.resource_active.get("sa-12345")
+        assert owner is not None
+        assert owner.display_name == "Top-Level SA"
+        assert owner.identity_type == "service_account"
+
+    def test_metadata_owner_id_fallback(self, mock_uow: MagicMock) -> None:
+        """Resource with owner_id=None falls back to metadata owner_id."""
+        from plugins.confluent_cloud.handlers.ksqldb_identity import (
+            resolve_ksqldb_identity,
+        )
+
+        ksqldb_app = Resource(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            resource_id="ksqldb-app-abc",
+            resource_type="ksqldb",
+            owner_id=None,  # top-level is None
+            metadata={"owner_id": "sa-67890"},  # fallback in metadata
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        )
+        sa_owner = Identity(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            identity_id="sa-67890",
+            identity_type="service_account",
+            display_name="Metadata Fallback",
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        )
+        mock_uow.resources.find_by_period.return_value = ([ksqldb_app], 1)
+        mock_uow.identities.find_by_period.return_value = ([sa_owner], 1)
+
+        result = resolve_ksqldb_identity(
+            tenant_id="org-123",
+            resource_id="ksqldb-app-abc",
+            billing_start=datetime(2026, 2, 1, tzinfo=UTC),
+            billing_end=datetime(2026, 2, 2, tzinfo=UTC),
+            uow=mock_uow,
+            ecosystem="confluent_cloud",
+        )
+
+        assert len(result.resource_active) == 1
+        assert "sa-67890" in result.resource_active.ids()
+        owner = result.resource_active.get("sa-67890")
+        assert owner is not None
+        assert owner.display_name == "Metadata Fallback"
+
+    def test_no_owner_anywhere_returns_unknown_sentinel(self, mock_uow: MagicMock) -> None:
+        """Resource with no owner_id anywhere falls through to unknown sentinel."""
+        from plugins.confluent_cloud.handlers.ksqldb_identity import (
+            KSQLDB_OWNER_UNKNOWN,
+            resolve_ksqldb_identity,
+        )
+
+        ksqldb_app = Resource(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            resource_id="ksqldb-app-abc",
+            resource_type="ksqldb",
+            owner_id=None,
+            metadata={},  # no owner_id
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        )
+        mock_uow.resources.find_by_period.return_value = ([ksqldb_app], 1)
+        mock_uow.identities.find_by_period.return_value = ([], 0)
+
+        result = resolve_ksqldb_identity(
+            tenant_id="org-123",
+            resource_id="ksqldb-app-abc",
+            billing_start=datetime(2026, 2, 1, tzinfo=UTC),
+            billing_end=datetime(2026, 2, 2, tzinfo=UTC),
+            uow=mock_uow,
+            ecosystem="confluent_cloud",
+        )
+
+        assert len(result.resource_active) == 1
+        assert KSQLDB_OWNER_UNKNOWN in result.resource_active.ids()
+        sentinel = result.resource_active.get(KSQLDB_OWNER_UNKNOWN)
+        assert sentinel is not None
+        assert sentinel.identity_type == "ksqldb_credentials"
+        assert sentinel.display_name == "ksqlDB Owner Unknown"
