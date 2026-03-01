@@ -898,7 +898,7 @@ class TestRunTenant:
 
         runner.run_tenant("t1")
 
-        # create_tables called for the single-tenant bootstrap + storage for runtime
+        # create_tables called via bootstrap_storage() for all tenants
         mock_backend.create_tables.assert_called_once()
 
     @patch("workflow_runner.ChargebackOrchestrator")
@@ -1016,3 +1016,148 @@ class TestCleanupRetention:
         settings = _make_settings(tenants={"t1": tenant})
         runner = WorkflowRunner(settings, MagicMock())
         runner._cleanup_retention()  # Should not raise
+
+
+class TestGap021RunTenantBootstrapLatch:
+    """GAP-021: run_tenant() must delegate bootstrap to bootstrap_storage() — latches flag and
+    bootstraps ALL tenants, not just the requested one."""
+
+    @patch("workflow_runner.ChargebackOrchestrator")
+    @patch("workflow_runner._create_storage_backend")
+    def test_consecutive_run_tenant_same_tenant_bootstraps_once(
+        self, mock_storage: MagicMock, mock_orch_cls: MagicMock
+    ) -> None:
+        """Two consecutive run_tenant() calls for the same tenant must not repeat bootstrap.
+
+        Expected (after fix): create_tables() called exactly 2 times total — once per configured
+        tenant during the first call — NOT 4 times (which would indicate missing flag latch).
+        """
+        backends: list[MagicMock] = []
+
+        def make_backend(config: Any) -> MagicMock:
+            b = MagicMock()
+            backends.append(b)
+            return b
+
+        mock_storage.side_effect = make_backend
+
+        mock_orch = MagicMock()
+        mock_orch.run.return_value = PipelineRunResult(
+            tenant_name="t1",
+            tenant_id="tid1",
+            dates_gathered=0,
+            dates_calculated=0,
+            chargeback_rows_written=0,
+        )
+        mock_orch_cls.return_value = mock_orch
+
+        registry = MagicMock()
+        plugin = MagicMock()
+        plugin.get_metrics_source.return_value = None
+        registry.create.return_value = plugin
+
+        settings = _make_settings(
+            tenants={
+                "t1": _make_tenant(tenant_id="tid1"),
+                "t2": _make_tenant(tenant_id="tid2"),
+            }
+        )
+        runner = WorkflowRunner(settings, registry)
+
+        runner.run_tenant("t1")
+
+        # Flag must be latched after first run_tenant — bug: this assertion fails
+        assert runner._bootstrapped is True
+
+        create_tables_after_first = sum(b.create_tables.call_count for b in backends)
+
+        runner.run_tenant("t1")
+
+        # No additional create_tables calls on second run_tenant
+        create_tables_after_second = sum(b.create_tables.call_count for b in backends)
+        assert create_tables_after_second == create_tables_after_first
+
+        # Total: exactly 2 (one per configured tenant bootstrapped during first call)
+        assert create_tables_after_second == 2
+
+    @patch("workflow_runner.ChargebackOrchestrator")
+    @patch("workflow_runner._create_storage_backend")
+    def test_run_tenant_different_tenants_bootstraps_all_once(
+        self, mock_storage: MagicMock, mock_orch_cls: MagicMock
+    ) -> None:
+        """run_tenant("t1") must bootstrap ALL configured tenants, not only t1.
+
+        After run_tenant("t1"):
+          - Both tenants' create_tables() called (not just t1's)
+          - _bootstrapped == True
+
+        After run_tenant("t2"):
+          - No additional create_tables() calls
+        """
+        t1_cfg = _make_tenant(tenant_id="tid1")
+        t2_cfg = _make_tenant(tenant_id="tid2")
+
+        # Map connection string → per-backend call tracking
+        conn_backends: dict[str, list[MagicMock]] = {
+            t1_cfg.storage.connection_string: [],
+            t2_cfg.storage.connection_string: [],
+        }
+
+        def make_backend(config: Any) -> MagicMock:
+            b = MagicMock()
+            key = config.connection_string
+            conn_backends.setdefault(key, []).append(b)
+            return b
+
+        mock_storage.side_effect = make_backend
+
+        mock_orch = MagicMock()
+        mock_orch.run.return_value = PipelineRunResult(
+            tenant_name="t1",
+            tenant_id="tid1",
+            dates_gathered=0,
+            dates_calculated=0,
+            chargeback_rows_written=0,
+        )
+        mock_orch_cls.return_value = mock_orch
+
+        registry = MagicMock()
+        plugin = MagicMock()
+        plugin.get_metrics_source.return_value = None
+        registry.create.return_value = plugin
+
+        settings = _make_settings(tenants={"t1": t1_cfg, "t2": t2_cfg})
+        runner = WorkflowRunner(settings, registry)
+
+        runner.run_tenant("t1")
+
+        # Flag must be latched — bug: this assertion fails
+        assert runner._bootstrapped is True
+
+        t1_conn = t1_cfg.storage.connection_string
+        t2_conn = t2_cfg.storage.connection_string
+
+        t1_create_tables_after_first = sum(
+            b.create_tables.call_count for b in conn_backends[t1_conn]
+        )
+        t2_create_tables_after_first = sum(
+            b.create_tables.call_count for b in conn_backends[t2_conn]
+        )
+
+        # t1 bootstrap must have happened
+        assert t1_create_tables_after_first >= 1
+
+        # t2 bootstrap must ALSO have happened — bug: this assertion fails
+        assert t2_create_tables_after_first >= 1
+
+        runner.run_tenant("t2")
+
+        # No additional create_tables after second run_tenant
+        t1_create_tables_after_second = sum(
+            b.create_tables.call_count for b in conn_backends[t1_conn]
+        )
+        t2_create_tables_after_second = sum(
+            b.create_tables.call_count for b in conn_backends[t2_conn]
+        )
+        assert t1_create_tables_after_second == t1_create_tables_after_first
+        assert t2_create_tables_after_second == t2_create_tables_after_first

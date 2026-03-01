@@ -137,13 +137,8 @@ class WorkflowRunner:
         if config is None:
             raise ValueError(f"Unknown tenant: {tenant_name}")
 
-        # Bootstrap only this tenant's storage if needed
         if not self._bootstrapped:
-            storage = _create_storage_backend(config.storage)
-            try:
-                storage.create_tables()
-            finally:
-                storage.dispose()
+            self.bootstrap_storage()
 
         return self._run_tenant(tenant_name, config)
 
