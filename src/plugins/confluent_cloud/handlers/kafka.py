@@ -45,13 +45,8 @@ _KAFKA_PRODUCT_TYPES: tuple[str, ...] = (
 _BYTES_IN_QUERY = "sum by (kafka_id, principal_id) (confluent_kafka_server_request_bytes{})"
 _BYTES_OUT_QUERY = "sum by (kafka_id, principal_id) (confluent_kafka_server_response_bytes{})"
 
-_KAFKA_USAGE_METRICS: list[MetricQuery] = [
-    MetricQuery(
-        key="bytes_in",
-        query_expression=_BYTES_IN_QUERY,
-        label_keys=("kafka_id", "principal_id"),
-        resource_label="kafka_id",
-    ),
+# bytes_out = response bytes = read direction (consume)
+_KAFKA_READ_METRICS: list[MetricQuery] = [
     MetricQuery(
         key="bytes_out",
         query_expression=_BYTES_OUT_QUERY,
@@ -59,6 +54,19 @@ _KAFKA_USAGE_METRICS: list[MetricQuery] = [
         resource_label="kafka_id",
     ),
 ]
+
+# bytes_in = request bytes = write direction (produce)
+_KAFKA_WRITE_METRICS: list[MetricQuery] = [
+    MetricQuery(
+        key="bytes_in",
+        query_expression=_BYTES_IN_QUERY,
+        label_keys=("kafka_id", "principal_id"),
+        resource_label="kafka_id",
+    ),
+]
+
+# CKU uses both directions (blended compute)
+_KAFKA_CKU_METRICS: list[MetricQuery] = _KAFKA_READ_METRICS + _KAFKA_WRITE_METRICS
 
 # Map product types to allocator functions.
 # CostAllocator is a Protocol — dict values satisfy it via structural typing.
@@ -178,18 +186,20 @@ class KafkaHandler:
     def get_metrics_for_product_type(self, product_type: str) -> list[MetricQuery]:
         """Return PromQL queries for this product type.
 
-        CKU and network types need bytes_in/bytes_out metrics.
-        Base, partition, and storage types don't need metrics (even split).
+        Direction-specific for network types:
+        - KAFKA_NETWORK_READ: bytes_out (response/consume)
+        - KAFKA_NETWORK_WRITE: bytes_in (request/produce)
+        - KAFKA_NUM_CKU/CKUS: both (blended compute)
         """
-        if product_type in (
-            "KAFKA_NUM_CKU",
-            "KAFKA_NUM_CKUS",
-            "KAFKA_NETWORK_READ",
-            "KAFKA_NETWORK_WRITE",
-        ):
-            return _KAFKA_USAGE_METRICS
-        # Base, partition, storage don't need metrics
-        return []
+        match product_type:
+            case "KAFKA_NETWORK_READ":
+                return _KAFKA_READ_METRICS
+            case "KAFKA_NETWORK_WRITE":
+                return _KAFKA_WRITE_METRICS
+            case "KAFKA_NUM_CKU" | "KAFKA_NUM_CKUS":
+                return _KAFKA_CKU_METRICS
+            case _:
+                return []
 
     def get_allocator(self, product_type: str) -> CostAllocator:
         """Return allocator function for this product type."""

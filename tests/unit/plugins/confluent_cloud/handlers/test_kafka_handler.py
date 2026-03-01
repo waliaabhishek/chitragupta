@@ -133,15 +133,6 @@ class TestKafkaHandlerGetMetrics:
         keys = {m.key for m in metrics}
         assert keys == {"bytes_in", "bytes_out"}
 
-    def test_network_returns_metrics(self) -> None:
-        """KAFKA_NETWORK_READ returns bytes_in and bytes_out metrics."""
-        from plugins.confluent_cloud.handlers.kafka import KafkaHandler
-
-        handler = KafkaHandler(connection=None, config=None, ecosystem="confluent_cloud")
-        metrics = handler.get_metrics_for_product_type("KAFKA_NETWORK_READ")
-
-        assert len(metrics) == 2
-
     def test_base_returns_empty(self) -> None:
         """KAFKA_BASE returns empty list (no metrics needed)."""
         from plugins.confluent_cloud.handlers.kafka import KafkaHandler
@@ -172,6 +163,74 @@ class TestKafkaHandlerGetMetrics:
             assert "{}" in metric.query_expression
             assert "principal_id" in metric.label_keys
             assert metric.resource_label == "kafka_id"
+
+
+class TestKafkaHandlerGetMetricsDirectionality:
+    """GAP-14: get_metrics_for_product_type must return direction-specific metrics."""
+
+    def test_network_read_returns_only_bytes_out(self) -> None:
+        """KAFKA_NETWORK_READ returns only bytes_out (response bytes = read direction)."""
+        from plugins.confluent_cloud.handlers.kafka import KafkaHandler
+
+        handler = KafkaHandler(connection=None, config=None, ecosystem="confluent_cloud")
+        metrics = handler.get_metrics_for_product_type("KAFKA_NETWORK_READ")
+
+        assert len(metrics) == 1
+        assert metrics[0].key == "bytes_out"
+
+    def test_network_write_returns_only_bytes_in(self) -> None:
+        """KAFKA_NETWORK_WRITE returns only bytes_in (request bytes = write direction)."""
+        from plugins.confluent_cloud.handlers.kafka import KafkaHandler
+
+        handler = KafkaHandler(connection=None, config=None, ecosystem="confluent_cloud")
+        metrics = handler.get_metrics_for_product_type("KAFKA_NETWORK_WRITE")
+
+        assert len(metrics) == 1
+        assert metrics[0].key == "bytes_in"
+
+    def test_cku_returns_both_directions(self) -> None:
+        """KAFKA_NUM_CKU returns both bytes_in and bytes_out (blended compute)."""
+        from plugins.confluent_cloud.handlers.kafka import KafkaHandler
+
+        handler = KafkaHandler(connection=None, config=None, ecosystem="confluent_cloud")
+        metrics = handler.get_metrics_for_product_type("KAFKA_NUM_CKU")
+
+        assert len(metrics) == 2
+        keys = {m.key for m in metrics}
+        assert keys == {"bytes_in", "bytes_out"}
+
+    def test_ckus_returns_both_directions(self) -> None:
+        """KAFKA_NUM_CKUS returns both bytes_in and bytes_out (blended compute)."""
+        from plugins.confluent_cloud.handlers.kafka import KafkaHandler
+
+        handler = KafkaHandler(connection=None, config=None, ecosystem="confluent_cloud")
+        metrics = handler.get_metrics_for_product_type("KAFKA_NUM_CKUS")
+
+        assert len(metrics) == 2
+        keys = {m.key for m in metrics}
+        assert keys == {"bytes_in", "bytes_out"}
+
+    def test_network_read_query_uses_response_bytes(self) -> None:
+        """KAFKA_NETWORK_READ metric query references response_bytes (not request_bytes)."""
+        from plugins.confluent_cloud.handlers.kafka import KafkaHandler
+
+        handler = KafkaHandler(connection=None, config=None, ecosystem="confluent_cloud")
+        metrics = handler.get_metrics_for_product_type("KAFKA_NETWORK_READ")
+
+        assert len(metrics) == 1
+        assert "response_bytes" in metrics[0].query_expression
+        assert "request_bytes" not in metrics[0].query_expression
+
+    def test_network_write_query_uses_request_bytes(self) -> None:
+        """KAFKA_NETWORK_WRITE metric query references request_bytes (not response_bytes)."""
+        from plugins.confluent_cloud.handlers.kafka import KafkaHandler
+
+        handler = KafkaHandler(connection=None, config=None, ecosystem="confluent_cloud")
+        metrics = handler.get_metrics_for_product_type("KAFKA_NETWORK_WRITE")
+
+        assert len(metrics) == 1
+        assert "request_bytes" in metrics[0].query_expression
+        assert "response_bytes" not in metrics[0].query_expression
 
 
 class TestKafkaHandlerGatherResources:
