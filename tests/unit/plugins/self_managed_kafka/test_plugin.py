@@ -15,9 +15,9 @@ def base_settings() -> dict:
         "broker_count": 3,
         "cost_model": {
             "compute_hourly_rate": "0.10",
-            "storage_per_gb_hourly": "0.0001",
-            "network_ingress_per_gb": "0.01",
-            "network_egress_per_gb": "0.02",
+            "storage_per_gib_hourly": "0.0001",
+            "network_ingress_per_gib": "0.01",
+            "network_egress_per_gib": "0.02",
         },
         "metrics": {"url": "http://prom:9090"},
     }
@@ -244,3 +244,108 @@ class TestPluginRegistration:
 
         plugin = registry.create("self_managed_kafka")
         assert isinstance(plugin, SelfManagedKafkaPlugin)
+
+
+class TestPluginPrincipalLabelValidation:
+    """Issue 3: startup validation of 'principal' label availability in Prometheus."""
+
+    def test_initialize_validates_principal_label_available(self, base_settings):
+        """Prometheus returns rows with 'principal' label → _prometheus_principals_available = True."""
+        from unittest.mock import MagicMock, patch
+
+        from plugins.self_managed_kafka.plugin import SelfManagedKafkaPlugin
+
+        base_settings["identity_source"] = {"source": "prometheus"}
+
+        mock_row = MagicMock()
+        mock_row.labels = {"principal": "User:alice"}
+
+        plugin = SelfManagedKafkaPlugin()
+        with patch.object(plugin, "_create_metrics_source") as mock_create:
+            mock_metrics = MagicMock()
+            mock_metrics.query.return_value = {"distinct_principals": [mock_row]}
+            mock_create.return_value = mock_metrics
+
+            plugin.initialize(base_settings)
+
+        assert plugin._prometheus_principals_available is True
+
+    def test_initialize_warns_when_principal_label_missing(self, base_settings):
+        """Prometheus returns rows without 'principal' label → WARNING logged, flag = False."""
+        import logging
+        from unittest.mock import MagicMock, patch
+
+        from plugins.self_managed_kafka.plugin import SelfManagedKafkaPlugin
+
+        base_settings["identity_source"] = {"source": "prometheus"}
+
+        mock_row = MagicMock()
+        mock_row.labels = {}  # No 'principal' label
+
+        plugin = SelfManagedKafkaPlugin()
+        with patch.object(plugin, "_create_metrics_source") as mock_create:
+            mock_metrics = MagicMock()
+            mock_metrics.query.return_value = {"distinct_principals": [mock_row]}
+            mock_create.return_value = mock_metrics
+
+            with patch("plugins.self_managed_kafka.plugin.LOGGER") as mock_logger:
+                plugin.initialize(base_settings)
+                mock_logger.warning.assert_called_once()
+                warning_msg = mock_logger.warning.call_args[0][0]
+                assert "principal" in warning_msg.lower()
+
+        assert plugin._prometheus_principals_available is False
+
+    def test_initialize_handles_prometheus_unreachable(self, base_settings):
+        """MetricsQueryError during validation → WARNING logged, plugin continues."""
+        from unittest.mock import MagicMock, patch
+
+        from core.metrics.protocol import MetricsQueryError
+        from plugins.self_managed_kafka.plugin import SelfManagedKafkaPlugin
+
+        base_settings["identity_source"] = {"source": "prometheus"}
+
+        plugin = SelfManagedKafkaPlugin()
+        with patch.object(plugin, "_create_metrics_source") as mock_create:
+            mock_metrics = MagicMock()
+            mock_metrics.query.side_effect = MetricsQueryError("connection refused")
+            mock_create.return_value = mock_metrics
+
+            with patch("plugins.self_managed_kafka.plugin.LOGGER") as mock_logger:
+                # Must not raise — plugin continues gracefully
+                plugin.initialize(base_settings)
+                mock_logger.warning.assert_called_once()
+
+        assert plugin._prometheus_principals_available is False
+        assert plugin._handler is not None
+
+    def test_gather_identities_static_fallback_when_prometheus_unavailable(self, base_settings):
+        """When principal label unavailable and static_identities configured → static identities returned."""
+        from unittest.mock import MagicMock, patch
+
+        from plugins.self_managed_kafka.plugin import SelfManagedKafkaPlugin
+
+        base_settings["identity_source"] = {
+            "source": "prometheus",
+            "static_identities": [
+                {"identity_id": "User:alice", "identity_type": "principal", "display_name": "Alice"},
+            ],
+        }
+
+        plugin = SelfManagedKafkaPlugin()
+        with patch.object(plugin, "_create_metrics_source") as mock_create:
+            mock_metrics = MagicMock()
+            # No principal labels → _prometheus_principals_available = False
+            mock_metrics.query.return_value = {"distinct_principals": []}
+            mock_create.return_value = mock_metrics
+
+            plugin.initialize(base_settings)
+
+        assert plugin._prometheus_principals_available is False
+
+        handler = plugin.get_service_handlers()["kafka"]
+        mock_uow = MagicMock()
+        identities = list(handler.gather_identities("tenant-1", mock_uow))
+
+        identity_ids = [i.identity_id for i in identities]
+        assert "User:alice" in identity_ids

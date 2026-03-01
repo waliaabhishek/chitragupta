@@ -12,9 +12,9 @@ from pydantic import ValidationError
 def base_cost_model() -> dict:
     return {
         "compute_hourly_rate": "0.10",
-        "storage_per_gb_hourly": "0.0001",
-        "network_ingress_per_gb": "0.01",
-        "network_egress_per_gb": "0.02",
+        "storage_per_gib_hourly": "0.0001",
+        "network_ingress_per_gib": "0.01",
+        "network_egress_per_gib": "0.02",
     }
 
 
@@ -39,9 +39,9 @@ class TestCostModelConfig:
 
         model = CostModelConfig.model_validate(base_cost_model)
         assert model.compute_hourly_rate == Decimal("0.10")
-        assert model.storage_per_gb_hourly == Decimal("0.0001")
-        assert model.network_ingress_per_gb == Decimal("0.01")
-        assert model.network_egress_per_gb == Decimal("0.02")
+        assert model.storage_per_gib_hourly == Decimal("0.0001")
+        assert model.network_ingress_per_gib == Decimal("0.01")
+        assert model.network_egress_per_gib == Decimal("0.02")
 
     def test_decimal_precision_preserved(self):
         from plugins.self_managed_kafka.config import CostModelConfig
@@ -49,13 +49,13 @@ class TestCostModelConfig:
         model = CostModelConfig.model_validate(
             {
                 "compute_hourly_rate": "0.123456789",
-                "storage_per_gb_hourly": "0.000012345",
-                "network_ingress_per_gb": "0.001",
-                "network_egress_per_gb": "0.002",
+                "storage_per_gib_hourly": "0.000012345",
+                "network_ingress_per_gib": "0.001",
+                "network_egress_per_gib": "0.002",
             }
         )
         assert model.compute_hourly_rate == Decimal("0.123456789")
-        assert model.storage_per_gb_hourly == Decimal("0.000012345")
+        assert model.storage_per_gib_hourly == Decimal("0.000012345")
 
     def test_region_overrides_empty_by_default(self, base_cost_model):
         from plugins.self_managed_kafka.config import CostModelConfig
@@ -71,7 +71,7 @@ class TestCostModelConfig:
         }
         model = CostModelConfig.model_validate(base_cost_model)
         assert model.region_overrides["us-west-2"].compute_hourly_rate == Decimal("0.08")
-        assert model.region_overrides["us-west-2"].storage_per_gb_hourly is None
+        assert model.region_overrides["us-west-2"].storage_per_gib_hourly is None
 
     def test_missing_required_fields_raises(self):
         from plugins.self_managed_kafka.config import CostModelConfig
@@ -264,7 +264,7 @@ class TestSelfManagedKafkaConfig:
         effective = config.get_effective_cost_model()
         assert effective.compute_hourly_rate == Decimal("0.08")
         # Other rates use base values
-        assert effective.storage_per_gb_hourly == Decimal("0.0001")
+        assert effective.storage_per_gib_hourly == Decimal("0.0001")
 
     def test_get_effective_cost_model_region_not_in_overrides(self, base_settings):
         from plugins.self_managed_kafka.config import SelfManagedKafkaConfig
@@ -286,3 +286,55 @@ class TestSelfManagedKafkaConfig:
 
         config = SelfManagedKafkaConfig.from_plugin_settings(base_settings)
         assert config.resource_source.source == "prometheus"
+
+
+class TestCostModelConfigGiBFields:
+    """Issue 2: config fields renamed from _per_gb to _per_gib."""
+
+    def test_cost_model_config_has_storage_per_gib_hourly(self):
+        from plugins.self_managed_kafka.config import CostModelConfig
+
+        model = CostModelConfig.model_validate(
+            {
+                "compute_hourly_rate": "0.10",
+                "storage_per_gib_hourly": "0.0001",
+                "network_ingress_per_gib": "0.01",
+                "network_egress_per_gib": "0.02",
+            }
+        )
+        assert model.storage_per_gib_hourly == Decimal("0.0001")
+
+    def test_cost_model_config_has_network_ingress_per_gib(self):
+        from plugins.self_managed_kafka.config import CostModelConfig
+
+        model = CostModelConfig.model_validate(
+            {
+                "compute_hourly_rate": "0.10",
+                "storage_per_gib_hourly": "0.0001",
+                "network_ingress_per_gib": "0.01",
+                "network_egress_per_gib": "0.02",
+            }
+        )
+        assert model.network_ingress_per_gib == Decimal("0.01")
+
+    def test_cost_model_config_has_network_egress_per_gib(self):
+        from plugins.self_managed_kafka.config import CostModelConfig
+
+        model = CostModelConfig.model_validate(
+            {
+                "compute_hourly_rate": "0.10",
+                "storage_per_gib_hourly": "0.0001",
+                "network_ingress_per_gib": "0.01",
+                "network_egress_per_gib": "0.02",
+            }
+        )
+        assert model.network_egress_per_gib == Decimal("0.02")
+
+
+class TestBytesPerGiBConstant:
+    """Issue 2: _BYTES_PER_GB renamed to _BYTES_PER_GIB in cost_input."""
+
+    def test_bytes_per_gib_constant_exists_and_correct(self):
+        from plugins.self_managed_kafka.cost_input import _BYTES_PER_GIB
+
+        assert _BYTES_PER_GIB == Decimal("1073741824")

@@ -26,8 +26,8 @@ if TYPE_CHECKING:
 LOGGER = logging.getLogger(__name__)
 ECOSYSTEM = "self_managed_kafka"
 
-# Bytes per GB (1024^3)
-_BYTES_PER_GB = Decimal("1073741824")
+# Bytes per GiB (2^30)
+_BYTES_PER_GIB = Decimal("1073741824")
 
 # PromQL queries for cluster-wide cost construction.
 # No {} placeholder needed since we want cluster-wide totals (no resource filter).
@@ -186,12 +186,12 @@ def _make_storage_line(
     """Generate SELF_KAFKA_STORAGE billing line from average storage bytes."""
     if storage_rows:
         avg_bytes = sum(row.value for row in storage_rows) / len(storage_rows)
-        avg_gb = Decimal(str(avg_bytes)) / _BYTES_PER_GB
+        avg_gib = Decimal(str(avg_bytes)) / _BYTES_PER_GIB
     else:
-        avg_gb = Decimal("0")
+        avg_gib = Decimal("0")
 
-    quantity = avg_gb * hours
-    unit_price = cost_model.storage_per_gb_hourly
+    quantity = avg_gib * hours
+    unit_price = cost_model.storage_per_gib_hourly
     yield BillingLineItem(
         ecosystem=ECOSYSTEM,
         tenant_id=tenant_id,
@@ -219,11 +219,11 @@ def _make_network_lines(
     total_bytes_in = sum(row.value for row in bytes_in_rows)
     total_bytes_out = sum(row.value for row in bytes_out_rows)
 
-    ingress_gb = Decimal(str(total_bytes_in)) / _BYTES_PER_GB
-    egress_gb = Decimal(str(total_bytes_out)) / _BYTES_PER_GB
+    ingress_gib = Decimal(str(total_bytes_in)) / _BYTES_PER_GIB
+    egress_gib = Decimal(str(total_bytes_out)) / _BYTES_PER_GIB
 
-    ingress_price = cost_model.network_ingress_per_gb
-    egress_price = cost_model.network_egress_per_gb
+    ingress_price = cost_model.network_ingress_per_gib
+    egress_price = cost_model.network_egress_per_gib
 
     yield BillingLineItem(
         ecosystem=ECOSYSTEM,
@@ -232,9 +232,9 @@ def _make_network_lines(
         resource_id=cluster_id,
         product_category="kafka",
         product_type="SELF_KAFKA_NETWORK_INGRESS",
-        quantity=ingress_gb,
+        quantity=ingress_gib,
         unit_price=ingress_price,
-        total_cost=ingress_gb * ingress_price,
+        total_cost=ingress_gib * ingress_price,
         granularity="daily",
         currency="USD",
     )
@@ -246,9 +246,9 @@ def _make_network_lines(
         resource_id=cluster_id,
         product_category="kafka",
         product_type="SELF_KAFKA_NETWORK_EGRESS",
-        quantity=egress_gb,
+        quantity=egress_gib,
         unit_price=egress_price,
-        total_cost=egress_gb * egress_price,
+        total_cost=egress_gib * egress_price,
         granularity="daily",
         currency="USD",
     )

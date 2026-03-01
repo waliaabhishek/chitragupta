@@ -16,7 +16,8 @@ from typing import TYPE_CHECKING, Any
 from core.models import Identity, IdentityResolution, IdentitySet, MetricQuery, Resource
 from plugins.self_managed_kafka.allocators.kafka_allocators import (
     self_kafka_compute_allocator,
-    self_kafka_network_allocator,
+    self_kafka_network_egress_allocator,
+    self_kafka_network_ingress_allocator,
     self_kafka_storage_allocator,
 )
 
@@ -55,8 +56,8 @@ _PRINCIPAL_USAGE_METRICS: list[MetricQuery] = [_BYTES_IN_PER_PRINCIPAL, _BYTES_O
 _ALLOCATOR_MAP: dict[str, CostAllocator] = {
     "SELF_KAFKA_COMPUTE": self_kafka_compute_allocator,
     "SELF_KAFKA_STORAGE": self_kafka_storage_allocator,
-    "SELF_KAFKA_NETWORK_INGRESS": self_kafka_network_allocator,
-    "SELF_KAFKA_NETWORK_EGRESS": self_kafka_network_allocator,
+    "SELF_KAFKA_NETWORK_INGRESS": self_kafka_network_ingress_allocator,
+    "SELF_KAFKA_NETWORK_EGRESS": self_kafka_network_egress_allocator,
 }
 
 
@@ -75,6 +76,7 @@ class SelfManagedKafkaHandler:
         config: SelfManagedKafkaConfig,
         metrics_source: MetricsSource,
         admin_client: Any = None,
+        prometheus_principals_available: bool = True,
     ) -> None:
         """Initialize handler with config and discovery clients.
 
@@ -82,10 +84,14 @@ class SelfManagedKafkaHandler:
             config: Plugin configuration.
             metrics_source: Prometheus client for resource/identity discovery.
             admin_client: Kafka AdminClient for resource discovery (optional).
+            prometheus_principals_available: Whether 'principal' label is present in
+                Prometheus metrics. Set to False when validation fails at startup.
+                Defaults to True (optimistic) to preserve existing tests that don't pass the flag.
         """
         self._config = config
         self._metrics_source = metrics_source
         self._admin_client = admin_client
+        self._prometheus_principals_available = prometheus_principals_available
         self._ecosystem = "self_managed_kafka"
 
     @property
@@ -146,15 +152,19 @@ class SelfManagedKafkaHandler:
         yield from gather_topics_from_admin(self._admin_client, self._ecosystem, tenant_id, self._config.cluster_id)
 
     def gather_identities(self, tenant_id: str, uow: UnitOfWork) -> Iterable[Identity]:
-        """Gather principals/teams based on identity_source config."""
-        source = self._config.identity_source.source
+        """Gather principals/teams based on identity_source config.
 
-        if source == "prometheus":
+        When _prometheus_principals_available is False and source includes Prometheus,
+        falls back to static identities if configured. If no static identities are
+        configured, the Prometheus path is still attempted (costs will go to UNALLOCATED).
+        """
+        source = self._config.identity_source.source
+        use_prometheus = source in ("prometheus", "both") and self._prometheus_principals_available
+
+        if use_prometheus:
             yield from self._gather_identities_from_prometheus(tenant_id)
-        elif source == "static":
-            yield from self._gather_static_identities(tenant_id)
-        else:  # "both"
-            yield from self._gather_identities_from_prometheus(tenant_id)
+
+        if source in ("static", "both") or (not use_prometheus and self._config.identity_source.static_identities):
             yield from self._gather_static_identities(tenant_id)
 
     def _gather_identities_from_prometheus(self, tenant_id: str) -> Iterable[Identity]:
@@ -204,9 +214,10 @@ class SelfManagedKafkaHandler:
         tenant_period = IdentitySet()
 
         source = self._config.identity_source.source
+        use_prometheus = source in ("prometheus", "both") and self._prometheus_principals_available
 
         # Load identities from metrics data (active principals in billing window)
-        if source in ("prometheus", "both") and metrics_data:
+        if use_prometheus and metrics_data:
             from plugins.self_managed_kafka.gathering.prometheus import (
                 extract_principals_from_metrics_data,
             )
@@ -220,7 +231,7 @@ class SelfManagedKafkaHandler:
                 metrics_derived.add(identity)
 
         # Load static identities into resource_active
-        if source in ("static", "both"):
+        if source in ("static", "both") or (not use_prometheus and self._config.identity_source.static_identities):
             from plugins.self_managed_kafka.gathering.prometheus import load_static_identities
 
             for identity in load_static_identities(self._config.identity_source, self._ecosystem, tenant_id):

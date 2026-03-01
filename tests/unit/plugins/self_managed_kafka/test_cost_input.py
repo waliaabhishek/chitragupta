@@ -22,9 +22,9 @@ def sample_config():
             "broker_count": 3,
             "cost_model": {
                 "compute_hourly_rate": "0.10",
-                "storage_per_gb_hourly": "0.0001",
-                "network_ingress_per_gb": "0.01",
-                "network_egress_per_gb": "0.02",
+                "storage_per_gib_hourly": "0.0001",
+                "network_ingress_per_gib": "0.01",
+                "network_egress_per_gib": "0.02",
             },
             "metrics": {"url": "http://prom:9090"},
         }
@@ -283,9 +283,9 @@ class TestEdgeCases:
                 "region": "us-west-2",
                 "cost_model": {
                     "compute_hourly_rate": "0.10",
-                    "storage_per_gb_hourly": "0.0001",
-                    "network_ingress_per_gb": "0.01",
-                    "network_egress_per_gb": "0.02",
+                    "storage_per_gib_hourly": "0.0001",
+                    "network_ingress_per_gib": "0.01",
+                    "network_egress_per_gib": "0.02",
                     "region_overrides": {"us-west-2": {"compute_hourly_rate": "0.08"}},
                 },
                 "metrics": {"url": "http://prom:9090"},

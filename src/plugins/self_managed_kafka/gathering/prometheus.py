@@ -30,7 +30,7 @@ _TOPICS_QUERY = MetricQuery(
     resource_label="topic",
 )
 
-_PRINCIPALS_QUERY = MetricQuery(
+PRINCIPALS_QUERY = MetricQuery(
     key="distinct_principals",
     query_expression="group by (principal) (kafka_server_brokertopicmetrics_bytesin_total{})",
     label_keys=("principal",),
@@ -149,7 +149,7 @@ def gather_principals_from_metrics(
     start = now - timedelta(hours=1)
 
     results = metrics_source.query(
-        queries=[_PRINCIPALS_QUERY],
+        queries=[PRINCIPALS_QUERY],
         start=start,
         end=now,
         step=timedelta(hours=1),

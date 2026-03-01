@@ -19,9 +19,9 @@ def prometheus_settings() -> dict:
         "broker_count": 3,
         "cost_model": {
             "compute_hourly_rate": "0.10",
-            "storage_per_gb_hourly": "0.0001",
-            "network_ingress_per_gb": "0.01",
-            "network_egress_per_gb": "0.02",
+            "storage_per_gib_hourly": "0.0001",
+            "network_ingress_per_gib": "0.01",
+            "network_egress_per_gib": "0.02",
         },
         "identity_source": {
             "source": "prometheus",
@@ -50,7 +50,7 @@ class TestFullPrometheusPipeline:
         """Full gather→resolve→allocate flow with mixed allocation strategies."""
         from plugins.self_managed_kafka.allocators.kafka_allocators import (
             self_kafka_compute_allocator,
-            self_kafka_network_allocator,
+            self_kafka_network_ingress_allocator,
         )
         from plugins.self_managed_kafka.config import SelfManagedKafkaConfig
         from plugins.self_managed_kafka.cost_input import ConstructedCostInput
@@ -120,7 +120,7 @@ class TestFullPrometheusPipeline:
             split_amount=ingress_line.total_cost,
             metrics_data=metrics_data,
         )
-        network_result = self_kafka_network_allocator(network_ctx)
+        network_result = self_kafka_network_ingress_allocator(network_ctx)
         network_total = sum(r.amount for r in network_result.rows)
         assert network_total == ingress_line.total_cost
         alice_network = sum(r.amount for r in network_result.rows if r.identity_id == "User:alice")
@@ -153,7 +153,7 @@ class TestFullPrometheusPipeline:
     def test_multi_principal_allocation_with_realistic_metrics(self, prometheus_settings, mock_prometheus):
         """Multi-principal allocation distributes costs proportionally."""
         from core.models import IdentityResolution
-        from plugins.self_managed_kafka.allocators.kafka_allocators import self_kafka_network_allocator
+        from plugins.self_managed_kafka.allocators.kafka_allocators import self_kafka_network_ingress_allocator
 
         billing_line = BillingLineItem(
             ecosystem="self_managed_kafka",
@@ -193,7 +193,7 @@ class TestFullPrometheusPipeline:
             metrics_data=metrics_data,
         )
 
-        result = self_kafka_network_allocator(ctx)
+        result = self_kafka_network_ingress_allocator(ctx)
         total = sum(r.amount for r in result.rows)
         assert total == Decimal("1.00")
 
@@ -216,9 +216,9 @@ class TestStaticIdentitiesFlow:
                 "broker_count": 3,
                 "cost_model": {
                     "compute_hourly_rate": "0.10",
-                    "storage_per_gb_hourly": "0.0001",
-                    "network_ingress_per_gb": "0.01",
-                    "network_egress_per_gb": "0.02",
+                    "storage_per_gib_hourly": "0.0001",
+                    "network_ingress_per_gib": "0.01",
+                    "network_egress_per_gib": "0.02",
                 },
                 "identity_source": {
                     "source": "static",
@@ -256,9 +256,9 @@ class TestAdminApiFlow:
                 "broker_count": 3,
                 "cost_model": {
                     "compute_hourly_rate": "0.10",
-                    "storage_per_gb_hourly": "0.0001",
-                    "network_ingress_per_gb": "0.01",
-                    "network_egress_per_gb": "0.02",
+                    "storage_per_gib_hourly": "0.0001",
+                    "network_ingress_per_gib": "0.01",
+                    "network_egress_per_gib": "0.02",
                 },
                 "resource_source": {
                     "source": "admin_api",
@@ -315,9 +315,9 @@ class TestPluginLifecycle:
             "broker_count": 3,
             "cost_model": {
                 "compute_hourly_rate": "0.10",
-                "storage_per_gb_hourly": "0.0001",
-                "network_ingress_per_gb": "0.01",
-                "network_egress_per_gb": "0.02",
+                "storage_per_gib_hourly": "0.0001",
+                "network_ingress_per_gib": "0.01",
+                "network_egress_per_gib": "0.02",
             },
             "metrics": {"url": "http://prom:9090"},
         }
@@ -343,9 +343,9 @@ class TestConfigValidationIntegration:
                 "region": "us-west-2",
                 "cost_model": {
                     "compute_hourly_rate": "0.10",
-                    "storage_per_gb_hourly": "0.0001",
-                    "network_ingress_per_gb": "0.01",
-                    "network_egress_per_gb": "0.02",
+                    "storage_per_gib_hourly": "0.0001",
+                    "network_ingress_per_gib": "0.01",
+                    "network_egress_per_gib": "0.02",
                     "region_overrides": {"us-west-2": {"compute_hourly_rate": "0.08"}},
                 },
                 "resource_source": {"source": "prometheus"},

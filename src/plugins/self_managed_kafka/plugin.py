@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import logging
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
+from core.metrics.protocol import MetricsQueryError
 from plugins.self_managed_kafka.config import SelfManagedKafkaConfig
 from plugins.self_managed_kafka.cost_input import ConstructedCostInput
 from plugins.self_managed_kafka.handlers.kafka import SelfManagedKafkaHandler
@@ -11,6 +14,8 @@ from plugins.self_managed_kafka.handlers.kafka import SelfManagedKafkaHandler
 if TYPE_CHECKING:
     from core.metrics.protocol import MetricsSource
     from core.plugin.protocols import CostInput, ServiceHandler
+
+LOGGER = logging.getLogger(__name__)
 
 
 class SelfManagedKafkaPlugin:
@@ -28,6 +33,7 @@ class SelfManagedKafkaPlugin:
         self._metrics_source: MetricsSource | None = None
         self._admin_client: Any = None
         self._handler: SelfManagedKafkaHandler | None = None
+        self._prometheus_principals_available: bool = True
 
     @property
     def ecosystem(self) -> str:
@@ -39,9 +45,11 @@ class SelfManagedKafkaPlugin:
         Creates:
         1. MetricsSource from config.metrics (always required)
         2. KafkaAdminClient if resource_source.source="admin_api"
-        3. Handler with both clients
+        3. Validates principal label availability when identity_source uses Prometheus
+        4. Handler with clients and principal availability flag
         """
         self._config = SelfManagedKafkaConfig.from_plugin_settings(config)
+        self._prometheus_principals_available = True
 
         # Always create MetricsSource (required for cost construction)
         self._metrics_source = self._create_metrics_source(self._config)
@@ -52,12 +60,50 @@ class SelfManagedKafkaPlugin:
 
             self._admin_client = create_admin_client(self._config.resource_source)
 
-        # Create handler with both clients
+        # Validate principal label availability before handler creation
+        if self._config.identity_source.source in ("prometheus", "both"):
+            self._validate_principal_label()
+
+        # Create handler with both clients and principal availability flag
         self._handler = SelfManagedKafkaHandler(
             config=self._config,
             metrics_source=self._metrics_source,
             admin_client=self._admin_client,
+            prometheus_principals_available=self._prometheus_principals_available,
         )
+
+    def _validate_principal_label(self) -> None:
+        """Warn if Prometheus metrics lack 'principal' label.
+
+        Reuses PRINCIPALS_QUERY from gathering/prometheus.py.
+        Sets self._prometheus_principals_available = False on missing label or
+        Prometheus unreachability. Plugin continues either way (lenient).
+        """
+        from plugins.self_managed_kafka.gathering.prometheus import PRINCIPALS_QUERY
+
+        now = datetime.now(UTC)
+        try:
+            results = self._metrics_source.query(  # type: ignore[union-attr]  # set on line above in initialize()
+                queries=[PRINCIPALS_QUERY],
+                start=now - timedelta(hours=1),
+                end=now,
+                step=timedelta(hours=1),
+            )
+            rows = results.get("distinct_principals", [])
+            has_principal_label = any(row.labels.get("principal") for row in rows)
+            if not has_principal_label:
+                LOGGER.warning(
+                    "self_managed_kafka: No 'principal' label found in Prometheus metrics. "
+                    "Per-principal identity discovery will be unavailable. "
+                    "Costs will be allocated to UNALLOCATED unless static_identities are configured."
+                )
+                self._prometheus_principals_available = False
+        except MetricsQueryError:
+            LOGGER.warning(
+                "self_managed_kafka: Could not reach Prometheus during principal label validation. "
+                "Proceeding with principal discovery disabled."
+            )
+            self._prometheus_principals_available = False
 
     def get_service_handlers(self) -> dict[str, ServiceHandler]:
         """Return service handlers keyed by service type."""

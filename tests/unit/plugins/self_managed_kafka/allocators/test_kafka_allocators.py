@@ -158,9 +158,9 @@ class TestStorageAllocator:
         assert result.rows[0].identity_id == "UNALLOCATED"
 
 
-class TestNetworkAllocator:
-    def test_usage_ratio_with_metrics(self, base_billing_line):
-        from plugins.self_managed_kafka.allocators.kafka_allocators import self_kafka_network_allocator
+class TestNetworkIngressAllocator:
+    def test_usage_ratio_with_bytes_in_only(self, base_billing_line):
+        from plugins.self_managed_kafka.allocators.kafka_allocators import self_kafka_network_ingress_allocator
 
         billing_line = BillingLineItem(**{**base_billing_line.__dict__, "product_type": "SELF_KAFKA_NETWORK_INGRESS"})
         metrics_data = {
@@ -168,26 +168,27 @@ class TestNetworkAllocator:
                 make_network_row("bytes_in_per_principal", "User:alice", 700.0),
                 make_network_row("bytes_in_per_principal", "User:bob", 300.0),
             ],
-            "bytes_out_per_principal": [],
         }
         resolution = make_resolution(metrics_derived=make_identity_set("User:alice", "User:bob"))
         ctx = make_ctx(billing_line, resolution, metrics_data=metrics_data)
 
-        result = self_kafka_network_allocator(ctx)
+        result = self_kafka_network_ingress_allocator(ctx)
 
         total = sum(row.amount for row in result.rows)
         assert total == Decimal("100")
         alice_amount = sum(r.amount for r in result.rows if r.identity_id == "User:alice")
         bob_amount = sum(r.amount for r in result.rows if r.identity_id == "User:bob")
-        assert alice_amount > bob_amount
+        assert alice_amount == Decimal("70")
+        assert bob_amount == Decimal("30")
 
     def test_fallback_to_even_split_when_no_metrics(self, base_billing_line):
-        from plugins.self_managed_kafka.allocators.kafka_allocators import self_kafka_network_allocator
+        from plugins.self_managed_kafka.allocators.kafka_allocators import self_kafka_network_ingress_allocator
 
+        billing_line = BillingLineItem(**{**base_billing_line.__dict__, "product_type": "SELF_KAFKA_NETWORK_INGRESS"})
         resolution = make_resolution(metrics_derived=make_identity_set("User:alice", "User:bob"))
-        ctx = make_ctx(base_billing_line, resolution, metrics_data=None)
+        ctx = make_ctx(billing_line, resolution, metrics_data=None)
 
-        result = self_kafka_network_allocator(ctx)
+        result = self_kafka_network_ingress_allocator(ctx)
 
         total = sum(row.amount for row in result.rows)
         assert total == Decimal("100")
@@ -196,74 +197,156 @@ class TestNetworkAllocator:
         assert alice_amount == bob_amount
 
     def test_fallback_to_even_split_when_zero_usage(self, base_billing_line):
-        from plugins.self_managed_kafka.allocators.kafka_allocators import self_kafka_network_allocator
+        from plugins.self_managed_kafka.allocators.kafka_allocators import self_kafka_network_ingress_allocator
 
+        billing_line = BillingLineItem(**{**base_billing_line.__dict__, "product_type": "SELF_KAFKA_NETWORK_INGRESS"})
         metrics_data = {
             "bytes_in_per_principal": [
                 make_network_row("bytes_in_per_principal", "User:alice", 0.0),
+                make_network_row("bytes_in_per_principal", "User:bob", 0.0),
             ],
-            "bytes_out_per_principal": [],
         }
         resolution = make_resolution(metrics_derived=make_identity_set("User:alice", "User:bob"))
-        ctx = make_ctx(base_billing_line, resolution, metrics_data=metrics_data)
+        ctx = make_ctx(billing_line, resolution, metrics_data=metrics_data)
 
-        result = self_kafka_network_allocator(ctx)
+        result = self_kafka_network_ingress_allocator(ctx)
 
-        # Falls back to even split since no non-zero usage
         alice_amount = sum(r.amount for r in result.rows if r.identity_id == "User:alice")
         bob_amount = sum(r.amount for r in result.rows if r.identity_id == "User:bob")
         assert alice_amount == bob_amount
 
     def test_no_identities_goes_to_unallocated(self, base_billing_line):
-        from plugins.self_managed_kafka.allocators.kafka_allocators import self_kafka_network_allocator
+        from plugins.self_managed_kafka.allocators.kafka_allocators import self_kafka_network_ingress_allocator
 
+        billing_line = BillingLineItem(**{**base_billing_line.__dict__, "product_type": "SELF_KAFKA_NETWORK_INGRESS"})
         resolution = make_resolution()
-        ctx = make_ctx(base_billing_line, resolution, metrics_data=None)
+        ctx = make_ctx(billing_line, resolution, metrics_data=None)
 
-        result = self_kafka_network_allocator(ctx)
+        result = self_kafka_network_ingress_allocator(ctx)
 
         assert result.rows[0].identity_id == "UNALLOCATED"
+        assert result.rows[0].amount == Decimal("100")
 
-    def test_total_preserved_with_remainder(self, base_billing_line):
-        """Remainder distribution ensures total is always preserved."""
-        from plugins.self_managed_kafka.allocators.kafka_allocators import self_kafka_network_allocator
+    def test_directional_allocation_ingress_vs_egress(self, base_billing_line):
+        """Principal A sends 100 bytes in / 0 out; B sends 0 in / 100 out.
+        Ingress allocator → 100% A.
+        """
+        from plugins.self_managed_kafka.allocators.kafka_allocators import self_kafka_network_ingress_allocator
 
+        billing_line = BillingLineItem(**{**base_billing_line.__dict__, "product_type": "SELF_KAFKA_NETWORK_INGRESS"})
         metrics_data = {
             "bytes_in_per_principal": [
-                make_network_row("bytes_in_per_principal", "User:alice", 333.0),
-                make_network_row("bytes_in_per_principal", "User:bob", 333.0),
-                make_network_row("bytes_in_per_principal", "User:charlie", 334.0),
-            ],
-            "bytes_out_per_principal": [],
-        }
-        resolution = make_resolution(metrics_derived=make_identity_set("User:alice", "User:bob", "User:charlie"))
-        ctx = make_ctx(base_billing_line, resolution, metrics_data=metrics_data, amount=Decimal("10"))
-
-        result = self_kafka_network_allocator(ctx)
-
-        total = sum(row.amount for row in result.rows)
-        assert total == Decimal("10")
-
-    def test_bytes_in_and_out_summed_per_principal(self, base_billing_line):
-        from plugins.self_managed_kafka.allocators.kafka_allocators import self_kafka_network_allocator
-
-        metrics_data = {
-            "bytes_in_per_principal": [
-                make_network_row("bytes_in_per_principal", "User:alice", 400.0),
-                make_network_row("bytes_in_per_principal", "User:bob", 100.0),
+                make_network_row("bytes_in_per_principal", "A", 100.0),
+                make_network_row("bytes_in_per_principal", "B", 0.0),
             ],
             "bytes_out_per_principal": [
-                make_network_row("bytes_out_per_principal", "User:alice", 400.0),
-                make_network_row("bytes_out_per_principal", "User:bob", 100.0),
+                make_network_row("bytes_out_per_principal", "A", 0.0),
+                make_network_row("bytes_out_per_principal", "B", 100.0),
+            ],
+        }
+        resolution = make_resolution(metrics_derived=make_identity_set("A", "B"))
+        ctx = make_ctx(billing_line, resolution, metrics_data=metrics_data)
+
+        ingress_result = self_kafka_network_ingress_allocator(ctx)
+        ingress_a = sum(r.amount for r in ingress_result.rows if r.identity_id == "A")
+        ingress_b = sum(r.amount for r in ingress_result.rows if r.identity_id == "B")
+
+        assert ingress_a == Decimal("100")
+        assert ingress_b == Decimal("0")
+
+
+class TestNetworkEgressAllocator:
+    def test_usage_ratio_with_bytes_out_only(self, base_billing_line):
+        from plugins.self_managed_kafka.allocators.kafka_allocators import self_kafka_network_egress_allocator
+
+        billing_line = BillingLineItem(**{**base_billing_line.__dict__, "product_type": "SELF_KAFKA_NETWORK_EGRESS"})
+        metrics_data = {
+            "bytes_out_per_principal": [
+                make_network_row("bytes_out_per_principal", "User:alice", 700.0),
+                make_network_row("bytes_out_per_principal", "User:bob", 300.0),
             ],
         }
         resolution = make_resolution(metrics_derived=make_identity_set("User:alice", "User:bob"))
-        ctx = make_ctx(base_billing_line, resolution, metrics_data=metrics_data)
+        ctx = make_ctx(billing_line, resolution, metrics_data=metrics_data)
 
-        result = self_kafka_network_allocator(ctx)
+        result = self_kafka_network_egress_allocator(ctx)
 
         total = sum(row.amount for row in result.rows)
         assert total == Decimal("100")
         alice_amount = sum(r.amount for r in result.rows if r.identity_id == "User:alice")
-        # alice has 80% of total (800/1000), bob has 20%
-        assert alice_amount == Decimal("80")
+        bob_amount = sum(r.amount for r in result.rows if r.identity_id == "User:bob")
+        assert alice_amount == Decimal("70")
+        assert bob_amount == Decimal("30")
+
+    def test_fallback_to_even_split_when_no_metrics(self, base_billing_line):
+        from plugins.self_managed_kafka.allocators.kafka_allocators import self_kafka_network_egress_allocator
+
+        billing_line = BillingLineItem(**{**base_billing_line.__dict__, "product_type": "SELF_KAFKA_NETWORK_EGRESS"})
+        resolution = make_resolution(metrics_derived=make_identity_set("User:alice", "User:bob"))
+        ctx = make_ctx(billing_line, resolution, metrics_data=None)
+
+        result = self_kafka_network_egress_allocator(ctx)
+
+        total = sum(row.amount for row in result.rows)
+        assert total == Decimal("100")
+        alice_amount = sum(r.amount for r in result.rows if r.identity_id == "User:alice")
+        bob_amount = sum(r.amount for r in result.rows if r.identity_id == "User:bob")
+        assert alice_amount == bob_amount
+
+    def test_fallback_to_even_split_when_zero_usage(self, base_billing_line):
+        from plugins.self_managed_kafka.allocators.kafka_allocators import self_kafka_network_egress_allocator
+
+        billing_line = BillingLineItem(**{**base_billing_line.__dict__, "product_type": "SELF_KAFKA_NETWORK_EGRESS"})
+        metrics_data = {
+            "bytes_out_per_principal": [
+                make_network_row("bytes_out_per_principal", "User:alice", 0.0),
+                make_network_row("bytes_out_per_principal", "User:bob", 0.0),
+            ],
+        }
+        resolution = make_resolution(metrics_derived=make_identity_set("User:alice", "User:bob"))
+        ctx = make_ctx(billing_line, resolution, metrics_data=metrics_data)
+
+        result = self_kafka_network_egress_allocator(ctx)
+
+        alice_amount = sum(r.amount for r in result.rows if r.identity_id == "User:alice")
+        bob_amount = sum(r.amount for r in result.rows if r.identity_id == "User:bob")
+        assert alice_amount == bob_amount
+
+    def test_no_identities_goes_to_unallocated(self, base_billing_line):
+        from plugins.self_managed_kafka.allocators.kafka_allocators import self_kafka_network_egress_allocator
+
+        billing_line = BillingLineItem(**{**base_billing_line.__dict__, "product_type": "SELF_KAFKA_NETWORK_EGRESS"})
+        resolution = make_resolution()
+        ctx = make_ctx(billing_line, resolution, metrics_data=None)
+
+        result = self_kafka_network_egress_allocator(ctx)
+
+        assert result.rows[0].identity_id == "UNALLOCATED"
+        assert result.rows[0].amount == Decimal("100")
+
+    def test_directional_allocation_ingress_vs_egress(self, base_billing_line):
+        """Principal A sends 100 bytes in / 0 out; B sends 0 in / 100 out.
+        Egress allocator → 100% B.
+        """
+        from plugins.self_managed_kafka.allocators.kafka_allocators import self_kafka_network_egress_allocator
+
+        billing_line = BillingLineItem(**{**base_billing_line.__dict__, "product_type": "SELF_KAFKA_NETWORK_EGRESS"})
+        metrics_data = {
+            "bytes_in_per_principal": [
+                make_network_row("bytes_in_per_principal", "A", 100.0),
+                make_network_row("bytes_in_per_principal", "B", 0.0),
+            ],
+            "bytes_out_per_principal": [
+                make_network_row("bytes_out_per_principal", "A", 0.0),
+                make_network_row("bytes_out_per_principal", "B", 100.0),
+            ],
+        }
+        resolution = make_resolution(metrics_derived=make_identity_set("A", "B"))
+        ctx = make_ctx(billing_line, resolution, metrics_data=metrics_data)
+
+        egress_result = self_kafka_network_egress_allocator(ctx)
+        egress_a = sum(r.amount for r in egress_result.rows if r.identity_id == "A")
+        egress_b = sum(r.amount for r in egress_result.rows if r.identity_id == "B")
+
+        assert egress_a == Decimal("0")
+        assert egress_b == Decimal("100")

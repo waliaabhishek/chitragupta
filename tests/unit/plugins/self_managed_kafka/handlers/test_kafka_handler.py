@@ -20,9 +20,9 @@ def base_config():
             "broker_count": 3,
             "cost_model": {
                 "compute_hourly_rate": "0.10",
-                "storage_per_gb_hourly": "0.0001",
-                "network_ingress_per_gb": "0.01",
-                "network_egress_per_gb": "0.02",
+                "storage_per_gib_hourly": "0.0001",
+                "network_ingress_per_gib": "0.01",
+                "network_egress_per_gib": "0.02",
             },
             "metrics": {"url": "http://prom:9090"},
         }
@@ -39,9 +39,9 @@ def static_config():
             "broker_count": 3,
             "cost_model": {
                 "compute_hourly_rate": "0.10",
-                "storage_per_gb_hourly": "0.0001",
-                "network_ingress_per_gb": "0.01",
-                "network_egress_per_gb": "0.02",
+                "storage_per_gib_hourly": "0.0001",
+                "network_ingress_per_gib": "0.01",
+                "network_egress_per_gib": "0.02",
             },
             "identity_source": {
                 "source": "static",
@@ -125,9 +125,9 @@ class TestGatherResources:
                 "broker_count": 3,
                 "cost_model": {
                     "compute_hourly_rate": "0.10",
-                    "storage_per_gb_hourly": "0.0001",
-                    "network_ingress_per_gb": "0.01",
-                    "network_egress_per_gb": "0.02",
+                    "storage_per_gib_hourly": "0.0001",
+                    "network_ingress_per_gib": "0.01",
+                    "network_egress_per_gib": "0.02",
                 },
                 "resource_source": {
                     "source": "admin_api",
@@ -162,9 +162,9 @@ class TestGatherResources:
                 "broker_count": 3,
                 "cost_model": {
                     "compute_hourly_rate": "0.10",
-                    "storage_per_gb_hourly": "0.0001",
-                    "network_ingress_per_gb": "0.01",
-                    "network_egress_per_gb": "0.02",
+                    "storage_per_gib_hourly": "0.0001",
+                    "network_ingress_per_gib": "0.01",
+                    "network_egress_per_gib": "0.02",
                 },
                 "resource_source": {
                     "source": "admin_api",
@@ -222,9 +222,9 @@ class TestGatherIdentities:
                 "broker_count": 3,
                 "cost_model": {
                     "compute_hourly_rate": "0.10",
-                    "storage_per_gb_hourly": "0.0001",
-                    "network_ingress_per_gb": "0.01",
-                    "network_egress_per_gb": "0.02",
+                    "storage_per_gib_hourly": "0.0001",
+                    "network_ingress_per_gib": "0.01",
+                    "network_egress_per_gib": "0.02",
                 },
                 "identity_source": {
                     "source": "both",
@@ -299,9 +299,9 @@ class TestResolveIdentities:
                 "broker_count": 3,
                 "cost_model": {
                     "compute_hourly_rate": "0.10",
-                    "storage_per_gb_hourly": "0.0001",
-                    "network_ingress_per_gb": "0.01",
-                    "network_egress_per_gb": "0.02",
+                    "storage_per_gib_hourly": "0.0001",
+                    "network_ingress_per_gib": "0.01",
+                    "network_egress_per_gib": "0.02",
                 },
                 "identity_source": {
                     "source": "both",
@@ -321,6 +321,43 @@ class TestResolveIdentities:
 
         assert "team-data" in resolution.resource_active
         assert "User:alice" in resolution.metrics_derived
+
+    def test_prometheus_unavailable_falls_back_to_static_in_resolve(self, mock_metrics_source):
+        """When prometheus_principals_available=False and static_identities configured,
+        resolve_identities() uses static identities instead of metrics_data."""
+        from plugins.self_managed_kafka.config import SelfManagedKafkaConfig
+        from plugins.self_managed_kafka.handlers.kafka import SelfManagedKafkaHandler
+
+        config = SelfManagedKafkaConfig.from_plugin_settings(
+            {
+                "cluster_id": "kafka-001",
+                "broker_count": 3,
+                "cost_model": {
+                    "compute_hourly_rate": "0.10",
+                    "storage_per_gib_hourly": "0.0001",
+                    "network_ingress_per_gib": "0.01",
+                    "network_egress_per_gib": "0.02",
+                },
+                "identity_source": {
+                    "source": "prometheus",
+                    "static_identities": [{"identity_id": "User:alice", "identity_type": "principal"}],
+                },
+                "metrics": {"url": "http://prom:9090"},
+            }
+        )
+
+        handler = SelfManagedKafkaHandler(config, mock_metrics_source, prometheus_principals_available=False)
+        metrics_data = {"bytes_in_per_principal": [make_metric_row("bytes_in_per_principal", "User:bob", 1000.0)]}
+        uow = MagicMock()
+
+        resolution = handler.resolve_identities(
+            "tenant-1", "kafka-001", datetime(2026, 2, 1, tzinfo=UTC), timedelta(days=1), metrics_data, uow
+        )
+
+        # Static fallback: alice from static_identities
+        assert "User:alice" in resolution.resource_active
+        # Prometheus path skipped: bob (from metrics_data) not in metrics_derived
+        assert "User:bob" not in resolution.metrics_derived
 
 
 class TestGetMetricsForProductType:
@@ -378,18 +415,18 @@ class TestGetAllocator:
         assert handler.get_allocator("SELF_KAFKA_STORAGE") is self_kafka_storage_allocator
 
     def test_network_ingress_allocator(self, base_config, mock_metrics_source):
-        from plugins.self_managed_kafka.allocators.kafka_allocators import self_kafka_network_allocator
+        from plugins.self_managed_kafka.allocators.kafka_allocators import self_kafka_network_ingress_allocator
         from plugins.self_managed_kafka.handlers.kafka import SelfManagedKafkaHandler
 
         handler = SelfManagedKafkaHandler(base_config, mock_metrics_source)
-        assert handler.get_allocator("SELF_KAFKA_NETWORK_INGRESS") is self_kafka_network_allocator
+        assert handler.get_allocator("SELF_KAFKA_NETWORK_INGRESS") is self_kafka_network_ingress_allocator
 
     def test_network_egress_allocator(self, base_config, mock_metrics_source):
-        from plugins.self_managed_kafka.allocators.kafka_allocators import self_kafka_network_allocator
+        from plugins.self_managed_kafka.allocators.kafka_allocators import self_kafka_network_egress_allocator
         from plugins.self_managed_kafka.handlers.kafka import SelfManagedKafkaHandler
 
         handler = SelfManagedKafkaHandler(base_config, mock_metrics_source)
-        assert handler.get_allocator("SELF_KAFKA_NETWORK_EGRESS") is self_kafka_network_allocator
+        assert handler.get_allocator("SELF_KAFKA_NETWORK_EGRESS") is self_kafka_network_egress_allocator
 
     def test_unknown_product_type_raises(self, base_config, mock_metrics_source):
         from plugins.self_managed_kafka.handlers.kafka import SelfManagedKafkaHandler

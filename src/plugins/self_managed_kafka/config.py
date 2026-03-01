@@ -12,18 +12,18 @@ class CostRateOverride(BaseModel):
     """Override cost rates for a specific region."""
 
     compute_hourly_rate: Decimal | None = None
-    storage_per_gb_hourly: Decimal | None = None
-    network_ingress_per_gb: Decimal | None = None
-    network_egress_per_gb: Decimal | None = None
+    storage_per_gib_hourly: Decimal | None = None
+    network_ingress_per_gib: Decimal | None = None
+    network_egress_per_gib: Decimal | None = None
 
 
 class CostModelConfig(BaseModel):
     """Infrastructure cost model for self-managed Kafka."""
 
     compute_hourly_rate: Decimal  # Per broker-hour
-    storage_per_gb_hourly: Decimal  # Per GB-hour
-    network_ingress_per_gb: Decimal  # Per GB
-    network_egress_per_gb: Decimal  # Per GB
+    storage_per_gib_hourly: Decimal  # Per GiB-hour (1 GiB = 2^30 bytes)
+    network_ingress_per_gib: Decimal  # Per GiB
+    network_egress_per_gib: Decimal  # Per GiB
     region_overrides: dict[str, CostRateOverride] = {}
 
 
@@ -113,13 +113,13 @@ class SelfManagedKafkaConfig(BaseModel):
             compute_hourly_rate=override.compute_hourly_rate
             if override.compute_hourly_rate is not None
             else self.cost_model.compute_hourly_rate,
-            storage_per_gb_hourly=override.storage_per_gb_hourly
-            if override.storage_per_gb_hourly is not None
-            else self.cost_model.storage_per_gb_hourly,
-            network_ingress_per_gb=override.network_ingress_per_gb
-            if override.network_ingress_per_gb is not None
-            else self.cost_model.network_ingress_per_gb,
-            network_egress_per_gb=override.network_egress_per_gb
-            if override.network_egress_per_gb is not None
-            else self.cost_model.network_egress_per_gb,
+            storage_per_gib_hourly=override.storage_per_gib_hourly
+            if override.storage_per_gib_hourly is not None
+            else self.cost_model.storage_per_gib_hourly,
+            network_ingress_per_gib=override.network_ingress_per_gib
+            if override.network_ingress_per_gib is not None
+            else self.cost_model.network_ingress_per_gib,
+            network_egress_per_gib=override.network_egress_per_gib
+            if override.network_egress_per_gib is not None
+            else self.cost_model.network_egress_per_gib,
         )
