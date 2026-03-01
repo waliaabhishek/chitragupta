@@ -31,7 +31,7 @@ if TYPE_CHECKING:
 
 _FLINK_METRICS_PRIMARY = MetricQuery(
     key="flink_cfu_primary",
-    query_expression='sum by (compute_pool_id, flink_statement_name)(confluent_flink_num_cfu{resource_id=~"lfcp-.+"})',
+    query_expression="sum by (compute_pool_id, flink_statement_name)(confluent_flink_num_cfu{})",
     label_keys=("compute_pool_id", "flink_statement_name"),
     resource_label="compute_pool_id",
     query_mode="instant",
@@ -39,8 +39,7 @@ _FLINK_METRICS_PRIMARY = MetricQuery(
 _FLINK_METRICS_FALLBACK = MetricQuery(
     key="flink_cfu_fallback",
     query_expression=(
-        "sum by (compute_pool_id, flink_statement_name)"
-        '(confluent_flink_statement_utilization_cfu_minutes_consumed{resource_id=~"lfcp-.+"})'
+        "sum by (compute_pool_id, flink_statement_name)(confluent_flink_statement_utilization_cfu_minutes_consumed{})"
     ),
     label_keys=("compute_pool_id", "flink_statement_name"),
     resource_label="compute_pool_id",

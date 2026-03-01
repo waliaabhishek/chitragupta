@@ -88,6 +88,100 @@ class TestFlinkHandlerGetMetrics:
         assert "flink_cfu_fallback" in keys
 
 
+class TestFlinkMetricQueryResourceFilter:
+    """Tests for GAP-19: Flink queries must use {} placeholder for resource filter injection."""
+
+    def test_primary_query_contains_placeholder(self) -> None:
+        """_FLINK_METRICS_PRIMARY query_expression contains {} placeholder."""
+        from plugins.confluent_cloud.handlers.flink import _FLINK_METRICS_PRIMARY
+
+        assert "{}" in _FLINK_METRICS_PRIMARY.query_expression
+
+    def test_fallback_query_contains_placeholder(self) -> None:
+        """_FLINK_METRICS_FALLBACK query_expression contains {} placeholder."""
+        from plugins.confluent_cloud.handlers.flink import _FLINK_METRICS_FALLBACK
+
+        assert "{}" in _FLINK_METRICS_FALLBACK.query_expression
+
+    def test_primary_with_resource_id_filter_injects_compute_pool_id(self) -> None:
+        """resource_id_filter injects {compute_pool_id="lfcp-abc123"} into primary query."""
+        from core.metrics.prometheus import _inject_resource_filter
+        from plugins.confluent_cloud.handlers.flink import _FLINK_METRICS_PRIMARY
+
+        result = _inject_resource_filter(
+            expression=_FLINK_METRICS_PRIMARY.query_expression,
+            resource_label=_FLINK_METRICS_PRIMARY.resource_label,
+            resource_id_filter="lfcp-abc123",
+        )
+
+        assert '{compute_pool_id="lfcp-abc123"}' in result
+
+    def test_fallback_with_resource_id_filter_injects_compute_pool_id(self) -> None:
+        """resource_id_filter injects {compute_pool_id="lfcp-abc123"} into fallback query."""
+        from core.metrics.prometheus import _inject_resource_filter
+        from plugins.confluent_cloud.handlers.flink import _FLINK_METRICS_FALLBACK
+
+        result = _inject_resource_filter(
+            expression=_FLINK_METRICS_FALLBACK.query_expression,
+            resource_label=_FLINK_METRICS_FALLBACK.resource_label,
+            resource_id_filter="lfcp-abc123",
+        )
+
+        assert '{compute_pool_id="lfcp-abc123"}' in result
+
+    def test_primary_with_none_filter_strips_placeholder(self) -> None:
+        """resource_id_filter=None strips {} from primary query, leaving no selector braces."""
+        from core.metrics.prometheus import _inject_resource_filter
+        from plugins.confluent_cloud.handlers.flink import _FLINK_METRICS_PRIMARY
+
+        result = _inject_resource_filter(
+            expression=_FLINK_METRICS_PRIMARY.query_expression,
+            resource_label=_FLINK_METRICS_PRIMARY.resource_label,
+            resource_id_filter=None,
+        )
+
+        assert "{}" not in result
+        assert "confluent_flink_num_cfu" in result
+        # No selector braces remain around the metric name
+        assert "confluent_flink_num_cfu{" not in result
+
+    def test_fallback_with_none_filter_strips_placeholder(self) -> None:
+        """resource_id_filter=None strips {} from fallback query, leaving no selector braces."""
+        from core.metrics.prometheus import _inject_resource_filter
+        from plugins.confluent_cloud.handlers.flink import _FLINK_METRICS_FALLBACK
+
+        result = _inject_resource_filter(
+            expression=_FLINK_METRICS_FALLBACK.query_expression,
+            resource_label=_FLINK_METRICS_FALLBACK.resource_label,
+            resource_id_filter=None,
+        )
+
+        assert "{}" not in result
+        assert "confluent_flink_statement_utilization_cfu_minutes_consumed" in result
+        assert "confluent_flink_statement_utilization_cfu_minutes_consumed{" not in result
+
+
+    def test_different_pools_produce_distinct_expressions(self) -> None:
+        """Two different pool IDs produce distinct, pool-specific expressions."""
+        from core.metrics.prometheus import _inject_resource_filter
+        from plugins.confluent_cloud.handlers.flink import _FLINK_METRICS_PRIMARY
+
+        query = _FLINK_METRICS_PRIMARY
+
+        result_pool1 = _inject_resource_filter(
+            query.query_expression, query.resource_label, "lfcp-abc123"
+        )
+        result_pool2 = _inject_resource_filter(
+            query.query_expression, query.resource_label, "lfcp-xyz789"
+        )
+
+        assert result_pool1 != result_pool2
+        assert 'compute_pool_id="lfcp-abc123"' in result_pool1
+        assert 'compute_pool_id="lfcp-xyz789"' in result_pool2
+        assert "lfcp-abc123" not in result_pool2
+        assert "lfcp-xyz789" not in result_pool1
+
+
 class TestFlinkHandlerGatherResources:
     """Tests for gather_resources method."""
 
