@@ -58,6 +58,7 @@ def _map_billing_item(
     item: dict[str, Any],
     ecosystem: str,
     tenant_id: str,
+    row_index: int = 0,
 ) -> BillingLineItem:
     """Map a CCloud billing API response item to BillingLineItem."""
     resource = item.get("resource", {})
@@ -77,7 +78,7 @@ def _map_billing_item(
         ecosystem=ecosystem,
         tenant_id=tenant_id,
         timestamp=_parse_billing_date(item["start_date"]),
-        resource_id=resource.get("id") or "unresolved_billing_resource",
+        resource_id=resource.get("id") or f"unresolved_billing_{row_index}",
         product_category=item.get("product", ""),
         product_type=item.get("line_type", ""),
         quantity=_safe_decimal(item.get("quantity")),
@@ -86,6 +87,26 @@ def _map_billing_item(
         granularity="daily",
         currency="USD",
         metadata=metadata,
+    )
+
+
+def _map_malformed_item(
+    item: dict[str, Any], ecosystem: str, tenant_id: str, idx: int, exc: Exception
+) -> BillingLineItem:
+    """Create a billing line from a malformed API row with best-effort field extraction."""
+    return BillingLineItem(
+        ecosystem=ecosystem,
+        tenant_id=tenant_id,
+        timestamp=_parse_billing_date(item.get("start_date", "1970-01-01")),
+        resource_id=f"malformed_billing_{idx}",
+        product_category=item.get("product", f"MALFORMED_{idx}"),
+        product_type=item.get("line_type", f"MALFORMED_{idx}"),
+        quantity=_safe_decimal(item.get("quantity")),
+        unit_price=_safe_decimal(item.get("price")),
+        total_cost=_safe_decimal(item.get("amount")),
+        granularity="daily",
+        currency="USD",
+        metadata={"malformed": True, "parse_error": str(exc)},
     )
 
 
@@ -134,14 +155,10 @@ class CCloudBillingCostInput(CostInput):
             "page_size": BILLING_PAGE_SIZE,
         }
 
-        for raw_item in self._connection.get(BILLING_API_PATH, params=params):
+        for idx, raw_item in enumerate(self._connection.get(BILLING_API_PATH, params=params)):
             try:
-                yield _map_billing_item(raw_item, ECOSYSTEM, tenant_id)
+                yield _map_billing_item(raw_item, ECOSYSTEM, tenant_id, row_index=idx)
             except (KeyError, ValueError) as exc:
-                # Malformed item — log warning and skip
-                resource_id = raw_item.get("resource", {}).get("id", "unknown")
-                LOGGER.warning(
-                    "Skipping malformed billing item (resource=%s): %s",
-                    resource_id,
-                    exc,
-                )
+                # Preserve malformed row instead of dropping
+                LOGGER.debug("Preserving malformed billing item %d as sentinel row: %s", idx, exc)
+                yield _map_malformed_item(raw_item, ECOSYSTEM, tenant_id, idx, exc)
