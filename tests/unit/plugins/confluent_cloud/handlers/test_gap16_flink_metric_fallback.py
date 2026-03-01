@@ -94,11 +94,7 @@ class TestFlinkMetricFallbackResolution:
         mock_uow.resources.find_by_period.return_value = ([stmt], 1)
         mock_uow.identities.find_by_period.return_value = ([owner], 1)
 
-        metrics = {
-            "flink_cfu_primary": [
-                _make_metric_row("confluent_flink_num_cfu", "stmt-primary", 99.0)
-            ]
-        }
+        metrics = {"flink_cfu_primary": [_make_metric_row("confluent_flink_num_cfu", "stmt-primary", 99.0)]}
 
         result = resolve_flink_identity(
             tenant_id=_TENANT,
@@ -124,9 +120,7 @@ class TestFlinkMetricFallbackResolution:
         mock_uow.identities.find_by_period.return_value = ([owner], 1)
 
         metrics = {
-            "flink_cfu_primary": [
-                _make_metric_row("confluent_flink_num_cfu", "stmt-shared", 10.0)
-            ],
+            "flink_cfu_primary": [_make_metric_row("confluent_flink_num_cfu", "stmt-shared", 10.0)],
             "flink_cfu_fallback": [
                 _make_metric_row(
                     "confluent_flink_statement_utilization_cfu_minutes_consumed",
@@ -149,9 +143,7 @@ class TestFlinkMetricFallbackResolution:
         # Primary value (10.0) used — fallback (20.0) ignored — no double-count (30.0)
         assert result.context.get("stmt_owner_cfu") == {"sa-shared-owner": 10.0}
 
-    def test_neither_metric_present_falls_through_to_unallocated(
-        self, mock_uow: MagicMock
-    ) -> None:
+    def test_neither_metric_present_falls_through_to_unallocated(self, mock_uow: MagicMock) -> None:
         """metrics_data has neither flink_cfu_primary nor flink_cfu_fallback → empty resolution."""
         from plugins.confluent_cloud.handlers.flink_identity import resolve_flink_identity
 

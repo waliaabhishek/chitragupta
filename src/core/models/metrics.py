@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 
 @dataclass(frozen=True)
@@ -13,6 +13,7 @@ class MetricQuery:
     query_expression: str
     label_keys: tuple[str, ...]
     resource_label: str
+    query_mode: Literal["instant", "range"] = "range"
     metadata: dict[str, Any] = field(default_factory=dict)
 
 

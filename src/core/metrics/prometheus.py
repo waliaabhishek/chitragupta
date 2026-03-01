@@ -7,7 +7,7 @@ import threading
 import time
 from collections import OrderedDict
 from collections.abc import Sequence
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Literal
@@ -73,6 +73,7 @@ class PrometheusMetricsSource:
     ) -> None:
         self._config = config
         self._url_range = urljoin(config.url, "/api/v1/query_range")
+        self._url_instant = urljoin(config.url, "/api/v1/query")
         self._extra_headers = dict(config.extra_headers)
         self._auth = self._build_auth()
         if self._config.auth and self._config.auth.type == "bearer":
@@ -107,27 +108,22 @@ class PrometheusMetricsSource:
         if not queries:
             return {}
 
-        # Prepare expressions with resource filter injected
-        prepared: list[tuple[MetricQuery, str]] = []
-        for mq in queries:
-            expr = _inject_resource_filter(mq.query_expression, mq.resource_label, resource_id_filter)
-            prepared.append((mq, expr))
+        prepared: list[tuple[MetricQuery, str]] = [
+            (mq, _inject_resource_filter(mq.query_expression, mq.resource_label, resource_id_filter)) for mq in queries
+        ]
 
         workers = min(self._config.max_workers, len(prepared))
         results: dict[str, list[MetricRow]] = {}
         errors: list[MetricsQueryError] = []
 
         with ThreadPoolExecutor(max_workers=workers) as executor:
-            futures = {
-                executor.submit(
-                    self._execute_query,
-                    expr,
-                    start,
-                    end,
-                    step,
-                ): mq
-                for mq, expr in prepared
-            }
+            futures: dict[Future[str], MetricQuery] = {}
+            for mq, expr in prepared:
+                if mq.query_mode == "instant":
+                    fut = executor.submit(self._execute_instant, expr, end)
+                else:
+                    fut = executor.submit(self._execute_query, expr, start, end, step)
+                futures[fut] = mq
 
             for future in futures:
                 mq = futures[future]
@@ -145,26 +141,19 @@ class PrometheusMetricsSource:
 
         return results
 
-    def _execute_query(
+    def _build_post_headers(self) -> dict[str, str]:
+        """Build POST headers for Prometheus API requests."""
+        headers = {"Content-Type": "application/x-www-form-urlencoded"}
+        headers.update(self._extra_headers)
+        return headers
+
+    def _execute_cached_post(
         self,
-        query_expression: str,
-        start: datetime,
-        end: datetime,
-        step: timedelta,
+        url: str,
+        data: dict[str, str],
+        cache_key: tuple[str, ...],
     ) -> str:
-        """Execute a single query with caching. Returns raw response text."""
-        start_str = _iso_utc(start)
-        end_str = _iso_utc(end)
-
-        step_seconds = int(step.total_seconds())
-        if step_seconds <= 0:
-            LOGGER.warning("Step %s is non-positive; defaulting to %ss", step, self._config.step_seconds)
-            step_seconds = self._config.step_seconds
-        step_str = str(step_seconds)
-
-        cache_key = (self._url_range, query_expression, start_str, end_str, step_str)
-
-        # Check cache (thread-safe)
+        """POST to Prometheus with cache read/write. Returns raw response text."""
         with self._cache_lock:
             cached = self._cache.get(cache_key)
             if cached is not None:
@@ -172,21 +161,10 @@ class PrometheusMetricsSource:
                 if expiry is None or time.monotonic() < expiry:
                     self._cache.move_to_end(cache_key)
                     return text
-                # Expired — remove it
                 del self._cache[cache_key]
 
-        data = {
-            "query": query_expression,
-            "start": start_str,
-            "end": end_str,
-            "step": step_str,
-        }
-        headers = {"Content-Type": "application/x-www-form-urlencoded"}
-        headers.update(self._extra_headers)
+        response_text = self._post_with_retry(url, data, self._build_post_headers())
 
-        response_text = self._post_with_retry(self._url_range, data, headers)
-
-        # Cache the result with LRU eviction (thread-safe)
         with self._cache_lock:
             if cache_key in self._cache:
                 self._cache.move_to_end(cache_key)
@@ -201,6 +179,46 @@ class PrometheusMetricsSource:
                 self._cache[cache_key] = (expiry, response_text)
 
         return response_text
+
+    def _execute_query(
+        self,
+        query_expression: str,
+        start: datetime,
+        end: datetime,
+        step: timedelta,
+    ) -> str:
+        """Execute a single range query with caching. Returns raw response text."""
+        start_str = _iso_utc(start)
+        end_str = _iso_utc(end)
+
+        step_seconds = int(step.total_seconds())
+        if step_seconds <= 0:
+            LOGGER.warning("Step %s is non-positive; defaulting to %ss", step, self._config.step_seconds)
+            step_seconds = self._config.step_seconds
+        step_str = str(step_seconds)
+
+        cache_key = (self._url_range, query_expression, start_str, end_str, step_str)
+        data = {
+            "query": query_expression,
+            "start": start_str,
+            "end": end_str,
+            "step": step_str,
+        }
+        return self._execute_cached_post(self._url_range, data, cache_key)
+
+    def _execute_instant(
+        self,
+        query_expression: str,
+        timestamp: datetime,
+    ) -> str:
+        """Execute a single instant query with caching. Returns raw response text."""
+        timestamp_str = _iso_utc(timestamp)
+        cache_key = (self._url_instant, query_expression, timestamp_str)
+        data = {
+            "query": query_expression,
+            "time": timestamp_str,
+        }
+        return self._execute_cached_post(self._url_instant, data, cache_key)
 
     def _post_with_retry(
         self,
