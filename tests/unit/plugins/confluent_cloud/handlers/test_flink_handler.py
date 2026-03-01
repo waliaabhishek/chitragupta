@@ -160,7 +160,6 @@ class TestFlinkMetricQueryResourceFilter:
         assert "confluent_flink_statement_utilization_cfu_minutes_consumed" in result
         assert "confluent_flink_statement_utilization_cfu_minutes_consumed{" not in result
 
-
     def test_different_pools_produce_distinct_expressions(self) -> None:
         """Two different pool IDs produce distinct, pool-specific expressions."""
         from core.metrics.prometheus import _inject_resource_filter
@@ -168,12 +167,8 @@ class TestFlinkMetricQueryResourceFilter:
 
         query = _FLINK_METRICS_PRIMARY
 
-        result_pool1 = _inject_resource_filter(
-            query.query_expression, query.resource_label, "lfcp-abc123"
-        )
-        result_pool2 = _inject_resource_filter(
-            query.query_expression, query.resource_label, "lfcp-xyz789"
-        )
+        result_pool1 = _inject_resource_filter(query.query_expression, query.resource_label, "lfcp-abc123")
+        result_pool2 = _inject_resource_filter(query.query_expression, query.resource_label, "lfcp-xyz789")
 
         assert result_pool1 != result_pool2
         assert 'compute_pool_id="lfcp-abc123"' in result_pool1

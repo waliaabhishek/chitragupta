@@ -337,4 +337,4 @@ class TestBytesPerGiBConstant:
     def test_bytes_per_gib_constant_exists_and_correct(self):
         from plugins.self_managed_kafka.cost_input import _BYTES_PER_GIB
 
-        assert _BYTES_PER_GIB == Decimal("1073741824")
+        assert Decimal("1073741824") == _BYTES_PER_GIB

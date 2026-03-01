@@ -272,7 +272,6 @@ class TestPluginPrincipalLabelValidation:
 
     def test_initialize_warns_when_principal_label_missing(self, base_settings):
         """Prometheus returns rows without 'principal' label → WARNING logged, flag = False."""
-        import logging
         from unittest.mock import MagicMock, patch
 
         from plugins.self_managed_kafka.plugin import SelfManagedKafkaPlugin

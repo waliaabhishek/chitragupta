@@ -546,13 +546,20 @@ class ChargebackOrchestrator:
             return rows_written
 
         except Exception as exc:
-            new_attempts = uow.billing.increment_allocation_attempts(
-                self._ecosystem,
-                self._tenant_id,
-                line.timestamp,
-                line.resource_id,
-                line.product_type,
-            )
+            # Persist attempt increment in a separate transaction so it survives rollback
+            try:
+                with self._storage_backend.create_unit_of_work() as retry_uow:
+                    new_attempts = retry_uow.billing.increment_allocation_attempts(
+                        self._ecosystem,
+                        self._tenant_id,
+                        line.timestamp,
+                        line.resource_id,
+                        line.product_type,
+                    )
+                    retry_uow.commit()
+            except Exception as retry_exc:
+                logger.warning("Failed to persist retry counter: %s", retry_exc)
+                raise exc from None  # re-raise original allocator exception; counter persistence is best-effort
 
             if new_attempts < allocation_retry_limit:
                 logger.error(

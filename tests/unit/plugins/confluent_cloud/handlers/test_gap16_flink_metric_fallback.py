@@ -12,7 +12,6 @@ from unittest.mock import MagicMock
 
 from core.models import Identity, MetricRow, Resource
 
-
 _BILLING_START = datetime(2026, 2, 1, tzinfo=UTC)
 _BILLING_END = datetime(2026, 2, 2, tzinfo=UTC)
 _TENANT = "org-123"
