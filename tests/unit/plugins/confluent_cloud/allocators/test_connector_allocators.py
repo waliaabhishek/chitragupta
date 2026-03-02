@@ -33,21 +33,6 @@ def connect_billing_line() -> BillingLineItem:
     )
 
 
-def make_identity_set_typed(*entries: tuple[str, str]) -> IdentitySet:
-    """Create an IdentitySet from (identity_id, identity_type) pairs."""
-    iset = IdentitySet()
-    for identity_id, identity_type in entries:
-        iset.add(
-            Identity(
-                ecosystem="confluent_cloud",
-                tenant_id="org-123",
-                identity_id=identity_id,
-                identity_type=identity_type,
-            )
-        )
-    return iset
-
-
 def make_identity_set(*identity_ids: str) -> IdentitySet:
     """Create an IdentitySet with the given identity IDs."""
     iset = IdentitySet()
@@ -94,8 +79,8 @@ class TestConnectCapacityAllocator:
         assert all(r.cost_type == CostType.SHARED for r in result.rows)
         assert all(r.allocation_method == "even_split" for r in result.rows)
 
-    def test_no_identities_unallocated(self, connect_billing_line: BillingLineItem) -> None:
-        """Without identities, allocates to UNALLOCATED."""
+    def test_no_identities_resource_local(self, connect_billing_line: BillingLineItem) -> None:
+        """Without identities, falls back to resource-local (identity_id == resource_id)."""
         from plugins.confluent_cloud.allocators.connector_allocators import (
             connect_capacity_allocator,
         )
@@ -117,35 +102,8 @@ class TestConnectCapacityAllocator:
         result = connect_capacity_allocator(ctx)
 
         assert len(result.rows) == 1
-        assert result.rows[0].identity_id == "UNALLOCATED"
+        assert result.rows[0].identity_id == connect_billing_line.resource_id
         assert result.rows[0].amount == Decimal("100")
-        assert result.rows[0].cost_type == CostType.SHARED
-
-    def test_fallback_to_tenant_period(self, connect_billing_line: BillingLineItem) -> None:
-        """Falls back to tenant_period when merged_active is empty."""
-        from plugins.confluent_cloud.allocators.connector_allocators import (
-            connect_capacity_allocator,
-        )
-
-        resolution = IdentityResolution(
-            resource_active=IdentitySet(),
-            metrics_derived=IdentitySet(),
-            tenant_period=make_identity_set("sa-tenant"),
-        )
-        ctx = AllocationContext(
-            timeslice=connect_billing_line.timestamp,
-            billing_line=connect_billing_line,
-            identities=resolution,
-            split_amount=Decimal("100"),
-            metrics_data=None,
-            params={},
-        )
-
-        result = connect_capacity_allocator(ctx)
-
-        assert len(result.rows) == 1
-        assert result.rows[0].identity_id == "sa-tenant"
-        assert result.rows[0].cost_type == CostType.SHARED
 
 
 class TestConnectTasksAllocator:
@@ -179,8 +137,8 @@ class TestConnectTasksAllocator:
         assert all(r.cost_type == CostType.USAGE for r in result.rows)
         assert all(r.allocation_method == "even_split" for r in result.rows)
 
-    def test_no_identities_unallocated(self, connect_billing_line: BillingLineItem) -> None:
-        """Without identities, allocates to UNALLOCATED with USAGE cost type."""
+    def test_no_identities_resource_local(self, connect_billing_line: BillingLineItem) -> None:
+        """Without identities, falls back to resource-local (identity_id == resource_id)."""
         from plugins.confluent_cloud.allocators.connector_allocators import (
             connect_tasks_allocator,
         )
@@ -202,35 +160,8 @@ class TestConnectTasksAllocator:
         result = connect_tasks_allocator(ctx)
 
         assert len(result.rows) == 1
-        assert result.rows[0].identity_id == "UNALLOCATED"
+        assert result.rows[0].identity_id == connect_billing_line.resource_id
         assert result.rows[0].amount == Decimal("100")
-        assert result.rows[0].cost_type == CostType.USAGE
-
-    def test_fallback_to_tenant_period(self, connect_billing_line: BillingLineItem) -> None:
-        """Falls back to tenant_period when merged_active is empty."""
-        from plugins.confluent_cloud.allocators.connector_allocators import (
-            connect_tasks_allocator,
-        )
-
-        resolution = IdentityResolution(
-            resource_active=IdentitySet(),
-            metrics_derived=IdentitySet(),
-            tenant_period=make_identity_set("sa-tenant"),
-        )
-        ctx = AllocationContext(
-            timeslice=connect_billing_line.timestamp,
-            billing_line=connect_billing_line,
-            identities=resolution,
-            split_amount=Decimal("100"),
-            metrics_data=None,
-            params={},
-        )
-
-        result = connect_tasks_allocator(ctx)
-
-        assert len(result.rows) == 1
-        assert result.rows[0].identity_id == "sa-tenant"
-        assert result.rows[0].cost_type == CostType.USAGE
 
     def test_three_way_split_with_remainder(self, connect_billing_line: BillingLineItem) -> None:
         """Three identities splitting $10 handles remainder correctly."""
@@ -295,8 +226,8 @@ class TestConnectThroughputAllocator:
         assert sum(r.amount for r in throughput_result.rows) == sum(r.amount for r in tasks_result.rows)
         assert all(r.cost_type == CostType.USAGE for r in throughput_result.rows)
 
-    def test_no_identities_unallocated(self, connect_billing_line: BillingLineItem) -> None:
-        """Without identities, allocates to UNALLOCATED with USAGE cost type."""
+    def test_no_identities_resource_local(self, connect_billing_line: BillingLineItem) -> None:
+        """Without identities, falls back to resource-local (identity_id == resource_id)."""
         from plugins.confluent_cloud.allocators.connector_allocators import (
             connect_throughput_allocator,
         )
@@ -318,15 +249,17 @@ class TestConnectThroughputAllocator:
         result = connect_throughput_allocator(ctx)
 
         assert len(result.rows) == 1
-        assert result.rows[0].identity_id == "UNALLOCATED"
-        assert result.rows[0].cost_type == CostType.USAGE
+        assert result.rows[0].identity_id == connect_billing_line.resource_id
+        assert result.rows[0].amount == Decimal("100")
 
 
-class TestConnectCapacityAllocatorTenantPeriodTypeFiltering:
-    """GAP-10: tenant_period fallback must exclude api_key and system types."""
+class TestConnectorResourceLocalFallback:
+    """GAP-24: Empty merged_active must fall back to resource-local, not tenant-period."""
 
-    def test_fallback_tenant_period_excludes_api_keys(self, connect_billing_line: BillingLineItem) -> None:
-        """When merged_active is empty, tenant_period fallback excludes API keys."""
+    def test_capacity_empty_merged_active_identity_id_is_resource_id(
+        self, connect_billing_line: BillingLineItem
+    ) -> None:
+        """Capacity: empty merged_active with tenant_period identities → single row with identity_id == resource_id."""
         from plugins.confluent_cloud.allocators.connector_allocators import (
             connect_capacity_allocator,
         )
@@ -334,12 +267,7 @@ class TestConnectCapacityAllocatorTenantPeriodTypeFiltering:
         resolution = IdentityResolution(
             resource_active=IdentitySet(),
             metrics_derived=IdentitySet(),
-            tenant_period=make_identity_set_typed(
-                ("sa-1", "service_account"),
-                ("pool-1", "identity_pool"),
-                ("key-1", "api_key"),
-                ("key-2", "api_key"),
-            ),
+            tenant_period=make_identity_set("sa-tenant-1", "sa-tenant-2"),
         )
         ctx = AllocationContext(
             timeslice=connect_billing_line.timestamp,
@@ -352,23 +280,52 @@ class TestConnectCapacityAllocatorTenantPeriodTypeFiltering:
 
         result = connect_capacity_allocator(ctx)
 
-        row_ids = {r.identity_id for r in result.rows}
-        assert row_ids == {"sa-1", "pool-1"}
-        assert len(result.rows) == 2
+        assert len(result.rows) == 1
+        assert result.rows[0].identity_id == connect_billing_line.resource_id
+        assert result.rows[0].identity_id == "connector-xyz"
+        assert result.rows[0].amount == Decimal("100")
 
-    def test_fallback_tenant_period_excludes_system_unallocated(self, connect_billing_line: BillingLineItem) -> None:
-        """When merged_active is empty, tenant_period fallback excludes system type."""
+    def test_tasks_empty_merged_active_identity_id_is_resource_id(
+        self, connect_billing_line: BillingLineItem
+    ) -> None:
+        """Tasks: empty merged_active with tenant_period identities → single row with identity_id == resource_id."""
         from plugins.confluent_cloud.allocators.connector_allocators import (
-            connect_capacity_allocator,
+            connect_tasks_allocator,
         )
 
         resolution = IdentityResolution(
             resource_active=IdentitySet(),
             metrics_derived=IdentitySet(),
-            tenant_period=make_identity_set_typed(
-                ("sa-1", "service_account"),
-                ("UNALLOCATED", "system"),
-            ),
+            tenant_period=make_identity_set("sa-tenant-1", "sa-tenant-2"),
+        )
+        ctx = AllocationContext(
+            timeslice=connect_billing_line.timestamp,
+            billing_line=connect_billing_line,
+            identities=resolution,
+            split_amount=Decimal("100"),
+            metrics_data=None,
+            params={},
+        )
+
+        result = connect_tasks_allocator(ctx)
+
+        assert len(result.rows) == 1
+        assert result.rows[0].identity_id == connect_billing_line.resource_id
+        assert result.rows[0].identity_id == "connector-xyz"
+        assert result.rows[0].amount == Decimal("100")
+
+    def test_capacity_active_identities_even_split(
+        self, connect_billing_line: BillingLineItem
+    ) -> None:
+        """Capacity: active identities present → even split (unchanged behavior)."""
+        from plugins.confluent_cloud.allocators.connector_allocators import (
+            connect_capacity_allocator,
+        )
+
+        resolution = IdentityResolution(
+            resource_active=make_identity_set("sa-1", "sa-2"),
+            metrics_derived=IdentitySet(),
+            tenant_period=IdentitySet(),
         )
         ctx = AllocationContext(
             timeslice=connect_billing_line.timestamp,
@@ -381,60 +338,22 @@ class TestConnectCapacityAllocatorTenantPeriodTypeFiltering:
 
         result = connect_capacity_allocator(ctx)
 
-        row_ids = {r.identity_id for r in result.rows}
-        assert "UNALLOCATED" not in row_ids
-        assert len(result.rows) == 1
-        assert result.rows[0].identity_id == "sa-1"
-
-
-class TestConnectTasksAllocatorTenantPeriodTypeFiltering:
-    """GAP-10: tenant_period fallback in tasks allocator must exclude api_key and system."""
-
-    def test_fallback_tenant_period_excludes_api_keys(self, connect_billing_line: BillingLineItem) -> None:
-        """When merged_active is empty, tenant_period fallback excludes API keys."""
-        from plugins.confluent_cloud.allocators.connector_allocators import (
-            connect_tasks_allocator,
-        )
-
-        resolution = IdentityResolution(
-            resource_active=IdentitySet(),
-            metrics_derived=IdentitySet(),
-            tenant_period=make_identity_set_typed(
-                ("sa-1", "service_account"),
-                ("pool-1", "identity_pool"),
-                ("key-1", "api_key"),
-                ("key-2", "api_key"),
-            ),
-        )
-        ctx = AllocationContext(
-            timeslice=connect_billing_line.timestamp,
-            billing_line=connect_billing_line,
-            identities=resolution,
-            split_amount=Decimal("100"),
-            metrics_data=None,
-            params={},
-        )
-
-        result = connect_tasks_allocator(ctx)
-
-        row_ids = {r.identity_id for r in result.rows}
-        assert row_ids == {"sa-1", "pool-1"}
         assert len(result.rows) == 2
-        assert all(r.cost_type == CostType.USAGE for r in result.rows)
+        assert {r.identity_id for r in result.rows} == {"sa-1", "sa-2"}
+        assert all(r.amount == Decimal("50") for r in result.rows)
 
-    def test_fallback_tenant_period_excludes_system_unallocated(self, connect_billing_line: BillingLineItem) -> None:
-        """When merged_active is empty, tenant_period fallback excludes system type."""
+    def test_tasks_active_identities_even_split(
+        self, connect_billing_line: BillingLineItem
+    ) -> None:
+        """Tasks: active identities present → even split (unchanged behavior)."""
         from plugins.confluent_cloud.allocators.connector_allocators import (
             connect_tasks_allocator,
         )
 
         resolution = IdentityResolution(
-            resource_active=IdentitySet(),
+            resource_active=make_identity_set("sa-1", "sa-2"),
             metrics_derived=IdentitySet(),
-            tenant_period=make_identity_set_typed(
-                ("sa-1", "service_account"),
-                ("UNALLOCATED", "system"),
-            ),
+            tenant_period=IdentitySet(),
         )
         ctx = AllocationContext(
             timeslice=connect_billing_line.timestamp,
@@ -447,8 +366,105 @@ class TestConnectTasksAllocatorTenantPeriodTypeFiltering:
 
         result = connect_tasks_allocator(ctx)
 
-        row_ids = {r.identity_id for r in result.rows}
-        assert "UNALLOCATED" not in row_ids
+        assert len(result.rows) == 2
+        assert {r.identity_id for r in result.rows} == {"sa-1", "sa-2"}
+        assert all(r.amount == Decimal("50") for r in result.rows)
+
+    def test_capacity_fallback_row_allocation_method_to_resource(
+        self, connect_billing_line: BillingLineItem
+    ) -> None:
+        """Capacity: fallback row must have allocation_method == 'to_resource'."""
+        from plugins.confluent_cloud.allocators.connector_allocators import (
+            connect_capacity_allocator,
+        )
+
+        resolution = IdentityResolution(
+            resource_active=IdentitySet(),
+            metrics_derived=IdentitySet(),
+            tenant_period=make_identity_set("sa-tenant"),
+        )
+        ctx = AllocationContext(
+            timeslice=connect_billing_line.timestamp,
+            billing_line=connect_billing_line,
+            identities=resolution,
+            split_amount=Decimal("100"),
+            metrics_data=None,
+            params={},
+        )
+
+        result = connect_capacity_allocator(ctx)
+
         assert len(result.rows) == 1
-        assert result.rows[0].identity_id == "sa-1"
-        assert result.rows[0].cost_type == CostType.USAGE
+        assert result.rows[0].allocation_method == "to_resource"
+
+    def test_tasks_fallback_row_allocation_method_to_resource(
+        self, connect_billing_line: BillingLineItem
+    ) -> None:
+        """Tasks: fallback row must have allocation_method == 'to_resource'."""
+        from plugins.confluent_cloud.allocators.connector_allocators import (
+            connect_tasks_allocator,
+        )
+
+        resolution = IdentityResolution(
+            resource_active=IdentitySet(),
+            metrics_derived=IdentitySet(),
+            tenant_period=make_identity_set("sa-tenant"),
+        )
+        ctx = AllocationContext(
+            timeslice=connect_billing_line.timestamp,
+            billing_line=connect_billing_line,
+            identities=resolution,
+            split_amount=Decimal("100"),
+            metrics_data=None,
+            params={},
+        )
+
+        result = connect_tasks_allocator(ctx)
+
+        assert len(result.rows) == 1
+        assert result.rows[0].allocation_method == "to_resource"
+
+    def test_parity_legacy_resource_local_fallback(
+        self, connect_billing_line: BillingLineItem
+    ) -> None:
+        """Parity: connector with no active identities produces same structural result as legacy.
+
+        Legacy behavior: single row with principal=connector_id (resource-local assignment).
+        New behavior: single row with identity_id=resource_id, allocation_method='to_resource'.
+        Both represent "charge this connector's cost back to the connector itself."
+        """
+        from plugins.confluent_cloud.allocators.connector_allocators import (
+            connect_capacity_allocator,
+        )
+
+        # Simulate a billing date where the connector has no active identities
+        # but has tenant_period identities (the scenario where legacy and new diverge)
+        resolution = IdentityResolution(
+            resource_active=IdentitySet(),
+            metrics_derived=IdentitySet(),
+            tenant_period=make_identity_set("sa-tenant-1", "sa-tenant-2"),
+        )
+        ctx = AllocationContext(
+            timeslice=connect_billing_line.timestamp,
+            billing_line=connect_billing_line,
+            identities=resolution,
+            split_amount=Decimal("100"),
+            metrics_data=None,
+            params={},
+        )
+
+        result = connect_capacity_allocator(ctx)
+
+        # Legacy produced: 1 row, principal == connector_id, full amount
+        # New produces the same structural pattern via allocate_to_resource
+        legacy_expected_principal = connect_billing_line.resource_id  # "connector-xyz"
+        assert len(result.rows) == 1, "parity: legacy emitted exactly one row"
+        assert result.rows[0].identity_id == legacy_expected_principal, (
+            "parity: identity_id must equal resource_id, matching legacy principal=connector_id"
+        )
+        assert result.rows[0].amount == Decimal("100"), "parity: full amount assigned to resource row"
+        assert result.rows[0].allocation_method == "to_resource", (
+            "parity: allocation_method signals resource-local, not tenant-wide"
+        )
+
+

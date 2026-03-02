@@ -11,8 +11,8 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import TYPE_CHECKING
 
-from core.engine.helpers import allocate_evenly
-from core.models import OWNER_IDENTITY_TYPES, CostType
+from core.engine.helpers import allocate_evenly, allocate_to_resource
+from core.models import CostType
 
 if TYPE_CHECKING:
     from core.engine.allocation import AllocationContext, AllocationResult
@@ -21,32 +21,24 @@ if TYPE_CHECKING:
 def connect_capacity_allocator(ctx: AllocationContext) -> AllocationResult:
     """Even split across active identities for Connect capacity costs.
 
-    Uses SHARED cost type (infrastructure cost).
-
-    Fallback chain:
-    1. merged_active (resource_active union metrics_derived)
-    2. tenant_period filtered to owner types (SAs, users, pools — not API keys)
-    3. UNALLOCATED (no identities found)
+    Falls back to resource-local assignment (not tenant-wide) when
+    no active identities are found, matching legacy behavior.
     """
     identity_ids = list(ctx.identities.merged_active.ids())
     if not identity_ids:
-        identity_ids = list(ctx.identities.tenant_period.ids_by_type(*OWNER_IDENTITY_TYPES))
+        return allocate_to_resource(ctx)
     return allocate_evenly(ctx, identity_ids)
 
 
 def connect_tasks_allocator(ctx: AllocationContext) -> AllocationResult:
     """Even split across active identities for Connect task-based costs.
 
-    Uses USAGE cost type (task-based cost).
-
-    Fallback chain:
-    1. merged_active (resource_active union metrics_derived)
-    2. tenant_period filtered to owner types (SAs, users, pools — not API keys)
-    3. UNALLOCATED (no identities found)
+    Falls back to resource-local assignment (not tenant-wide) when
+    no active identities are found, matching legacy behavior.
     """
     identity_ids = list(ctx.identities.merged_active.ids())
     if not identity_ids:
-        identity_ids = list(ctx.identities.tenant_period.ids_by_type(*OWNER_IDENTITY_TYPES))
+        return allocate_to_resource(ctx)
 
     result = allocate_evenly(ctx, identity_ids)
 
