@@ -285,9 +285,7 @@ class TestConnectorResourceLocalFallback:
         assert result.rows[0].identity_id == "connector-xyz"
         assert result.rows[0].amount == Decimal("100")
 
-    def test_tasks_empty_merged_active_identity_id_is_resource_id(
-        self, connect_billing_line: BillingLineItem
-    ) -> None:
+    def test_tasks_empty_merged_active_identity_id_is_resource_id(self, connect_billing_line: BillingLineItem) -> None:
         """Tasks: empty merged_active with tenant_period identities → single row with identity_id == resource_id."""
         from plugins.confluent_cloud.allocators.connector_allocators import (
             connect_tasks_allocator,
@@ -314,9 +312,7 @@ class TestConnectorResourceLocalFallback:
         assert result.rows[0].identity_id == "connector-xyz"
         assert result.rows[0].amount == Decimal("100")
 
-    def test_capacity_active_identities_even_split(
-        self, connect_billing_line: BillingLineItem
-    ) -> None:
+    def test_capacity_active_identities_even_split(self, connect_billing_line: BillingLineItem) -> None:
         """Capacity: active identities present → even split (unchanged behavior)."""
         from plugins.confluent_cloud.allocators.connector_allocators import (
             connect_capacity_allocator,
@@ -342,9 +338,7 @@ class TestConnectorResourceLocalFallback:
         assert {r.identity_id for r in result.rows} == {"sa-1", "sa-2"}
         assert all(r.amount == Decimal("50") for r in result.rows)
 
-    def test_tasks_active_identities_even_split(
-        self, connect_billing_line: BillingLineItem
-    ) -> None:
+    def test_tasks_active_identities_even_split(self, connect_billing_line: BillingLineItem) -> None:
         """Tasks: active identities present → even split (unchanged behavior)."""
         from plugins.confluent_cloud.allocators.connector_allocators import (
             connect_tasks_allocator,
@@ -370,9 +364,7 @@ class TestConnectorResourceLocalFallback:
         assert {r.identity_id for r in result.rows} == {"sa-1", "sa-2"}
         assert all(r.amount == Decimal("50") for r in result.rows)
 
-    def test_capacity_fallback_row_allocation_method_to_resource(
-        self, connect_billing_line: BillingLineItem
-    ) -> None:
+    def test_capacity_fallback_row_allocation_method_to_resource(self, connect_billing_line: BillingLineItem) -> None:
         """Capacity: fallback row must have allocation_method == 'to_resource'."""
         from plugins.confluent_cloud.allocators.connector_allocators import (
             connect_capacity_allocator,
@@ -397,9 +389,7 @@ class TestConnectorResourceLocalFallback:
         assert len(result.rows) == 1
         assert result.rows[0].allocation_method == "to_resource"
 
-    def test_tasks_fallback_row_allocation_method_to_resource(
-        self, connect_billing_line: BillingLineItem
-    ) -> None:
+    def test_tasks_fallback_row_allocation_method_to_resource(self, connect_billing_line: BillingLineItem) -> None:
         """Tasks: fallback row must have allocation_method == 'to_resource'."""
         from plugins.confluent_cloud.allocators.connector_allocators import (
             connect_tasks_allocator,
@@ -424,9 +414,7 @@ class TestConnectorResourceLocalFallback:
         assert len(result.rows) == 1
         assert result.rows[0].allocation_method == "to_resource"
 
-    def test_parity_legacy_resource_local_fallback(
-        self, connect_billing_line: BillingLineItem
-    ) -> None:
+    def test_parity_legacy_resource_local_fallback(self, connect_billing_line: BillingLineItem) -> None:
         """Parity: connector with no active identities produces same structural result as legacy.
 
         Legacy behavior: single row with principal=connector_id (resource-local assignment).
@@ -466,5 +454,3 @@ class TestConnectorResourceLocalFallback:
         assert result.rows[0].allocation_method == "to_resource", (
             "parity: allocation_method signals resource-local, not tenant-wide"
         )
-
-

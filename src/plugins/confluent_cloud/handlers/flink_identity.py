@@ -82,7 +82,7 @@ def _fallback_from_running_statements(
         for s in all_resources
         if s.resource_type == "flink_statement"
         and s.metadata.get("compute_pool_id") == compute_pool_id
-        and s.metadata.get("status", "") not in ("COMPLETED", "FAILED", "STOPPED")
+        and not s.metadata.get("is_stopped", False)
     ]
 
     if not pool_stmts:

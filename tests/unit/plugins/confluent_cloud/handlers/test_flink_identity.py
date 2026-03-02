@@ -528,7 +528,7 @@ class TestFlinkFallbackFromRunningStatements:
             resource_type="flink_statement",
             display_name="running-stmt",
             owner_id="sa-owner-1",
-            metadata={"compute_pool_id": "lfcp-pool-1", "status": "RUNNING"},
+            metadata={"compute_pool_id": "lfcp-pool-1", "is_stopped": False},
         )
         owner = Identity(
             ecosystem="confluent_cloud",
@@ -567,7 +567,7 @@ class TestFlinkFallbackFromRunningStatements:
             resource_type="flink_statement",
             display_name="running-stmt",
             owner_id="sa-running",
-            metadata={"compute_pool_id": "lfcp-pool-1", "status": "RUNNING"},
+            metadata={"compute_pool_id": "lfcp-pool-1", "is_stopped": False},
         )
         stopped_stmt = Resource(
             ecosystem="confluent_cloud",
@@ -576,7 +576,7 @@ class TestFlinkFallbackFromRunningStatements:
             resource_type="flink_statement",
             display_name="stopped-stmt",
             owner_id="sa-stopped",
-            metadata={"compute_pool_id": "lfcp-pool-1", "status": "STOPPED"},
+            metadata={"compute_pool_id": "lfcp-pool-1", "is_stopped": True},
         )
         completed_stmt = Resource(
             ecosystem="confluent_cloud",
@@ -585,7 +585,7 @@ class TestFlinkFallbackFromRunningStatements:
             resource_type="flink_statement",
             display_name="completed-stmt",
             owner_id="sa-completed",
-            metadata={"compute_pool_id": "lfcp-pool-1", "status": "COMPLETED"},
+            metadata={"compute_pool_id": "lfcp-pool-1", "is_stopped": True},
         )
         failed_stmt = Resource(
             ecosystem="confluent_cloud",
@@ -594,7 +594,7 @@ class TestFlinkFallbackFromRunningStatements:
             resource_type="flink_statement",
             display_name="failed-stmt",
             owner_id="sa-failed",
-            metadata={"compute_pool_id": "lfcp-pool-1", "status": "FAILED"},
+            metadata={"compute_pool_id": "lfcp-pool-1", "is_stopped": True},
         )
         running_owner = Identity(
             ecosystem="confluent_cloud",
@@ -656,7 +656,7 @@ class TestFlinkFallbackFromRunningStatements:
             resource_type="flink_statement",
             display_name="other-stmt",
             owner_id="sa-other",
-            metadata={"compute_pool_id": "lfcp-OTHER", "status": "RUNNING"},
+            metadata={"compute_pool_id": "lfcp-OTHER", "is_stopped": False},
         )
 
         mock_uow.resources.find_by_period.return_value = ([other_pool_stmt], 1)
@@ -687,7 +687,7 @@ class TestFlinkFallbackFromRunningStatements:
             resource_type="flink_statement",
             display_name="my-stmt",
             owner_id="sa-unknown-xyz",
-            metadata={"compute_pool_id": "lfcp-pool-1", "status": "RUNNING"},
+            metadata={"compute_pool_id": "lfcp-pool-1", "is_stopped": False},
         )
         mock_uow.resources.find_by_period.return_value = ([stmt], 1)
         mock_uow.identities.find_by_period.return_value = ([], 0)  # No matching identity
@@ -706,3 +706,169 @@ class TestFlinkFallbackFromRunningStatements:
         sentinel = result.resource_active.get("sa-unknown-xyz")
         assert sentinel.identity_type == "service_account"  # inferred from "sa-" prefix
         assert result.context["stmt_owner_cfu"] == {"sa-unknown-xyz": 1.0}
+
+
+class TestFallbackFromRunningStatementsDirect:
+    """Direct unit tests for _fallback_from_running_statements using is_stopped key."""
+
+    def test_fallback_stopped_statement_excluded(self, mock_uow: MagicMock) -> None:
+        """Stopped statement (is_stopped=True) must be excluded; result is empty."""
+        from plugins.confluent_cloud.handlers.flink_identity import _fallback_from_running_statements
+
+        stopped_stmt = Resource(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            resource_id="stmt-stopped",
+            resource_type="flink_statement",
+            display_name="stopped-stmt",
+            owner_id="sa-stopped",
+            metadata={"compute_pool_id": "pool-1", "is_stopped": True},
+        )
+        mock_uow.resources.find_by_period.return_value = ([stopped_stmt], 1)
+        mock_uow.identities.find_by_period.return_value = ([], 0)
+
+        owner_weight, identity_set = _fallback_from_running_statements(
+            compute_pool_id="pool-1",
+            tenant_id="org-123",
+            billing_start=datetime(2026, 2, 1, tzinfo=UTC),
+            billing_end=datetime(2026, 2, 2, tzinfo=UTC),
+            uow=mock_uow,
+            ecosystem="confluent_cloud",
+        )
+
+        assert identity_set.ids() == set()
+        assert owner_weight == {}
+
+    def test_fallback_running_statement_included(self, mock_uow: MagicMock) -> None:
+        """Running statement (is_stopped=False) must appear in the returned IdentitySet."""
+        from plugins.confluent_cloud.handlers.flink_identity import _fallback_from_running_statements
+
+        running_stmt = Resource(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            resource_id="stmt-running",
+            resource_type="flink_statement",
+            display_name="running-stmt",
+            owner_id="sa-active",
+            metadata={"compute_pool_id": "pool-1", "is_stopped": False},
+        )
+        owner = Identity(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            identity_id="sa-active",
+            identity_type="service_account",
+            display_name="Active Owner",
+        )
+        mock_uow.resources.find_by_period.return_value = ([running_stmt], 1)
+        mock_uow.identities.find_by_period.return_value = ([owner], 1)
+
+        owner_weight, identity_set = _fallback_from_running_statements(
+            compute_pool_id="pool-1",
+            tenant_id="org-123",
+            billing_start=datetime(2026, 2, 1, tzinfo=UTC),
+            billing_end=datetime(2026, 2, 2, tzinfo=UTC),
+            uow=mock_uow,
+            ecosystem="confluent_cloud",
+        )
+
+        assert "sa-active" in identity_set.ids()
+        assert owner_weight == {"sa-active": 1.0}
+
+    def test_fallback_mixed_statements_only_running_included(self, mock_uow: MagicMock) -> None:
+        """2 running + 3 stopped statements: only 2 running owners appear in result."""
+        from plugins.confluent_cloud.handlers.flink_identity import _fallback_from_running_statements
+
+        stmts = [
+            Resource(
+                ecosystem="confluent_cloud",
+                tenant_id="org-123",
+                resource_id=f"stmt-run-{i}",
+                resource_type="flink_statement",
+                display_name=f"running-{i}",
+                owner_id=f"sa-run-{i}",
+                metadata={"compute_pool_id": "pool-1", "is_stopped": False},
+            )
+            for i in range(2)
+        ] + [
+            Resource(
+                ecosystem="confluent_cloud",
+                tenant_id="org-123",
+                resource_id=f"stmt-stop-{i}",
+                resource_type="flink_statement",
+                display_name=f"stopped-{i}",
+                owner_id=f"sa-stop-{i}",
+                metadata={"compute_pool_id": "pool-1", "is_stopped": True},
+            )
+            for i in range(3)
+        ]
+        running_owners = [
+            Identity(
+                ecosystem="confluent_cloud",
+                tenant_id="org-123",
+                identity_id=f"sa-run-{i}",
+                identity_type="service_account",
+            )
+            for i in range(2)
+        ]
+        mock_uow.resources.find_by_period.return_value = (stmts, 5)
+        mock_uow.identities.find_by_period.return_value = (running_owners, 2)
+
+        owner_weight, identity_set = _fallback_from_running_statements(
+            compute_pool_id="pool-1",
+            tenant_id="org-123",
+            billing_start=datetime(2026, 2, 1, tzinfo=UTC),
+            billing_end=datetime(2026, 2, 2, tzinfo=UTC),
+            uow=mock_uow,
+            ecosystem="confluent_cloud",
+        )
+
+        assert len(owner_weight) == 2
+        assert "sa-run-0" in owner_weight
+        assert "sa-run-1" in owner_weight
+        assert not any(f"sa-stop-{i}" in owner_weight for i in range(3))
+        assert identity_set.ids() == {"sa-run-0", "sa-run-1"}
+
+    def test_fallback_regression_via_resolve_flink_identity_stopped_excluded(self, mock_uow: MagicMock) -> None:
+        """Regression: resolve_flink_identity with metrics_data=None must not count stopped statements."""
+        from plugins.confluent_cloud.handlers.flink_identity import resolve_flink_identity
+
+        running_stmt = Resource(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            resource_id="stmt-run",
+            resource_type="flink_statement",
+            display_name="running",
+            owner_id="sa-active",
+            metadata={"compute_pool_id": "pool-reg", "is_stopped": False},
+        )
+        stopped_stmt = Resource(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            resource_id="stmt-stop",
+            resource_type="flink_statement",
+            display_name="stopped",
+            owner_id="sa-ghost",
+            metadata={"compute_pool_id": "pool-reg", "is_stopped": True},
+        )
+        active_owner = Identity(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            identity_id="sa-active",
+            identity_type="service_account",
+        )
+        mock_uow.resources.find_by_period.return_value = ([running_stmt, stopped_stmt], 2)
+        mock_uow.identities.find_by_period.return_value = ([active_owner], 1)
+
+        result = resolve_flink_identity(
+            tenant_id="org-123",
+            resource_id="pool-reg",
+            billing_start=datetime(2026, 2, 1, tzinfo=UTC),
+            billing_end=datetime(2026, 2, 2, tzinfo=UTC),
+            metrics_data=None,
+            uow=mock_uow,
+            ecosystem="confluent_cloud",
+        )
+
+        stmt_owner_cfu = result.context.get("stmt_owner_cfu", {})
+        assert "sa-ghost" not in stmt_owner_cfu
+        assert "sa-active" in stmt_owner_cfu
