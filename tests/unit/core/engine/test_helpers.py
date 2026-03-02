@@ -59,6 +59,27 @@ class TestSplitAmountEvenly:
         assert sum(result) == Decimal("10.00")
         assert len(result) == 100
 
+    def test_non_quantized_input_no_crash(self) -> None:
+        # Decimal("1.00005") has 5 decimal places — remainder index must not overflow
+        result = split_amount_evenly(Decimal("1.00005"), 2)
+        assert len(result) == 2
+
+    def test_non_quantized_input_sum_quantized(self) -> None:
+        # Sum must equal the 4-decimal quantized value of the input
+        result = split_amount_evenly(Decimal("1.00005"), 2)
+        assert sum(result) == Decimal("1.0001")
+
+    def test_extreme_precision_no_crash(self) -> None:
+        # 9 decimal places — remainder could exceed count without modulo guard
+        result = split_amount_evenly(Decimal("1.000000001"), 2)
+        assert len(result) == 2
+
+    def test_large_remainder_wraps(self) -> None:
+        # remainder > count*CENT: modulo wraparound must still distribute correctly
+        result = split_amount_evenly(Decimal("0.00009"), 2)
+        assert len(result) == 2
+        assert sum(result) == Decimal("0.0001")
+
 
 # --- allocate_by_usage_ratio ---
 
@@ -122,6 +143,18 @@ class TestAllocateByUsageRatio:
         ctx = make_ctx()
         result = allocate_by_usage_ratio(ctx, {"u-1": 1.0})
         assert all(r.allocation_detail == AllocationDetail.USAGE_RATIO_ALLOCATION for r in result.rows)
+
+    def test_non_quantized_split_amount_no_crash(self) -> None:
+        # split_amount with >4 decimal places must not raise IndexError
+        ctx = make_ctx(split_amount=Decimal("1.00005"))
+        result = allocate_by_usage_ratio(ctx, {"u-1": 60.0, "u-2": 40.0})
+        assert len(result.rows) == 2
+
+    def test_non_quantized_split_amount_sum_preserved(self) -> None:
+        # Sum of allocated rows must equal quantized(split_amount)
+        ctx = make_ctx(split_amount=Decimal("1.00005"))
+        result = allocate_by_usage_ratio(ctx, {"u-1": 60.0, "u-2": 40.0})
+        assert sum(r.amount for r in result.rows) == Decimal("1.0001")
 
 
 # --- allocate_evenly ---

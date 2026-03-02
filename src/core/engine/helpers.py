@@ -44,16 +44,16 @@ def split_amount_evenly(total: Decimal, count: int) -> list[Decimal]:
     """Split total into count parts, distributing remainder across leading recipients."""
     if count <= 0:
         return []
+    total = total.quantize(_CENT, rounding=ROUND_HALF_UP)  # Quantize first
     base = (total / count).quantize(_CENT, rounding=ROUND_HALF_UP)
     amounts = [base] * count
-    diff = total - sum(amounts)
-    # Distribute remainder one cent at a time
+    diff = (total - sum(amounts)).quantize(_CENT)
     step = _CENT if diff > 0 else -_CENT
     idx = 0
     while diff != Decimal(0):
         amounts[idx] += step
-        diff -= step
-        idx += 1
+        diff = (diff - step).quantize(_CENT)
+        idx = (idx + 1) % count  # Modulo wraparound
     return amounts
 
 
@@ -76,16 +76,17 @@ def allocate_by_usage_ratio(
 
     ids = list(identity_values.keys())
     ratios = [identity_values[i] / total_value for i in ids]
-    raw_amounts = [ctx.split_amount * Decimal(str(r)) for r in ratios]
+    split_amount = ctx.split_amount.quantize(_CENT, rounding=ROUND_HALF_UP)
+    raw_amounts = [split_amount * Decimal(str(r)) for r in ratios]
     # Same remainder-distribution algorithm as split_amount_evenly
     quantized = [a.quantize(_CENT, rounding=ROUND_HALF_UP) for a in raw_amounts]
-    diff = ctx.split_amount - sum(quantized)
+    diff = (split_amount - sum(quantized)).quantize(_CENT)
     step = _CENT if diff > 0 else -_CENT
     idx = 0
     while diff != Decimal(0):
         quantized[idx] += step
-        diff -= step
-        idx += 1
+        diff = (diff - step).quantize(_CENT)
+        idx = (idx + 1) % len(quantized)  # Modulo wraparound
 
     rows = [
         make_row(
