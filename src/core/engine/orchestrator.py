@@ -425,7 +425,8 @@ class ChargebackOrchestrator:
             identities, _ = uow.identities.find_by_period(self._ecosystem, self._tenant_id, b_start, b_end)
             tp = IdentitySet()
             for identity in identities:
-                tp.add(identity)
+                if identity.identity_type != "system":
+                    tp.add(identity)
             tenant_period_cache[(b_start, b_end)] = tp
 
         # Pre-fetch all resources for this date's billing windows into a flat lookup

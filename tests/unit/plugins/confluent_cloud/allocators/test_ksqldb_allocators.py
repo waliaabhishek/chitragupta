@@ -171,6 +171,38 @@ class TestKsqldbCsuAllocator:
         assert result.rows[0].amount == Decimal("100")
         assert result.rows[0].cost_type == CostType.USAGE
 
+    def test_tenant_period_splits_evenly_across_real_identities(self, ksqldb_billing_line: BillingLineItem) -> None:
+        """GAP-23: tenant_period fallback splits evenly across all real identities."""
+        tp = IdentitySet()
+        for sa_id in ("sa-1", "sa-2", "sa-3"):
+            tp.add(
+                Identity(
+                    ecosystem="confluent_cloud",
+                    tenant_id="org-123",
+                    identity_id=sa_id,
+                    identity_type="service_account",
+                )
+            )
+        resolution = IdentityResolution(
+            resource_active=IdentitySet(),
+            metrics_derived=IdentitySet(),
+            tenant_period=tp,
+        )
+        ctx = AllocationContext(
+            timeslice=ksqldb_billing_line.timestamp,
+            billing_line=ksqldb_billing_line,
+            identities=resolution,
+            split_amount=Decimal("90"),
+            metrics_data=None,
+            params={},
+        )
+
+        result = ksqldb_csu_allocator(ctx)
+
+        recipient_ids = {r.identity_id for r in result.rows}
+        assert recipient_ids == {"sa-1", "sa-2", "sa-3"}
+        assert len(result.rows) == 3
+
     def test_single_identity_full_amount(self, ksqldb_billing_line: BillingLineItem) -> None:
         """Single identity gets full amount with USAGE cost type."""
         resolution = IdentityResolution(

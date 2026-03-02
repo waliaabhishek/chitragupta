@@ -350,3 +350,52 @@ class TestNetworkEgressAllocator:
 
         assert egress_a == Decimal("0")
         assert egress_b == Decimal("100")
+
+
+class TestGap23TenantPeriodFallback:
+    """GAP-23: tenant_period fallback splits evenly across real identities (orchestrator guarantees no system entries)."""
+
+    def test_compute_allocator_splits_real_identities(self, base_billing_line: BillingLineItem) -> None:
+        """Compute fallback: splits evenly across all real identities in tenant_period."""
+        from plugins.self_managed_kafka.allocators.kafka_allocators import self_kafka_compute_allocator
+
+        tp = make_identity_set("User:alice", "User:bob")
+        resolution = make_resolution(tenant_period=tp)
+        ctx = make_ctx(base_billing_line, resolution)
+
+        result = self_kafka_compute_allocator(ctx)
+
+        recipient_ids = {r.identity_id for r in result.rows}
+        assert recipient_ids == {"User:alice", "User:bob"}
+        assert len(result.rows) == 2
+
+    def test_storage_allocator_splits_real_identities(self, base_billing_line: BillingLineItem) -> None:
+        """Storage fallback: splits evenly across all real identities in tenant_period."""
+        from plugins.self_managed_kafka.allocators.kafka_allocators import self_kafka_storage_allocator
+
+        billing_line = BillingLineItem(**{**base_billing_line.__dict__, "product_type": "SELF_KAFKA_STORAGE"})
+        tp = make_identity_set("User:alice", "User:bob")
+        resolution = make_resolution(tenant_period=tp)
+        ctx = make_ctx(billing_line, resolution)
+
+        result = self_kafka_storage_allocator(ctx)
+
+        recipient_ids = {r.identity_id for r in result.rows}
+        assert recipient_ids == {"User:alice", "User:bob"}
+        assert len(result.rows) == 2
+
+    def test_network_fallback_splits_real_identities(self, base_billing_line: BillingLineItem) -> None:
+        """Network fallback: splits evenly across real identities when no metrics available."""
+        from plugins.self_managed_kafka.allocators.kafka_allocators import self_kafka_network_ingress_allocator
+
+        billing_line = BillingLineItem(**{**base_billing_line.__dict__, "product_type": "SELF_KAFKA_NETWORK_INGRESS"})
+        tp = make_identity_set("User:alice", "User:bob")
+        # No metrics_data and no merged_active → falls to tenant_period via _even_split_fallback
+        resolution = make_resolution(tenant_period=tp)
+        ctx = make_ctx(billing_line, resolution, metrics_data=None)
+
+        result = self_kafka_network_ingress_allocator(ctx)
+
+        recipient_ids = {r.identity_id for r in result.rows}
+        assert recipient_ids == {"User:alice", "User:bob"}
+        assert len(result.rows) == 2

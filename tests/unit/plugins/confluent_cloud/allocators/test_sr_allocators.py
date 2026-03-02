@@ -175,6 +175,42 @@ class TestSchemaRegistryAllocator:
         assert len(result.rows) == 1
         assert result.rows[0].identity_id == "sa-tenant"
 
+    def test_tenant_period_splits_evenly_across_real_identities(self, sr_billing_line: BillingLineItem) -> None:
+        """GAP-23: tenant_period fallback splits evenly across all real identities."""
+        from plugins.confluent_cloud.allocators.sr_allocators import (
+            schema_registry_allocator,
+        )
+
+        tp = IdentitySet()
+        for sa_id in ("sa-1", "sa-2"):
+            tp.add(
+                Identity(
+                    ecosystem="confluent_cloud",
+                    tenant_id="org-123",
+                    identity_id=sa_id,
+                    identity_type="service_account",
+                )
+            )
+        resolution = IdentityResolution(
+            resource_active=IdentitySet(),
+            metrics_derived=IdentitySet(),
+            tenant_period=tp,
+        )
+        ctx = AllocationContext(
+            timeslice=sr_billing_line.timestamp,
+            billing_line=sr_billing_line,
+            identities=resolution,
+            split_amount=Decimal("50"),
+            metrics_data=None,
+            params={},
+        )
+
+        result = schema_registry_allocator(ctx)
+
+        recipient_ids = {r.identity_id for r in result.rows}
+        assert recipient_ids == {"sa-1", "sa-2"}
+        assert len(result.rows) == 2
+
     def test_three_way_split_with_remainder(self, sr_billing_line: BillingLineItem) -> None:
         """Three identities splitting $10 handles remainder correctly."""
         from plugins.confluent_cloud.allocators.sr_allocators import (

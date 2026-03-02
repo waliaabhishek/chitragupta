@@ -1137,12 +1137,8 @@ class TestGap021RunTenantBootstrapLatch:
         t1_conn = t1_cfg.storage.connection_string
         t2_conn = t2_cfg.storage.connection_string
 
-        t1_create_tables_after_first = sum(
-            b.create_tables.call_count for b in conn_backends[t1_conn]
-        )
-        t2_create_tables_after_first = sum(
-            b.create_tables.call_count for b in conn_backends[t2_conn]
-        )
+        t1_create_tables_after_first = sum(b.create_tables.call_count for b in conn_backends[t1_conn])
+        t2_create_tables_after_first = sum(b.create_tables.call_count for b in conn_backends[t2_conn])
 
         # t1 bootstrap must have happened
         assert t1_create_tables_after_first >= 1
@@ -1153,11 +1149,7 @@ class TestGap021RunTenantBootstrapLatch:
         runner.run_tenant("t2")
 
         # No additional create_tables after second run_tenant
-        t1_create_tables_after_second = sum(
-            b.create_tables.call_count for b in conn_backends[t1_conn]
-        )
-        t2_create_tables_after_second = sum(
-            b.create_tables.call_count for b in conn_backends[t2_conn]
-        )
+        t1_create_tables_after_second = sum(b.create_tables.call_count for b in conn_backends[t1_conn])
+        t2_create_tables_after_second = sum(b.create_tables.call_count for b in conn_backends[t2_conn])
         assert t1_create_tables_after_second == t1_create_tables_after_first
         assert t2_create_tables_after_second == t2_create_tables_after_first

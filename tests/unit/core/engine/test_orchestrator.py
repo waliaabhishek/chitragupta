@@ -859,8 +859,8 @@ class TestTenantPeriod:
         # tenant_period should contain identities from identity repo (find_by_period)
         tp = captured[0].tenant_period
         tp_ids = set(tp.ids())
-        # Must contain at least the identities we seeded (UNALLOCATED from init, i1/i2 from handler gather)
-        assert "UNALLOCATED" in tp_ids
+        # Must contain real identities (i1/i2 from handler gather); UNALLOCATED (system) must be excluded
+        assert "UNALLOCATED" not in tp_ids
         assert "i1" in tp_ids or "i2" in tp_ids
 
     def test_handler_tenant_period_replaced_with_warning(self, caplog: pytest.LogCaptureFixture) -> None:
@@ -907,6 +907,92 @@ class TestTenantPeriod:
         with caplog.at_level(logging.WARNING):
             orch.run()
         assert any("non-empty tenant_period" in r.message for r in caplog.records)
+
+    def test_tenant_period_excludes_system_identities(self) -> None:
+        """GAP-23: Tenant-period cache must not include UNALLOCATED (system) identities."""
+        captured: list[IdentityResolution] = []
+
+        def capturing_allocator(ctx: AllocationContext) -> AllocationResult:
+            captured.append(ctx.identities)
+            return _simple_allocator(ctx)
+
+        handler = MockServiceHandler(
+            resources=[_make_resource()],
+            identities=[
+                _make_identity("user-1"),  # identity_type="user"
+                Identity(
+                    ecosystem=ECOSYSTEM,
+                    tenant_id=TENANT_ID,
+                    identity_id="sa-1",
+                    identity_type="service_account",
+                ),
+            ],
+            allocator=capturing_allocator,
+        )
+        line = _make_billing_line(timestamp=NOW - timedelta(days=10))
+        cost_input = MockCostInput([line])
+        orch, storage = _create_orchestrator(handler=handler, cost_input=cost_input)
+        uow = storage.create_unit_of_work()
+
+        ps = PipelineState(
+            ecosystem=ECOSYSTEM,
+            tenant_id=TENANT_ID,
+            tracking_date=line.timestamp.date(),
+            billing_gathered=True,
+            resources_gathered=True,
+        )
+        uow.pipeline_state.upsert(ps)
+        uow.pipeline_state.mark_billing_gathered(ECOSYSTEM, TENANT_ID, line.timestamp.date())
+        uow.pipeline_state.mark_resources_gathered(ECOSYSTEM, TENANT_ID, line.timestamp.date())
+        uow.billing.upsert(line)
+
+        orch.run()
+
+        assert len(captured) >= 1
+        tp_ids = set(captured[0].tenant_period.ids())
+        # UNALLOCATED is a system identity and must not appear in tenant_period
+        assert "UNALLOCATED" not in tp_ids
+        # Real identities must still be present
+        assert "user-1" in tp_ids
+        assert "sa-1" in tp_ids
+
+    def test_tenant_period_empty_when_only_system_identities(self) -> None:
+        """GAP-23: With only UNALLOCATED in the repo, tenant_period must be an empty set."""
+        captured: list[IdentityResolution] = []
+
+        def capturing_allocator(ctx: AllocationContext) -> AllocationResult:
+            captured.append(ctx.identities)
+            return _simple_allocator(ctx)
+
+        # No real identities gathered — only UNALLOCATED (inserted by orchestrator init)
+        handler = MockServiceHandler(
+            resources=[_make_resource()],
+            identities=[],
+            allocator=capturing_allocator,
+        )
+        line = _make_billing_line(timestamp=NOW - timedelta(days=10))
+        cost_input = MockCostInput([line])
+        orch, storage = _create_orchestrator(handler=handler, cost_input=cost_input)
+        uow = storage.create_unit_of_work()
+
+        ps = PipelineState(
+            ecosystem=ECOSYSTEM,
+            tenant_id=TENANT_ID,
+            tracking_date=line.timestamp.date(),
+            billing_gathered=True,
+            resources_gathered=True,
+        )
+        uow.pipeline_state.upsert(ps)
+        uow.pipeline_state.mark_billing_gathered(ECOSYSTEM, TENANT_ID, line.timestamp.date())
+        uow.pipeline_state.mark_resources_gathered(ECOSYSTEM, TENANT_ID, line.timestamp.date())
+        uow.billing.upsert(line)
+
+        orch.run()
+
+        assert len(captured) >= 1
+        # After filtering system identities, tenant_period must be empty
+        tp_ids = set(captured[0].tenant_period.ids())
+        assert tp_ids == set()
 
 
 class TestMaxDatesPerRun:
