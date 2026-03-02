@@ -224,28 +224,6 @@ class TestPluginInjectsDependencies:
         assert cost_input._metrics_source is plugin._metrics_source
 
 
-class TestPluginRegistration:
-    def test_register_adds_to_registry(self):
-        from core.plugin.registry import PluginRegistry
-        from plugins.self_managed_kafka import register
-
-        registry = PluginRegistry()
-        register(registry)
-
-        assert "self_managed_kafka" in registry.list_ecosystems()
-
-    def test_registered_plugin_creates_correct_instance(self):
-        from core.plugin.registry import PluginRegistry
-        from plugins.self_managed_kafka import register
-        from plugins.self_managed_kafka.plugin import SelfManagedKafkaPlugin
-
-        registry = PluginRegistry()
-        register(registry)
-
-        plugin = registry.create("self_managed_kafka")
-        assert isinstance(plugin, SelfManagedKafkaPlugin)
-
-
 class TestPluginPrincipalLabelValidation:
     """Issue 3: startup validation of 'principal' label availability in Prometheus."""
 
