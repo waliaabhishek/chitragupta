@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+import threading
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 
@@ -133,3 +134,167 @@ class TestMain:
         with patch("main.signal"):
             main(["--config-file", "dummy.yaml"])
         mock_runner.run_loop.assert_called_once()
+
+
+class TestBothModeSingleRunner:
+    """TASK-005: Dual WorkflowRunner Fix — main.py tests."""
+
+    @patch("main.run_api")
+    @patch("main.WorkflowRunner")
+    @patch("main.PluginRegistry")
+    @patch("main.discover_plugins")
+    @patch("main.load_config")
+    def test_both_mode_single_runner_created(
+        self,
+        mock_load: MagicMock,
+        mock_discover: MagicMock,
+        mock_registry_cls: MagicMock,
+        mock_runner_cls: MagicMock,
+        mock_run_api: MagicMock,
+    ) -> None:
+        """Exactly ONE WorkflowRunner is instantiated in --mode both (TASK-005 fix test 1)."""
+        from core.config.models import AppSettings
+
+        mock_load.return_value = AppSettings()
+        mock_discover.return_value = []
+        mock_runner = MagicMock()
+        mock_runner.run_once.return_value = {}
+        mock_runner_cls.return_value = mock_runner
+
+        from main import main
+
+        main(["--config-file", "dummy.yaml", "--mode", "both", "--run-once"])
+        # After fix: exactly one runner — not two (one in main() + one in run_worker())
+        assert mock_runner_cls.call_count == 1
+
+    @patch("main.WorkflowRunner")
+    @patch("main.PluginRegistry")
+    @patch("main.discover_plugins")
+    @patch("main.load_config")
+    def test_run_worker_uses_injected_runner(
+        self,
+        mock_load: MagicMock,
+        mock_discover: MagicMock,
+        mock_registry_cls: MagicMock,
+        mock_runner_cls: MagicMock,
+    ) -> None:
+        """run_worker uses the injected runner kwarg and does not create a new one (TASK-005 fix test 2)."""
+        from core.config.models import AppSettings
+
+        mock_load.return_value = AppSettings()
+        settings = AppSettings()
+        mock_discover.return_value = []
+        mock_runner = MagicMock()
+        mock_runner.run_once.return_value = {}
+
+        from main import run_worker
+
+        run_worker(settings, runner=mock_runner, run_once=True)
+        # The injected runner's run_once() must be called
+        mock_runner.run_once.assert_called_once()
+        # No new WorkflowRunner should be constructed
+        mock_runner_cls.assert_not_called()
+
+    @patch("main.WorkflowRunner")
+    @patch("main.PluginRegistry")
+    @patch("main.discover_plugins")
+    def test_run_worker_standalone_creates_runner(
+        self,
+        mock_discover: MagicMock,
+        mock_registry_cls: MagicMock,
+        mock_runner_cls: MagicMock,
+    ) -> None:
+        """run_worker without runner kwarg constructs its own WorkflowRunner (TASK-005 fix test 3)."""
+        from core.config.models import AppSettings
+
+        settings = AppSettings()
+        mock_discover.return_value = []
+        mock_runner = MagicMock()
+        mock_runner.run_once.return_value = {}
+        mock_runner_cls.return_value = mock_runner
+
+        from main import run_worker
+
+        run_worker(settings, run_once=True)
+        # A new WorkflowRunner must be constructed when none is injected
+        mock_runner_cls.assert_called_once()
+        mock_runner.run_once.assert_called_once()
+
+    @patch("main.signal")
+    @patch("main.WorkflowRunner")
+    @patch("main.PluginRegistry")
+    @patch("main.discover_plugins")
+    def test_run_worker_pre_set_shutdown_event_skips_signals(
+        self,
+        mock_discover: MagicMock,
+        mock_registry_cls: MagicMock,
+        mock_runner_cls: MagicMock,
+        mock_signal: MagicMock,
+    ) -> None:
+        """When a pre-set shutdown_event is passed, run_loop exits immediately and no signal.signal() is registered (TASK-005 fix test 4)."""
+        from core.config.models import AppSettings
+
+        settings = AppSettings()
+        mock_discover.return_value = []
+        mock_runner = MagicMock()
+        # run_loop returns immediately (shutdown already set)
+        mock_runner.run_loop.return_value = None
+        mock_runner_cls.return_value = mock_runner
+
+        pre_set_event = threading.Event()
+        pre_set_event.set()
+
+        from main import run_worker
+
+        run_worker(settings, shutdown_event=pre_set_event)
+        # run_loop is called with the provided event
+        mock_runner.run_loop.assert_called_once_with(pre_set_event)
+        # No signal registrations — event was external
+        mock_signal.signal.assert_not_called()
+
+    @patch("main.run_api")
+    @patch("main.run_worker")
+    @patch("main.WorkflowRunner")
+    @patch("main.PluginRegistry")
+    @patch("main.discover_plugins")
+    @patch("main.load_config")
+    def test_both_mode_api_and_worker_share_same_runner(
+        self,
+        mock_load: MagicMock,
+        mock_discover: MagicMock,
+        mock_registry_cls: MagicMock,
+        mock_runner_cls: MagicMock,
+        mock_run_worker: MagicMock,
+        mock_run_api: MagicMock,
+    ) -> None:
+        """run_api and run_worker both receive the identical WorkflowRunner instance in both mode (TASK-005 fix test 10)."""
+        from core.config.models import AppSettings
+
+        mock_load.return_value = AppSettings()
+        mock_discover.return_value = []
+
+        runner_instance = MagicMock()
+        mock_runner_cls.return_value = runner_instance
+
+        captured_api_runners: list[object] = []
+        captured_worker_runners: list[object] = []
+
+        def capture_run_api(settings: object, runner: object = None) -> None:
+            captured_api_runners.append(runner)
+
+        def capture_run_worker(settings: object, **kwargs: object) -> None:
+            captured_worker_runners.append(kwargs.get("runner"))
+
+        mock_run_api.side_effect = capture_run_api
+        mock_run_worker.side_effect = capture_run_worker
+
+        from main import main
+
+        main(["--config-file", "dummy.yaml", "--mode", "both", "--run-once"])
+
+        # run_api and run_worker must both have received the same runner object
+        assert len(captured_api_runners) == 1
+        assert len(captured_worker_runners) == 1
+        assert captured_api_runners[0] is runner_instance
+        # After fix: run_worker must receive runner kwarg; currently it doesn't → fails
+        assert captured_worker_runners[0] is runner_instance

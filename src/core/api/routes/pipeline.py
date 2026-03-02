@@ -5,7 +5,7 @@ import logging
 from datetime import UTC, datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
 from core.api.dependencies import get_or_create_backend, get_settings, get_tenant_config
 from core.api.schemas import PipelineResultSummary, PipelineRunResponse, PipelineStatusResponse
@@ -45,6 +45,19 @@ async def _run_pipeline(
         if workflow_runner is not None:
             # TD-039: Run single tenant instead of all tenants
             result = await asyncio.to_thread(workflow_runner.run_tenant, tenant_name)
+
+            if result.already_running:
+                with backend.create_unit_of_work() as uow:
+                    run = uow.pipeline_runs.get_run(run_id)
+                    if run is not None:
+                        run.status = "skipped"
+                        run.ended_at = datetime.now(UTC)
+                        run.error_message = "Skipped — tenant already being processed"
+                        uow.pipeline_runs.update_run(run)
+                        uow.commit()
+                logger.info("Pipeline run skipped for tenant %s — already in progress", tenant_name)
+                return
+
             dates_gathered = result.dates_gathered
             dates_calculated = result.dates_calculated
             rows_written = result.chargeback_rows_written
@@ -97,6 +110,7 @@ async def _run_pipeline(
 )
 async def trigger_pipeline(
     request: Request,
+    response: Response,
     tenant_name: str,
     tenant_config: Annotated[TenantConfig, Depends(get_tenant_config)],
     settings: Annotated[AppSettings, Depends(get_settings)],
@@ -107,6 +121,15 @@ async def trigger_pipeline(
         raise HTTPException(
             status_code=409,
             detail=f"Pipeline is already running for tenant {tenant_name!r}",
+        )
+
+    workflow_runner = getattr(request.app.state, "workflow_runner", None)
+    if workflow_runner is not None and workflow_runner.is_tenant_running(tenant_name):
+        response.status_code = 200
+        return PipelineRunResponse(
+            tenant_name=tenant_name,
+            status="already_running",
+            message=f"Tenant {tenant_name!r} is already being processed",
         )
 
     backend = get_or_create_backend(_get_backends(request), tenant_name, tenant_config.storage.connection_string)

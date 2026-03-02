@@ -23,7 +23,7 @@ class PipelineRun:
 
     tenant_name: str
     started_at: datetime
-    status: Literal["running", "completed", "failed"]
+    status: Literal["running", "completed", "failed", "skipped"]
     id: int | None = field(default=None)
     ended_at: datetime | None = None
     dates_gathered: int = 0

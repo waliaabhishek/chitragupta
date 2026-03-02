@@ -1153,3 +1153,140 @@ class TestGap021RunTenantBootstrapLatch:
         t2_create_tables_after_second = sum(b.create_tables.call_count for b in conn_backends[t2_conn])
         assert t1_create_tables_after_second == t1_create_tables_after_first
         assert t2_create_tables_after_second == t2_create_tables_after_first
+
+
+class TestPerTenantRunGuard:
+    """TASK-005: Per-tenant run guard prevents concurrent duplicate runs."""
+
+    def test_run_tenant_guard_already_running_returns_flag(self) -> None:
+        """_run_tenant returns already_running=True when tenant already in _running_tenants (TASK-005 fix test 5)."""
+        settings = _make_settings(tenants={"tenant-a": _make_tenant(tenant_id="tid-a")})
+        runner = WorkflowRunner(settings, MagicMock())
+
+        # Manually inject tenant into the running set (simulates concurrent run)
+        runner._running_tenants.add("tenant-a")
+
+        config = settings.tenants["tenant-a"]
+        result = runner._run_tenant("tenant-a", config)
+
+        assert result.already_running is True
+        assert result.dates_gathered == 0
+
+    @patch("workflow_runner.ChargebackOrchestrator")
+    @patch("workflow_runner._create_storage_backend")
+    def test_run_tenant_guard_clears_on_exception(self, mock_storage: MagicMock, mock_orch_cls: MagicMock) -> None:
+        """_running_tenants entry is cleared in the finally block even when orchestrator.run() raises (TASK-005 fix test 6)."""
+        mock_storage.return_value = MagicMock()
+        mock_orch = MagicMock()
+        mock_orch.run.side_effect = RuntimeError("orchestrator exploded")
+        mock_orch_cls.return_value = mock_orch
+
+        settings = _make_settings(tenants={"tenant-a": _make_tenant(tenant_id="tid-a")})
+        runner = WorkflowRunner(settings, MagicMock())
+        runner._bootstrapped = True
+
+        config = settings.tenants["tenant-a"]
+        with pytest.raises(RuntimeError):
+            runner._run_tenant("tenant-a", config)
+
+        # Guard must have been cleared — finally block ran
+        assert "tenant-a" not in runner._running_tenants
+
+    @patch("workflow_runner.ChargebackOrchestrator")
+    @patch("workflow_runner._create_storage_backend")
+    def test_run_tenant_guard_different_tenants_do_not_block(
+        self, mock_storage: MagicMock, mock_orch_cls: MagicMock
+    ) -> None:
+        """A different tenant in _running_tenants does not block the requested tenant (TASK-005 fix test 7)."""
+        mock_storage.return_value = MagicMock()
+        mock_orch = MagicMock()
+        mock_orch.run.return_value = PipelineRunResult(
+            tenant_name="tenant-b",
+            tenant_id="tid-b",
+            dates_gathered=3,
+            dates_calculated=2,
+            chargeback_rows_written=10,
+        )
+        mock_orch_cls.return_value = mock_orch
+
+        settings = _make_settings(
+            tenants={
+                "tenant-a": _make_tenant(tenant_id="tid-a"),
+                "tenant-b": _make_tenant(tenant_id="tid-b"),
+            }
+        )
+        runner = WorkflowRunner(settings, MagicMock())
+        runner._bootstrapped = True
+
+        # Inject tenant-a as already running
+        runner._running_tenants.add("tenant-a")
+
+        config_b = settings.tenants["tenant-b"]
+        result = runner._run_tenant("tenant-b", config_b)
+
+        # tenant-b must proceed normally — not blocked by tenant-a
+        assert result.already_running is False
+        assert result.dates_gathered == 3
+
+    def test_is_tenant_running_reflects_running_set(self) -> None:
+        """is_tenant_running() returns False before, True while in set, False after removal (TASK-005)."""
+        settings = _make_settings(tenants={"tenant-a": _make_tenant(tenant_id="tid-a")})
+        runner = WorkflowRunner(settings, MagicMock())
+
+        assert runner.is_tenant_running("tenant-a") is False
+
+        runner._running_tenants.add("tenant-a")
+        assert runner.is_tenant_running("tenant-a") is True
+
+        runner._running_tenants.discard("tenant-a")
+        assert runner.is_tenant_running("tenant-a") is False
+
+
+class TestDrain:
+    """TASK-005: drain() waits for in-progress runs then closes (GIT-002)."""
+
+    def test_drain_calls_close_when_no_tenants_running(self) -> None:
+        """drain() calls close() immediately when _running_tenants is empty."""
+        settings = _make_settings()
+        runner = WorkflowRunner(settings, MagicMock())
+
+        with patch.object(runner, "close") as mock_close:
+            runner.drain(timeout=5)
+
+        mock_close.assert_called_once()
+
+    def test_drain_waits_for_running_tenants_to_clear(self) -> None:
+        """drain() blocks until _running_tenants empties, then closes."""
+        settings = _make_settings()
+        runner = WorkflowRunner(settings, MagicMock())
+        runner._running_tenants.add("tenant-a")
+
+        cleared_at: list[float] = []
+
+        def clear_after_delay() -> None:
+            time.sleep(0.15)
+            with runner._running_lock:
+                runner._running_tenants.discard("tenant-a")
+            cleared_at.append(time.monotonic())
+
+        t = threading.Thread(target=clear_after_delay)
+        t.start()
+
+        with patch.object(runner, "close") as mock_close:
+            runner.drain(timeout=2)
+
+        t.join()
+        mock_close.assert_called_once()
+        # drain() must have waited — close() called after tenant was cleared
+        assert cleared_at, "tenant was never cleared"
+
+    def test_drain_times_out_and_still_calls_close(self) -> None:
+        """drain() calls close() even when _running_tenants never empties (timeout path)."""
+        settings = _make_settings()
+        runner = WorkflowRunner(settings, MagicMock())
+        runner._running_tenants.add("tenant-stuck")
+
+        with patch.object(runner, "close") as mock_close:
+            runner.drain(timeout=0.2)  # short timeout — tenant never clears
+
+        mock_close.assert_called_once()

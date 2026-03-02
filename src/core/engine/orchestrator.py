@@ -68,6 +68,7 @@ class PipelineRunResult:
     dates_calculated: int
     chargeback_rows_written: int
     errors: list[str] = field(default_factory=list)
+    already_running: bool = False
 
 
 class ChargebackOrchestrator:

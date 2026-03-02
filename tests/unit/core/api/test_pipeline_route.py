@@ -1,4 +1,4 @@
-"""Unit tests for the _run_pipeline background task."""
+"""Unit tests for the _run_pipeline background task and trigger_pipeline endpoint."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
 import pytest
+from fastapi.testclient import TestClient
 
 from core.api.routes.pipeline import _run_pipeline
 from core.storage.backends.sqlmodel.unit_of_work import SQLModelBackend
@@ -46,6 +47,7 @@ class TestRunPipelineBackground:
         assert run_id is not None
 
         mock_result = MagicMock()
+        mock_result.already_running = False
         mock_result.dates_gathered = 7
         mock_result.dates_calculated = 5
         mock_result.chargeback_rows_written = 200
@@ -76,6 +78,7 @@ class TestRunPipelineBackground:
         assert run_id is not None
 
         mock_result = MagicMock()
+        mock_result.already_running = False
         mock_result.dates_gathered = 0
         mock_result.dates_calculated = 0
         mock_result.chargeback_rows_written = 0
@@ -131,3 +134,67 @@ class TestRunPipelineBackground:
         assert updated.status == "completed"
         assert updated.error_message is not None
         assert "WorkflowRunner" in updated.error_message
+
+    def test_run_pipeline_skips_when_already_running(self, temp_backend: SQLModelBackend) -> None:
+        """When workflow_runner.run_tenant() returns already_running=True, DB run status is set to 'skipped' (TASK-005 fix test 9)."""
+        from core.engine.orchestrator import PipelineRunResult
+
+        with temp_backend.create_unit_of_work() as uow:
+            run = uow.pipeline_runs.create_run("my-tenant", datetime(2026, 2, 26, 10, 0, tzinfo=UTC))
+            uow.commit()
+        run_id = run.id
+        assert run_id is not None
+
+        already_running_result = PipelineRunResult(
+            tenant_name="my-tenant",
+            tenant_id="tid",
+            dates_gathered=0,
+            dates_calculated=0,
+            chargeback_rows_written=0,
+            already_running=True,
+        )
+        mock_runner = MagicMock()
+        mock_runner.run_tenant.return_value = already_running_result
+
+        asyncio.run(_run_pipeline("my-tenant", MagicMock(), run_id, temp_backend, _make_request(mock_runner)))
+
+        with temp_backend.create_unit_of_work() as uow:
+            updated = uow.pipeline_runs.get_run(run_id)
+
+        assert updated is not None
+        assert updated.status == "skipped"
+
+
+def _make_app_with_runner(runner: object) -> TestClient:
+    """Create a TestClient with a workflow_runner injected into app state."""
+    from core.api.app import create_app
+    from core.config.models import ApiConfig, AppSettings, LoggingConfig, StorageConfig, TenantConfig
+
+    tenant_config = TenantConfig(
+        tenant_id="t",
+        ecosystem="test-eco",
+        storage=StorageConfig(connection_string="sqlite:///:memory:"),
+    )
+    settings = AppSettings(
+        api=ApiConfig(host="127.0.0.1", port=8080),
+        logging=LoggingConfig(),
+        tenants={"t": tenant_config},
+    )
+    app = create_app(settings, workflow_runner=runner)  # type: ignore[arg-type]
+    return TestClient(app).__enter__()
+
+
+class TestTriggerPipelineAlreadyRunning:
+    """TASK-005: trigger_pipeline synchronous guard using WorkflowRunner.is_tenant_running()."""
+
+    def test_trigger_pipeline_already_running_returns_200(self) -> None:
+        """When workflow_runner.is_tenant_running('t') is True, POST returns HTTP 200 with status='already_running' (TASK-005 fix test 8)."""
+        mock_runner = MagicMock()
+        mock_runner.is_tenant_running.return_value = True
+
+        client = _make_app_with_runner(mock_runner)
+        response = client.post("/api/v1/tenants/t/pipeline/run")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "already_running"

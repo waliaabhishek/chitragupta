@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, wait
@@ -72,6 +73,27 @@ class WorkflowRunner:
         self._plugin_registry = plugin_registry
         self._bootstrapped = False
         self._tenant_runtimes: dict[str, TenantRuntime] = {}
+        self._running_tenants: set[str] = set()
+        self._running_lock = threading.Lock()
+
+    def is_tenant_running(self, tenant_name: str) -> bool:
+        """Return True if tenant is currently being processed by any thread."""
+        with self._running_lock:
+            return tenant_name in self._running_tenants
+
+    def drain(self, timeout: float) -> None:
+        """Wait for all in-progress tenant runs to complete, then close.
+
+        Waits up to `timeout` seconds for `_running_tenants` to empty before
+        disposing resources. Prevents tearing down storage mid-run on shutdown.
+        """
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            with self._running_lock:
+                if not self._running_tenants:
+                    break
+            time.sleep(0.1)
+        self.close()
 
     def close(self) -> None:
         """Clean up all tenant runtimes."""
@@ -202,16 +224,31 @@ class WorkflowRunner:
         return results
 
     def _run_tenant(self, name: str, config: TenantConfig) -> PipelineRunResult:
-        runtime = self._get_or_create_runtime(name, config)
-        try:
-            result = runtime.orchestrator.run()
-        except GatherFailureThresholdError as exc:
-            logger.critical("FATAL: %s", exc)
-            import sys
+        with self._running_lock:
+            if name in self._running_tenants:
+                logger.info("Tenant %s: run skipped — already in progress", name)
+                return PipelineRunResult(
+                    tenant_name=name,
+                    tenant_id=config.tenant_id,
+                    dates_gathered=0,
+                    dates_calculated=0,
+                    chargeback_rows_written=0,
+                    already_running=True,
+                )
+            self._running_tenants.add(name)
 
-            sys.exit(1)
-        runtime.last_run_at = datetime.now(UTC)
-        return result
+        try:
+            runtime = self._get_or_create_runtime(name, config)
+            try:
+                result = runtime.orchestrator.run()
+            except GatherFailureThresholdError as exc:
+                logger.critical("FATAL: %s", exc)
+                sys.exit(1)
+            runtime.last_run_at = datetime.now(UTC)
+            return result
+        finally:
+            with self._running_lock:
+                self._running_tenants.discard(name)
 
     def _log_results(self, results: dict[str, PipelineRunResult]) -> None:
         for name, result in results.items():

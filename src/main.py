@@ -53,6 +53,15 @@ def setup_logging(settings: AppSettings) -> None:
         logging.getLogger(module).setLevel(level)
 
 
+def _create_runner(settings: AppSettings) -> WorkflowRunner:
+    """Create a WorkflowRunner with all plugins discovered from plugins/."""
+    plugins_path = Path("plugins")
+    registry = PluginRegistry()
+    for ecosystem, factory in discover_plugins(plugins_path):
+        registry.register(ecosystem, factory)
+    return WorkflowRunner(settings, registry)
+
+
 def run_api(settings: AppSettings, runner: WorkflowRunner | None = None) -> None:
     """Start the FastAPI server."""
     import uvicorn
@@ -63,14 +72,20 @@ def run_api(settings: AppSettings, runner: WorkflowRunner | None = None) -> None
     uvicorn.run(app, host=settings.api.host, port=settings.api.port)
 
 
-def run_worker(settings: AppSettings, *, run_once: bool = False) -> None:
-    """Run the pipeline worker."""
-    plugins_path = Path("plugins")
-    registry = PluginRegistry()
-    for ecosystem, factory in discover_plugins(plugins_path):
-        registry.register(ecosystem, factory)
+def run_worker(
+    settings: AppSettings,
+    *,
+    run_once: bool = False,
+    runner: WorkflowRunner | None = None,
+    shutdown_event: threading.Event | None = None,
+) -> None:
+    """Run the pipeline worker.
 
-    runner = WorkflowRunner(settings, registry)
+    Standalone 'worker' mode: creates its own runner, installs signal handlers.
+    'both' mode: accepts injected runner and external shutdown_event.
+    """
+    if runner is None:
+        runner = _create_runner(settings)
 
     if run_once:
         results = runner.run_once()
@@ -87,14 +102,16 @@ def run_worker(settings: AppSettings, *, run_once: bool = False) -> None:
                 )
         return
 
-    shutdown_event = threading.Event()
+    if shutdown_event is None:
+        # Standalone worker: install signal handlers (main thread only)
+        shutdown_event = threading.Event()
 
-    def _signal_handler(signum: int, frame: object) -> None:
-        logger.info("Received signal %d, shutting down...", signum)
-        shutdown_event.set()
+        def _signal_handler(signum: int, frame: object) -> None:
+            logger.info("Received signal %d, shutting down...", signum)
+            shutdown_event.set()
 
-    signal.signal(signal.SIGINT, _signal_handler)
-    signal.signal(signal.SIGTERM, _signal_handler)
+        signal.signal(signal.SIGINT, _signal_handler)
+        signal.signal(signal.SIGTERM, _signal_handler)
 
     logger.info("Starting chargeback engine worker...")
     runner.run_loop(shutdown_event)
@@ -111,16 +128,23 @@ def main(argv: list[str] | None = None) -> None:
     if mode == "api":
         run_api(settings)
     elif mode == "both":
-        plugins_path = Path("plugins")
-        registry = PluginRegistry()
-        for ecosystem, factory in discover_plugins(plugins_path):
-            registry.register(ecosystem, factory)
-        runner = WorkflowRunner(settings, registry)
+        runner = _create_runner(settings)
+        shutdown_event = threading.Event()
 
-        worker_thread = threading.Thread(target=run_worker, args=(settings,), kwargs={"run_once": args.run_once})
+        worker_thread = threading.Thread(
+            target=run_worker,
+            args=(settings,),
+            kwargs={
+                "run_once": args.run_once,
+                "runner": runner,
+                "shutdown_event": shutdown_event,
+            },
+        )
         worker_thread.daemon = True
         worker_thread.start()
         run_api(settings, runner=runner)
+        shutdown_event.set()
+        worker_thread.join(timeout=30)
     else:
         run_worker(settings, run_once=args.run_once)
 
