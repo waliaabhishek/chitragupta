@@ -402,3 +402,78 @@ class TestProactiveThrottling:
         """Default request_interval_seconds is 0.1 (100ms)."""
         conn = CCloudConnection(api_key="key", api_secret=SecretStr("secret"))
         assert conn.request_interval_seconds == 0.1
+
+
+# =============================================================================
+# _get_rate_limit_wait() unit tests — GAP-25
+# =============================================================================
+
+
+class TestGetRateLimitWait:
+    """Unit tests for _get_rate_limit_wait: X-RateLimit-Reset header support."""
+
+    def _make_conn(self) -> CCloudConnection:
+        return CCloudConnection(
+            api_key="key",
+            api_secret=SecretStr("secret"),
+            base_backoff_seconds=0.001,
+        )
+
+    def _make_429(self, headers: dict) -> httpx.Response:
+        return httpx.Response(429, content=b"", headers=headers)
+
+    def test_get_rate_limit_wait_x_ratelimit_reset_future_timestamp(self) -> None:
+        """X-RateLimit-Reset future Unix timestamp → wait = reset_time - now (plus jitter)."""
+        conn = self._make_conn()
+        now = 1000.0
+        reset_time = 1060.0  # 60 s in the future
+        response = self._make_429({"X-RateLimit-Reset": str(reset_time)})
+
+        with patch("plugins.confluent_cloud.connections.time") as mock_time:
+            mock_time.time.return_value = now
+            result = conn._get_rate_limit_wait(response, attempt=1)
+
+        # base_wait = 60.0, floor leaves it at 60.0, jitter factor ∈ [1.1, 1.2]
+        assert 60.0 * 1.1 <= result <= 60.0 * 1.2
+
+    def test_get_rate_limit_wait_x_ratelimit_reset_past_timestamp(self) -> None:
+        """X-RateLimit-Reset past Unix timestamp → wait floored at 1.0 (plus jitter).
+
+        Uses attempt=10 so exponential backoff would produce ~1.024 + jitter ≈ [1.13, 2.43],
+        which is outside [1.1, 1.2]. The floor-to-1.0 path (from a past timestamp) produces
+        exactly [1.1, 1.2], making this test a reliable discriminator.
+        """
+        conn = self._make_conn()
+        now = 1000.0
+        reset_time = 990.0  # 10 s in the past → negative wait
+        response = self._make_429({"X-RateLimit-Reset": str(reset_time)})
+
+        with patch("plugins.confluent_cloud.connections.time") as mock_time:
+            mock_time.time.return_value = now
+            result = conn._get_rate_limit_wait(response, attempt=10)
+
+        # base_wait = -10.0 → floored to 1.0, jitter factor ∈ [1.1, 1.2]
+        assert 1.0 * 1.1 <= result <= 1.0 * 1.2
+
+    def test_get_rate_limit_wait_retry_after_takes_precedence_over_x_ratelimit_reset(self) -> None:
+        """When both Retry-After and X-RateLimit-Reset present, Retry-After wins."""
+        conn = self._make_conn()
+        # X-RateLimit-Reset is a far-future timestamp; if it were used the wait would be huge
+        response = self._make_429({"Retry-After": "30", "X-RateLimit-Reset": "9999999999"})
+
+        result = conn._get_rate_limit_wait(response, attempt=1)
+
+        # base_wait = 30.0, jitter factor ∈ [1.1, 1.2]
+        assert 30.0 * 1.1 <= result <= 30.0 * 1.2
+
+    def test_get_rate_limit_wait_no_headers_falls_to_exponential_backoff(self) -> None:
+        """No rate-limit headers → _calculate_backoff() is called."""
+        conn = self._make_conn()
+        response = self._make_429({})
+
+        with patch.object(conn, "_calculate_backoff", return_value=5.0) as mock_backoff:
+            result = conn._get_rate_limit_wait(response, attempt=2)
+
+        mock_backoff.assert_called_once_with(2)
+        # base_wait = 5.0, jitter factor ∈ [1.1, 1.2]
+        assert 5.0 * 1.1 <= result <= 5.0 * 1.2

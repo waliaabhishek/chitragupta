@@ -168,6 +168,7 @@ class CCloudConnection:
         Confluent Cloud API uses these headers (per docs):
         - Retry-After: seconds to wait (standard HTTP)
         - rateLimit-reset: relative seconds until window resets (NOT Unix timestamp)
+        - X-RateLimit-Reset: Unix timestamp when limit resets (legacy)
 
         See: https://api.telemetry.confluent.cloud/docs
         """
@@ -180,6 +181,10 @@ class CCloudConnection:
         # Legacy/alternative header name (some Confluent APIs may use this)
         elif "RateLimit-Reset" in response.headers:
             wait = float(response.headers["RateLimit-Reset"])
+        # Legacy header: Unix timestamp when limit resets
+        elif "X-RateLimit-Reset" in response.headers:
+            reset_time = float(response.headers["X-RateLimit-Reset"])
+            wait = reset_time - time.time()
         else:
             wait = self._calculate_backoff(attempt)
 
