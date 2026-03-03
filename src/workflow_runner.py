@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, wait
@@ -75,6 +74,8 @@ class WorkflowRunner:
         self._tenant_runtimes: dict[str, TenantRuntime] = {}
         self._running_tenants: set[str] = set()
         self._running_lock = threading.Lock()
+        self._failed_tenants: dict[str, str] = {}  # name -> error message
+        self._failed_tenants_lock = threading.Lock()
 
     def is_tenant_running(self, tenant_name: str) -> bool:
         """Return True if tenant is currently being processed by any thread."""
@@ -162,7 +163,16 @@ class WorkflowRunner:
         if not self._bootstrapped:
             self.bootstrap_storage()
 
-        return self._run_tenant(tenant_name, config)
+        # Return cached fatal result if tenant is permanently failed
+        with self._failed_tenants_lock:
+            error_msg = self._failed_tenants.get(tenant_name)
+        if error_msg is not None:
+            return self._build_cached_fatal_result(tenant_name, config, error_msg)
+
+        try:
+            return self._run_tenant(tenant_name, config)
+        except GatherFailureThresholdError as exc:
+            return self._mark_tenant_permanently_failed(tenant_name, config, exc)
 
     def run_once(self) -> dict[str, PipelineRunResult]:
         if not self._bootstrapped:
@@ -173,21 +183,33 @@ class WorkflowRunner:
         if not tenants:
             return results
 
+        # Skip permanently failed tenants
+        with self._failed_tenants_lock:
+            failed_snapshot = dict(self._failed_tenants)
+        active_tenants = {name: config for name, config in tenants.items() if name not in failed_snapshot}
+        for name, error_msg in failed_snapshot.items():
+            config = tenants[name]
+            results[name] = self._build_cached_fatal_result(name, config, error_msg)
+
+        if not active_tenants:
+            return results
+
         # GAP-010: bounded concurrency
         max_workers = min(
-            len(tenants),
+            len(active_tenants),
             self._settings.features.max_parallel_tenants,
         )
         # GAP-002: global timeout = max of all tenant timeouts
         max_timeout = max(
-            (c.tenant_execution_timeout_seconds for c in tenants.values()),
+            (c.tenant_execution_timeout_seconds for c in active_tenants.values()),
             default=3600,
         )
         effective_timeout = max_timeout if max_timeout > 0 else None  # 0 means no timeout
 
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = {
-                executor.submit(self._run_tenant, name, config): (name, config) for name, config in tenants.items()
+                executor.submit(self._run_tenant, name, config): (name, config)
+                for name, config in active_tenants.items()
             }
             done, not_done = wait(futures, timeout=effective_timeout)
 
@@ -196,6 +218,8 @@ class WorkflowRunner:
                 name, config = futures[future]
                 try:
                     results[name] = future.result()
+                except GatherFailureThresholdError as exc:
+                    results[name] = self._mark_tenant_permanently_failed(name, config, exc)
                 except Exception as exc:
                     logger.error("Tenant %s failed: %s", name, exc)
                     results[name] = PipelineRunResult(
@@ -239,16 +263,44 @@ class WorkflowRunner:
 
         try:
             runtime = self._get_or_create_runtime(name, config)
-            try:
-                result = runtime.orchestrator.run()
-            except GatherFailureThresholdError as exc:
-                logger.critical("FATAL: %s", exc)
-                sys.exit(1)
+            result = runtime.orchestrator.run()  # GatherFailureThresholdError propagates up
             runtime.last_run_at = datetime.now(UTC)
             return result
         finally:
             with self._running_lock:
                 self._running_tenants.discard(name)
+
+    def _build_cached_fatal_result(self, name: str, config: TenantConfig, error_msg: str) -> PipelineRunResult:
+        """Build a PipelineRunResult for an already-failed tenant (no side effects)."""
+        return PipelineRunResult(
+            tenant_name=name,
+            tenant_id=config.tenant_id,
+            dates_gathered=0,
+            dates_calculated=0,
+            chargeback_rows_written=0,
+            errors=[error_msg],
+            fatal=True,
+        )
+
+    def _mark_tenant_permanently_failed(
+        self, name: str, config: TenantConfig, exc: GatherFailureThresholdError
+    ) -> PipelineRunResult:
+        """Mark tenant as permanently failed, emit structured alert, return fatal result."""
+        error_msg = str(exc)
+        with self._failed_tenants_lock:
+            self._failed_tenants[name] = error_msg
+        logger.critical(
+            "ALERT: Tenant %s has been permanently suspended after breaching gather failure threshold. "
+            "Manual operator intervention required. Error: %s",
+            name,
+            error_msg,
+        )
+        return self._build_cached_fatal_result(name, config, error_msg)
+
+    def get_failed_tenants(self) -> dict[str, str]:
+        """Return permanently failed tenants and their error messages."""
+        with self._failed_tenants_lock:
+            return dict(self._failed_tenants)
 
     def _log_results(self, results: dict[str, PipelineRunResult]) -> None:
         for name, result in results.items():
@@ -309,6 +361,19 @@ class WorkflowRunner:
             try:
                 self._log_results(self.run_once())
                 self._cleanup_retention()  # TD-016: Retention cleanup after each cycle
+
+                # Alert if all configured tenants are permanently failed
+                all_tenants = set(self._settings.tenants)
+                with self._failed_tenants_lock:
+                    failed_set = set(self._failed_tenants)
+                if all_tenants and all_tenants == failed_set:
+                    logger.critical(
+                        "ALERT: All %d tenant(s) have been permanently suspended. "
+                        "No work will be performed. Operator intervention required. "
+                        "Failed tenants: %s",
+                        len(all_tenants),
+                        list(failed_set),
+                    )
             except Exception:
                 logger.exception("Unexpected error in run_loop")
 

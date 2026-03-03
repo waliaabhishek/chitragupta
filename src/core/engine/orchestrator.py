@@ -69,6 +69,7 @@ class PipelineRunResult:
     chargeback_rows_written: int
     errors: list[str] = field(default_factory=list)
     already_running: bool = False
+    fatal: bool = False  # True when tenant is permanently failed
 
 
 class ChargebackOrchestrator:

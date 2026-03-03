@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from core.config.models import AppSettings, FeaturesConfig, StorageConfig, TenantConfig
-from core.engine.orchestrator import PipelineRunResult
+from core.engine.orchestrator import GatherFailureThresholdError, PipelineRunResult
 from workflow_runner import WorkflowRunner, _create_storage_backend
 
 
@@ -1290,3 +1290,281 @@ class TestDrain:
             runner.drain(timeout=0.2)  # short timeout — tenant never clears
 
         mock_close.assert_called_once()
+
+
+class TestGatherFailureThresholdHandling:
+    """TASK-004: GatherFailureThresholdError permanently suspends tenant instead of sys.exit(1)."""
+
+    def _make_orch_mock(self, mock_orch_cls: MagicMock, side_effect: Exception | None = None) -> MagicMock:
+        mock_orch = MagicMock()
+        if side_effect is not None:
+            mock_orch.run.side_effect = side_effect
+        mock_orch_cls.return_value = mock_orch
+        return mock_orch
+
+    def _make_registry(self) -> MagicMock:
+        registry = MagicMock()
+        plugin = MagicMock()
+        plugin.get_metrics_source.return_value = None
+        registry.create.return_value = plugin
+        return registry
+
+    # --- Test 1 ---
+    @patch("workflow_runner.ChargebackOrchestrator")
+    @patch("workflow_runner._create_storage_backend")
+    def test_run_once_marks_tenant_failed_on_threshold_breach(
+        self,
+        mock_storage: MagicMock,
+        mock_orch_cls: MagicMock,
+    ) -> None:
+        """run_once(): GatherFailureThresholdError → _failed_tenants populated, result fatal=True."""
+        mock_storage.return_value = MagicMock()
+        exc = GatherFailureThresholdError("consecutive gather failures exceeded threshold")
+        self._make_orch_mock(mock_orch_cls, side_effect=exc)
+
+        settings = _make_settings(tenants={"t1": _make_tenant(tenant_id="tid1")})
+        runner = WorkflowRunner(settings, self._make_registry())
+        runner._bootstrapped = True
+
+        results = runner.run_once()
+
+        assert "t1" in runner._failed_tenants
+        result = results["t1"]
+        assert result.fatal is True
+        assert any("consecutive" in e or "threshold" in e or "gather" in e for e in result.errors)
+
+    # --- Test 2 ---
+    @patch("workflow_runner.ChargebackOrchestrator")
+    @patch("workflow_runner._create_storage_backend")
+    def test_run_once_skips_failed_tenant_on_subsequent_call(
+        self,
+        mock_storage: MagicMock,
+        mock_orch_cls: MagicMock,
+    ) -> None:
+        """After threshold breach in run_once(), second run_once() skips the failed tenant."""
+        mock_storage.return_value = MagicMock()
+        exc = GatherFailureThresholdError("threshold hit")
+        mock_orch = self._make_orch_mock(mock_orch_cls, side_effect=exc)
+
+        settings = _make_settings(tenants={"t1": _make_tenant(tenant_id="tid1")})
+        runner = WorkflowRunner(settings, self._make_registry())
+        runner._bootstrapped = True
+
+        # First call — triggers threshold breach
+        runner.run_once()
+        assert "t1" in runner._failed_tenants
+        assert mock_orch.run.call_count == 1
+
+        # Second call — tenant is permanently failed; orchestrator.run() must NOT be called again
+        results = runner.run_once()
+        assert mock_orch.run.call_count == 1  # still 1, not 2
+        assert results["t1"].fatal is True
+
+    # --- Test 3 ---
+    @patch("workflow_runner.ChargebackOrchestrator")
+    @patch("workflow_runner._create_storage_backend")
+    def test_run_tenant_marks_failed_on_threshold_breach(
+        self,
+        mock_storage: MagicMock,
+        mock_orch_cls: MagicMock,
+    ) -> None:
+        """run_tenant(): GatherFailureThresholdError → _failed_tenants populated, result fatal=True."""
+        mock_storage.return_value = MagicMock()
+        exc = GatherFailureThresholdError("threshold exceeded")
+        self._make_orch_mock(mock_orch_cls, side_effect=exc)
+
+        settings = _make_settings(tenants={"t1": _make_tenant(tenant_id="tid1")})
+        runner = WorkflowRunner(settings, self._make_registry())
+        runner._bootstrapped = True
+
+        result = runner.run_tenant("t1")
+
+        assert "t1" in runner._failed_tenants
+        assert result.fatal is True
+
+    # --- Test 4 ---
+    @patch("workflow_runner.ChargebackOrchestrator")
+    @patch("workflow_runner._create_storage_backend")
+    def test_run_tenant_skips_permanently_failed_tenant(
+        self,
+        mock_storage: MagicMock,
+        mock_orch_cls: MagicMock,
+    ) -> None:
+        """run_tenant() on a pre-failed tenant returns fatal=True without calling orchestrator."""
+        mock_storage.return_value = MagicMock()
+        mock_orch = self._make_orch_mock(mock_orch_cls)
+
+        settings = _make_settings(tenants={"t1": _make_tenant(tenant_id="tid1")})
+        runner = WorkflowRunner(settings, self._make_registry())
+        runner._bootstrapped = True
+
+        # Pre-populate as permanently failed
+        runner._failed_tenants["t1"] = "previously exceeded threshold"  # type: ignore[attr-defined]
+
+        result = runner.run_tenant("t1")
+
+        mock_orch.run.assert_not_called()
+        assert result.fatal is True
+
+    # --- Test 5 ---
+    @patch("workflow_runner.ChargebackOrchestrator")
+    @patch("workflow_runner._create_storage_backend")
+    def test_non_fatal_error_does_not_mark_tenant_failed(
+        self,
+        mock_storage: MagicMock,
+        mock_orch_cls: MagicMock,
+    ) -> None:
+        """Generic RuntimeError does NOT mark tenant as permanently failed; fatal=False."""
+        mock_storage.return_value = MagicMock()
+        self._make_orch_mock(mock_orch_cls, side_effect=RuntimeError("transient failure"))
+
+        settings = _make_settings(tenants={"t1": _make_tenant(tenant_id="tid1")})
+        runner = WorkflowRunner(settings, self._make_registry())
+        runner._bootstrapped = True
+
+        results = runner.run_once()
+
+        assert not runner._failed_tenants  # type: ignore[attr-defined]
+        result = results["t1"]
+        assert result.fatal is False
+
+    # --- Test 6 ---
+    @patch("workflow_runner.ChargebackOrchestrator")
+    @patch("workflow_runner._create_storage_backend")
+    def test_get_failed_tenants_returns_thread_safe_copy(
+        self,
+        mock_storage: MagicMock,
+        mock_orch_cls: MagicMock,
+    ) -> None:
+        """get_failed_tenants() returns a copy; mutating it does not affect internal state."""
+        mock_storage.return_value = MagicMock()
+        exc = GatherFailureThresholdError("breach")
+        self._make_orch_mock(mock_orch_cls, side_effect=exc)
+
+        settings = _make_settings(tenants={"t1": _make_tenant(tenant_id="tid1")})
+        runner = WorkflowRunner(settings, self._make_registry())
+        runner._bootstrapped = True
+
+        runner.run_once()
+
+        failed = runner.get_failed_tenants()  # type: ignore[attr-defined]
+        assert "t1" in failed
+        assert isinstance(failed["t1"], str)
+
+        # Mutating the returned dict must not affect internal state
+        failed["injected"] = "evil"
+        assert "injected" not in runner._failed_tenants  # type: ignore[attr-defined]
+
+    # --- Test 7 ---
+    def test_sys_not_imported_in_workflow_runner(self) -> None:
+        """workflow_runner.py must not use `import sys` after the fix."""
+        import pathlib
+
+        source = (pathlib.Path(__file__).parent.parent.parent / "src" / "workflow_runner.py").read_text()
+        assert "import sys" not in source, (
+            "workflow_runner.py still contains `import sys` — sys.exit(1) must be removed"
+        )
+
+    # --- Test 8 (integration) ---
+    @patch("workflow_runner.ChargebackOrchestrator")
+    @patch("workflow_runner._create_storage_backend")
+    def test_integration_both_mode_failed_tenant_persists_across_threads(
+        self,
+        mock_storage: MagicMock,
+        mock_orch_cls: MagicMock,
+    ) -> None:
+        """In 'both' mode: daemon thread triggers breach; API thread sees failed tenant; next cycle skips."""
+        mock_storage.return_value = MagicMock()
+        exc = GatherFailureThresholdError("breach in daemon thread")
+        mock_orch = self._make_orch_mock(mock_orch_cls, side_effect=exc)
+
+        settings = _make_settings(tenants={"t1": _make_tenant(tenant_id="tid1")})
+        runner = WorkflowRunner(settings, self._make_registry())
+        runner._bootstrapped = True
+
+        # Simulate daemon thread calling run_once()
+        daemon_results: dict[str, Any] = {}
+        daemon_exc: list[Exception] = []
+
+        def daemon_run() -> None:
+            try:
+                daemon_results.update(runner.run_once())
+            except Exception as e:
+                daemon_exc.append(e)
+
+        t = threading.Thread(target=daemon_run, daemon=True)
+        t.start()
+        t.join(timeout=10)
+
+        assert not daemon_exc, f"daemon thread raised: {daemon_exc}"
+
+        # API side: failed tenant is visible
+        failed = runner.get_failed_tenants()  # type: ignore[attr-defined]
+        assert "t1" in failed
+
+        # Subsequent run_once() must NOT call orchestrator for failed tenant
+        mock_orch.run.reset_mock()
+        runner.run_once()
+        mock_orch.run.assert_not_called()
+
+    # --- Test 9 ---
+    @patch("workflow_runner.ChargebackOrchestrator")
+    @patch("workflow_runner._create_storage_backend")
+    def test_all_tenants_failed_logs_critical_in_run_loop(
+        self,
+        mock_storage: MagicMock,
+        mock_orch_cls: MagicMock,
+    ) -> None:
+        """When all tenants are permanently suspended, run_loop logs a CRITICAL alert."""
+        mock_storage.return_value = MagicMock()
+        exc = GatherFailureThresholdError("threshold breached")
+        self._make_orch_mock(mock_orch_cls, side_effect=exc)
+
+        settings = _make_settings(
+            tenants={"t1": _make_tenant(tenant_id="tid1")},
+            refresh_interval=1,
+            enable_periodic_refresh=True,
+        )
+        runner = WorkflowRunner(settings, self._make_registry())
+        runner._bootstrapped = True
+
+        records: list[logging.LogRecord] = []
+
+        class RecordingHandler(logging.Handler):
+            def emit(self, record: logging.LogRecord) -> None:
+                records.append(record)
+
+        handler = RecordingHandler(level=logging.DEBUG)
+        wf_logger = logging.getLogger("workflow_runner")
+        wf_logger.addHandler(handler)
+        orig_level = wf_logger.level
+        orig_disabled = wf_logger.disabled
+        wf_logger.setLevel(logging.DEBUG)
+        wf_logger.disabled = False
+
+        shutdown = threading.Event()
+
+        # Allow two run_once() iterations: first breaches, second should trigger CRITICAL log
+        call_count = [0]
+        original_run_once = runner.run_once
+
+        def patched_run_once() -> dict[str, PipelineRunResult]:
+            result = original_run_once()
+            call_count[0] += 1
+            if call_count[0] >= 2:
+                shutdown.set()
+            return result
+
+        runner.run_once = patched_run_once  # type: ignore[method-assign]
+
+        try:
+            runner.run_loop(shutdown)
+        finally:
+            wf_logger.removeHandler(handler)
+            wf_logger.setLevel(orig_level)
+            wf_logger.disabled = orig_disabled
+
+        logged_messages = [r.getMessage() for r in records if r.levelno >= logging.CRITICAL]
+        assert any("1 tenant" in msg and "permanently suspended" in msg for msg in logged_messages), (
+            f"Expected CRITICAL all-tenants-suspended log; got: {logged_messages}"
+        )

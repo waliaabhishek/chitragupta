@@ -63,9 +63,7 @@ def test_cc_register_exists() -> None:
     """confluent_cloud package exposes a register() callable."""
     import plugins.confluent_cloud as cc_pkg
 
-    assert callable(getattr(cc_pkg, "register", None)), (
-        "plugins.confluent_cloud has no register() function"
-    )
+    assert callable(getattr(cc_pkg, "register", None)), "plugins.confluent_cloud has no register() function"
 
 
 def test_cc_register_returns_tuple() -> None:
