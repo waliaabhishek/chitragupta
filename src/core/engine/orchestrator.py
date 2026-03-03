@@ -3,12 +3,12 @@ from __future__ import annotations
 import calendar
 import inspect
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from datetime import date as date_type
 from decimal import Decimal
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from core.engine.allocation import AllocationContext, AllocatorRegistry
 from core.engine.helpers import compute_active_fraction
@@ -26,6 +26,14 @@ if TYPE_CHECKING:
     from core.models.resource import Resource
     from core.plugin.protocols import CostAllocator, EcosystemPlugin, ServiceHandler
     from core.storage.interface import StorageBackend, UnitOfWork
+
+    class _EntityRepo(Protocol):
+        """Structural minimum for deletion detection — covers ResourceRepository and IdentityRepository."""
+
+        def find_active_at(self, ecosystem: str, tenant_id: str, timestamp: datetime) -> tuple[Sequence[Any], int]: ...
+
+        def mark_deleted(self, ecosystem: str, tenant_id: str, entity_id: str, deleted_at: datetime) -> None: ...
+
 
 logger = logging.getLogger(__name__)
 
@@ -106,8 +114,7 @@ class ChargebackOrchestrator:
         self._consecutive_gather_failures: int = 0
 
         # Zero-gather counters (in-memory, reset on restart)
-        self._consecutive_zero_resource_gathers = 0
-        self._consecutive_zero_identity_gathers = 0
+        self._zero_gather_counters: dict[str, int] = {"resources": 0, "identities": 0}
 
         # Ensure UNALLOCATED identity exists
         with self._storage_backend.create_unit_of_work() as uow:
@@ -301,6 +308,46 @@ class ChargebackOrchestrator:
 
         return gathered_resource_ids, gathered_identity_ids
 
+    def _detect_entity_deletions(
+        self,
+        repo: _EntityRepo,
+        gathered_ids: set[str],
+        entity_name: str,
+        id_getter: Callable[[Any], str],
+        now: datetime,
+    ) -> None:
+        """Zero-gather-protected deletion for a single entity type (resources or identities)."""
+        threshold = self._tenant_config.zero_gather_deletion_threshold
+        active_entities, _ = repo.find_active_at(self._ecosystem, self._tenant_id, now)
+        if len(gathered_ids) == 0 and len(active_entities) > 0:
+            self._zero_gather_counters[entity_name] += 1
+            consecutive = self._zero_gather_counters[entity_name]
+            if threshold == -1 or consecutive < threshold:
+                logger.warning(
+                    "Zero %s gathered but %d active — skipping %s deletion (consecutive: %d)",
+                    entity_name,
+                    len(active_entities),
+                    entity_name,
+                    consecutive,
+                )
+            else:
+                logger.warning(
+                    "Zero %s gathered for %d consecutive runs — proceeding with deletion",
+                    entity_name,
+                    consecutive,
+                )
+                for entity in active_entities:
+                    entity_id = id_getter(entity)
+                    if entity_id not in gathered_ids:
+                        repo.mark_deleted(self._ecosystem, self._tenant_id, entity_id, now)
+                self._zero_gather_counters[entity_name] = 0
+        else:
+            self._zero_gather_counters[entity_name] = 0
+            for entity in active_entities:
+                entity_id = id_getter(entity)
+                if entity_id not in gathered_ids:
+                    repo.mark_deleted(self._ecosystem, self._tenant_id, entity_id, now)
+
     def _detect_deletions(
         self,
         uow: UnitOfWork,
@@ -309,57 +356,20 @@ class ChargebackOrchestrator:
         gathered_identity_ids: set[str],
     ) -> None:
         """Detect resource and identity deletions with zero-gather protection."""
-        threshold = self._tenant_config.zero_gather_deletion_threshold
-
-        # Resource deletions
-        active_resources, _ = uow.resources.find_active_at(self._ecosystem, self._tenant_id, now)
-        if len(gathered_resource_ids) == 0 and len(active_resources) > 0:
-            self._consecutive_zero_resource_gathers += 1
-            if threshold == -1 or self._consecutive_zero_resource_gathers < threshold:
-                logger.warning(
-                    "Zero resources gathered but %d active — skipping resource deletion (consecutive: %d)",
-                    len(active_resources),
-                    self._consecutive_zero_resource_gathers,
-                )
-            else:
-                logger.warning(
-                    "Zero resources gathered for %d consecutive runs — proceeding with deletion",
-                    self._consecutive_zero_resource_gathers,
-                )
-                for r in active_resources:
-                    if r.resource_id not in gathered_resource_ids:
-                        uow.resources.mark_deleted(self._ecosystem, self._tenant_id, r.resource_id, now)
-                self._consecutive_zero_resource_gathers = 0
-        else:
-            self._consecutive_zero_resource_gathers = 0
-            for r in active_resources:
-                if r.resource_id not in gathered_resource_ids:
-                    uow.resources.mark_deleted(self._ecosystem, self._tenant_id, r.resource_id, now)
-
-        # Identity deletions
-        active_identities, _ = uow.identities.find_active_at(self._ecosystem, self._tenant_id, now)
-        if len(gathered_identity_ids) == 0 and len(active_identities) > 0:
-            self._consecutive_zero_identity_gathers += 1
-            if threshold == -1 or self._consecutive_zero_identity_gathers < threshold:
-                logger.warning(
-                    "Zero identities gathered but %d active — skipping identity deletion (consecutive: %d)",
-                    len(active_identities),
-                    self._consecutive_zero_identity_gathers,
-                )
-            else:
-                logger.warning(
-                    "Zero identities gathered for %d consecutive runs — proceeding with deletion",
-                    self._consecutive_zero_identity_gathers,
-                )
-                for i in active_identities:
-                    if i.identity_id not in gathered_identity_ids:
-                        uow.identities.mark_deleted(self._ecosystem, self._tenant_id, i.identity_id, now)
-                self._consecutive_zero_identity_gathers = 0
-        else:
-            self._consecutive_zero_identity_gathers = 0
-            for i in active_identities:
-                if i.identity_id not in gathered_identity_ids:
-                    uow.identities.mark_deleted(self._ecosystem, self._tenant_id, i.identity_id, now)
+        self._detect_entity_deletions(
+            repo=uow.resources,
+            gathered_ids=gathered_resource_ids,
+            entity_name="resources",
+            id_getter=lambda r: r.resource_id,
+            now=now,
+        )
+        self._detect_entity_deletions(
+            repo=uow.identities,
+            gathered_ids=gathered_identity_ids,
+            entity_name="identities",
+            id_getter=lambda i: i.identity_id,
+            now=now,
+        )
 
     def _apply_recalculation_window(
         self,

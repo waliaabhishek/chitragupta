@@ -616,12 +616,12 @@ class TestZeroGatherProtection:
         # 2 zero gathers
         orch.run()
         orch.run()
-        assert orch._consecutive_zero_resource_gathers == 2
+        assert orch._zero_gather_counters["resources"] == 2
 
         # Now handler returns a resource — resets counter
         handler._resources = [_make_resource("r-new")]
         orch.run()
-        assert orch._consecutive_zero_resource_gathers == 0
+        assert orch._zero_gather_counters["resources"] == 0
 
 
 class TestCalculatePhase:
