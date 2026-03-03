@@ -12,7 +12,23 @@ from plugins.confluent_cloud.handlers.org_wide import OrgWideCostHandler
 
 @pytest.fixture
 def handler() -> OrgWideCostHandler:
-    return OrgWideCostHandler(connection=None, config=None, ecosystem="confluent_cloud")
+    return OrgWideCostHandler(ecosystem="confluent_cloud")
+
+
+class TestOrgWideCostHandlerConstructor:
+    """Test constructor dependency cleanup — only ecosystem param."""
+
+    def test_accepts_only_ecosystem(self) -> None:
+        handler = OrgWideCostHandler(ecosystem="confluent_cloud")
+        assert handler.service_type == "org_wide"
+
+    def test_rejects_connection_kwarg(self) -> None:
+        with pytest.raises(TypeError):
+            OrgWideCostHandler(ecosystem="confluent_cloud", connection=MagicMock())  # type: ignore[call-arg]
+
+    def test_rejects_config_kwarg(self) -> None:
+        with pytest.raises(TypeError):
+            OrgWideCostHandler(ecosystem="confluent_cloud", config=MagicMock())  # type: ignore[call-arg]
 
 
 class TestOrgWideCostHandlerProperties:

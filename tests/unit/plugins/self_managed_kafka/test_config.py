@@ -107,7 +107,9 @@ class TestMetricsConfig:
         from core.metrics.config import MetricsConnectionConfig
 
         with pytest.raises(ValidationError, match="password required"):
-            MetricsConnectionConfig.model_validate({"url": "http://prom:9090", "auth_type": "basic", "username": "user"})
+            MetricsConnectionConfig.model_validate(
+                {"url": "http://prom:9090", "auth_type": "basic", "username": "user"}
+            )
 
     def test_bearer_auth(self):
         from core.metrics.config import MetricsConnectionConfig

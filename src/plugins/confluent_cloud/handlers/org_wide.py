@@ -22,8 +22,6 @@ if TYPE_CHECKING:
     from core.models import Identity, MetricRow, Resource
     from core.plugin.protocols import CostAllocator
     from core.storage.interface import UnitOfWork
-    from plugins.confluent_cloud.config import CCloudPluginConfig
-    from plugins.confluent_cloud.connections import CCloudConnection
 
 _ORG_WIDE_PRODUCT_TYPES: tuple[str, ...] = (
     "AUDIT_LOG_READ",
@@ -39,12 +37,7 @@ class OrgWideCostHandler:
     identity resolution pass. Costs are split evenly across all identities.
     """
 
-    def __init__(
-        self,
-        connection: CCloudConnection | None,
-        config: CCloudPluginConfig | None,
-        ecosystem: str,
-    ) -> None:
+    def __init__(self, ecosystem: str) -> None:
         self._ecosystem = ecosystem
 
     @property

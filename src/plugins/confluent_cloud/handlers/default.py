@@ -27,8 +27,6 @@ if TYPE_CHECKING:
     from core.models import Identity, MetricRow, Resource
     from core.plugin.protocols import CostAllocator
     from core.storage.interface import UnitOfWork
-    from plugins.confluent_cloud.config import CCloudPluginConfig
-    from plugins.confluent_cloud.connections import CCloudConnection
 
 _DEFAULT_PRODUCT_TYPES: tuple[str, ...] = (
     "TABLEFLOW_DATA_PROCESSED",
@@ -56,15 +54,9 @@ class DefaultHandler:
     metrics collection is performed.
 
     Does NOT require connection/config since it performs no API calls.
-    Constructor accepts them for interface consistency but ignores them.
     """
 
-    def __init__(
-        self,
-        connection: CCloudConnection | None,
-        config: CCloudPluginConfig | None,
-        ecosystem: str,
-    ) -> None:
+    def __init__(self, ecosystem: str) -> None:
         self._ecosystem = ecosystem
 
     @property

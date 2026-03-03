@@ -61,8 +61,8 @@ class ConfluentCloudPlugin:
             "connector": ConnectorHandler(self._connection, self._config, self.ecosystem),
             "ksqldb": KsqldbHandler(self._connection, self._config, self.ecosystem),
             "flink": FlinkHandler(self._connection, self._config, self.ecosystem),
-            "org_wide": OrgWideCostHandler(self._connection, self._config, self.ecosystem),
-            "default": DefaultHandler(self._connection, self._config, self.ecosystem),
+            "org_wide": OrgWideCostHandler(self.ecosystem),
+            "default": DefaultHandler(self.ecosystem),
         }
 
         # Initialize metrics source if configured
