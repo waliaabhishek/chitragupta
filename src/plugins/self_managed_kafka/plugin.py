@@ -7,6 +7,7 @@ import logging
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
+from core.metrics.config import create_metrics_source
 from core.metrics.protocol import MetricsQueryError
 from plugins.self_managed_kafka.config import SelfManagedKafkaConfig
 from plugins.self_managed_kafka.cost_input import ConstructedCostInput
@@ -53,7 +54,7 @@ class SelfManagedKafkaPlugin:
         self._prometheus_principals_available = True
 
         # Always create MetricsSource (required for cost construction)
-        self._metrics_source = self._create_metrics_source(self._config)
+        self._metrics_source = create_metrics_source(self._config.metrics)
 
         # Create AdminClient if using admin_api for resource discovery
         if self._config.resource_source.source == "admin_api":
@@ -132,19 +133,3 @@ class SelfManagedKafkaPlugin:
         if self._metrics_source is not None:
             self._metrics_source.close()
             self._metrics_source = None
-
-    def _create_metrics_source(self, config: SelfManagedKafkaConfig) -> MetricsSource:
-        """Create PrometheusMetricsSource from config."""
-        from core.metrics.prometheus import AuthConfig, PrometheusConfig, PrometheusMetricsSource
-
-        metrics_config = config.metrics
-        auth: AuthConfig | None = None
-        if metrics_config.auth_type != "none":
-            auth = AuthConfig(
-                type=metrics_config.auth_type,
-                username=metrics_config.username,
-                password=metrics_config.password.get_secret_value() if metrics_config.password else None,
-                token=metrics_config.bearer_token.get_secret_value() if metrics_config.bearer_token else None,
-            )
-
-        return PrometheusMetricsSource(PrometheusConfig(url=metrics_config.url, auth=auth))

@@ -8,6 +8,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, SecretStr, model_validator
 
 from core.config.models import PluginSettingsBase
+from core.metrics.config import MetricsConnectionConfig  # noqa: TC001 — Pydantic evaluates field annotations at runtime
 
 
 class CostRateOverride(BaseModel):
@@ -27,29 +28,6 @@ class CostModelConfig(BaseModel):
     network_ingress_per_gib: Decimal  # Per GiB
     network_egress_per_gib: Decimal  # Per GiB
     region_overrides: dict[str, CostRateOverride] = {}
-
-
-class MetricsConfig(BaseModel):
-    """Prometheus metrics configuration (plugin-local, not shared with CCloud)."""
-
-    type: Literal["prometheus"] = "prometheus"
-    url: str
-    auth_type: Literal["basic", "bearer", "none"] = "none"
-    username: str | None = None
-    password: SecretStr | None = None
-    bearer_token: SecretStr | None = None
-
-    @model_validator(mode="after")
-    def validate_auth_credentials(self) -> MetricsConfig:
-        if self.auth_type == "basic":
-            if not self.username or not self.password:
-                raise ValueError("username and password required for basic auth")
-        elif self.auth_type == "bearer":
-            if not self.bearer_token:
-                raise ValueError("bearer_token required for bearer auth")
-        elif self.auth_type == "none" and (self.username or self.password or self.bearer_token):
-            raise ValueError("credentials provided but auth_type is 'none'")
-        return self
 
 
 class StaticIdentityConfig(BaseModel):
@@ -98,7 +76,7 @@ class SelfManagedKafkaConfig(PluginSettingsBase):
     cost_model: CostModelConfig
     identity_source: IdentitySourceConfig = Field(default_factory=IdentitySourceConfig)
     resource_source: ResourceSourceConfig = Field(default_factory=ResourceSourceConfig)
-    metrics: MetricsConfig  # Required for cost construction + allocation
+    metrics: MetricsConnectionConfig  # Required for cost construction + allocation
 
     @classmethod
     def from_plugin_settings(cls, settings: dict[str, Any]) -> SelfManagedKafkaConfig:

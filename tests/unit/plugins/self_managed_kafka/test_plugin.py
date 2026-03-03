@@ -239,7 +239,7 @@ class TestPluginPrincipalLabelValidation:
         mock_row.labels = {"principal": "User:alice"}
 
         plugin = SelfManagedKafkaPlugin()
-        with patch.object(plugin, "_create_metrics_source") as mock_create:
+        with patch("plugins.self_managed_kafka.plugin.create_metrics_source") as mock_create:
             mock_metrics = MagicMock()
             mock_metrics.query.return_value = {"distinct_principals": [mock_row]}
             mock_create.return_value = mock_metrics
@@ -260,7 +260,7 @@ class TestPluginPrincipalLabelValidation:
         mock_row.labels = {}  # No 'principal' label
 
         plugin = SelfManagedKafkaPlugin()
-        with patch.object(plugin, "_create_metrics_source") as mock_create:
+        with patch("plugins.self_managed_kafka.plugin.create_metrics_source") as mock_create:
             mock_metrics = MagicMock()
             mock_metrics.query.return_value = {"distinct_principals": [mock_row]}
             mock_create.return_value = mock_metrics
@@ -283,7 +283,7 @@ class TestPluginPrincipalLabelValidation:
         base_settings["identity_source"] = {"source": "prometheus"}
 
         plugin = SelfManagedKafkaPlugin()
-        with patch.object(plugin, "_create_metrics_source") as mock_create:
+        with patch("plugins.self_managed_kafka.plugin.create_metrics_source") as mock_create:
             mock_metrics = MagicMock()
             mock_metrics.query.side_effect = MetricsQueryError("connection refused")
             mock_create.return_value = mock_metrics
@@ -310,7 +310,7 @@ class TestPluginPrincipalLabelValidation:
         }
 
         plugin = SelfManagedKafkaPlugin()
-        with patch.object(plugin, "_create_metrics_source") as mock_create:
+        with patch("plugins.self_managed_kafka.plugin.create_metrics_source") as mock_create:
             mock_metrics = MagicMock()
             # No principal labels → _prometheus_principals_available = False
             mock_metrics.query.return_value = {"distinct_principals": []}

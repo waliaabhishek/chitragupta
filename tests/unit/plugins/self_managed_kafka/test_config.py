@@ -82,16 +82,16 @@ class TestCostModelConfig:
 
 class TestMetricsConfig:
     def test_no_auth(self, base_metrics):
-        from plugins.self_managed_kafka.config import MetricsConfig
+        from core.metrics.config import MetricsConnectionConfig
 
-        config = MetricsConfig.model_validate(base_metrics)
+        config = MetricsConnectionConfig.model_validate(base_metrics)
         assert config.auth_type == "none"
         assert config.username is None
 
     def test_basic_auth(self):
-        from plugins.self_managed_kafka.config import MetricsConfig
+        from core.metrics.config import MetricsConnectionConfig
 
-        config = MetricsConfig.model_validate(
+        config = MetricsConnectionConfig.model_validate(
             {
                 "url": "http://prom:9090",
                 "auth_type": "basic",
@@ -104,31 +104,31 @@ class TestMetricsConfig:
         assert config.password.get_secret_value() == "pass"
 
     def test_basic_auth_missing_password_raises(self):
-        from plugins.self_managed_kafka.config import MetricsConfig
+        from core.metrics.config import MetricsConnectionConfig
 
         with pytest.raises(ValidationError, match="password required"):
-            MetricsConfig.model_validate({"url": "http://prom:9090", "auth_type": "basic", "username": "user"})
+            MetricsConnectionConfig.model_validate({"url": "http://prom:9090", "auth_type": "basic", "username": "user"})
 
     def test_bearer_auth(self):
-        from plugins.self_managed_kafka.config import MetricsConfig
+        from core.metrics.config import MetricsConnectionConfig
 
-        config = MetricsConfig.model_validate(
+        config = MetricsConnectionConfig.model_validate(
             {"url": "http://prom:9090", "auth_type": "bearer", "bearer_token": "tok123"}
         )
         assert config.bearer_token is not None
         assert config.bearer_token.get_secret_value() == "tok123"
 
     def test_bearer_auth_missing_token_raises(self):
-        from plugins.self_managed_kafka.config import MetricsConfig
+        from core.metrics.config import MetricsConnectionConfig
 
         with pytest.raises(ValidationError, match="bearer_token required"):
-            MetricsConfig.model_validate({"url": "http://prom:9090", "auth_type": "bearer"})
+            MetricsConnectionConfig.model_validate({"url": "http://prom:9090", "auth_type": "bearer"})
 
     def test_none_auth_with_credentials_raises(self):
-        from plugins.self_managed_kafka.config import MetricsConfig
+        from core.metrics.config import MetricsConnectionConfig
 
         with pytest.raises(ValidationError, match="credentials provided"):
-            MetricsConfig.model_validate({"url": "http://prom:9090", "auth_type": "none", "username": "oops"})
+            MetricsConnectionConfig.model_validate({"url": "http://prom:9090", "auth_type": "none", "username": "oops"})
 
 
 class TestIdentitySourceConfig:

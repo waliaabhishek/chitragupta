@@ -818,8 +818,6 @@ class TestTd021TenantRuntimeCaching:
         assert runtime.is_healthy() is True
 
 
-
-
 class TestTenantRuntimeClose:
     def test_close_calls_plugin_close_directly(self) -> None:
         """TenantRuntime.close() calls storage.dispose() and plugin.close()."""

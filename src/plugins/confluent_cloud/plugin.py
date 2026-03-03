@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from core.metrics.config import create_metrics_source
 from plugins.confluent_cloud.config import CCloudPluginConfig
 from plugins.confluent_cloud.connections import CCloudConnection
 from plugins.confluent_cloud.cost_input import CCloudBillingCostInput
@@ -66,33 +67,7 @@ class ConfluentCloudPlugin:
 
         # Initialize metrics source if configured
         if self._config.metrics:
-            from core.metrics.prometheus import (
-                AuthConfig,
-                PrometheusConfig,
-                PrometheusMetricsSource,
-            )
-
-            # Build auth config if authentication is needed
-            auth: AuthConfig | None = None
-            if self._config.metrics.auth_type != "none":
-                auth = AuthConfig(
-                    type=self._config.metrics.auth_type,
-                    username=self._config.metrics.username,
-                    password=(
-                        self._config.metrics.password.get_secret_value() if self._config.metrics.password else None
-                    ),
-                    token=(
-                        self._config.metrics.bearer_token.get_secret_value()
-                        if self._config.metrics.bearer_token
-                        else None
-                    ),
-                )
-
-            prom_config = PrometheusConfig(
-                url=self._config.metrics.url,
-                auth=auth,
-            )
-            self._metrics_source = PrometheusMetricsSource(prom_config)
+            self._metrics_source = create_metrics_source(self._config.metrics)
 
     def get_service_handlers(self) -> dict[str, ServiceHandler]:
         """Return service handlers keyed by service type."""

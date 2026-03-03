@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any
 
 from pydantic import BaseModel, Field, SecretStr, model_validator
 
 from core.config.models import PluginSettingsBase
+from core.metrics.config import MetricsConnectionConfig  # noqa: TC001 — Pydantic evaluates field annotations at runtime
 
 
 class CCloudCredentials(BaseModel):
@@ -20,29 +21,6 @@ class CCloudBillingConfig(BaseModel):
     days_per_query: int = Field(default=15, gt=0, le=30)
 
 
-class CCloudMetricsConfig(BaseModel):
-    """Configuration for metrics source (Prometheus)."""
-
-    type: Literal["prometheus"] = "prometheus"
-    url: str
-    auth_type: Literal["basic", "bearer", "none"] = "none"
-    username: str | None = None
-    password: SecretStr | None = None
-    bearer_token: SecretStr | None = None
-
-    @model_validator(mode="after")
-    def validate_auth_credentials(self) -> CCloudMetricsConfig:
-        if self.auth_type == "basic":
-            if not self.username or not self.password:
-                raise ValueError("username and password required for basic auth")
-        elif self.auth_type == "bearer":
-            if not self.bearer_token:
-                raise ValueError("bearer_token required for bearer auth")
-        elif self.auth_type == "none" and (self.username or self.password or self.bearer_token):
-            raise ValueError("credentials provided but auth_type is 'none'")
-        return self
-
-
 class CCloudFlinkRegionConfig(BaseModel):
     """Per-region Flink API credentials."""
 
@@ -56,7 +34,7 @@ class CCloudPluginConfig(PluginSettingsBase):
 
     ccloud_api: CCloudCredentials
     billing_api: CCloudBillingConfig = Field(default_factory=CCloudBillingConfig)
-    metrics: CCloudMetricsConfig | None = None
+    metrics: MetricsConnectionConfig | None = None
     flink: list[CCloudFlinkRegionConfig] | None = None
 
     @model_validator(mode="after")
