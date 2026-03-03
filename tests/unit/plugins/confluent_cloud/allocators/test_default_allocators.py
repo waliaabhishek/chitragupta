@@ -16,6 +16,7 @@ from plugins.confluent_cloud.allocators.default_allocators import (
     cluster_linking_allocator,
     default_allocator,
 )
+from plugins.confluent_cloud.constants import CLUSTER_LINKING_COST
 
 
 def _make_ctx(
@@ -133,11 +134,11 @@ class TestClusterLinkingAllocator:
         assert result.rows[0].cost_type == CostType.USAGE
 
     def test_allocation_detail_is_cluster_linking_cost(self) -> None:
-        """Cluster-linking allocator sets AllocationDetail.CLUSTER_LINKING_COST."""
+        """Cluster-linking allocator sets CLUSTER_LINKING_COST (plugin constant)."""
         ctx = _make_ctx(product_type="CLUSTER_LINKING_READ", amount=Decimal("30"))
         result = cluster_linking_allocator(ctx)
 
-        assert result.rows[0].allocation_detail == AllocationDetail.CLUSTER_LINKING_COST
+        assert result.rows[0].allocation_detail == CLUSTER_LINKING_COST
 
     def test_single_row_full_amount(self) -> None:
         """Cluster-linking allocator produces exactly one row with the full split amount."""
@@ -154,4 +155,4 @@ class TestClusterLinkingAllocator:
 
         assert result.rows[0].identity_id == "lkc-writer-9"
         assert result.rows[0].cost_type == CostType.USAGE
-        assert result.rows[0].allocation_detail == AllocationDetail.CLUSTER_LINKING_COST
+        assert result.rows[0].allocation_detail == CLUSTER_LINKING_COST

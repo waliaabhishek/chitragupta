@@ -17,6 +17,7 @@ from core.engine.allocation import AllocationResult
 from core.engine.helpers import make_row
 from core.models import CostType
 from core.models.chargeback import AllocationDetail
+from plugins.confluent_cloud.constants import CLUSTER_LINKING_COST
 
 if TYPE_CHECKING:
     from core.engine.allocation import AllocationContext
@@ -52,6 +53,6 @@ def cluster_linking_allocator(ctx: AllocationContext) -> AllocationResult:
         cost_type=CostType.USAGE,
         amount=ctx.split_amount,
         allocation_method="cluster_linking",
-        allocation_detail=AllocationDetail.CLUSTER_LINKING_COST,
+        allocation_detail=CLUSTER_LINKING_COST,
     )
     return AllocationResult(rows=[row])

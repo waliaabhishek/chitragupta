@@ -16,6 +16,7 @@ from core.models import (
     IdentitySet,
 )
 from plugins.confluent_cloud.allocators.flink_allocators import flink_cfu_allocator
+from plugins.confluent_cloud.constants import NO_FLINK_STMT_NAME_TO_OWNER_MAP
 
 
 @pytest.fixture
@@ -168,8 +169,6 @@ class TestFlinkCfuAllocatorFallback:
         self, flink_billing_line: BillingLineItem
     ) -> None:
         """metrics_data present but no stmt_owner_cfu and no identities → NO_FLINK_STMT_NAME_TO_OWNER_MAP."""
-        from core.models.chargeback import AllocationDetail
-
         resolution = _make_resolution()
         ctx = AllocationContext(
             timeslice=flink_billing_line.timestamp,
@@ -185,7 +184,7 @@ class TestFlinkCfuAllocatorFallback:
         assert len(result.rows) == 1
         assert result.rows[0].identity_id == "UNALLOCATED"
         assert result.rows[0].cost_type == CostType.USAGE
-        assert result.rows[0].allocation_detail == AllocationDetail.NO_FLINK_STMT_NAME_TO_OWNER_MAP
+        assert result.rows[0].allocation_detail == NO_FLINK_STMT_NAME_TO_OWNER_MAP
 
     def test_empty_stmt_cfu_with_no_metrics_uses_no_metrics_detail(self, flink_billing_line: BillingLineItem) -> None:
         """Empty stmt_owner_cfu context + no metrics_data + no identities → NO_METRICS_LOCATED."""

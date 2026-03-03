@@ -37,13 +37,6 @@ class AllocationDetail(StrEnum):
     NO_METRICS_NO_ACTIVE_IDENTITIES = "no_metrics_no_active_identities"
     METRICS_PRESENT_NO_ACTIVE_IDENTITIES = "metrics_present_no_active_identities"
 
-    # Flink-specific
-    NO_FLINK_STMT_NAME_TO_OWNER_MAP = "no_flink_stmt_name_to_owner_map"
-    FAILED_TO_LOCATE_FLINK_STATEMENT_OWNER = "failed_to_locate_flink_statement_owner"
-
-    # Cluster linking
-    CLUSTER_LINKING_COST = "cluster_linking_cost"
-
     # Usage-based allocation (success)
     USAGE_RATIO_ALLOCATION = "usage_ratio_allocation"
 

@@ -18,6 +18,7 @@ from core.engine.allocation import AllocationResult
 from core.engine.helpers import allocate_by_usage_ratio, allocate_evenly, make_row
 from core.models import CostType
 from core.models.chargeback import AllocationDetail
+from plugins.confluent_cloud.constants import NO_FLINK_STMT_NAME_TO_OWNER_MAP
 
 if TYPE_CHECKING:
     from core.engine.allocation import AllocationContext
@@ -52,10 +53,7 @@ def flink_cfu_allocator(ctx: AllocationContext) -> AllocationResult:
         return AllocationResult(rows=[replace(row, cost_type=CostType.USAGE) for row in result.rows])
 
     # TD-034/TD-035: Use specific detail codes for Flink terminal fallback paths
-    if not ctx.metrics_data:
-        detail = AllocationDetail.NO_METRICS_LOCATED
-    else:
-        detail = AllocationDetail.NO_FLINK_STMT_NAME_TO_OWNER_MAP
+    detail = AllocationDetail.NO_METRICS_LOCATED if not ctx.metrics_data else NO_FLINK_STMT_NAME_TO_OWNER_MAP
 
     row = make_row(
         ctx,
