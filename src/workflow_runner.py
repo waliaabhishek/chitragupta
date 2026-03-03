@@ -14,6 +14,7 @@ from core.engine.orchestrator import ChargebackOrchestrator, GatherFailureThresh
 
 if TYPE_CHECKING:
     from core.config.models import AppSettings, StorageConfig, TenantConfig
+    from core.plugin.protocols import EcosystemPlugin
     from core.plugin.registry import PluginRegistry
     from core.storage.interface import StorageBackend
 
@@ -25,7 +26,7 @@ class TenantRuntime:
     """Persistent runtime objects for a single tenant."""
 
     tenant_name: str
-    plugin: object  # EcosystemPlugin protocol — avoid circular import
+    plugin: EcosystemPlugin
     storage: StorageBackend
     orchestrator: ChargebackOrchestrator
     config_hash: str
@@ -39,11 +40,7 @@ class TenantRuntime:
     def close(self) -> None:
         """Clean up all resources."""
         self.storage.dispose()
-        if hasattr(self.plugin, "close"):
-            self.plugin.close()
-        metrics = self.plugin.get_metrics_source() if hasattr(self.plugin, "get_metrics_source") else None
-        if metrics is not None and hasattr(metrics, "close"):
-            metrics.close()
+        self.plugin.close()
 
 
 def _config_hash(config: TenantConfig) -> str:

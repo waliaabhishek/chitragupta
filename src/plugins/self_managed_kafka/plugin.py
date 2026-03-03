@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
@@ -122,16 +123,15 @@ class SelfManagedKafkaPlugin:
         return self._metrics_source
 
     def close(self) -> None:
-        """Clean up resources (AdminClient connection)."""
+        """Clean up resources (AdminClient connection, metrics source)."""
         if self._admin_client is not None:
-            import contextlib
-
             # Best-effort cleanup: suppress all exceptions since we're tearing down.
-            # kafka-python raises various errors from close() (network, state, etc.)
-            # and none of them should prevent cleanup from completing.
             with contextlib.suppress(Exception):
                 self._admin_client.close()
             self._admin_client = None
+        if self._metrics_source is not None:
+            self._metrics_source.close()
+            self._metrics_source = None
 
     def _create_metrics_source(self, config: SelfManagedKafkaConfig) -> MetricsSource:
         """Create PrometheusMetricsSource from config."""

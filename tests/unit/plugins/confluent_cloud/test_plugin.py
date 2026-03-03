@@ -206,3 +206,24 @@ def test_plugin_get_metrics_source_with_basic_auth():
 
     source = plugin.get_metrics_source()
     assert isinstance(source, PrometheusMetricsSource)
+
+
+class TestConfluentCloudPluginClose:
+    def test_close_closes_metrics_source(self) -> None:
+        """Plugin.close() must close _metrics_source when set."""
+        from unittest.mock import MagicMock
+
+        from plugins.confluent_cloud import ConfluentCloudPlugin
+
+        plugin = ConfluentCloudPlugin()
+        mock_connection = MagicMock()
+        mock_metrics = MagicMock()
+        plugin._connection = mock_connection
+        plugin._metrics_source = mock_metrics
+
+        plugin.close()
+
+        mock_connection.close.assert_called_once()
+        assert plugin._connection is None
+        mock_metrics.close.assert_called_once()
+        assert plugin._metrics_source is None

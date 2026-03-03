@@ -28,6 +28,9 @@ class TestMetricsSourceProtocol:
             ) -> dict[str, list[MetricRow]]:
                 return {}
 
+            def close(self) -> None:
+                pass
+
         assert isinstance(_Good(), MetricsSource)
 
     def test_conforming_class_passes_isinstance(self) -> None:
@@ -42,6 +45,9 @@ class TestMetricsSourceProtocol:
             ) -> dict[str, list[MetricRow]]:
                 return {}
 
+            def close(self) -> None:
+                pass
+
         assert isinstance(Conforming(), MetricsSource)
 
     def test_non_conforming_class_fails_isinstance(self) -> None:
@@ -49,6 +55,22 @@ class TestMetricsSourceProtocol:
             pass
 
         assert not isinstance(NonConforming(), MetricsSource)
+
+    def test_metrics_source_without_close_fails_isinstance(self) -> None:
+        """A class with query() but no close() must not satisfy the MetricsSource protocol."""
+
+        class MissingClose:
+            def query(
+                self,
+                queries: Sequence[MetricQuery],
+                start: datetime,
+                end: datetime,
+                step: timedelta = timedelta(hours=1),
+                resource_id_filter: str | None = None,
+            ) -> dict[str, list[MetricRow]]:
+                return {}
+
+        assert not isinstance(MissingClose(), MetricsSource)
 
 
 class TestMetricsQueryError:

@@ -119,3 +119,6 @@ class ConfluentCloudPlugin:
         if self._connection is not None:
             self._connection.close()
             self._connection = None
+        if self._metrics_source is not None:
+            self._metrics_source.close()
+            self._metrics_source = None

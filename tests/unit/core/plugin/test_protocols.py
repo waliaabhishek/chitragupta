@@ -93,6 +93,9 @@ class FakeEcosystemPlugin:
     def get_metrics_source(self) -> None:
         return None
 
+    def close(self) -> None:
+        pass
+
 
 # --- Non-conforming implementations ---
 
@@ -158,3 +161,27 @@ class TestEcosystemPluginProtocol:
 
     def test_non_conforming_instance(self) -> None:
         assert not isinstance(NotAnEcosystemPlugin(), EcosystemPlugin)
+
+
+class TestEcosystemPluginCloseRequired:
+    def test_plugin_without_close_fails_isinstance(self) -> None:
+        """Plugin missing close() should not satisfy EcosystemPlugin protocol."""
+
+        class PluginWithoutClose:
+            @property
+            def ecosystem(self) -> str:
+                return "test"
+
+            def initialize(self, config: dict[str, Any]) -> None:
+                pass
+
+            def get_service_handlers(self) -> dict[str, ServiceHandler]:
+                return {}
+
+            def get_cost_input(self) -> CostInput:
+                return FakeCostInput()
+
+            def get_metrics_source(self) -> None:
+                return None
+
+        assert not isinstance(PluginWithoutClose(), EcosystemPlugin)

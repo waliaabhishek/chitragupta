@@ -12,7 +12,7 @@ import pytest
 
 from core.config.models import AppSettings, FeaturesConfig, StorageConfig, TenantConfig
 from core.engine.orchestrator import GatherFailureThresholdError, PipelineRunResult
-from workflow_runner import WorkflowRunner, _create_storage_backend
+from workflow_runner import WorkflowRunner, TenantRuntime, _create_storage_backend
 
 
 class TestCreateStorageBackend:
@@ -784,11 +784,10 @@ class TestTd021TenantRuntimeCaching:
         assert runtime.last_run_at <= datetime.now(UTC)
 
     def test_tenant_runtime_close_calls_plugin_close(self) -> None:
-        """TenantRuntime.close() calls plugin.close() if it exists."""
+        """TenantRuntime.close() calls plugin.close() directly."""
         from workflow_runner import TenantRuntime
 
         mock_plugin = MagicMock(spec=["close", "get_metrics_source"])
-        mock_plugin.get_metrics_source.return_value = None
         mock_storage = MagicMock()
 
         runtime = TenantRuntime(
@@ -818,48 +817,41 @@ class TestTd021TenantRuntimeCaching:
         )
         assert runtime.is_healthy() is True
 
-    def test_tenant_runtime_close_calls_metrics_source_close(self) -> None:
-        """CT-007: TenantRuntime.close() calls metrics_source.close() if it has close()."""
-        from workflow_runner import TenantRuntime
 
-        fake_metrics = MagicMock(spec=["close"])
-        mock_plugin = MagicMock(spec=["get_metrics_source"])
-        mock_plugin.get_metrics_source.return_value = fake_metrics
-        mock_storage = MagicMock()
 
+
+class TestTenantRuntimeClose:
+    def test_close_calls_plugin_close_directly(self) -> None:
+        """TenantRuntime.close() calls storage.dispose() and plugin.close()."""
+        plugin = MagicMock()
+        storage = MagicMock()
         runtime = TenantRuntime(
             tenant_name="t1",
-            plugin=mock_plugin,
-            storage=mock_storage,
+            plugin=plugin,
+            storage=storage,
             orchestrator=MagicMock(),
             config_hash="abc",
             created_at=datetime.now(UTC),
         )
         runtime.close()
+        storage.dispose.assert_called_once()
+        plugin.close.assert_called_once()
 
-        mock_storage.dispose.assert_called_once()
-        fake_metrics.close.assert_called_once()
-
-    def test_tenant_runtime_close_skips_metrics_close_if_no_close_attr(self) -> None:
-        """TenantRuntime.close() does not fail if metrics source has no close()."""
-        from workflow_runner import TenantRuntime
-
-        fake_metrics = MagicMock(spec=[])  # no close() method
-        mock_plugin = MagicMock(spec=["get_metrics_source"])
-        mock_plugin.get_metrics_source.return_value = fake_metrics
-        mock_storage = MagicMock()
-
+    def test_close_does_not_call_get_metrics_source(self) -> None:
+        """TenantRuntime.close() should NOT call plugin.get_metrics_source().
+        Plugin owns its metrics_source cleanup internally."""
+        plugin = MagicMock()
+        storage = MagicMock()
         runtime = TenantRuntime(
             tenant_name="t1",
-            plugin=mock_plugin,
-            storage=mock_storage,
+            plugin=plugin,
+            storage=storage,
             orchestrator=MagicMock(),
             config_hash="abc",
             created_at=datetime.now(UTC),
         )
-        runtime.close()  # Should not raise
-
-        mock_storage.dispose.assert_called_once()
+        runtime.close()
+        plugin.get_metrics_source.assert_not_called()
 
 
 class TestRunTenant:
