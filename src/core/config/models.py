@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
-
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 _VALID_LOG_LEVELS = frozenset({"CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"})
 
@@ -53,6 +51,17 @@ class StorageConfig(BaseModel):
     connection_string: str = "sqlite:///data/chargeback.db"
 
 
+class PluginSettingsBase(BaseModel):
+    """Orchestrator-consumed plugin settings. All plugin configs must extend this."""
+
+    model_config = ConfigDict(extra="allow")  # plugin-specific fields pass through
+
+    allocator_params: dict[str, float | int | str | bool] = Field(default_factory=dict)
+    allocator_overrides: dict[str, str] = Field(default_factory=dict)
+    identity_resolution_overrides: dict[str, str] = Field(default_factory=dict)
+    min_refresh_gap_seconds: int = Field(default=1800, ge=0)
+
+
 class TenantConfig(BaseModel):
     ecosystem: str
     tenant_id: str
@@ -65,7 +74,7 @@ class TenantConfig(BaseModel):
     gather_failure_threshold: int = Field(default=5, gt=0)
     tenant_execution_timeout_seconds: int = Field(default=3600, ge=0)
     storage: StorageConfig = Field(default_factory=StorageConfig)
-    plugin_settings: dict[str, Any] = Field(default_factory=dict)
+    plugin_settings: PluginSettingsBase = Field(default_factory=PluginSettingsBase)
 
     @model_validator(mode="after")
     def validate_lookback_gt_cutoff(self) -> TenantConfig:

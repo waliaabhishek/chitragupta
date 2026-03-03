@@ -4,6 +4,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, SecretStr, model_validator
 
+from core.config.models import PluginSettingsBase
+
 
 class CCloudCredentials(BaseModel):
     """API key/secret pair for CCloud authentication."""
@@ -49,14 +51,13 @@ class CCloudFlinkRegionConfig(BaseModel):
     secret: SecretStr
 
 
-class CCloudPluginConfig(BaseModel):
+class CCloudPluginConfig(PluginSettingsBase):
     """Validates TenantConfig.plugin_settings for ecosystem='confluent_cloud'."""
 
     ccloud_api: CCloudCredentials
     billing_api: CCloudBillingConfig = Field(default_factory=CCloudBillingConfig)
     metrics: CCloudMetricsConfig | None = None
     flink: list[CCloudFlinkRegionConfig] | None = None
-    allocator_params: dict[str, float | int | str | bool] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def validate_allocator_params(self) -> CCloudPluginConfig:

@@ -8,6 +8,7 @@ from core.config.models import (
     AppSettings,
     FeaturesConfig,
     LoggingConfig,
+    PluginSettingsBase,
     StorageConfig,
     TenantConfig,
 )
@@ -119,7 +120,7 @@ class TestTenantConfig:
         assert cfg.lookback_days == 200
         assert cfg.cutoff_days == 5
         assert cfg.retention_days == 250
-        assert cfg.plugin_settings == {}
+        assert cfg.plugin_settings == PluginSettingsBase()
         assert cfg.storage.backend == "sqlmodel"
 
     def test_all_fields(self) -> None:
@@ -134,7 +135,7 @@ class TestTenantConfig:
         )
         assert cfg.ecosystem == "self_managed_kafka"
         assert cfg.retention_days == 400
-        assert cfg.plugin_settings["cost_model"] == "constructed"
+        assert cfg.plugin_settings.model_extra["cost_model"] == "constructed"
 
     def test_lookback_must_exceed_cutoff(self) -> None:
         with pytest.raises(ValidationError, match="lookback_days must be > cutoff_days"):

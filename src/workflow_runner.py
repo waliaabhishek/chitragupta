@@ -121,7 +121,7 @@ class WorkflowRunner:
             del self._tenant_runtimes[tenant_name]
 
         plugin = self._plugin_registry.create(config.ecosystem)
-        plugin.initialize(config.plugin_settings)
+        plugin.initialize(config.plugin_settings.model_dump())
         storage = _create_storage_backend(config.storage)
         metrics = plugin.get_metrics_source()
         orchestrator = ChargebackOrchestrator(tenant_name, config, plugin, storage, metrics)

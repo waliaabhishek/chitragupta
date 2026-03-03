@@ -7,6 +7,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, SecretStr, model_validator
 
+from core.config.models import PluginSettingsBase
+
 
 class CostRateOverride(BaseModel):
     """Override cost rates for a specific region."""
@@ -87,7 +89,7 @@ class ResourceSourceConfig(BaseModel):
         return self
 
 
-class SelfManagedKafkaConfig(BaseModel):
+class SelfManagedKafkaConfig(PluginSettingsBase):
     """Validates plugin_settings for ecosystem='self_managed_kafka'."""
 
     cluster_id: str  # Logical identifier for this cluster (used as resource_id in billing)

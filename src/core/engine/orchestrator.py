@@ -8,7 +8,7 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from datetime import date as date_type
 from decimal import Decimal
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, cast
 
 from core.engine.allocation import AllocationContext, AllocatorRegistry
 from core.engine.helpers import compute_active_fraction
@@ -19,7 +19,7 @@ from core.models.pipeline import PipelineState
 from core.plugin.registry import EcosystemBundle
 
 if TYPE_CHECKING:
-    from core.config.models import TenantConfig
+    from core.config.models import PluginSettingsBase, TenantConfig
     from core.metrics.protocol import MetricsSource
     from core.models.billing import BillingLineItem
     from core.models.metrics import MetricQuery, MetricRow
@@ -96,7 +96,7 @@ class ChargebackOrchestrator:
         # Allocator overrides
         self._allocator_registry = AllocatorRegistry()
         self._identity_overrides: dict[str, Callable[..., IdentityResolution]] = {}
-        self._allocator_params: dict[str, Any] = {}
+        self._allocator_params: dict[str, float | int | str | bool] = {}
         self._load_overrides(tenant_config.plugin_settings)
 
         # GAP-04: API object refresh throttle
@@ -114,23 +114,20 @@ class ChargebackOrchestrator:
             self._ensure_unallocated_identity(uow)
             uow.commit()
 
-    def _load_overrides(self, plugin_settings: dict[str, Any]) -> None:
+    def _load_overrides(self, plugin_settings: PluginSettingsBase) -> None:
         """Load allocator and identity resolution overrides from plugin_settings."""
         from core.plugin.protocols import CostAllocator as CostAllocatorProtocol
 
-        self._allocator_params = plugin_settings.get("allocator_params", {})
-        allocator_overrides = plugin_settings.get("allocator_overrides", {})
-        for product_type, dotted_path in allocator_overrides.items():
+        self._allocator_params = plugin_settings.allocator_params
+        for product_type, dotted_path in plugin_settings.allocator_overrides.items():
             fn = load_protocol_callable(dotted_path, CostAllocatorProtocol)
             self._allocator_registry.register_override(product_type, fn)
 
-        identity_overrides = plugin_settings.get("identity_resolution_overrides", {})
-        for service_type, dotted_path in identity_overrides.items():
+        for service_type, dotted_path in plugin_settings.identity_resolution_overrides.items():
             fn = _load_identity_resolver(dotted_path)
             self._identity_overrides[service_type] = fn
 
-        # GAP-04: configurable refresh throttle (default 30 min)
-        self._min_refresh_gap = timedelta(seconds=plugin_settings.get("min_refresh_gap_seconds", 1800))
+        self._min_refresh_gap = timedelta(seconds=plugin_settings.min_refresh_gap_seconds)
 
     def _ensure_unallocated_identity(self, uow: UnitOfWork) -> None:
         """Upsert the UNALLOCATED identity for this tenant (idempotent)."""
