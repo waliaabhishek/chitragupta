@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
-from unittest.mock import MagicMock
+from datetime import UTC, date, datetime
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
@@ -9,6 +9,7 @@ from fastapi import HTTPException
 from core.api.dependencies import (
     get_settings,
     get_tenant_config,
+    utc_today,
     validate_datetime_param,
 )
 from core.config.models import AppSettings, TenantConfig
@@ -60,3 +61,21 @@ class TestValidateDatetimeParam:
             validate_datetime_param(dt, "active_at")
         assert exc_info.value.status_code == 400
         assert "active_at" in str(exc_info.value.detail)
+
+
+class TestUtcToday:
+    def test_returns_utc_date_not_local(self) -> None:
+        """utc_today() should use datetime.now(UTC).date(), not date.today()."""
+        # Simulate a server at UTC-5 where local time is 23:00 on March 3
+        # but UTC is already March 4
+        fake_utc_now = datetime(2026, 3, 4, 4, 0, 0, tzinfo=UTC)
+        with patch("core.api.dependencies.datetime") as mock_dt:
+            mock_dt.now.return_value = fake_utc_now
+            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+            result = utc_today()
+        assert result == date(2026, 3, 4)
+        mock_dt.now.assert_called_once_with(UTC)
+
+    def test_returns_date_type(self) -> None:
+        result = utc_today()
+        assert isinstance(result, date)

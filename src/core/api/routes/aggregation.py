@@ -6,7 +6,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from core.api.dependencies import get_tenant_config, get_unit_of_work
+from core.api.dependencies import get_tenant_config, get_unit_of_work, utc_today
 from core.api.schemas import AggregationBucket, AggregationResponse
 from core.config.models import TenantConfig  # noqa: TC001  # FastAPI evaluates annotations at runtime
 from core.storage.interface import UnitOfWork  # noqa: TC001
@@ -62,7 +62,7 @@ async def aggregate_chargebacks(
             detail=f"time_bucket must be one of {sorted(_VALID_TIME_BUCKETS)}, got {time_bucket!r}",
         )
 
-    today = date.today()
+    today = utc_today()
     effective_end = end_date or today
     effective_start = start_date or (today - timedelta(days=30))
 

@@ -3,13 +3,13 @@ from __future__ import annotations
 import csv
 import io
 from collections.abc import Iterator
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 
-from core.api.dependencies import get_tenant_config, get_unit_of_work
+from core.api.dependencies import get_tenant_config, get_unit_of_work, utc_today
 from core.api.schemas import ExportRequest  # noqa: TC001  # FastAPI evaluates annotations at runtime
 from core.config.models import TenantConfig  # noqa: TC001  # FastAPI evaluates annotations at runtime
 from core.storage.interface import UnitOfWork  # noqa: TC001
@@ -108,7 +108,7 @@ async def export_chargebacks(
     uow: Annotated[UnitOfWork, Depends(get_unit_of_work)],
     body: ExportRequest,
 ) -> StreamingResponse:
-    today = date.today()
+    today = utc_today()
     effective_start = body.start_date or (today - timedelta(days=30))
     effective_end = body.end_date or today
 

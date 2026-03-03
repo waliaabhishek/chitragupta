@@ -6,7 +6,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from core.api.dependencies import get_tenant_config, get_unit_of_work
+from core.api.dependencies import get_tenant_config, get_unit_of_work, utc_today
 from core.api.schemas import BillingLineResponse, PaginatedResponse
 from core.config.models import TenantConfig  # noqa: TC001  # FastAPI evaluates annotations at runtime
 from core.storage.interface import UnitOfWork  # noqa: TC001
@@ -25,7 +25,7 @@ async def list_billing(
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=1000)] = 100,
 ) -> PaginatedResponse[BillingLineResponse]:
-    today = date.today()
+    today = utc_today()
     effective_end = end_date or today
     effective_start = start_date or (today - timedelta(days=30))
 

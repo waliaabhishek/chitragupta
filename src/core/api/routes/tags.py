@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
 
-from core.api.dependencies import get_tenant_config, get_unit_of_work
+from core.api.dependencies import get_tenant_config, get_unit_of_work, utc_today
 from core.api.schemas import (
     BulkTagByFilterRequest,
     BulkTagRequest,
@@ -252,9 +252,7 @@ async def bulk_add_tags_by_filter(
     uow: Annotated[UnitOfWork, Depends(get_unit_of_work)],
     body: BulkTagByFilterRequest,
 ) -> BulkTagResponse:
-    from datetime import date
-
-    today = date.today()
+    today = utc_today()
     effective_start = body.start_date or (today - timedelta(days=30))
     effective_end = body.end_date or today
 

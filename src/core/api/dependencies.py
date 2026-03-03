@@ -1,13 +1,18 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Annotated, cast
 
 from fastapi import Depends, HTTPException, Path, Request
 
 from core.config.models import AppSettings, TenantConfig  # noqa: TC001  # FastAPI evaluates annotations at runtime
 from core.storage.interface import StorageBackend, UnitOfWork  # noqa: TC001
+
+
+def utc_today() -> date:
+    """Return today's date in UTC. Use instead of date.today() in all API routes."""
+    return datetime.now(UTC).date()
 
 
 def get_settings(request: Request) -> AppSettings:

@@ -6,7 +6,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
 
-from core.api.dependencies import get_tenant_config, get_unit_of_work
+from core.api.dependencies import get_tenant_config, get_unit_of_work, utc_today
 from core.api.schemas import (
     ChargebackDimensionResponse,
     ChargebackDimensionUpdateRequest,
@@ -33,7 +33,7 @@ async def list_chargebacks(
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=1000)] = 100,
 ) -> PaginatedResponse[ChargebackResponse]:
-    today = datetime.now(UTC).date()
+    today = utc_today()
     effective_end = end_date or today
     effective_start = start_date or (today - timedelta(days=30))
 
