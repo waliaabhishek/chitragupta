@@ -26,6 +26,26 @@ class CostAllocator(Protocol):
 
 
 @runtime_checkable
+class IdentityResolver(Protocol):
+    """Protocol for standalone identity resolution override callables.
+
+    Matches the parameter signature of ``ServiceHandler.resolve_identities``
+    but without ``self`` — the loaded object must be a plain function or
+    callable instance, not an uninstantiated class.
+    """
+
+    def __call__(
+        self,
+        tenant_id: str,
+        resource_id: str,
+        billing_timestamp: datetime,
+        billing_duration: timedelta,
+        metrics_data: dict[str, list[MetricRow]] | None,
+        uow: UnitOfWork,
+    ) -> IdentityResolution: ...
+
+
+@runtime_checkable
 class CostInput(Protocol):
     def gather(
         self,

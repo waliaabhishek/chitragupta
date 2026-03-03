@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import calendar
-import inspect
 import logging
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
@@ -639,30 +638,9 @@ def _ensure_pipeline_state(uow: UnitOfWork, ecosystem: str, tenant_id: str, trac
 
 def _load_identity_resolver(dotted_path: str) -> Callable[..., IdentityResolution]:
     """Load an identity resolution override callable and validate its signature."""
-    if not dotted_path or ":" not in dotted_path:
-        raise ValueError(f"Expected 'module:attribute' format, got {dotted_path!r}")
+    from core.plugin.protocols import IdentityResolver
 
-    import importlib
-
-    module_path, attr_name = dotted_path.rsplit(":", 1)
-    module = importlib.import_module(module_path)
-    obj = getattr(module, attr_name)
-
-    if not callable(obj):
-        raise TypeError(f"Loaded object {obj!r} is not callable")
-
-    # Validate parameter count matches resolve_identities signature (6 params)
-    sig = inspect.signature(obj)
-    params = [
-        p
-        for name, p in sig.parameters.items()
-        if name != "self" and p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)
-    ]
-    if len(params) != 6:
-        raise TypeError(
-            f"Identity resolver {obj!r} must accept 6 positional parameters "
-            f"(tenant_id, resource_id, billing_timestamp, billing_duration, metrics_data, uow), "
-            f"got {len(params)}"
-        )
-
-    return cast("Callable[..., IdentityResolution]", obj)
+    return cast(
+        "Callable[..., IdentityResolution]",
+        load_protocol_callable(dotted_path, IdentityResolver),
+    )

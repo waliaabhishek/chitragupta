@@ -1185,26 +1185,26 @@ class TestLoadIdentityResolver:
     def test_empty_path_raises(self) -> None:
         from core.engine.orchestrator import _load_identity_resolver
 
-        with pytest.raises(ValueError, match="Expected 'module:attribute' format"):
+        with pytest.raises(ValueError, match="dotted_path must not be empty"):
             _load_identity_resolver("")
 
     def test_nonexistent_module_raises(self) -> None:
         from core.engine.orchestrator import _load_identity_resolver
 
-        with pytest.raises(ModuleNotFoundError):
+        with pytest.raises(ImportError, match="Could not import module"):
             _load_identity_resolver("nonexistent.module:func")
 
     def test_not_callable_raises(self) -> None:
         from core.engine.orchestrator import _load_identity_resolver
 
-        with pytest.raises(TypeError, match="not callable"):
+        with pytest.raises(TypeError, match="does not satisfy protocol"):
             _load_identity_resolver("os.path:sep")
 
     def test_wrong_param_count_raises(self) -> None:
         from core.engine.orchestrator import _load_identity_resolver
 
         # os.path.join has *args, not 6 positional params — but let's use a known callable
-        with pytest.raises(TypeError, match="must accept 6 positional parameters"):
+        with pytest.raises(TypeError, match="Signature mismatch"):
             _load_identity_resolver("os.path:exists")
 
 

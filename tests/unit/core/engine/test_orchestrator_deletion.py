@@ -44,15 +44,11 @@ class _MockEntityRepo:
         self._active_ids = active_ids
         self.mark_deleted_calls: list[tuple[str, datetime]] = []
 
-    def find_active_at(
-        self, ecosystem: str, tenant_id: str, timestamp: datetime
-    ) -> tuple[list[_FakeResource], int]:
+    def find_active_at(self, ecosystem: str, tenant_id: str, timestamp: datetime) -> tuple[list[_FakeResource], int]:
         entities = [_FakeResource(eid) for eid in self._active_ids]
         return entities, len(entities)
 
-    def mark_deleted(
-        self, ecosystem: str, tenant_id: str, entity_id: str, deleted_at: datetime
-    ) -> None:
+    def mark_deleted(self, ecosystem: str, tenant_id: str, entity_id: str, deleted_at: datetime) -> None:
         self.mark_deleted_calls.append((entity_id, deleted_at))
 
 
@@ -81,9 +77,7 @@ class _MockIdentityRepo:
         items = [i for i in self._data.values() if i.deleted_at is None]
         return items, len(items)
 
-    def mark_deleted(
-        self, ecosystem: str, tenant_id: str, identity_id: str, deleted_at: datetime
-    ) -> None:
+    def mark_deleted(self, ecosystem: str, tenant_id: str, identity_id: str, deleted_at: datetime) -> None:
         self._deletions.append((identity_id, deleted_at))
 
 
@@ -104,9 +98,7 @@ class _MockResourceRepo:
         items = [r for r in self._data.values() if r.deleted_at is None]
         return items, len(items)
 
-    def mark_deleted(
-        self, ecosystem: str, tenant_id: str, resource_id: str, deleted_at: datetime
-    ) -> None:
+    def mark_deleted(self, ecosystem: str, tenant_id: str, resource_id: str, deleted_at: datetime) -> None:
         self._deletions.append((resource_id, deleted_at))
 
 
@@ -199,9 +191,7 @@ class TestZeroGatherCountersAttribute:
 
     def test_zero_gather_counters_exists(self) -> None:
         orch = _make_orchestrator()
-        assert hasattr(orch, "_zero_gather_counters"), (
-            "_zero_gather_counters dict not found; refactor not applied"
-        )
+        assert hasattr(orch, "_zero_gather_counters"), "_zero_gather_counters dict not found; refactor not applied"
 
     def test_zero_gather_counters_has_resources_key(self) -> None:
         orch = _make_orchestrator()
