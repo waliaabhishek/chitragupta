@@ -224,6 +224,65 @@ class TestNetworkCostCalculation:
         assert egress.total_cost == Decimal("0.40")
 
 
+class TestConstructedCostInputStepParam:
+    """task-013: ConstructedCostInput must use metrics_step_seconds from config."""
+
+    def test_gather_day_uses_step_from_config(
+        self, mock_metrics_source: MagicMock, day_start: object, day_end: object
+    ) -> None:
+        from datetime import timedelta
+
+        from plugins.self_managed_kafka.config import SelfManagedKafkaConfig
+        from plugins.self_managed_kafka.cost_input import ConstructedCostInput
+
+        config = SelfManagedKafkaConfig.from_plugin_settings(
+            {
+                "cluster_id": "kafka-001",
+                "broker_count": 3,
+                "metrics_step_seconds": 1800,
+                "cost_model": {
+                    "compute_hourly_rate": "0.10",
+                    "storage_per_gib_hourly": "0.0001",
+                    "network_ingress_per_gib": "0.01",
+                    "network_egress_per_gib": "0.02",
+                },
+                "metrics": {"url": "http://prom:9090"},
+            }
+        )
+        gb = 1073741824
+        mock_metrics_source.query.return_value = {
+            "cluster_bytes_in": [make_metric_row("cluster_bytes_in", gb)],
+            "cluster_bytes_out": [make_metric_row("cluster_bytes_out", gb)],
+            "cluster_storage_bytes": [make_metric_row("cluster_storage_bytes", gb)],
+        }
+        cost_input = ConstructedCostInput(config, mock_metrics_source)
+        uow = MagicMock()
+        list(cost_input.gather("tenant-1", day_start, day_end, uow))
+
+        _, call_kwargs = mock_metrics_source.query.call_args
+        assert call_kwargs["step"] == timedelta(seconds=1800)
+
+    def test_gather_day_default_step_is_one_hour(
+        self, sample_config: object, mock_metrics_source: MagicMock, day_start: object, day_end: object
+    ) -> None:
+        from datetime import timedelta
+
+        from plugins.self_managed_kafka.cost_input import ConstructedCostInput
+
+        gb = 1073741824
+        mock_metrics_source.query.return_value = {
+            "cluster_bytes_in": [make_metric_row("cluster_bytes_in", gb)],
+            "cluster_bytes_out": [make_metric_row("cluster_bytes_out", gb)],
+            "cluster_storage_bytes": [make_metric_row("cluster_storage_bytes", gb)],
+        }
+        cost_input = ConstructedCostInput(sample_config, mock_metrics_source)
+        uow = MagicMock()
+        list(cost_input.gather("tenant-1", day_start, day_end, uow))
+
+        _, call_kwargs = mock_metrics_source.query.call_args
+        assert call_kwargs["step"] == timedelta(hours=1)
+
+
 class TestEdgeCases:
     def test_prometheus_query_failure_skips_billing_period(
         self, sample_config, mock_metrics_source, day_start, day_end

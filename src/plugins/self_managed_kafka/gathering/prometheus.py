@@ -70,6 +70,7 @@ def gather_brokers_from_metrics(
     ecosystem: str,
     tenant_id: str,
     cluster_id: str,
+    step: timedelta = timedelta(hours=1),
 ) -> Iterable[Resource]:
     """Query Prometheus for distinct broker labels → Resource objects."""
     now = datetime.now(UTC)
@@ -80,7 +81,7 @@ def gather_brokers_from_metrics(
         queries=[_BROKERS_QUERY],
         start=start,
         end=now,
-        step=timedelta(hours=1),
+        step=step,
     )
 
     seen_brokers: set[str] = set()
@@ -107,6 +108,7 @@ def gather_topics_from_metrics(
     ecosystem: str,
     tenant_id: str,
     cluster_id: str,
+    step: timedelta = timedelta(hours=1),
 ) -> Iterable[Resource]:
     """Query Prometheus for distinct topic labels → Resource objects."""
     now = datetime.now(UTC)
@@ -116,7 +118,7 @@ def gather_topics_from_metrics(
         queries=[_TOPICS_QUERY],
         start=start,
         end=now,
-        step=timedelta(hours=1),
+        step=step,
     )
 
     seen_topics: set[str] = set()
@@ -143,6 +145,7 @@ def gather_principals_from_metrics(
     ecosystem: str,
     tenant_id: str,
     identity_config: IdentitySourceConfig,
+    step: timedelta = timedelta(hours=1),
 ) -> Iterable[Identity]:
     """Query Prometheus for distinct principal labels → Identity objects."""
     now = datetime.now(UTC)
@@ -152,7 +155,7 @@ def gather_principals_from_metrics(
         queries=[PRINCIPALS_QUERY],
         start=start,
         end=now,
-        step=timedelta(hours=1),
+        step=step,
     )
 
     seen_principals: set[str] = set()

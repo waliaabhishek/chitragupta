@@ -108,7 +108,7 @@ class ConstructedCostInput(CostInput):
                 queries=_COST_QUERIES,
                 start=day_start,
                 end=day_end,
-                step=timedelta(hours=1),
+                step=timedelta(seconds=self._config.metrics_step_seconds),
             )
         except MetricsQueryError as exc:
             LOGGER.warning(

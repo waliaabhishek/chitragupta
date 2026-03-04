@@ -154,6 +154,24 @@ class TestTenantConfig:
             TenantConfig(ecosystem="x", tenant_id="t", cutoff_days=31)
 
 
+class TestPluginSettingsBaseMetricsStep:
+    def test_metrics_step_seconds_default_is_3600(self) -> None:
+        cfg = PluginSettingsBase()
+        assert cfg.metrics_step_seconds == 3600
+
+    def test_metrics_step_seconds_custom_value(self) -> None:
+        cfg = PluginSettingsBase(metrics_step_seconds=1800)
+        assert cfg.metrics_step_seconds == 1800
+
+    def test_metrics_step_seconds_zero_raises_validation_error(self) -> None:
+        with pytest.raises(ValidationError):
+            PluginSettingsBase(metrics_step_seconds=0)
+
+    def test_metrics_step_seconds_negative_raises_validation_error(self) -> None:
+        with pytest.raises(ValidationError):
+            PluginSettingsBase(metrics_step_seconds=-60)
+
+
 class TestAppSettings:
     def test_defaults(self) -> None:
         cfg = AppSettings()

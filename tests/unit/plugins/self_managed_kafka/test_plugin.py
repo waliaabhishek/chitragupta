@@ -224,6 +224,50 @@ class TestPluginInjectsDependencies:
         assert cost_input._metrics_source is plugin._metrics_source
 
 
+class TestPluginPrincipalLabelValidationStep:
+    """task-013: _validate_principal_label must use metrics_step_seconds from config."""
+
+    def test_validate_principal_label_uses_step_from_config(self, base_settings: dict) -> None:
+        from datetime import timedelta
+        from unittest.mock import MagicMock, patch
+
+        from plugins.self_managed_kafka.plugin import SelfManagedKafkaPlugin
+
+        base_settings["identity_source"] = {"source": "prometheus"}
+        base_settings["metrics_step_seconds"] = 1800
+
+        plugin = SelfManagedKafkaPlugin()
+        with patch("plugins.self_managed_kafka.plugin.create_metrics_source") as mock_create:
+            mock_metrics = MagicMock()
+            mock_metrics.query.return_value = {"distinct_principals": []}
+            mock_create.return_value = mock_metrics
+
+            plugin.initialize(base_settings)
+
+        _, call_kwargs = mock_metrics.query.call_args
+        assert call_kwargs["step"] == timedelta(seconds=1800)
+
+    def test_validate_principal_label_default_step_is_one_hour(self, base_settings: dict) -> None:
+        from datetime import timedelta
+        from unittest.mock import MagicMock, patch
+
+        from plugins.self_managed_kafka.plugin import SelfManagedKafkaPlugin
+
+        base_settings["identity_source"] = {"source": "prometheus"}
+        # No metrics_step_seconds → default 3600s → timedelta(hours=1)
+
+        plugin = SelfManagedKafkaPlugin()
+        with patch("plugins.self_managed_kafka.plugin.create_metrics_source") as mock_create:
+            mock_metrics = MagicMock()
+            mock_metrics.query.return_value = {"distinct_principals": []}
+            mock_create.return_value = mock_metrics
+
+            plugin.initialize(base_settings)
+
+        _, call_kwargs = mock_metrics.query.call_args
+        assert call_kwargs["step"] == timedelta(hours=1)
+
+
 class TestPluginPrincipalLabelValidation:
     """Issue 3: startup validation of 'principal' label availability in Prometheus."""
 

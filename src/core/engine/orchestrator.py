@@ -134,6 +134,7 @@ class ChargebackOrchestrator:
             self._identity_overrides[service_type] = fn
 
         self._min_refresh_gap = timedelta(seconds=plugin_settings.min_refresh_gap_seconds)
+        self._metrics_step = timedelta(seconds=plugin_settings.metrics_step_seconds)
 
     def _ensure_unallocated_identity(self, uow: UnitOfWork) -> None:
         """Upsert the UNALLOCATED identity for this tenant (idempotent)."""
@@ -423,7 +424,7 @@ class ChargebackOrchestrator:
                     queries,
                     start=m_start,
                     end=m_end,
-                    step=timedelta(hours=1),
+                    step=self._metrics_step,
                     resource_id_filter=resource_id,
                 )
 

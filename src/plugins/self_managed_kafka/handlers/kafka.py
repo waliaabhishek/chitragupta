@@ -133,10 +133,13 @@ class SelfManagedKafkaHandler:
             gather_topics_from_metrics,
         )
 
+        step = timedelta(seconds=self._config.metrics_step_seconds)
         yield from gather_brokers_from_metrics(
-            self._metrics_source, self._ecosystem, tenant_id, self._config.cluster_id
+            self._metrics_source, self._ecosystem, tenant_id, self._config.cluster_id, step=step
         )
-        yield from gather_topics_from_metrics(self._metrics_source, self._ecosystem, tenant_id, self._config.cluster_id)
+        yield from gather_topics_from_metrics(
+            self._metrics_source, self._ecosystem, tenant_id, self._config.cluster_id, step=step
+        )
 
     def _gather_resources_from_admin(self, tenant_id: str) -> Iterable[Resource]:
         """Gather brokers and topics from Kafka Admin API."""
@@ -171,11 +174,13 @@ class SelfManagedKafkaHandler:
         """Gather principals from Prometheus metrics."""
         from plugins.self_managed_kafka.gathering.prometheus import gather_principals_from_metrics
 
+        step = timedelta(seconds=self._config.metrics_step_seconds)
         yield from gather_principals_from_metrics(
             self._metrics_source,
             self._ecosystem,
             tenant_id,
             self._config.identity_source,
+            step=step,
         )
 
     def _gather_static_identities(self, tenant_id: str) -> Iterable[Identity]:

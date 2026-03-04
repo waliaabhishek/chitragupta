@@ -89,7 +89,7 @@ class SelfManagedKafkaPlugin:
                 queries=[PRINCIPALS_QUERY],
                 start=now - timedelta(hours=1),
                 end=now,
-                step=timedelta(hours=1),
+                step=timedelta(seconds=self._config.metrics_step_seconds),  # type: ignore[union-attr]  # set in initialize()
             )
             rows = results.get("distinct_principals", [])
             has_principal_label = any(row.labels.get("principal") for row in rows)

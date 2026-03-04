@@ -1981,3 +1981,63 @@ class TestResourceLookupCache:
             f"Expected {expected_windows} calls to find_by_period "
             f"(one per unique window), got {uow.resources.find_by_period.call_count}"
         )
+
+
+class TestLoadOverridesMetricsStep:
+    """task-013: _load_overrides must read metrics_step_seconds and store as _metrics_step."""
+
+    def test_load_overrides_sets_metrics_step_from_settings(self) -> None:
+        orch, _ = _create_orchestrator(plugin_settings={"metrics_step_seconds": 1800})
+        assert orch._metrics_step == timedelta(seconds=1800)
+
+    def test_load_overrides_default_metrics_step_is_one_hour(self) -> None:
+        orch, _ = _create_orchestrator(plugin_settings={})
+        assert orch._metrics_step == timedelta(hours=1)
+
+    def test_prefetch_uses_metrics_step_not_hardcoded_hour(self) -> None:
+        """Orchestrator prefetch query must pass self._metrics_step, not timedelta(hours=1)."""
+        from core.models.metrics import MetricQuery, MetricRow
+
+        metrics_query = MetricQuery(
+            key="cpu_usage",
+            query_expression="rate(cpu_seconds_total{}[5m])",
+            resource_label="resource_id",
+            label_keys=["pod"],
+        )
+        handler = MockServiceHandler(
+            resources=[_make_resource()],
+            identities=[_make_identity()],
+            metrics_queries=[metrics_query],
+        )
+        line = _make_billing_line(timestamp=NOW - timedelta(days=10))
+        cost_input = MockCostInput([line])
+
+        mock_metrics = MagicMock()
+        mock_row = MetricRow(timestamp=NOW, metric_key="cpu_usage", value=1.0, labels={"pod": "p1"})
+        mock_metrics.query.return_value = {"cpu_usage": [mock_row]}
+
+        orch, storage = _create_orchestrator(
+            handler=handler,
+            cost_input=cost_input,
+            plugin_settings={"metrics_step_seconds": 1800},
+            metrics_source=mock_metrics,
+        )
+        uow = storage.create_unit_of_work()
+
+        ps = PipelineState(
+            ecosystem=ECOSYSTEM,
+            tenant_id=TENANT_ID,
+            tracking_date=line.timestamp.date(),
+            billing_gathered=True,
+            resources_gathered=True,
+        )
+        uow.pipeline_state.upsert(ps)
+        uow.pipeline_state.mark_billing_gathered(ECOSYSTEM, TENANT_ID, line.timestamp.date())
+        uow.pipeline_state.mark_resources_gathered(ECOSYSTEM, TENANT_ID, line.timestamp.date())
+        uow.billing.upsert(line)
+
+        orch.run()
+
+        mock_metrics.query.assert_called_once()
+        _, call_kwargs = mock_metrics.query.call_args
+        assert call_kwargs["step"] == timedelta(seconds=1800)

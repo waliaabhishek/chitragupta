@@ -434,3 +434,87 @@ class TestGetAllocator:
         handler = SelfManagedKafkaHandler(base_config, mock_metrics_source)
         with pytest.raises(ValueError, match="Unknown product type"):
             handler.get_allocator("UNKNOWN_TYPE")
+
+
+class TestMetricsStepForwarding:
+    """task-013: Handler must derive step from config.metrics_step_seconds and forward to gathering functions."""
+
+    def _make_step_config(self, metrics_step_seconds: int = 1800):
+        from plugins.self_managed_kafka.config import SelfManagedKafkaConfig
+
+        return SelfManagedKafkaConfig.from_plugin_settings(
+            {
+                "cluster_id": "kafka-001",
+                "broker_count": 3,
+                "cost_model": {
+                    "compute_hourly_rate": "0.10",
+                    "storage_per_gib_hourly": "0.0001",
+                    "network_ingress_per_gib": "0.01",
+                    "network_egress_per_gib": "0.02",
+                },
+                "metrics_step_seconds": metrics_step_seconds,
+                "metrics": {"url": "http://prom:9090"},
+            }
+        )
+
+    def test_gather_resources_forwards_step_to_brokers(self, mock_metrics_source):
+        """gather_resources() passes step=timedelta(seconds=metrics_step_seconds) to gather_brokers_from_metrics."""
+        from unittest.mock import patch
+
+        from plugins.self_managed_kafka.handlers.kafka import SelfManagedKafkaHandler
+
+        config = self._make_step_config(metrics_step_seconds=1800)
+        handler = SelfManagedKafkaHandler(config, mock_metrics_source)
+        uow = MagicMock()
+
+        prom = "plugins.self_managed_kafka.gathering.prometheus"
+        with (
+            patch(f"{prom}.gather_brokers_from_metrics") as mock_brokers,
+            patch(f"{prom}.gather_topics_from_metrics") as mock_topics,
+        ):
+            mock_brokers.return_value = []
+            mock_topics.return_value = []
+            list(handler.gather_resources("tenant-1", uow))
+
+        _, broker_kwargs = mock_brokers.call_args
+        assert broker_kwargs["step"] == timedelta(seconds=1800)
+
+    def test_gather_resources_forwards_step_to_topics(self, mock_metrics_source):
+        """gather_resources() passes step=timedelta(seconds=metrics_step_seconds) to gather_topics_from_metrics."""
+        from unittest.mock import patch
+
+        from plugins.self_managed_kafka.handlers.kafka import SelfManagedKafkaHandler
+
+        config = self._make_step_config(metrics_step_seconds=1800)
+        handler = SelfManagedKafkaHandler(config, mock_metrics_source)
+        uow = MagicMock()
+
+        prom = "plugins.self_managed_kafka.gathering.prometheus"
+        with (
+            patch(f"{prom}.gather_brokers_from_metrics") as mock_brokers,
+            patch(f"{prom}.gather_topics_from_metrics") as mock_topics,
+        ):
+            mock_brokers.return_value = []
+            mock_topics.return_value = []
+            list(handler.gather_resources("tenant-1", uow))
+
+        _, topic_kwargs = mock_topics.call_args
+        assert topic_kwargs["step"] == timedelta(seconds=1800)
+
+    def test_gather_identities_forwards_step_to_principals(self, mock_metrics_source):
+        """gather_identities() passes step=timedelta(seconds=metrics_step_seconds) to gather_principals_from_metrics."""
+        from unittest.mock import patch
+
+        from plugins.self_managed_kafka.handlers.kafka import SelfManagedKafkaHandler
+
+        config = self._make_step_config(metrics_step_seconds=1800)
+        handler = SelfManagedKafkaHandler(config, mock_metrics_source)
+        uow = MagicMock()
+
+        prom = "plugins.self_managed_kafka.gathering.prometheus"
+        with patch(f"{prom}.gather_principals_from_metrics") as mock_principals:
+            mock_principals.return_value = []
+            list(handler.gather_identities("tenant-1", uow))
+
+        _, principal_kwargs = mock_principals.call_args
+        assert principal_kwargs["step"] == timedelta(seconds=1800)

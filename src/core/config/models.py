@@ -60,6 +60,15 @@ class PluginSettingsBase(BaseModel):
     allocator_overrides: dict[str, str] = Field(default_factory=dict)
     identity_resolution_overrides: dict[str, str] = Field(default_factory=dict)
     min_refresh_gap_seconds: int = Field(default=1800, ge=0)
+    metrics_step_seconds: int = Field(
+        default=3600,
+        gt=0,
+        description=(
+            "Prometheus range query step in seconds. Controls billing granularity and Prometheus server load."
+            " Default 3600 = 1-hour resolution. Lower values (e.g. 1800) give finer-grained cost data at"
+            " higher Prometheus load."
+        ),
+    )
 
 
 class TenantConfig(BaseModel):

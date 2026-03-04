@@ -221,6 +221,94 @@ class TestGatherPrincipalsFromMetrics:
         assert i.last_seen_at is not None
 
 
+class TestGatherBrokersStepParam:
+    def test_gather_brokers_uses_default_step_timedelta_hours_1(self, mock_metrics_source: MagicMock) -> None:
+        from datetime import timedelta
+
+        from plugins.self_managed_kafka.gathering.prometheus import gather_brokers_from_metrics
+
+        mock_metrics_source.query.return_value = {"distinct_brokers": []}
+        list(gather_brokers_from_metrics(mock_metrics_source, "self_managed_kafka", "t1", "cluster-001"))
+
+        _, call_kwargs = mock_metrics_source.query.call_args
+        assert call_kwargs["step"] == timedelta(hours=1)
+
+    def test_gather_brokers_custom_step_forwarded_to_query(self, mock_metrics_source: MagicMock) -> None:
+        from datetime import timedelta
+
+        from plugins.self_managed_kafka.gathering.prometheus import gather_brokers_from_metrics
+
+        mock_metrics_source.query.return_value = {"distinct_brokers": []}
+        list(
+            gather_brokers_from_metrics(
+                mock_metrics_source, "self_managed_kafka", "t1", "cluster-001", step=timedelta(seconds=1800)
+            )
+        )
+
+        _, call_kwargs = mock_metrics_source.query.call_args
+        assert call_kwargs["step"] == timedelta(seconds=1800)
+
+
+class TestGatherTopicsStepParam:
+    def test_gather_topics_uses_default_step_timedelta_hours_1(self, mock_metrics_source: MagicMock) -> None:
+        from datetime import timedelta
+
+        from plugins.self_managed_kafka.gathering.prometheus import gather_topics_from_metrics
+
+        mock_metrics_source.query.return_value = {"distinct_topics": []}
+        list(gather_topics_from_metrics(mock_metrics_source, "self_managed_kafka", "t1", "cluster-001"))
+
+        _, call_kwargs = mock_metrics_source.query.call_args
+        assert call_kwargs["step"] == timedelta(hours=1)
+
+    def test_gather_topics_custom_step_forwarded_to_query(self, mock_metrics_source: MagicMock) -> None:
+        from datetime import timedelta
+
+        from plugins.self_managed_kafka.gathering.prometheus import gather_topics_from_metrics
+
+        mock_metrics_source.query.return_value = {"distinct_topics": []}
+        list(
+            gather_topics_from_metrics(
+                mock_metrics_source, "self_managed_kafka", "t1", "cluster-001", step=timedelta(seconds=1800)
+            )
+        )
+
+        _, call_kwargs = mock_metrics_source.query.call_args
+        assert call_kwargs["step"] == timedelta(seconds=1800)
+
+
+class TestGatherPrincipalsStepParam:
+    def test_gather_principals_uses_default_step_timedelta_hours_1(
+        self, mock_metrics_source: MagicMock, base_identity_config: object
+    ) -> None:
+        from datetime import timedelta
+
+        from plugins.self_managed_kafka.gathering.prometheus import gather_principals_from_metrics
+
+        mock_metrics_source.query.return_value = {"distinct_principals": []}
+        list(gather_principals_from_metrics(mock_metrics_source, "self_managed_kafka", "t1", base_identity_config))
+
+        _, call_kwargs = mock_metrics_source.query.call_args
+        assert call_kwargs["step"] == timedelta(hours=1)
+
+    def test_gather_principals_custom_step_forwarded_to_query(
+        self, mock_metrics_source: MagicMock, base_identity_config: object
+    ) -> None:
+        from datetime import timedelta
+
+        from plugins.self_managed_kafka.gathering.prometheus import gather_principals_from_metrics
+
+        mock_metrics_source.query.return_value = {"distinct_principals": []}
+        list(
+            gather_principals_from_metrics(
+                mock_metrics_source, "self_managed_kafka", "t1", base_identity_config, step=timedelta(seconds=1800)
+            )
+        )
+
+        _, call_kwargs = mock_metrics_source.query.call_args
+        assert call_kwargs["step"] == timedelta(seconds=1800)
+
+
 class TestLoadStaticIdentities:
     def test_loads_static_identities(self):
         from plugins.self_managed_kafka.config import IdentitySourceConfig
