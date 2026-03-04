@@ -17,6 +17,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_DEFAULT_PLUGINS_PATH = Path(__file__).parent.parent / "plugins"
+
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Chargeback Engine")
@@ -54,8 +56,9 @@ def setup_logging(settings: AppSettings) -> None:
 
 
 def _create_runner(settings: AppSettings) -> WorkflowRunner:
-    """Create a WorkflowRunner with all plugins discovered from plugins/."""
-    plugins_path = Path("plugins")
+    """Create a WorkflowRunner with all plugins discovered from configured plugins path."""
+    plugins_path = _DEFAULT_PLUGINS_PATH if settings.plugins_path is None else Path.cwd() / settings.plugins_path
+
     registry = PluginRegistry()
     for ecosystem, factory in discover_plugins(plugins_path):
         registry.register(ecosystem, factory)

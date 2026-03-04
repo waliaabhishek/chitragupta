@@ -249,3 +249,21 @@ class TestAppSettings:
             }
         )
         assert len(cfg.tenants) == 2
+
+    def test_plugins_path_default_is_none(self) -> None:
+        cfg = AppSettings()
+        assert cfg.plugins_path is None
+
+    def test_plugins_path_absolute(self) -> None:
+        from pathlib import Path
+
+        cfg = AppSettings(plugins_path="/abs/path")
+        assert cfg.plugins_path == Path("/abs/path")
+        assert cfg.plugins_path.is_absolute()
+
+    def test_plugins_path_relative(self) -> None:
+        from pathlib import Path
+
+        cfg = AppSettings(plugins_path="relative/path")
+        assert cfg.plugins_path == Path("relative/path")
+        assert not cfg.plugins_path.is_absolute()

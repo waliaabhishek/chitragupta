@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -298,3 +299,84 @@ class TestBothModeSingleRunner:
         assert captured_api_runners[0] is runner_instance
         # After fix: run_worker must receive runner kwarg; currently it doesn't → fails
         assert captured_worker_runners[0] is runner_instance
+
+
+class TestCreateRunnerPluginPath:
+    """TASK-014: Configurable plugins_path for _create_runner."""
+
+    @patch("main.WorkflowRunner")
+    @patch("main.PluginRegistry")
+    @patch("main.discover_plugins")
+    def test_create_runner_no_override_uses_default_plugins_path(
+        self,
+        mock_discover: MagicMock,
+        mock_registry_cls: MagicMock,
+        mock_runner_cls: MagicMock,
+    ) -> None:
+        """settings.plugins_path=None → discover_plugins called with _DEFAULT_PLUGINS_PATH."""
+        from core.config.models import AppSettings
+        from main import _DEFAULT_PLUGINS_PATH, _create_runner
+
+        settings = AppSettings()
+        assert settings.plugins_path is None
+        mock_discover.return_value = []
+        mock_runner_cls.return_value = MagicMock()
+
+        _create_runner(settings)
+
+        mock_discover.assert_called_once_with(_DEFAULT_PLUGINS_PATH)
+
+    @patch("main.WorkflowRunner")
+    @patch("main.PluginRegistry")
+    @patch("main.discover_plugins")
+    def test_create_runner_absolute_override_resolves_correctly(
+        self,
+        mock_discover: MagicMock,
+        mock_registry_cls: MagicMock,
+        mock_runner_cls: MagicMock,
+    ) -> None:
+        """settings.plugins_path=absolute → discover_plugins called with that absolute path."""
+        from core.config.models import AppSettings
+        from main import _create_runner
+
+        settings = AppSettings(plugins_path="/abs/path")
+        mock_discover.return_value = []
+        mock_runner_cls.return_value = MagicMock()
+
+        _create_runner(settings)
+
+        # Path.cwd() / Path("/abs/path") == Path("/abs/path") via pathlib "/" behaviour
+        expected = Path.cwd() / Path("/abs/path")
+        mock_discover.assert_called_once_with(expected)
+
+    @patch("main.WorkflowRunner")
+    @patch("main.PluginRegistry")
+    @patch("main.discover_plugins")
+    def test_create_runner_relative_override_joins_cwd(
+        self,
+        mock_discover: MagicMock,
+        mock_registry_cls: MagicMock,
+        mock_runner_cls: MagicMock,
+    ) -> None:
+        """settings.plugins_path=relative → discover_plugins called with Path.cwd() / relative."""
+        from core.config.models import AppSettings
+        from main import _create_runner
+
+        settings = AppSettings(plugins_path="relative/path")
+        mock_discover.return_value = []
+        mock_runner_cls.return_value = MagicMock()
+
+        _create_runner(settings)
+
+        expected = Path.cwd() / Path("relative/path")
+        mock_discover.assert_called_once_with(expected)
+
+    def test_default_plugins_path_is_absolute_and_cwd_independent(self) -> None:
+        """_DEFAULT_PLUGINS_PATH is absolute and equals Path(main.__file__).parent.parent / "plugins"."""
+        import main as main_module
+        from main import _DEFAULT_PLUGINS_PATH
+
+        main_file = Path(main_module.__file__).resolve()
+        expected = main_file.parent.parent / "plugins"
+        assert _DEFAULT_PLUGINS_PATH.is_absolute()
+        assert _DEFAULT_PLUGINS_PATH == expected

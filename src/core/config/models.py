@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 _VALID_LOG_LEVELS = frozenset({"CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"})
@@ -97,6 +99,15 @@ class AppSettings(BaseModel):
     features: FeaturesConfig = Field(default_factory=FeaturesConfig)
     api: ApiConfig = Field(default_factory=ApiConfig)
     tenants: dict[str, TenantConfig] = Field(default_factory=dict)
+    plugins_path: Path | None = Field(
+        default=None,
+        description=(
+            "Path to plugin directory. "
+            "Absolute paths used as-is. "
+            "Relative paths resolved against CWD. "
+            "Defaults to the 'plugins/' sibling of the src/ package root."
+        ),
+    )
 
     @model_validator(mode="after")
     def validate_unique_connection_strings(self) -> AppSettings:
