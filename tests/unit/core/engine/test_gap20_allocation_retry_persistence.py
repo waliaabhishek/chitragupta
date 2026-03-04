@@ -297,7 +297,7 @@ class MockServiceHandler:
     def handles_product_types(self) -> list[str]:
         return ["KAFKA_CKU"]
 
-    def gather_resources(self, tenant_id: str, uow: Any) -> list[Resource]:
+    def gather_resources(self, tenant_id: str, uow: Any, shared_ctx: object | None = None) -> list[Resource]:
         return self._resources
 
     def gather_identities(self, tenant_id: str, uow: Any) -> list[Identity]:
@@ -346,6 +346,15 @@ class MockPlugin:
 
     def get_cost_input(self) -> Any:
         return self._cost_input
+
+    def get_metrics_source(self) -> None:
+        return None
+
+    def build_shared_context(self, tenant_id: str) -> None:
+        return None
+
+    def close(self) -> None:
+        pass
 
 
 class _MockCostInput:

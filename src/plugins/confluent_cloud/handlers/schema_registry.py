@@ -56,26 +56,19 @@ class SchemaRegistryHandler:
     def handles_product_types(self) -> Sequence[str]:
         return _SR_PRODUCT_TYPES
 
-    def gather_resources(self, tenant_id: str, uow: UnitOfWork) -> Iterable[Resource]:
-        """Gather Schema Registry clusters.
+    def gather_resources(self, tenant_id: str, uow: UnitOfWork, shared_ctx: object | None = None) -> Iterable[Resource]:
+        """Gather Schema Registry clusters using env_ids from shared context.
 
-        Note: Does NOT yield environments - KafkaHandler yields those.
-        This is intentional handler ordering: Kafka must be iterated first.
+        No longer calls gather_environments() directly — eliminates the redundant
+        API round-trip that occurred because this handler could not trust UoW ordering.
         """
-        from plugins.confluent_cloud.gathering import (
-            gather_environments,
-            gather_schema_registries,
-        )
+        from plugins.confluent_cloud.gathering import gather_schema_registries
+        from plugins.confluent_cloud.shared_context import CCloudSharedContext
 
-        if self._connection is None:
+        if self._connection is None or not isinstance(shared_ctx, CCloudSharedContext):
             return
 
-        # Get environment IDs but don't yield environments (Kafka already did)
-        env_ids: list[str] = []
-        for env in gather_environments(self._connection, self._ecosystem, tenant_id):
-            env_ids.append(env.resource_id)
-
-        yield from gather_schema_registries(self._connection, self._ecosystem, tenant_id, env_ids)
+        yield from gather_schema_registries(self._connection, self._ecosystem, tenant_id, shared_ctx.env_ids)
 
     def gather_identities(self, tenant_id: str, uow: UnitOfWork) -> Iterable[Identity]:
         """SR uses same identities as Kafka - intentionally empty.

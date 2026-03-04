@@ -47,7 +47,7 @@ def _config_hash(config: TenantConfig) -> str:
     """Stable hash of tenant config for change detection."""
     try:
         raw = json.dumps(config.model_dump(), sort_keys=True, default=str)
-    except (TypeError, ValueError, AttributeError):
+    except TypeError, ValueError, AttributeError:
         logger.debug("Failed to JSON-serialize config for hashing; falling back to repr()", exc_info=True)
         raw = repr(config)
     return hashlib.sha256(raw.encode()).hexdigest()[:16]

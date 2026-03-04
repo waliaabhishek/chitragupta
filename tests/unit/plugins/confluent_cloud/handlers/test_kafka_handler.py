@@ -245,32 +245,40 @@ class TestKafkaHandlerGatherResources:
         assert result == []
 
     def test_calls_gather_environments_and_clusters(self, mock_uow: MagicMock) -> None:
-        """gather_resources calls gather_environments then gather_kafka_clusters."""
-        from unittest.mock import patch
-
+        """gather_resources yields environment and cluster resources from shared_ctx."""
         from plugins.confluent_cloud.handlers.kafka import KafkaHandler
+        from plugins.confluent_cloud.shared_context import CCloudSharedContext
+        from core.models import Resource, ResourceStatus
 
         mock_conn = MagicMock()
-        env_resource = MagicMock()
-        env_resource.resource_id = "env-abc"
-        cluster_resource = MagicMock()
+        env_resource = Resource(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            resource_id="env-abc",
+            resource_type="environment",
+            status=ResourceStatus.ACTIVE,
+            metadata={},
+        )
+        cluster_resource = Resource(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            resource_id="lkc-abc",
+            resource_type="kafka_cluster",
+            status=ResourceStatus.ACTIVE,
+            parent_id="env-abc",
+            metadata={},
+        )
+        ctx = CCloudSharedContext(
+            environment_resources=(env_resource,),
+            kafka_cluster_resources=(cluster_resource,),
+        )
 
-        with (
-            patch(
-                "plugins.confluent_cloud.gathering.gather_environments",
-                return_value=[env_resource],
-            ) as mock_envs,
-            patch(
-                "plugins.confluent_cloud.gathering.gather_kafka_clusters",
-                return_value=[cluster_resource],
-            ) as mock_clusters,
-        ):
-            handler = KafkaHandler(connection=mock_conn, config=None, ecosystem="confluent_cloud")
-            result = list(handler.gather_resources("org-123", mock_uow))
+        handler = KafkaHandler(connection=mock_conn, config=None, ecosystem="confluent_cloud")
+        result = list(handler.gather_resources("org-123", mock_uow, ctx))
 
-        mock_envs.assert_called_once_with(mock_conn, "confluent_cloud", "org-123")
-        mock_clusters.assert_called_once_with(mock_conn, "confluent_cloud", "org-123", ["env-abc"])
-        assert result == [env_resource, cluster_resource]
+        assert env_resource in result
+        assert cluster_resource in result
+        assert result.index(env_resource) < result.index(cluster_resource)
 
 
 class TestKafkaHandlerGatherIdentities:

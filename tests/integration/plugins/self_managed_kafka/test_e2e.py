@@ -9,7 +9,21 @@ from unittest.mock import MagicMock
 import pytest
 
 from core.engine.allocation import AllocationContext
-from core.models import BillingLineItem, Identity, IdentitySet, MetricRow
+from core.models import BillingLineItem, Identity, IdentitySet, MetricRow, Resource, ResourceStatus
+
+
+def _make_smk_ctx(cluster_id: str, tenant_id: str = "tenant-1") -> object:
+    from plugins.self_managed_kafka.shared_context import SMKSharedContext
+
+    cluster = Resource(
+        ecosystem="self_managed_kafka",
+        tenant_id=tenant_id,
+        resource_id=cluster_id,
+        resource_type="cluster",
+        status=ResourceStatus.ACTIVE,
+        metadata={},
+    )
+    return SMKSharedContext(cluster_resource=cluster)
 
 
 @pytest.fixture
@@ -141,7 +155,7 @@ class TestFullPrometheusPipeline:
         handler = SelfManagedKafkaHandler(config, mock_prometheus)
         uow = MagicMock()
 
-        resources = list(handler.gather_resources("tenant-1", uow))
+        resources = list(handler.gather_resources("tenant-1", uow, _make_smk_ctx("kafka-cluster-001")))
         cluster = resources[0]
         assert cluster.resource_type == "cluster"
         assert cluster.resource_id == "kafka-cluster-001"
@@ -282,7 +296,7 @@ class TestAdminApiFlow:
         handler = SelfManagedKafkaHandler(config, mock_metrics, admin_client=mock_admin)
         uow = MagicMock()
 
-        resources = list(handler.gather_resources("tenant-1", uow))
+        resources = list(handler.gather_resources("tenant-1", uow, _make_smk_ctx("kafka-001")))
         types = {r.resource_type for r in resources}
         assert "cluster" in types
         assert "broker" in types

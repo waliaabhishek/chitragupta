@@ -170,12 +170,12 @@ class TestConnectorHandlerGatherResources:
         assert result == []
 
     def test_calls_gather_connectors_with_kafka_clusters(self, mock_uow: MagicMock) -> None:
-        """gather_resources calls gather_connectors with Kafka cluster IDs."""
+        """gather_resources calls gather_connectors with Kafka cluster IDs from shared_ctx."""
         from plugins.confluent_cloud.handlers.connectors import ConnectorHandler
+        from plugins.confluent_cloud.shared_context import CCloudSharedContext
 
         mock_conn = MagicMock()
 
-        # Setup mock resources with Kafka clusters
         kafka_cluster = Resource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
@@ -185,15 +185,10 @@ class TestConnectorHandlerGatherResources:
             parent_id="env-001",
             metadata={},
         )
-        other_resource = Resource(
-            ecosystem="confluent_cloud",
-            tenant_id="org-123",
-            resource_id="env-001",
-            resource_type="environment",
-            status=ResourceStatus.ACTIVE,
-            metadata={},
+        ctx = CCloudSharedContext(
+            environment_resources=(),
+            kafka_cluster_resources=(kafka_cluster,),
         )
-        mock_uow.resources.find_by_period.return_value = ([kafka_cluster, other_resource], 2)
 
         connector_resource = MagicMock()
 
@@ -202,7 +197,7 @@ class TestConnectorHandlerGatherResources:
             return_value=[connector_resource],
         ) as mock_gather:
             handler = ConnectorHandler(connection=mock_conn, config=None, ecosystem="confluent_cloud")
-            result = list(handler.gather_resources("org-123", mock_uow))
+            result = list(handler.gather_resources("org-123", mock_uow, ctx))
 
         # Should be called with (env_id, cluster_id) tuples
         mock_gather.assert_called_once()
@@ -216,8 +211,9 @@ class TestConnectorHandlerGatherResources:
         assert result == [connector_resource]
 
     def test_handles_multiple_kafka_clusters(self, mock_uow: MagicMock) -> None:
-        """gather_resources handles multiple Kafka clusters."""
+        """gather_resources handles multiple Kafka clusters from shared_ctx."""
         from plugins.confluent_cloud.handlers.connectors import ConnectorHandler
+        from plugins.confluent_cloud.shared_context import CCloudSharedContext
 
         mock_conn = MagicMock()
 
@@ -240,14 +236,17 @@ class TestConnectorHandlerGatherResources:
             parent_id="env-002",
             metadata={},
         )
-        mock_uow.resources.find_by_period.return_value = ([cluster1, cluster2], 2)
+        ctx = CCloudSharedContext(
+            environment_resources=(),
+            kafka_cluster_resources=(cluster1, cluster2),
+        )
 
         with patch(
             "plugins.confluent_cloud.gathering.gather_connectors",
             return_value=[],
         ) as mock_gather:
             handler = ConnectorHandler(connection=mock_conn, config=None, ecosystem="confluent_cloud")
-            list(handler.gather_resources("org-123", mock_uow))
+            list(handler.gather_resources("org-123", mock_uow, ctx))
 
         # Should include both clusters as (env_id, cluster_id) tuples
         call_args = mock_gather.call_args
@@ -256,18 +255,19 @@ class TestConnectorHandlerGatherResources:
         assert ("env-002", "lkc-002") in clusters_arg
 
     def test_handles_no_kafka_clusters(self, mock_uow: MagicMock) -> None:
-        """gather_resources handles case where no Kafka clusters exist."""
+        """gather_resources handles case where no Kafka clusters exist in shared_ctx."""
         from plugins.confluent_cloud.handlers.connectors import ConnectorHandler
+        from plugins.confluent_cloud.shared_context import CCloudSharedContext
 
         mock_conn = MagicMock()
-        mock_uow.resources.find_by_period.return_value = ([], 0)
+        ctx = CCloudSharedContext(environment_resources=(), kafka_cluster_resources=())
 
         with patch(
             "plugins.confluent_cloud.gathering.gather_connectors",
             return_value=[],
         ) as mock_gather:
             handler = ConnectorHandler(connection=mock_conn, config=None, ecosystem="confluent_cloud")
-            result = list(handler.gather_resources("org-123", mock_uow))
+            result = list(handler.gather_resources("org-123", mock_uow, ctx))
 
         # Should be called with empty clusters list
         call_args = mock_gather.call_args

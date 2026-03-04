@@ -97,32 +97,37 @@ class TestSchemaRegistryHandlerGatherResources:
         assert result == []
 
     def test_calls_gather_environments_and_registries(self, mock_uow: MagicMock) -> None:
-        """gather_resources calls gather_environments then gather_schema_registries."""
+        """gather_resources calls gather_schema_registries with env_ids from shared_ctx."""
         from unittest.mock import patch
 
         from plugins.confluent_cloud.handlers.schema_registry import (
             SchemaRegistryHandler,
         )
+        from plugins.confluent_cloud.shared_context import CCloudSharedContext
+        from core.models import Resource, ResourceStatus
 
         mock_conn = MagicMock()
-        env_resource = MagicMock()
-        env_resource.resource_id = "env-abc"
+        env_resource = Resource(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            resource_id="env-abc",
+            resource_type="environment",
+            status=ResourceStatus.ACTIVE,
+            metadata={},
+        )
+        ctx = CCloudSharedContext(
+            environment_resources=(env_resource,),
+            kafka_cluster_resources=(),
+        )
         sr_resource = MagicMock()
 
-        with (
-            patch(
-                "plugins.confluent_cloud.gathering.gather_environments",
-                return_value=[env_resource],
-            ) as mock_envs,
-            patch(
-                "plugins.confluent_cloud.gathering.gather_schema_registries",
-                return_value=[sr_resource],
-            ) as mock_srs,
-        ):
+        with patch(
+            "plugins.confluent_cloud.gathering.gather_schema_registries",
+            return_value=[sr_resource],
+        ) as mock_srs:
             handler = SchemaRegistryHandler(connection=mock_conn, config=None, ecosystem="confluent_cloud")
-            result = list(handler.gather_resources("org-123", mock_uow))
+            result = list(handler.gather_resources("org-123", mock_uow, ctx))
 
-        mock_envs.assert_called_once_with(mock_conn, "confluent_cloud", "org-123")
         mock_srs.assert_called_once_with(mock_conn, "confluent_cloud", "org-123", ["env-abc"])
         # SR handler does NOT yield environments (Kafka handler does that)
         assert result == [sr_resource]

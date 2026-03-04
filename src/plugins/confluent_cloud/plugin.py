@@ -17,24 +17,11 @@ from plugins.confluent_cloud.handlers.schema_registry import SchemaRegistryHandl
 if TYPE_CHECKING:
     from core.metrics.protocol import MetricsSource
     from core.plugin.protocols import CostInput, ServiceHandler
+    from plugins.confluent_cloud.shared_context import CCloudSharedContext
 
 
 class ConfluentCloudPlugin:
-    """Confluent Cloud ecosystem plugin.
-
-    Handler ordering requirements:
-    - Kafka MUST be first: it gathers environments that other handlers
-      (connector, ksqldb) depend on for resource discovery.
-    - schema_registry, connector, ksqldb, flink: order among these is not
-      critical, but kept consistent for predictable iteration.
-    - org_wide: no resource/identity gathering, placed after resource handlers.
-    - default: catch-all for known remaining types, placed last.
-
-    Note: Kafka and schema_registry both call gather_environments(), resulting
-    in duplicate API calls. This is an intentional tradeoff — deduplicating
-    would require cross-handler state sharing that adds complexity without
-    meaningful benefit (TD-028).
-    """
+    """Confluent Cloud ecosystem plugin."""
 
     def __init__(self) -> None:
         self._config: CCloudPluginConfig | None = None
@@ -54,7 +41,8 @@ class ConfluentCloudPlugin:
             api_secret=self._config.ccloud_api.secret,
         )
 
-        # Initialize handlers (order matters: Kafka first for environment gathering)
+        # Initialize handlers (ordering no longer load-bearing — shared context
+        # eliminates handler-to-handler UoW dependencies)
         self._handlers = {
             "kafka": KafkaHandler(self._connection, self._config, self.ecosystem),
             "schema_registry": SchemaRegistryHandler(self._connection, self._config, self.ecosystem),
@@ -84,6 +72,31 @@ class ConfluentCloudPlugin:
     def get_metrics_source(self) -> MetricsSource | None:
         """Return metrics source if configured, None otherwise."""
         return self._metrics_source
+
+    def build_shared_context(self, tenant_id: str) -> CCloudSharedContext | None:
+        """Gather environments and Kafka clusters once for the entire gather cycle.
+
+        Called by the orchestrator before iterating handlers. Returns a frozen
+        context object passed to every handler's gather_resources() call.
+        Returns None if no connection is available (e.g., test/offline scenario).
+
+        Resolves TD-028: deduplication of environment API calls across handlers
+        no longer requires cross-handler state sharing — shared context is built
+        once here and passed explicitly.
+        """
+        from plugins.confluent_cloud.gathering import gather_environments, gather_kafka_clusters
+        from plugins.confluent_cloud.shared_context import CCloudSharedContext
+
+        if self._connection is None:
+            return None
+
+        env_resources = list(gather_environments(self._connection, self.ecosystem, tenant_id))
+        env_ids = [r.resource_id for r in env_resources]
+        cluster_resources = list(gather_kafka_clusters(self._connection, self.ecosystem, tenant_id, env_ids))
+        return CCloudSharedContext(
+            environment_resources=tuple(env_resources),
+            kafka_cluster_resources=tuple(cluster_resources),
+        )
 
     def close(self) -> None:
         """Release plugin resources (HTTP connections).

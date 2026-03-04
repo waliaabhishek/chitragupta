@@ -12,7 +12,7 @@ Handles all Kafka Connect-related product types:
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
 from plugins.confluent_cloud.allocators.connector_allocators import (
@@ -79,33 +79,19 @@ class ConnectorHandler:
     def handles_product_types(self) -> Sequence[str]:
         return _CONNECTOR_PRODUCT_TYPES
 
-    def gather_resources(self, tenant_id: str, uow: UnitOfWork) -> Iterable[Resource]:
-        """Gather connectors for all Kafka clusters.
+    def gather_resources(self, tenant_id: str, uow: UnitOfWork, shared_ctx: object | None = None) -> Iterable[Resource]:
+        """Gather connectors for all Kafka clusters via shared context.
 
-        Queries existing resources from UoW to find Kafka clusters,
-        then calls gather_connectors for each cluster.
+        Replaces UoW full-table scan for kafka_cluster resources. Cluster list
+        comes from build_shared_context(), which fetched it in Phase 1.
         """
         from plugins.confluent_cloud.gathering import gather_connectors
+        from plugins.confluent_cloud.shared_context import CCloudSharedContext
 
-        if self._connection is None:
+        if self._connection is None or not isinstance(shared_ctx, CCloudSharedContext):
             return
 
-        # Find all Kafka clusters for this tenant
-        now = datetime.now(UTC)
-
-        resources, _ = uow.resources.find_by_period(
-            ecosystem=self._ecosystem,
-            tenant_id=tenant_id,
-            start=datetime(2000, 1, 1, tzinfo=UTC),  # Far past
-            end=now,
-        )
-
-        # Build (env_id, cluster_id) tuples for gather_connectors
-        clusters: list[tuple[str, str]] = [
-            (r.parent_id or "", r.resource_id) for r in resources if r.resource_type == "kafka_cluster"
-        ]
-
-        yield from gather_connectors(self._connection, self._ecosystem, tenant_id, clusters)
+        yield from gather_connectors(self._connection, self._ecosystem, tenant_id, shared_ctx.kafka_cluster_pairs)
 
     def gather_identities(self, tenant_id: str, uow: UnitOfWork) -> Iterable[Identity]:
         """Return empty — Kafka handler gathers all org-level identities.
@@ -113,8 +99,7 @@ class ConnectorHandler:
         Connectors don't have their own identity types. They reference
         service accounts or API keys that are gathered by the Kafka handler.
         """
-        return
-        yield  # Make this a generator that yields nothing
+        yield from ()
 
     def resolve_identities(
         self,

@@ -48,7 +48,7 @@ class OrgWideCostHandler:
     def handles_product_types(self) -> Sequence[str]:
         return _ORG_WIDE_PRODUCT_TYPES
 
-    def gather_resources(self, tenant_id: str, uow: UnitOfWork) -> Iterable[Resource]:
+    def gather_resources(self, tenant_id: str, uow: UnitOfWork, shared_ctx: object | None = None) -> Iterable[Resource]:
         return iter([])
 
     def gather_identities(self, tenant_id: str, uow: UnitOfWork) -> Iterable[Identity]:

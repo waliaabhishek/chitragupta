@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterable, Sequence
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
 from core.models import MetricQuery
@@ -20,7 +20,6 @@ from plugins.confluent_cloud.allocators.flink_allocators import flink_cfu_alloca
 from plugins.confluent_cloud.handlers.flink_identity import resolve_flink_identity
 
 _LOGGER = logging.getLogger(__name__)
-_EPOCH_START = datetime(2000, 1, 1, tzinfo=UTC)
 
 if TYPE_CHECKING:
     from core.models import Identity, IdentityResolution, MetricRow, Resource
@@ -95,39 +94,32 @@ class FlinkHandler:
     def handles_product_types(self) -> Sequence[str]:
         return _FLINK_PRODUCT_TYPES
 
-    def gather_resources(self, tenant_id: str, uow: UnitOfWork) -> Iterable[Resource]:
-        """Gather Flink compute pools and statements for all environments.
+    def gather_resources(self, tenant_id: str, uow: UnitOfWork, shared_ctx: object | None = None) -> Iterable[Resource]:
+        """Gather Flink compute pools and statements using env_ids from shared context.
 
-        Two-phase gathering:
-        1. Gather compute pools per environment
-        2. For allocatable pools (with regional credentials), gather statements
+        Replaces UoW full-table scan for environment resources.
+        Two-phase internal gathering preserved: pools first, then statements.
         """
         from plugins.confluent_cloud.gathering import (
             gather_flink_compute_pools,
             gather_flink_statements,
         )
+        from plugins.confluent_cloud.shared_context import CCloudSharedContext
 
-        if self._connection is None:
+        if self._connection is None or not isinstance(shared_ctx, CCloudSharedContext):
             return
 
-        # Find all environments for this tenant
-        now = datetime.now(UTC)
-        resources, _ = uow.resources.find_by_period(
-            ecosystem=self._ecosystem,
-            tenant_id=tenant_id,
-            start=_EPOCH_START,
-            end=now,
-        )
-        env_ids: list[str] = [r.resource_id for r in resources if r.resource_type == "environment"]
-
-        # Phase 1: Gather compute pools
         pools = list(
-            gather_flink_compute_pools(self._connection, self._ecosystem, tenant_id, env_ids, self._flink_regions)
+            gather_flink_compute_pools(
+                self._connection,
+                self._ecosystem,
+                tenant_id,
+                shared_ctx.env_ids,
+                self._flink_regions,
+            )
         )
         yield from pools
 
-        # Phase 2: Gather statements from allocatable pools
-        # TD-036: Log pools skipped due to missing regional credentials
         allocatable_pools: list[tuple[Resource, str, str]] = []
         for pool in pools:
             region = pool.metadata.get("region", "")

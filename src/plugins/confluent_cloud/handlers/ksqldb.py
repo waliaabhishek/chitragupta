@@ -8,7 +8,7 @@ Handles ksqlDB product types:
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
 from plugins.confluent_cloud.allocators.ksqldb_allocators import (
@@ -65,31 +65,18 @@ class KsqldbHandler:
     def handles_product_types(self) -> Sequence[str]:
         return _KSQLDB_PRODUCT_TYPES
 
-    def gather_resources(self, tenant_id: str, uow: UnitOfWork) -> Iterable[Resource]:
-        """Gather ksqlDB clusters for all environments.
+    def gather_resources(self, tenant_id: str, uow: UnitOfWork, shared_ctx: object | None = None) -> Iterable[Resource]:
+        """Gather ksqlDB clusters using env_ids from shared context.
 
-        Queries existing resources from UoW to find environments,
-        then calls gather_ksqldb_clusters for each environment.
+        Replaces UoW full-table scan for environment resources.
         """
         from plugins.confluent_cloud.gathering import gather_ksqldb_clusters
+        from plugins.confluent_cloud.shared_context import CCloudSharedContext
 
-        if self._connection is None:
+        if self._connection is None or not isinstance(shared_ctx, CCloudSharedContext):
             return
 
-        # Find all environments for this tenant
-        now = datetime.now(UTC)
-
-        resources, _ = uow.resources.find_by_period(
-            ecosystem=self._ecosystem,
-            tenant_id=tenant_id,
-            start=datetime(2000, 1, 1, tzinfo=UTC),  # Far past
-            end=now,
-        )
-
-        # Extract environment IDs
-        env_ids: list[str] = [r.resource_id for r in resources if r.resource_type == "environment"]
-
-        yield from gather_ksqldb_clusters(self._connection, self._ecosystem, tenant_id, env_ids)
+        yield from gather_ksqldb_clusters(self._connection, self._ecosystem, tenant_id, shared_ctx.env_ids)
 
     def gather_identities(self, tenant_id: str, uow: UnitOfWork) -> Iterable[Identity]:
         """Return empty - Kafka handler gathers all org-level identities.
@@ -97,8 +84,7 @@ class KsqldbHandler:
         ksqlDB apps don't have their own identity types. They reference
         service accounts that are gathered by the Kafka handler.
         """
-        return
-        yield  # Make this a generator that yields nothing
+        yield from ()
 
     def resolve_identities(
         self,

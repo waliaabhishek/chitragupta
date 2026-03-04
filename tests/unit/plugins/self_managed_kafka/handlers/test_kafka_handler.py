@@ -7,7 +7,22 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from core.models import MetricRow
+from core.models import MetricRow, Resource, ResourceStatus
+
+
+def _make_smk_ctx(cluster_id: str = "kafka-001") -> object:
+    """Create an SMKSharedContext with a cluster resource matching cluster_id."""
+    from plugins.self_managed_kafka.shared_context import SMKSharedContext
+
+    cluster = Resource(
+        ecosystem="self_managed_kafka",
+        tenant_id="tenant-1",
+        resource_id=cluster_id,
+        resource_type="cluster",
+        status=ResourceStatus.ACTIVE,
+        metadata={},
+    )
+    return SMKSharedContext(cluster_resource=cluster)
 
 
 @pytest.fixture
@@ -95,7 +110,7 @@ class TestGatherResources:
         handler = SelfManagedKafkaHandler(base_config, mock_metrics_source)
         uow = MagicMock()
 
-        resources = list(handler.gather_resources("tenant-1", uow))
+        resources = list(handler.gather_resources("tenant-1", uow, _make_smk_ctx("kafka-001")))
         cluster_resource = resources[0]
         assert cluster_resource.resource_id == "kafka-001"
         assert cluster_resource.resource_type == "cluster"
@@ -110,7 +125,7 @@ class TestGatherResources:
         handler = SelfManagedKafkaHandler(base_config, mock_metrics_source)
         uow = MagicMock()
 
-        resources = list(handler.gather_resources("tenant-1", uow))
+        resources = list(handler.gather_resources("tenant-1", uow, _make_smk_ctx("kafka-001")))
         resource_types = [r.resource_type for r in resources]
         assert "cluster" in resource_types
         assert "broker" in resource_types
@@ -143,7 +158,7 @@ class TestGatherResources:
         handler = SelfManagedKafkaHandler(config, mock_metrics_source, admin_client=mock_admin)
         uow = MagicMock()
 
-        resources = list(handler.gather_resources("tenant-1", uow))
+        resources = list(handler.gather_resources("tenant-1", uow, _make_smk_ctx("kafka-001")))
         resource_types = {r.resource_type for r in resources}
         assert "cluster" in resource_types
         assert "broker" in resource_types
@@ -178,7 +193,7 @@ class TestGatherResources:
         handler = SelfManagedKafkaHandler(config, mock_metrics_source, admin_client=None)
         uow = MagicMock()
 
-        resources = list(handler.gather_resources("tenant-1", uow))
+        resources = list(handler.gather_resources("tenant-1", uow, _make_smk_ctx("kafka-001")))
         resource_types = {r.resource_type for r in resources}
         # Only cluster is yielded; brokers/topics skipped due to early return
         assert resource_types == {"cluster"}
@@ -474,7 +489,7 @@ class TestMetricsStepForwarding:
         ):
             mock_brokers.return_value = []
             mock_topics.return_value = []
-            list(handler.gather_resources("tenant-1", uow))
+            list(handler.gather_resources("tenant-1", uow, _make_smk_ctx("kafka-001")))
 
         _, broker_kwargs = mock_brokers.call_args
         assert broker_kwargs["step"] == timedelta(seconds=1800)
@@ -496,7 +511,7 @@ class TestMetricsStepForwarding:
         ):
             mock_brokers.return_value = []
             mock_topics.return_value = []
-            list(handler.gather_resources("tenant-1", uow))
+            list(handler.gather_resources("tenant-1", uow, _make_smk_ctx("kafka-001")))
 
         _, topic_kwargs = mock_topics.call_args
         assert topic_kwargs["step"] == timedelta(seconds=1800)

@@ -49,7 +49,7 @@ class IntegrationHandler:
     def set_identities(self, identities: list[Identity]) -> None:
         self._identities = identities
 
-    def gather_resources(self, tenant_id: str, uow: Any) -> Iterable[Resource]:
+    def gather_resources(self, tenant_id: str, uow: Any, shared_ctx: object | None = None) -> Iterable[Resource]:
         return self._resources
 
     def gather_identities(self, tenant_id: str, uow: Any) -> Iterable[Identity]:
@@ -131,6 +131,15 @@ class IntegrationPlugin:
 
     def get_cost_input(self) -> IntegrationCostInput:
         return self._cost_input
+
+    def get_metrics_source(self) -> None:
+        return None
+
+    def build_shared_context(self, tenant_id: str) -> None:
+        return None
+
+    def close(self) -> None:
+        pass
 
 
 @pytest.fixture

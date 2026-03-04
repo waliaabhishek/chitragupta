@@ -110,26 +110,19 @@ class KafkaHandler:
     def handles_product_types(self) -> Sequence[str]:
         return _KAFKA_PRODUCT_TYPES
 
-    def gather_resources(self, tenant_id: str, uow: UnitOfWork) -> Iterable[Resource]:
-        """Gather Kafka clusters (and environments).
+    def gather_resources(self, tenant_id: str, uow: UnitOfWork, shared_ctx: object | None = None) -> Iterable[Resource]:
+        """Yield environment and Kafka cluster resources from shared context.
 
-        Also yields environments as resources since Kafka is typically
-        the first handler iterated. Other handlers skip environment yielding.
+        Environments and clusters are pre-fetched by the plugin's build_shared_context().
+        This handler yields them to UoW; it no longer fetches them independently.
         """
-        from plugins.confluent_cloud.gathering import (
-            gather_environments,
-            gather_kafka_clusters,
-        )
+        from plugins.confluent_cloud.shared_context import CCloudSharedContext
 
-        if self._connection is None:
+        if self._connection is None or not isinstance(shared_ctx, CCloudSharedContext):
             return
 
-        env_ids: list[str] = []
-        for env in gather_environments(self._connection, self._ecosystem, tenant_id):
-            yield env  # Environment is also a resource
-            env_ids.append(env.resource_id)
-
-        yield from gather_kafka_clusters(self._connection, self._ecosystem, tenant_id, env_ids)
+        yield from shared_ctx.environment_resources
+        yield from shared_ctx.kafka_cluster_resources
 
     def gather_identities(self, tenant_id: str, uow: UnitOfWork) -> Iterable[Identity]:
         """Gather org-level identities (SAs, users, API keys).

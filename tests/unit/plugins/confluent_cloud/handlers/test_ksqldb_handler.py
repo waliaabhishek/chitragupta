@@ -96,12 +96,12 @@ class TestKsqldbHandlerGatherResources:
         assert result == []
 
     def test_calls_gather_ksqldb_clusters_with_env_ids(self, mock_uow: MagicMock) -> None:
-        """gather_resources calls gather_ksqldb_clusters with environment IDs."""
+        """gather_resources calls gather_ksqldb_clusters with env_ids from shared_ctx."""
         from plugins.confluent_cloud.handlers.ksqldb import KsqldbHandler
+        from plugins.confluent_cloud.shared_context import CCloudSharedContext
 
         mock_conn = MagicMock()
 
-        # Setup mock resources with environments
         environment = Resource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
@@ -110,16 +110,10 @@ class TestKsqldbHandlerGatherResources:
             status=ResourceStatus.ACTIVE,
             metadata={},
         )
-        other_resource = Resource(
-            ecosystem="confluent_cloud",
-            tenant_id="org-123",
-            resource_id="lkc-abc",
-            resource_type="kafka_cluster",
-            status=ResourceStatus.ACTIVE,
-            parent_id="env-001",
-            metadata={},
+        ctx = CCloudSharedContext(
+            environment_resources=(environment,),
+            kafka_cluster_resources=(),
         )
-        mock_uow.resources.find_by_period.return_value = ([environment, other_resource], 2)
 
         ksqldb_resource = MagicMock()
 
@@ -128,9 +122,9 @@ class TestKsqldbHandlerGatherResources:
             return_value=[ksqldb_resource],
         ) as mock_gather:
             handler = KsqldbHandler(connection=mock_conn, config=None, ecosystem="confluent_cloud")
-            result = list(handler.gather_resources("org-123", mock_uow))
+            result = list(handler.gather_resources("org-123", mock_uow, ctx))
 
-        # Should be called with environment IDs
+        # Should be called with environment IDs from shared_ctx
         mock_gather.assert_called_once()
         call_args = mock_gather.call_args
         assert call_args[0][0] is mock_conn  # connection
@@ -142,12 +136,12 @@ class TestKsqldbHandlerGatherResources:
         assert result == [ksqldb_resource]
 
     def test_handles_multiple_environments(self, mock_uow: MagicMock) -> None:
-        """gather_resources handles multiple environments."""
+        """gather_resources handles multiple environments from shared_ctx."""
         from plugins.confluent_cloud.handlers.ksqldb import KsqldbHandler
+        from plugins.confluent_cloud.shared_context import CCloudSharedContext
 
         mock_conn = MagicMock()
 
-        # Multiple environments
         env1 = Resource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
@@ -164,14 +158,17 @@ class TestKsqldbHandlerGatherResources:
             status=ResourceStatus.ACTIVE,
             metadata={},
         )
-        mock_uow.resources.find_by_period.return_value = ([env1, env2], 2)
+        ctx = CCloudSharedContext(
+            environment_resources=(env1, env2),
+            kafka_cluster_resources=(),
+        )
 
         with patch(
             "plugins.confluent_cloud.gathering.gather_ksqldb_clusters",
             return_value=[],
         ) as mock_gather:
             handler = KsqldbHandler(connection=mock_conn, config=None, ecosystem="confluent_cloud")
-            list(handler.gather_resources("org-123", mock_uow))
+            list(handler.gather_resources("org-123", mock_uow, ctx))
 
         # Should include both environment IDs
         call_args = mock_gather.call_args
@@ -180,18 +177,19 @@ class TestKsqldbHandlerGatherResources:
         assert "env-002" in env_ids_arg
 
     def test_handles_no_environments(self, mock_uow: MagicMock) -> None:
-        """gather_resources handles case where no environments exist."""
+        """gather_resources handles case where no environments exist in shared_ctx."""
         from plugins.confluent_cloud.handlers.ksqldb import KsqldbHandler
+        from plugins.confluent_cloud.shared_context import CCloudSharedContext
 
         mock_conn = MagicMock()
-        mock_uow.resources.find_by_period.return_value = ([], 0)
+        ctx = CCloudSharedContext(environment_resources=(), kafka_cluster_resources=())
 
         with patch(
             "plugins.confluent_cloud.gathering.gather_ksqldb_clusters",
             return_value=[],
         ) as mock_gather:
             handler = KsqldbHandler(connection=mock_conn, config=None, ecosystem="confluent_cloud")
-            result = list(handler.gather_resources("org-123", mock_uow))
+            result = list(handler.gather_resources("org-123", mock_uow, ctx))
 
         # Should be called with empty environment IDs list
         call_args = mock_gather.call_args

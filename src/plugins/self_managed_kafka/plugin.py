@@ -16,6 +16,7 @@ from plugins.self_managed_kafka.handlers.kafka import SelfManagedKafkaHandler
 if TYPE_CHECKING:
     from core.metrics.protocol import MetricsSource
     from core.plugin.protocols import CostInput, ServiceHandler
+    from plugins.self_managed_kafka.shared_context import SMKSharedContext
 
 LOGGER = logging.getLogger(__name__)
 
@@ -122,6 +123,28 @@ class SelfManagedKafkaPlugin:
     def get_metrics_source(self) -> MetricsSource | None:
         """Return metrics source (always set after initialize)."""
         return self._metrics_source
+
+    def build_shared_context(self, tenant_id: str) -> SMKSharedContext:
+        """Build the cluster resource once for the gather cycle.
+
+        gather_cluster_resource() is a pure config-to-Resource constructor —
+        no API call is made. This follows the same two-phase pattern as the
+        CCloud plugin for structural consistency.
+        """
+        if self._config is None:
+            raise RuntimeError("Plugin not initialized. Call initialize() first.")
+
+        from plugins.self_managed_kafka.gathering.prometheus import gather_cluster_resource
+        from plugins.self_managed_kafka.shared_context import SMKSharedContext
+
+        cluster = gather_cluster_resource(
+            ecosystem=self.ecosystem,
+            tenant_id=tenant_id,
+            cluster_id=self._config.cluster_id,
+            broker_count=self._config.broker_count,
+            region=self._config.region,
+        )
+        return SMKSharedContext(cluster_resource=cluster)
 
     def close(self) -> None:
         """Clean up resources (AdminClient connection, metrics source)."""

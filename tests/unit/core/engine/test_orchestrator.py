@@ -135,7 +135,7 @@ class MockServiceHandler:
     def handles_product_types(self) -> list[str]:
         return self._product_types
 
-    def gather_resources(self, tenant_id: str, uow: Any) -> Iterable[Resource]:
+    def gather_resources(self, tenant_id: str, uow: Any, shared_ctx: object | None = None) -> Iterable[Resource]:
         return self._resources
 
     def gather_identities(self, tenant_id: str, uow: Any) -> Iterable[Identity]:
@@ -194,6 +194,15 @@ class MockPlugin:
 
     def get_cost_input(self) -> MockCostInput:
         return self._cost_input
+
+    def get_metrics_source(self) -> None:
+        return None
+
+    def build_shared_context(self, tenant_id: str) -> None:
+        return None
+
+    def close(self) -> None:
+        pass
 
 
 class MockUnitOfWork:
@@ -540,7 +549,9 @@ class TestGatherPhase:
         """If a handler raises during gather, deletion detection is skipped."""
 
         class FailingHandler(MockServiceHandler):
-            def gather_resources(self, tenant_id: str, uow: Any) -> Iterable[Resource]:
+            def gather_resources(
+                self, tenant_id: str, uow: Any, shared_ctx: object | None = None
+            ) -> Iterable[Resource]:
                 raise RuntimeError("API down")
 
         handler = FailingHandler(resources=[], identities=[])
@@ -1303,7 +1314,9 @@ class TestGap006ErrorPropagation:
 
     def test_partial_handler_failure_surfaces_in_errors(self) -> None:
         class FailingHandler(MockServiceHandler):
-            def gather_resources(self, tenant_id: str, uow: Any) -> Iterable[Resource]:
+            def gather_resources(
+                self, tenant_id: str, uow: Any, shared_ctx: object | None = None
+            ) -> Iterable[Resource]:
                 raise RuntimeError("API timeout")
 
         handler = FailingHandler(resources=[], identities=[])
@@ -1315,11 +1328,15 @@ class TestGap006ErrorPropagation:
 
     def test_multiple_handler_failures_all_surfaced(self) -> None:
         class Failing1(MockServiceHandler):
-            def gather_resources(self, tenant_id: str, uow: Any) -> Iterable[Resource]:
+            def gather_resources(
+                self, tenant_id: str, uow: Any, shared_ctx: object | None = None
+            ) -> Iterable[Resource]:
                 raise RuntimeError("handler1 down")
 
         class Failing2(MockServiceHandler):
-            def gather_resources(self, tenant_id: str, uow: Any) -> Iterable[Resource]:
+            def gather_resources(
+                self, tenant_id: str, uow: Any, shared_ctx: object | None = None
+            ) -> Iterable[Resource]:
                 raise RuntimeError("handler2 down")
 
         h1 = Failing1(service_type="svc1", product_types=["P1"])
@@ -1366,7 +1383,9 @@ class TestGap001ResourcesGatheredPerDate:
         """If a handler fails, resources_gathered stays False for all dates."""
 
         class FailingHandler(MockServiceHandler):
-            def gather_resources(self, tenant_id: str, uow: Any) -> Iterable[Resource]:
+            def gather_resources(
+                self, tenant_id: str, uow: Any, shared_ctx: object | None = None
+            ) -> Iterable[Resource]:
                 raise RuntimeError("API down")
 
         handler = FailingHandler(resources=[], identities=[])
@@ -1452,9 +1471,11 @@ class TestOrchestratorInvariants:
                 return super().gather(tenant_id, start, end, uow)
 
         class TrackedHandler(MockServiceHandler):
-            def gather_resources(self, tenant_id: str, uow: Any) -> Iterable[Resource]:
+            def gather_resources(
+                self, tenant_id: str, uow: Any, shared_ctx: object | None = None
+            ) -> Iterable[Resource]:
                 call_log.append("resource_gather")
-                return super().gather_resources(tenant_id, uow)
+                return super().gather_resources(tenant_id, uow, shared_ctx)
 
         ts = NOW - timedelta(days=10)
         line = _make_billing_line(timestamp=ts)
@@ -1477,9 +1498,11 @@ class TestOrchestratorInvariants:
         allocation_called = [False]
 
         class TrackedHandler(MockServiceHandler):
-            def gather_resources(self, tenant_id: str, uow: Any) -> Iterable[Resource]:
+            def gather_resources(
+                self, tenant_id: str, uow: Any, shared_ctx: object | None = None
+            ) -> Iterable[Resource]:
                 call_log.append("gather")
-                return super().gather_resources(tenant_id, uow)
+                return super().gather_resources(tenant_id, uow, shared_ctx)
 
         def tracking_allocator(ctx: AllocationContext) -> AllocationResult:
             call_log.append("allocate")
@@ -1569,7 +1592,9 @@ class TestRefreshThrottle:
         gather_calls: list[str] = []
 
         class TrackingHandler(MockServiceHandler):
-            def gather_resources(self, tenant_id: str, uow: Any) -> Iterable[Resource]:
+            def gather_resources(
+                self, tenant_id: str, uow: Any, shared_ctx: object | None = None
+            ) -> Iterable[Resource]:
                 gather_calls.append("gather_resources")
                 return self._resources
 
@@ -1620,7 +1645,9 @@ class TestRefreshThrottle:
         gather_calls: list[str] = []
 
         class TrackingHandler(MockServiceHandler):
-            def gather_resources(self, tenant_id: str, uow: Any) -> Iterable[Resource]:
+            def gather_resources(
+                self, tenant_id: str, uow: Any, shared_ctx: object | None = None
+            ) -> Iterable[Resource]:
                 gather_calls.append("gather_resources")
                 return self._resources
 
@@ -1666,7 +1693,9 @@ class TestRefreshThrottle:
         gather_calls: list[str] = []
 
         class TrackingHandler(MockServiceHandler):
-            def gather_resources(self, tenant_id: str, uow: Any) -> Iterable[Resource]:
+            def gather_resources(
+                self, tenant_id: str, uow: Any, shared_ctx: object | None = None
+            ) -> Iterable[Resource]:
                 gather_calls.append("gather_resources")
                 return self._resources
 

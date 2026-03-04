@@ -342,7 +342,7 @@ class MockServiceHandler:
     def handles_product_types(self) -> list[str]:
         return self._product_types
 
-    def gather_resources(self, tenant_id: str, uow: Any) -> Iterable[Resource]:
+    def gather_resources(self, tenant_id: str, uow: Any, shared_ctx: object | None = None) -> Iterable[Resource]:
         return self._resources
 
     def gather_identities(self, tenant_id: str, uow: Any) -> Iterable[Identity]:
@@ -405,6 +405,15 @@ class MockPlugin:
 
     def get_cost_input(self) -> MockCostInput:
         return self._cost_input
+
+    def get_metrics_source(self) -> None:
+        return None
+
+    def build_shared_context(self, tenant_id: str) -> None:
+        return None
+
+    def close(self) -> None:
+        pass
 
 
 def _make_gather_phase(
@@ -476,7 +485,9 @@ class TestGatherPhaseHandlerException:
         from core.plugin.registry import EcosystemBundle
 
         class FailingHandler(MockServiceHandler):
-            def gather_resources(self, tenant_id: str, uow: Any) -> Iterable[Resource]:
+            def gather_resources(
+                self, tenant_id: str, uow: Any, shared_ctx: object | None = None
+            ) -> Iterable[Resource]:
                 raise RuntimeError("API unavailable")
 
         failing_handler = FailingHandler(service_type="kafka", resources=[], identities=[])
@@ -507,7 +518,9 @@ class TestGatherPhaseHandlerException:
         from core.plugin.registry import EcosystemBundle
 
         class FailingHandler(MockServiceHandler):
-            def gather_resources(self, tenant_id: str, uow: Any) -> Iterable[Resource]:
+            def gather_resources(
+                self, tenant_id: str, uow: Any, shared_ctx: object | None = None
+            ) -> Iterable[Resource]:
                 raise RuntimeError("API unavailable")
 
         billing_ts = NOW - timedelta(days=10)

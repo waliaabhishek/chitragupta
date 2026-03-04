@@ -189,8 +189,9 @@ class TestFlinkHandlerGatherResources:
         assert result == []
 
     def test_calls_gather_functions_with_env_ids(self, mock_uow: MagicMock) -> None:
-        """gather_resources calls gather_flink_compute_pools with environment IDs."""
+        """gather_resources calls gather_flink_compute_pools with env_ids from shared_ctx."""
         from plugins.confluent_cloud.handlers.flink import FlinkHandler
+        from plugins.confluent_cloud.shared_context import CCloudSharedContext
 
         mock_conn = MagicMock()
 
@@ -202,7 +203,10 @@ class TestFlinkHandlerGatherResources:
             status=ResourceStatus.ACTIVE,
             metadata={},
         )
-        mock_uow.resources.find_by_period.return_value = ([environment], 1)
+        ctx = CCloudSharedContext(
+            environment_resources=(environment,),
+            kafka_cluster_resources=(),
+        )
 
         pool_resource = Resource(
             ecosystem="confluent_cloud",
@@ -224,7 +228,7 @@ class TestFlinkHandlerGatherResources:
             ) as mock_gather_stmts,
         ):
             handler = FlinkHandler(connection=mock_conn, config=None, ecosystem="confluent_cloud")
-            result = list(handler.gather_resources("org-123", mock_uow))
+            result = list(handler.gather_resources("org-123", mock_uow, ctx))
 
         mock_gather_pools.assert_called_once()
         call_args = mock_gather_pools.call_args

@@ -102,24 +102,18 @@ class SelfManagedKafkaHandler:
     def handles_product_types(self) -> Sequence[str]:
         return _SELF_KAFKA_PRODUCT_TYPES
 
-    def gather_resources(self, tenant_id: str, uow: UnitOfWork) -> Iterable[Resource]:
-        """Gather cluster, brokers, and topics based on resource_source config.
+    def gather_resources(self, tenant_id: str, uow: UnitOfWork, shared_ctx: object | None = None) -> Iterable[Resource]:
+        """Gather cluster, brokers, and topics.
 
-        Cluster resource is always created first, since all billing lines reference
-        resource_id = cluster_id.
+        Cluster resource comes from shared_ctx (pre-built in Phase 1).
+        Broker and topic gathering proceeds as before via admin_api or Prometheus.
         """
-        from plugins.self_managed_kafka.gathering.prometheus import (
-            gather_cluster_resource,
-        )
+        from plugins.self_managed_kafka.shared_context import SMKSharedContext
 
-        cluster = gather_cluster_resource(
-            ecosystem=self._ecosystem,
-            tenant_id=tenant_id,
-            cluster_id=self._config.cluster_id,
-            broker_count=self._config.broker_count,
-            region=self._config.region,
-        )
-        yield cluster
+        if not isinstance(shared_ctx, SMKSharedContext):
+            return
+
+        yield shared_ctx.cluster_resource
 
         if self._config.resource_source.source == "admin_api":
             yield from self._gather_resources_from_admin(tenant_id)

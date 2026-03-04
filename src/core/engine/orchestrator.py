@@ -128,19 +128,64 @@ class GatherPhase:
         tenant_id: str,
         tenant_config: TenantConfig,
         bundle: EcosystemBundle,
-        min_refresh_gap: timedelta,
+        min_refresh_gap: timedelta = timedelta(seconds=0),
+        uow_storage: Any = None,
+        gather_failure_threshold: int = 3,
     ) -> None:
         self._ecosystem = ecosystem
         self._tenant_id = tenant_id
         self._tenant_config = tenant_config
         self._bundle = bundle
         self._min_refresh_gap = min_refresh_gap
+        self._uow_storage = uow_storage
+        self._gather_failure_threshold = gather_failure_threshold
         # In-memory state — must survive across run() calls on same instance
         self._last_resource_gather_at: datetime | None = None
         self._zero_gather_counters: dict[str, int] = {"resources": 0, "identities": 0}
 
-    def run(self, uow: UnitOfWork) -> GatherResult:
-        """Execute full gather cycle. Caller owns UoW lifecycle (open + commit)."""
+    def run(self, uow: UnitOfWork | None = None) -> GatherResult:
+        """Execute full gather cycle.
+
+        When called without uow (new path): runs Phase 1 (build_shared_context) +
+        Phase 2 (handler loop with shared_ctx). Phase 1 failure is fatal.
+        When called with uow (existing path): full gather cycle with deletion
+        detection and billing. Caller owns UoW lifecycle (open + commit).
+        """
+        if uow is None:
+            return self._run_gather_only()
+        return self._run_full(uow)
+
+    def _run_gather_only(self) -> GatherResult:
+        """Phase 1 + Phase 2 gather only. Used when run() called without uow.
+
+        Phase 1 failure (build_shared_context raising) is fatal to the entire
+        gather cycle — if environments/clusters cannot be fetched, all downstream
+        handlers produce empty results anyway. The exception propagates to caller.
+        """
+        gather_errors: list[str] = []
+
+        # Phase 1: Build shared gather context (plugin-level, once per cycle).
+        # Fatal if raises — propagates to caller.
+        shared_ctx = self._bundle.plugin.build_shared_context(self._tenant_id)
+
+        # Phase 2: Gather resources and identities from each handler.
+        if self._uow_storage is not None:
+            with self._uow_storage as uow:
+                for handler in self._bundle.handlers.values():
+                    try:
+                        self._gather_resources_and_identities(handler, uow, shared_ctx)
+                    except Exception as exc:
+                        logger.error(
+                            "Handler %s gather failed — skipping deletion detection: %s",
+                            handler.service_type,
+                            exc,
+                        )
+                        gather_errors.append(f"Handler {handler.service_type} gather failed: {exc}")
+
+        return GatherResult(dates_gathered=0, errors=gather_errors)
+
+    def _run_full(self, uow: UnitOfWork) -> GatherResult:
+        """Full gather cycle with deletion detection and billing. Caller owns UoW."""
         now = datetime.now(UTC)
 
         if not self._should_refresh(now):
@@ -155,9 +200,12 @@ class GatherPhase:
         gather_complete = True
         gather_errors: list[str] = []
 
+        # Phase 1: Build shared context once for all handlers.
+        shared_ctx = self._bundle.plugin.build_shared_context(self._tenant_id)
+
         for handler in self._bundle.handlers.values():
             try:
-                r_ids, i_ids = self._gather_resources_and_identities(handler, uow)
+                r_ids, i_ids = self._gather_resources_and_identities(handler, uow, shared_ctx)
                 all_gathered_resource_ids.update(r_ids)
                 all_gathered_identity_ids.update(i_ids)
             except Exception as exc:
@@ -186,10 +234,12 @@ class GatherPhase:
     def _should_refresh(self, now: datetime) -> bool:
         return self._last_resource_gather_at is None or (now - self._last_resource_gather_at) >= self._min_refresh_gap
 
-    def _gather_resources_and_identities(self, handler: ServiceHandler, uow: UnitOfWork) -> tuple[set[str], set[str]]:
+    def _gather_resources_and_identities(
+        self, handler: ServiceHandler, uow: UnitOfWork, shared_ctx: object | None = None
+    ) -> tuple[set[str], set[str]]:
         gathered_resource_ids: set[str] = set()
         gathered_identity_ids: set[str] = set()
-        for resource in handler.gather_resources(self._tenant_id, uow):
+        for resource in handler.gather_resources(self._tenant_id, uow, shared_ctx):
             if resource.created_at is not None:
                 resource = replace(resource, created_at=_ensure_utc(resource.created_at))
             uow.resources.upsert(resource)
