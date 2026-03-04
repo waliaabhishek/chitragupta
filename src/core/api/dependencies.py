@@ -2,12 +2,16 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from datetime import UTC, date, datetime
-from typing import Annotated, cast
+from typing import TYPE_CHECKING, Annotated, cast
 
 from fastapi import Depends, HTTPException, Path, Request
 
 from core.config.models import AppSettings, TenantConfig  # noqa: TC001  # FastAPI evaluates annotations at runtime
 from core.storage.interface import StorageBackend, UnitOfWork  # noqa: TC001
+from core.storage.registry import create_storage_backend
+
+if TYPE_CHECKING:
+    from core.config.models import StorageConfig
 
 
 def utc_today() -> date:
@@ -31,22 +35,11 @@ def get_tenant_config(
 
 
 def get_or_create_backend(
-    backends: dict[str, StorageBackend], tenant_name: str, connection_string: str
+    backends: dict[str, StorageBackend], tenant_name: str, storage_config: StorageConfig
 ) -> StorageBackend:
-    """Get cached backend or create and cache a new one.
-
-    Args:
-        backends: The backends cache dict (typically app.state.backends).
-        tenant_name: Key for caching.
-        connection_string: Database connection string for creating new backend.
-
-    Returns:
-        The cached or newly created StorageBackend.
-    """
+    """Get cached backend or create and cache a new one."""
     if tenant_name not in backends:
-        from core.storage.backends.sqlmodel.unit_of_work import SQLModelBackend
-
-        backends[tenant_name] = SQLModelBackend(connection_string, use_migrations=False)
+        backends[tenant_name] = create_storage_backend(storage_config, use_migrations=False)
     return backends[tenant_name]
 
 
@@ -60,7 +53,7 @@ def get_storage_backend(
     if not hasattr(request.app.state, "backends"):
         request.app.state.backends = {}
 
-    return get_or_create_backend(request.app.state.backends, tenant_name, tenant_config.storage.connection_string)
+    return get_or_create_backend(request.app.state.backends, tenant_name, tenant_config.storage)
 
 
 def get_unit_of_work(

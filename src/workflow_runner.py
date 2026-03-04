@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 from core.engine.orchestrator import ChargebackOrchestrator, GatherFailureThresholdError, PipelineRunResult
 
 if TYPE_CHECKING:
-    from core.config.models import AppSettings, StorageConfig, TenantConfig
+    from core.config.models import AppSettings, TenantConfig
     from core.plugin.protocols import EcosystemPlugin
     from core.plugin.registry import PluginRegistry
     from core.storage.interface import StorageBackend
@@ -47,18 +47,10 @@ def _config_hash(config: TenantConfig) -> str:
     """Stable hash of tenant config for change detection."""
     try:
         raw = json.dumps(config.model_dump(), sort_keys=True, default=str)
-    except Exception:
+    except (TypeError, ValueError, AttributeError):
         logger.debug("Failed to JSON-serialize config for hashing; falling back to repr()", exc_info=True)
         raw = repr(config)
     return hashlib.sha256(raw.encode()).hexdigest()[:16]
-
-
-def _create_storage_backend(config: StorageConfig) -> StorageBackend:
-    if config.backend == "sqlmodel":
-        from core.storage.backends.sqlmodel.unit_of_work import SQLModelBackend
-
-        return SQLModelBackend(config.connection_string)
-    raise ValueError(f"Unknown storage backend: {config.backend!r}")
 
 
 class WorkflowRunner:
@@ -119,7 +111,9 @@ class WorkflowRunner:
 
         plugin = self._plugin_registry.create(config.ecosystem)
         plugin.initialize(config.plugin_settings.model_dump())
-        storage = _create_storage_backend(config.storage)
+        from core.storage.registry import create_storage_backend
+
+        storage = create_storage_backend(config.storage)
         metrics = plugin.get_metrics_source()
         orchestrator = ChargebackOrchestrator(tenant_name, config, plugin, storage, metrics)
 
@@ -139,8 +133,10 @@ class WorkflowRunner:
         """Create tables for all tenant storage backends. Call once at startup."""
         if self._bootstrapped:
             return
+        from core.storage.registry import create_storage_backend
+
         for config in self._settings.tenants.values():
-            storage = _create_storage_backend(config.storage)
+            storage = create_storage_backend(config.storage)
             try:
                 storage.create_tables()
             finally:
@@ -323,7 +319,9 @@ class WorkflowRunner:
                 continue  # 0 = disabled
 
             cutoff = datetime.now(UTC) - timedelta(days=config.retention_days)
-            storage = _create_storage_backend(config.storage)
+            from core.storage.registry import create_storage_backend
+
+            storage = create_storage_backend(config.storage)
             try:
                 with storage.create_unit_of_work() as uow:
                     deleted_billing = uow.billing.delete_before(config.ecosystem, config.tenant_id, cutoff)

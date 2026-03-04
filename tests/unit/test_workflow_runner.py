@@ -12,20 +12,7 @@ import pytest
 
 from core.config.models import AppSettings, FeaturesConfig, StorageConfig, TenantConfig
 from core.engine.orchestrator import GatherFailureThresholdError, PipelineRunResult
-from workflow_runner import WorkflowRunner, TenantRuntime, _create_storage_backend
-
-
-class TestCreateStorageBackend:
-    def test_sqlmodel_backend(self) -> None:
-        config = StorageConfig(backend="sqlmodel", connection_string="sqlite:///:memory:")
-        backend = _create_storage_backend(config)
-        assert backend is not None
-        backend.dispose()
-
-    def test_unknown_backend_raises(self) -> None:
-        config = StorageConfig(backend="redis", connection_string="redis://localhost")
-        with pytest.raises(ValueError, match="Unknown storage backend"):
-            _create_storage_backend(config)
+from workflow_runner import WorkflowRunner, TenantRuntime
 
 
 def _make_settings(
@@ -56,7 +43,7 @@ def _make_tenant(**overrides: Any) -> TenantConfig:
 class TestBootstrapStorage:
     """GAP-003: create_tables called once at startup, not per-tenant per-cycle."""
 
-    @patch("workflow_runner._create_storage_backend")
+    @patch("core.storage.registry.create_storage_backend")
     def test_bootstrap_creates_tables_for_all_tenants(self, mock_storage: MagicMock) -> None:
         backends: list[MagicMock] = []
 
@@ -81,7 +68,7 @@ class TestBootstrapStorage:
             b.create_tables.assert_called_once()
             b.dispose.assert_called_once()
 
-    @patch("workflow_runner._create_storage_backend")
+    @patch("core.storage.registry.create_storage_backend")
     def test_bootstrap_only_runs_once(self, mock_storage: MagicMock) -> None:
         mock_storage.return_value = MagicMock()
         settings = _make_settings(tenants={"t1": _make_tenant(tenant_id="tid1")})
@@ -94,7 +81,7 @@ class TestBootstrapStorage:
         assert mock_storage.call_count == 1
 
     @patch("workflow_runner.ChargebackOrchestrator")
-    @patch("workflow_runner._create_storage_backend")
+    @patch("core.storage.registry.create_storage_backend")
     def test_run_once_auto_bootstraps(self, mock_storage: MagicMock, mock_orch_cls: MagicMock) -> None:
         """run_once calls bootstrap_storage on first call if not already done."""
         mock_backend = MagicMock()
@@ -124,7 +111,7 @@ class TestBootstrapStorage:
         assert mock_backend.dispose.call_count == 1  # only from bootstrap
 
     @patch("workflow_runner.ChargebackOrchestrator")
-    @patch("workflow_runner._create_storage_backend")
+    @patch("core.storage.registry.create_storage_backend")
     def test_run_tenant_does_not_call_create_tables(self, mock_storage: MagicMock, mock_orch_cls: MagicMock) -> None:
         """After bootstrap, _run_tenant does not call create_tables."""
         mock_backend = MagicMock()
@@ -162,7 +149,7 @@ class TestWorkflowRunnerRunOnce:
         assert runner.run_once() == {}
 
     @patch("workflow_runner.ChargebackOrchestrator")
-    @patch("workflow_runner._create_storage_backend")
+    @patch("core.storage.registry.create_storage_backend")
     def test_runs_tenant(
         self,
         mock_storage: MagicMock,
@@ -193,7 +180,7 @@ class TestWorkflowRunnerRunOnce:
         assert results["t1"].dates_gathered == 3
 
     @patch("workflow_runner.ChargebackOrchestrator")
-    @patch("workflow_runner._create_storage_backend")
+    @patch("core.storage.registry.create_storage_backend")
     def test_error_isolation(
         self,
         mock_storage: MagicMock,
@@ -257,7 +244,7 @@ class TestGap010BoundedConcurrency:
             FeaturesConfig(max_parallel_tenants=65)
 
     @patch("workflow_runner.ThreadPoolExecutor")
-    @patch("workflow_runner._create_storage_backend")
+    @patch("core.storage.registry.create_storage_backend")
     def test_pool_size_capped(
         self,
         mock_storage: MagicMock,
@@ -293,7 +280,7 @@ class TestGap002WaitTimeout:
     """GAP-002: global timeout via wait() deadline."""
 
     @patch("workflow_runner.ChargebackOrchestrator")
-    @patch("workflow_runner._create_storage_backend")
+    @patch("core.storage.registry.create_storage_backend")
     def test_timeout_zero_means_no_timeout(
         self,
         mock_storage: MagicMock,
@@ -328,7 +315,7 @@ class TestGap002WaitTimeout:
             assert kwargs.get("timeout") is None
 
     @patch("workflow_runner.ChargebackOrchestrator")
-    @patch("workflow_runner._create_storage_backend")
+    @patch("core.storage.registry.create_storage_backend")
     def test_not_done_futures_marked_timed_out(
         self,
         mock_storage: MagicMock,
@@ -425,7 +412,7 @@ class TestGap015017PluginMetrics:
     """GAP-015+017: plugin owns metrics source."""
 
     @patch("workflow_runner.ChargebackOrchestrator")
-    @patch("workflow_runner._create_storage_backend")
+    @patch("core.storage.registry.create_storage_backend")
     def test_plugin_metrics_passed_to_orchestrator(
         self,
         mock_storage: MagicMock,
@@ -462,7 +449,7 @@ class TestTd020PluginInitialization:
     """TD-020 regression: plugin.initialize() called before any method calls."""
 
     @patch("workflow_runner.ChargebackOrchestrator")
-    @patch("workflow_runner._create_storage_backend")
+    @patch("core.storage.registry.create_storage_backend")
     def test_plugin_initialized_before_get_metrics_source(
         self,
         mock_storage: MagicMock,
@@ -527,7 +514,7 @@ class TestWorkflowRunnerRunLoop:
         assert shutdown.is_set()
 
     @patch("workflow_runner.ChargebackOrchestrator")
-    @patch("workflow_runner._create_storage_backend")
+    @patch("core.storage.registry.create_storage_backend")
     def test_run_loop_processes_tenants(
         self,
         mock_storage: MagicMock,
@@ -621,7 +608,7 @@ class TestTd021TenantRuntimeCaching:
     """TD-021: Persistent runtime objects — caching, config change, close()."""
 
     @patch("workflow_runner.ChargebackOrchestrator")
-    @patch("workflow_runner._create_storage_backend")
+    @patch("core.storage.registry.create_storage_backend")
     def test_same_tenant_reuses_runtime(self, mock_storage: MagicMock, mock_orch_cls: MagicMock) -> None:
         """Second run for same tenant uses cached plugin/storage/orchestrator."""
         mock_backend = MagicMock()
@@ -656,7 +643,7 @@ class TestTd021TenantRuntimeCaching:
         assert mock_storage.call_count == 2  # bootstrap (disposed) + runtime (persistent)
 
     @patch("workflow_runner.ChargebackOrchestrator")
-    @patch("workflow_runner._create_storage_backend")
+    @patch("core.storage.registry.create_storage_backend")
     def test_config_change_invalidates_runtime(self, mock_storage: MagicMock, mock_orch_cls: MagicMock) -> None:
         """When tenant config changes, runtime is closed and a new one is created."""
         mock_backend = MagicMock()
@@ -695,7 +682,7 @@ class TestTd021TenantRuntimeCaching:
         assert mock_backend.dispose.call_count >= 1
 
     @patch("workflow_runner.ChargebackOrchestrator")
-    @patch("workflow_runner._create_storage_backend")
+    @patch("core.storage.registry.create_storage_backend")
     def test_close_disposes_all_runtimes(self, mock_storage: MagicMock, mock_orch_cls: MagicMock) -> None:
         """close() disposes storage and closes plugin for every cached runtime."""
         backends: dict[str, MagicMock] = {}
@@ -751,7 +738,7 @@ class TestTd021TenantRuntimeCaching:
             backend.dispose.assert_called_once()
 
     @patch("workflow_runner.ChargebackOrchestrator")
-    @patch("workflow_runner._create_storage_backend")
+    @patch("core.storage.registry.create_storage_backend")
     def test_runtime_last_run_at_updated(self, mock_storage: MagicMock, mock_orch_cls: MagicMock) -> None:
         """last_run_at is updated after each successful orchestrator.run()."""
         mock_backend = MagicMock()
@@ -862,7 +849,7 @@ class TestRunTenant:
             runner.run_tenant("nonexistent")
 
     @patch("workflow_runner.ChargebackOrchestrator")
-    @patch("workflow_runner._create_storage_backend")
+    @patch("core.storage.registry.create_storage_backend")
     def test_run_tenant_auto_bootstraps_if_needed(self, mock_storage: MagicMock, mock_orch_cls: MagicMock) -> None:
         """run_tenant() bootstraps storage for the tenant if not already bootstrapped."""
         mock_backend = MagicMock()
@@ -892,7 +879,7 @@ class TestRunTenant:
         mock_backend.create_tables.assert_called_once()
 
     @patch("workflow_runner.ChargebackOrchestrator")
-    @patch("workflow_runner._create_storage_backend")
+    @patch("core.storage.registry.create_storage_backend")
     def test_run_tenant_delegates_to_run_tenant_method(self, mock_storage: MagicMock, mock_orch_cls: MagicMock) -> None:
         """run_tenant() returns the result from the orchestrator."""
         mock_backend = MagicMock()
@@ -922,7 +909,7 @@ class TestRunTenant:
         assert result.chargeback_rows_written == 20
 
     @patch("workflow_runner.ChargebackOrchestrator")
-    @patch("workflow_runner._create_storage_backend")
+    @patch("core.storage.registry.create_storage_backend")
     def test_run_tenant_skips_bootstrap_if_already_bootstrapped(
         self, mock_storage: MagicMock, mock_orch_cls: MagicMock
     ) -> None:
@@ -958,7 +945,7 @@ class TestRunTenant:
 class TestCleanupRetention:
     """CT-002: _cleanup_retention() tests."""
 
-    @patch("workflow_runner._create_storage_backend")
+    @patch("core.storage.registry.create_storage_backend")
     def test_skips_tenant_with_retention_zero(self, mock_storage: MagicMock) -> None:
         """retention_days <= 0 means disabled; no storage operations.
         Since TenantConfig validates retention_days > 0, we patch the value directly."""
@@ -970,7 +957,7 @@ class TestCleanupRetention:
         runner._cleanup_retention()
         mock_storage.assert_not_called()
 
-    @patch("workflow_runner._create_storage_backend")
+    @patch("core.storage.registry.create_storage_backend")
     def test_calls_delete_before_for_enabled_tenant(self, mock_storage: MagicMock) -> None:
         """retention_days > 0 triggers delete_before on all repos."""
         mock_backend = MagicMock()
@@ -995,7 +982,7 @@ class TestCleanupRetention:
         mock_uow.commit.assert_called_once()
         mock_backend.dispose.assert_called_once()
 
-    @patch("workflow_runner._create_storage_backend")
+    @patch("core.storage.registry.create_storage_backend")
     def test_exception_does_not_propagate(self, mock_storage: MagicMock) -> None:
         """Retention cleanup errors are caught and logged, not re-raised."""
         mock_backend = MagicMock()
@@ -1013,7 +1000,7 @@ class TestGap021RunTenantBootstrapLatch:
     bootstraps ALL tenants, not just the requested one."""
 
     @patch("workflow_runner.ChargebackOrchestrator")
-    @patch("workflow_runner._create_storage_backend")
+    @patch("core.storage.registry.create_storage_backend")
     def test_consecutive_run_tenant_same_tenant_bootstraps_once(
         self, mock_storage: MagicMock, mock_orch_cls: MagicMock
     ) -> None:
@@ -1071,7 +1058,7 @@ class TestGap021RunTenantBootstrapLatch:
         assert create_tables_after_second == 2
 
     @patch("workflow_runner.ChargebackOrchestrator")
-    @patch("workflow_runner._create_storage_backend")
+    @patch("core.storage.registry.create_storage_backend")
     def test_run_tenant_different_tenants_bootstraps_all_once(
         self, mock_storage: MagicMock, mock_orch_cls: MagicMock
     ) -> None:
@@ -1163,7 +1150,7 @@ class TestPerTenantRunGuard:
         assert result.dates_gathered == 0
 
     @patch("workflow_runner.ChargebackOrchestrator")
-    @patch("workflow_runner._create_storage_backend")
+    @patch("core.storage.registry.create_storage_backend")
     def test_run_tenant_guard_clears_on_exception(self, mock_storage: MagicMock, mock_orch_cls: MagicMock) -> None:
         """_running_tenants entry is cleared in the finally block even when orchestrator.run() raises (TASK-005 fix test 6)."""
         mock_storage.return_value = MagicMock()
@@ -1183,7 +1170,7 @@ class TestPerTenantRunGuard:
         assert "tenant-a" not in runner._running_tenants
 
     @patch("workflow_runner.ChargebackOrchestrator")
-    @patch("workflow_runner._create_storage_backend")
+    @patch("core.storage.registry.create_storage_backend")
     def test_run_tenant_guard_different_tenants_do_not_block(
         self, mock_storage: MagicMock, mock_orch_cls: MagicMock
     ) -> None:
@@ -1301,7 +1288,7 @@ class TestGatherFailureThresholdHandling:
 
     # --- Test 1 ---
     @patch("workflow_runner.ChargebackOrchestrator")
-    @patch("workflow_runner._create_storage_backend")
+    @patch("core.storage.registry.create_storage_backend")
     def test_run_once_marks_tenant_failed_on_threshold_breach(
         self,
         mock_storage: MagicMock,
@@ -1325,7 +1312,7 @@ class TestGatherFailureThresholdHandling:
 
     # --- Test 2 ---
     @patch("workflow_runner.ChargebackOrchestrator")
-    @patch("workflow_runner._create_storage_backend")
+    @patch("core.storage.registry.create_storage_backend")
     def test_run_once_skips_failed_tenant_on_subsequent_call(
         self,
         mock_storage: MagicMock,
@@ -1352,7 +1339,7 @@ class TestGatherFailureThresholdHandling:
 
     # --- Test 3 ---
     @patch("workflow_runner.ChargebackOrchestrator")
-    @patch("workflow_runner._create_storage_backend")
+    @patch("core.storage.registry.create_storage_backend")
     def test_run_tenant_marks_failed_on_threshold_breach(
         self,
         mock_storage: MagicMock,
@@ -1374,7 +1361,7 @@ class TestGatherFailureThresholdHandling:
 
     # --- Test 4 ---
     @patch("workflow_runner.ChargebackOrchestrator")
-    @patch("workflow_runner._create_storage_backend")
+    @patch("core.storage.registry.create_storage_backend")
     def test_run_tenant_skips_permanently_failed_tenant(
         self,
         mock_storage: MagicMock,
@@ -1398,7 +1385,7 @@ class TestGatherFailureThresholdHandling:
 
     # --- Test 5 ---
     @patch("workflow_runner.ChargebackOrchestrator")
-    @patch("workflow_runner._create_storage_backend")
+    @patch("core.storage.registry.create_storage_backend")
     def test_non_fatal_error_does_not_mark_tenant_failed(
         self,
         mock_storage: MagicMock,
@@ -1420,7 +1407,7 @@ class TestGatherFailureThresholdHandling:
 
     # --- Test 6 ---
     @patch("workflow_runner.ChargebackOrchestrator")
-    @patch("workflow_runner._create_storage_backend")
+    @patch("core.storage.registry.create_storage_backend")
     def test_get_failed_tenants_returns_thread_safe_copy(
         self,
         mock_storage: MagicMock,
@@ -1457,7 +1444,7 @@ class TestGatherFailureThresholdHandling:
 
     # --- Test 8 (integration) ---
     @patch("workflow_runner.ChargebackOrchestrator")
-    @patch("workflow_runner._create_storage_backend")
+    @patch("core.storage.registry.create_storage_backend")
     def test_integration_both_mode_failed_tenant_persists_across_threads(
         self,
         mock_storage: MagicMock,
@@ -1499,7 +1486,7 @@ class TestGatherFailureThresholdHandling:
 
     # --- Test 9 ---
     @patch("workflow_runner.ChargebackOrchestrator")
-    @patch("workflow_runner._create_storage_backend")
+    @patch("core.storage.registry.create_storage_backend")
     def test_all_tenants_failed_logs_critical_in_run_loop(
         self,
         mock_storage: MagicMock,
