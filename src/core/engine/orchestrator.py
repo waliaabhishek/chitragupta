@@ -79,233 +79,126 @@ class PipelineRunResult:
     fatal: bool = False  # True when tenant is permanently failed
 
 
-class ChargebackOrchestrator:
-    """Runs the gather→calculate pipeline for one tenant."""
+@dataclass
+class GatherResult:
+    """Result from a single GatherPhase.run() call."""
+
+    dates_gathered: int
+    errors: list[str]
+    skipped: bool = False  # True when throttled — no gather performed
+
+
+class RetryChecker(Protocol):
+    """DIP boundary — CalculatePhase depends on this, not on RetryManager directly."""
+
+    def increment_and_check(self, ecosystem: str, tenant_id: str, line: BillingLineItem) -> tuple[int, bool]: ...
+
+
+class RetryManager:
+    """Persists per-line retry counters and determines fallback behavior.
+
+    Opens a separate UoW (committed immediately) so the counter survives
+    the caller's UoW rollback on allocation failure.
+    """
+
+    def __init__(self, storage_backend: StorageBackend, limit: int) -> None:
+        self._storage_backend = storage_backend
+        self._limit = limit
+
+    def increment_and_check(self, ecosystem: str, tenant_id: str, line: BillingLineItem) -> tuple[int, bool]:
+        """Increment attempt counter. Returns (new_attempts, should_fallback_to_unallocated)."""
+        with self._storage_backend.create_unit_of_work() as uow:
+            new_attempts = uow.billing.increment_allocation_attempts(
+                ecosystem,
+                tenant_id,
+                line.timestamp,
+                line.resource_id,
+                line.product_type,
+            )
+            uow.commit()
+        return new_attempts, new_attempts >= self._limit
+
+
+class GatherPhase:
+    """Handles resource/identity/billing gather and deletion detection for one tenant."""
 
     def __init__(
         self,
-        tenant_name: str,
+        ecosystem: str,
+        tenant_id: str,
         tenant_config: TenantConfig,
-        plugin: EcosystemPlugin,
-        storage_backend: StorageBackend,
-        metrics_source: MetricsSource | None = None,
+        bundle: EcosystemBundle,
+        min_refresh_gap: timedelta,
     ) -> None:
-        self._tenant_name = tenant_name
+        self._ecosystem = ecosystem
+        self._tenant_id = tenant_id
         self._tenant_config = tenant_config
-        self._storage_backend = storage_backend
-        self._metrics_source = metrics_source
-        self._ecosystem = tenant_config.ecosystem
-        self._tenant_id = tenant_config.tenant_id
-
-        # Plugin should already be initialized by caller (workflow_runner)
-        self._bundle = EcosystemBundle.build(plugin)
-
-        # Allocator overrides
-        self._allocator_registry = AllocatorRegistry()
-        self._identity_overrides: dict[str, Callable[..., IdentityResolution]] = {}
-        self._allocator_params: dict[str, float | int | str | bool] = {}
-        self._load_overrides(tenant_config.plugin_settings)
-
-        # GAP-04: API object refresh throttle
+        self._bundle = bundle
+        self._min_refresh_gap = min_refresh_gap
+        # In-memory state — must survive across run() calls on same instance
         self._last_resource_gather_at: datetime | None = None
-
-        # Consecutive gather failure tracking
-        self._consecutive_gather_failures: int = 0
-
-        # Zero-gather counters (in-memory, reset on restart)
         self._zero_gather_counters: dict[str, int] = {"resources": 0, "identities": 0}
 
-        # Ensure UNALLOCATED identity exists
-        with self._storage_backend.create_unit_of_work() as uow:
-            self._ensure_unallocated_identity(uow)
-            uow.commit()
-
-    def _load_overrides(self, plugin_settings: PluginSettingsBase) -> None:
-        """Load allocator and identity resolution overrides from plugin_settings."""
-        from core.plugin.protocols import CostAllocator as CostAllocatorProtocol
-
-        self._allocator_params = plugin_settings.allocator_params
-        for product_type, dotted_path in plugin_settings.allocator_overrides.items():
-            fn = load_protocol_callable(dotted_path, CostAllocatorProtocol)
-            self._allocator_registry.register_override(product_type, fn)
-
-        for service_type, dotted_path in plugin_settings.identity_resolution_overrides.items():
-            fn = _load_identity_resolver(dotted_path)
-            self._identity_overrides[service_type] = fn
-
-        self._min_refresh_gap = timedelta(seconds=plugin_settings.min_refresh_gap_seconds)
-        self._metrics_step = timedelta(seconds=plugin_settings.metrics_step_seconds)
-
-    def _ensure_unallocated_identity(self, uow: UnitOfWork) -> None:
-        """Upsert the UNALLOCATED identity for this tenant (idempotent)."""
-        unallocated = Identity(
-            ecosystem=self._ecosystem,
-            tenant_id=self._tenant_id,
-            identity_id="UNALLOCATED",
-            identity_type="system",
-            display_name="Unallocated Costs",
-        )
-        uow.identities.upsert(unallocated)
-
-    def run(self) -> PipelineRunResult:
-        errors: list[str] = []
-        dates_gathered = 0
-        dates_calculated = 0
-        chargeback_rows_written = 0
-
-        # 1. Gather phase
-        gather_failed = False
-        try:
-            with self._storage_backend.create_unit_of_work() as uow:
-                dates_gathered, gather_errors = self._gather(uow)
-                errors.extend(gather_errors)
-                uow.commit()
-            # Reset on success
-            self._consecutive_gather_failures = 0
-        except Exception as exc:
-            logger.error("Gather phase failed for %s: %s", self._tenant_name, exc)
-            errors.append(f"Gather phase failed: {exc}")
-            gather_failed = True
-            # Increment and check threshold
-            self._consecutive_gather_failures += 1
-            threshold = self._tenant_config.gather_failure_threshold
-            if self._consecutive_gather_failures >= threshold:
-                raise GatherFailureThresholdError(
-                    f"Tenant {self._tenant_name} gather failed {self._consecutive_gather_failures} "
-                    f"consecutive times (threshold: {threshold}). Exiting for operator attention."
-                ) from exc
-
-        if gather_failed:
-            return PipelineRunResult(
-                tenant_name=self._tenant_name,
-                tenant_id=self._tenant_id,
-                dates_gathered=dates_gathered,
-                dates_calculated=dates_calculated,
-                chargeback_rows_written=chargeback_rows_written,
-                errors=errors,
-            )
-
-        # 2. Find dates needing calculation
-        max_dates = self._tenant_config.max_dates_per_run
-        with self._storage_backend.create_unit_of_work() as uow:
-            all_pending = uow.pipeline_state.find_needing_calculation(self._ecosystem, self._tenant_id)
-            pending_states = all_pending[:max_dates]
-
-        # 3. Calculate phase — one UoW per date
-        for pipeline_state in pending_states:
-            try:
-                with self._storage_backend.create_unit_of_work() as uow:
-                    rows = self._calculate_date(uow, pipeline_state.tracking_date)
-                    chargeback_rows_written += rows
-                    dates_calculated += 1
-                    uow.commit()
-            except Exception as exc:
-                logger.error(
-                    "Calculate failed for %s date %s: %s",
-                    self._tenant_name,
-                    pipeline_state.tracking_date,
-                    exc,
-                )
-                errors.append(f"Calculate failed for date {pipeline_state.tracking_date}: {exc}")
-
-        return PipelineRunResult(
-            tenant_name=self._tenant_name,
-            tenant_id=self._tenant_id,
-            dates_gathered=dates_gathered,
-            dates_calculated=dates_calculated,
-            chargeback_rows_written=chargeback_rows_written,
-            errors=errors,
-        )
-
-    def _gather(self, uow: UnitOfWork) -> tuple[int, list[str]]:
-        """Run gather phase. Returns (billing_dates_count, errors)."""
+    def run(self, uow: UnitOfWork) -> GatherResult:
+        """Execute full gather cycle. Caller owns UoW lifecycle (open + commit)."""
         now = datetime.now(UTC)
 
-        # GAP-04: throttle resource/billing refresh
-        should_refresh_resources = (
-            self._last_resource_gather_at is None or (now - self._last_resource_gather_at) >= self._min_refresh_gap
-        )
-
-        if not should_refresh_resources:
+        if not self._should_refresh(now):
             logger.debug(
                 "Skipping resource/billing refresh — last gather was %s ago",
                 now - self._last_resource_gather_at,
             )
-            return 0, []
+            return GatherResult(dates_gathered=0, errors=[], skipped=True)
 
         all_gathered_resource_ids: set[str] = set()
         all_gathered_identity_ids: set[str] = set()
         gather_complete = True
         gather_errors: list[str] = []
 
-        # Gather resources and identities from each handler
         for handler in self._bundle.handlers.values():
             try:
                 r_ids, i_ids = self._gather_resources_and_identities(handler, uow)
                 all_gathered_resource_ids.update(r_ids)
                 all_gathered_identity_ids.update(i_ids)
             except Exception as exc:
-                logger.error(
-                    "Handler %s gather failed — skipping deletion detection: %s",
-                    handler.service_type,
-                    exc,
-                )
+                logger.error("Handler %s gather failed: %s", handler.service_type, exc)
                 gather_complete = False
                 gather_errors.append(f"Handler {handler.service_type} gather failed: {exc}")
 
-        # Deletion detection
-        if not gather_complete:
-            logger.warning("Skipping deletion detection — incomplete gather for %s", self._tenant_id)
-        else:
+        if gather_complete:
             self._detect_deletions(uow, now, all_gathered_resource_ids, all_gathered_identity_ids)
+        else:
+            logger.warning("Skipping deletion detection — incomplete gather for %s", self._tenant_id)
 
-        # Billing gather
-        start = now - timedelta(days=self._tenant_config.lookback_days)
-        end = now - timedelta(days=self._tenant_config.cutoff_days)
-        cost_input = self._bundle.plugin.get_cost_input()
-        gathered_billing_dates: set[date_type] = set()
+        gathered_billing_dates = self._gather_billing(uow, now)
 
-        for line in cost_input.gather(self._tenant_id, start, end, uow):
-            line = replace(line, timestamp=_ensure_utc(line.timestamp))
-            uow.billing.upsert(line)
-            gathered_billing_dates.add(line.timestamp.date())
-
-        # GAP-001: mark pipeline state per billing date (not just today)
         for billing_date in gathered_billing_dates:
             _ensure_pipeline_state(uow, self._ecosystem, self._tenant_id, billing_date)
             uow.pipeline_state.mark_billing_gathered(self._ecosystem, self._tenant_id, billing_date)
             if gather_complete:
                 uow.pipeline_state.mark_resources_gathered(self._ecosystem, self._tenant_id, billing_date)
 
-        # Recalculation window
         self._apply_recalculation_window(uow, gathered_billing_dates, now)
-
-        # GAP-04: update last gather timestamp on success
         self._last_resource_gather_at = now
 
-        return len(gathered_billing_dates), gather_errors
+        return GatherResult(dates_gathered=len(gathered_billing_dates), errors=gather_errors)
 
-    def _gather_resources_and_identities(
-        self,
-        handler: ServiceHandler,
-        uow: UnitOfWork,
-    ) -> tuple[set[str], set[str]]:
-        """Gather resources and identities from a handler. Returns (resource_ids, identity_ids)."""
+    def _should_refresh(self, now: datetime) -> bool:
+        return self._last_resource_gather_at is None or (now - self._last_resource_gather_at) >= self._min_refresh_gap
+
+    def _gather_resources_and_identities(self, handler: ServiceHandler, uow: UnitOfWork) -> tuple[set[str], set[str]]:
         gathered_resource_ids: set[str] = set()
         gathered_identity_ids: set[str] = set()
-
         for resource in handler.gather_resources(self._tenant_id, uow):
             if resource.created_at is not None:
                 resource = replace(resource, created_at=_ensure_utc(resource.created_at))
             uow.resources.upsert(resource)
             gathered_resource_ids.add(resource.resource_id)
-
         for identity in handler.gather_identities(self._tenant_id, uow):
             if identity.created_at is not None:
                 identity = replace(identity, created_at=_ensure_utc(identity.created_at))
             uow.identities.upsert(identity)
             gathered_identity_ids.add(identity.identity_id)
-
         return gathered_resource_ids, gathered_identity_ids
 
     def _detect_entity_deletions(
@@ -316,10 +209,9 @@ class ChargebackOrchestrator:
         id_getter: Callable[[Any], str],
         now: datetime,
     ) -> None:
-        """Zero-gather-protected deletion for a single entity type (resources or identities)."""
         threshold = self._tenant_config.zero_gather_deletion_threshold
         active_entities, _ = repo.find_active_at(self._ecosystem, self._tenant_id, now)
-        if len(gathered_ids) == 0 and len(active_entities) > 0:
+        if not gathered_ids and active_entities:
             self._zero_gather_counters[entity_name] += 1
             consecutive = self._zero_gather_counters[entity_name]
             if threshold == -1 or consecutive < threshold:
@@ -355,29 +247,23 @@ class ChargebackOrchestrator:
         gathered_resource_ids: set[str],
         gathered_identity_ids: set[str],
     ) -> None:
-        """Detect resource and identity deletions with zero-gather protection."""
-        self._detect_entity_deletions(
-            repo=uow.resources,
-            gathered_ids=gathered_resource_ids,
-            entity_name="resources",
-            id_getter=lambda r: r.resource_id,
-            now=now,
-        )
-        self._detect_entity_deletions(
-            repo=uow.identities,
-            gathered_ids=gathered_identity_ids,
-            entity_name="identities",
-            id_getter=lambda i: i.identity_id,
-            now=now,
-        )
+        self._detect_entity_deletions(uow.resources, gathered_resource_ids, "resources", lambda r: r.resource_id, now)
+        self._detect_entity_deletions(uow.identities, gathered_identity_ids, "identities", lambda i: i.identity_id, now)
+
+    def _gather_billing(self, uow: UnitOfWork, now: datetime) -> set[date_type]:
+        start = now - timedelta(days=self._tenant_config.lookback_days)
+        end = now - timedelta(days=self._tenant_config.cutoff_days)
+        cost_input = self._bundle.plugin.get_cost_input()
+        gathered: set[date_type] = set()
+        for line in cost_input.gather(self._tenant_id, start, end, uow):
+            line = replace(line, timestamp=_ensure_utc(line.timestamp))
+            uow.billing.upsert(line)
+            gathered.add(line.timestamp.date())
+        return gathered
 
     def _apply_recalculation_window(
-        self,
-        uow: UnitOfWork,
-        gathered_billing_dates: set[date_type],
-        now: datetime,
+        self, uow: UnitOfWork, gathered_billing_dates: set[date_type], now: datetime
     ) -> None:
-        """Reset chargeback_calculated for dates within the recalculation window."""
         recalc_cutoff = (now - timedelta(days=self._tenant_config.cutoff_days)).date()
         for billing_date in gathered_billing_dates:
             if billing_date >= recalc_cutoff:
@@ -387,7 +273,33 @@ class ChargebackOrchestrator:
                     uow.pipeline_state.mark_needs_recalculation(self._ecosystem, self._tenant_id, billing_date)
                     logger.info("Date %s within recalculation window — will recompute", billing_date)
 
-    def _calculate_date(self, uow: UnitOfWork, tracking_date: date_type) -> int:
+
+class CalculatePhase:
+    """Handles metrics prefetch, identity resolution, and per-line allocation for one tenant."""
+
+    def __init__(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        bundle: EcosystemBundle,
+        retry_checker: RetryChecker,
+        metrics_source: MetricsSource | None,
+        allocator_registry: AllocatorRegistry,
+        identity_overrides: dict[str, Callable[..., IdentityResolution]],
+        allocator_params: dict[str, float | int | str | bool],
+        metrics_step: timedelta,
+    ) -> None:
+        self._ecosystem = ecosystem
+        self._tenant_id = tenant_id
+        self._bundle = bundle
+        self._retry_checker = retry_checker
+        self._metrics_source = metrics_source
+        self._allocator_registry = allocator_registry
+        self._identity_overrides = identity_overrides
+        self._allocator_params = allocator_params
+        self._metrics_step = metrics_step
+
+    def run(self, uow: UnitOfWork, tracking_date: date_type) -> int:
         """Calculate chargebacks for a single date. Returns rows written."""
         billing_lines = uow.billing.find_by_date(self._ecosystem, self._tenant_id, tracking_date)
 
@@ -395,14 +307,24 @@ class ChargebackOrchestrator:
             uow.pipeline_state.mark_chargeback_calculated(self._ecosystem, self._tenant_id, tracking_date)
             return 0
 
-        # Pre-computation: billing windows + metrics groups
-        metrics_groups: dict[tuple[str, datetime, datetime], list[MetricQuery]] = {}
-        billing_windows: set[tuple[datetime, datetime]] = set()
+        prefetched_metrics = self._prefetch_metrics(billing_lines)
+        tenant_period_cache = self._build_tenant_period_cache(uow, billing_lines)
+        resource_cache = self._build_resource_cache(uow, billing_lines)
 
+        total_rows = 0
+        for line in billing_lines:
+            rows = self._process_billing_line(line, uow, prefetched_metrics, tenant_period_cache, resource_cache)
+            total_rows += rows
+
+        uow.pipeline_state.mark_chargeback_calculated(self._ecosystem, self._tenant_id, tracking_date)
+        return total_rows
+
+    def _prefetch_metrics(
+        self, billing_lines: list[BillingLineItem]
+    ) -> dict[tuple[str, datetime, datetime], dict[str, list[MetricRow]]]:
+        metrics_groups: dict[tuple[str, datetime, datetime], list[MetricQuery]] = {}
         for line in billing_lines:
             b_start, b_end, _ = billing_window(line)
-            billing_windows.add((b_start, b_end))
-
             handler = self._bundle.product_type_to_handler.get(line.product_type)
             if handler:
                 metrics_needed = handler.get_metrics_for_product_type(line.product_type)
@@ -416,52 +338,46 @@ class ChargebackOrchestrator:
                             seen_keys.add(query.key)
                     metrics_groups[group_key] = existing
 
-        # Pre-fetch metrics
-        prefetched_metrics: dict[tuple[str, datetime, datetime], dict[str, list[MetricRow]]] = {}
+        prefetched: dict[tuple[str, datetime, datetime], dict[str, list[MetricRow]]] = {}
         if self._metrics_source:
             for (resource_id, m_start, m_end), queries in metrics_groups.items():
-                prefetched_metrics[(resource_id, m_start, m_end)] = self._metrics_source.query(
+                prefetched[(resource_id, m_start, m_end)] = self._metrics_source.query(
                     queries,
                     start=m_start,
                     end=m_end,
                     step=self._metrics_step,
                     resource_id_filter=resource_id,
                 )
+        return prefetched
 
-        # Pre-compute tenant_period cache
-        tenant_period_cache: dict[tuple[datetime, datetime], IdentitySet] = {}
-        for b_start, b_end in billing_windows:
+    @staticmethod
+    def _compute_billing_windows(billing_lines: list[BillingLineItem]) -> set[tuple[datetime, datetime]]:
+        windows: set[tuple[datetime, datetime]] = set()
+        for line in billing_lines:
+            b_start, b_end, _ = billing_window(line)
+            windows.add((b_start, b_end))
+        return windows
+
+    def _build_tenant_period_cache(
+        self, uow: UnitOfWork, billing_lines: list[BillingLineItem]
+    ) -> dict[tuple[datetime, datetime], IdentitySet]:
+        cache: dict[tuple[datetime, datetime], IdentitySet] = {}
+        for b_start, b_end in self._compute_billing_windows(billing_lines):
             identities, _ = uow.identities.find_by_period(self._ecosystem, self._tenant_id, b_start, b_end)
             tp = IdentitySet()
             for identity in identities:
                 if identity.identity_type != "system":
                     tp.add(identity)
-            tenant_period_cache[(b_start, b_end)] = tp
+            cache[(b_start, b_end)] = tp
+        return cache
 
-        # Pre-fetch all resources for this date's billing windows into a flat lookup
-        resource_cache: dict[str, Resource] = {}
-        for b_start, b_end in billing_windows:
+    def _build_resource_cache(self, uow: UnitOfWork, billing_lines: list[BillingLineItem]) -> dict[str, Resource]:
+        cache: dict[str, Resource] = {}
+        for b_start, b_end in self._compute_billing_windows(billing_lines):
             resources, _ = uow.resources.find_by_period(self._ecosystem, self._tenant_id, b_start, b_end)
             for r in resources:
-                resource_cache.setdefault(r.resource_id, r)
-
-        # Per-line processing
-        allocation_retry_limit = self._tenant_config.allocation_retry_limit
-        total_rows = 0
-
-        for line in billing_lines:
-            rows = self._process_billing_line(
-                line,
-                uow,
-                prefetched_metrics,
-                tenant_period_cache,
-                allocation_retry_limit,
-                resource_cache=resource_cache,
-            )
-            total_rows += rows
-
-        uow.pipeline_state.mark_chargeback_calculated(self._ecosystem, self._tenant_id, tracking_date)
-        return total_rows
+                cache.setdefault(r.resource_id, r)
+        return cache
 
     def _process_billing_line(
         self,
@@ -469,13 +385,10 @@ class ChargebackOrchestrator:
         uow: UnitOfWork,
         prefetched_metrics: dict[tuple[str, datetime, datetime], dict[str, list[MetricRow]]],
         tenant_period_cache: dict[tuple[datetime, datetime], IdentitySet],
-        allocation_retry_limit: int,
         resource_cache: dict[str, Resource],
     ) -> int:
-        """Process a single billing line. Returns number of chargeback rows written."""
         try:
             b_start, b_end, b_duration = billing_window(line)
-
             handler = self._bundle.product_type_to_handler.get(line.product_type)
             if handler is None:
                 logger.warning(
@@ -483,42 +396,25 @@ class ChargebackOrchestrator:
                     line.product_type,
                 )
                 row = self._allocate_to_unallocated(
-                    line,
-                    reason="UNKNOWN_PRODUCT_TYPE",
-                    detail=AllocationDetail.USING_UNKNOWN_ALLOCATOR,
+                    line, "UNKNOWN_PRODUCT_TYPE", AllocationDetail.USING_UNKNOWN_ALLOCATOR
                 )
                 uow.chargebacks.upsert(row)
                 return 1
 
-            # Metrics lookup
             metrics_data = prefetched_metrics.get((line.resource_id, b_start, b_end))
-
-            # Active fraction
             resource = resource_cache.get(line.resource_id)
             active_fraction = Decimal(1) if resource is None else compute_active_fraction(resource, b_start, b_end)
             split_amount = line.total_cost * active_fraction
 
-            # Identity resolution
             if handler.service_type in self._identity_overrides:
                 identity_resolution = self._identity_overrides[handler.service_type](
-                    self._tenant_id,
-                    line.resource_id,
-                    b_start,
-                    b_duration,
-                    metrics_data,
-                    uow,
+                    self._tenant_id, line.resource_id, b_start, b_duration, metrics_data, uow
                 )
             else:
                 identity_resolution = handler.resolve_identities(
-                    self._tenant_id,
-                    line.resource_id,
-                    b_start,
-                    b_duration,
-                    metrics_data,
-                    uow,
+                    self._tenant_id, line.resource_id, b_start, b_duration, metrics_data, uow
                 )
 
-            # Warn if handler populated tenant_period
             if identity_resolution.tenant_period and len(identity_resolution.tenant_period) > 0:
                 logger.warning(
                     "Handler %s returned non-empty tenant_period (%d identities) — "
@@ -527,7 +423,6 @@ class ChargebackOrchestrator:
                     len(identity_resolution.tenant_period),
                 )
 
-            # Inject orchestrator-managed tenant_period
             identity_resolution = IdentityResolution(
                 resource_active=identity_resolution.resource_active,
                 metrics_derived=identity_resolution.metrics_derived,
@@ -535,9 +430,7 @@ class ChargebackOrchestrator:
                 context=identity_resolution.context,
             )
 
-            # Allocator dispatch
             allocator = self._resolve_allocator(line.product_type, handler)
-
             ctx = AllocationContext(
                 timeslice=b_start,
                 billing_line=line,
@@ -546,7 +439,6 @@ class ChargebackOrchestrator:
                 metrics_data=metrics_data,
                 params=self._allocator_params,
             )
-
             result = allocator(ctx)
 
             rows_written = 0
@@ -556,28 +448,20 @@ class ChargebackOrchestrator:
             return rows_written
 
         except Exception as exc:
-            # Persist attempt increment in a separate transaction so it survives rollback
             try:
-                with self._storage_backend.create_unit_of_work() as retry_uow:
-                    new_attempts = retry_uow.billing.increment_allocation_attempts(
-                        self._ecosystem,
-                        self._tenant_id,
-                        line.timestamp,
-                        line.resource_id,
-                        line.product_type,
-                    )
-                    retry_uow.commit()
+                new_attempts, should_fallback = self._retry_checker.increment_and_check(
+                    self._ecosystem, self._tenant_id, line
+                )
             except Exception as retry_exc:
                 logger.warning("Failed to persist retry counter: %s", retry_exc)
-                raise exc from None  # re-raise original allocator exception; counter persistence is best-effort
+                raise exc from None
 
-            if new_attempts < allocation_retry_limit:
+            if not should_fallback:
                 logger.error(
-                    "Billing line %s/%s failed (attempt %d/%d): %s — failing date",
+                    "Billing line %s/%s failed (attempt %d): %s — failing date",
                     line.resource_id,
                     line.product_type,
                     new_attempts,
-                    allocation_retry_limit,
                     exc,
                 )
                 raise
@@ -590,31 +474,18 @@ class ChargebackOrchestrator:
                 exc,
             )
             row = self._allocate_to_unallocated(
-                line,
-                reason="ALLOCATION_FAILED",
-                detail=f"Failed after {new_attempts} attempts: {exc}",
+                line, "ALLOCATION_FAILED", f"Failed after {new_attempts} attempts: {exc}"
             )
             uow.chargebacks.upsert(row)
             return 1
 
-    def _resolve_allocator(
-        self,
-        product_type: str,
-        handler: ServiceHandler,
-    ) -> CostAllocator:
-        """Dispatch: override registry first, then handler."""
+    def _resolve_allocator(self, product_type: str, handler: ServiceHandler) -> CostAllocator:
         try:
             return self._allocator_registry.get(product_type)
         except KeyError:
             return handler.get_allocator(product_type)
 
-    def _allocate_to_unallocated(
-        self,
-        line: BillingLineItem,
-        reason: str,
-        detail: str | None = None,
-    ) -> ChargebackRow:
-        """Create a ChargebackRow allocating full cost to UNALLOCATED identity."""
+    def _allocate_to_unallocated(self, line: BillingLineItem, reason: str, detail: str | None = None) -> ChargebackRow:
         return ChargebackRow(
             ecosystem=line.ecosystem,
             tenant_id=line.tenant_id,
@@ -628,6 +499,202 @@ class ChargebackOrchestrator:
             allocation_method=reason,
             allocation_detail=detail,
         )
+
+
+class ChargebackOrchestrator:
+    """Thin coordinator: runs gather -> calculate pipeline for one tenant."""
+
+    def __init__(
+        self,
+        tenant_name: str,
+        tenant_config: TenantConfig,
+        plugin: EcosystemPlugin,
+        storage_backend: StorageBackend,
+        metrics_source: MetricsSource | None = None,
+    ) -> None:
+        self._tenant_name = tenant_name
+        self._tenant_id = tenant_config.tenant_id
+        self._ecosystem = tenant_config.ecosystem
+        self._storage_backend = storage_backend
+        self._tenant_config = tenant_config  # kept for backward compatibility
+
+        bundle = EcosystemBundle.build(plugin)
+        allocator_registry, identity_overrides, allocator_params, min_refresh_gap, metrics_step = _load_overrides(
+            tenant_config.plugin_settings
+        )
+
+        self._gather_phase = GatherPhase(
+            ecosystem=self._ecosystem,
+            tenant_id=self._tenant_id,
+            tenant_config=tenant_config,
+            bundle=bundle,
+            min_refresh_gap=min_refresh_gap,
+        )
+        retry_checker = RetryManager(
+            storage_backend=storage_backend,
+            limit=tenant_config.allocation_retry_limit,
+        )
+        self._calculate_phase = CalculatePhase(
+            ecosystem=self._ecosystem,
+            tenant_id=self._tenant_id,
+            bundle=bundle,
+            retry_checker=retry_checker,
+            metrics_source=metrics_source,
+            allocator_registry=allocator_registry,
+            identity_overrides=identity_overrides,
+            allocator_params=allocator_params,
+            metrics_step=metrics_step,
+        )
+        self._consecutive_gather_failures = 0
+        self._gather_failure_threshold = tenant_config.gather_failure_threshold
+        self._max_dates_per_run = tenant_config.max_dates_per_run
+
+        with storage_backend.create_unit_of_work() as uow:
+            _ensure_unallocated_identity(uow, self._ecosystem, self._tenant_id)
+            uow.commit()
+
+    # ------------------------------------------------------------------
+    # Backward-compatibility delegation — pre-existing tests access these
+    # on ChargebackOrchestrator directly; they now live in the phase objects.
+    # ------------------------------------------------------------------
+
+    @property
+    def _bundle(self) -> EcosystemBundle:
+        return self._gather_phase._bundle
+
+    @property
+    def _zero_gather_counters(self) -> dict[str, int]:
+        return self._gather_phase._zero_gather_counters
+
+    @property
+    def _min_refresh_gap(self) -> timedelta:
+        return self._gather_phase._min_refresh_gap
+
+    @property
+    def _metrics_step(self) -> timedelta:
+        return self._calculate_phase._metrics_step
+
+    def _detect_entity_deletions(self, *args: Any, **kwargs: Any) -> None:
+        return self._gather_phase._detect_entity_deletions(*args, **kwargs)
+
+    def _process_billing_line(
+        self,
+        line: BillingLineItem,
+        uow: UnitOfWork,
+        prefetched_metrics: dict[tuple[str, datetime, datetime], dict[str, list[MetricRow]]],
+        tenant_period_cache: dict[tuple[datetime, datetime], IdentitySet],
+        allocation_retry_limit: int,
+        resource_cache: dict[str, Resource],
+    ) -> int:
+        """Backward-compatible wrapper — allocation_retry_limit is ignored (RetryManager owns it)."""
+        return self._calculate_phase._process_billing_line(
+            line, uow, prefetched_metrics, tenant_period_cache, resource_cache
+        )
+
+    def _calculate_date(self, uow: UnitOfWork, tracking_date: date_type) -> int:
+        """Backward-compatible wrapper — delegates to CalculatePhase.run()."""
+        return self._calculate_phase.run(uow, tracking_date)
+
+    def run(self) -> PipelineRunResult:
+        errors: list[str] = []
+        dates_gathered = 0
+        dates_calculated = 0
+        chargeback_rows_written = 0
+
+        try:
+            with self._storage_backend.create_unit_of_work() as uow:
+                gather_result = self._gather_phase.run(uow)
+                dates_gathered = gather_result.dates_gathered
+                errors.extend(gather_result.errors)
+                uow.commit()
+            self._consecutive_gather_failures = 0
+        except Exception as exc:
+            logger.error("Gather phase failed for %s: %s", self._tenant_name, exc)
+            errors.append(f"Gather phase failed: {exc}")
+            self._consecutive_gather_failures += 1
+            if self._consecutive_gather_failures >= self._gather_failure_threshold:
+                raise GatherFailureThresholdError(
+                    f"Tenant {self._tenant_name} gather failed {self._consecutive_gather_failures} "
+                    f"consecutive times (threshold: {self._gather_failure_threshold})."
+                ) from exc
+            return PipelineRunResult(
+                tenant_name=self._tenant_name,
+                tenant_id=self._tenant_id,
+                dates_gathered=0,
+                dates_calculated=0,
+                chargeback_rows_written=0,
+                errors=errors,
+            )
+
+        with self._storage_backend.create_unit_of_work() as uow:
+            all_pending = uow.pipeline_state.find_needing_calculation(self._ecosystem, self._tenant_id)
+            pending_states = all_pending[: self._max_dates_per_run]
+
+        for pipeline_state in pending_states:
+            try:
+                with self._storage_backend.create_unit_of_work() as uow:
+                    rows = self._calculate_phase.run(uow, pipeline_state.tracking_date)
+                    chargeback_rows_written += rows
+                    dates_calculated += 1
+                    uow.commit()
+            except Exception as exc:
+                logger.error(
+                    "Calculate failed for %s date %s: %s",
+                    self._tenant_name,
+                    pipeline_state.tracking_date,
+                    exc,
+                )
+                errors.append(f"Calculate failed for date {pipeline_state.tracking_date}: {exc}")
+
+        return PipelineRunResult(
+            tenant_name=self._tenant_name,
+            tenant_id=self._tenant_id,
+            dates_gathered=dates_gathered,
+            dates_calculated=dates_calculated,
+            chargeback_rows_written=chargeback_rows_written,
+            errors=errors,
+        )
+
+
+def _load_overrides(
+    plugin_settings: PluginSettingsBase,
+) -> tuple[
+    AllocatorRegistry,
+    dict[str, Callable[..., IdentityResolution]],
+    dict[str, float | int | str | bool],
+    timedelta,
+    timedelta,
+]:
+    """Pure function — extracts and validates overrides from plugin_settings.
+
+    Returns (registry, identity_overrides, allocator_params, min_refresh_gap, metrics_step).
+    """
+    from core.plugin.protocols import CostAllocator as CostAllocatorProtocol
+
+    registry = AllocatorRegistry()
+    for product_type, dotted_path in plugin_settings.allocator_overrides.items():
+        fn = load_protocol_callable(dotted_path, CostAllocatorProtocol)
+        registry.register_override(product_type, fn)
+
+    identity_overrides: dict[str, Callable[..., IdentityResolution]] = {}
+    for service_type, dotted_path in plugin_settings.identity_resolution_overrides.items():
+        identity_overrides[service_type] = _load_identity_resolver(dotted_path)
+
+    min_refresh_gap = timedelta(seconds=plugin_settings.min_refresh_gap_seconds)
+    metrics_step = timedelta(seconds=plugin_settings.metrics_step_seconds)
+    return registry, identity_overrides, plugin_settings.allocator_params, min_refresh_gap, metrics_step
+
+
+def _ensure_unallocated_identity(uow: UnitOfWork, ecosystem: str, tenant_id: str) -> None:
+    """Upsert the UNALLOCATED system identity (idempotent)."""
+    unallocated = Identity(
+        ecosystem=ecosystem,
+        tenant_id=tenant_id,
+        identity_id="UNALLOCATED",
+        identity_type="system",
+        display_name="Unallocated Costs",
+    )
+    uow.identities.upsert(unallocated)
 
 
 def _ensure_pipeline_state(uow: UnitOfWork, ecosystem: str, tenant_id: str, tracking_date: date_type) -> None:
