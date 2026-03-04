@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 from fastapi import FastAPI
 
 from core.api import API_VERSION
+from core.api.exception_handler import global_exception_handler
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -35,6 +36,8 @@ def create_app(settings: AppSettings, workflow_runner: WorkflowRunner | None = N
         version=API_VERSION,
         lifespan=lifespan,
     )
+
+    app.add_exception_handler(Exception, global_exception_handler)
 
     if settings.api.enable_cors:
         from fastapi.middleware.cors import CORSMiddleware
