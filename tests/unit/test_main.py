@@ -379,4 +379,4 @@ class TestCreateRunnerPluginPath:
         main_file = Path(main_module.__file__).resolve()
         expected = main_file.parent.parent / "plugins"
         assert _DEFAULT_PLUGINS_PATH.is_absolute()
-        assert _DEFAULT_PLUGINS_PATH == expected
+        assert expected == _DEFAULT_PLUGINS_PATH

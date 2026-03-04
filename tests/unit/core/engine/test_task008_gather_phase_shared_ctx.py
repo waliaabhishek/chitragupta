@@ -8,9 +8,9 @@ exceptions from build_shared_context (not swallowing them).
 from __future__ import annotations
 
 from collections.abc import Iterable
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -112,7 +112,6 @@ class _FakePlugin:
         return self._handlers
 
     def get_cost_input(self) -> Any:
-        from core.models.billing import BillingLineItem
 
         cost_input = MagicMock()
         cost_input.get_line_items.return_value = iter([])

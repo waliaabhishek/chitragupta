@@ -246,9 +246,9 @@ class TestKafkaHandlerGatherResources:
 
     def test_calls_gather_environments_and_clusters(self, mock_uow: MagicMock) -> None:
         """gather_resources yields environment and cluster resources from shared_ctx."""
+        from core.models import Resource, ResourceStatus
         from plugins.confluent_cloud.handlers.kafka import KafkaHandler
         from plugins.confluent_cloud.shared_context import CCloudSharedContext
-        from core.models import Resource, ResourceStatus
 
         mock_conn = MagicMock()
         env_resource = Resource(

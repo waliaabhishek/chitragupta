@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -53,6 +54,25 @@ class StorageConfig(BaseModel):
     connection_string: str = "sqlite:///data/chargeback.db"
 
 
+class EmitterSpec(BaseModel):
+    """Spec for one emitter entry in YAML config.
+
+    ``type`` is a human-friendly registered name (e.g. ``"csv"``).
+    The registry maps names to factory callables; ``params`` are forwarded to
+    the factory as keyword arguments.
+
+    ``aggregation`` controls row aggregation before emitting:
+    - ``None`` (default) — pass rows as-is, no aggregation
+    - ``"hourly"`` — rows grouped/summed by hour (only valid when chargeback granularity is hourly)
+    - ``"daily"`` — rows grouped/summed by calendar day
+    - ``"monthly"`` — rows grouped/summed by calendar month (queries full month per run)
+    """
+
+    type: str
+    aggregation: Literal["hourly", "daily", "monthly"] | None = None
+    params: dict[str, Any] = Field(default_factory=dict)
+
+
 class PluginSettingsBase(BaseModel):
     """Orchestrator-consumed plugin settings. All plugin configs must extend this."""
 
@@ -69,6 +89,15 @@ class PluginSettingsBase(BaseModel):
             "Prometheus range query step in seconds. Controls billing granularity and Prometheus server load."
             " Default 3600 = 1-hour resolution. Lower values (e.g. 1800) give finer-grained cost data at"
             " higher Prometheus load."
+        ),
+    )
+    emitters: list[EmitterSpec] = Field(default_factory=list)
+    chargeback_granularity: Literal["hourly", "daily", "monthly"] = Field(
+        default="daily",
+        description=(
+            "Granularity of billing data produced by the plugin's CostInput. "
+            "Controls emitter aggregation validation — emitters may not request "
+            "finer granularity than the chargeback data provides."
         ),
     )
 

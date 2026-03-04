@@ -9,8 +9,6 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 
 class TestConfluentCloudPluginBuildSharedContext:
     """build_shared_context() gathers envs + clusters and returns CCloudSharedContext."""

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
+from datetime import date as date_type
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
@@ -17,6 +18,7 @@ if TYPE_CHECKING:
         MetricRow,
         Resource,
     )
+    from core.models.chargeback import ChargebackRow
     from core.storage.interface import UnitOfWork
 
 
@@ -101,3 +103,24 @@ class EcosystemPlugin(Protocol):
     def build_shared_context(self, tenant_id: str) -> object | None: ...
 
     def close(self) -> None: ...
+
+
+@runtime_checkable
+class Emitter(Protocol):
+    """Protocol for output sinks — called after chargeback calculation is committed.
+
+    An emitter is a callable that receives a batch of chargeback rows for one
+    tenant/date and writes them to an external sink (CSV, webhook, etc.).
+
+    Emitters MUST be idempotent — they may be called again if the pipeline re-runs
+    for the same date (recalculation window). Implementations should overwrite/upsert.
+
+    Failures in emit do NOT roll back calculated chargebacks. Emit is best-effort.
+    """
+
+    def __call__(
+        self,
+        tenant_id: str,
+        date: date_type,
+        rows: Sequence[ChargebackRow],
+    ) -> None: ...

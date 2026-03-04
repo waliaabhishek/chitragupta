@@ -100,11 +100,11 @@ class TestSchemaRegistryHandlerGatherResources:
         """gather_resources calls gather_schema_registries with env_ids from shared_ctx."""
         from unittest.mock import patch
 
+        from core.models import Resource, ResourceStatus
         from plugins.confluent_cloud.handlers.schema_registry import (
             SchemaRegistryHandler,
         )
         from plugins.confluent_cloud.shared_context import CCloudSharedContext
-        from core.models import Resource, ResourceStatus
 
         mock_conn = MagicMock()
         env_resource = Resource(

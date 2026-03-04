@@ -6,6 +6,44 @@ from collections.abc import Callable
 from typing import Any
 
 
+def import_attr(dotted_path: str) -> Any:
+    """Import and return a raw attribute from a dotted ``module:attr`` path.
+
+    Warning: ``dotted_path`` must come from trusted configuration only.
+    ``importlib.import_module`` executes arbitrary module-level code on import.
+    Never pass untrusted strings as ``dotted_path``.
+
+    Args:
+        dotted_path: ``"module.path:attribute_name"`` format.
+
+    Raises:
+        ValueError: If *dotted_path* is empty or missing the colon separator.
+        ImportError: If the module cannot be imported.
+        AttributeError: If the attribute is not found in the module.
+    """
+    if not dotted_path:
+        msg = "dotted_path must not be empty"
+        raise ValueError(msg)
+
+    if ":" not in dotted_path:
+        msg = f"Expected 'module:attribute' format, got {dotted_path!r}"
+        raise ValueError(msg)
+
+    module_path, attr_name = dotted_path.rsplit(":", 1)
+
+    try:
+        module = importlib.import_module(module_path)
+    except ModuleNotFoundError as exc:
+        msg = f"Could not import module {module_path!r}"
+        raise ImportError(msg) from exc
+
+    try:
+        return getattr(module, attr_name)
+    except AttributeError as exc:
+        msg = f"Module {module_path!r} has no attribute {attr_name!r}"
+        raise AttributeError(msg) from exc
+
+
 def load_protocol_callable(
     dotted_path: str,
     protocol: type,
@@ -30,27 +68,7 @@ def load_protocol_callable(
         TypeError: If the loaded object does not satisfy *protocol* or has
             an incompatible signature.
     """
-    if not dotted_path:
-        msg = "dotted_path must not be empty"
-        raise ValueError(msg)
-
-    if ":" not in dotted_path:
-        msg = f"Expected 'module:attribute' format, got {dotted_path!r}"
-        raise ValueError(msg)
-
-    module_path, attr_name = dotted_path.rsplit(":", 1)
-
-    try:
-        module = importlib.import_module(module_path)
-    except ModuleNotFoundError as exc:
-        msg = f"Could not import module {module_path!r}"
-        raise ImportError(msg) from exc
-
-    try:
-        obj = getattr(module, attr_name)
-    except AttributeError as exc:
-        msg = f"Module {module_path!r} has no attribute {attr_name!r}"
-        raise AttributeError(msg) from exc
+    obj = import_attr(dotted_path)
 
     # Reject bare classes — must be a function or callable instance
     if inspect.isclass(obj):

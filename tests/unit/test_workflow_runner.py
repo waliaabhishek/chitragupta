@@ -12,7 +12,7 @@ import pytest
 
 from core.config.models import AppSettings, FeaturesConfig, StorageConfig, TenantConfig
 from core.engine.orchestrator import GatherFailureThresholdError, PipelineRunResult
-from workflow_runner import WorkflowRunner, TenantRuntime
+from workflow_runner import TenantRuntime, WorkflowRunner
 
 
 def _make_settings(

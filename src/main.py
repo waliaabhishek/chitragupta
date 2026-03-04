@@ -8,9 +8,14 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from core.config.loader import load_config
+from core.emitters.registry import register as register_emitter
 from core.plugin.loader import discover_plugins
 from core.plugin.registry import PluginRegistry
+from emitters.csv_emitter import make_csv_emitter
 from workflow_runner import WorkflowRunner
+
+# Register built-in emitters at application startup
+register_emitter("csv", make_csv_emitter)
 
 if TYPE_CHECKING:
     from core.config.models import AppSettings
