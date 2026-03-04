@@ -4,9 +4,9 @@ import math
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 
-from core.api.dependencies import get_tenant_config, get_unit_of_work, validate_datetime_param
+from core.api.dependencies import get_tenant_config, get_unit_of_work, validate_temporal_params
 from core.api.schemas import IdentityResponse, PaginatedResponse
 from core.config.models import TenantConfig  # noqa: TC001  # FastAPI evaluates annotations at runtime
 from core.storage.interface import UnitOfWork  # noqa: TC001
@@ -25,35 +25,28 @@ async def list_identities(
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=1000)] = 100,
 ) -> PaginatedResponse[IdentityResponse]:
-    active_at = validate_datetime_param(active_at, "active_at")
-    period_start = validate_datetime_param(period_start, "period_start")
-    period_end = validate_datetime_param(period_end, "period_end")
-
-    if active_at and (period_start or period_end):
-        raise HTTPException(400, detail="Cannot combine active_at with period_start/period_end")
-    if period_start and period_end and period_start > period_end:
-        raise HTTPException(400, detail="period_start must be <= period_end")
+    tp = validate_temporal_params(active_at, period_start, period_end)
 
     eco = tenant_config.ecosystem
     tid = tenant_config.tenant_id
     offset = (page - 1) * page_size
 
     with uow:
-        if active_at:
+        if tp.active_at:
             items, total = uow.identities.find_active_at(
                 eco,
                 tid,
-                active_at,
+                tp.active_at,
                 identity_type=identity_type,
                 limit=page_size,
                 offset=offset,
             )
-        elif period_start and period_end:
+        elif tp.period_start and tp.period_end:
             items, total = uow.identities.find_by_period(
                 eco,
                 tid,
-                period_start,
-                period_end,
+                tp.period_start,
+                tp.period_end,
                 identity_type=identity_type,
                 limit=page_size,
                 offset=offset,

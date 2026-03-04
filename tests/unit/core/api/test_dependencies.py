@@ -7,10 +7,12 @@ import pytest
 from fastapi import HTTPException
 
 from core.api.dependencies import (
+    TemporalParams,
     get_settings,
     get_tenant_config,
     utc_today,
     validate_datetime_param,
+    validate_temporal_params,
 )
 from core.config.models import AppSettings, TenantConfig
 
@@ -61,6 +63,75 @@ class TestValidateDatetimeParam:
             validate_datetime_param(dt, "active_at")
         assert exc_info.value.status_code == 400
         assert "active_at" in str(exc_info.value.detail)
+
+
+class TestValidateTemporalParams:
+    def test_validate_temporal_params_all_none(self) -> None:
+        result = validate_temporal_params(None, None, None)
+        assert isinstance(result, TemporalParams)
+        assert result.active_at is None
+        assert result.period_start is None
+        assert result.period_end is None
+
+    def test_validate_temporal_params_active_at_only(self) -> None:
+        active_at = datetime(2026, 1, 15, 12, 0, 0, tzinfo=UTC)
+        result = validate_temporal_params(active_at, None, None)
+        assert isinstance(result, TemporalParams)
+        assert result.active_at is not None
+        assert result.active_at.tzinfo is not None
+        assert result.period_start is None
+        assert result.period_end is None
+
+    def test_validate_temporal_params_period_only(self) -> None:
+        period_start = datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC)
+        period_end = datetime(2026, 1, 31, 23, 59, 59, tzinfo=UTC)
+        result = validate_temporal_params(None, period_start, period_end)
+        assert isinstance(result, TemporalParams)
+        assert result.active_at is None
+        assert result.period_start is not None
+        assert result.period_end is not None
+
+    def test_validate_temporal_params_active_at_with_period_start_raises(self) -> None:
+        active_at = datetime(2026, 1, 15, 12, 0, 0, tzinfo=UTC)
+        period_start = datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC)
+        with pytest.raises(HTTPException) as exc_info:
+            validate_temporal_params(active_at, period_start, None)
+        assert exc_info.value.status_code == 400
+        assert exc_info.value.detail == "Cannot combine active_at with period_start/period_end"
+
+    def test_validate_temporal_params_active_at_with_period_end_raises(self) -> None:
+        active_at = datetime(2026, 1, 15, 12, 0, 0, tzinfo=UTC)
+        period_end = datetime(2026, 1, 31, 23, 59, 59, tzinfo=UTC)
+        with pytest.raises(HTTPException) as exc_info:
+            validate_temporal_params(active_at, None, period_end)
+        assert exc_info.value.status_code == 400
+        assert exc_info.value.detail == "Cannot combine active_at with period_start/period_end"
+
+    def test_validate_temporal_params_period_start_gt_end_raises(self) -> None:
+        period_start = datetime(2026, 1, 31, 0, 0, 0, tzinfo=UTC)
+        period_end = datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC)
+        with pytest.raises(HTTPException) as exc_info:
+            validate_temporal_params(None, period_start, period_end)
+        assert exc_info.value.status_code == 400
+        assert exc_info.value.detail == "period_start must be <= period_end"
+
+    def test_validate_temporal_params_naive_datetime_raises(self) -> None:
+        naive_dt = datetime(2026, 1, 15, 12, 0, 0)
+        with pytest.raises(HTTPException) as exc_info:
+            validate_temporal_params(naive_dt, None, None)
+        assert exc_info.value.status_code == 400
+        assert "must include timezone" in exc_info.value.detail
+
+    def test_validate_temporal_params_converts_to_utc(self) -> None:
+        # IST = UTC+5:30; 17:30 IST == 12:00 UTC
+        from datetime import timedelta, timezone
+
+        ist_tz = timezone(timedelta(hours=5, minutes=30))
+        dt_ist = datetime(2026, 1, 15, 17, 30, 0, tzinfo=ist_tz)
+        result = validate_temporal_params(dt_ist, None, None)
+        assert result.active_at is not None
+        assert result.active_at.tzinfo == UTC
+        assert result.active_at == datetime(2026, 1, 15, 12, 0, 0, tzinfo=UTC)
 
 
 class TestUtcToday:

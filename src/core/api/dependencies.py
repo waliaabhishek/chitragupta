@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING, Annotated, cast
 
@@ -88,3 +89,44 @@ def validate_datetime_param(dt: datetime | None, param_name: str) -> datetime | 
             detail=f"{param_name} must include timezone (e.g., 2026-02-24T00:00:00Z)",
         )
     return dt.astimezone(UTC)
+
+
+@dataclass(frozen=True)
+class TemporalParams:
+    active_at: datetime | None
+    period_start: datetime | None
+    period_end: datetime | None
+
+
+def validate_temporal_params(
+    active_at: datetime | None,
+    period_start: datetime | None,
+    period_end: datetime | None,
+) -> TemporalParams:
+    """Validate and normalise temporal query parameters.
+
+    Validates timezone presence, checks mutual exclusivity of active_at vs
+    period range, and checks period ordering.
+
+    Args:
+        active_at: Point-in-time filter.
+        period_start: Start of period range filter.
+        period_end: End of period range filter.
+
+    Returns:
+        TemporalParams with all values converted to UTC.
+
+    Raises:
+        HTTPException 400: If any datetime is naive, active_at is combined with
+            a period param, or period_start > period_end.
+    """
+    active_at = validate_datetime_param(active_at, "active_at")
+    period_start = validate_datetime_param(period_start, "period_start")
+    period_end = validate_datetime_param(period_end, "period_end")
+
+    if active_at and (period_start or period_end):
+        raise HTTPException(400, detail="Cannot combine active_at with period_start/period_end")
+    if period_start and period_end and period_start > period_end:
+        raise HTTPException(400, detail="period_start must be <= period_end")
+
+    return TemporalParams(active_at=active_at, period_start=period_start, period_end=period_end)
