@@ -440,7 +440,6 @@ class TestBulkAddTagsByFilter:
         assert data["created_count"] == 1
 
 
-
 class TestBulkAddTagsByFilterDateValidation:
     def test_start_date_after_end_date_returns_400(self, app_with_backend: "TestClient") -> None:
         response = app_with_backend.post(

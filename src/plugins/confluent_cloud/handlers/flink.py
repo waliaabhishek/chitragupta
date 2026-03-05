@@ -16,13 +16,14 @@ from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
 from core.models import MetricQuery
+from core.plugin.base import BaseServiceHandler
 from plugins.confluent_cloud.allocators.flink_allocators import flink_cfu_allocator
 from plugins.confluent_cloud.handlers.flink_identity import resolve_flink_identity
 
 _LOGGER = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from core.models import Identity, IdentityResolution, MetricRow, Resource
+    from core.models import IdentityResolution, MetricRow, Resource
     from core.plugin.protocols import CostAllocator
     from core.storage.interface import UnitOfWork
     from plugins.confluent_cloud.config import CCloudPluginConfig
@@ -52,13 +53,13 @@ _FLINK_PRODUCT_TYPES: tuple[str, ...] = (
 
 # Map product types to allocator functions.
 # CostAllocator is a Protocol — dict values satisfy it via structural typing.
-_ALLOCATOR_MAP: dict[str, CostAllocator] = {
+_FLINK_ALLOCATORS: dict[str, CostAllocator] = {
     "FLINK_NUM_CFU": flink_cfu_allocator,
     "FLINK_NUM_CFUS": flink_cfu_allocator,
 }
 
 
-class FlinkHandler:
+class FlinkHandler(BaseServiceHandler["CCloudConnection | None", "CCloudPluginConfig | None"]):
     """Service handler for Flink product types.
 
     Implements the ServiceHandler protocol for Flink.
@@ -67,16 +68,16 @@ class FlinkHandler:
     Resolves identities via metrics (CFU per statement) + statement owner lookup.
     """
 
+    _ALLOCATOR_MAP = _FLINK_ALLOCATORS
+
     def __init__(
         self,
         connection: CCloudConnection | None,
         config: CCloudPluginConfig | None,
         ecosystem: str,
     ) -> None:
-        self._connection = connection
-        self._config = config
-        self._ecosystem = ecosystem
-        # Build region lookup from config (used by gather_resources)
+        super().__init__(connection, config, ecosystem)
+        # Flink-specific: build region lookup from config
         self._flink_regions: dict[str, tuple[str, str]] = {}
         if config and config.flink:
             for region_config in config.flink:
@@ -135,13 +136,7 @@ class FlinkHandler:
 
         yield from gather_flink_statements(self._ecosystem, tenant_id, allocatable_pools)
 
-    def gather_identities(self, tenant_id: str, uow: UnitOfWork) -> Iterable[Identity]:
-        """Return empty — Kafka handler gathers all org-level identities.
-
-        Flink statements reference service accounts/users that are gathered
-        by the Kafka handler at the org level.
-        """
-        yield from ()
+    # gather_identities() inherited from BaseServiceHandler (returns empty iterable)
 
     def resolve_identities(
         self,
@@ -177,10 +172,4 @@ class FlinkHandler:
         """
         return [_FLINK_METRICS_PRIMARY, _FLINK_METRICS_FALLBACK]
 
-    def get_allocator(self, product_type: str) -> CostAllocator:
-        """Return allocator function for this product type."""
-        allocator = _ALLOCATOR_MAP.get(product_type)
-        if allocator is None:
-            msg = f"Unknown product type: {product_type}"
-            raise ValueError(msg)
-        return allocator
+    # get_allocator() inherited from BaseServiceHandler

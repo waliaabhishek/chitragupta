@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
 from core.models import MetricQuery
+from core.plugin.base import BaseServiceHandler
 from plugins.confluent_cloud.allocators.kafka_allocators import (
     kafka_base_allocator,
     kafka_network_allocator,
@@ -26,8 +27,6 @@ if TYPE_CHECKING:
     from core.models import Identity, IdentityResolution, MetricRow, Resource
     from core.plugin.protocols import CostAllocator
     from core.storage.interface import UnitOfWork
-    from plugins.confluent_cloud.config import CCloudPluginConfig
-    from plugins.confluent_cloud.connections import CCloudConnection
 
 _KAFKA_PRODUCT_TYPES: tuple[str, ...] = (
     "KAFKA_NUM_CKU",
@@ -72,7 +71,7 @@ _KAFKA_CKU_METRICS: list[MetricQuery] = _KAFKA_READ_METRICS + _KAFKA_WRITE_METRI
 
 # Map product types to allocator functions.
 # CostAllocator is a Protocol — dict values satisfy it via structural typing.
-_ALLOCATOR_MAP: dict[str, CostAllocator] = {
+_KAFKA_ALLOCATORS: dict[str, CostAllocator] = {
     "KAFKA_NUM_CKU": kafka_num_cku_allocator,
     "KAFKA_NUM_CKUS": kafka_num_cku_allocator,
     "KAFKA_BASE": kafka_base_allocator,
@@ -83,7 +82,7 @@ _ALLOCATOR_MAP: dict[str, CostAllocator] = {
 }
 
 
-class KafkaHandler:
+class KafkaHandler(BaseServiceHandler["CCloudConnection | None", "CCloudPluginConfig | None"]):
     """Service handler for Kafka product types.
 
     Implements the ServiceHandler protocol for Kafka clusters.
@@ -92,15 +91,7 @@ class KafkaHandler:
     Resolves identities via API key ownership with temporal filtering.
     """
 
-    def __init__(
-        self,
-        connection: CCloudConnection | None,
-        config: CCloudPluginConfig | None,
-        ecosystem: str,
-    ) -> None:
-        self._connection = connection
-        self._config = config
-        self._ecosystem = ecosystem
+    _ALLOCATOR_MAP = _KAFKA_ALLOCATORS
 
     @property
     def service_type(self) -> str:
@@ -196,10 +187,4 @@ class KafkaHandler:
             case _:
                 return []
 
-    def get_allocator(self, product_type: str) -> CostAllocator:
-        """Return allocator function for this product type."""
-        allocator = _ALLOCATOR_MAP.get(product_type)
-        if allocator is None:
-            msg = f"Unknown product type: {product_type}"
-            raise ValueError(msg)
-        return allocator
+    # get_allocator() inherited from BaseServiceHandler

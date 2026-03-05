@@ -47,7 +47,8 @@ def make_config(cost_types: list, identity_source: dict | None = None):
             "ecosystem_name": "self_managed_postgres",
             "cluster_id": "pg-prod-1",
             "metrics": {"url": "http://prom:9090"},
-            "identity_source": identity_source or {
+            "identity_source": identity_source
+            or {
                 "source": "static",
             },
             "cost_types": cost_types,
@@ -333,9 +334,7 @@ class TestBillingLineItemEcosystem:
         items = list(cost_input.gather("tenant-1", day_start, day_end, uow))
         assert items[0].timestamp == datetime(2026, 2, 1, 0, 0, 0, tzinfo=UTC)
 
-    def test_multi_day_range_generates_one_line_per_cost_type_per_day(
-        self, mock_metrics_source: MagicMock
-    ) -> None:
+    def test_multi_day_range_generates_one_line_per_cost_type_per_day(self, mock_metrics_source: MagicMock) -> None:
         from plugins.generic_metrics_only.cost_input import GenericConstructedCostInput
 
         config = make_config(

@@ -164,9 +164,7 @@ class TestHandlerGetAllocator:
 
 
 class TestHandlerGetMetricsForProductType:
-    def test_even_split_with_prometheus_source_returns_discovery_query(
-        self, pg_config, mock_metrics
-    ) -> None:
+    def test_even_split_with_prometheus_source_returns_discovery_query(self, pg_config, mock_metrics) -> None:
         """Test case 10: even_split + prometheus returns MetricQuery(key="discovery", ...)."""
         from plugins.generic_metrics_only.handler import GenericMetricsOnlyHandler
 
@@ -188,9 +186,7 @@ class TestHandlerGetMetricsForProductType:
         assert queries[0].key == "alloc_PG_NETWORK"
         assert queries[0].query_expression == "sum by (datname) (pg_stat_database_blks_read)"
 
-    def test_even_split_with_static_source_returns_empty_list(
-        self, static_config, mock_metrics
-    ) -> None:
+    def test_even_split_with_static_source_returns_empty_list(self, static_config, mock_metrics) -> None:
         """Test case 12: static-only source returns []."""
         from plugins.generic_metrics_only.handler import GenericMetricsOnlyHandler
 
@@ -207,9 +203,7 @@ class TestHandlerGetMetricsForProductType:
 
 
 class TestHandlerResolveIdentities:
-    def test_resolve_identities_prometheus_source_extracts_from_metrics_data(
-        self, pg_config, mock_metrics
-    ) -> None:
+    def test_resolve_identities_prometheus_source_extracts_from_metrics_data(self, pg_config, mock_metrics) -> None:
         """Test case 13: metrics_data={"discovery": [row(datname="alice")]} produces metrics_derived containing "alice"."""
         from plugins.generic_metrics_only.handler import GenericMetricsOnlyHandler
 
@@ -231,9 +225,7 @@ class TestHandlerResolveIdentities:
         identity_ids = list(result.metrics_derived.ids())
         assert "alice" in identity_ids
 
-    def test_resolve_identities_static_source_returns_in_resource_active(
-        self, static_config, mock_metrics
-    ) -> None:
+    def test_resolve_identities_static_source_returns_in_resource_active(self, static_config, mock_metrics) -> None:
         """Test case 14: static identity config returns identity in resource_active."""
         from plugins.generic_metrics_only.handler import GenericMetricsOnlyHandler
 
@@ -252,9 +244,7 @@ class TestHandlerResolveIdentities:
         identity_ids = list(result.resource_active.ids())
         assert "team-data" in identity_ids
 
-    def test_resolve_identities_no_metrics_data_produces_empty_metrics_derived(
-        self, pg_config, mock_metrics
-    ) -> None:
+    def test_resolve_identities_no_metrics_data_produces_empty_metrics_derived(self, pg_config, mock_metrics) -> None:
         from plugins.generic_metrics_only.handler import GenericMetricsOnlyHandler
 
         handler = GenericMetricsOnlyHandler(config=pg_config, metrics_source=mock_metrics)
@@ -271,9 +261,7 @@ class TestHandlerResolveIdentities:
 
         assert list(result.metrics_derived.ids()) == []
 
-    def test_resolve_identities_deduplicates_repeated_identity(
-        self, pg_config, mock_metrics
-    ) -> None:
+    def test_resolve_identities_deduplicates_repeated_identity(self, pg_config, mock_metrics) -> None:
         from plugins.generic_metrics_only.handler import GenericMetricsOnlyHandler
 
         handler = GenericMetricsOnlyHandler(config=pg_config, metrics_source=mock_metrics)

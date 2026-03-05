@@ -11,6 +11,7 @@ from collections.abc import Iterable, Sequence
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
+from core.plugin.base import BaseServiceHandler
 from plugins.confluent_cloud.allocators.ksqldb_allocators import (
     ksqldb_csu_allocator,
 )
@@ -19,11 +20,9 @@ from plugins.confluent_cloud.handlers.ksqldb_identity import (
 )
 
 if TYPE_CHECKING:
-    from core.models import Identity, IdentityResolution, MetricQuery, MetricRow, Resource
+    from core.models import IdentityResolution, MetricQuery, MetricRow, Resource
     from core.plugin.protocols import CostAllocator
     from core.storage.interface import UnitOfWork
-    from plugins.confluent_cloud.config import CCloudPluginConfig
-    from plugins.confluent_cloud.connections import CCloudConnection
 
 _KSQLDB_PRODUCT_TYPES: tuple[str, ...] = (
     "KSQL_NUM_CSU",
@@ -32,13 +31,13 @@ _KSQLDB_PRODUCT_TYPES: tuple[str, ...] = (
 
 # Map product types to allocator functions.
 # CostAllocator is a Protocol - dict values satisfy it via structural typing.
-_ALLOCATOR_MAP: dict[str, CostAllocator] = {
+_KSQLDB_ALLOCATORS: dict[str, CostAllocator] = {
     "KSQL_NUM_CSU": ksqldb_csu_allocator,
     "KSQL_NUM_CSUS": ksqldb_csu_allocator,
 }
 
 
-class KsqldbHandler:
+class KsqldbHandler(BaseServiceHandler["CCloudConnection | None", "CCloudPluginConfig | None"]):
     """Service handler for ksqlDB product types.
 
     Implements the ServiceHandler protocol for ksqlDB.
@@ -47,15 +46,7 @@ class KsqldbHandler:
     Resolves identities via direct owner_id lookup (credential_identity from API).
     """
 
-    def __init__(
-        self,
-        connection: CCloudConnection | None,
-        config: CCloudPluginConfig | None,
-        ecosystem: str,
-    ) -> None:
-        self._connection = connection
-        self._config = config
-        self._ecosystem = ecosystem
+    _ALLOCATOR_MAP = _KSQLDB_ALLOCATORS
 
     @property
     def service_type(self) -> str:
@@ -77,14 +68,6 @@ class KsqldbHandler:
             return
 
         yield from gather_ksqldb_clusters(self._connection, self._ecosystem, tenant_id, shared_ctx.env_ids)
-
-    def gather_identities(self, tenant_id: str, uow: UnitOfWork) -> Iterable[Identity]:
-        """Return empty - Kafka handler gathers all org-level identities.
-
-        ksqlDB apps don't have their own identity types. They reference
-        service accounts that are gathered by the Kafka handler.
-        """
-        yield from ()
 
     def resolve_identities(
         self,
@@ -119,10 +102,4 @@ class KsqldbHandler:
         """
         return []
 
-    def get_allocator(self, product_type: str) -> CostAllocator:
-        """Return allocator function for this product type."""
-        allocator = _ALLOCATOR_MAP.get(product_type)
-        if allocator is None:
-            msg = f"Unknown product type: {product_type}"
-            raise ValueError(msg)
-        return allocator
+    # gather_identities() and get_allocator() inherited from BaseServiceHandler

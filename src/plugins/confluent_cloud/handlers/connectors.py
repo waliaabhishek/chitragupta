@@ -15,6 +15,7 @@ from collections.abc import Iterable, Sequence
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
+from core.plugin.base import BaseServiceHandler
 from plugins.confluent_cloud.allocators.connector_allocators import (
     connect_capacity_allocator,
     connect_tasks_allocator,
@@ -25,11 +26,9 @@ from plugins.confluent_cloud.handlers.connector_identity import (
 )
 
 if TYPE_CHECKING:
-    from core.models import Identity, IdentityResolution, MetricQuery, MetricRow, Resource
+    from core.models import IdentityResolution, MetricQuery, MetricRow, Resource
     from core.plugin.protocols import CostAllocator
     from core.storage.interface import UnitOfWork
-    from plugins.confluent_cloud.config import CCloudPluginConfig
-    from plugins.confluent_cloud.connections import CCloudConnection
 
 _CONNECTOR_PRODUCT_TYPES: tuple[str, ...] = (
     "CONNECT_CAPACITY",
@@ -42,7 +41,7 @@ _CONNECTOR_PRODUCT_TYPES: tuple[str, ...] = (
 
 # Map product types to allocator functions.
 # CostAllocator is a Protocol — dict values satisfy it via structural typing.
-_ALLOCATOR_MAP: dict[str, CostAllocator] = {
+_CONNECTOR_ALLOCATORS: dict[str, CostAllocator] = {
     "CONNECT_CAPACITY": connect_capacity_allocator,
     "CONNECT_NUM_TASKS": connect_tasks_allocator,
     "CONNECT_THROUGHPUT": connect_throughput_allocator,
@@ -52,7 +51,7 @@ _ALLOCATOR_MAP: dict[str, CostAllocator] = {
 }
 
 
-class ConnectorHandler:
+class ConnectorHandler(BaseServiceHandler["CCloudConnection | None", "CCloudPluginConfig | None"]):
     """Service handler for Kafka Connect product types.
 
     Implements the ServiceHandler protocol for connectors.
@@ -61,15 +60,7 @@ class ConnectorHandler:
     Resolves identities via connector auth mode (SERVICE_ACCOUNT or KAFKA_API_KEY).
     """
 
-    def __init__(
-        self,
-        connection: CCloudConnection | None,
-        config: CCloudPluginConfig | None,
-        ecosystem: str,
-    ) -> None:
-        self._connection = connection
-        self._config = config
-        self._ecosystem = ecosystem
+    _ALLOCATOR_MAP = _CONNECTOR_ALLOCATORS
 
     @property
     def service_type(self) -> str:
@@ -92,14 +83,6 @@ class ConnectorHandler:
             return
 
         yield from gather_connectors(self._connection, self._ecosystem, tenant_id, shared_ctx.kafka_cluster_pairs)
-
-    def gather_identities(self, tenant_id: str, uow: UnitOfWork) -> Iterable[Identity]:
-        """Return empty — Kafka handler gathers all org-level identities.
-
-        Connectors don't have their own identity types. They reference
-        service accounts or API keys that are gathered by the Kafka handler.
-        """
-        yield from ()
 
     def resolve_identities(
         self,
@@ -134,10 +117,4 @@ class ConnectorHandler:
         """
         return []
 
-    def get_allocator(self, product_type: str) -> CostAllocator:
-        """Return allocator function for this product type."""
-        allocator = _ALLOCATOR_MAP.get(product_type)
-        if allocator is None:
-            msg = f"Unknown product type: {product_type}"
-            raise ValueError(msg)
-        return allocator
+    # gather_identities() and get_allocator() inherited from BaseServiceHandler

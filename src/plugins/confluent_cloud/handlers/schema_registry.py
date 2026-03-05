@@ -14,22 +14,27 @@ from collections.abc import Iterable, Sequence
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
+from core.plugin.base import BaseServiceHandler
 from plugins.confluent_cloud.allocators.sr_allocators import schema_registry_allocator
 from plugins.confluent_cloud.handlers.identity_resolution import (
     resolve_kafka_sr_identities,
 )
 
 if TYPE_CHECKING:
-    from core.models import Identity, IdentityResolution, MetricQuery, MetricRow, Resource
+    from core.models import IdentityResolution, MetricQuery, MetricRow, Resource
     from core.plugin.protocols import CostAllocator
     from core.storage.interface import UnitOfWork
-    from plugins.confluent_cloud.config import CCloudPluginConfig
-    from plugins.confluent_cloud.connections import CCloudConnection
 
 _SR_PRODUCT_TYPES: tuple[str, ...] = ("SCHEMA_REGISTRY", "GOVERNANCE_BASE", "NUM_RULES")
 
+_SR_ALLOCATORS: dict[str, CostAllocator] = {
+    "SCHEMA_REGISTRY": schema_registry_allocator,
+    "GOVERNANCE_BASE": schema_registry_allocator,
+    "NUM_RULES": schema_registry_allocator,
+}
 
-class SchemaRegistryHandler:
+
+class SchemaRegistryHandler(BaseServiceHandler["CCloudConnection | None", "CCloudPluginConfig | None"]):
     """Service handler for Schema Registry product types.
 
     Implements the ServiceHandler protocol for Schema Registry.
@@ -38,15 +43,7 @@ class SchemaRegistryHandler:
     Resolves identities via API key ownership with temporal filtering.
     """
 
-    def __init__(
-        self,
-        connection: CCloudConnection | None,
-        config: CCloudPluginConfig | None,
-        ecosystem: str,
-    ) -> None:
-        self._connection = connection
-        self._config = config
-        self._ecosystem = ecosystem
+    _ALLOCATOR_MAP = _SR_ALLOCATORS
 
     @property
     def service_type(self) -> str:
@@ -69,16 +66,6 @@ class SchemaRegistryHandler:
             return
 
         yield from gather_schema_registries(self._connection, self._ecosystem, tenant_id, shared_ctx.env_ids)
-
-    def gather_identities(self, tenant_id: str, uow: UnitOfWork) -> Iterable[Identity]:
-        """SR uses same identities as Kafka - intentionally empty.
-
-        Design decision: KafkaHandler gathers all org-scoped identities
-        (service accounts, users, API keys). SR doesn't need additional
-        identities. Returning empty iterable is intentional coordination,
-        not a gap.
-        """
-        return iter([])
 
     def resolve_identities(
         self,
@@ -109,9 +96,4 @@ class SchemaRegistryHandler:
         """SR doesn't need metrics - uses even split."""
         return []
 
-    def get_allocator(self, product_type: str) -> CostAllocator:
-        """All SR types use the same allocator."""
-        if product_type not in _SR_PRODUCT_TYPES:
-            msg = f"Unknown product type: {product_type}"
-            raise ValueError(msg)
-        return schema_registry_allocator
+    # gather_identities() and get_allocator() inherited from BaseServiceHandler
