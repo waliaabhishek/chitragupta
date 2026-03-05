@@ -147,8 +147,16 @@ class TestHandlerGetAllocator:
         allocator = handler.get_allocator("PG_NETWORK")
 
         iset = IdentitySet()
-        iset.add(Identity(ecosystem="self_managed_postgres", tenant_id="tenant-1", identity_id="alice", identity_type="principal"))
-        iset.add(Identity(ecosystem="self_managed_postgres", tenant_id="tenant-1", identity_id="bob", identity_type="principal"))
+        iset.add(
+            Identity(
+                ecosystem="self_managed_postgres", tenant_id="tenant-1", identity_id="alice", identity_type="principal"
+            )
+        )
+        iset.add(
+            Identity(
+                ecosystem="self_managed_postgres", tenant_id="tenant-1", identity_id="bob", identity_type="principal"
+            )
+        )
         billing_line = BillingLineItem(
             ecosystem="self_managed_postgres",
             tenant_id="tenant-1",
@@ -163,7 +171,9 @@ class TestHandlerGetAllocator:
         ctx = AllocationContext(
             timeslice=billing_line.timestamp,
             billing_line=billing_line,
-            identities=IdentityResolution(resource_active=iset, metrics_derived=IdentitySet(), tenant_period=IdentitySet()),
+            identities=IdentityResolution(
+                resource_active=iset, metrics_derived=IdentitySet(), tenant_period=IdentitySet()
+            ),
             split_amount=Decimal("10.00"),
             metrics_data=None,
             params={},
@@ -187,8 +197,16 @@ class TestHandlerGetAllocator:
         allocator = handler.get_allocator("PG_NETWORK")
 
         iset = IdentitySet()
-        iset.add(Identity(ecosystem="self_managed_postgres", tenant_id="tenant-1", identity_id="alice", identity_type="principal"))
-        iset.add(Identity(ecosystem="self_managed_postgres", tenant_id="tenant-1", identity_id="bob", identity_type="principal"))
+        iset.add(
+            Identity(
+                ecosystem="self_managed_postgres", tenant_id="tenant-1", identity_id="alice", identity_type="principal"
+            )
+        )
+        iset.add(
+            Identity(
+                ecosystem="self_managed_postgres", tenant_id="tenant-1", identity_id="bob", identity_type="principal"
+            )
+        )
         billing_line = BillingLineItem(
             ecosystem="self_managed_postgres",
             tenant_id="tenant-1",
@@ -203,11 +221,15 @@ class TestHandlerGetAllocator:
         ctx = AllocationContext(
             timeslice=billing_line.timestamp,
             billing_line=billing_line,
-            identities=IdentityResolution(resource_active=iset, metrics_derived=IdentitySet(), tenant_period=IdentitySet()),
+            identities=IdentityResolution(
+                resource_active=iset, metrics_derived=IdentitySet(), tenant_period=IdentitySet()
+            ),
             split_amount=Decimal("10.00"),
             metrics_data={
                 "alloc_PG_NETWORK": [
-                    MetricRow(timestamp=datetime(2026, 2, 1, tzinfo=UTC), metric_key="alloc_PG_NETWORK", value=0.0, labels={}),
+                    MetricRow(
+                        timestamp=datetime(2026, 2, 1, tzinfo=UTC), metric_key="alloc_PG_NETWORK", value=0.0, labels={}
+                    ),
                 ]
             },
             params={},
@@ -357,9 +379,7 @@ class TestTask024EvenSplitAllocatorAssignment:
 
         assert not hasattr(handler_module, "_make_even_split_allocator")
 
-    def test_even_split_cost_type_gets_allocate_evenly_with_fallback_directly(
-        self, pg_config, mock_metrics
-    ) -> None:
+    def test_even_split_cost_type_gets_allocate_evenly_with_fallback_directly(self, pg_config, mock_metrics) -> None:
         from core.engine.helpers import allocate_evenly_with_fallback
         from plugins.generic_metrics_only.handler import GenericMetricsOnlyHandler
 

@@ -146,3 +146,151 @@ class TestExportChargebacks:
             json={"start_date": "2026-02-01", "end_date": "2026-02-28"},
         )
         assert response.status_code == 404
+
+
+class TestExportStreaming:
+    """Tests that verify the streaming path (iter_by_filters) is used for export."""
+
+    def test_export_streaming_all_rows_returned_past_old_limit(
+        self, app_with_backend: TestClient, in_memory_backend: SQLModelBackend
+    ) -> None:
+        """Export returns all rows even when count would exceed the old find_by_filters default limit."""
+        row_count = 1050  # exceeds find_by_filters default limit=1000
+        with in_memory_backend.create_unit_of_work() as uow:
+            for i in range(row_count):
+                uow.chargebacks.upsert(
+                    ChargebackRow(
+                        ecosystem="test-eco",
+                        tenant_id="test-tenant",
+                        timestamp=datetime(2026, 2, 1, tzinfo=UTC),
+                        resource_id=f"resource-{i}",
+                        product_category="compute",
+                        product_type="kafka",
+                        identity_id=f"user-{i}",
+                        cost_type=CostType.USAGE,
+                        amount=Decimal("1.00"),
+                        allocation_method="direct",
+                        allocation_detail=None,
+                        tags=[],
+                        metadata={},
+                    )
+                )
+            uow.commit()
+
+        response = app_with_backend.post(
+            "/api/v1/tenants/test-tenant/export",
+            json={"start_date": "2026-02-01", "end_date": "2026-02-28"},
+        )
+        assert response.status_code == 200
+        lines = [ln for ln in response.text.strip().split("\n") if ln]
+        assert len(lines) == row_count + 1  # header + all data rows
+
+    def test_export_streaming_tag_overlay_per_row(
+        self, app_with_backend: TestClient, in_memory_backend: SQLModelBackend
+    ) -> None:
+        """Custom tag display_names are applied correctly to each row via streaming path."""
+        _seed_chargeback(in_memory_backend, with_custom_tag=True)
+
+        response = app_with_backend.post(
+            "/api/v1/tenants/test-tenant/export",
+            json={
+                "start_date": "2026-02-01",
+                "end_date": "2026-02-28",
+                "columns": ["identity_id", "tags"],
+            },
+        )
+        assert response.status_code == 200
+        lines = response.text.strip().split("\n")
+        assert len(lines) == 2  # header + 1 data row
+        assert lines[0] == "identity_id,tags"
+        # display_name from CustomTagTable should appear, not the raw tag_value UUID
+        assert "prod" in lines[1]
+        assert "user-1" in lines[1]
+
+    def test_export_streaming_no_rows_returns_header_only(
+        self, app_with_backend: TestClient, in_memory_backend: SQLModelBackend
+    ) -> None:
+        """Streaming export with filters matching zero rows returns only CSV header, no error."""
+        _seed_chargeback(in_memory_backend)
+
+        response = app_with_backend.post(
+            "/api/v1/tenants/test-tenant/export",
+            json={
+                "start_date": "2026-02-01",
+                "end_date": "2026-02-28",
+                "filters": {"identity_id": "no-such-user"},
+            },
+        )
+        assert response.status_code == 200
+        lines = [ln for ln in response.text.strip().split("\n") if ln]
+        assert len(lines) == 1  # header only, no exception raised
+
+    def test_export_streaming_identity_filter_row_count_matches_db(
+        self, app_with_backend: TestClient, in_memory_backend: SQLModelBackend
+    ) -> None:
+        """Export with identity_id filter returns only matching rows; count matches direct DB query."""
+        target_identity = "user-target"
+        other_count = 5
+        target_count = 3
+
+        with in_memory_backend.create_unit_of_work() as uow:
+            for i in range(other_count):
+                uow.chargebacks.upsert(
+                    ChargebackRow(
+                        ecosystem="test-eco",
+                        tenant_id="test-tenant",
+                        timestamp=datetime(2026, 2, i + 1, tzinfo=UTC),
+                        resource_id="resource-1",
+                        product_category="compute",
+                        product_type="kafka",
+                        identity_id=f"other-user-{i}",
+                        cost_type=CostType.USAGE,
+                        amount=Decimal("1.00"),
+                        allocation_method="direct",
+                        allocation_detail=None,
+                        tags=[],
+                        metadata={},
+                    )
+                )
+            for i in range(target_count):
+                uow.chargebacks.upsert(
+                    ChargebackRow(
+                        ecosystem="test-eco",
+                        tenant_id="test-tenant",
+                        timestamp=datetime(2026, 2, i + 1, tzinfo=UTC),
+                        resource_id=f"resource-target-{i}",
+                        product_category="compute",
+                        product_type="kafka",
+                        identity_id=target_identity,
+                        cost_type=CostType.USAGE,
+                        amount=Decimal("2.00"),
+                        allocation_method="direct",
+                        allocation_detail=None,
+                        tags=[],
+                        metadata={},
+                    )
+                )
+            uow.commit()
+
+        # Verify via direct DB query
+        with in_memory_backend.create_unit_of_work() as uow:
+            db_rows, db_total = uow.chargebacks.find_by_filters(
+                ecosystem="test-eco",
+                tenant_id="test-tenant",
+                identity_id=target_identity,
+                limit=10000,
+            )
+        assert db_total == target_count
+
+        # Verify export matches
+        response = app_with_backend.post(
+            "/api/v1/tenants/test-tenant/export",
+            json={
+                "start_date": "2026-02-01",
+                "end_date": "2026-02-28",
+                "filters": {"identity_id": target_identity},
+            },
+        )
+        assert response.status_code == 200
+        lines = [ln for ln in response.text.strip().split("\n") if ln]
+        assert len(lines) == db_total + 1  # header + matching data rows

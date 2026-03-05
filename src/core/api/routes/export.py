@@ -69,23 +69,16 @@ def _stream_csv(
     buf.truncate(0)
 
     # Build filter kwargs
-    filter_kwargs: dict[str, str | None] = {}
-    if filters:
-        for k, v in filters.items():
-            filter_kwargs[k] = v
+    filter_kwargs: dict[str, str | None] = dict(filters) if filters else {}
 
     with uow:
-        items, _ = uow.chargebacks.find_by_filters(
+        for row in uow.chargebacks.iter_by_filters(
             ecosystem=ecosystem,
             tenant_id=tenant_id,
             start=start_dt,
             end=end_dt,
-            limit=100000,
-            offset=0,
             **filter_kwargs,
-        )
-
-        for row in items:
+        ):
             values = []
             for col_name in columns:
                 if col_name == "cost_type":

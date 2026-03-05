@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from datetime import date, datetime
 from typing import TYPE_CHECKING, Protocol, Self, runtime_checkable
 
@@ -212,6 +213,21 @@ class ChargebackRepository(Protocol):
         offset: int = 0,
     ) -> tuple[list[ChargebackRow], int]:
         """Returns (items, total_count). Filters and pagination at SQL level."""
+        ...
+
+    def iter_by_filters(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        identity_id: str | None = None,
+        product_type: str | None = None,
+        resource_id: str | None = None,
+        cost_type: str | None = None,
+        batch_size: int = 5000,
+    ) -> Iterator[ChargebackRow]:
+        """Yield rows matching filters in batches. No limit cap; bounded memory."""
         ...
 
     def get_dimension(self, dimension_id: int) -> ChargebackDimensionInfo | None:

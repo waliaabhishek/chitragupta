@@ -1,4 +1,5 @@
 """Per-product-type cost allocators for self-managed Kafka."""
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING

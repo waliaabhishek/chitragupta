@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from collections.abc import Iterator
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
@@ -538,19 +539,18 @@ class SQLModelChargebackRepository:
         self._session.flush()
         return result.rowcount  # type: ignore[attr-defined, no-any-return]  # CursorResult always has rowcount
 
-    def find_by_filters(
+    def _build_chargeback_where(
         self,
         ecosystem: str,
         tenant_id: str,
-        start: datetime | None = None,
-        end: datetime | None = None,
-        identity_id: str | None = None,
-        product_type: str | None = None,
-        resource_id: str | None = None,
-        cost_type: str | None = None,
-        limit: int = 1000,
-        offset: int = 0,
-    ) -> tuple[list[ChargebackRow], int]:
+        start: datetime | None,
+        end: datetime | None,
+        identity_id: str | None,
+        product_type: str | None,
+        resource_id: str | None,
+        cost_type: str | None,
+    ) -> tuple[list[Any], Any]:
+        """Return (where_clauses, join_clause) for chargeback dimension+fact queries."""
         where: list[Any] = [
             col(ChargebackDimensionTable.ecosystem) == ecosystem,
             col(ChargebackDimensionTable.tenant_id) == tenant_id,
@@ -567,8 +567,38 @@ class SQLModelChargebackRepository:
             where.append(col(ChargebackDimensionTable.resource_id) == resource_id)
         if cost_type is not None:
             where.append(col(ChargebackDimensionTable.cost_type) == cost_type)
-
         join_clause = col(ChargebackDimensionTable.dimension_id) == col(ChargebackFactTable.dimension_id)
+        return where, join_clause
+
+    def _overlay_tags(self, rows: list[ChargebackRow]) -> None:
+        """Fetch custom tags for rows and mutate row.tags in-place."""
+        dim_ids = list({row.dimension_id for row in rows if row.dimension_id is not None})
+        if not dim_ids:
+            return
+        tag_rows = self._session.exec(select(CustomTagTable).where(col(CustomTagTable.dimension_id).in_(dim_ids))).all()
+        tags_by_dim: dict[int, list[str]] = {}
+        for t in tag_rows:
+            tags_by_dim.setdefault(t.dimension_id, []).append(t.display_name)
+        for row in rows:
+            if row.dimension_id is not None:
+                row.tags = tags_by_dim.get(row.dimension_id, [])
+
+    def find_by_filters(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        identity_id: str | None = None,
+        product_type: str | None = None,
+        resource_id: str | None = None,
+        cost_type: str | None = None,
+        limit: int = 1000,
+        offset: int = 0,
+    ) -> tuple[list[ChargebackRow], int]:
+        where, join_clause = self._build_chargeback_where(
+            ecosystem, tenant_id, start, end, identity_id, product_type, resource_id, cost_type
+        )
 
         count_stmt = (
             select(func.count())
@@ -587,21 +617,35 @@ class SQLModelChargebackRepository:
         )
         results = self._session.execute(stmt).all()
         items = [chargeback_to_domain(dim, fact) for dim, fact in results]
-
-        # Overlay custom tag display_names onto each row
-        dim_ids = [row.dimension_id for row in items if row.dimension_id is not None]
-        if dim_ids:
-            tag_rows = self._session.exec(
-                select(CustomTagTable).where(col(CustomTagTable.dimension_id).in_(dim_ids))
-            ).all()
-            tags_by_dim: dict[int, list[str]] = {}
-            for t in tag_rows:
-                tags_by_dim.setdefault(t.dimension_id, []).append(t.display_name)
-            for row in items:
-                if row.dimension_id is not None:
-                    row.tags = tags_by_dim.get(row.dimension_id, [])
-
+        self._overlay_tags(items)
         return items, total
+
+    def iter_by_filters(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        identity_id: str | None = None,
+        product_type: str | None = None,
+        resource_id: str | None = None,
+        cost_type: str | None = None,
+        batch_size: int = 5000,
+    ) -> Iterator[ChargebackRow]:
+        """Yield ChargebackRow objects in batches. Memory bounded to batch_size rows."""
+        where, join_clause = self._build_chargeback_where(
+            ecosystem, tenant_id, start, end, identity_id, product_type, resource_id, cost_type
+        )
+        stmt = (
+            select(ChargebackDimensionTable, ChargebackFactTable)
+            .join(ChargebackFactTable, join_clause)
+            .where(*where)
+            .execution_options(yield_per=batch_size)
+        )
+        for partition in self._session.execute(stmt).partitions(batch_size):
+            batch = [chargeback_to_domain(dim, fact) for dim, fact in partition]
+            self._overlay_tags(batch)
+            yield from batch
 
     def delete_before(self, ecosystem: str, tenant_id: str, before: datetime) -> int:
         # Get dimension IDs for this ecosystem+tenant
@@ -683,22 +727,9 @@ class SQLModelChargebackRepository:
         resource_id: str | None = None,
         cost_type: str | None = None,
     ) -> list[int]:
-        where: list[Any] = [
-            col(ChargebackDimensionTable.ecosystem) == ecosystem,
-            col(ChargebackDimensionTable.tenant_id) == tenant_id,
-            col(ChargebackFactTable.timestamp) >= start,
-            col(ChargebackFactTable.timestamp) < end,
-        ]
-        if identity_id is not None:
-            where.append(col(ChargebackDimensionTable.identity_id) == identity_id)
-        if product_type is not None:
-            where.append(col(ChargebackDimensionTable.product_type) == product_type)
-        if resource_id is not None:
-            where.append(col(ChargebackDimensionTable.resource_id) == resource_id)
-        if cost_type is not None:
-            where.append(col(ChargebackDimensionTable.cost_type) == cost_type)
-
-        join_clause = col(ChargebackDimensionTable.dimension_id) == col(ChargebackFactTable.dimension_id)
+        where, join_clause = self._build_chargeback_where(
+            ecosystem, tenant_id, start, end, identity_id, product_type, resource_id, cost_type
+        )
         stmt = (
             select(ChargebackDimensionTable.dimension_id)
             .select_from(ChargebackDimensionTable)
