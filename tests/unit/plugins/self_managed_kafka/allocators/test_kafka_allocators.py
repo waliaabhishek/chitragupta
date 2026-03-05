@@ -85,79 +85,6 @@ def make_network_row(key: str, principal: str, value: float) -> MetricRow:
     )
 
 
-class TestComputeAllocator:
-    def test_even_split_two_identities(self, base_billing_line):
-        from plugins.self_managed_kafka.allocators.kafka_allocators import self_kafka_compute_allocator
-
-        resolution = make_resolution(resource_active=make_identity_set("User:alice", "User:bob"))
-        ctx = make_ctx(base_billing_line, resolution)
-
-        result = self_kafka_compute_allocator(ctx)
-
-        assert isinstance(result, AllocationResult)
-        total = sum(row.amount for row in result.rows)
-        assert total == Decimal("100")
-        assert len(result.rows) == 2
-
-    def test_single_identity_gets_full_amount(self, base_billing_line):
-        from plugins.self_managed_kafka.allocators.kafka_allocators import self_kafka_compute_allocator
-
-        resolution = make_resolution(resource_active=make_identity_set("User:alice"))
-        ctx = make_ctx(base_billing_line, resolution)
-
-        result = self_kafka_compute_allocator(ctx)
-
-        assert len(result.rows) == 1
-        assert result.rows[0].amount == Decimal("100")
-        assert result.rows[0].identity_id == "User:alice"
-
-    def test_no_identities_goes_to_unallocated(self, base_billing_line):
-        from plugins.self_managed_kafka.allocators.kafka_allocators import self_kafka_compute_allocator
-
-        resolution = make_resolution()
-        ctx = make_ctx(base_billing_line, resolution)
-
-        result = self_kafka_compute_allocator(ctx)
-
-        assert result.rows[0].identity_id == "UNALLOCATED"
-        assert result.rows[0].amount == Decimal("100")
-
-    def test_uses_tenant_period_fallback(self, base_billing_line):
-        from plugins.self_managed_kafka.allocators.kafka_allocators import self_kafka_compute_allocator
-
-        resolution = make_resolution(tenant_period=make_identity_set("User:charlie"))
-        ctx = make_ctx(base_billing_line, resolution)
-
-        result = self_kafka_compute_allocator(ctx)
-
-        assert result.rows[0].identity_id == "User:charlie"
-
-
-class TestStorageAllocator:
-    def test_even_split_two_identities(self, base_billing_line):
-        from plugins.self_managed_kafka.allocators.kafka_allocators import self_kafka_storage_allocator
-
-        billing_line = BillingLineItem(**{**base_billing_line.__dict__, "product_type": "SELF_KAFKA_STORAGE"})
-        resolution = make_resolution(resource_active=make_identity_set("User:alice", "User:bob"))
-        ctx = make_ctx(billing_line, resolution)
-
-        result = self_kafka_storage_allocator(ctx)
-
-        total = sum(row.amount for row in result.rows)
-        assert total == Decimal("100")
-        assert len(result.rows) == 2
-
-    def test_no_identities_goes_to_unallocated(self, base_billing_line):
-        from plugins.self_managed_kafka.allocators.kafka_allocators import self_kafka_storage_allocator
-
-        resolution = make_resolution()
-        ctx = make_ctx(base_billing_line, resolution)
-
-        result = self_kafka_storage_allocator(ctx)
-
-        assert result.rows[0].identity_id == "UNALLOCATED"
-
-
 class TestNetworkIngressAllocator:
     def test_usage_ratio_with_bytes_in_only(self, base_billing_line):
         from plugins.self_managed_kafka.allocators.kafka_allocators import self_kafka_network_ingress_allocator
@@ -352,37 +279,97 @@ class TestNetworkEgressAllocator:
         assert egress_b == Decimal("100")
 
 
+class TestTask024AllocatorRemoval:
+    """TASK-024: self_kafka_compute_allocator and self_kafka_storage_allocator must not be importable after fix."""
+
+    def test_self_kafka_compute_allocator_not_importable(self) -> None:
+        with pytest.raises(ImportError):
+            from plugins.self_managed_kafka.allocators.kafka_allocators import (  # noqa: F401
+                self_kafka_compute_allocator,
+            )
+
+    def test_self_kafka_storage_allocator_not_importable(self) -> None:
+        with pytest.raises(ImportError):
+            from plugins.self_managed_kafka.allocators.kafka_allocators import (  # noqa: F401
+                self_kafka_storage_allocator,
+            )
+
+
+@pytest.fixture
+def smk_config():
+    from plugins.self_managed_kafka.config import SelfManagedKafkaConfig
+
+    return SelfManagedKafkaConfig.model_validate(
+        {
+            "cluster_id": "test-cluster",
+            "broker_count": 3,
+            "cost_model": {
+                "compute_hourly_rate": "1.00",
+                "storage_per_gib_hourly": "0.01",
+                "network_ingress_per_gib": "0.05",
+                "network_egress_per_gib": "0.05",
+            },
+            "metrics": {"url": "http://prom:9090"},
+        }
+    )
+
+
+class TestTask024HandlerAllocatorIdentity:
+    """TASK-024: handler.get_allocator must return allocate_evenly_with_fallback directly for COMPUTE/STORAGE."""
+
+    def test_compute_allocator_is_allocate_evenly_with_fallback(self, smk_config) -> None:
+        from unittest.mock import MagicMock
+
+        from core.engine.helpers import allocate_evenly_with_fallback
+        from plugins.self_managed_kafka.handlers.kafka import SelfManagedKafkaHandler
+
+        handler = SelfManagedKafkaHandler(config=smk_config, metrics_source=MagicMock())
+        assert handler.get_allocator("SELF_KAFKA_COMPUTE") is allocate_evenly_with_fallback
+
+    def test_storage_allocator_is_allocate_evenly_with_fallback(self, smk_config) -> None:
+        from unittest.mock import MagicMock
+
+        from core.engine.helpers import allocate_evenly_with_fallback
+        from plugins.self_managed_kafka.handlers.kafka import SelfManagedKafkaHandler
+
+        handler = SelfManagedKafkaHandler(config=smk_config, metrics_source=MagicMock())
+        assert handler.get_allocator("SELF_KAFKA_STORAGE") is allocate_evenly_with_fallback
+
+
+class TestTask024NetworkFallbackParity:
+    """TASK-024: Network allocators fallback to even split when metrics absent — parity with allocate_evenly_with_fallback."""
+
+    def test_network_ingress_fallback_matches_allocate_evenly_with_fallback(self, base_billing_line) -> None:
+        from core.engine.helpers import allocate_evenly_with_fallback
+        from plugins.self_managed_kafka.allocators.kafka_allocators import self_kafka_network_ingress_allocator
+
+        billing_line = BillingLineItem(**{**base_billing_line.__dict__, "product_type": "SELF_KAFKA_NETWORK_INGRESS"})
+        resolution = make_resolution(metrics_derived=make_identity_set("User:alice", "User:bob"))
+        ctx = make_ctx(billing_line, resolution, metrics_data=None)
+
+        network_result = self_kafka_network_ingress_allocator(ctx)
+        fallback_result = allocate_evenly_with_fallback(ctx)
+
+        assert {r.identity_id for r in network_result.rows} == {r.identity_id for r in fallback_result.rows}
+        assert sum(r.amount for r in network_result.rows) == sum(r.amount for r in fallback_result.rows)
+
+    def test_network_egress_fallback_matches_allocate_evenly_with_fallback(self, base_billing_line) -> None:
+        from core.engine.helpers import allocate_evenly_with_fallback
+        from plugins.self_managed_kafka.allocators.kafka_allocators import self_kafka_network_egress_allocator
+
+        billing_line = BillingLineItem(**{**base_billing_line.__dict__, "product_type": "SELF_KAFKA_NETWORK_EGRESS"})
+        resolution = make_resolution(metrics_derived=make_identity_set("User:alice", "User:bob"))
+        ctx = make_ctx(billing_line, resolution, metrics_data=None)
+
+        network_result = self_kafka_network_egress_allocator(ctx)
+        fallback_result = allocate_evenly_with_fallback(ctx)
+
+        assert {r.identity_id for r in network_result.rows} == {r.identity_id for r in fallback_result.rows}
+        assert sum(r.amount for r in network_result.rows) == sum(r.amount for r in fallback_result.rows)
+
+
 class TestGap23TenantPeriodFallback:
     """GAP-23: tenant_period fallback splits evenly across real identities (orchestrator guarantees no system entries)."""
-
-    def test_compute_allocator_splits_real_identities(self, base_billing_line: BillingLineItem) -> None:
-        """Compute fallback: splits evenly across all real identities in tenant_period."""
-        from plugins.self_managed_kafka.allocators.kafka_allocators import self_kafka_compute_allocator
-
-        tp = make_identity_set("User:alice", "User:bob")
-        resolution = make_resolution(tenant_period=tp)
-        ctx = make_ctx(base_billing_line, resolution)
-
-        result = self_kafka_compute_allocator(ctx)
-
-        recipient_ids = {r.identity_id for r in result.rows}
-        assert recipient_ids == {"User:alice", "User:bob"}
-        assert len(result.rows) == 2
-
-    def test_storage_allocator_splits_real_identities(self, base_billing_line: BillingLineItem) -> None:
-        """Storage fallback: splits evenly across all real identities in tenant_period."""
-        from plugins.self_managed_kafka.allocators.kafka_allocators import self_kafka_storage_allocator
-
-        billing_line = BillingLineItem(**{**base_billing_line.__dict__, "product_type": "SELF_KAFKA_STORAGE"})
-        tp = make_identity_set("User:alice", "User:bob")
-        resolution = make_resolution(tenant_period=tp)
-        ctx = make_ctx(billing_line, resolution)
-
-        result = self_kafka_storage_allocator(ctx)
-
-        recipient_ids = {r.identity_id for r in result.rows}
-        assert recipient_ids == {"User:alice", "User:bob"}
-        assert len(result.rows) == 2
 
     def test_network_fallback_splits_real_identities(self, base_billing_line: BillingLineItem) -> None:
         """Network fallback: splits evenly across real identities when no metrics available."""

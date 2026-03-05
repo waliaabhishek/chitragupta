@@ -416,18 +416,18 @@ class TestGetMetricsForProductType:
 
 class TestGetAllocator:
     def test_compute_allocator(self, base_config, mock_metrics_source):
-        from plugins.self_managed_kafka.allocators.kafka_allocators import self_kafka_compute_allocator
+        from core.engine.helpers import allocate_evenly_with_fallback
         from plugins.self_managed_kafka.handlers.kafka import SelfManagedKafkaHandler
 
         handler = SelfManagedKafkaHandler(base_config, mock_metrics_source)
-        assert handler.get_allocator("SELF_KAFKA_COMPUTE") is self_kafka_compute_allocator
+        assert handler.get_allocator("SELF_KAFKA_COMPUTE") is allocate_evenly_with_fallback
 
     def test_storage_allocator(self, base_config, mock_metrics_source):
-        from plugins.self_managed_kafka.allocators.kafka_allocators import self_kafka_storage_allocator
+        from core.engine.helpers import allocate_evenly_with_fallback
         from plugins.self_managed_kafka.handlers.kafka import SelfManagedKafkaHandler
 
         handler = SelfManagedKafkaHandler(base_config, mock_metrics_source)
-        assert handler.get_allocator("SELF_KAFKA_STORAGE") is self_kafka_storage_allocator
+        assert handler.get_allocator("SELF_KAFKA_STORAGE") is allocate_evenly_with_fallback
 
     def test_network_ingress_allocator(self, base_config, mock_metrics_source):
         from plugins.self_managed_kafka.allocators.kafka_allocators import self_kafka_network_ingress_allocator

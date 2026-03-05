@@ -411,3 +411,68 @@ class TestComputeActiveFraction:
         )
         frac = compute_active_fraction(r, _NOW, _NOW)
         assert frac == Decimal(1)
+
+
+# --- allocate_evenly_with_fallback ---
+
+
+class TestAllocateEvenlyWithFallback:
+    def test_merged_active_used_when_non_empty(self) -> None:
+        from core.engine.helpers import allocate_evenly_with_fallback
+        from core.models import Identity, IdentityResolution
+        from core.models.identity import IdentitySet
+
+        iset = IdentitySet()
+        iset.add(Identity(ecosystem="confluent", tenant_id="t-001", identity_id="u-1", identity_type="service_account"))
+        iset.add(Identity(ecosystem="confluent", tenant_id="t-001", identity_id="u-2", identity_type="service_account"))
+        resolution = IdentityResolution(
+            resource_active=iset,
+            metrics_derived=IdentitySet(),
+            tenant_period=IdentitySet(),
+        )
+        ctx = make_ctx(split_amount=Decimal("10.00"), identities=resolution)
+
+        result = allocate_evenly_with_fallback(ctx)
+
+        assert len(result.rows) == 2
+        assert {r.identity_id for r in result.rows} == {"u-1", "u-2"}
+        assert all(r.allocation_detail == AllocationDetail.EVEN_SPLIT_ALLOCATION for r in result.rows)
+
+    def test_tenant_period_fallback_when_merged_active_empty(self) -> None:
+        from core.engine.helpers import allocate_evenly_with_fallback
+        from core.models import Identity, IdentityResolution
+        from core.models.identity import IdentitySet
+
+        tp = IdentitySet()
+        tp.add(Identity(ecosystem="confluent", tenant_id="t-001", identity_id="tp-1", identity_type="service_account"))
+        resolution = IdentityResolution(
+            resource_active=IdentitySet(),
+            metrics_derived=IdentitySet(),
+            tenant_period=tp,
+        )
+        ctx = make_ctx(split_amount=Decimal("10.00"), identities=resolution)
+
+        result = allocate_evenly_with_fallback(ctx)
+
+        assert len(result.rows) == 1
+        assert result.rows[0].identity_id == "tp-1"
+        assert result.rows[0].allocation_detail == AllocationDetail.EVEN_SPLIT_ALLOCATION
+
+    def test_both_empty_produces_unallocated(self) -> None:
+        from core.engine.helpers import allocate_evenly_with_fallback
+        from core.models import IdentityResolution
+        from core.models.identity import IdentitySet
+
+        resolution = IdentityResolution(
+            resource_active=IdentitySet(),
+            metrics_derived=IdentitySet(),
+            tenant_period=IdentitySet(),
+        )
+        ctx = make_ctx(split_amount=Decimal("5.00"), identities=resolution)
+
+        result = allocate_evenly_with_fallback(ctx)
+
+        assert len(result.rows) == 1
+        assert result.rows[0].identity_id == "UNALLOCATED"
+        assert result.rows[0].cost_type == CostType.SHARED
+        assert result.rows[0].allocation_detail == AllocationDetail.NO_IDENTITIES_LOCATED

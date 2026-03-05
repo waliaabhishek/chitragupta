@@ -13,12 +13,11 @@ from collections.abc import Iterable, Sequence
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
+from core.engine.helpers import allocate_evenly_with_fallback
 from core.models import Identity, IdentityResolution, IdentitySet, MetricQuery, Resource
 from plugins.self_managed_kafka.allocators.kafka_allocators import (
-    self_kafka_compute_allocator,
     self_kafka_network_egress_allocator,
     self_kafka_network_ingress_allocator,
-    self_kafka_storage_allocator,
 )
 
 if TYPE_CHECKING:
@@ -54,8 +53,8 @@ _BYTES_OUT_PER_PRINCIPAL = MetricQuery(
 _PRINCIPAL_USAGE_METRICS: list[MetricQuery] = [_BYTES_IN_PER_PRINCIPAL, _BYTES_OUT_PER_PRINCIPAL]
 
 _ALLOCATOR_MAP: dict[str, CostAllocator] = {
-    "SELF_KAFKA_COMPUTE": self_kafka_compute_allocator,
-    "SELF_KAFKA_STORAGE": self_kafka_storage_allocator,
+    "SELF_KAFKA_COMPUTE": allocate_evenly_with_fallback,
+    "SELF_KAFKA_STORAGE": allocate_evenly_with_fallback,
     "SELF_KAFKA_NETWORK_INGRESS": self_kafka_network_ingress_allocator,
     "SELF_KAFKA_NETWORK_EGRESS": self_kafka_network_egress_allocator,
 }

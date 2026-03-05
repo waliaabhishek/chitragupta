@@ -107,26 +107,6 @@ class TestHandlerHandlesProductTypes:
 
 
 class TestHandlerGetAllocator:
-    def test_get_allocator_even_split_calls_allocate_evenly(self, pg_config, mock_metrics) -> None:
-        """Test case 8: even_split allocator calls allocate_evenly."""
-        from unittest.mock import MagicMock, patch
-
-        from plugins.generic_metrics_only.handler import GenericMetricsOnlyHandler
-
-        handler = GenericMetricsOnlyHandler(config=pg_config, metrics_source=mock_metrics)
-        allocator = handler.get_allocator("PG_COMPUTE")
-
-        mock_ctx = MagicMock()
-        mock_identities = MagicMock()
-        mock_identities.merged_active.ids.return_value = ["alice", "bob"]
-        mock_ctx.identities = mock_identities
-        mock_ctx.metrics_data = {}
-
-        with patch("plugins.generic_metrics_only.handler.allocate_evenly") as mock_evenly:
-            mock_evenly.return_value = MagicMock()
-            allocator(mock_ctx)
-            mock_evenly.assert_called_once()
-
     def test_get_allocator_usage_ratio_reads_alloc_key_and_calls_allocate_by_usage_ratio(
         self, pg_config, mock_metrics
     ) -> None:
@@ -154,6 +134,90 @@ class TestHandlerGetAllocator:
             # Verify it was called with the identity values extracted from correct key
             # allocate_by_usage_ratio(ctx, identity_values)
             assert "alice" in mock_ratio.call_args[0][1]
+
+    def test_usage_ratio_allocator_falls_back_when_metrics_data_none(self, pg_config, mock_metrics) -> None:
+        """GIT-001: handler.py:23 — usage_ratio allocator falls back to even split when metrics_data is None."""
+        from decimal import Decimal
+
+        from core.engine.allocation import AllocationContext
+        from core.models import BillingLineItem, Identity, IdentityResolution, IdentitySet
+        from plugins.generic_metrics_only.handler import GenericMetricsOnlyHandler
+
+        handler = GenericMetricsOnlyHandler(config=pg_config, metrics_source=mock_metrics)
+        allocator = handler.get_allocator("PG_NETWORK")
+
+        iset = IdentitySet()
+        iset.add(Identity(ecosystem="self_managed_postgres", tenant_id="tenant-1", identity_id="alice", identity_type="principal"))
+        iset.add(Identity(ecosystem="self_managed_postgres", tenant_id="tenant-1", identity_id="bob", identity_type="principal"))
+        billing_line = BillingLineItem(
+            ecosystem="self_managed_postgres",
+            tenant_id="tenant-1",
+            timestamp=datetime(2026, 2, 1, tzinfo=UTC),
+            resource_id="pg-prod-1",
+            product_category="postgres",
+            product_type="PG_NETWORK",
+            quantity=Decimal("1"),
+            unit_price=Decimal("10.00"),
+            total_cost=Decimal("10.00"),
+        )
+        ctx = AllocationContext(
+            timeslice=billing_line.timestamp,
+            billing_line=billing_line,
+            identities=IdentityResolution(resource_active=iset, metrics_derived=IdentitySet(), tenant_period=IdentitySet()),
+            split_amount=Decimal("10.00"),
+            metrics_data=None,
+            params={},
+        )
+
+        result = allocator(ctx)
+
+        identity_ids = {r.identity_id for r in result.rows}
+        assert identity_ids == {"alice", "bob"}
+        assert sum(r.amount for r in result.rows) == Decimal("10.00")
+
+    def test_usage_ratio_allocator_falls_back_when_no_valid_metric_values(self, pg_config, mock_metrics) -> None:
+        """GIT-002: handler.py:30 — usage_ratio allocator falls back when metrics have zero values or missing labels."""
+        from decimal import Decimal
+
+        from core.engine.allocation import AllocationContext
+        from core.models import BillingLineItem, Identity, IdentityResolution, IdentitySet, MetricRow
+        from plugins.generic_metrics_only.handler import GenericMetricsOnlyHandler
+
+        handler = GenericMetricsOnlyHandler(config=pg_config, metrics_source=mock_metrics)
+        allocator = handler.get_allocator("PG_NETWORK")
+
+        iset = IdentitySet()
+        iset.add(Identity(ecosystem="self_managed_postgres", tenant_id="tenant-1", identity_id="alice", identity_type="principal"))
+        iset.add(Identity(ecosystem="self_managed_postgres", tenant_id="tenant-1", identity_id="bob", identity_type="principal"))
+        billing_line = BillingLineItem(
+            ecosystem="self_managed_postgres",
+            tenant_id="tenant-1",
+            timestamp=datetime(2026, 2, 1, tzinfo=UTC),
+            resource_id="pg-prod-1",
+            product_category="postgres",
+            product_type="PG_NETWORK",
+            quantity=Decimal("1"),
+            unit_price=Decimal("10.00"),
+            total_cost=Decimal("10.00"),
+        )
+        ctx = AllocationContext(
+            timeslice=billing_line.timestamp,
+            billing_line=billing_line,
+            identities=IdentityResolution(resource_active=iset, metrics_derived=IdentitySet(), tenant_period=IdentitySet()),
+            split_amount=Decimal("10.00"),
+            metrics_data={
+                "alloc_PG_NETWORK": [
+                    MetricRow(timestamp=datetime(2026, 2, 1, tzinfo=UTC), metric_key="alloc_PG_NETWORK", value=0.0, labels={}),
+                ]
+            },
+            params={},
+        )
+
+        result = allocator(ctx)
+
+        identity_ids = {r.identity_id for r in result.rows}
+        assert identity_ids == {"alice", "bob"}
+        assert sum(r.amount for r in result.rows) == Decimal("10.00")
 
     def test_get_allocator_unknown_type_raises(self, pg_config, mock_metrics) -> None:
         from plugins.generic_metrics_only.handler import GenericMetricsOnlyHandler
@@ -283,3 +347,21 @@ class TestHandlerResolveIdentities:
 
         identity_ids = list(result.metrics_derived.ids())
         assert identity_ids.count("alice") == 1
+
+
+class TestTask024EvenSplitAllocatorAssignment:
+    """TASK-024: _make_even_split_allocator removed; __init__ assigns allocate_evenly_with_fallback directly."""
+
+    def test_make_even_split_allocator_not_in_handler_module(self) -> None:
+        from plugins.generic_metrics_only import handler as handler_module
+
+        assert not hasattr(handler_module, "_make_even_split_allocator")
+
+    def test_even_split_cost_type_gets_allocate_evenly_with_fallback_directly(
+        self, pg_config, mock_metrics
+    ) -> None:
+        from core.engine.helpers import allocate_evenly_with_fallback
+        from plugins.generic_metrics_only.handler import GenericMetricsOnlyHandler
+
+        handler = GenericMetricsOnlyHandler(config=pg_config, metrics_source=mock_metrics)
+        assert handler.get_allocator("PG_COMPUTE") is allocate_evenly_with_fallback

@@ -4,7 +4,7 @@ from collections.abc import Iterable, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
-from core.engine.helpers import allocate_by_usage_ratio, allocate_evenly
+from core.engine.helpers import allocate_by_usage_ratio, allocate_evenly_with_fallback
 from core.models import Identity, IdentityResolution, IdentitySet, MetricQuery, Resource
 from plugins.generic_metrics_only.shared_context import GenericSharedContext
 
@@ -17,31 +17,20 @@ if TYPE_CHECKING:
     from plugins.generic_metrics_only.config import GenericMetricsOnlyConfig
 
 
-def _make_even_split_allocator() -> CostAllocator:
-    return _even_split_fallback  # type: ignore[return-value]  # closure satisfies CostAllocator protocol at runtime
-
-
 def _make_usage_ratio_allocator(label: str, metric_key: str) -> CostAllocator:
     def allocator(ctx: AllocationContext) -> AllocationResult:
         if not ctx.metrics_data:
-            return _even_split_fallback(ctx)
+            return allocate_evenly_with_fallback(ctx)
         identity_values: dict[str, float] = {}
         for row in ctx.metrics_data.get(metric_key, []):
             identity_id = row.labels.get(label)
             if identity_id and row.value > 0:
                 identity_values[identity_id] = identity_values.get(identity_id, 0.0) + row.value
         if not identity_values:
-            return _even_split_fallback(ctx)
+            return allocate_evenly_with_fallback(ctx)
         return allocate_by_usage_ratio(ctx, identity_values)
 
     return allocator  # type: ignore[return-value]  # closure satisfies CostAllocator protocol at runtime
-
-
-def _even_split_fallback(ctx: AllocationContext) -> AllocationResult:
-    identity_ids = list(ctx.identities.merged_active.ids())
-    if not identity_ids:
-        identity_ids = list(ctx.identities.tenant_period.ids())
-    return allocate_evenly(ctx, identity_ids)
 
 
 class GenericMetricsOnlyHandler:
@@ -66,7 +55,7 @@ class GenericMetricsOnlyHandler:
         cfg = config.identity_source
         for ct in config.cost_types:
             if ct.allocation_strategy == "even_split":
-                self._allocator_map[ct.name] = _make_even_split_allocator()
+                self._allocator_map[ct.name] = allocate_evenly_with_fallback
                 if cfg.source in ("prometheus", "both"):
                     self._metrics_map[ct.name] = [
                         MetricQuery(

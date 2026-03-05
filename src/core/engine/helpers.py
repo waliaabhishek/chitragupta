@@ -134,6 +134,18 @@ def allocate_evenly(
     return AllocationResult(rows=rows)
 
 
+def allocate_evenly_with_fallback(ctx: AllocationContext) -> AllocationResult:
+    """Even split using standard fallback chain: merged_active → tenant_period → UNALLOCATED.
+
+    Standard allocator for infrastructure costs where all active tenants benefit equally.
+    Delegates to allocate_evenly() which handles the UNALLOCATED terminal case.
+    """
+    identity_ids = list(ctx.identities.merged_active.ids())
+    if not identity_ids:
+        identity_ids = list(ctx.identities.tenant_period.ids())
+    return allocate_evenly(ctx, identity_ids)
+
+
 def allocate_hybrid(
     ctx: AllocationContext,
     usage_ratio: float,

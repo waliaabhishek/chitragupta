@@ -62,8 +62,8 @@ def make_row(key: str, value: float, labels: dict | None = None) -> MetricRow:
 class TestFullPrometheusPipeline:
     def test_compute_storage_even_split_network_usage_ratio(self, prometheus_settings, mock_prometheus):
         """Full gather→resolve→allocate flow with mixed allocation strategies."""
+        from core.engine.helpers import allocate_evenly_with_fallback as self_kafka_compute_allocator
         from plugins.self_managed_kafka.allocators.kafka_allocators import (
-            self_kafka_compute_allocator,
             self_kafka_network_ingress_allocator,
         )
         from plugins.self_managed_kafka.config import SelfManagedKafkaConfig
