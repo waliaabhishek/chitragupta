@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import math
-from datetime import UTC, date, datetime, timedelta
+from datetime import date
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 
-from core.api.dependencies import get_tenant_config, get_unit_of_work, utc_today
+from core.api.dependencies import get_tenant_config, get_unit_of_work, resolve_date_range
 from core.api.schemas import BillingLineResponse, PaginatedResponse
 from core.config.models import TenantConfig  # noqa: TC001  # FastAPI evaluates annotations at runtime
 from core.storage.interface import UnitOfWork  # noqa: TC001
@@ -25,17 +25,7 @@ async def list_billing(
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=1000)] = 100,
 ) -> PaginatedResponse[BillingLineResponse]:
-    today = utc_today()
-    effective_end = end_date or today
-    effective_start = start_date or (today - timedelta(days=30))
-
-    if effective_start > effective_end:
-        raise HTTPException(400, detail="start_date must be <= end_date")
-
-    # Convert dates to datetimes with UTC timezone
-    # end_dt is exclusive (start of next day) to include all records on end_date
-    start_dt = datetime(effective_start.year, effective_start.month, effective_start.day, tzinfo=UTC)
-    end_dt = datetime(effective_end.year, effective_end.month, effective_end.day, tzinfo=UTC) + timedelta(days=1)
+    start_dt, end_dt = resolve_date_range(start_date, end_date)
 
     offset = (page - 1) * page_size
     with uow:

@@ -72,7 +72,7 @@ class TestBillingUsesUtcToday:
             uow.billing.upsert(_make_billing(_OUT_WINDOW_TS))
             uow.commit()
 
-        with patch("core.api.routes.billing.utc_today", return_value=_FIXED_TODAY):
+        with patch("core.api.dependencies.utc_today", return_value=_FIXED_TODAY):
             response = app_with_backend.get("/api/v1/tenants/test-tenant/billing")
 
         assert response.status_code == 200
@@ -94,7 +94,7 @@ class TestAggregationUsesUtcToday:
             uow.chargebacks.upsert(_make_chargeback(_OUT_WINDOW_TS))
             uow.commit()
 
-        with patch("core.api.routes.aggregation.utc_today", return_value=_FIXED_TODAY):
+        with patch("core.api.dependencies.utc_today", return_value=_FIXED_TODAY):
             response = app_with_backend.get("/api/v1/tenants/test-tenant/chargebacks/aggregate")
 
         assert response.status_code == 200
@@ -115,7 +115,7 @@ class TestChargebacksUsesUtcToday:
             uow.chargebacks.upsert(_make_chargeback(_OUT_WINDOW_TS))
             uow.commit()
 
-        with patch("core.api.routes.chargebacks.utc_today", return_value=_FIXED_TODAY):
+        with patch("core.api.dependencies.utc_today", return_value=_FIXED_TODAY):
             response = app_with_backend.get("/api/v1/tenants/test-tenant/chargebacks")
 
         assert response.status_code == 200
@@ -136,7 +136,7 @@ class TestExportUsesUtcToday:
             uow.chargebacks.upsert(_make_chargeback(_OUT_WINDOW_TS))
             uow.commit()
 
-        with patch("core.api.routes.export.utc_today", return_value=_FIXED_TODAY):
+        with patch("core.api.dependencies.utc_today", return_value=_FIXED_TODAY):
             response = app_with_backend.post(
                 "/api/v1/tenants/test-tenant/export",
                 json={},
@@ -160,7 +160,7 @@ class TestTagsBulkByFilterUsesUtcToday:
             uow.chargebacks.upsert(_make_chargeback(_OUT_WINDOW_TS))
             uow.commit()
 
-        with patch("core.api.routes.tags.utc_today", return_value=_FIXED_TODAY):
+        with patch("core.api.dependencies.utc_today", return_value=_FIXED_TODAY):
             response = app_with_backend.post(
                 "/api/v1/tenants/test-tenant/tags/bulk-by-filter",
                 json={

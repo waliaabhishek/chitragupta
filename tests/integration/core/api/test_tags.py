@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 
 from fastapi.testclient import TestClient  # noqa: TC002
@@ -438,3 +438,19 @@ class TestBulkAddTagsByFilter:
         )
         data = response.json()
         assert data["created_count"] == 1
+
+
+
+class TestBulkAddTagsByFilterDateValidation:
+    def test_start_date_after_end_date_returns_400(self, app_with_backend: "TestClient") -> None:
+        response = app_with_backend.post(
+            "/api/v1/tenants/test-tenant/tags/bulk-by-filter",
+            json={
+                "start_date": "2026-02-01",
+                "end_date": "2026-01-01",
+                "tag_key": "team",
+                "display_name": "Team A",
+                "created_by": "admin",
+            },
+        )
+        assert response.status_code == 400

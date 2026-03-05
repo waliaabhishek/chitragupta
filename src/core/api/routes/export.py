@@ -3,13 +3,13 @@ from __future__ import annotations
 import csv
 import io
 from collections.abc import Iterator
-from datetime import UTC, datetime, timedelta
+from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 
-from core.api.dependencies import get_tenant_config, get_unit_of_work, utc_today
+from core.api.dependencies import get_tenant_config, get_unit_of_work, resolve_date_range
 from core.api.schemas import ExportRequest  # noqa: TC001  # FastAPI evaluates annotations at runtime
 from core.config.models import TenantConfig  # noqa: TC001  # FastAPI evaluates annotations at runtime
 from core.storage.interface import UnitOfWork  # noqa: TC001
@@ -108,12 +108,7 @@ async def export_chargebacks(
     uow: Annotated[UnitOfWork, Depends(get_unit_of_work)],
     body: ExportRequest,
 ) -> StreamingResponse:
-    today = utc_today()
-    effective_start = body.start_date or (today - timedelta(days=30))
-    effective_end = body.end_date or today
-
-    if effective_start > effective_end:
-        raise HTTPException(400, detail="start_date must be <= end_date")
+    start_dt, end_dt = resolve_date_range(body.start_date, body.end_date)
 
     columns = body.columns or list(_DEFAULT_COLUMNS)
     invalid = set(columns) - _ALL_COLUMNS
@@ -124,9 +119,6 @@ async def export_chargebacks(
         invalid_filters = set(body.filters.keys()) - _VALID_FILTER_KEYS
         if invalid_filters:
             raise HTTPException(400, detail=f"Invalid filter keys: {sorted(invalid_filters)}")
-
-    start_dt = datetime(effective_start.year, effective_start.month, effective_start.day, tzinfo=UTC)
-    end_dt = datetime(effective_end.year, effective_end.month, effective_end.day, tzinfo=UTC) + timedelta(days=1)
 
     return StreamingResponse(
         _stream_csv(

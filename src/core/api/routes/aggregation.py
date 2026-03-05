@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from datetime import UTC, date, datetime, timedelta
+from datetime import date
 from decimal import Decimal
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from core.api.dependencies import get_tenant_config, get_unit_of_work, utc_today
+from core.api.dependencies import get_tenant_config, get_unit_of_work, resolve_date_range
 from core.api.schemas import AggregationBucket, AggregationResponse
 from core.config.models import TenantConfig  # noqa: TC001  # FastAPI evaluates annotations at runtime
 from core.storage.interface import UnitOfWork  # noqa: TC001
@@ -62,15 +62,7 @@ async def aggregate_chargebacks(
             detail=f"time_bucket must be one of {sorted(_VALID_TIME_BUCKETS)}, got {time_bucket!r}",
         )
 
-    today = utc_today()
-    effective_end = end_date or today
-    effective_start = start_date or (today - timedelta(days=30))
-
-    if effective_start > effective_end:
-        raise HTTPException(400, detail="start_date must be <= end_date")
-
-    start_dt = datetime(effective_start.year, effective_start.month, effective_start.day, tzinfo=UTC)
-    end_dt = datetime(effective_end.year, effective_end.month, effective_end.day, tzinfo=UTC) + timedelta(days=1)
+    start_dt, end_dt = resolve_date_range(start_date, end_date)
 
     with uow:
         rows = uow.chargebacks.aggregate(

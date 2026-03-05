@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING, Annotated, cast
 
 from fastapi import Depends, HTTPException, Path, Request
@@ -18,6 +18,38 @@ if TYPE_CHECKING:
 def utc_today() -> date:
     """Return today's date in UTC. Use instead of date.today() in all API routes."""
     return datetime.now(UTC).date()
+
+
+def resolve_date_range(
+    start_date: date | None,
+    end_date: date | None,
+) -> tuple[datetime, datetime]:
+    """Resolve optional date params to UTC datetime bounds with a 30-day default window.
+
+    Applies defaults (today-30d to today), validates ordering, and converts to
+    UTC-aware datetimes. end_dt is exclusive (midnight of the day after end_date)
+    so that records timestamped anywhere on end_date are included.
+
+    Args:
+        start_date: Inclusive start date, or None to default to today - 30 days.
+        end_date: Inclusive end date, or None to default to today.
+
+    Returns:
+        (start_dt, end_dt) as UTC-aware datetimes.
+
+    Raises:
+        HTTPException 400: If effective start_date > end_date.
+    """
+    today = utc_today()
+    effective_end = end_date or today
+    effective_start = start_date or (today - timedelta(days=30))
+
+    if effective_start > effective_end:
+        raise HTTPException(400, detail="start_date must be <= end_date")
+
+    start_dt = datetime(effective_start.year, effective_start.month, effective_start.day, tzinfo=UTC)
+    end_dt = datetime(effective_end.year, effective_end.month, effective_end.day, tzinfo=UTC) + timedelta(days=1)
+    return start_dt, end_dt
 
 
 def get_settings(request: Request) -> AppSettings:

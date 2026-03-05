@@ -10,6 +10,7 @@ from core.api.dependencies import (
     TemporalParams,
     get_settings,
     get_tenant_config,
+    resolve_date_range,
     utc_today,
     validate_datetime_param,
     validate_temporal_params,
@@ -150,3 +151,34 @@ class TestUtcToday:
     def test_returns_date_type(self) -> None:
         result = utc_today()
         assert isinstance(result, date)
+
+
+class TestResolveDateRange:
+    _FAKE_TODAY = date(2026, 3, 5)
+
+    def test_defaults_return_30_day_window(self) -> None:
+        with patch("core.api.dependencies.utc_today", return_value=self._FAKE_TODAY):
+            start_dt, end_dt = resolve_date_range(None, None)
+        assert start_dt == datetime(2026, 2, 3, tzinfo=UTC)
+        assert end_dt == datetime(2026, 3, 6, tzinfo=UTC)
+
+    def test_explicit_dates_convert_to_utc_midnight(self) -> None:
+        start_dt, end_dt = resolve_date_range(date(2026, 1, 1), date(2026, 1, 31))
+        assert start_dt == datetime(2026, 1, 1, tzinfo=UTC)
+        assert end_dt == datetime(2026, 2, 1, tzinfo=UTC)
+
+    def test_start_after_end_raises_400(self) -> None:
+        with pytest.raises(HTTPException) as exc_info:
+            resolve_date_range(date(2026, 2, 1), date(2026, 1, 1))
+        assert exc_info.value.status_code == 400
+
+    def test_partial_default_end_uses_tomorrow(self) -> None:
+        with patch("core.api.dependencies.utc_today", return_value=self._FAKE_TODAY):
+            start_dt, end_dt = resolve_date_range(date(2026, 1, 15), None)
+        assert start_dt == datetime(2026, 1, 15, tzinfo=UTC)
+        assert end_dt == datetime(2026, 3, 6, tzinfo=UTC)
+
+    def test_same_day_start_end_is_valid(self) -> None:
+        start_dt, end_dt = resolve_date_range(date(2026, 1, 1), date(2026, 1, 1))
+        assert start_dt == datetime(2026, 1, 1, tzinfo=UTC)
+        assert end_dt == datetime(2026, 1, 2, tzinfo=UTC)

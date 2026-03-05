@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 import math
-from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
 
-from core.api.dependencies import get_tenant_config, get_unit_of_work, utc_today
+from core.api.dependencies import get_tenant_config, get_unit_of_work, resolve_date_range
 from core.api.schemas import (
     BulkTagByFilterRequest,
     BulkTagRequest,
@@ -252,12 +251,7 @@ async def bulk_add_tags_by_filter(
     uow: Annotated[UnitOfWork, Depends(get_unit_of_work)],
     body: BulkTagByFilterRequest,
 ) -> BulkTagResponse:
-    today = utc_today()
-    effective_start = body.start_date or (today - timedelta(days=30))
-    effective_end = body.end_date or today
-
-    start_dt = datetime(effective_start.year, effective_start.month, effective_start.day, tzinfo=UTC)
-    end_dt = datetime(effective_end.year, effective_end.month, effective_end.day, tzinfo=UTC) + timedelta(days=1)
+    start_dt, end_dt = resolve_date_range(body.start_date, body.end_date)
 
     with uow:
         dimension_ids = uow.chargebacks.find_dimension_ids_by_filters(
