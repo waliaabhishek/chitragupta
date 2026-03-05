@@ -311,19 +311,18 @@ class WorkflowRunner:
     def _cleanup_retention(self) -> None:
         """Delete data older than retention_days for each tenant.
 
-        TD-016: Wire up delete_before() calls for retention cleanup.
-        Called after each run cycle to prevent unbounded storage growth.
+        Only processes tenants with a cached TenantRuntime (i.e., tenants that ran
+        this cycle). Tenants without a cached runtime are skipped — no new storage
+        backend is created.
         """
-        for name, config in self._settings.tenants.items():
-            if config.retention_days <= 0:
-                continue  # 0 = disabled
+        for name, runtime in self._tenant_runtimes.items():
+            config = self._settings.tenants.get(name)
+            if config is None or config.retention_days <= 0:
+                continue  # tenant removed from config, or retention disabled
 
             cutoff = datetime.now(UTC) - timedelta(days=config.retention_days)
-            from core.storage.registry import create_storage_backend
-
-            storage = create_storage_backend(config.storage)
             try:
-                with storage.create_unit_of_work() as uow:
+                with runtime.storage.create_unit_of_work() as uow:
                     deleted_billing = uow.billing.delete_before(config.ecosystem, config.tenant_id, cutoff)
                     deleted_resources = uow.resources.delete_before(config.ecosystem, config.tenant_id, cutoff)
                     deleted_identities = uow.identities.delete_before(config.ecosystem, config.tenant_id, cutoff)
@@ -340,8 +339,6 @@ class WorkflowRunner:
                     )
             except Exception:
                 logger.exception("Tenant %s: retention cleanup failed", name)
-            finally:
-                storage.dispose()
 
     def run_loop(self, shutdown_event: threading.Event) -> None:
         """Run orchestrator loop until shutdown_event is set."""

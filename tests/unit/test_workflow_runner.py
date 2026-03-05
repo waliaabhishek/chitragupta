@@ -957,11 +957,9 @@ class TestCleanupRetention:
         runner._cleanup_retention()
         mock_storage.assert_not_called()
 
-    @patch("core.storage.registry.create_storage_backend")
-    def test_calls_delete_before_for_enabled_tenant(self, mock_storage: MagicMock) -> None:
-        """retention_days > 0 triggers delete_before on all repos."""
+    def test_calls_delete_before_for_enabled_tenant(self) -> None:
+        """retention_days > 0 triggers delete_before on all repos via cached runtime storage."""
         mock_backend = MagicMock()
-        mock_storage.return_value = mock_backend
         mock_uow = MagicMock()
         mock_backend.create_unit_of_work.return_value.__enter__ = MagicMock(return_value=mock_uow)
         mock_backend.create_unit_of_work.return_value.__exit__ = MagicMock(return_value=False)
@@ -973,6 +971,15 @@ class TestCleanupRetention:
         tenant = _make_tenant(tenant_id="tid1", retention_days=30)
         settings = _make_settings(tenants={"t1": tenant})
         runner = WorkflowRunner(settings, MagicMock())
+        runtime = TenantRuntime(
+            tenant_name="t1",
+            plugin=MagicMock(),
+            storage=mock_backend,
+            orchestrator=MagicMock(),
+            config_hash="abc123",
+            created_at=datetime.now(UTC),
+        )
+        runner._tenant_runtimes["t1"] = runtime
         runner._cleanup_retention()
 
         mock_uow.billing.delete_before.assert_called_once()
@@ -980,18 +987,25 @@ class TestCleanupRetention:
         mock_uow.identities.delete_before.assert_called_once()
         mock_uow.chargebacks.delete_before.assert_called_once()
         mock_uow.commit.assert_called_once()
-        mock_backend.dispose.assert_called_once()
+        mock_backend.dispose.assert_not_called()
 
-    @patch("core.storage.registry.create_storage_backend")
-    def test_exception_does_not_propagate(self, mock_storage: MagicMock) -> None:
+    def test_exception_does_not_propagate(self) -> None:
         """Retention cleanup errors are caught and logged, not re-raised."""
         mock_backend = MagicMock()
-        mock_storage.return_value = mock_backend
         mock_backend.create_unit_of_work.side_effect = RuntimeError("DB down")
 
         tenant = _make_tenant(tenant_id="tid1", retention_days=30)
         settings = _make_settings(tenants={"t1": tenant})
         runner = WorkflowRunner(settings, MagicMock())
+        runtime = TenantRuntime(
+            tenant_name="t1",
+            plugin=MagicMock(),
+            storage=mock_backend,
+            orchestrator=MagicMock(),
+            config_hash="abc123",
+            created_at=datetime.now(UTC),
+        )
+        runner._tenant_runtimes["t1"] = runtime
         runner._cleanup_retention()  # Should not raise
 
 
@@ -1545,3 +1559,164 @@ class TestGatherFailureThresholdHandling:
         assert any("1 tenant" in msg and "permanently suspended" in msg for msg in logged_messages), (
             f"Expected CRITICAL all-tenants-suspended log; got: {logged_messages}"
         )
+
+
+class TestCleanupRetentionStorageReuse:
+    """TASK-020: _cleanup_retention() reuses cached TenantRuntime storage."""
+
+    @patch("core.storage.registry.create_storage_backend")
+    def test_no_new_engine_when_runtime_exists(self, mock_create: MagicMock) -> None:
+        """With cached runtime, create_storage_backend should NOT be called."""
+        mock_storage = MagicMock()
+        mock_uow = MagicMock()
+        mock_storage.create_unit_of_work.return_value.__enter__ = MagicMock(return_value=mock_uow)
+        mock_storage.create_unit_of_work.return_value.__exit__ = MagicMock(return_value=False)
+        mock_uow.billing.delete_before.return_value = 0
+        mock_uow.resources.delete_before.return_value = 0
+        mock_uow.identities.delete_before.return_value = 0
+        mock_uow.chargebacks.delete_before.return_value = 0
+
+        tenant = _make_tenant(tenant_id="tid1", retention_days=30)
+        settings = _make_settings(tenants={"t1": tenant})
+        runner = WorkflowRunner(settings, MagicMock())
+
+        runtime = TenantRuntime(
+            tenant_name="t1",
+            plugin=MagicMock(),
+            storage=mock_storage,
+            orchestrator=MagicMock(),
+            config_hash="abc123",
+            created_at=datetime.now(UTC),
+        )
+        runner._tenant_runtimes["t1"] = runtime
+        runner._cleanup_retention()
+
+        mock_create.assert_not_called()
+
+    def test_uses_runtime_storage_not_new_backend(self) -> None:
+        """Runtime's storage.create_unit_of_work() called, dispose() NOT called."""
+        mock_storage = MagicMock()
+        mock_uow = MagicMock()
+        mock_storage.create_unit_of_work.return_value.__enter__ = MagicMock(return_value=mock_uow)
+        mock_storage.create_unit_of_work.return_value.__exit__ = MagicMock(return_value=False)
+        mock_uow.billing.delete_before.return_value = 0
+        mock_uow.resources.delete_before.return_value = 0
+        mock_uow.identities.delete_before.return_value = 0
+        mock_uow.chargebacks.delete_before.return_value = 0
+
+        tenant = _make_tenant(tenant_id="tid1", retention_days=30)
+        settings = _make_settings(tenants={"t1": tenant})
+        runner = WorkflowRunner(settings, MagicMock())
+
+        runtime = TenantRuntime(
+            tenant_name="t1",
+            plugin=MagicMock(),
+            storage=mock_storage,
+            orchestrator=MagicMock(),
+            config_hash="abc123",
+            created_at=datetime.now(UTC),
+        )
+        runner._tenant_runtimes["t1"] = runtime
+        runner._cleanup_retention()
+
+        mock_storage.create_unit_of_work.assert_called_once()
+        mock_storage.dispose.assert_not_called()
+
+    @patch("core.storage.registry.create_storage_backend")
+    def test_skip_tenant_without_runtime(self, mock_create: MagicMock) -> None:
+        """Tenant with no cached runtime is skipped — no storage created."""
+        mock_storage = MagicMock()
+        mock_uow = MagicMock()
+        mock_storage.create_unit_of_work.return_value.__enter__ = MagicMock(return_value=mock_uow)
+        mock_storage.create_unit_of_work.return_value.__exit__ = MagicMock(return_value=False)
+        mock_uow.billing.delete_before.return_value = 0
+        mock_uow.resources.delete_before.return_value = 0
+        mock_uow.identities.delete_before.return_value = 0
+        mock_uow.chargebacks.delete_before.return_value = 0
+
+        tenant1 = _make_tenant(tenant_id="tid1", retention_days=30)
+        tenant2 = _make_tenant(tenant_id="tid2", retention_days=30)
+        settings = _make_settings(tenants={"t1": tenant1, "t2": tenant2})
+        runner = WorkflowRunner(settings, MagicMock())
+
+        # Only populate runtime for t1
+        runtime = TenantRuntime(
+            tenant_name="t1",
+            plugin=MagicMock(),
+            storage=mock_storage,
+            orchestrator=MagicMock(),
+            config_hash="abc123",
+            created_at=datetime.now(UTC),
+        )
+        runner._tenant_runtimes["t1"] = runtime
+        runner._cleanup_retention()
+
+        # t1 processed via runtime, t2 skipped (no runtime)
+        mock_storage.create_unit_of_work.assert_called_once()
+        mock_create.assert_not_called()
+
+    def test_skip_when_retention_days_zero_with_runtime(self) -> None:
+        """retention_days=0 disables cleanup even with cached runtime."""
+        mock_storage = MagicMock()
+
+        tenant = _make_tenant(tenant_id="tid1")
+        object.__setattr__(tenant, "retention_days", 0)
+        settings = _make_settings(tenants={"t1": tenant})
+        runner = WorkflowRunner(settings, MagicMock())
+
+        runtime = TenantRuntime(
+            tenant_name="t1",
+            plugin=MagicMock(),
+            storage=mock_storage,
+            orchestrator=MagicMock(),
+            config_hash="abc123",
+            created_at=datetime.now(UTC),
+        )
+        runner._tenant_runtimes["t1"] = runtime
+        runner._cleanup_retention()
+
+        mock_storage.create_unit_of_work.assert_not_called()
+
+    def test_exception_isolation_per_tenant(self) -> None:
+        """Error in first tenant's cleanup does not block second tenant."""
+        mock_storage1 = MagicMock()
+        mock_storage1.create_unit_of_work.side_effect = RuntimeError("DB error")
+
+        mock_storage2 = MagicMock()
+        mock_uow2 = MagicMock()
+        mock_storage2.create_unit_of_work.return_value.__enter__ = MagicMock(return_value=mock_uow2)
+        mock_storage2.create_unit_of_work.return_value.__exit__ = MagicMock(return_value=False)
+        mock_uow2.billing.delete_before.return_value = 0
+        mock_uow2.resources.delete_before.return_value = 0
+        mock_uow2.identities.delete_before.return_value = 0
+        mock_uow2.chargebacks.delete_before.return_value = 0
+
+        tenant1 = _make_tenant(tenant_id="tid1", retention_days=30)
+        tenant2 = _make_tenant(tenant_id="tid2", retention_days=30)
+        settings = _make_settings(tenants={"t1": tenant1, "t2": tenant2})
+        runner = WorkflowRunner(settings, MagicMock())
+
+        runtime1 = TenantRuntime(
+            tenant_name="t1",
+            plugin=MagicMock(),
+            storage=mock_storage1,
+            orchestrator=MagicMock(),
+            config_hash="abc123",
+            created_at=datetime.now(UTC),
+        )
+        runtime2 = TenantRuntime(
+            tenant_name="t2",
+            plugin=MagicMock(),
+            storage=mock_storage2,
+            orchestrator=MagicMock(),
+            config_hash="def456",
+            created_at=datetime.now(UTC),
+        )
+        runner._tenant_runtimes["t1"] = runtime1
+        runner._tenant_runtimes["t2"] = runtime2
+
+        runner._cleanup_retention()  # Should not raise
+
+        # t2 still processed despite t1 failure
+        mock_storage2.create_unit_of_work.assert_called_once()
+        mock_uow2.billing.delete_before.assert_called_once()
