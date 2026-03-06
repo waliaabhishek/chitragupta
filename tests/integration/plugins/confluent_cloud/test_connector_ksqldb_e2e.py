@@ -51,9 +51,11 @@ def mock_uow_for_connector() -> MagicMock:
 
     uow.resources = MagicMock()
     uow.resources.find_by_period.return_value = ([connector], 1)
+    uow.resources.get.return_value = connector
 
     uow.identities = MagicMock()
     uow.identities.find_by_period.return_value = ([sa_xxx], 1)
+    uow.identities.get.return_value = sa_xxx
 
     return uow
 
@@ -99,9 +101,12 @@ def mock_uow_for_connector_api_key() -> MagicMock:
 
     uow.resources = MagicMock()
     uow.resources.find_by_period.return_value = ([connector], 1)
+    uow.resources.get.return_value = connector
 
     uow.identities = MagicMock()
     uow.identities.find_by_period.return_value = ([api_key, sa_owner], 2)
+    identity_map = {i.identity_id: i for i in [api_key, sa_owner]}
+    uow.identities.get.side_effect = lambda ecosystem, tenant_id, identity_id: identity_map.get(identity_id)
 
     return uow
 
@@ -126,9 +131,11 @@ def mock_uow_for_connector_unknown_mode() -> MagicMock:
 
     uow.resources = MagicMock()
     uow.resources.find_by_period.return_value = ([connector], 1)
+    uow.resources.get.return_value = connector
 
     uow.identities = MagicMock()
     uow.identities.find_by_period.return_value = ([], 0)
+    uow.identities.get.return_value = None
 
     return uow
 
@@ -163,9 +170,11 @@ def mock_uow_for_ksqldb() -> MagicMock:
 
     uow.resources = MagicMock()
     uow.resources.find_by_period.return_value = ([ksqldb_app], 1)
+    uow.resources.get.return_value = ksqldb_app
 
     uow.identities = MagicMock()
     uow.identities.find_by_period.return_value = ([sa_owner], 1)
+    uow.identities.get.return_value = sa_owner
 
     return uow
 
@@ -188,9 +197,11 @@ def mock_uow_for_ksqldb_missing_owner() -> MagicMock:
 
     uow.resources = MagicMock()
     uow.resources.find_by_period.return_value = ([ksqldb_app], 1)
+    uow.resources.get.return_value = ksqldb_app
 
     uow.identities = MagicMock()
     uow.identities.find_by_period.return_value = ([], 0)
+    uow.identities.get.return_value = None
 
     return uow
 

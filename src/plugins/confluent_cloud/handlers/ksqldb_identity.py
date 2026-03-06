@@ -52,16 +52,7 @@ def resolve_ksqldb_identity(
     metrics_derived = IdentitySet()
     tenant_period = IdentitySet()
 
-    # Find all resources in the billing period
-    resources, _ = uow.resources.find_by_period(
-        ecosystem=ecosystem,
-        tenant_id=tenant_id,
-        start=billing_start,
-        end=billing_end,
-    )
-
-    # Filter to the specific ksqlDB resource
-    ksqldb_app = next((r for r in resources if r.resource_id == resource_id), None)
+    ksqldb_app = uow.resources.get(ecosystem=ecosystem, tenant_id=tenant_id, resource_id=resource_id)
 
     # Resource not found -> deleted sentinel
     if ksqldb_app is None:
@@ -96,20 +87,10 @@ def resolve_ksqldb_identity(
             tenant_period=tenant_period,
         )
 
-    # Get all identities in billing window for lookup
-    all_identities, _ = uow.identities.find_by_period(
-        ecosystem=ecosystem,
-        tenant_id=tenant_id,
-        start=billing_start,
-        end=billing_end,
-    )
-    identity_by_id = {i.identity_id: i for i in all_identities}
-
     # Look up owner in identities
-    owner = identity_by_id.get(owner_id)
-    if owner is None:
-        # Owner not in DB -> create sentinel from ID (parses prefix for type)
-        owner = create_sentinel_from_id(owner_id, tenant_id, ecosystem)
+    owner = uow.identities.get(
+        ecosystem=ecosystem, tenant_id=tenant_id, identity_id=owner_id
+    ) or create_sentinel_from_id(owner_id, tenant_id, ecosystem)
 
     resource_active.add(owner)
 

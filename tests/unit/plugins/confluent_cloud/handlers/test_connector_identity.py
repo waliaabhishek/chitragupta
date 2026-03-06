@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, call
 
 from core.models import Identity, Resource
 
@@ -36,8 +36,10 @@ class TestResolveConnectorIdentity:
             display_name="My SA",
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        mock_uow.resources.find_by_period.return_value = ([connector], 1)
-        mock_uow.identities.find_by_period.return_value = ([sa_owner], 1)
+
+        mock_uow.resources.get.return_value = connector
+
+        mock_uow.identities.get.return_value = sa_owner
 
         result = resolve_connector_identity(
             tenant_id="org-123",
@@ -87,8 +89,11 @@ class TestResolveConnectorIdentity:
             display_name="Human User",
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        mock_uow.resources.find_by_period.return_value = ([connector], 1)
-        mock_uow.identities.find_by_period.return_value = ([api_key, user_owner], 2)
+
+        mock_uow.resources.get.return_value = connector
+
+        identity_map = {i.identity_id: i for i in [api_key, user_owner]}
+        mock_uow.identities.get.side_effect = lambda ecosystem, tenant_id, identity_id: identity_map.get(identity_id)
 
         result = resolve_connector_identity(
             tenant_id="org-123",
@@ -116,8 +121,8 @@ class TestResolveConnectorIdentity:
             metadata={"kafka_auth_mode": "UNKNOWN"},
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        mock_uow.resources.find_by_period.return_value = ([connector], 1)
-        mock_uow.identities.find_by_period.return_value = ([], 0)
+
+        mock_uow.resources.get.return_value = connector
 
         result = resolve_connector_identity(
             tenant_id="org-123",
@@ -140,9 +145,6 @@ class TestResolveConnectorIdentity:
         from plugins.confluent_cloud.handlers.connector_identity import (
             resolve_connector_identity,
         )
-
-        mock_uow.resources.find_by_period.return_value = ([], 0)
-        mock_uow.identities.find_by_period.return_value = ([], 0)
 
         result = resolve_connector_identity(
             tenant_id="org-123",
@@ -176,8 +178,8 @@ class TestResolveConnectorIdentity:
             },
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        mock_uow.resources.find_by_period.return_value = ([connector], 1)
-        mock_uow.identities.find_by_period.return_value = ([], 0)
+
+        mock_uow.resources.get.return_value = connector
 
         result = resolve_connector_identity(
             tenant_id="org-123",
@@ -212,8 +214,8 @@ class TestResolveConnectorIdentity:
             },
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        mock_uow.resources.find_by_period.return_value = ([connector], 1)
-        mock_uow.identities.find_by_period.return_value = ([], 0)
+
+        mock_uow.resources.get.return_value = connector
 
         result = resolve_connector_identity(
             tenant_id="org-123",
@@ -254,8 +256,10 @@ class TestResolveConnectorIdentity:
             metadata={},  # No owner_id
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        mock_uow.resources.find_by_period.return_value = ([connector], 1)
-        mock_uow.identities.find_by_period.return_value = ([api_key], 1)
+
+        mock_uow.resources.get.return_value = connector
+
+        mock_uow.identities.get.return_value = api_key
 
         result = resolve_connector_identity(
             tenant_id="org-123",
@@ -283,8 +287,8 @@ class TestResolveConnectorIdentity:
             metadata={},  # No kafka_auth_mode
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        mock_uow.resources.find_by_period.return_value = ([connector], 1)
-        mock_uow.identities.find_by_period.return_value = ([], 0)
+
+        mock_uow.resources.get.return_value = connector
 
         result = resolve_connector_identity(
             tenant_id="org-123",
@@ -313,8 +317,8 @@ class TestResolveConnectorIdentity:
             metadata={"kafka_auth_mode": "SERVICE_ACCOUNT"},  # No kafka_service_account_id
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        mock_uow.resources.find_by_period.return_value = ([connector], 1)
-        mock_uow.identities.find_by_period.return_value = ([], 0)
+
+        mock_uow.resources.get.return_value = connector
 
         result = resolve_connector_identity(
             tenant_id="org-123",
@@ -342,8 +346,8 @@ class TestResolveConnectorIdentity:
             metadata={"kafka_auth_mode": "KAFKA_API_KEY"},  # No kafka_api_key
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        mock_uow.resources.find_by_period.return_value = ([connector], 1)
-        mock_uow.identities.find_by_period.return_value = ([], 0)
+
+        mock_uow.resources.get.return_value = connector
 
         result = resolve_connector_identity(
             tenant_id="org-123",
@@ -381,8 +385,6 @@ class TestResolveConnectorIdentity:
             identity_type="service_account",
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        mock_uow.resources.find_by_period.return_value = ([connector], 1)
-        mock_uow.identities.find_by_period.return_value = ([sa_owner], 1)
 
         result = resolve_connector_identity(
             tenant_id="org-123",
@@ -431,11 +433,10 @@ class TestResolveConnectorIdentity:
             identity_type="service_account",
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        mock_uow.resources.find_by_period.return_value = (
-            [connector_match, connector_other],
-            2,
-        )
-        mock_uow.identities.find_by_period.return_value = ([sa_correct], 1)
+
+        mock_uow.resources.get.return_value = connector_match
+
+        mock_uow.identities.get.return_value = sa_correct
 
         result = resolve_connector_identity(
             tenant_id="org-123",
@@ -467,8 +468,8 @@ class TestResolveConnectorIdentity:
             },
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        mock_uow.resources.find_by_period.return_value = ([connector], 1)
-        mock_uow.identities.find_by_period.return_value = ([], 0)
+
+        mock_uow.resources.get.return_value = connector
 
         result = resolve_connector_identity(
             tenant_id="org-123",
@@ -500,8 +501,8 @@ class TestResolveConnectorIdentity:
             },
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        mock_uow.resources.find_by_period.return_value = ([connector], 1)
-        mock_uow.identities.find_by_period.return_value = ([], 0)
+
+        mock_uow.resources.get.return_value = connector
 
         result = resolve_connector_identity(
             tenant_id="org-123",
@@ -533,8 +534,8 @@ class TestResolveConnectorIdentity:
             },
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        mock_uow.resources.find_by_period.return_value = ([connector], 1)
-        mock_uow.identities.find_by_period.return_value = ([], 0)
+
+        mock_uow.resources.get.return_value = connector
 
         result = resolve_connector_identity(
             tenant_id="org-123",
@@ -563,8 +564,8 @@ class TestResolveConnectorIdentity:
             metadata={"kafka_auth_mode": "UNKNOWN"},
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        mock_uow.resources.find_by_period.return_value = ([connector], 1)
-        mock_uow.identities.find_by_period.return_value = ([], 0)
+
+        mock_uow.resources.get.return_value = connector
 
         result = resolve_connector_identity(
             tenant_id="org-123",
@@ -660,3 +661,334 @@ class TestCreateConnectorSentinel:
         assert result.identity_type == "connector_credentials"
         assert result.identity_id == "connector_credentials_masked"
         assert result.display_name == "Connector Credentials Masked"
+
+
+# ---------------------------------------------------------------------------
+# TASK-028 — Direct lookup tests (TDD RED phase)
+# These tests verify that the fixed code uses uow.resources.get() and
+# uow.identities.get() instead of full-table find_by_period() scans.
+# ---------------------------------------------------------------------------
+
+
+class TestConnectorIdentityDirectLookup:
+    """GAP-028: connector resolve uses targeted get() calls, never full-table scans."""
+
+    # --- Method-usage assertions ---
+
+    def test_resource_lookup_uses_get_not_find_by_period(self, mock_uow: MagicMock) -> None:
+        """resolve_connector_identity calls uow.resources.get() exactly once, never find_by_period."""
+        from plugins.confluent_cloud.handlers.connector_identity import resolve_connector_identity
+
+        connector = Resource(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            resource_id="connector-abc",
+            resource_type="connector",
+            metadata={"kafka_auth_mode": "UNKNOWN"},
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        )
+        mock_uow.resources.get.return_value = connector
+
+        resolve_connector_identity(
+            tenant_id="org-123",
+            resource_id="connector-abc",
+            billing_start=datetime(2026, 2, 1, tzinfo=UTC),
+            billing_end=datetime(2026, 2, 2, tzinfo=UTC),
+            uow=mock_uow,
+            ecosystem="confluent_cloud",
+        )
+
+        mock_uow.resources.get.assert_called_once_with(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            resource_id="connector-abc",
+        )
+        mock_uow.resources.find_by_period.assert_not_called()
+
+    def test_identity_lookup_sa_mode_uses_get_not_find_by_period(self, mock_uow: MagicMock) -> None:
+        """SERVICE_ACCOUNT mode resolves identity via uow.identities.get(), never find_by_period."""
+        from plugins.confluent_cloud.handlers.connector_identity import resolve_connector_identity
+
+        connector = Resource(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            resource_id="connector-abc",
+            resource_type="connector",
+            metadata={
+                "kafka_auth_mode": "SERVICE_ACCOUNT",
+                "kafka_service_account_id": "sa-owner-123",
+            },
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        )
+        sa_owner = Identity(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            identity_id="sa-owner-123",
+            identity_type="service_account",
+            display_name="My SA",
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        )
+        mock_uow.resources.get.return_value = connector
+        mock_uow.identities.get.return_value = sa_owner
+
+        resolve_connector_identity(
+            tenant_id="org-123",
+            resource_id="connector-abc",
+            billing_start=datetime(2026, 2, 1, tzinfo=UTC),
+            billing_end=datetime(2026, 2, 2, tzinfo=UTC),
+            uow=mock_uow,
+            ecosystem="confluent_cloud",
+        )
+
+        mock_uow.identities.get.assert_called_once_with(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            identity_id="sa-owner-123",
+        )
+        mock_uow.identities.find_by_period.assert_not_called()
+
+    def test_identity_lookup_api_key_mode_at_most_two_get_calls(self, mock_uow: MagicMock) -> None:
+        """KAFKA_API_KEY mode makes at most 2 identities.get() calls (api_key + owner), never find_by_period."""
+        from plugins.confluent_cloud.handlers.connector_identity import resolve_connector_identity
+
+        connector = Resource(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            resource_id="connector-abc",
+            resource_type="connector",
+            metadata={
+                "kafka_auth_mode": "KAFKA_API_KEY",
+                "kafka_api_key": "key-abc",
+            },
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        )
+        api_key = Identity(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            identity_id="key-abc",
+            identity_type="api_key",
+            metadata={"owner_id": "u-user-1"},
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        )
+        user = Identity(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            identity_id="u-user-1",
+            identity_type="user",
+            display_name="Human User",
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        )
+
+        def identity_get_side_effect(ecosystem: str, tenant_id: str, identity_id: str) -> Identity | None:
+            if identity_id == "key-abc":
+                return api_key
+            if identity_id == "u-user-1":
+                return user
+            return None
+
+        mock_uow.resources.get.return_value = connector
+        mock_uow.identities.get.side_effect = identity_get_side_effect
+
+        resolve_connector_identity(
+            tenant_id="org-123",
+            resource_id="connector-abc",
+            billing_start=datetime(2026, 2, 1, tzinfo=UTC),
+            billing_end=datetime(2026, 2, 2, tzinfo=UTC),
+            uow=mock_uow,
+            ecosystem="confluent_cloud",
+        )
+
+        assert mock_uow.identities.get.call_count <= 2
+        mock_uow.identities.find_by_period.assert_not_called()
+
+    # --- Behavioral parity tests (new mock setup via get()) ---
+
+    def test_masked_sentinel_parity_resource_get_returns_none(self, mock_uow: MagicMock) -> None:
+        """get(resource) returns None → masked sentinel; get() is called, find_by_period is not."""
+        from plugins.confluent_cloud.handlers.connector_identity import resolve_connector_identity
+
+        mock_uow.resources.get.return_value = None  # resource not found
+
+        result = resolve_connector_identity(
+            tenant_id="org-123",
+            resource_id="connector-abc",
+            billing_start=datetime(2026, 2, 1, tzinfo=UTC),
+            billing_end=datetime(2026, 2, 2, tzinfo=UTC),
+            uow=mock_uow,
+            ecosystem="confluent_cloud",
+        )
+
+        mock_uow.resources.get.assert_called_once_with(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            resource_id="connector-abc",
+        )
+        mock_uow.resources.find_by_period.assert_not_called()
+        assert "connector_credentials_masked" in result.resource_active.ids()
+
+    def test_api_key_not_found_parity_identity_get_returns_none(self, mock_uow: MagicMock) -> None:
+        """API key not in DB (get returns None) → connector_api_key_not_found; no find_by_period."""
+        from plugins.confluent_cloud.handlers.connector_identity import resolve_connector_identity
+
+        connector = Resource(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            resource_id="connector-abc",
+            resource_type="connector",
+            metadata={
+                "kafka_auth_mode": "KAFKA_API_KEY",
+                "kafka_api_key": "real-key-missing",
+            },
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        )
+        mock_uow.resources.get.return_value = connector
+        mock_uow.identities.get.return_value = None  # api key not found
+
+        result = resolve_connector_identity(
+            tenant_id="org-123",
+            resource_id="connector-abc",
+            billing_start=datetime(2026, 2, 1, tzinfo=UTC),
+            billing_end=datetime(2026, 2, 2, tzinfo=UTC),
+            uow=mock_uow,
+            ecosystem="confluent_cloud",
+        )
+
+        mock_uow.resources.find_by_period.assert_not_called()
+        mock_uow.identities.find_by_period.assert_not_called()
+        assert "connector_api_key_not_found" in result.resource_active.ids()
+
+    def test_owner_unknown_parity_api_key_has_no_owner_id(self, mock_uow: MagicMock) -> None:
+        """API key found but no owner_id in metadata → connector_credentials_unknown; no find_by_period."""
+        from plugins.confluent_cloud.handlers.connector_identity import resolve_connector_identity
+
+        connector = Resource(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            resource_id="connector-abc",
+            resource_type="connector",
+            metadata={
+                "kafka_auth_mode": "KAFKA_API_KEY",
+                "kafka_api_key": "key-abc",
+            },
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        )
+        api_key = Identity(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            identity_id="key-abc",
+            identity_type="api_key",
+            metadata={},  # no owner_id
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        )
+        mock_uow.resources.get.return_value = connector
+        mock_uow.identities.get.return_value = api_key
+
+        result = resolve_connector_identity(
+            tenant_id="org-123",
+            resource_id="connector-abc",
+            billing_start=datetime(2026, 2, 1, tzinfo=UTC),
+            billing_end=datetime(2026, 2, 2, tzinfo=UTC),
+            uow=mock_uow,
+            ecosystem="confluent_cloud",
+        )
+
+        mock_uow.resources.find_by_period.assert_not_called()
+        mock_uow.identities.find_by_period.assert_not_called()
+        assert "connector_credentials_unknown" in result.resource_active.ids()
+
+    def test_happy_path_sa_mode_parity_using_get(self, mock_uow: MagicMock) -> None:
+        """SERVICE_ACCOUNT happy path: resource.get + identity.get → SA owner resolved."""
+        from plugins.confluent_cloud.handlers.connector_identity import resolve_connector_identity
+
+        connector = Resource(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            resource_id="connector-abc",
+            resource_type="connector",
+            metadata={
+                "kafka_auth_mode": "SERVICE_ACCOUNT",
+                "kafka_service_account_id": "sa-happy",
+            },
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        )
+        sa_owner = Identity(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            identity_id="sa-happy",
+            identity_type="service_account",
+            display_name="Happy Owner",
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        )
+        mock_uow.resources.get.return_value = connector
+        mock_uow.identities.get.return_value = sa_owner
+
+        result = resolve_connector_identity(
+            tenant_id="org-123",
+            resource_id="connector-abc",
+            billing_start=datetime(2026, 2, 1, tzinfo=UTC),
+            billing_end=datetime(2026, 2, 2, tzinfo=UTC),
+            uow=mock_uow,
+            ecosystem="confluent_cloud",
+        )
+
+        mock_uow.resources.find_by_period.assert_not_called()
+        mock_uow.identities.find_by_period.assert_not_called()
+        assert len(result.resource_active) == 1
+        assert "sa-happy" in result.resource_active.ids()
+        assert result.resource_active.get("sa-happy").display_name == "Happy Owner"
+
+    def test_happy_path_api_key_mode_parity_using_get(self, mock_uow: MagicMock) -> None:
+        """KAFKA_API_KEY happy path: api_key.get + owner.get → user owner resolved."""
+        from plugins.confluent_cloud.handlers.connector_identity import resolve_connector_identity
+
+        connector = Resource(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            resource_id="connector-abc",
+            resource_type="connector",
+            metadata={
+                "kafka_auth_mode": "KAFKA_API_KEY",
+                "kafka_api_key": "key-abc",
+            },
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        )
+        api_key = Identity(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            identity_id="key-abc",
+            identity_type="api_key",
+            metadata={"owner_id": "u-user-1"},
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        )
+        user = Identity(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            identity_id="u-user-1",
+            identity_type="user",
+            display_name="Human User",
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        )
+
+        def identity_get_side_effect(ecosystem: str, tenant_id: str, identity_id: str) -> Identity | None:
+            if identity_id == "key-abc":
+                return api_key
+            if identity_id == "u-user-1":
+                return user
+            return None
+
+        mock_uow.resources.get.return_value = connector
+        mock_uow.identities.get.side_effect = identity_get_side_effect
+
+        result = resolve_connector_identity(
+            tenant_id="org-123",
+            resource_id="connector-abc",
+            billing_start=datetime(2026, 2, 1, tzinfo=UTC),
+            billing_end=datetime(2026, 2, 2, tzinfo=UTC),
+            uow=mock_uow,
+            ecosystem="confluent_cloud",
+        )
+
+        mock_uow.resources.find_by_period.assert_not_called()
+        mock_uow.identities.find_by_period.assert_not_called()
+        assert len(result.resource_active) == 1
+        assert "u-user-1" in result.resource_active.ids()

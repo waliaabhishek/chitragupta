@@ -55,20 +55,7 @@ def resolve_connector_identity(
     metrics_derived = IdentitySet()
     tenant_period = IdentitySet()
 
-    # Find the connector resource in the billing period
-    resources, _ = uow.resources.find_by_period(
-        ecosystem=ecosystem,
-        tenant_id=tenant_id,
-        start=billing_start,
-        end=billing_end,
-    )
-
-    # Filter to the specific connector resource
-    connector = None
-    for r in resources:
-        if r.resource_id == resource_id:
-            connector = r
-            break
+    connector = uow.resources.get(ecosystem=ecosystem, tenant_id=tenant_id, resource_id=resource_id)
 
     # Resource not found -> masked sentinel
     if connector is None:
@@ -83,22 +70,15 @@ def resolve_connector_identity(
     # Get auth mode from metadata
     auth_mode = connector.metadata.get("kafka_auth_mode")
 
-    # Get all identities in billing window for lookup
-    all_identities, _ = uow.identities.find_by_period(
-        ecosystem=ecosystem,
-        tenant_id=tenant_id,
-        start=billing_start,
-        end=billing_end,
-    )
-    identity_by_id = {i.identity_id: i for i in all_identities}
-
     owner: Identity | None = None
 
     if auth_mode == "SERVICE_ACCOUNT":
         # Direct owner from service account ID
         sa_id = connector.metadata.get("kafka_service_account_id")
         if sa_id:
-            owner = identity_by_id.get(sa_id) or create_sentinel_from_id(sa_id, tenant_id, ecosystem)
+            owner = uow.identities.get(
+                ecosystem=ecosystem, tenant_id=tenant_id, identity_id=sa_id
+            ) or create_sentinel_from_id(sa_id, tenant_id, ecosystem)
         else:
             # No service account ID in metadata
             owner = create_connector_sentinel(CONNECTOR_CREDENTIALS_UNKNOWN, tenant_id, ecosystem, is_masked=False)
@@ -117,7 +97,7 @@ def resolve_connector_identity(
                     is_masked=True,
                 )
             else:
-                api_key = identity_by_id.get(api_key_id)
+                api_key = uow.identities.get(ecosystem=ecosystem, tenant_id=tenant_id, identity_id=api_key_id)
                 if api_key is None:
                     LOGGER.warning("Connector %s API key %s not found in DB", connector.resource_id, api_key_id)
                     owner = create_connector_sentinel(
@@ -129,7 +109,9 @@ def resolve_connector_identity(
                 else:
                     owner_id = api_key.metadata.get("owner_id")
                     if owner_id:
-                        owner = identity_by_id.get(owner_id) or create_sentinel_from_id(owner_id, tenant_id, ecosystem)
+                        owner = uow.identities.get(
+                            ecosystem=ecosystem, tenant_id=tenant_id, identity_id=owner_id
+                        ) or create_sentinel_from_id(owner_id, tenant_id, ecosystem)
                     else:
                         # API key has no owner_id
                         owner = create_connector_sentinel(

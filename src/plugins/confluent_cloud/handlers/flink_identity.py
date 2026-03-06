@@ -18,7 +18,7 @@ from core.models import IdentityResolution, IdentitySet
 from ._identity_helpers import create_flink_sentinel, create_sentinel_from_id
 
 if TYPE_CHECKING:
-    from core.models import MetricRow
+    from core.models import Identity, MetricRow
     from core.storage.interface import UnitOfWork
 
 
@@ -74,36 +74,30 @@ def _fallback_from_running_statements(
         tenant_id=tenant_id,
         start=billing_start,
         end=billing_end,
+        resource_type="flink_statement",
     )
 
     # Filter to running statements belonging to this compute pool
     pool_stmts = [
         s
         for s in all_resources
-        if s.resource_type == "flink_statement"
-        and s.metadata.get("compute_pool_id") == compute_pool_id
-        and not s.metadata.get("is_stopped", False)
+        if s.metadata.get("compute_pool_id") == compute_pool_id and not s.metadata.get("is_stopped", False)
     ]
 
     if not pool_stmts:
         return {}, IdentitySet()
 
-    all_identities, _ = uow.identities.find_by_period(
-        ecosystem=ecosystem,
-        tenant_id=tenant_id,
-        start=billing_start,
-        end=billing_end,
-    )
-    identity_by_id = {i.identity_id: i for i in all_identities}
-
     # Equal weight per statement (no metrics to differentiate)
+    resolved: dict[str, Identity | None] = {}
     resource_active = IdentitySet()
     owner_weight: dict[str, float] = {}
     for stmt in pool_stmts:
         owner_id = stmt.owner_id or stmt.metadata.get("owner_id")
         if owner_id:
             owner_weight[owner_id] = owner_weight.get(owner_id, 0.0) + 1.0
-            identity = identity_by_id.get(owner_id)
+            if owner_id not in resolved:
+                resolved[owner_id] = uow.identities.get(ecosystem=ecosystem, tenant_id=tenant_id, identity_id=owner_id)
+            identity = resolved[owner_id]
             if identity:
                 resource_active.add(identity)
             else:
@@ -131,28 +125,21 @@ def _resolve_statement_owners(
         tenant_id=tenant_id,
         start=billing_start,
         end=billing_end,
+        resource_type="flink_statement",
     )
 
     # Build statement_name -> owner_id map from flink_statement resources
     # TD-033: Filter by compute_pool_id to avoid cross-pool collisions
     stmt_name_to_owner: dict[str, str | None] = {}
     for r in resources:
-        if r.resource_type == "flink_statement":
-            pool_id = r.metadata.get("compute_pool_id", "")
-            if pool_id != resource_id:
-                continue  # Statement belongs to different pool
-            display_name = r.display_name or r.metadata.get("statement_name", "")
-            if display_name:
-                stmt_name_to_owner[display_name] = r.owner_id
+        pool_id = r.metadata.get("compute_pool_id", "")
+        if pool_id != resource_id:
+            continue  # Statement belongs to different pool
+        display_name = r.display_name or r.metadata.get("statement_name", "")
+        if display_name:
+            stmt_name_to_owner[display_name] = r.owner_id
 
-    all_identities, _ = uow.identities.find_by_period(
-        ecosystem=ecosystem,
-        tenant_id=tenant_id,
-        start=billing_start,
-        end=billing_end,
-    )
-    identity_by_id = {i.identity_id: i for i in all_identities}
-
+    resolved: dict[str, Identity | None] = {}
     resource_active = IdentitySet()
     owner_cfu: dict[str, float] = {}
     for stmt_name, cfu_value in stmt_cfu.items():
@@ -171,9 +158,9 @@ def _resolve_statement_owners(
             owner_cfu[key] = owner_cfu.get(key, 0.0) + cfu_value
             continue
 
-        owner = identity_by_id.get(owner_id)
-        if owner is None:
-            owner = create_sentinel_from_id(owner_id, tenant_id, ecosystem)
+        if owner_id not in resolved:
+            resolved[owner_id] = uow.identities.get(ecosystem=ecosystem, tenant_id=tenant_id, identity_id=owner_id)
+        owner = resolved[owner_id] or create_sentinel_from_id(owner_id, tenant_id, ecosystem)
 
         resource_active.add(owner)
         owner_cfu[owner.identity_id] = owner_cfu.get(owner.identity_id, 0.0) + cfu_value
@@ -209,8 +196,7 @@ def resolve_flink_identity(
         cfu_data = metrics_data.get("flink_cfu_primary", [])
         if not cfu_data:
             cfu_data = metrics_data.get("flink_cfu_fallback", [])
-        filtered_metrics: dict[str, list[MetricRow]] = {"flink_cfu_active": cfu_data} if cfu_data else {}
-        active_stmts = _extract_active_statements(filtered_metrics, resource_id) if filtered_metrics else {}
+        active_stmts = _extract_active_statements({"flink_cfu_active": cfu_data}, resource_id)
 
         if active_stmts:
             stmt_owner_cfu, resource_active = _resolve_statement_owners(

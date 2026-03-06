@@ -13,6 +13,8 @@ def mock_uow() -> MagicMock:
     uow = MagicMock()
     uow.identities = MagicMock()
     uow.identities.find_by_period.return_value = ([], 0)
+    uow.identities.get.return_value = None
     uow.resources = MagicMock()
     uow.resources.find_by_period.return_value = ([], 0)
+    uow.resources.get.return_value = None
     return uow

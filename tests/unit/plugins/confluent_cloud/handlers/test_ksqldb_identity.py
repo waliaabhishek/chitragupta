@@ -8,6 +8,11 @@ from unittest.mock import MagicMock
 from core.models import Identity, Resource
 
 
+# ---------------------------------------------------------------------------
+# TASK-028 — Direct lookup tests appended after existing tests (see below)
+# ---------------------------------------------------------------------------
+
+
 class TestResolveKsqldbIdentity:
     """Tests for resolve_ksqldb_identity function."""
 
@@ -33,8 +38,10 @@ class TestResolveKsqldbIdentity:
             display_name="My SA",
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        mock_uow.resources.find_by_period.return_value = ([ksqldb_app], 1)
-        mock_uow.identities.find_by_period.return_value = ([sa_owner], 1)
+
+        mock_uow.resources.get.return_value = ksqldb_app
+
+        mock_uow.identities.get.return_value = sa_owner
 
         result = resolve_ksqldb_identity(
             tenant_id="org-123",
@@ -57,9 +64,6 @@ class TestResolveKsqldbIdentity:
             KSQLDB_DELETED_SENTINEL,
             resolve_ksqldb_identity,
         )
-
-        mock_uow.resources.find_by_period.return_value = ([], 0)
-        mock_uow.identities.find_by_period.return_value = ([], 0)
 
         result = resolve_ksqldb_identity(
             tenant_id="org-123",
@@ -91,8 +95,8 @@ class TestResolveKsqldbIdentity:
             metadata={},  # No owner_id
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        mock_uow.resources.find_by_period.return_value = ([ksqldb_app], 1)
-        mock_uow.identities.find_by_period.return_value = ([], 0)
+
+        mock_uow.resources.get.return_value = ksqldb_app
 
         result = resolve_ksqldb_identity(
             tenant_id="org-123",
@@ -124,8 +128,8 @@ class TestResolveKsqldbIdentity:
             metadata={"owner_id": "sa-unknown-999"},
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        mock_uow.resources.find_by_period.return_value = ([ksqldb_app], 1)
-        mock_uow.identities.find_by_period.return_value = ([], 0)  # Owner not in DB
+
+        mock_uow.resources.get.return_value = ksqldb_app
 
         result = resolve_ksqldb_identity(
             tenant_id="org-123",
@@ -157,8 +161,8 @@ class TestResolveKsqldbIdentity:
             metadata={"owner_id": "sa-12345"},
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        mock_uow.resources.find_by_period.return_value = ([ksqldb_app], 1)
-        mock_uow.identities.find_by_period.return_value = ([], 0)
+
+        mock_uow.resources.get.return_value = ksqldb_app
 
         result = resolve_ksqldb_identity(
             tenant_id="org-123",
@@ -187,8 +191,8 @@ class TestResolveKsqldbIdentity:
             metadata={"owner_id": "u-user-456"},
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        mock_uow.resources.find_by_period.return_value = ([ksqldb_app], 1)
-        mock_uow.identities.find_by_period.return_value = ([], 0)
+
+        mock_uow.resources.get.return_value = ksqldb_app
 
         result = resolve_ksqldb_identity(
             tenant_id="org-123",
@@ -217,8 +221,8 @@ class TestResolveKsqldbIdentity:
             metadata={"owner_id": "pool-abc-789"},
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        mock_uow.resources.find_by_period.return_value = ([ksqldb_app], 1)
-        mock_uow.identities.find_by_period.return_value = ([], 0)
+
+        mock_uow.resources.get.return_value = ksqldb_app
 
         result = resolve_ksqldb_identity(
             tenant_id="org-123",
@@ -247,8 +251,8 @@ class TestResolveKsqldbIdentity:
             metadata={"owner_id": "xyz-mystery-123"},
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        mock_uow.resources.find_by_period.return_value = ([ksqldb_app], 1)
-        mock_uow.identities.find_by_period.return_value = ([], 0)
+
+        mock_uow.resources.get.return_value = ksqldb_app
 
         result = resolve_ksqldb_identity(
             tenant_id="org-123",
@@ -284,8 +288,6 @@ class TestResolveKsqldbIdentity:
             identity_type="service_account",
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        mock_uow.resources.find_by_period.return_value = ([ksqldb_app], 1)
-        mock_uow.identities.find_by_period.return_value = ([sa_owner], 1)
 
         result = resolve_ksqldb_identity(
             tenant_id="org-123",
@@ -328,11 +330,10 @@ class TestResolveKsqldbIdentity:
             identity_type="service_account",
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        mock_uow.resources.find_by_period.return_value = (
-            [ksqldb_match, ksqldb_other],
-            2,
-        )
-        mock_uow.identities.find_by_period.return_value = ([sa_correct], 1)
+
+        mock_uow.resources.get.return_value = ksqldb_match
+
+        mock_uow.identities.get.return_value = sa_correct
 
         result = resolve_ksqldb_identity(
             tenant_id="org-123",
@@ -369,8 +370,10 @@ class TestResolveKsqldbIdentity:
             display_name="Human User",
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        mock_uow.resources.find_by_period.return_value = ([ksqldb_app], 1)
-        mock_uow.identities.find_by_period.return_value = ([user_owner], 1)
+
+        mock_uow.resources.get.return_value = ksqldb_app
+
+        mock_uow.identities.get.return_value = user_owner
 
         result = resolve_ksqldb_identity(
             tenant_id="org-123",
@@ -413,8 +416,10 @@ class TestResolveKsqldbIdentity:
             display_name="Direct Field SA",
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        mock_uow.resources.find_by_period.return_value = ([ksqldb_app], 1)
-        mock_uow.identities.find_by_period.return_value = ([sa_owner], 1)
+
+        mock_uow.resources.get.return_value = ksqldb_app
+
+        mock_uow.identities.get.return_value = sa_owner
 
         result = resolve_ksqldb_identity(
             tenant_id="org-123",
@@ -463,8 +468,10 @@ class TestResolveKsqldbIdentity:
             display_name="Secondary SA",
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        mock_uow.resources.find_by_period.return_value = ([ksqldb_app], 1)
-        mock_uow.identities.find_by_period.return_value = ([sa_primary, sa_secondary], 2)
+
+        mock_uow.resources.get.return_value = ksqldb_app
+
+        mock_uow.identities.get.return_value = sa_primary
 
         result = resolve_ksqldb_identity(
             tenant_id="org-123",
@@ -502,8 +509,10 @@ class TestResolveKsqldbIdentity:
             display_name="Metadata Fallback SA",
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        mock_uow.resources.find_by_period.return_value = ([ksqldb_app], 1)
-        mock_uow.identities.find_by_period.return_value = ([sa_owner], 1)
+
+        mock_uow.resources.get.return_value = ksqldb_app
+
+        mock_uow.identities.get.return_value = sa_owner
 
         result = resolve_ksqldb_identity(
             tenant_id="org-123",
@@ -535,8 +544,8 @@ class TestResolveKsqldbIdentity:
             metadata={},  # no metadata owner_id either
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        mock_uow.resources.find_by_period.return_value = ([ksqldb_app], 1)
-        mock_uow.identities.find_by_period.return_value = ([], 0)
+
+        mock_uow.resources.get.return_value = ksqldb_app
 
         result = resolve_ksqldb_identity(
             tenant_id="org-123",
@@ -578,8 +587,10 @@ class TestResolveKsqldbIdentity:
             display_name="Top-Level SA",
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        mock_uow.resources.find_by_period.return_value = ([ksqldb_app], 1)
-        mock_uow.identities.find_by_period.return_value = ([sa_owner], 1)
+
+        mock_uow.resources.get.return_value = ksqldb_app
+
+        mock_uow.identities.get.return_value = sa_owner
 
         result = resolve_ksqldb_identity(
             tenant_id="org-123",
@@ -620,8 +631,10 @@ class TestResolveKsqldbIdentity:
             display_name="Metadata Fallback",
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        mock_uow.resources.find_by_period.return_value = ([ksqldb_app], 1)
-        mock_uow.identities.find_by_period.return_value = ([sa_owner], 1)
+
+        mock_uow.resources.get.return_value = ksqldb_app
+
+        mock_uow.identities.get.return_value = sa_owner
 
         result = resolve_ksqldb_identity(
             tenant_id="org-123",
@@ -654,8 +667,8 @@ class TestResolveKsqldbIdentity:
             metadata={},  # no owner_id
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        mock_uow.resources.find_by_period.return_value = ([ksqldb_app], 1)
-        mock_uow.identities.find_by_period.return_value = ([], 0)
+
+        mock_uow.resources.get.return_value = ksqldb_app
 
         result = resolve_ksqldb_identity(
             tenant_id="org-123",
@@ -672,3 +685,219 @@ class TestResolveKsqldbIdentity:
         assert sentinel is not None
         assert sentinel.identity_type == "ksqldb_credentials"
         assert sentinel.display_name == "ksqlDB Owner Unknown"
+
+
+# ---------------------------------------------------------------------------
+# TASK-028 — Direct lookup tests (TDD RED phase)
+# These tests verify that the fixed code uses uow.resources.get() and
+# uow.identities.get() instead of full-table find_by_period() scans.
+# ---------------------------------------------------------------------------
+
+
+class TestKsqldbIdentityDirectLookup:
+    """GAP-028: ksqldb resolve uses targeted get() calls, never full-table scans."""
+
+    # --- Method-usage assertions ---
+
+    def test_resource_lookup_uses_get_not_find_by_period(self, mock_uow: MagicMock) -> None:
+        """resolve_ksqldb_identity calls uow.resources.get() exactly once, never find_by_period."""
+        from plugins.confluent_cloud.handlers.ksqldb_identity import resolve_ksqldb_identity
+
+        ksqldb_app = Resource(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            resource_id="ksqldb-app-abc",
+            resource_type="ksqldb",
+            metadata={"owner_id": "sa-owner-123"},
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        )
+        mock_uow.resources.get.return_value = ksqldb_app
+
+        resolve_ksqldb_identity(
+            tenant_id="org-123",
+            resource_id="ksqldb-app-abc",
+            billing_start=datetime(2026, 2, 1, tzinfo=UTC),
+            billing_end=datetime(2026, 2, 2, tzinfo=UTC),
+            uow=mock_uow,
+            ecosystem="confluent_cloud",
+        )
+
+        mock_uow.resources.get.assert_called_once_with(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            resource_id="ksqldb-app-abc",
+        )
+        mock_uow.resources.find_by_period.assert_not_called()
+
+    def test_identity_lookup_uses_get_not_find_by_period(self, mock_uow: MagicMock) -> None:
+        """Owner resolved via uow.identities.get(), never find_by_period."""
+        from plugins.confluent_cloud.handlers.ksqldb_identity import resolve_ksqldb_identity
+
+        ksqldb_app = Resource(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            resource_id="ksqldb-app-abc",
+            resource_type="ksqldb",
+            metadata={"owner_id": "sa-owner-123"},
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        )
+        sa_owner = Identity(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            identity_id="sa-owner-123",
+            identity_type="service_account",
+            display_name="My SA",
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        )
+        mock_uow.resources.get.return_value = ksqldb_app
+        mock_uow.identities.get.return_value = sa_owner
+
+        resolve_ksqldb_identity(
+            tenant_id="org-123",
+            resource_id="ksqldb-app-abc",
+            billing_start=datetime(2026, 2, 1, tzinfo=UTC),
+            billing_end=datetime(2026, 2, 2, tzinfo=UTC),
+            uow=mock_uow,
+            ecosystem="confluent_cloud",
+        )
+
+        mock_uow.identities.get.assert_called_once_with(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            identity_id="sa-owner-123",
+        )
+        mock_uow.identities.find_by_period.assert_not_called()
+
+    def test_identity_lookup_exactly_one_get_call(self, mock_uow: MagicMock) -> None:
+        """resolve_ksqldb_identity makes exactly one uow.identities.get() call for the owner."""
+        from plugins.confluent_cloud.handlers.ksqldb_identity import resolve_ksqldb_identity
+
+        ksqldb_app = Resource(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            resource_id="ksqldb-app-abc",
+            resource_type="ksqldb",
+            metadata={"owner_id": "u-user-789"},
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        )
+        user_owner = Identity(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            identity_id="u-user-789",
+            identity_type="user",
+            display_name="Human User",
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        )
+        mock_uow.resources.get.return_value = ksqldb_app
+        mock_uow.identities.get.return_value = user_owner
+
+        resolve_ksqldb_identity(
+            tenant_id="org-123",
+            resource_id="ksqldb-app-abc",
+            billing_start=datetime(2026, 2, 1, tzinfo=UTC),
+            billing_end=datetime(2026, 2, 2, tzinfo=UTC),
+            uow=mock_uow,
+            ecosystem="confluent_cloud",
+        )
+
+        assert mock_uow.identities.get.call_count == 1
+
+    # --- Behavioral parity tests (new mock setup via get()) ---
+
+    def test_deleted_sentinel_parity_resource_get_returns_none(self, mock_uow: MagicMock) -> None:
+        """get(resource) returns None → deleted sentinel; get() called, find_by_period not called."""
+        from plugins.confluent_cloud.handlers.ksqldb_identity import (
+            KSQLDB_DELETED_SENTINEL,
+            resolve_ksqldb_identity,
+        )
+
+        mock_uow.resources.get.return_value = None  # resource not found
+
+        result = resolve_ksqldb_identity(
+            tenant_id="org-123",
+            resource_id="ksqldb-app-abc",
+            billing_start=datetime(2026, 2, 1, tzinfo=UTC),
+            billing_end=datetime(2026, 2, 2, tzinfo=UTC),
+            uow=mock_uow,
+            ecosystem="confluent_cloud",
+        )
+
+        mock_uow.resources.get.assert_called_once_with(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            resource_id="ksqldb-app-abc",
+        )
+        mock_uow.resources.find_by_period.assert_not_called()
+        assert KSQLDB_DELETED_SENTINEL in result.resource_active.ids()
+        sentinel = result.resource_active.get(KSQLDB_DELETED_SENTINEL)
+        assert sentinel is not None
+        assert sentinel.identity_type == "ksqldb_credentials"
+
+    def test_owner_unknown_parity_no_owner_id(self, mock_uow: MagicMock) -> None:
+        """Resource found but no owner_id → ksqldb_owner_unknown sentinel; no find_by_period."""
+        from plugins.confluent_cloud.handlers.ksqldb_identity import (
+            KSQLDB_OWNER_UNKNOWN,
+            resolve_ksqldb_identity,
+        )
+
+        ksqldb_app = Resource(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            resource_id="ksqldb-app-abc",
+            resource_type="ksqldb",
+            owner_id=None,
+            metadata={},
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        )
+        mock_uow.resources.get.return_value = ksqldb_app
+
+        result = resolve_ksqldb_identity(
+            tenant_id="org-123",
+            resource_id="ksqldb-app-abc",
+            billing_start=datetime(2026, 2, 1, tzinfo=UTC),
+            billing_end=datetime(2026, 2, 2, tzinfo=UTC),
+            uow=mock_uow,
+            ecosystem="confluent_cloud",
+        )
+
+        mock_uow.resources.find_by_period.assert_not_called()
+        mock_uow.identities.find_by_period.assert_not_called()
+        assert KSQLDB_OWNER_UNKNOWN in result.resource_active.ids()
+
+    def test_happy_path_parity_using_get(self, mock_uow: MagicMock) -> None:
+        """Happy path: resource.get + identity.get → owner resolved; no find_by_period calls."""
+        from plugins.confluent_cloud.handlers.ksqldb_identity import resolve_ksqldb_identity
+
+        ksqldb_app = Resource(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            resource_id="ksqldb-app-abc",
+            resource_type="ksqldb",
+            metadata={"owner_id": "sa-owner-123"},
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        )
+        sa_owner = Identity(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            identity_id="sa-owner-123",
+            identity_type="service_account",
+            display_name="My SA",
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        )
+        mock_uow.resources.get.return_value = ksqldb_app
+        mock_uow.identities.get.return_value = sa_owner
+
+        result = resolve_ksqldb_identity(
+            tenant_id="org-123",
+            resource_id="ksqldb-app-abc",
+            billing_start=datetime(2026, 2, 1, tzinfo=UTC),
+            billing_end=datetime(2026, 2, 2, tzinfo=UTC),
+            uow=mock_uow,
+            ecosystem="confluent_cloud",
+        )
+
+        mock_uow.resources.find_by_period.assert_not_called()
+        mock_uow.identities.find_by_period.assert_not_called()
+        assert len(result.resource_active) == 1
+        assert "sa-owner-123" in result.resource_active.ids()
+        assert result.resource_active.get("sa-owner-123").display_name == "My SA"

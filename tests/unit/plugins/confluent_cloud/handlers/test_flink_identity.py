@@ -143,7 +143,6 @@ class TestResolveFlinkIdentityWithStatements:
         )
 
         mock_uow.resources.find_by_period.return_value = ([stmt_resource], 1)
-        mock_uow.identities.find_by_period.return_value = ([owner], 1)
 
         result = resolve_flink_identity(
             tenant_id="org-123",
@@ -212,7 +211,6 @@ class TestResolveFlinkIdentityWithStatements:
         )
 
         mock_uow.resources.find_by_period.return_value = ([stmt_a, stmt_b], 2)
-        mock_uow.identities.find_by_period.return_value = ([sa_1, sa_2], 2)
 
         result = resolve_flink_identity(
             tenant_id="org-123",
@@ -276,7 +274,6 @@ class TestResolveFlinkIdentityWithStatements:
         )
 
         mock_uow.resources.find_by_period.return_value = ([stmt_x, stmt_y], 2)
-        mock_uow.identities.find_by_period.return_value = ([sa], 1)
 
         result = resolve_flink_identity(
             tenant_id="org-123",
@@ -310,7 +307,6 @@ class TestResolveFlinkIdentityWithStatements:
         }
 
         mock_uow.resources.find_by_period.return_value = ([], 0)
-        mock_uow.identities.find_by_period.return_value = ([], 0)
 
         result = resolve_flink_identity(
             tenant_id="org-123",
@@ -354,7 +350,6 @@ class TestResolveFlinkIdentityWithStatements:
         )
 
         mock_uow.resources.find_by_period.return_value = ([stmt], 1)
-        mock_uow.identities.find_by_period.return_value = ([], 0)
 
         result = resolve_flink_identity(
             tenant_id="org-123",
@@ -395,7 +390,6 @@ class TestResolveFlinkIdentityWithStatements:
         )
 
         mock_uow.resources.find_by_period.return_value = ([stmt], 1)
-        mock_uow.identities.find_by_period.return_value = ([], 0)
 
         result = resolve_flink_identity(
             tenant_id="org-123",
@@ -445,7 +439,6 @@ class TestResolveFlinkIdentityWithStatements:
         )
 
         mock_uow.resources.find_by_period.return_value = ([stmt], 1)
-        mock_uow.identities.find_by_period.return_value = ([sa], 1)
 
         result = resolve_flink_identity(
             tenant_id="org-123",
@@ -499,7 +492,6 @@ class TestResolveFlinkIdentityWithStatements:
         )
 
         mock_uow.resources.find_by_period.return_value = ([stmt], 1)
-        mock_uow.identities.find_by_period.return_value = ([sa], 1)
 
         result = resolve_flink_identity(
             tenant_id="org-123",
@@ -539,7 +531,6 @@ class TestFlinkFallbackFromRunningStatements:
         )
 
         mock_uow.resources.find_by_period.return_value = ([running_stmt], 1)
-        mock_uow.identities.find_by_period.return_value = ([owner], 1)
 
         result = resolve_flink_identity(
             tenant_id="org-123",
@@ -607,7 +598,6 @@ class TestFlinkFallbackFromRunningStatements:
             [running_stmt, stopped_stmt, completed_stmt, failed_stmt],
             4,
         )
-        mock_uow.identities.find_by_period.return_value = ([running_owner], 1)
 
         result = resolve_flink_identity(
             tenant_id="org-123",
@@ -628,7 +618,6 @@ class TestFlinkFallbackFromRunningStatements:
         from plugins.confluent_cloud.handlers.flink_identity import resolve_flink_identity
 
         mock_uow.resources.find_by_period.return_value = ([], 0)
-        mock_uow.identities.find_by_period.return_value = ([], 0)
 
         result = resolve_flink_identity(
             tenant_id="org-123",
@@ -660,7 +649,6 @@ class TestFlinkFallbackFromRunningStatements:
         )
 
         mock_uow.resources.find_by_period.return_value = ([other_pool_stmt], 1)
-        mock_uow.identities.find_by_period.return_value = ([], 0)
 
         result = resolve_flink_identity(
             tenant_id="org-123",
@@ -690,7 +678,6 @@ class TestFlinkFallbackFromRunningStatements:
             metadata={"compute_pool_id": "lfcp-pool-1", "is_stopped": False},
         )
         mock_uow.resources.find_by_period.return_value = ([stmt], 1)
-        mock_uow.identities.find_by_period.return_value = ([], 0)  # No matching identity
 
         result = resolve_flink_identity(
             tenant_id="org-123",
@@ -725,7 +712,6 @@ class TestFallbackFromRunningStatementsDirect:
             metadata={"compute_pool_id": "pool-1", "is_stopped": True},
         )
         mock_uow.resources.find_by_period.return_value = ([stopped_stmt], 1)
-        mock_uow.identities.find_by_period.return_value = ([], 0)
 
         owner_weight, identity_set = _fallback_from_running_statements(
             compute_pool_id="pool-1",
@@ -760,7 +746,6 @@ class TestFallbackFromRunningStatementsDirect:
             display_name="Active Owner",
         )
         mock_uow.resources.find_by_period.return_value = ([running_stmt], 1)
-        mock_uow.identities.find_by_period.return_value = ([owner], 1)
 
         owner_weight, identity_set = _fallback_from_running_statements(
             compute_pool_id="pool-1",
@@ -811,7 +796,6 @@ class TestFallbackFromRunningStatementsDirect:
             for i in range(2)
         ]
         mock_uow.resources.find_by_period.return_value = (stmts, 5)
-        mock_uow.identities.find_by_period.return_value = (running_owners, 2)
 
         owner_weight, identity_set = _fallback_from_running_statements(
             compute_pool_id="pool-1",
@@ -857,7 +841,6 @@ class TestFallbackFromRunningStatementsDirect:
             identity_type="service_account",
         )
         mock_uow.resources.find_by_period.return_value = ([running_stmt, stopped_stmt], 2)
-        mock_uow.identities.find_by_period.return_value = ([active_owner], 1)
 
         result = resolve_flink_identity(
             tenant_id="org-123",
@@ -872,3 +855,310 @@ class TestFallbackFromRunningStatementsDirect:
         stmt_owner_cfu = result.context.get("stmt_owner_cfu", {})
         assert "sa-ghost" not in stmt_owner_cfu
         assert "sa-active" in stmt_owner_cfu
+
+
+# ---------------------------------------------------------------------------
+# TASK-028 — Direct lookup tests (TDD RED phase)
+# Verify flink identity resolution pushes resource_type filter to SQL and
+# uses uow.identities.get() with a local cache instead of find_by_period.
+# ---------------------------------------------------------------------------
+
+
+class TestFlinkIdentityDirectLookup:
+    """GAP-028: flink resolve uses resource_type filter on find_by_period; identities via get()."""
+
+    # --- Resource-type filter pushed to SQL ---
+
+    def test_fallback_resource_lookup_uses_flink_statement_type_filter(self, mock_uow: MagicMock) -> None:
+        """_fallback_from_running_statements calls find_by_period with resource_type='flink_statement'."""
+        from plugins.confluent_cloud.handlers.flink_identity import resolve_flink_identity
+
+        # No metrics → secondary path (_fallback_from_running_statements)
+        mock_uow.resources.find_by_period.return_value = ([], 0)
+
+        resolve_flink_identity(
+            tenant_id="org-123",
+            resource_id="lfcp-pool-1",
+            billing_start=datetime(2026, 2, 1, tzinfo=UTC),
+            billing_end=datetime(2026, 2, 2, tzinfo=UTC),
+            metrics_data=None,
+            uow=mock_uow,
+            ecosystem="confluent_cloud",
+        )
+
+        # At least one call to find_by_period must include resource_type="flink_statement"
+        calls = mock_uow.resources.find_by_period.call_args_list
+        assert any(c.kwargs.get("resource_type") == "flink_statement" for c in calls), (
+            f"Expected resource_type='flink_statement' kwarg in calls: {calls}"
+        )
+
+    def test_metrics_path_resource_lookup_uses_flink_statement_type_filter(self, mock_uow: MagicMock) -> None:
+        """_resolve_statement_owners calls find_by_period with resource_type='flink_statement'."""
+        from plugins.confluent_cloud.handlers.flink_identity import resolve_flink_identity
+
+        metrics = {
+            "flink_cfu_primary": [
+                MetricRow(
+                    timestamp=datetime(2026, 2, 1, tzinfo=UTC),
+                    metric_key="confluent_flink_num_cfu",
+                    value=10.0,
+                    labels={"compute_pool_id": "lfcp-pool-1", "flink_statement_name": "my-stmt"},
+                )
+            ]
+        }
+        # find_by_period returns empty → statement not found → unknown sentinel; we only care about the call
+        mock_uow.resources.find_by_period.return_value = ([], 0)
+
+        resolve_flink_identity(
+            tenant_id="org-123",
+            resource_id="lfcp-pool-1",
+            billing_start=datetime(2026, 2, 1, tzinfo=UTC),
+            billing_end=datetime(2026, 2, 2, tzinfo=UTC),
+            metrics_data=metrics,
+            uow=mock_uow,
+            ecosystem="confluent_cloud",
+        )
+
+        calls = mock_uow.resources.find_by_period.call_args_list
+        assert any(c.kwargs.get("resource_type") == "flink_statement" for c in calls), (
+            f"Expected resource_type='flink_statement' kwarg in calls: {calls}"
+        )
+
+    # --- Identity lookups via get(), not find_by_period ---
+
+    def test_fallback_identity_lookup_uses_get_not_find_by_period(self, mock_uow: MagicMock) -> None:
+        """_fallback_from_running_statements uses uow.identities.get(), never find_by_period."""
+        from plugins.confluent_cloud.handlers.flink_identity import resolve_flink_identity
+
+        running_stmt = Resource(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            resource_id="stmt-uid-run1",
+            resource_type="flink_statement",
+            display_name="running-stmt",
+            owner_id="sa-owner-1",
+            metadata={"compute_pool_id": "lfcp-pool-1", "is_stopped": False},
+        )
+        owner = Identity(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            identity_id="sa-owner-1",
+            identity_type="service_account",
+            display_name="Owner 1",
+        )
+        mock_uow.resources.find_by_period.return_value = ([running_stmt], 1)
+        mock_uow.identities.get.return_value = owner
+
+        resolve_flink_identity(
+            tenant_id="org-123",
+            resource_id="lfcp-pool-1",
+            billing_start=datetime(2026, 2, 1, tzinfo=UTC),
+            billing_end=datetime(2026, 2, 2, tzinfo=UTC),
+            metrics_data=None,
+            uow=mock_uow,
+            ecosystem="confluent_cloud",
+        )
+
+        mock_uow.identities.get.assert_called()
+        mock_uow.identities.find_by_period.assert_not_called()
+
+    def test_metrics_path_identity_lookup_uses_get_not_find_by_period(self, mock_uow: MagicMock) -> None:
+        """_resolve_statement_owners uses uow.identities.get(), never find_by_period."""
+        from plugins.confluent_cloud.handlers.flink_identity import resolve_flink_identity
+
+        metrics = {
+            "flink_cfu_primary": [
+                MetricRow(
+                    timestamp=datetime(2026, 2, 1, tzinfo=UTC),
+                    metric_key="confluent_flink_num_cfu",
+                    value=10.0,
+                    labels={"compute_pool_id": "lfcp-pool-1", "flink_statement_name": "my-stmt"},
+                )
+            ]
+        }
+        stmt = Resource(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            resource_id="stmt-uid-1",
+            resource_type="flink_statement",
+            display_name="my-stmt",
+            owner_id="sa-owner-1",
+            metadata={"statement_name": "my-stmt", "compute_pool_id": "lfcp-pool-1"},
+        )
+        owner = Identity(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            identity_id="sa-owner-1",
+            identity_type="service_account",
+            display_name="Owner",
+        )
+        mock_uow.resources.find_by_period.return_value = ([stmt], 1)
+        mock_uow.identities.get.return_value = owner
+
+        resolve_flink_identity(
+            tenant_id="org-123",
+            resource_id="lfcp-pool-1",
+            billing_start=datetime(2026, 2, 1, tzinfo=UTC),
+            billing_end=datetime(2026, 2, 2, tzinfo=UTC),
+            metrics_data=metrics,
+            uow=mock_uow,
+            ecosystem="confluent_cloud",
+        )
+
+        mock_uow.identities.get.assert_called()
+        mock_uow.identities.find_by_period.assert_not_called()
+
+    # --- Local resolved cache prevents duplicate DB calls ---
+
+    def test_same_owner_multiple_statements_only_one_identities_get_call(self, mock_uow: MagicMock) -> None:
+        """When two statements share the same owner, identities.get() is called exactly once (cache hit)."""
+        from plugins.confluent_cloud.handlers.flink_identity import resolve_flink_identity
+
+        metrics = {
+            "flink_cfu_primary": [
+                MetricRow(
+                    timestamp=datetime(2026, 2, 1, tzinfo=UTC),
+                    metric_key="confluent_flink_num_cfu",
+                    value=20.0,
+                    labels={"compute_pool_id": "lfcp-pool-1", "flink_statement_name": "stmt-x"},
+                ),
+                MetricRow(
+                    timestamp=datetime(2026, 2, 1, tzinfo=UTC),
+                    metric_key="confluent_flink_num_cfu",
+                    value=30.0,
+                    labels={"compute_pool_id": "lfcp-pool-1", "flink_statement_name": "stmt-y"},
+                ),
+            ]
+        }
+        stmt_x = Resource(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            resource_id="uid-x",
+            resource_type="flink_statement",
+            display_name="stmt-x",
+            owner_id="sa-shared-owner",
+            metadata={"statement_name": "stmt-x", "compute_pool_id": "lfcp-pool-1"},
+        )
+        stmt_y = Resource(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            resource_id="uid-y",
+            resource_type="flink_statement",
+            display_name="stmt-y",
+            owner_id="sa-shared-owner",
+            metadata={"statement_name": "stmt-y", "compute_pool_id": "lfcp-pool-1"},
+        )
+        shared_owner = Identity(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            identity_id="sa-shared-owner",
+            identity_type="service_account",
+        )
+        mock_uow.resources.find_by_period.return_value = ([stmt_x, stmt_y], 2)
+        mock_uow.identities.get.return_value = shared_owner
+
+        resolve_flink_identity(
+            tenant_id="org-123",
+            resource_id="lfcp-pool-1",
+            billing_start=datetime(2026, 2, 1, tzinfo=UTC),
+            billing_end=datetime(2026, 2, 2, tzinfo=UTC),
+            metrics_data=metrics,
+            uow=mock_uow,
+            ecosystem="confluent_cloud",
+        )
+
+        # Only one DB call for the shared owner (cache prevents second lookup)
+        assert mock_uow.identities.get.call_count == 1
+        mock_uow.identities.find_by_period.assert_not_called()
+
+    def test_same_owner_multiple_running_stmts_fallback_only_one_identities_get_call(self, mock_uow: MagicMock) -> None:
+        """Fallback path: two running stmts with same owner → only one identities.get() (cache)."""
+        from plugins.confluent_cloud.handlers.flink_identity import resolve_flink_identity
+
+        running_stmt_1 = Resource(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            resource_id="stmt-uid-1",
+            resource_type="flink_statement",
+            display_name="running-stmt-1",
+            owner_id="sa-shared",
+            metadata={"compute_pool_id": "lfcp-pool-1", "is_stopped": False},
+        )
+        running_stmt_2 = Resource(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            resource_id="stmt-uid-2",
+            resource_type="flink_statement",
+            display_name="running-stmt-2",
+            owner_id="sa-shared",
+            metadata={"compute_pool_id": "lfcp-pool-1", "is_stopped": False},
+        )
+        owner = Identity(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            identity_id="sa-shared",
+            identity_type="service_account",
+        )
+        mock_uow.resources.find_by_period.return_value = ([running_stmt_1, running_stmt_2], 2)
+        mock_uow.identities.get.return_value = owner
+
+        resolve_flink_identity(
+            tenant_id="org-123",
+            resource_id="lfcp-pool-1",
+            billing_start=datetime(2026, 2, 1, tzinfo=UTC),
+            billing_end=datetime(2026, 2, 2, tzinfo=UTC),
+            metrics_data=None,
+            uow=mock_uow,
+            ecosystem="confluent_cloud",
+        )
+
+        # Only one DB call for "sa-shared" despite two statements
+        assert mock_uow.identities.get.call_count == 1
+
+    def test_cross_pool_statement_resource_excluded_uses_unknown_sentinel(self, mock_uow: MagicMock) -> None:
+        """Cross-pool flink_statement resource excluded; statement name resolves to unknown sentinel.
+
+        Covers the guard in _resolve_statement_owners:
+            if pool_id != resource_id: continue
+        """
+        from plugins.confluent_cloud.handlers.flink_identity import (
+            FLINK_STMT_OWNER_UNKNOWN,
+            resolve_flink_identity,
+        )
+
+        metrics = {
+            "flink_cfu_primary": [
+                MetricRow(
+                    timestamp=datetime(2026, 2, 1, tzinfo=UTC),
+                    metric_key="confluent_flink_num_cfu",
+                    value=10.0,
+                    labels={"compute_pool_id": "lfcp-pool-1", "flink_statement_name": "stmt-target"},
+                )
+            ]
+        }
+        # DB returns a flink_statement with matching display_name but from a different pool
+        stmt_cross_pool = Resource(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            resource_id="uid-cross",
+            resource_type="flink_statement",
+            display_name="stmt-target",
+            owner_id="sa-wrong",
+            metadata={"statement_name": "stmt-target", "compute_pool_id": "lfcp-pool-2"},
+        )
+        mock_uow.resources.find_by_period.return_value = ([stmt_cross_pool], 1)
+
+        result = resolve_flink_identity(
+            tenant_id="org-123",
+            resource_id="lfcp-pool-1",
+            billing_start=datetime(2026, 2, 1, tzinfo=UTC),
+            billing_end=datetime(2026, 2, 2, tzinfo=UTC),
+            metrics_data=metrics,
+            uow=mock_uow,
+            ecosystem="confluent_cloud",
+        )
+
+        # Cross-pool resource excluded → stmt-target owner unknown → sentinel used
+        assert FLINK_STMT_OWNER_UNKNOWN in result.resource_active.ids()
+        assert "sa-wrong" not in result.resource_active.ids()
+        mock_uow.identities.find_by_period.assert_not_called()

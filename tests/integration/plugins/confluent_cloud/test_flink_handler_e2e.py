@@ -68,6 +68,8 @@ def mock_uow_for_flink_with_owners() -> MagicMock:
 
     uow.identities = MagicMock()
     uow.identities.find_by_period.return_value = ([sa_alice, sa_bob], 2)
+    identity_map = {i.identity_id: i for i in [sa_alice, sa_bob]}
+    uow.identities.get.side_effect = lambda ecosystem, tenant_id, identity_id: identity_map.get(identity_id)
 
     return uow
 
