@@ -27,6 +27,10 @@ dev = [
     "types-pyyaml>=6.0",
     "respx>=0.21.0",
 ]
+docs = [
+    "mkdocs-material>=9.5",
+    "mike>=2.0",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src"]

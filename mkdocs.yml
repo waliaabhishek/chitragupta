@@ -1,0 +1,87 @@
+# mkdocs.yml
+site_name: Chargeback Engine
+site_description: Multi-ecosystem chargeback engine — allocate infrastructure costs to tenants and teams
+repo_url: https://github.com/<YOUR_ORG>/<YOUR_REPO>
+repo_name: chargeback-engine
+
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.top
+    - navigation.indexes
+    - navigation.expand
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+  icon:
+    annotation: material/plus-circle
+  palette:
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: deep purple
+      accent: purple
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: deep purple
+      accent: purple
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - admonition
+  - pymdownx.details
+  - tables
+  - toc:
+      permalink: true
+      toc_depth: 3
+      baselevel: 1
+
+extra:
+  version:
+    provider: mike
+
+plugins:
+  - search
+  - mike:
+      version_selector: true
+      canonical_version: latest
+
+nav:
+  - Home: index.md
+  - Getting Started:
+    - getting-started/index.md
+    - Prerequisites: getting-started/prerequisites.md
+    - Quickstart: getting-started/quickstart.md
+    - Configuration: getting-started/configuration.md
+    - First Run: getting-started/first-run.md
+  - Configuration Reference:
+    - configuration/index.md
+    - Confluent Cloud: configuration/ccloud-reference.md
+    - Self-Managed Kafka: configuration/self-managed-reference.md
+    - Generic Metrics: configuration/generic-metrics-reference.md
+    - Advanced Scenarios: configuration/advanced-scenarios.md
+  - Architecture:
+    - architecture/index.md
+    - Plugin System: architecture/plugin-system.md
+    - Data Flow: architecture/data-flow.md
+    - Identity Resolution: architecture/identity-resolution.md
+  - Operations:
+    - operations/index.md
+    - Deployment: operations/deployment.md
+    - Monitoring: operations/monitoring.md
+    - Troubleshooting: operations/troubleshooting.md
+    - Data Retention: operations/data-retention.md
