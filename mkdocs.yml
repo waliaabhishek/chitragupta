@@ -55,6 +55,9 @@ extra:
   version:
     provider: mike
 
+extra_javascript:
+  - javascripts/external-links.js
+
 plugins:
   - search
   - mike:
