@@ -1,5 +1,48 @@
 # Data Flow
 
+## Pipeline overview
+
+```mermaid
+flowchart TD
+    subgraph inputs["Data Sources"]
+        BILLING[("Billing API<br/>(CCloud)")]
+        YAML[("YAML Cost Model<br/>(Self-managed)")]
+        PROM[("Prometheus")]
+        API[("Resource APIs")]
+    end
+
+    subgraph gather["Phase 1: Gather"]
+        G1["Gather Billing"]
+        G2["Gather Resources"]
+        G3["Gather Identities"]
+    end
+
+    subgraph resolve["Phase 2: Resolve & Allocate"]
+        M["Fetch Metrics"]
+        R["Resolve Identities"]
+        A["Allocate Costs"]
+    end
+
+    subgraph output["Phase 3: Output"]
+        DB[("Storage<br/>SQLite")]
+        E["Emitters<br/>(CSV, etc.)"]
+    end
+
+    BILLING --> G1
+    YAML --> G1
+    API --> G2
+    API --> G3
+    PROM --> M
+
+    G1 --> |BillingLineItem| M
+    G2 --> |Resource| R
+    G3 --> |Identity| R
+    M --> |MetricRow| R
+    R --> |IdentityResolution| A
+    A --> |ChargebackRow| DB
+    DB --> E
+```
+
 ## Pipeline steps per date
 
 1. **Gather billing** — `CostInput.gather(tenant_id, start, end, uow)`
