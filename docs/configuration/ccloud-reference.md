@@ -77,21 +77,27 @@ tenants:
 
 | Handler | Product types | Allocation strategy |
 |---|---|---|
-| `kafka` | `KAFKA_*` | Usage ratio (bytes in/out) |
-| `schema_registry` | `SCHEMA_REGISTRY_*` | Even split |
-| `connector` | `CONNECT_*` | Even split per connector |
-| `ksqldb` | `KSQL_*` | Even split |
-| `flink` | `FLINK_*` | Even split per statement |
-| `org_wide` | `SUPPORT_*`, `GOVERNANCE_*` | Even split |
-| `default` | All others | Even split |
+| `kafka` | `KAFKA_NUM_CKU`, `KAFKA_NUM_CKUS` | Hybrid: 70% usage ratio (bytes), 30% even split |
+| `kafka` | `KAFKA_NETWORK_READ`, `KAFKA_NETWORK_WRITE` | Usage ratio (bytes in/out) |
+| `kafka` | `KAFKA_BASE`, `KAFKA_PARTITION`, `KAFKA_STORAGE` | Even split |
+| `schema_registry` | `SCHEMA_REGISTRY`, `GOVERNANCE_BASE`, `NUM_RULES` | Even split |
+| `connector` | `CONNECT_CAPACITY`, `CONNECT_NUM_TASKS`, `CONNECT_THROUGHPUT` | Even split per connector |
+| `ksqldb` | `KSQL_NUM_CSU`, `KSQL_NUM_CSUS` | Even split |
+| `flink` | `FLINK_NUM_CFU`, `FLINK_NUM_CFUS` | Even split per statement |
+| `org_wide` | `AUDIT_LOG_READ`, `SUPPORT` | Even split |
+| `default` | `TABLEFLOW_*` | Shared (to resource) |
+| `default` | `CLUSTER_LINKING_*` | Usage (to resource) |
+
+Unknown product types are allocated to UNALLOCATED.
 
 ## Allocator params
 
-Override default ratio splits for org-wide costs:
+Override default allocation ratios for Kafka CKU costs:
 
 ```yaml
 allocator_params:
-  support_ratio: 0.8   # fraction of support cost charged to teams
+  kafka_cku_usage_ratio: 0.70   # fraction allocated by bytes (default 0.70)
+  kafka_cku_shared_ratio: 0.30  # fraction allocated evenly (default 0.30)
 ```
 
 ## Emitters
