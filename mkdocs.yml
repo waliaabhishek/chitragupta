@@ -49,6 +49,7 @@ markdown_extensions:
       permalink: true
       toc_depth: 3
       baselevel: 1
+      slugify: !!python/name:pymdownx.slugs.uslugify
 
 extra:
   version:
