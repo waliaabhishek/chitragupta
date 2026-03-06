@@ -17,6 +17,7 @@ from ._identity_helpers import create_connector_sentinel, create_sentinel_from_i
 if TYPE_CHECKING:
     from core.models import Identity
     from core.storage.interface import UnitOfWork
+logger = logging.getLogger(__name__)
 
 LOGGER = logging.getLogger(__name__)
 

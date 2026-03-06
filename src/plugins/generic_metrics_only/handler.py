@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterable, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
@@ -15,6 +16,8 @@ if TYPE_CHECKING:
     from core.plugin.protocols import CostAllocator
     from core.storage.interface import UnitOfWork
     from plugins.generic_metrics_only.config import GenericMetricsOnlyConfig
+
+logger = logging.getLogger(__name__)
 
 
 def _make_usage_ratio_allocator(label: str, metric_key: str) -> CostAllocator:
@@ -91,10 +94,12 @@ class GenericMetricsOnlyHandler:
         return self._handles_product_types
 
     def gather_resources(self, tenant_id: str, uow: UnitOfWork, shared_ctx: object | None = None) -> Iterable[Resource]:
+        logger.debug("Gathering %s resources for tenant %s", self.service_type, tenant_id)
         if isinstance(shared_ctx, GenericSharedContext):
             yield shared_ctx.cluster_resource
 
     def gather_identities(self, tenant_id: str, uow: UnitOfWork) -> Iterable[Identity]:
+        logger.debug("Gathering %s identities for tenant %s", self.service_type, tenant_id)
         source = self._config.identity_source.source
         if source in ("prometheus", "both"):
             yield from self._gather_from_prometheus(tenant_id)
@@ -158,6 +163,9 @@ class GenericMetricsOnlyHandler:
         metrics_data: dict[str, list[MetricRow]] | None,
         uow: UnitOfWork,
     ) -> IdentityResolution:
+        logger.debug(
+            "Resolving %s identities resource=%s timestamp=%s", self.service_type, resource_id, billing_timestamp
+        )
         resource_active = IdentitySet()
         metrics_derived = IdentitySet()
         cfg = self._config.identity_source

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any
 
 from core.metrics.config import create_metrics_source
@@ -19,6 +20,8 @@ if TYPE_CHECKING:
     from core.plugin.protocols import CostInput, ServiceHandler
     from plugins.confluent_cloud.shared_context import CCloudSharedContext
 
+logger = logging.getLogger(__name__)
+
 
 class ConfluentCloudPlugin:
     """Confluent Cloud ecosystem plugin."""
@@ -35,6 +38,7 @@ class ConfluentCloudPlugin:
 
     def initialize(self, config: dict[str, Any]) -> None:
         """Initialize plugin with validated config."""
+        logger.info("Initializing ConfluentCloudPlugin")
         self._config = CCloudPluginConfig.from_plugin_settings(config)
         self._connection = CCloudConnection(
             api_key=self._config.ccloud_api.key,
@@ -57,16 +61,24 @@ class ConfluentCloudPlugin:
         if self._config.metrics:
             self._metrics_source = create_metrics_source(self._config.metrics)
 
+        logger.info(
+            "ConfluentCloudPlugin initialized handlers=%s metrics_enabled=%s",
+            list(self._handlers),
+            self._metrics_source is not None,
+        )
+
     def get_service_handlers(self) -> dict[str, ServiceHandler]:
         """Return service handlers keyed by service type."""
         if self._handlers is None:
             raise RuntimeError("Plugin not initialized. Call initialize() first.")
+        logger.debug("get_service_handlers -> %s", list(self._handlers))
         return self._handlers
 
     def get_cost_input(self) -> CostInput:
         """Return cost input backed by CCloud Billing API."""
         if self._config is None or self._connection is None:
             raise RuntimeError("Plugin not initialized. Call initialize() first.")
+        logger.debug("get_cost_input building CCloudBillingCostInput")
         return CCloudBillingCostInput(self._connection, self._config)
 
     def get_metrics_source(self) -> MetricsSource | None:
@@ -84,6 +96,7 @@ class ConfluentCloudPlugin:
         no longer requires cross-handler state sharing — shared context is built
         once here and passed explicitly.
         """
+        logger.debug("Building shared context for tenant=%s", tenant_id)
         from plugins.confluent_cloud.gathering import gather_environments, gather_kafka_clusters
         from plugins.confluent_cloud.shared_context import CCloudSharedContext
 
@@ -93,6 +106,12 @@ class ConfluentCloudPlugin:
         env_resources = list(gather_environments(self._connection, self.ecosystem, tenant_id))
         env_ids = [r.resource_id for r in env_resources]
         cluster_resources = list(gather_kafka_clusters(self._connection, self.ecosystem, tenant_id, env_ids))
+        logger.info(
+            "Shared context built tenant=%s envs=%d clusters=%d",
+            tenant_id,
+            len(env_resources),
+            len(cluster_resources),
+        )
         return CCloudSharedContext(
             environment_resources=tuple(env_resources),
             kafka_cluster_resources=tuple(cluster_resources),

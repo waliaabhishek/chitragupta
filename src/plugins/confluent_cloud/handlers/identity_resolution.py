@@ -6,6 +6,7 @@ The critical fix from reference code: filter by billing window, not current stat
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from typing import TYPE_CHECKING
 
@@ -16,6 +17,7 @@ from ._identity_helpers import create_sentinel_from_id
 if TYPE_CHECKING:
     from core.models import MetricRow
     from core.storage.interface import UnitOfWork
+logger = logging.getLogger(__name__)
 
 
 def resolve_kafka_sr_identities(
@@ -44,6 +46,11 @@ def resolve_kafka_sr_identities(
         - metrics_derived: Principal IDs from metrics (sentinels if not in DB)
         - tenant_period: Empty (orchestrator fills this)
     """
+    logger.debug(
+        "resolve_kafka_sr_identities tenant=%s resource=%s",
+        tenant_id,
+        resource_id,
+    )
     resource_active = IdentitySet()
     metrics_derived = IdentitySet()
     tenant_period = IdentitySet()  # Orchestrator fills this
@@ -77,6 +84,11 @@ def resolve_kafka_sr_identities(
             identity = identity_by_id.get(principal_id) or create_sentinel_from_id(principal_id, tenant_id, ecosystem)
             metrics_derived.add(identity)
 
+    logger.debug(
+        "resolve_kafka_sr_identities resolved=%d identities resource=%s",
+        len(resource_active.ids()) + len(metrics_derived.ids()),
+        resource_id,
+    )
     return IdentityResolution(
         resource_active=resource_active,
         metrics_derived=metrics_derived,

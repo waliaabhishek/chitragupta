@@ -214,7 +214,7 @@ class WorkflowRunner:
                 except GatherFailureThresholdError as exc:
                     results[name] = self._mark_tenant_permanently_failed(name, config, exc)
                 except Exception as exc:
-                    logger.error("Tenant %s failed: %s", name, exc)
+                    logger.exception("Tenant %s failed: %s", name, exc)
                     results[name] = PipelineRunResult(
                         tenant_name=name,
                         tenant_id=config.tenant_id,

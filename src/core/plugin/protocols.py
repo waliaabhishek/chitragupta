@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterable, Sequence
 from datetime import date as date_type
 from datetime import datetime, timedelta
@@ -20,6 +21,7 @@ if TYPE_CHECKING:
     )
     from core.models.chargeback import ChargebackRow
     from core.storage.interface import UnitOfWork
+logger = logging.getLogger(__name__)
 
 
 @runtime_checkable

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Sequence
 from dataclasses import replace
 from datetime import datetime
@@ -9,6 +10,8 @@ from typing import Any
 from core.engine.allocation import AllocationContext, AllocationResult
 from core.models import ChargebackRow, CostType, Resource
 from core.models.chargeback import AllocationDetail
+
+logger = logging.getLogger(__name__)
 
 _CENT = Decimal("0.0001")
 
@@ -64,6 +67,11 @@ def allocate_by_usage_ratio(
     """Allocate cost proportionally based on per-identity usage values."""
     total_value = sum(identity_values.values())
     if not identity_values or total_value == 0:
+        logger.warning(
+            "No usable metrics for resource=%s product=%s — falling back to even split",
+            ctx.billing_line.resource_id,
+            ctx.billing_line.product_type,
+        )
         row = make_row(
             ctx,
             identity_id="UNALLOCATED",
@@ -143,6 +151,12 @@ def allocate_evenly_with_fallback(ctx: AllocationContext) -> AllocationResult:
     identity_ids = list(ctx.identities.merged_active.ids())
     if not identity_ids:
         identity_ids = list(ctx.identities.tenant_period.ids())
+    if not identity_ids:
+        logger.warning(
+            "No identities for resource=%s product=%s — allocating to UNALLOCATED",
+            ctx.billing_line.resource_id,
+            ctx.billing_line.product_type,
+        )
     return allocate_evenly(ctx, identity_ids)
 
 

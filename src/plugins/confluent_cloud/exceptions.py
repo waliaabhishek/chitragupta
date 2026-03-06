@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 
 class CCloudApiError(Exception):
     """Raised when CCloud API returns an error response."""

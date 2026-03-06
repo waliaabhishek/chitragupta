@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from core.models.metrics import MetricQuery, MetricRow
+logger = logging.getLogger(__name__)
 
 
 class MetricsQueryError(Exception):

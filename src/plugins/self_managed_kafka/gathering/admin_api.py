@@ -6,6 +6,7 @@ resource_source.source="admin_api" is configured.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -14,6 +15,8 @@ from core.models import Resource
 
 if TYPE_CHECKING:
     from plugins.self_managed_kafka.config import ResourceSourceConfig
+
+logger = logging.getLogger(__name__)
 
 
 def create_admin_client(config: ResourceSourceConfig) -> Any:
@@ -25,11 +28,13 @@ def create_admin_client(config: ResourceSourceConfig) -> Any:
         ImportError: If kafka-python is not installed.
         ValueError: If config is invalid for admin_api source.
     """
+    logger.debug("Creating Kafka admin client bootstrap_servers=%s", config.bootstrap_servers)
     try:
         # kafka-python is an optional dependency with no type stubs.
         # --ignore-missing-imports suppresses mypy errors for this import globally.
         from kafka import KafkaAdminClient
     except ImportError as exc:
+        logger.exception("kafka-python not installed — admin_api source unavailable")
         raise ImportError(
             "kafka-python is required for admin_api resource discovery. Install it with: uv add kafka-python"
         ) from exc
@@ -46,7 +51,9 @@ def create_admin_client(config: ResourceSourceConfig) -> Any:
         if config.sasl_password:
             client_config["sasl_plain_password"] = config.sasl_password.get_secret_value()
 
-    return KafkaAdminClient(**client_config)
+    client = KafkaAdminClient(**client_config)
+    logger.info("Kafka admin client connected bootstrap_servers=%s", config.bootstrap_servers)
+    return client
 
 
 def gather_brokers_from_admin(

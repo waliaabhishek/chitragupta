@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 from core.models import Identity, Resource, ResourceStatus
 from plugins.confluent_cloud.crn import parse_ccloud_crn
 
-LOGGER = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)
 
 
 def _parse_iso_datetime(value: str | None) -> datetime | None:
@@ -41,7 +41,7 @@ def _parse_iso_datetime(value: str | None) -> datetime | None:
 
         return dt
     except ValueError:
-        LOGGER.warning("Could not parse datetime: %s", value)
+        logger.warning("Could not parse datetime: %s", value)
         return None
 
 
@@ -138,7 +138,7 @@ def gather_connectors(
                 elif config.get("kafka.service.account.id") is not None:
                     auth_mode = "SERVICE_ACCOUNT"
                 else:
-                    LOGGER.warning("Connector %s has no auth mode and no credential fields", connector_name)
+                    logger.warning("Connector %s has no auth mode and no credential fields", connector_name)
                     auth_mode = "UNKNOWN"
             metadata: dict[str, Any] = {
                 "kafka_auth_mode": auth_mode,

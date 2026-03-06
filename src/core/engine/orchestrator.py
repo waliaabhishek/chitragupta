@@ -189,7 +189,7 @@ class GatherPhase:
                     try:
                         self._gather_resources_and_identities(handler, uow, shared_ctx)
                     except Exception as exc:
-                        logger.error(
+                        logger.exception(
                             "Handler %s gather failed — skipping deletion detection: %s",
                             handler.service_type,
                             exc,
@@ -223,7 +223,7 @@ class GatherPhase:
                 all_gathered_resource_ids.update(r_ids)
                 all_gathered_identity_ids.update(i_ids)
             except Exception as exc:
-                logger.error("Handler %s gather failed: %s", handler.service_type, exc)
+                logger.exception("Handler %s gather failed: %s", handler.service_type, exc)
                 gather_complete = False
                 gather_errors.append(f"Handler {handler.service_type} gather failed: {exc}")
 
@@ -525,7 +525,7 @@ class CalculatePhase:
                 raise exc from None
 
             if not should_fallback:
-                logger.error(
+                logger.exception(
                     "Billing line %s/%s failed (attempt %d): %s — failing date",
                     line.resource_id,
                     line.product_type,
@@ -534,7 +534,7 @@ class CalculatePhase:
                 )
                 raise
 
-            logger.error(
+            logger.exception(
                 "Billing line %s/%s failed after %d attempts: %s — allocating to UNALLOCATED",
                 line.resource_id,
                 line.product_type,
@@ -632,7 +632,7 @@ class EmitPhase:
                 entry.emitter(self._tenant_id, emit_date, rows)
                 any_emitter_called = True
             except Exception as exc:
-                logger.error(
+                logger.exception(
                     "Emitter %r failed for tenant=%s date=%s: %s",
                     entry.emitter,
                     self._tenant_id,
@@ -845,7 +845,7 @@ class ChargebackOrchestrator:
                 uow.commit()
             self._consecutive_gather_failures = 0
         except Exception as exc:
-            logger.error("Gather phase failed for %s: %s", self._tenant_name, exc)
+            logger.exception("Gather phase failed for %s: %s", self._tenant_name, exc)
             errors.append(f"Gather phase failed: {exc}")
             self._consecutive_gather_failures += 1
             if self._consecutive_gather_failures >= self._gather_failure_threshold:
@@ -877,7 +877,7 @@ class ChargebackOrchestrator:
                 emit_result = self._emit_phase.run(pipeline_state.tracking_date)
                 errors.extend(emit_result.errors)
             except Exception as exc:
-                logger.error(
+                logger.exception(
                     "Calculate failed for %s date %s: %s",
                     self._tenant_name,
                     pipeline_state.tracking_date,

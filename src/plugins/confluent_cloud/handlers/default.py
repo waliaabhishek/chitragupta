@@ -13,6 +13,7 @@ entirely and go to the orchestrator's fallback UNALLOCATED path.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterable, Sequence
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
@@ -27,6 +28,8 @@ if TYPE_CHECKING:
     from core.models import Identity, MetricRow, Resource
     from core.plugin.protocols import CostAllocator
     from core.storage.interface import UnitOfWork
+
+logger = logging.getLogger(__name__)
 
 _DEFAULT_PRODUCT_TYPES: tuple[str, ...] = (
     "TABLEFLOW_DATA_PROCESSED",
@@ -68,6 +71,7 @@ class DefaultHandler:
         return _DEFAULT_PRODUCT_TYPES
 
     def gather_resources(self, tenant_id: str, uow: UnitOfWork, shared_ctx: object | None = None) -> Iterable[Resource]:
+        logger.debug("Gathering %s resources for tenant %s (no-op)", self.service_type, tenant_id)
         return iter([])
 
     def gather_identities(self, tenant_id: str, uow: UnitOfWork) -> Iterable[Identity]:
@@ -82,6 +86,7 @@ class DefaultHandler:
         metrics_data: dict[str, list[MetricRow]] | None,
         uow: UnitOfWork,
     ) -> IdentityResolution:
+        logger.debug("Resolving %s identities resource=%s (no-op)", self.service_type, resource_id)
         return IdentityResolution(
             resource_active=IdentitySet(),
             metrics_derived=IdentitySet(),

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any, Literal, cast, overload
@@ -20,6 +21,8 @@ from core.storage.backends.sqlmodel.tables import (
     PipelineStateTable,
     ResourceTable,
 )
+
+logger = logging.getLogger(__name__)
 
 
 @overload

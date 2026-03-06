@@ -5,7 +5,11 @@ Extracted to avoid DRY violations between identity_resolution.py and connector_i
 
 from __future__ import annotations
 
+import logging
+
 from core.models import Identity
+
+logger = logging.getLogger(__name__)
 
 # Prefix-to-type mapping for CCloud identity IDs
 _PREFIX_TYPE_MAP = {"sa": "service_account", "u": "user", "pool": "identity_pool"}

@@ -11,6 +11,7 @@ Handles all Kafka Connect-related product types:
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterable, Sequence
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
@@ -29,6 +30,9 @@ if TYPE_CHECKING:
     from core.models import IdentityResolution, MetricQuery, MetricRow, Resource
     from core.plugin.protocols import CostAllocator
     from core.storage.interface import UnitOfWork
+
+logger = logging.getLogger(__name__)
+
 
 _CONNECTOR_PRODUCT_TYPES: tuple[str, ...] = (
     "CONNECT_CAPACITY",
@@ -76,6 +80,7 @@ class ConnectorHandler(BaseServiceHandler["CCloudConnection | None", "CCloudPlug
         Replaces UoW full-table scan for kafka_cluster resources. Cluster list
         comes from build_shared_context(), which fetched it in Phase 1.
         """
+        logger.debug("Gathering %s resources for tenant %s", self.service_type, tenant_id)
         from plugins.confluent_cloud.gathering import gather_connectors
         from plugins.confluent_cloud.shared_context import CCloudSharedContext
 
@@ -99,6 +104,9 @@ class ConnectorHandler(BaseServiceHandler["CCloudConnection | None", "CCloudPlug
         auth mode (SERVICE_ACCOUNT or KAFKA_API_KEY) to determine the owner.
         metrics_data is ignored — connectors don't use metrics for identity.
         """
+        logger.debug(
+            "Resolving %s identities resource=%s timestamp=%s", self.service_type, resource_id, billing_timestamp
+        )
         billing_end = billing_timestamp + billing_duration
         return resolve_connector_identity(
             tenant_id=tenant_id,

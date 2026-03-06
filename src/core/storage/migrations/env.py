@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from logging.config import fileConfig
 
 from alembic import context
@@ -8,6 +9,8 @@ from sqlmodel import SQLModel
 
 # Import all table modules so they register with SQLModel.metadata
 import core.storage.backends.sqlmodel.tables  # noqa: F401
+
+logger = logging.getLogger(__name__)
 
 target_metadata = SQLModel.metadata
 

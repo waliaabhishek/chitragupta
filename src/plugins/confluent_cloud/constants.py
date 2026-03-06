@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger(__name__)
 # Allocation detail reason codes specific to the Confluent Cloud plugin.
 # Stored as VARCHAR in the DB — no enum membership required.
 # Core AllocationDetail is intentionally not used here (DIP: plugin must not

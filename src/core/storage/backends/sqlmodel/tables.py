@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import logging
 from datetime import UTC, date, datetime
 
 from sqlalchemy import Column, Date, DateTime, UniqueConstraint
 from sqlmodel import Field, SQLModel
+
+logger = logging.getLogger(__name__)
 
 
 class ResourceTable(SQLModel, table=True):

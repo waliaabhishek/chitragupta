@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import math
 from datetime import date
 from typing import Annotated
@@ -10,6 +11,8 @@ from core.api.dependencies import get_tenant_config, get_unit_of_work, resolve_d
 from core.api.schemas import BillingLineResponse, PaginatedResponse
 from core.config.models import TenantConfig  # noqa: TC001  # FastAPI evaluates annotations at runtime
 from core.storage.interface import UnitOfWork  # noqa: TC001
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["billing"])
 
@@ -25,6 +28,12 @@ async def list_billing(
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=1000)] = 100,
 ) -> PaginatedResponse[BillingLineResponse]:
+    logger.debug(
+        "GET /billing tenant=%s page=%d page_size=%d",
+        tenant_config.tenant_id,
+        page,
+        page_size,
+    )
     start_dt, end_dt = resolve_date_range(start_date, end_date)
 
     offset = (page - 1) * page_size
@@ -41,6 +50,7 @@ async def list_billing(
         )
 
     pages = math.ceil(total / page_size) if total > 0 else 0
+    logger.info("Listed billing tenant=%s returned=%d total=%d", tenant_config.tenant_id, len(items), total)
     return PaginatedResponse[BillingLineResponse](
         items=[
             BillingLineResponse(

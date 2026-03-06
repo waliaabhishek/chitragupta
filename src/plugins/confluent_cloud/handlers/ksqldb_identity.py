@@ -6,6 +6,7 @@ Unlike connectors which have auth mode branching, ksqlDB uses direct owner_id lo
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from typing import TYPE_CHECKING
 
@@ -15,6 +16,7 @@ from ._identity_helpers import create_ksqldb_sentinel, create_sentinel_from_id
 
 if TYPE_CHECKING:
     from core.storage.interface import UnitOfWork
+logger = logging.getLogger(__name__)
 
 
 # Sentinel identity IDs for ksqlDB

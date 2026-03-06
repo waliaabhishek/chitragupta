@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)

@@ -18,6 +18,7 @@ if TYPE_CHECKING:
         CostTypeConfig,
         GenericMetricsOnlyConfig,
     )
+logger = logging.getLogger(__name__)
 
 LOGGER = logging.getLogger(__name__)
 _BYTES_PER_GIB = Decimal("1073741824")

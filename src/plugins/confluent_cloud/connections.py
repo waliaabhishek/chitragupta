@@ -13,6 +13,8 @@ from pydantic import SecretStr  # noqa: TC002 - runtime use in get_secret_value(
 
 from plugins.confluent_cloud.exceptions import CCloudApiError, CCloudConnectionError
 
+logger = logging.getLogger(__name__)
+
 LOGGER = logging.getLogger(__name__)
 DEFAULT_PAGE_SIZE = 500
 

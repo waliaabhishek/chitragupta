@@ -8,6 +8,7 @@ Handles all Kafka-related product types:
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterable, Sequence
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
@@ -27,6 +28,8 @@ if TYPE_CHECKING:
     from core.models import Identity, IdentityResolution, MetricRow, Resource
     from core.plugin.protocols import CostAllocator
     from core.storage.interface import UnitOfWork
+
+logger = logging.getLogger(__name__)
 
 _KAFKA_PRODUCT_TYPES: tuple[str, ...] = (
     "KAFKA_NUM_CKU",
@@ -122,6 +125,7 @@ class KafkaHandler(BaseServiceHandler["CCloudConnection | None", "CCloudPluginCo
         shared across service types. Other handlers (SR, ksqlDB, etc.)
         can skip identity gathering to avoid duplicates.
         """
+        logger.debug("Gathering %s identities for tenant %s", self.service_type, tenant_id)
         from plugins.confluent_cloud.gathering import (
             gather_api_keys,
             gather_identity_pools,
@@ -158,6 +162,12 @@ class KafkaHandler(BaseServiceHandler["CCloudConnection | None", "CCloudPluginCo
         billing window are considered. Metrics principal IDs are extracted
         and resolved to identities or sentinels.
         """
+        logger.debug(
+            "Resolving %s identities resource=%s timestamp=%s",
+            self.service_type,
+            resource_id,
+            billing_timestamp,
+        )
         billing_end = billing_timestamp + billing_duration
         return resolve_kafka_sr_identities(
             tenant_id=tenant_id,

@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, TypedDict
+
+logger = logging.getLogger(__name__)
 
 # Types that represent "owners" (not API keys or system identities)
 OWNER_IDENTITY_TYPES: tuple[str, ...] = ("service_account", "user", "identity_pool")

@@ -8,6 +8,8 @@ These allocators handle various Kafka product types:
 
 from __future__ import annotations
 
+import logging
+
 from core.engine.allocation import AllocationContext, AllocationResult
 from core.engine.helpers import (
     allocate_by_usage_ratio,
@@ -16,6 +18,8 @@ from core.engine.helpers import (
     split_amount_evenly,
 )
 from core.models.chargeback import AllocationDetail, CostType
+
+logger = logging.getLogger(__name__)
 
 
 def kafka_num_cku_allocator(ctx: AllocationContext) -> AllocationResult:
@@ -26,6 +30,12 @@ def kafka_num_cku_allocator(ctx: AllocationContext) -> AllocationResult:
     - kafka_cku_usage_ratio: float (default 0.70)
     - kafka_cku_shared_ratio: float (default 0.30)
     """
+    logger.debug(
+        "Allocating kafka_num_cku resource=%s product=%s amount=%s",
+        ctx.billing_line.resource_id,
+        ctx.billing_line.product_type,
+        ctx.split_amount,
+    )
     usage_ratio = float(ctx.params.get("kafka_cku_usage_ratio", 0.70))
     shared_ratio = float(ctx.params.get("kafka_cku_shared_ratio", 0.30))
 
@@ -79,6 +89,10 @@ def _kafka_usage_allocation(ctx: AllocationContext) -> AllocationResult:
 
 def _fallback_no_metrics(ctx: AllocationContext) -> AllocationResult:
     """Tier 2: Prometheus returned no data for this cluster/timeslice."""
+    logger.warning(
+        "No metrics for resource=%s — falling back to even split",
+        ctx.billing_line.resource_id,
+    )
     merged_active = list(ctx.identities.merged_active.ids())
     if merged_active:
         return _even_split_with_detail(ctx, merged_active, AllocationDetail.NO_METRICS_LOCATED)

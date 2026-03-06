@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from core.plugin.protocols import CostInput, ServiceHandler
     from plugins.self_managed_kafka.shared_context import SMKSharedContext
 
+logger = logging.getLogger(__name__)
 LOGGER = logging.getLogger(__name__)
 
 

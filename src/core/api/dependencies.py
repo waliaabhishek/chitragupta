@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
@@ -13,6 +14,7 @@ from core.storage.registry import create_storage_backend
 
 if TYPE_CHECKING:
     from core.config.models import StorageConfig
+logger = logging.getLogger(__name__)
 
 
 def utc_today() -> date:

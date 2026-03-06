@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import io
+import logging
 from collections.abc import Iterator
 from datetime import datetime
 from typing import Annotated
@@ -13,6 +14,8 @@ from core.api.dependencies import get_tenant_config, get_unit_of_work, resolve_d
 from core.api.schemas import ExportRequest  # noqa: TC001  # FastAPI evaluates annotations at runtime
 from core.config.models import TenantConfig  # noqa: TC001  # FastAPI evaluates annotations at runtime
 from core.storage.interface import UnitOfWork  # noqa: TC001
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["export"])
 
@@ -71,6 +74,7 @@ def _stream_csv(
     # Build filter kwargs
     filter_kwargs: dict[str, str | None] = dict(filters) if filters else {}
 
+    row_count = 0
     with uow:
         for row in uow.chargebacks.iter_by_filters(
             ecosystem=ecosystem,
@@ -90,9 +94,11 @@ def _stream_csv(
                 else:
                     values.append(str(getattr(row, col_name, "")))
             writer.writerow(values)
+            row_count += 1
             yield buf.getvalue()
             buf.seek(0)
             buf.truncate(0)
+    logger.info("Export completed tenant=%s rows=%d", tenant_id, row_count)
 
 
 @router.post("/tenants/{tenant_name}/export")
@@ -102,6 +108,12 @@ async def export_chargebacks(
     body: ExportRequest,
 ) -> StreamingResponse:
     start_dt, end_dt = resolve_date_range(body.start_date, body.end_date)
+    logger.info(
+        "Export started tenant=%s start=%s end=%s",
+        tenant_config.tenant_id,
+        start_dt,
+        end_dt,
+    )
 
     columns = body.columns or list(_DEFAULT_COLUMNS)
     invalid = set(columns) - _ALL_COLUMNS

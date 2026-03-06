@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from core.models import MetricRow
     from core.storage.interface import UnitOfWork
     from plugins.self_managed_kafka.config import CostModelConfig, SelfManagedKafkaConfig
+logger = logging.getLogger(__name__)
 
 LOGGER = logging.getLogger(__name__)
 ECOSYSTEM = "self_managed_kafka"

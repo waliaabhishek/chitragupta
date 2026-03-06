@@ -6,6 +6,7 @@ CSU (Confluent Streaming Units) represent compute capacity.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import replace
 from typing import TYPE_CHECKING
 
@@ -17,6 +18,7 @@ if TYPE_CHECKING:
     # TYPE_CHECKING for lightweight module loading. Works because
     # `from __future__ import annotations` makes all annotations strings.
     from core.engine.allocation import AllocationContext, AllocationResult
+logger = logging.getLogger(__name__)
 
 
 def ksqldb_csu_allocator(ctx: AllocationContext) -> AllocationResult:

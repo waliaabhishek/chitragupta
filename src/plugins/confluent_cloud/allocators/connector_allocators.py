@@ -8,6 +8,7 @@ These allocators handle Kafka Connect product types:
 
 from __future__ import annotations
 
+import logging
 from dataclasses import replace
 from typing import TYPE_CHECKING
 
@@ -16,6 +17,7 @@ from core.models import CostType
 
 if TYPE_CHECKING:
     from core.engine.allocation import AllocationContext, AllocationResult
+logger = logging.getLogger(__name__)
 
 
 def connect_capacity_allocator(ctx: AllocationContext) -> AllocationResult:

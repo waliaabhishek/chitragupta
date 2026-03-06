@@ -7,6 +7,7 @@ Handles ksqlDB product types:
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterable, Sequence
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
@@ -23,6 +24,8 @@ if TYPE_CHECKING:
     from core.models import IdentityResolution, MetricQuery, MetricRow, Resource
     from core.plugin.protocols import CostAllocator
     from core.storage.interface import UnitOfWork
+
+logger = logging.getLogger(__name__)
 
 _KSQLDB_PRODUCT_TYPES: tuple[str, ...] = (
     "KSQL_NUM_CSU",
@@ -61,6 +64,7 @@ class KsqldbHandler(BaseServiceHandler["CCloudConnection | None", "CCloudPluginC
 
         Replaces UoW full-table scan for environment resources.
         """
+        logger.debug("Gathering %s resources for tenant %s", self.service_type, tenant_id)
         from plugins.confluent_cloud.gathering import gather_ksqldb_clusters
         from plugins.confluent_cloud.shared_context import CCloudSharedContext
 
@@ -82,8 +86,12 @@ class KsqldbHandler(BaseServiceHandler["CCloudConnection | None", "CCloudPluginC
 
         Delegates to resolve_ksqldb_identity which looks up the owner_id
         from the resource's credential_identity field.
+
         metrics_data is ignored - ksqlDB doesn't use metrics for identity.
         """
+        logger.debug(
+            "Resolving %s identities resource=%s timestamp=%s", self.service_type, resource_id, billing_timestamp
+        )
         billing_end = billing_timestamp + billing_duration
         return resolve_ksqldb_identity(
             tenant_id=tenant_id,

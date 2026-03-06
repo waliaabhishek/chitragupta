@@ -14,14 +14,14 @@ from core.plugin.registry import PluginRegistry
 from emitters.csv_emitter import make_csv_emitter
 from workflow_runner import WorkflowRunner
 
+logger = logging.getLogger(__name__)
+
+
 # Register built-in emitters at application startup
 register_emitter("csv", make_csv_emitter)
 
 if TYPE_CHECKING:
     from core.config.models import AppSettings
-
-logger = logging.getLogger(__name__)
-
 _DEFAULT_PLUGINS_PATH = Path(__file__).parent.parent / "plugins"
 
 

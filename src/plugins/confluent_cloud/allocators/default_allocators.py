@@ -11,6 +11,7 @@ usage attributed to the resource.
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 from core.engine.allocation import AllocationResult
@@ -21,6 +22,7 @@ from plugins.confluent_cloud.constants import CLUSTER_LINKING_COST
 
 if TYPE_CHECKING:
     from core.engine.allocation import AllocationContext
+logger = logging.getLogger(__name__)
 
 
 def default_allocator(ctx: AllocationContext) -> AllocationResult:
@@ -30,6 +32,12 @@ def default_allocator(ctx: AllocationContext) -> AllocationResult:
     (TABLEFLOW_DATA_PROCESSED, TABLEFLOW_NUM_TOPICS, TABLEFLOW_STORAGE).
     Mirrors reference DefaultAllocator: principal=cluster_id, addl_details=USING_DEFAULT_ALLOCATOR.
     """
+    logger.debug(
+        "default_allocator resource=%s product=%s amount=%s",
+        ctx.billing_line.resource_id,
+        ctx.billing_line.product_type,
+        ctx.split_amount,
+    )
     row = make_row(
         ctx=ctx,
         identity_id=ctx.billing_line.resource_id,  # ← resource, not UNALLOCATED
@@ -47,6 +55,12 @@ def cluster_linking_allocator(ctx: AllocationContext) -> AllocationResult:
     Cluster-linking costs are direct resource usage. Assign to resource_id
     to preserve lineage; cost_type=USAGE reflects direct consumption.
     """
+    logger.debug(
+        "cluster_linking_allocator resource=%s product=%s amount=%s",
+        ctx.billing_line.resource_id,
+        ctx.billing_line.product_type,
+        ctx.split_amount,
+    )
     row = make_row(
         ctx=ctx,
         identity_id=ctx.billing_line.resource_id,  # ← resource, not UNALLOCATED

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from decimal import Decimal
 from typing import Any, Literal
 
@@ -9,6 +10,8 @@ from pydantic import BaseModel, Field, SecretStr, model_validator
 
 from core.config.models import PluginSettingsBase
 from core.metrics.config import MetricsConnectionConfig  # noqa: TC001 — Pydantic evaluates field annotations at runtime
+
+logger = logging.getLogger(__name__)
 
 
 class CostRateOverride(BaseModel):

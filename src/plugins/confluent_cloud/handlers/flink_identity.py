@@ -10,6 +10,7 @@ The stmt_owner_cfu map is stored in IdentityResolution.context for the allocator
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from typing import TYPE_CHECKING
 
@@ -20,6 +21,7 @@ from ._identity_helpers import create_flink_sentinel, create_sentinel_from_id
 if TYPE_CHECKING:
     from core.models import Identity, MetricRow
     from core.storage.interface import UnitOfWork
+logger = logging.getLogger(__name__)
 
 
 # Sentinel identity IDs for Flink

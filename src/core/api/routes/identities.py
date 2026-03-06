@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import math
 from datetime import datetime
 from typing import Annotated
@@ -10,6 +11,8 @@ from core.api.dependencies import get_tenant_config, get_unit_of_work, validate_
 from core.api.schemas import IdentityResponse, PaginatedResponse
 from core.config.models import TenantConfig  # noqa: TC001  # FastAPI evaluates annotations at runtime
 from core.storage.interface import UnitOfWork  # noqa: TC001
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["identities"])
 
@@ -25,6 +28,7 @@ async def list_identities(
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=1000)] = 100,
 ) -> PaginatedResponse[IdentityResponse]:
+    logger.debug("GET /identities tenant=%s page=%d page_size=%d", tenant_config.tenant_id, page, page_size)
     tp = validate_temporal_params(active_at, period_start, period_end)
 
     eco = tenant_config.ecosystem
@@ -57,6 +61,7 @@ async def list_identities(
             )
 
     pages = math.ceil(total / page_size) if total > 0 else 0
+    logger.info("Listed identities tenant=%s returned=%d total=%d", tenant_config.tenant_id, len(items), total)
     return PaginatedResponse[IdentityResponse](
         items=[
             IdentityResponse(

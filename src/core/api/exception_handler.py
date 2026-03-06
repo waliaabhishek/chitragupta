@@ -8,7 +8,6 @@ from fastapi.responses import JSONResponse
 
 if TYPE_CHECKING:
     from fastapi import Request
-
 logger = logging.getLogger(__name__)
 
 

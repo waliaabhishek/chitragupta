@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 
@@ -15,21 +16,27 @@ if TYPE_CHECKING:
     from core.config.models import AppSettings
     from workflow_runner import WorkflowRunner
 
+logger = logging.getLogger(__name__)
+
 
 def create_app(settings: AppSettings, workflow_runner: WorkflowRunner | None = None) -> FastAPI:
     """Factory function for creating the FastAPI application."""
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        logger.info("Chargeback API starting up version=%s", API_VERSION)
         app.state.settings = settings
         app.state.backends = {}
         app.state.pipeline_runs = {}
         app.state.workflow_runner = workflow_runner
         yield
+        logger.info("Chargeback API shutting down — disposing backends")
         for backend in app.state.backends.values():
             backend.dispose()
         if workflow_runner is not None:
+            logger.debug("Draining workflow runner")
             await asyncio.to_thread(workflow_runner.drain, 30)
+        logger.info("Chargeback API shutdown complete")
 
     app = FastAPI(
         title="Chargeback Engine API",

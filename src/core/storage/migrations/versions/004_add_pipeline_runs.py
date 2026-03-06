@@ -8,8 +8,12 @@ Create Date: 2026-02-26
 
 from __future__ import annotations
 
+import logging
+
 import sqlalchemy as sa
 from alembic import op
+
+logger = logging.getLogger(__name__)
 
 revision = "004"
 down_revision = "003"

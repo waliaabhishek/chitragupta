@@ -10,6 +10,7 @@ All use even split allocation - no metrics needed.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterable, Sequence
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
@@ -24,6 +25,9 @@ if TYPE_CHECKING:
     from core.models import IdentityResolution, MetricQuery, MetricRow, Resource
     from core.plugin.protocols import CostAllocator
     from core.storage.interface import UnitOfWork
+
+logger = logging.getLogger(__name__)
+
 
 _SR_PRODUCT_TYPES: tuple[str, ...] = ("SCHEMA_REGISTRY", "GOVERNANCE_BASE", "NUM_RULES")
 
@@ -59,6 +63,7 @@ class SchemaRegistryHandler(BaseServiceHandler["CCloudConnection | None", "CClou
         No longer calls gather_environments() directly — eliminates the redundant
         API round-trip that occurred because this handler could not trust UoW ordering.
         """
+        logger.debug("Gathering %s resources for tenant %s", self.service_type, tenant_id)
         from plugins.confluent_cloud.gathering import gather_schema_registries
         from plugins.confluent_cloud.shared_context import CCloudSharedContext
 
@@ -81,6 +86,9 @@ class SchemaRegistryHandler(BaseServiceHandler["CCloudConnection | None", "CClou
         Uses temporal filtering: only API keys that existed during the
         billing window are considered.
         """
+        logger.debug(
+            "Resolving %s identities resource=%s timestamp=%s", self.service_type, resource_id, billing_timestamp
+        )
         billing_end = billing_timestamp + billing_duration
         return resolve_kafka_sr_identities(
             tenant_id=tenant_id,

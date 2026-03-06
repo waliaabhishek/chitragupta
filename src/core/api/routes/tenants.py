@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import date
 from typing import Annotated
 
@@ -15,6 +16,8 @@ from core.api.schemas import (
 from core.config.models import AppSettings, TenantConfig  # noqa: TC001  # FastAPI evaluates annotations at runtime
 from core.storage.interface import UnitOfWork  # noqa: TC001
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(tags=["tenants"])
 
 
@@ -23,6 +26,7 @@ async def list_tenants(
     request: Request,
     settings: Annotated[AppSettings, Depends(get_settings)],
 ) -> TenantListResponse:
+    logger.debug("GET /tenants")
     summaries: list[TenantStatusSummary] = []
     for tenant_name, tenant_config in settings.tenants.items():
         backend = get_or_create_backend(request.app.state.backends, tenant_name, tenant_config.storage)
@@ -41,6 +45,7 @@ async def list_tenants(
                 last_calculated_date=last_date,
             )
         )
+    logger.info("Listed tenants count=%d", len(summaries))
     return TenantListResponse(tenants=summaries)
 
 

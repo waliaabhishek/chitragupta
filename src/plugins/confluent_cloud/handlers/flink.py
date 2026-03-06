@@ -20,7 +20,7 @@ from core.plugin.base import BaseServiceHandler
 from plugins.confluent_cloud.allocators.flink_allocators import flink_cfu_allocator
 from plugins.confluent_cloud.handlers.flink_identity import resolve_flink_identity
 
-_LOGGER = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from core.models import IdentityResolution, MetricRow, Resource
@@ -128,7 +128,7 @@ class FlinkHandler(BaseServiceHandler["CCloudConnection | None", "CCloudPluginCo
                 api_key, api_secret = self._flink_regions[region]
                 allocatable_pools.append((pool, api_key, api_secret))
             elif region:
-                _LOGGER.info(
+                logger.info(
                     "Flink pool %s in region %s skipped: no regional credentials configured",
                     pool.resource_id,
                     region,

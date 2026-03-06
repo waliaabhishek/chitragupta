@@ -11,6 +11,7 @@ Fallback chain:
 
 from __future__ import annotations
 
+import logging
 from dataclasses import replace
 from typing import TYPE_CHECKING
 
@@ -22,6 +23,7 @@ from plugins.confluent_cloud.constants import NO_FLINK_STMT_NAME_TO_OWNER_MAP
 
 if TYPE_CHECKING:
     from core.engine.allocation import AllocationContext
+logger = logging.getLogger(__name__)
 
 
 def flink_cfu_allocator(ctx: AllocationContext) -> AllocationResult:

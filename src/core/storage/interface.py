@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterator
 from datetime import date, datetime
 from typing import TYPE_CHECKING, Protocol, Self, runtime_checkable
@@ -10,6 +11,7 @@ if TYPE_CHECKING:
     from core.models.identity import Identity
     from core.models.pipeline import PipelineRun, PipelineState
     from core.models.resource import Resource
+logger = logging.getLogger(__name__)
 
 
 @runtime_checkable

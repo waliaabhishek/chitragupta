@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import date
 from decimal import Decimal
 from typing import Annotated
@@ -10,6 +11,8 @@ from core.api.dependencies import get_tenant_config, get_unit_of_work, resolve_d
 from core.api.schemas import AggregationBucket, AggregationResponse
 from core.config.models import TenantConfig  # noqa: TC001  # FastAPI evaluates annotations at runtime
 from core.storage.interface import UnitOfWork  # noqa: TC001
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["aggregation"])
 
@@ -43,6 +46,12 @@ async def aggregate_chargebacks(
     resource_id: Annotated[str | None, Query()] = None,
     cost_type: Annotated[str | None, Query()] = None,
 ) -> AggregationResponse:
+    logger.debug(
+        "GET /chargebacks/aggregate tenant=%s group_by=%s time_bucket=%s",
+        tenant_config.tenant_id,
+        group_by,
+        time_bucket,
+    )
     if group_by is None:
         group_by = ["identity_id"]
 
@@ -92,4 +101,9 @@ async def aggregate_chargebacks(
     total_amount = sum((b.total_amount for b in buckets), Decimal(0))
     total_rows = sum(b.row_count for b in buckets)
 
+    logger.info(
+        "Aggregated chargebacks tenant=%s buckets=%d",
+        tenant_config.tenant_id,
+        len(buckets),
+    )
     return AggregationResponse(buckets=buckets, total_amount=total_amount, total_rows=total_rows)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import math
 from datetime import date
 from typing import Annotated
@@ -17,6 +18,8 @@ from core.api.schemas import (
 from core.config.models import TenantConfig  # noqa: TC001  # FastAPI evaluates annotations at runtime
 from core.storage.interface import UnitOfWork  # noqa: TC001
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(tags=["chargebacks"])
 
 
@@ -33,6 +36,12 @@ async def list_chargebacks(
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=1000)] = 100,
 ) -> PaginatedResponse[ChargebackResponse]:
+    logger.debug(
+        "GET /chargebacks tenant=%s page=%d page_size=%d",
+        tenant_config.tenant_id,
+        page,
+        page_size,
+    )
     start_dt, end_dt = resolve_date_range(start_date, end_date)
 
     offset = (page - 1) * page_size
@@ -51,6 +60,12 @@ async def list_chargebacks(
         )
 
     pages = math.ceil(total / page_size) if total > 0 else 0
+    logger.info(
+        "Listed chargebacks tenant=%s returned=%d total=%d",
+        tenant_config.tenant_id,
+        len(items),
+        total,
+    )
     return PaginatedResponse[ChargebackResponse](
         items=[
             ChargebackResponse(
@@ -138,6 +153,7 @@ async def update_chargeback_dimension(
     body: ChargebackDimensionUpdateRequest,
 ) -> ChargebackDimensionResponse:
     """Update tags/annotations on a chargeback dimension."""
+    logger.debug("PATCH /chargebacks/%s tenant=%s", dimension_id, tenant_config.tenant_id)
     with uow:
         dim = uow.chargebacks.get_dimension(dimension_id)
         if dim is None or dim.ecosystem != tenant_config.ecosystem or dim.tenant_id != tenant_config.tenant_id:
@@ -170,4 +186,5 @@ async def update_chargeback_dimension(
                 uow.tags.delete_tag(tag_id)
 
         uow.commit()
+        logger.info("Updated chargeback dimension %s tenant=%s", dimension_id, tenant_config.tenant_id)
         return _build_dimension_response(uow, dimension_id)

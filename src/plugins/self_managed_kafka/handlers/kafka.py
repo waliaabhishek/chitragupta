@@ -9,6 +9,7 @@ Single handler covering all product types:
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterable, Sequence
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
@@ -26,6 +27,9 @@ if TYPE_CHECKING:
     from core.plugin.protocols import CostAllocator
     from core.storage.interface import UnitOfWork
     from plugins.self_managed_kafka.config import SelfManagedKafkaConfig
+
+logger = logging.getLogger(__name__)
+
 
 _SELF_KAFKA_PRODUCT_TYPES: tuple[str, ...] = (
     "SELF_KAFKA_COMPUTE",
@@ -107,6 +111,7 @@ class SelfManagedKafkaHandler:
         Cluster resource comes from shared_ctx (pre-built in Phase 1).
         Broker and topic gathering proceeds as before via admin_api or Prometheus.
         """
+        logger.debug("Gathering %s resources for tenant %s", self.service_type, tenant_id)
         from plugins.self_managed_kafka.shared_context import SMKSharedContext
 
         if not isinstance(shared_ctx, SMKSharedContext):
@@ -154,6 +159,7 @@ class SelfManagedKafkaHandler:
         falls back to static identities if configured. If no static identities are
         configured, the Prometheus path is still attempted (costs will go to UNALLOCATED).
         """
+        logger.debug("Gathering %s identities for tenant %s", self.service_type, tenant_id)
         source = self._config.identity_source.source
         use_prometheus = source in ("prometheus", "both") and self._prometheus_principals_available
 
@@ -207,6 +213,9 @@ class SelfManagedKafkaHandler:
         Returns:
             IdentityResolution with principals in resource_active and/or metrics_derived.
         """
+        logger.debug(
+            "Resolving %s identities resource=%s timestamp=%s", self.service_type, resource_id, billing_timestamp
+        )
         resource_active = IdentitySet()
         metrics_derived = IdentitySet()
         tenant_period = IdentitySet()

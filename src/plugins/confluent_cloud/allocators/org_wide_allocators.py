@@ -9,6 +9,7 @@ Fallback: UNALLOCATED if no identities exist.
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 from core.engine.helpers import allocate_evenly
@@ -16,6 +17,7 @@ from core.models import OWNER_IDENTITY_TYPES
 
 if TYPE_CHECKING:
     from core.engine.allocation import AllocationContext, AllocationResult
+logger = logging.getLogger(__name__)
 
 
 def org_wide_allocator(ctx: AllocationContext) -> AllocationResult:

@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from pydantic import BaseModel, Field, SecretStr, model_validator
 
 from core.config.models import PluginSettingsBase
 from core.metrics.config import MetricsConnectionConfig  # noqa: TC001 — Pydantic evaluates field annotations at runtime
+
+logger = logging.getLogger(__name__)
 
 
 class CCloudCredentials(BaseModel):
@@ -48,4 +51,9 @@ class CCloudPluginConfig(PluginSettingsBase):
     @classmethod
     def from_plugin_settings(cls, settings: dict[str, Any]) -> CCloudPluginConfig:
         """Validate and parse plugin_settings dict."""
-        return cls.model_validate(settings)
+        logger.debug("Validating CCloudPluginConfig")
+        try:
+            return cls.model_validate(settings)
+        except Exception:
+            logger.exception("CCloudPluginConfig validation failed")
+            raise

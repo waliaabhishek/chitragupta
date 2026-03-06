@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import math
 from typing import TYPE_CHECKING, Annotated
 
@@ -21,6 +22,7 @@ from core.storage.interface import UnitOfWork  # noqa: TC001
 
 if TYPE_CHECKING:
     from core.models.chargeback import CustomTag
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["tags"])
 
@@ -59,6 +61,7 @@ async def list_tags(
     uow: Annotated[UnitOfWork, Depends(get_unit_of_work)],
     dimension_id: Annotated[int, Path(description="Chargeback dimension ID")],
 ) -> list[TagResponse]:
+    logger.debug("GET /chargebacks/%s/tags tenant=%s", dimension_id, tenant_config.tenant_id)
     with uow:
         _validate_dimension_ownership(uow, dimension_id, tenant_config)
         tags = uow.tags.get_tags(dimension_id)

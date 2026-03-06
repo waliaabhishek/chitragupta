@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, SecretStr, model_validator
@@ -8,6 +9,7 @@ from core.metrics.prometheus import AuthConfig, PrometheusConfig, PrometheusMetr
 
 if TYPE_CHECKING:
     from core.metrics.protocol import MetricsSource
+logger = logging.getLogger(__name__)
 
 
 class MetricsConnectionConfig(BaseModel):

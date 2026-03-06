@@ -7,7 +7,6 @@ from sqlalchemy import Engine, event
 from sqlmodel import create_engine
 
 logger = logging.getLogger(__name__)
-
 _engines: dict[str, Engine] = {}
 _engine_lock = threading.Lock()
 

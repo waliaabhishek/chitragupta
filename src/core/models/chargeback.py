@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 class CostType(StrEnum):
@@ -17,8 +20,9 @@ class CostType(StrEnum):
 class AllocationDetail(StrEnum):
     """Standardized reason codes for allocation decisions.
 
-    Values are stored as VARCHAR in the DB; existing free-form strings
-    from older data remain valid (they just won't match enum values).
+        Values are stored as VARCHAR in the DB; existing free-form strings
+        from older data remain valid (they just won't match enum values).
+
     """
 
     # Default/fallback allocators

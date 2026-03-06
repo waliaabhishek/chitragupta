@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
@@ -12,6 +13,7 @@ if TYPE_CHECKING:
     from core.metrics.protocol import MetricsSource
     from core.models import MetricRow
     from plugins.self_managed_kafka.config import IdentitySourceConfig
+logger = logging.getLogger(__name__)
 
 # PromQL expressions for resource/identity discovery.
 # {} placeholder is replaced by _inject_resource_filter when a filter is needed.

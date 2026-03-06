@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 from core.engine.helpers import allocate_by_usage_ratio, allocate_evenly_with_fallback
 
 if TYPE_CHECKING:
     from core.engine.allocation import AllocationContext, AllocationResult
+logger = logging.getLogger(__name__)
 
 
 def self_kafka_network_ingress_allocator(ctx: AllocationContext) -> AllocationResult:

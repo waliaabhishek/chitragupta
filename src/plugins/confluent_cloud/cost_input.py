@@ -14,6 +14,8 @@ if TYPE_CHECKING:
 from core.models import BillingLineItem
 from core.plugin.protocols import CostInput
 
+logger = logging.getLogger(__name__)
+
 LOGGER = logging.getLogger(__name__)
 BILLING_API_PATH = "/billing/v1/costs"
 BILLING_PAGE_SIZE = 2000

@@ -18,6 +18,8 @@ import httpx
 from core.metrics.protocol import MetricsQueryError
 from core.models.metrics import MetricQuery, MetricRow  # noqa: TC001 — used at runtime in _parse_response
 
+logger = logging.getLogger(__name__)
+
 LOGGER = logging.getLogger(__name__)
 
 _TRANSIENT_STATUS = frozenset({408, 425, 429, 500, 502, 503, 504})

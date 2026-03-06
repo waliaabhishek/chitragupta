@@ -13,7 +13,6 @@ from core.config.models import AppSettings, TenantConfig  # noqa: TC001  # FastA
 from core.storage.interface import StorageBackend  # noqa: TC001
 
 logger = logging.getLogger(__name__)
-
 router = APIRouter(tags=["pipeline"])
 
 

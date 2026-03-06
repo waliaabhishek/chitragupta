@@ -12,6 +12,7 @@ resolve_identities, and get_metrics_for_product_type.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterable
 from typing import TYPE_CHECKING, ClassVar
 
@@ -19,6 +20,7 @@ if TYPE_CHECKING:
     from core.models import Identity
     from core.plugin.protocols import CostAllocator
     from core.storage.interface import UnitOfWork
+logger = logging.getLogger(__name__)
 
 
 class BaseServiceHandler[ConnT, CfgT]:
@@ -48,6 +50,12 @@ class BaseServiceHandler[ConnT, CfgT]:
         """Look up allocator from _ALLOCATOR_MAP. Raises ValueError if unknown."""
         allocator = self._ALLOCATOR_MAP.get(product_type)
         if allocator is None:
+            logger.warning(
+                "%s.get_allocator no allocator for product_type=%r",
+                type(self).__name__,
+                product_type,
+            )
             msg = f"Unknown product type: {product_type}"
             raise ValueError(msg)
+        logger.debug("%s.get_allocator product_type=%r resolved", type(self).__name__, product_type)
         return allocator

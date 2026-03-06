@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -13,6 +14,7 @@ from plugins.generic_metrics_only.shared_context import GenericSharedContext
 if TYPE_CHECKING:
     from core.metrics.protocol import MetricsSource
     from core.plugin.protocols import CostInput, ServiceHandler
+logger = logging.getLogger(__name__)
 
 
 class GenericMetricsOnlyPlugin:
@@ -32,21 +34,29 @@ class GenericMetricsOnlyPlugin:
         return self._config.ecosystem_name
 
     def initialize(self, config: dict[str, Any]) -> None:
+        logger.info("Initializing GenericMetricsOnlyPlugin")
         self._config = GenericMetricsOnlyConfig.from_plugin_settings(config)
         self._metrics_source = create_metrics_source(self._config.metrics)
         self._handler = GenericMetricsOnlyHandler(
             config=self._config,
             metrics_source=self._metrics_source,
         )
+        logger.info(
+            "GenericMetricsOnlyPlugin initialized ecosystem=%s cluster=%s",
+            self._config.ecosystem_name,
+            self._config.cluster_id,
+        )
 
     def get_service_handlers(self) -> dict[str, ServiceHandler]:
         if self._handler is None:
             raise RuntimeError("Plugin not initialized.")
+        logger.debug("get_service_handlers -> ['generic']")
         return {"generic": self._handler}
 
     def get_cost_input(self) -> CostInput:
         if self._config is None or self._metrics_source is None:
             raise RuntimeError("Plugin not initialized.")
+        logger.debug("get_cost_input building GenericConstructedCostInput")
         return GenericConstructedCostInput(self._config, self._metrics_source)
 
     def get_metrics_source(self) -> MetricsSource | None:

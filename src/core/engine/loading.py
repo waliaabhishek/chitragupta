@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import importlib
 import inspect
+import logging
 from collections.abc import Callable
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 def import_attr(dotted_path: str) -> Any:
@@ -30,16 +33,19 @@ def import_attr(dotted_path: str) -> Any:
         raise ValueError(msg)
 
     module_path, attr_name = dotted_path.rsplit(":", 1)
+    logger.debug("import_attr loading %r", dotted_path)
 
     try:
         module = importlib.import_module(module_path)
     except ModuleNotFoundError as exc:
+        logger.exception("import_attr failed: module %r not found", module_path)
         msg = f"Could not import module {module_path!r}"
         raise ImportError(msg) from exc
 
     try:
         return getattr(module, attr_name)
     except AttributeError as exc:
+        logger.exception("import_attr failed: module %r has no attribute %r", module_path, attr_name)
         msg = f"Module {module_path!r} has no attribute {attr_name!r}"
         raise AttributeError(msg) from exc
 
