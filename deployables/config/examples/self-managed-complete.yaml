@@ -1,0 +1,96 @@
+# =============================================================================
+# Self-Managed Kafka Complete — All options documented.
+# Who: Production operators needing RBAC-aware identity resolution and cost overrides.
+# Requires env vars: PROMETHEUS_URL, PROM_USERNAME, PROM_PASSWORD,
+#                    KAFKA_SASL_USERNAME, KAFKA_SASL_PASSWORD
+# =============================================================================
+
+logging:
+  level: ${LOG_LEVEL:-INFO}
+  per_module_levels:
+    kafka: WARNING  # Optional — suppress verbose confluent-kafka client logs
+
+features:
+  enable_periodic_refresh: true
+  refresh_interval: 1800
+  max_parallel_tenants: 2  # Optional — set lower if tenants share a Prometheus instance
+
+api:
+  host: "0.0.0.0"
+  port: 8080
+
+tenants:
+  kafka-dc1:
+    ecosystem: self_managed_kafka
+    tenant_id: kafka-dc1
+    lookback_days: 60              # Optional — 60-day backfill window
+    cutoff_days: 3
+    retention_days: 180            # Optional — purge after 6 months
+    allocation_retry_limit: 3
+    max_dates_per_run: 15
+
+    storage:
+      backend: sqlmodel
+      connection_string: "sqlite:////app/data/kafka-dc1.db"
+
+    plugin_settings:
+      cluster_id: kafka-dc1         # Required — resource_id in billing
+      broker_count: 6               # Required — broker count for compute cost
+      region: us-west-2             # Optional — activates region_overrides lookup in cost_model
+
+      # --- Cost model (required) ---
+      cost_model:
+        compute_hourly_rate: "0.50"         # Required — USD per broker-hour
+        storage_per_gib_hourly: "0.000125"  # Required — USD per GiB-hour
+        network_ingress_per_gib: "0.01"     # Required — USD per GiB ingested
+        network_egress_per_gib: "0.09"      # Required — USD per GiB egressed
+        # Optional — override specific rates per region (unset fields inherit base rates)
+        region_overrides:
+          us-west-2:
+            compute_hourly_rate: "0.55"       # Optional — override compute for us-west-2 only
+            network_egress_per_gib: "0.10"    # Optional — override egress; others use base rates
+
+      # --- Identity source ---
+      identity_source:
+        source: both                    # Optional — "prometheus"/"static"/"both"
+        # Optional — map Kafka principals to team names (applies when source includes "prometheus")
+        principal_to_team:
+          "User:alice": team-data-eng
+          "User:bob": team-platform
+          "ServiceAccount:etl": team-data-eng
+        default_team: UNASSIGNED        # Optional — fallback for unmapped principals
+        # Static identities (used when source="static" or "both")
+        static_identities:
+          - identity_id: "User:alice"       # Required — must match Kafka principal format
+            identity_type: principal        # Required — "principal"/"team"/"service_account"
+            display_name: Alice Smith       # Optional — human-readable label
+            team: team-data-eng             # Optional — explicit team assignment
+
+      # --- Resource source ---
+      resource_source:
+        source: admin_api                  # Optional — "prometheus"/"admin_api"; default "prometheus"
+        bootstrap_servers: "kafka-dc1:9092"        # Required when source=admin_api
+        security_protocol: SASL_SSL                # Optional — "PLAINTEXT"/"SSL"/"SASL_PLAINTEXT"/"SASL_SSL"
+        sasl_mechanism: SCRAM-SHA-256              # Optional — "PLAIN"/"SCRAM-SHA-256"/"SCRAM-SHA-512"
+        sasl_username: "${KAFKA_SASL_USERNAME}"    # Optional — required if SASL is configured
+        sasl_password: "${KAFKA_SASL_PASSWORD}"    # Optional — required if SASL is configured
+
+      # --- Prometheus connection (required) ---
+      metrics:
+        type: prometheus
+        url: "${PROMETHEUS_URL}"
+        auth_type: basic
+        username: "${PROM_USERNAME}"
+        password: "${PROM_PASSWORD}"
+
+      # --- Orchestration ---
+      chargeback_granularity: daily       # Optional — "hourly"/"daily"/"monthly"
+      metrics_step_seconds: 3600          # Optional — Prometheus step in seconds
+
+      # --- CSV emitter ---
+      emitters:
+        - type: csv
+          aggregation: daily
+          params:
+            output_dir: "/app/data/csv"
+            filename_template: "{tenant_id}_{date}.csv"

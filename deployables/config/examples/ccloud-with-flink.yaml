@@ -1,0 +1,46 @@
+# =============================================================================
+# CCloud with Flink — Confluent Cloud with per-region Flink credentials.
+# Who: Teams running Flink compute pools on CCloud needing per-region cost attribution.
+# Note: flink[] entries correspond to Confluent Cloud Flink compute pool regions.
+#       region_id must match the Confluent Cloud region identifier exactly.
+# Requires env vars: CCLOUD_ORG_ID, CCLOUD_API_KEY, CCLOUD_API_SECRET,
+#                    FLINK_US_KEY, FLINK_US_SECRET, FLINK_EU_KEY, FLINK_EU_SECRET
+# =============================================================================
+
+logging:
+  level: ${LOG_LEVEL:-INFO}
+
+features:
+  enable_periodic_refresh: true
+  refresh_interval: 1800
+
+api:
+  host: "0.0.0.0"
+  port: 8080
+
+tenants:
+  ccloud-prod:
+    ecosystem: confluent_cloud
+    tenant_id: "${CCLOUD_ORG_ID}"  # Required — Confluent Cloud org ID
+    lookback_days: 90
+    cutoff_days: 5
+    storage:
+      backend: sqlmodel
+      connection_string: "sqlite:////app/data/ccloud-prod.db"
+    plugin_settings:
+      ccloud_api:
+        key: "${CCLOUD_API_KEY}"       # Required — org-level CCloud API key
+        secret: "${CCLOUD_API_SECRET}" # Required — org-level CCloud API secret
+      billing_api:
+        days_per_query: 15             # Optional — billing fetch batch size; 1-30
+
+      # --- Flink regional credentials ---
+      # Required when Flink workloads are present. Each entry = one CCloud region.
+      # Omit this section entirely if no Flink compute pools are used.
+      flink:
+        - region_id: us-east-1           # Required — Confluent Cloud region identifier
+          key: "${FLINK_US_KEY}"          # Required — Flink API key for this region
+          secret: "${FLINK_US_SECRET}"    # Required — Flink API secret for this region
+        - region_id: eu-central-1        # Required — second region
+          key: "${FLINK_EU_KEY}"          # Required — Flink API key for this region
+          secret: "${FLINK_EU_SECRET}"    # Required — Flink API secret for this region

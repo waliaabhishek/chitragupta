@@ -1,0 +1,50 @@
+# =============================================================================
+# CCloud Multi-Tenant — Two Confluent Cloud organizations in one deployment.
+# Who: Platform teams managing multiple CCloud orgs (prod/staging, separate BUs).
+# Note: Each tenant MUST have a unique storage connection_string.
+# Requires env vars: CCLOUD_PROD_ORG_ID, CCLOUD_PROD_API_KEY, CCLOUD_PROD_API_SECRET,
+#                    CCLOUD_STAGING_ORG_ID, CCLOUD_STAGING_API_KEY, CCLOUD_STAGING_API_SECRET
+# =============================================================================
+
+logging:
+  level: ${LOG_LEVEL:-INFO}
+
+features:
+  enable_periodic_refresh: true
+  refresh_interval: 1800
+  max_parallel_tenants: 4  # Optional — both tenants may process concurrently
+
+api:
+  host: "0.0.0.0"
+  port: 8080
+
+tenants:
+  # --- Production org ---
+  ccloud-prod:
+    ecosystem: confluent_cloud     # Required — "confluent_cloud"
+    tenant_id: "${CCLOUD_PROD_ORG_ID}"  # Required — production org ID
+    lookback_days: 90
+    cutoff_days: 5
+    storage:
+      backend: sqlmodel
+      connection_string: "sqlite:////app/data/ccloud-prod.db"     # Required — unique path
+    plugin_settings:
+      ccloud_api:
+        key: "${CCLOUD_PROD_API_KEY}"       # Required — production API key
+        secret: "${CCLOUD_PROD_API_SECRET}" # Required — production API secret
+
+  # --- Staging org ---
+  ccloud-staging:
+    ecosystem: confluent_cloud
+    tenant_id: "${CCLOUD_STAGING_ORG_ID}"  # Required — staging org ID
+    lookback_days: 30            # Optional — shorter lookback for staging
+    cutoff_days: 5
+    storage:
+      backend: sqlmodel
+      connection_string: "sqlite:////app/data/ccloud-staging.db"  # Required — DIFFERENT path from prod
+    plugin_settings:
+      ccloud_api:
+        key: "${CCLOUD_STAGING_API_KEY}"       # Required — staging API key
+        secret: "${CCLOUD_STAGING_API_SECRET}" # Required — staging API secret
+      billing_api:
+        days_per_query: 15  # Optional — billing batch size; 1-30
