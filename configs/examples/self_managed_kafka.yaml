@@ -1,5 +1,8 @@
+# Self-managed Kafka example
+# Requires: PROMETHEUS_URL
+
 logging:
-  level: DEBUG
+  level: INFO
 
 features:
   enable_periodic_refresh: true
@@ -7,21 +10,29 @@ features:
 
 api:
   host: "0.0.0.0"
-  port: 8081
+  port: 8080
 
 tenants:
   on-prem-kafka:
     ecosystem: self_managed_kafka
     tenant_id: kafka-dc1
-    lookback_days: 180
+    lookback_days: 30
     cutoff_days: 3
-    retention_days: 365
     storage:
       backend: sqlmodel
       connection_string: "sqlite:///data/kafka-dc1.db"
     plugin_settings:
-      cost_model: constructed
-      bootstrap_servers: "${KAFKA_BOOTSTRAP_SERVERS:-localhost:9092}"
-      monthly_infrastructure_cost: 15000.00
-      metrics_source: prometheus
-      prometheus_url: "${PROMETHEUS_URL:-http://localhost:9090}"
+      cluster_id: kafka-dc1
+      broker_count: 3
+      cost_model:
+        compute_hourly_rate: "0.50"
+        storage_per_gib_hourly: "0.000125"
+        network_ingress_per_gib: "0.01"
+        network_egress_per_gib: "0.09"
+      metrics:
+        type: prometheus
+        url: "${PROMETHEUS_URL:-http://localhost:9090}"
+        auth_type: none
+      identity_source:
+        source: prometheus
+        default_team: UNASSIGNED

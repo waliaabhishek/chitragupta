@@ -21,10 +21,9 @@ tenants:
       backend: sqlmodel
       connection_string: "sqlite:///data/ccloud-prod.db"
     plugin_settings:
-      api_key: "${CCLOUD_API_KEY}"
-      api_secret: "${CCLOUD_API_SECRET}"
-      billing_api_url: "https://api.confluent.cloud/billing/v1/costs"
-      core_api_url: "https://api.confluent.cloud"
+      ccloud_api:
+        key: "${CCLOUD_API_KEY}"
+        secret: "${CCLOUD_API_SECRET}"
 
   staging-ccloud:
     ecosystem: confluent_cloud
@@ -36,5 +35,6 @@ tenants:
       backend: sqlmodel
       connection_string: "sqlite:///data/ccloud-staging.db"
     plugin_settings:
-      api_key: "${CCLOUD_STAGING_API_KEY}"
-      api_secret: "${CCLOUD_STAGING_API_SECRET}"
+      ccloud_api:
+        key: "${CCLOUD_STAGING_API_KEY}"
+        secret: "${CCLOUD_STAGING_API_SECRET}"

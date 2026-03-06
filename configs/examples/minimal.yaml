@@ -1,4 +1,13 @@
+# Minimal Confluent Cloud config
+# Requires: CCLOUD_ORG_ID, CCLOUD_API_KEY, CCLOUD_API_SECRET
+
 tenants:
   my-org:
     ecosystem: confluent_cloud
-    tenant_id: org-12345
+    tenant_id: "${CCLOUD_ORG_ID}"
+    storage:
+      connection_string: "sqlite:///data/my-org.db"
+    plugin_settings:
+      ccloud_api:
+        key: "${CCLOUD_API_KEY}"
+        secret: "${CCLOUD_API_SECRET}"

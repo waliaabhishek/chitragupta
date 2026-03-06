@@ -19,9 +19,17 @@ tenants:
       backend: sqlmodel
       connection_string: "sqlite:////app/data/chargeback.db"
     plugin_settings:
-      cost_model: constructed
-      bootstrap_servers: "${KAFKA_BOOTSTRAP_SERVERS}"
-      monthly_infrastructure_cost: 15000.00
-      metrics_source: prometheus
-      prometheus_url: "${PROMETHEUS_URL}"
-      identity_source: prometheus
+      cluster_id: kafka-dc1
+      broker_count: 3
+      cost_model:
+        compute_hourly_rate: "0.50"
+        storage_per_gib_hourly: "0.000125"
+        network_ingress_per_gib: "0.01"
+        network_egress_per_gib: "0.09"
+      metrics:
+        type: prometheus
+        url: "${PROMETHEUS_URL}"
+        auth_type: none
+      identity_source:
+        source: prometheus
+        default_team: UNASSIGNED

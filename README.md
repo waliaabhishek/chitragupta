@@ -27,13 +27,20 @@ git clone https://github.com/waliaabhishek/chitragupt.git
 cd chitragupt
 uv sync
 
-# Configure (see docs/configuration/ for full reference)
+# Copy and configure
+cp deployables/config/examples/ccloud-minimal.yaml config.yaml
+# Edit config.yaml — set your org ID or use env vars
+
+# Set credentials
+export CCLOUD_ORG_ID=org-xxxxx
 export CCLOUD_API_KEY=your-key
 export CCLOUD_API_SECRET=your-secret
 
 # Run once
 uv run python src/main.py --config-file config.yaml --run-once
 ```
+
+See [Quickstart guide](docs/getting-started/quickstart.md) for step-by-step walkthrough.
 
 ## Documentation
 

@@ -19,7 +19,6 @@ tenants:
       backend: sqlmodel
       connection_string: "sqlite:////app/data/chargeback.db"
     plugin_settings:
-      api_key: "${CCLOUD_API_KEY}"
-      api_secret: "${CCLOUD_API_SECRET}"
-      billing_api_url: "https://api.confluent.cloud/billing/v1/costs"
-      core_api_url: "https://api.confluent.cloud"
+      ccloud_api:
+        key: "${CCLOUD_API_KEY}"
+        secret: "${CCLOUD_API_SECRET}"
