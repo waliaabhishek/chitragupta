@@ -1,4 +1,4 @@
-# Chargeback Engine
+# Chitragupt
 
 Multi-ecosystem infrastructure cost chargeback engine. Allocates costs to teams and service accounts across Confluent Cloud, self-managed Kafka, and any Prometheus-instrumented system.
 
@@ -23,8 +23,8 @@ Multi-ecosystem infrastructure cost chargeback engine. Allocates costs to teams 
 ```bash
 # Install
 pip install uv
-git clone https://github.com/your-org/chargeback-engine.git
-cd chargeback-engine
+git clone https://github.com/waliaabhishek/chitragupt.git
+cd chitragupt
 uv sync
 
 # Configure (see docs/configuration/ for full reference)

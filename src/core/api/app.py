@@ -24,22 +24,22 @@ def create_app(settings: AppSettings, workflow_runner: WorkflowRunner | None = N
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        logger.info("Chargeback API starting up version=%s", API_VERSION)
+        logger.info("Chitragupt API starting up version=%s", API_VERSION)
         app.state.settings = settings
         app.state.backends = {}
         app.state.pipeline_runs = {}
         app.state.workflow_runner = workflow_runner
         yield
-        logger.info("Chargeback API shutting down — disposing backends")
+        logger.info("Chitragupt API shutting down — disposing backends")
         for backend in app.state.backends.values():
             backend.dispose()
         if workflow_runner is not None:
             logger.debug("Draining workflow runner")
             await asyncio.to_thread(workflow_runner.drain, 30)
-        logger.info("Chargeback API shutdown complete")
+        logger.info("Chitragupt API shutdown complete")
 
     app = FastAPI(
-        title="Chargeback Engine API",
+        title="Chitragupt API",
         version=API_VERSION,
         lifespan=lifespan,
     )

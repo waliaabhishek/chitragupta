@@ -7,7 +7,6 @@ from unittest.mock import MagicMock
 
 from core.models import Identity, Resource
 
-
 # ---------------------------------------------------------------------------
 # TASK-028 — Direct lookup tests appended after existing tests (see below)
 # ---------------------------------------------------------------------------
@@ -273,7 +272,7 @@ class TestResolveKsqldbIdentity:
             resolve_ksqldb_identity,
         )
 
-        ksqldb_app = Resource(
+        Resource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="ksqldb-app-abc",
@@ -281,7 +280,7 @@ class TestResolveKsqldbIdentity:
             metadata={"owner_id": "sa-owner-123"},
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        sa_owner = Identity(
+        Identity(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             identity_id="sa-owner-123",
@@ -315,7 +314,7 @@ class TestResolveKsqldbIdentity:
             metadata={"owner_id": "sa-correct"},
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        ksqldb_other = Resource(
+        Resource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="ksqldb-app-OTHER",
@@ -460,7 +459,7 @@ class TestResolveKsqldbIdentity:
             display_name="Primary SA",
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        sa_secondary = Identity(
+        Identity(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             identity_id="sa-metadata-secondary",

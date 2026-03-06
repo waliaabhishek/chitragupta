@@ -12,12 +12,12 @@
 
 ```ini
 [Unit]
-Description=Chargeback Engine Worker
+Description=Chitragupt Worker
 After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=/opt/chargeback-engine
+WorkingDirectory=/opt/chitragupt
 ExecStart=uv run python src/main.py \
     --config-file /etc/chargeback/config.yaml \
     --mode worker
@@ -43,7 +43,7 @@ CMD ["uv", "run", "python", "src/main.py", "--config-file", "/config/config.yaml
 Pass secrets via environment — never hardcode in YAML:
 
 ```bash
-docker run -e CCLOUD_API_KEY=... -e CCLOUD_API_SECRET=... chargeback-engine
+docker run -e CCLOUD_API_KEY=... -e CCLOUD_API_SECRET=... chitragupt
 ```
 
 ## API server

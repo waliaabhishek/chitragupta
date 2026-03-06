@@ -7,7 +7,7 @@ from decimal import Decimal
 
 import pytest
 
-from core.engine.allocation import AllocationContext, AllocationResult
+from core.engine.allocation import AllocationContext
 from core.models import (
     BillingLineItem,
     Identity,
@@ -337,7 +337,7 @@ class TestTask024HandlerAllocatorIdentity:
 
 
 class TestTask024NetworkFallbackParity:
-    """TASK-024: Network allocators fallback to even split when metrics absent — parity with allocate_evenly_with_fallback."""
+    """TASK-024: Network allocators fallback to even split when metrics absent."""
 
     def test_network_ingress_fallback_matches_allocate_evenly_with_fallback(self, base_billing_line) -> None:
         from core.engine.helpers import allocate_evenly_with_fallback
@@ -369,7 +369,7 @@ class TestTask024NetworkFallbackParity:
 
 
 class TestGap23TenantPeriodFallback:
-    """GAP-23: tenant_period fallback splits evenly across real identities (orchestrator guarantees no system entries)."""
+    """GAP-23: tenant_period fallback splits evenly across real identities."""
 
     def test_network_fallback_splits_real_identities(self, base_billing_line: BillingLineItem) -> None:
         """Network fallback: splits evenly across real identities when no metrics available."""

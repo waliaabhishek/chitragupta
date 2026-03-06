@@ -136,7 +136,7 @@ class TestRunPipelineBackground:
         assert "WorkflowRunner" in updated.error_message
 
     def test_run_pipeline_skips_when_already_running(self, temp_backend: SQLModelBackend) -> None:
-        """When workflow_runner.run_tenant() returns already_running=True, DB run status is set to 'skipped' (TASK-005 fix test 9)."""
+        """When run_tenant() returns already_running=True, DB status is 'skipped' (TASK-005 test 9)."""
         from core.engine.orchestrator import PipelineRunResult
 
         with temp_backend.create_unit_of_work() as uow:
@@ -188,7 +188,7 @@ class TestTriggerPipelineAlreadyRunning:
     """TASK-005: trigger_pipeline synchronous guard using WorkflowRunner.is_tenant_running()."""
 
     def test_trigger_pipeline_already_running_returns_200(self) -> None:
-        """When workflow_runner.is_tenant_running('t') is True, POST returns HTTP 200 with status='already_running' (TASK-005 fix test 8)."""
+        """When is_tenant_running('t') is True, POST returns 200 with status='already_running' (TASK-005 test 8)."""
         mock_runner = MagicMock()
         mock_runner.is_tenant_running.return_value = True
 

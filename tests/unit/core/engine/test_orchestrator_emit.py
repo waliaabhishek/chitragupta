@@ -3,14 +3,14 @@ from __future__ import annotations
 from collections.abc import Iterable
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, patch
 
+from core.engine.allocation import AllocationContext, AllocationResult
 from core.engine.orchestrator import ChargebackOrchestrator
 from core.models.billing import BillingLineItem
 from core.models.chargeback import ChargebackRow, CostType
 from core.models.identity import Identity, IdentityResolution, IdentitySet
-from core.models.pipeline import PipelineState
 from core.models.resource import Resource
 
 # ---------- constants ----------
@@ -76,7 +76,8 @@ def _make_identity(identity_id: str = "user-1") -> Identity:
     )
 
 
-from core.engine.allocation import AllocationContext, AllocationResult
+if TYPE_CHECKING:
+    from core.models.pipeline import PipelineState
 
 
 def _simple_allocator(ctx: AllocationContext) -> AllocationResult:

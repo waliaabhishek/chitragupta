@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from core.config.models import StorageConfig
-from core.storage.interface import StorageBackend
+
+if TYPE_CHECKING:
+    from core.storage.interface import StorageBackend
 
 
 class TestStorageBackendRegistry:

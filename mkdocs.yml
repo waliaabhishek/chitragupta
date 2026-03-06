@@ -1,8 +1,8 @@
 # mkdocs.yml
-site_name: Chargeback Engine
+site_name: Chitragupt
 site_description: Multi-ecosystem chargeback engine — allocate infrastructure costs to tenants and teams
-repo_url: https://github.com/<YOUR_ORG>/<YOUR_REPO>
-repo_name: chargeback-engine
+repo_url: https://github.com/waliaabhishek/chitragupt
+repo_name: chitragupt
 
 theme:
   name: material

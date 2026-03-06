@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from unittest.mock import MagicMock, call
+from unittest.mock import MagicMock
 
 from core.models import Identity, Resource
 
@@ -367,7 +367,7 @@ class TestResolveConnectorIdentity:
             resolve_connector_identity,
         )
 
-        connector = Resource(
+        Resource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="connector-abc",
@@ -378,7 +378,7 @@ class TestResolveConnectorIdentity:
             },
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        sa_owner = Identity(
+        Identity(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             identity_id="sa-owner-123",
@@ -415,7 +415,7 @@ class TestResolveConnectorIdentity:
             },
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        connector_other = Resource(
+        Resource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="connector-OTHER",

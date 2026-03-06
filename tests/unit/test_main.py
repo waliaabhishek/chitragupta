@@ -232,7 +232,7 @@ class TestBothModeSingleRunner:
         mock_runner_cls: MagicMock,
         mock_signal: MagicMock,
     ) -> None:
-        """When a pre-set shutdown_event is passed, run_loop exits immediately and no signal.signal() is registered (TASK-005 fix test 4)."""
+        """Pre-set shutdown_event exits immediately, no signal registered (TASK-005 test 4)."""
         from core.config.models import AppSettings
 
         settings = AppSettings()
@@ -268,7 +268,7 @@ class TestBothModeSingleRunner:
         mock_run_worker: MagicMock,
         mock_run_api: MagicMock,
     ) -> None:
-        """run_api and run_worker both receive the identical WorkflowRunner instance in both mode (TASK-005 fix test 10)."""
+        """run_api and run_worker share same WorkflowRunner in both mode (TASK-005 test 10)."""
         from core.config.models import AppSettings
 
         mock_load.return_value = AppSettings()

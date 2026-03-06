@@ -2,13 +2,15 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime
 from decimal import Decimal
+from typing import TYPE_CHECKING
 from unittest.mock import patch
-
-from fastapi.testclient import TestClient
 
 from core.models.billing import BillingLineItem
 from core.models.chargeback import ChargebackRow, CostType
 from core.storage.backends.sqlmodel.unit_of_work import SQLModelBackend  # noqa: TC001
+
+if TYPE_CHECKING:
+    from fastapi.testclient import TestClient
 
 # Fixed UTC "today" used across all route tests.
 # window: effective_start = date(2025, 12, 16), effective_end = date(2026, 1, 15)

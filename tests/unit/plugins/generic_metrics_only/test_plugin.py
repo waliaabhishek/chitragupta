@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import pytest
 
-
 KAFKA_YAML_SETTINGS = {
     "ecosystem_name": "self_managed_kafka",
     "cluster_id": "kafka-prod",

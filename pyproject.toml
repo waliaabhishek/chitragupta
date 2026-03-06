@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "chargeback-engine"
+name = "chitragupt"
 version = "0.1.0"
 description = "Multi-ecosystem chargeback engine"
 requires-python = ">=3.14"

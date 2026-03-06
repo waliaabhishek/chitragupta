@@ -7,6 +7,7 @@ then proceeds with broker/topic gathering — without calling gather_cluster_res
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -159,4 +160,3 @@ class TestSMKHandlerGatherResourcesSharedContext:
 
 
 # Type alias for fixture type hints (avoids import issues at collection time)
-from typing import Any

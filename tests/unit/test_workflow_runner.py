@@ -1166,7 +1166,7 @@ class TestPerTenantRunGuard:
     @patch("workflow_runner.ChargebackOrchestrator")
     @patch("core.storage.registry.create_storage_backend")
     def test_run_tenant_guard_clears_on_exception(self, mock_storage: MagicMock, mock_orch_cls: MagicMock) -> None:
-        """_running_tenants entry is cleared in the finally block even when orchestrator.run() raises (TASK-005 fix test 6)."""
+        """_running_tenants cleared in finally even when orchestrator.run() raises (TASK-005 test 6)."""
         mock_storage.return_value = MagicMock()
         mock_orch = MagicMock()
         mock_orch.run.side_effect = RuntimeError("orchestrator exploded")

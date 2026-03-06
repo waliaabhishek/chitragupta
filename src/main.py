@@ -26,7 +26,7 @@ _DEFAULT_PLUGINS_PATH = Path(__file__).parent.parent / "plugins"
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Chargeback Engine")
+    parser = argparse.ArgumentParser(description="Chitragupt")
     parser.add_argument(
         "--config-file",
         required=True,

@@ -7,6 +7,7 @@ from sqlalchemy import inspect as sa_inspect
 from sqlmodel import create_engine
 
 from core.storage.backends.sqlmodel.engine import _engine_lock, _engines
+from core.storage.backends.sqlmodel.unit_of_work import SQLModelBackend
 
 
 @pytest.fixture(autouse=True)
@@ -41,9 +42,6 @@ def reset_alembic_logging():
         logger = logging.getLogger(name)
         logger.handlers.clear()
         logger.setLevel(logging.NOTSET)
-
-
-from core.storage.backends.sqlmodel.unit_of_work import SQLModelBackend
 
 
 @pytest.fixture(autouse=True)

@@ -34,7 +34,7 @@ class TestCreateApp:
     def test_app_has_title_and_version(self) -> None:
         settings = _make_settings()
         app = create_app(settings)
-        assert app.title == "Chargeback Engine API"
+        assert app.title == "Chitragupt API"
         assert app.version == "1.0.0"
 
     def test_app_has_all_routers_registered(self) -> None:

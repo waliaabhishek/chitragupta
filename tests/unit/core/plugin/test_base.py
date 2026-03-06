@@ -381,7 +381,6 @@ class TestOrgWideAndDefaultHandlerUnchanged:
 
     def test_org_wide_handler_no_base_import(self) -> None:
         """org_wide module does not import BaseServiceHandler."""
-        import importlib.util
         import ast
         import pathlib
 

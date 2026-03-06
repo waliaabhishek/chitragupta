@@ -1,4 +1,4 @@
-# Chargeback Engine — Docker Deployment
+# Chitragupt — Docker Deployment
 
 ## Prerequisites
 - Docker and Docker Compose v2+
@@ -40,7 +40,7 @@
 
 | Service | Port | Description |
 |---------|------|-------------|
-| chargeback-engine | 8080 | API + pipeline worker |
+| chitragupt | 8080 | API + pipeline worker |
 | grafana | 3000 | Dashboards |
 
 ## Run Modes
@@ -66,7 +66,7 @@ Set in `config/.env`. See `.env.example` for required variables per ecosystem.
 
 From repo root:
 ```bash
-docker build -t chargeback-engine .
+docker build -t chitragupt .
 ```
 
 The build uses multi-stage caching for fast rebuilds.
@@ -74,7 +74,7 @@ The build uses multi-stage caching for fast rebuilds.
 ## Troubleshooting
 
 **Engine fails to start**
-- Check credentials: `docker compose logs chargeback-engine`
+- Check credentials: `docker compose logs chitragupt`
 - Verify config syntax: mount and run with `--run-once` to test
 
 **Grafana shows "No data"**

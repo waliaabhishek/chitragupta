@@ -7,6 +7,7 @@ exceptions from build_shared_context (not swallowing them).
 
 from __future__ import annotations
 
+import contextlib
 from collections.abc import Iterable
 from datetime import UTC, datetime
 from typing import Any
@@ -243,10 +244,8 @@ class TestGatherPhaseBuildSharedContextFailurePropagates:
         plugin = _RaisingPlugin(handlers={"h1": handler})
         phase = _make_gather_phase(plugin)
 
-        try:
+        with contextlib.suppress(RuntimeError):
             phase.run()
-        except RuntimeError:
-            pass
 
         assert len(handler.received_shared_ctx) == 0
 
@@ -256,9 +255,7 @@ class TestGatherPhaseBuildSharedContextFailurePropagates:
         plugin = _RaisingPlugin(handlers={"h1": handler})
         phase = _make_gather_phase(plugin)
 
-        try:
+        with contextlib.suppress(RuntimeError):
             phase.run()
-        except RuntimeError:
-            pass
 
         assert plugin.build_shared_context_call_count == 1

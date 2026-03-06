@@ -134,7 +134,7 @@ class TestResolveFlinkIdentityWithStatements:
             owner_id="sa-owner-1",
             metadata={"statement_name": "my-statement", "compute_pool_id": "lfcp-pool-1"},
         )
-        owner = Identity(
+        Identity(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             identity_id="sa-owner-1",
@@ -197,13 +197,13 @@ class TestResolveFlinkIdentityWithStatements:
             owner_id="sa-2",
             metadata={"statement_name": "stmt-b", "compute_pool_id": "lfcp-pool-1"},
         )
-        sa_1 = Identity(
+        Identity(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             identity_id="sa-1",
             identity_type="service_account",
         )
-        sa_2 = Identity(
+        Identity(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             identity_id="sa-2",
@@ -266,7 +266,7 @@ class TestResolveFlinkIdentityWithStatements:
             owner_id="sa-same",
             metadata={"statement_name": "stmt-y", "compute_pool_id": "lfcp-pool-1"},
         )
-        sa = Identity(
+        Identity(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             identity_id="sa-same",
@@ -431,7 +431,7 @@ class TestResolveFlinkIdentityWithStatements:
             owner_id="sa-1",
             metadata={"statement_name": "stmt-1", "compute_pool_id": "lfcp-pool-1"},
         )
-        sa = Identity(
+        Identity(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             identity_id="sa-1",
@@ -484,7 +484,7 @@ class TestResolveFlinkIdentityWithStatements:
             owner_id="sa-1",
             metadata={"statement_name": "stmt-1", "compute_pool_id": "lfcp-pool-1"},
         )
-        sa = Identity(
+        Identity(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             identity_id="sa-1",
@@ -522,7 +522,7 @@ class TestFlinkFallbackFromRunningStatements:
             owner_id="sa-owner-1",
             metadata={"compute_pool_id": "lfcp-pool-1", "is_stopped": False},
         )
-        owner = Identity(
+        Identity(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             identity_id="sa-owner-1",
@@ -587,7 +587,7 @@ class TestFlinkFallbackFromRunningStatements:
             owner_id="sa-failed",
             metadata={"compute_pool_id": "lfcp-pool-1", "is_stopped": True},
         )
-        running_owner = Identity(
+        Identity(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             identity_id="sa-running",
@@ -738,7 +738,7 @@ class TestFallbackFromRunningStatementsDirect:
             owner_id="sa-active",
             metadata={"compute_pool_id": "pool-1", "is_stopped": False},
         )
-        owner = Identity(
+        Identity(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             identity_id="sa-active",
@@ -786,7 +786,7 @@ class TestFallbackFromRunningStatementsDirect:
             )
             for i in range(3)
         ]
-        running_owners = [
+        [
             Identity(
                 ecosystem="confluent_cloud",
                 tenant_id="org-123",
@@ -834,7 +834,7 @@ class TestFallbackFromRunningStatementsDirect:
             owner_id="sa-ghost",
             metadata={"compute_pool_id": "pool-reg", "is_stopped": True},
         )
-        active_owner = Identity(
+        Identity(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             identity_id="sa-active",

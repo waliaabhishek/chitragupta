@@ -5,7 +5,7 @@
 ```bash
 pip install uv
 git clone <repo-url>
-cd chargeback-engine
+cd chitragupt
 uv sync
 ```
 

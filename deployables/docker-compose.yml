@@ -1,5 +1,5 @@
 services:
-  chargeback-engine:
+  chitragupt:
     build:
       context: ..
       dockerfile: Dockerfile
@@ -32,5 +32,5 @@ services:
       - ./data:/var/lib/grafana/data/chargeback:ro
     restart: unless-stopped
     depends_on:
-      chargeback-engine:
+      chitragupt:
         condition: service_healthy

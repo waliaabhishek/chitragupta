@@ -110,7 +110,7 @@ class TestHandlerGetAllocator:
     def test_get_allocator_usage_ratio_reads_alloc_key_and_calls_allocate_by_usage_ratio(
         self, pg_config, mock_metrics
     ) -> None:
-        """Test case 9: usage_ratio allocator reads metrics_data["alloc_PG_NETWORK"] and calls allocate_by_usage_ratio."""
+        """Test case 9: usage_ratio allocator reads alloc key and calls allocate_by_usage_ratio."""
         from unittest.mock import MagicMock, patch
 
         from plugins.generic_metrics_only.handler import GenericMetricsOnlyHandler
@@ -290,7 +290,7 @@ class TestHandlerGetMetricsForProductType:
 
 class TestHandlerResolveIdentities:
     def test_resolve_identities_prometheus_source_extracts_from_metrics_data(self, pg_config, mock_metrics) -> None:
-        """Test case 13: metrics_data={"discovery": [row(datname="alice")]} produces metrics_derived containing "alice"."""
+        """Test case 13: discovery metrics produce metrics_derived containing extracted identity."""
         from plugins.generic_metrics_only.handler import GenericMetricsOnlyHandler
 
         handler = GenericMetricsOnlyHandler(config=pg_config, metrics_source=mock_metrics)
