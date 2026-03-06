@@ -42,20 +42,33 @@ class GatherFailureThresholdError(Exception):
     """Raised when consecutive gather failures exceed threshold."""
 
 
-GRANULARITY_DURATION: dict[str, timedelta] = {
+_DEFAULT_GRANULARITY_DURATION: dict[str, timedelta] = {
     "hourly": timedelta(hours=1),
     "daily": timedelta(hours=24),
 }
 
 
-def billing_window(line: BillingLineItem) -> tuple[datetime, datetime, timedelta]:
-    """Derive (start, end, duration) from billing line's timestamp + granularity."""
+def billing_window(
+    line: BillingLineItem,
+    durations: dict[str, timedelta] | None = None,
+) -> tuple[datetime, datetime, timedelta]:
+    """Derive (start, end, duration) from billing line's timestamp + granularity.
+
+    Args:
+        line: The billing line item.
+        durations: Complete granularity→timedelta mapping to use. Callers are
+            responsible for merging built-in defaults with any plugin-supplied
+            entries before passing. If None or empty, falls back to
+            ``_DEFAULT_GRANULARITY_DURATION``.
+    """
+    durations = durations if durations else _DEFAULT_GRANULARITY_DURATION
+
     if line.granularity == "monthly":
         year, month = line.timestamp.year, line.timestamp.month
         _, days_in_month = calendar.monthrange(year, month)
         duration = timedelta(days=days_in_month)
-    elif line.granularity in GRANULARITY_DURATION:
-        duration = GRANULARITY_DURATION[line.granularity]
+    elif line.granularity in durations:
+        duration = durations[line.granularity]
     else:
         raise ValueError(f"Unknown billing granularity: {line.granularity!r}")
     return line.timestamp, line.timestamp + duration, duration
@@ -339,6 +352,7 @@ class CalculatePhase:
         identity_overrides: dict[str, Callable[..., IdentityResolution]],
         allocator_params: dict[str, float | int | str | bool],
         metrics_step: timedelta,
+        extra_granularity_durations: dict[str, timedelta] | None = None,
     ) -> None:
         self._ecosystem = ecosystem
         self._tenant_id = tenant_id
@@ -349,6 +363,10 @@ class CalculatePhase:
         self._identity_overrides = identity_overrides
         self._allocator_params = allocator_params
         self._metrics_step = metrics_step
+        self._merged_granularity_durations: dict[str, timedelta] = {
+            **_DEFAULT_GRANULARITY_DURATION,
+            **(extra_granularity_durations or {}),
+        }
 
     def run(self, uow: UnitOfWork, tracking_date: date_type) -> int:
         """Calculate chargebacks for a single date. Returns rows written."""
@@ -375,7 +393,7 @@ class CalculatePhase:
     ) -> dict[tuple[str, datetime, datetime], dict[str, list[MetricRow]]]:
         metrics_groups: dict[tuple[str, datetime, datetime], list[MetricQuery]] = {}
         for line in billing_lines:
-            b_start, b_end, _ = billing_window(line)
+            b_start, b_end, _ = billing_window(line, self._merged_granularity_durations)
             handler = self._bundle.product_type_to_handler.get(line.product_type)
             if handler:
                 metrics_needed = handler.get_metrics_for_product_type(line.product_type)
@@ -401,11 +419,10 @@ class CalculatePhase:
                 )
         return prefetched
 
-    @staticmethod
-    def _compute_billing_windows(billing_lines: list[BillingLineItem]) -> set[tuple[datetime, datetime]]:
+    def _compute_billing_windows(self, billing_lines: list[BillingLineItem]) -> set[tuple[datetime, datetime]]:
         windows: set[tuple[datetime, datetime]] = set()
         for line in billing_lines:
-            b_start, b_end, _ = billing_window(line)
+            b_start, b_end, _ = billing_window(line, self._merged_granularity_durations)
             windows.add((b_start, b_end))
         return windows
 
@@ -439,7 +456,7 @@ class CalculatePhase:
         resource_cache: dict[str, Resource],
     ) -> int:
         try:
-            b_start, b_end, b_duration = billing_window(line)
+            b_start, b_end, b_duration = billing_window(line, self._merged_granularity_durations)
             handler = self._bundle.product_type_to_handler.get(line.product_type)
             if handler is None:
                 logger.warning(
@@ -723,9 +740,14 @@ class ChargebackOrchestrator:
         self._tenant_config = tenant_config  # kept for backward compatibility
 
         bundle = EcosystemBundle.build(plugin)
-        allocator_registry, identity_overrides, allocator_params, min_refresh_gap, metrics_step = _load_overrides(
-            tenant_config.plugin_settings
-        )
+        (
+            allocator_registry,
+            identity_overrides,
+            allocator_params,
+            min_refresh_gap,
+            metrics_step,
+            extra_granularity_durations,
+        ) = _load_overrides(tenant_config.plugin_settings)
         settings = tenant_config.plugin_settings
         emitter_entries = _load_emitters(settings.emitters, settings.chargeback_granularity)
 
@@ -750,6 +772,7 @@ class ChargebackOrchestrator:
             identity_overrides=identity_overrides,
             allocator_params=allocator_params,
             metrics_step=metrics_step,
+            extra_granularity_durations=extra_granularity_durations,
         )
         self._emit_phase = EmitPhase(
             ecosystem=self._ecosystem,
@@ -917,10 +940,12 @@ def _load_overrides(
     dict[str, float | int | str | bool],
     timedelta,
     timedelta,
+    dict[str, timedelta],
 ]:
     """Pure function — extracts and validates overrides from plugin_settings.
 
-    Returns (registry, identity_overrides, allocator_params, min_refresh_gap, metrics_step).
+    Returns (registry, identity_overrides, allocator_params, min_refresh_gap, metrics_step,
+    extra_granularity_durations).
     """
     from core.plugin.protocols import CostAllocator as CostAllocatorProtocol
 
@@ -935,7 +960,17 @@ def _load_overrides(
 
     min_refresh_gap = timedelta(seconds=plugin_settings.min_refresh_gap_seconds)
     metrics_step = timedelta(seconds=plugin_settings.metrics_step_seconds)
-    return registry, identity_overrides, plugin_settings.allocator_params, min_refresh_gap, metrics_step
+    extra_granularity_durations: dict[str, timedelta] = {
+        name: timedelta(hours=hours) for name, hours in plugin_settings.granularity_durations.items()
+    }
+    return (
+        registry,
+        identity_overrides,
+        plugin_settings.allocator_params,
+        min_refresh_gap,
+        metrics_step,
+        extra_granularity_durations,
+    )
 
 
 def _ensure_unallocated_identity(uow: UnitOfWork, ecosystem: str, tenant_id: str) -> None:

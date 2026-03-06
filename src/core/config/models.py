@@ -73,6 +73,9 @@ class EmitterSpec(BaseModel):
     params: dict[str, Any] = Field(default_factory=dict)
 
 
+_MIN_GRANULARITY_HOURS = 1  # sub-hour cadences not supported
+
+
 class PluginSettingsBase(BaseModel):
     """Orchestrator-consumed plugin settings. All plugin configs must extend this."""
 
@@ -82,6 +85,19 @@ class PluginSettingsBase(BaseModel):
     allocator_overrides: dict[str, str] = Field(default_factory=dict)
     identity_resolution_overrides: dict[str, str] = Field(default_factory=dict)
     min_refresh_gap_seconds: int = Field(default=1800, ge=0)
+    granularity_durations: dict[str, int] = Field(
+        default_factory=dict,
+        description="Custom granularity name → duration in whole hours (minimum 1).",
+    )
+
+    @field_validator("granularity_durations")
+    @classmethod
+    def validate_granularity_hours(cls, v: dict[str, int]) -> dict[str, int]:
+        for name, hours in v.items():
+            if hours < _MIN_GRANULARITY_HOURS:
+                raise ValueError(f"granularity_durations[{name!r}]: minimum is 1 hour, got {hours}")
+        return v
+
     metrics_step_seconds: int = Field(
         default=3600,
         gt=0,
