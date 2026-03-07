@@ -16,7 +16,7 @@ from plugins.confluent_cloud.exceptions import CCloudApiError, CCloudConnectionE
 logger = logging.getLogger(__name__)
 
 LOGGER = logging.getLogger(__name__)
-DEFAULT_PAGE_SIZE = 500
+DEFAULT_PAGE_SIZE = 99  # CCloud API requires page_size < 100
 
 
 @dataclass
