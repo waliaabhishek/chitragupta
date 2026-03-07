@@ -22,7 +22,7 @@ register_emitter("csv", make_csv_emitter)
 
 if TYPE_CHECKING:
     from core.config.models import AppSettings
-_DEFAULT_PLUGINS_PATH = Path(__file__).parent.parent / "plugins"
+_DEFAULT_PLUGINS_PATH = Path(__file__).parent / "plugins"
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
