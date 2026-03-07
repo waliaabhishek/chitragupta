@@ -15,9 +15,10 @@ import pytest
 from core.engine.allocation import AllocationContext
 from core.models import (
     BillingLineItem,
-    Identity,
-    Resource,
+    CoreIdentity,
+    CoreResource,
 )
+from core.models.billing import CoreBillingLineItem
 
 
 @pytest.fixture
@@ -26,7 +27,7 @@ def mock_uow_for_connector() -> MagicMock:
     uow = MagicMock()
 
     # Connector resource with SERVICE_ACCOUNT auth mode
-    connector = Resource(
+    connector = CoreResource(
         ecosystem="confluent_cloud",
         tenant_id="org-123",
         resource_id="connector-abc",
@@ -40,7 +41,7 @@ def mock_uow_for_connector() -> MagicMock:
     )
 
     # Service account identity
-    sa_xxx = Identity(
+    sa_xxx = CoreIdentity(
         ecosystem="confluent_cloud",
         tenant_id="org-123",
         identity_id="sa-xxx",
@@ -66,7 +67,7 @@ def mock_uow_for_connector_api_key() -> MagicMock:
     uow = MagicMock()
 
     # Connector resource with KAFKA_API_KEY auth mode
-    connector = Resource(
+    connector = CoreResource(
         ecosystem="confluent_cloud",
         tenant_id="org-123",
         resource_id="connector-def",
@@ -80,7 +81,7 @@ def mock_uow_for_connector_api_key() -> MagicMock:
     )
 
     # API key identity with owner reference
-    api_key = Identity(
+    api_key = CoreIdentity(
         ecosystem="confluent_cloud",
         tenant_id="org-123",
         identity_id="api-key-1",
@@ -90,7 +91,7 @@ def mock_uow_for_connector_api_key() -> MagicMock:
     )
 
     # Owner service account
-    sa_owner = Identity(
+    sa_owner = CoreIdentity(
         ecosystem="confluent_cloud",
         tenant_id="org-123",
         identity_id="sa-owner-1",
@@ -117,7 +118,7 @@ def mock_uow_for_connector_unknown_mode() -> MagicMock:
     uow = MagicMock()
 
     # Connector resource with UNKNOWN or missing auth mode
-    connector = Resource(
+    connector = CoreResource(
         ecosystem="confluent_cloud",
         tenant_id="org-123",
         resource_id="connector-ghi",
@@ -146,7 +147,7 @@ def mock_uow_for_ksqldb() -> MagicMock:
     uow = MagicMock()
 
     # ksqlDB resource with owner_id
-    ksqldb_app = Resource(
+    ksqldb_app = CoreResource(
         ecosystem="confluent_cloud",
         tenant_id="org-123",
         resource_id="lksqlc-ksql1",
@@ -159,7 +160,7 @@ def mock_uow_for_ksqldb() -> MagicMock:
     )
 
     # Owner service account
-    sa_owner = Identity(
+    sa_owner = CoreIdentity(
         ecosystem="confluent_cloud",
         tenant_id="org-123",
         identity_id="sa-ksql-owner",
@@ -185,7 +186,7 @@ def mock_uow_for_ksqldb_missing_owner() -> MagicMock:
     uow = MagicMock()
 
     # ksqlDB resource without owner_id
-    ksqldb_app = Resource(
+    ksqldb_app = CoreResource(
         ecosystem="confluent_cloud",
         tenant_id="org-123",
         resource_id="lksqlc-ksql2",
@@ -209,7 +210,7 @@ def mock_uow_for_ksqldb_missing_owner() -> MagicMock:
 @pytest.fixture
 def connector_billing_line() -> BillingLineItem:
     """Billing line for CONNECT_CAPACITY."""
-    return BillingLineItem(
+    return CoreBillingLineItem(
         ecosystem="confluent_cloud",
         tenant_id="org-123",
         timestamp=datetime(2026, 2, 1, tzinfo=UTC),
@@ -225,7 +226,7 @@ def connector_billing_line() -> BillingLineItem:
 @pytest.fixture
 def ksqldb_billing_line() -> BillingLineItem:
     """Billing line for KSQL_NUM_CSU."""
-    return BillingLineItem(
+    return CoreBillingLineItem(
         ecosystem="confluent_cloud",
         tenant_id="org-123",
         timestamp=datetime(2026, 2, 1, tzinfo=UTC),
@@ -296,7 +297,7 @@ class TestConnectorBillingToChargebackEndToEnd:
         handler = ConnectorHandler(connection=None, config=None, ecosystem="confluent_cloud")
         billing_duration = timedelta(hours=24)
 
-        billing_line = BillingLineItem(
+        billing_line = CoreBillingLineItem(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             timestamp=datetime(2026, 2, 1, tzinfo=UTC),
@@ -346,7 +347,7 @@ class TestConnectorBillingToChargebackEndToEnd:
         handler = ConnectorHandler(connection=None, config=None, ecosystem="confluent_cloud")
         billing_duration = timedelta(hours=24)
 
-        billing_line = BillingLineItem(
+        billing_line = CoreBillingLineItem(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             timestamp=datetime(2026, 2, 1, tzinfo=UTC),
@@ -450,7 +451,7 @@ class TestKsqldbBillingToChargebackEndToEnd:
         handler = KsqldbHandler(connection=None, config=None, ecosystem="confluent_cloud")
         billing_duration = timedelta(hours=24)
 
-        billing_line = BillingLineItem(
+        billing_line = CoreBillingLineItem(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             timestamp=datetime(2026, 2, 1, tzinfo=UTC),

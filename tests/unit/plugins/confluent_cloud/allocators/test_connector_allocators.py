@@ -10,17 +10,18 @@ import pytest
 from core.engine.allocation import AllocationContext
 from core.models import (
     BillingLineItem,
+    CoreIdentity,
     CostType,
-    Identity,
     IdentityResolution,
     IdentitySet,
 )
+from core.models.billing import CoreBillingLineItem
 
 
 @pytest.fixture
 def connect_billing_line() -> BillingLineItem:
     """Standard Connect billing line for tests."""
-    return BillingLineItem(
+    return CoreBillingLineItem(
         ecosystem="confluent_cloud",
         tenant_id="org-123",
         timestamp=datetime(2026, 2, 1, tzinfo=UTC),
@@ -38,7 +39,7 @@ def make_identity_set(*identity_ids: str) -> IdentitySet:
     iset = IdentitySet()
     for identity_id in identity_ids:
         iset.add(
-            Identity(
+            CoreIdentity(
                 ecosystem="confluent_cloud",
                 tenant_id="org-123",
                 identity_id=identity_id,

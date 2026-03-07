@@ -12,7 +12,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from core.models import Resource, ResourceStatus
+from core.models import CoreResource, Resource, ResourceStatus
 
 
 @pytest.fixture
@@ -40,7 +40,7 @@ def mock_metrics_source():
 
 
 def _make_cluster_resource(cluster_id: str = "kafka-001") -> Resource:
-    return Resource(
+    return CoreResource(
         ecosystem="self_managed_kafka",
         tenant_id="tenant-1",
         resource_id=cluster_id,

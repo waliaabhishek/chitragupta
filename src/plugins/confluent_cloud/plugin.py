@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from core.metrics.protocol import MetricsSource
     from core.plugin.protocols import CostInput, ServiceHandler
     from plugins.confluent_cloud.shared_context import CCloudSharedContext
+    from plugins.confluent_cloud.storage.module import CCloudStorageModule
 
 logger = logging.getLogger(__name__)
 
@@ -116,6 +117,11 @@ class ConfluentCloudPlugin:
             environment_resources=tuple(env_resources),
             kafka_cluster_resources=tuple(cluster_resources),
         )
+
+    def get_storage_module(self) -> CCloudStorageModule:
+        from plugins.confluent_cloud.storage.module import CCloudStorageModule
+
+        return CCloudStorageModule()
 
     def close(self) -> None:
         """Release plugin resources (HTTP connections).

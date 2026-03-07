@@ -4,7 +4,7 @@ import logging
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, TypedDict
+from typing import Any, Protocol, TypedDict, runtime_checkable
 
 logger = logging.getLogger(__name__)
 
@@ -22,9 +22,41 @@ class FlinkContextDict(TypedDict, total=False):
     """Maps owner identity_id to total CFU usage."""
 
 
+@runtime_checkable
+class Identity(Protocol):
+    """Protocol for an identity (user, service account, etc.) within an ecosystem."""
+
+    @property
+    def ecosystem(self) -> str: ...
+
+    @property
+    def tenant_id(self) -> str: ...
+
+    @property
+    def identity_id(self) -> str: ...
+
+    @property
+    def identity_type(self) -> str: ...
+
+    @property
+    def display_name(self) -> str | None: ...
+
+    @property
+    def created_at(self) -> datetime | None: ...
+
+    @property
+    def deleted_at(self) -> datetime | None: ...
+
+    @property
+    def last_seen_at(self) -> datetime | None: ...
+
+    @property
+    def metadata(self) -> dict[str, Any]: ...
+
+
 @dataclass
-class Identity:
-    """An identity (user, service account, etc.) within an ecosystem."""
+class CoreIdentity:
+    """Core implementation of the Identity Protocol."""
 
     ecosystem: str
     tenant_id: str

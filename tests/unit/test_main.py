@@ -372,11 +372,11 @@ class TestCreateRunnerPluginPath:
         mock_discover.assert_called_once_with(expected)
 
     def test_default_plugins_path_is_absolute_and_cwd_independent(self) -> None:
-        """_DEFAULT_PLUGINS_PATH is absolute and equals Path(main.__file__).parent.parent / "plugins"."""
+        """_DEFAULT_PLUGINS_PATH is absolute and equals Path(main.__file__).parent / "plugins"."""
         import main as main_module
         from main import _DEFAULT_PLUGINS_PATH
 
         main_file = Path(main_module.__file__).resolve()
-        expected = main_file.parent.parent / "plugins"
+        expected = main_file.parent / "plugins"
         assert _DEFAULT_PLUGINS_PATH.is_absolute()
         assert expected == _DEFAULT_PLUGINS_PATH

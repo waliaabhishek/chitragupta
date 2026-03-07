@@ -9,13 +9,21 @@ from unittest.mock import MagicMock
 import pytest
 
 from core.engine.allocation import AllocationContext
-from core.models import BillingLineItem, Identity, IdentitySet, MetricRow, Resource, ResourceStatus
+from core.models import (
+    CoreBillingLineItem,
+    CoreIdentity,
+    CoreResource,
+    IdentityResolution,
+    IdentitySet,
+    MetricRow,
+    ResourceStatus,
+)
 
 
 def _make_smk_ctx(cluster_id: str, tenant_id: str = "tenant-1") -> object:
     from plugins.self_managed_kafka.shared_context import SMKSharedContext
 
-    cluster = Resource(
+    cluster = CoreResource(
         ecosystem="self_managed_kafka",
         tenant_id=tenant_id,
         resource_id=cluster_id,
@@ -93,10 +101,8 @@ class TestFullPrometheusPipeline:
         # Test COMPUTE allocation (even split)
         compute_line = next(i for i in billing_items if i.product_type == "SELF_KAFKA_COMPUTE")
         two_identities = IdentitySet()
-        two_identities.add(Identity("self_managed_kafka", "tenant-1", "User:alice", "principal"))
-        two_identities.add(Identity("self_managed_kafka", "tenant-1", "User:bob", "principal"))
-
-        from core.models import IdentityResolution
+        two_identities.add(CoreIdentity("self_managed_kafka", "tenant-1", "User:alice", "principal"))
+        two_identities.add(CoreIdentity("self_managed_kafka", "tenant-1", "User:bob", "principal"))
 
         resolution = IdentityResolution(
             resource_active=two_identities,
@@ -166,10 +172,9 @@ class TestFullPrometheusPipeline:
 
     def test_multi_principal_allocation_with_realistic_metrics(self, prometheus_settings, mock_prometheus):
         """Multi-principal allocation distributes costs proportionally."""
-        from core.models import IdentityResolution
         from plugins.self_managed_kafka.allocators.kafka_allocators import self_kafka_network_ingress_allocator
 
-        billing_line = BillingLineItem(
+        billing_line = CoreBillingLineItem(
             ecosystem="self_managed_kafka",
             tenant_id="tenant-1",
             timestamp=datetime(2026, 2, 1, tzinfo=UTC),
@@ -183,7 +188,7 @@ class TestFullPrometheusPipeline:
 
         principals = IdentitySet()
         for p in ("User:alice", "User:bob", "User:charlie"):
-            principals.add(Identity("self_managed_kafka", "tenant-1", p, "principal"))
+            principals.add(CoreIdentity("self_managed_kafka", "tenant-1", p, "principal"))
 
         metrics_data = {
             "bytes_in_per_principal": [

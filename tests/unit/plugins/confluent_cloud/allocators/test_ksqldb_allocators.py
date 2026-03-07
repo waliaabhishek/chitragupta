@@ -10,18 +10,19 @@ import pytest
 from core.engine.allocation import AllocationContext
 from core.models import (
     BillingLineItem,
+    CoreIdentity,
     CostType,
-    Identity,
     IdentityResolution,
     IdentitySet,
 )
+from core.models.billing import CoreBillingLineItem
 from plugins.confluent_cloud.allocators.ksqldb_allocators import ksqldb_csu_allocator
 
 
 @pytest.fixture
 def ksqldb_billing_line() -> BillingLineItem:
     """Standard ksqlDB billing line for tests."""
-    return BillingLineItem(
+    return CoreBillingLineItem(
         ecosystem="confluent_cloud",
         tenant_id="org-123",
         timestamp=datetime(2026, 2, 1, tzinfo=UTC),
@@ -39,7 +40,7 @@ def make_identity_set(*identity_ids: str) -> IdentitySet:
     iset = IdentitySet()
     for identity_id in identity_ids:
         iset.add(
-            Identity(
+            CoreIdentity(
                 ecosystem="confluent_cloud",
                 tenant_id="org-123",
                 identity_id=identity_id,
@@ -176,7 +177,7 @@ class TestKsqldbCsuAllocator:
         tp = IdentitySet()
         for sa_id in ("sa-1", "sa-2", "sa-3"):
             tp.add(
-                Identity(
+                CoreIdentity(
                     ecosystem="confluent_cloud",
                     tenant_id="org-123",
                     identity_id=sa_id,

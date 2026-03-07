@@ -9,6 +9,9 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 if TYPE_CHECKING:
     # Runtime import not needed — protocols use string annotations via
     # __future__.annotations.
+    from sqlalchemy import Engine
+    from sqlmodel import Session
+
     from core.engine.allocation import AllocationContext, AllocationResult
     from core.metrics.protocol import MetricsSource
     from core.models import (
@@ -20,8 +23,25 @@ if TYPE_CHECKING:
         Resource,
     )
     from core.models.chargeback import ChargebackRow
-    from core.storage.interface import UnitOfWork
+    from core.storage.interface import BillingRepository, IdentityRepository, ResourceRepository, UnitOfWork
 logger = logging.getLogger(__name__)
+
+
+@runtime_checkable
+class StorageModule(Protocol):
+    """Plugin-owned factory for billing, resource, and identity repositories.
+
+    Each plugin provides its own StorageModule so it can use plugin-specific
+    table schemas (e.g. CCloud billing with env_id in the PK).
+    """
+
+    def create_billing_repository(self, session: Session) -> BillingRepository: ...
+
+    def create_resource_repository(self, session: Session) -> ResourceRepository: ...
+
+    def create_identity_repository(self, session: Session) -> IdentityRepository: ...
+
+    def register_tables(self, engine: Engine) -> None: ...
 
 
 @runtime_checkable
@@ -103,6 +123,8 @@ class EcosystemPlugin(Protocol):
     def get_metrics_source(self) -> MetricsSource | None: ...
 
     def build_shared_context(self, tenant_id: str) -> object | None: ...
+
+    def get_storage_module(self) -> StorageModule: ...
 
     def close(self) -> None: ...
 

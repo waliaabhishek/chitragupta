@@ -7,7 +7,7 @@ from decimal import Decimal
 import pytest
 
 from core.engine.orchestrator import billing_window
-from core.models.billing import BillingLineItem
+from core.models.billing import BillingLineItem, CoreBillingLineItem
 
 _TS = datetime(2024, 3, 15, 0, 0, 0, tzinfo=UTC)
 
@@ -25,7 +25,7 @@ def _make_line(**overrides: object) -> BillingLineItem:
         "total_cost": Decimal("1"),
     }
     defaults.update(overrides)
-    return BillingLineItem(**defaults)  # type: ignore[arg-type]
+    return CoreBillingLineItem(**defaults)  # type: ignore[arg-type]
 
 
 class TestBillingWindowExtraGranularities:

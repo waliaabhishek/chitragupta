@@ -14,7 +14,7 @@ from decimal import Decimal
 from typing import TYPE_CHECKING
 
 from core.metrics.protocol import MetricsQueryError
-from core.models import BillingLineItem, MetricQuery
+from core.models import BillingLineItem, CoreBillingLineItem, MetricQuery
 from core.plugin.protocols import CostInput
 
 if TYPE_CHECKING:
@@ -161,7 +161,7 @@ def _make_compute_line(
     """Generate SELF_KAFKA_COMPUTE billing line."""
     quantity = Decimal(str(broker_count)) * hours
     unit_price = cost_model.compute_hourly_rate
-    yield BillingLineItem(
+    yield CoreBillingLineItem(
         ecosystem=ECOSYSTEM,
         tenant_id=tenant_id,
         timestamp=timestamp,
@@ -193,7 +193,7 @@ def _make_storage_line(
 
     quantity = avg_gib * hours
     unit_price = cost_model.storage_per_gib_hourly
-    yield BillingLineItem(
+    yield CoreBillingLineItem(
         ecosystem=ECOSYSTEM,
         tenant_id=tenant_id,
         timestamp=timestamp,
@@ -226,7 +226,7 @@ def _make_network_lines(
     ingress_price = cost_model.network_ingress_per_gib
     egress_price = cost_model.network_egress_per_gib
 
-    yield BillingLineItem(
+    yield CoreBillingLineItem(
         ecosystem=ECOSYSTEM,
         tenant_id=tenant_id,
         timestamp=timestamp,
@@ -240,7 +240,7 @@ def _make_network_lines(
         currency="USD",
     )
 
-    yield BillingLineItem(
+    yield CoreBillingLineItem(
         ecosystem=ECOSYSTEM,
         tenant_id=tenant_id,
         timestamp=timestamp,

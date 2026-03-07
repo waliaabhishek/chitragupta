@@ -5,7 +5,7 @@ from decimal import Decimal
 
 from fastapi.testclient import TestClient  # noqa: TC002
 
-from core.models.billing import BillingLineItem
+from core.models.billing import CoreBillingLineItem
 from core.storage.backends.sqlmodel.unit_of_work import SQLModelBackend  # noqa: TC001
 
 
@@ -18,7 +18,7 @@ class TestListBilling:
         assert data["total"] == 0
 
     def test_list_billing_with_data(
-        self, app_with_backend: TestClient, in_memory_backend: SQLModelBackend, sample_billing: BillingLineItem
+        self, app_with_backend: TestClient, in_memory_backend: SQLModelBackend, sample_billing: CoreBillingLineItem
     ) -> None:
         with in_memory_backend.create_unit_of_work() as uow:
             uow.billing.upsert(sample_billing)
@@ -38,7 +38,7 @@ class TestListBilling:
         with in_memory_backend.create_unit_of_work() as uow:
             for day in [10, 15, 20]:
                 uow.billing.upsert(
-                    BillingLineItem(
+                    CoreBillingLineItem(
                         ecosystem="test-eco",
                         tenant_id="test-tenant",
                         timestamp=datetime(2026, 2, day, tzinfo=UTC),
@@ -70,7 +70,7 @@ class TestListBilling:
         with in_memory_backend.create_unit_of_work() as uow:
             for ptype in ["kafka", "connect", "ksql"]:
                 uow.billing.upsert(
-                    BillingLineItem(
+                    CoreBillingLineItem(
                         ecosystem="test-eco",
                         tenant_id="test-tenant",
                         timestamp=datetime(2026, 2, 15, tzinfo=UTC),
@@ -100,7 +100,7 @@ class TestListBilling:
         with in_memory_backend.create_unit_of_work() as uow:
             for i in range(25):
                 uow.billing.upsert(
-                    BillingLineItem(
+                    CoreBillingLineItem(
                         ecosystem="test-eco",
                         tenant_id="test-tenant",
                         timestamp=datetime(2026, 2, 15, i % 24, i, tzinfo=UTC),  # hour=i%24, minute=i

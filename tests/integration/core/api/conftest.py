@@ -11,11 +11,12 @@ from fastapi.testclient import TestClient
 
 from core.api.app import create_app
 from core.config.models import ApiConfig, AppSettings, LoggingConfig, StorageConfig, TenantConfig
-from core.models.billing import BillingLineItem
+from core.models.billing import BillingLineItem, CoreBillingLineItem
 from core.models.chargeback import ChargebackRow, CostType
-from core.models.identity import Identity
+from core.models.identity import CoreIdentity, Identity
 from core.models.pipeline import PipelineState
-from core.models.resource import Resource, ResourceStatus
+from core.models.resource import CoreResource, Resource, ResourceStatus
+from core.storage.backends.sqlmodel.module import CoreStorageModule
 from core.storage.backends.sqlmodel.unit_of_work import SQLModelBackend
 
 if TYPE_CHECKING:
@@ -34,7 +35,7 @@ def temp_db_path() -> Iterator[str]:
 @pytest.fixture
 def in_memory_backend(temp_db_path: str) -> Iterator[SQLModelBackend]:
     """Create a fresh SQLite backend for testing."""
-    backend = SQLModelBackend(temp_db_path, use_migrations=False)
+    backend = SQLModelBackend(temp_db_path, CoreStorageModule(), use_migrations=False)
     backend.create_tables()
     yield backend
     backend.dispose()
@@ -70,7 +71,7 @@ def app_with_backend(settings_with_tenant: AppSettings, in_memory_backend: SQLMo
 
 @pytest.fixture
 def sample_resource() -> Resource:
-    return Resource(
+    return CoreResource(
         ecosystem="test-eco",
         tenant_id="test-tenant",
         resource_id="resource-1",
@@ -88,7 +89,7 @@ def sample_resource() -> Resource:
 
 @pytest.fixture
 def sample_identity() -> Identity:
-    return Identity(
+    return CoreIdentity(
         ecosystem="test-eco",
         tenant_id="test-tenant",
         identity_id="user-1",
@@ -103,7 +104,7 @@ def sample_identity() -> Identity:
 
 @pytest.fixture
 def sample_billing() -> BillingLineItem:
-    return BillingLineItem(
+    return CoreBillingLineItem(
         ecosystem="test-eco",
         tenant_id="test-tenant",
         timestamp=datetime(2026, 2, 15, tzinfo=UTC),

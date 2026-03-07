@@ -10,11 +10,12 @@ import pytest
 from core.engine.allocation import AllocationContext
 from core.models import (
     BillingLineItem,
+    CoreIdentity,
     CostType,
-    Identity,
     IdentityResolution,
     IdentitySet,
 )
+from core.models.billing import CoreBillingLineItem
 from plugins.confluent_cloud.allocators.flink_allocators import flink_cfu_allocator
 from plugins.confluent_cloud.constants import NO_FLINK_STMT_NAME_TO_OWNER_MAP
 
@@ -22,7 +23,7 @@ from plugins.confluent_cloud.constants import NO_FLINK_STMT_NAME_TO_OWNER_MAP
 @pytest.fixture
 def flink_billing_line() -> BillingLineItem:
     """Standard Flink billing line for tests."""
-    return BillingLineItem(
+    return CoreBillingLineItem(
         ecosystem="confluent_cloud",
         tenant_id="org-123",
         timestamp=datetime(2026, 2, 1, tzinfo=UTC),
@@ -40,7 +41,7 @@ def make_identity_set(*identity_ids: str) -> IdentitySet:
     iset = IdentitySet()
     for identity_id in identity_ids:
         iset.add(
-            Identity(
+            CoreIdentity(
                 ecosystem="confluent_cloud",
                 tenant_id="org-123",
                 identity_id=identity_id,

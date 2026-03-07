@@ -6,11 +6,11 @@ from typing import Any
 
 import pytest
 
-from core.models.billing import BillingLineItem
+from core.models.billing import BillingLineItem, CoreBillingLineItem
 from core.models.chargeback import ChargebackRow, CostType, CustomTag
-from core.models.identity import Identity
+from core.models.identity import CoreIdentity, Identity
 from core.models.pipeline import PipelineState
-from core.models.resource import Resource, ResourceStatus
+from core.models.resource import CoreResource, Resource, ResourceStatus
 from core.storage.backends.sqlmodel.mappers import (
     billing_to_domain,
     billing_to_table,
@@ -68,7 +68,7 @@ class TestResourceMapper:
             metadata={"cloud": "aws", "region": "us-east-1", "extra": "val"},
         )
         defaults.update(overrides)
-        return Resource(**defaults)
+        return CoreResource(**defaults)
 
     def test_round_trip(self):
         r = self._make_resource()
@@ -130,7 +130,7 @@ class TestIdentityMapper:
             metadata={"role": "admin"},
         )
         defaults.update(overrides)
-        return Identity(**defaults)
+        return CoreIdentity(**defaults)
 
     def test_round_trip(self):
         i = self._make_identity()
@@ -165,7 +165,7 @@ class TestBillingMapper:
             metadata={},
         )
         defaults.update(overrides)
-        return BillingLineItem(**defaults)
+        return CoreBillingLineItem(**defaults)
 
     def test_round_trip(self):
         b = self._make_billing()
@@ -339,7 +339,7 @@ class TestReadPathPermissiveGap014:
     """GAP-014: Read path tolerates naive datetimes from DB."""
 
     def test_resource_to_domain_naive_created_at(self):
-        from core.storage.backends.sqlmodel.tables import ResourceTable
+        from core.storage.backends.sqlmodel.base_tables import ResourceTable
 
         t = ResourceTable(
             ecosystem="test",

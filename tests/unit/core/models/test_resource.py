@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict
 from datetime import UTC, datetime
 
-from core.models.resource import Resource, ResourceStatus
+from core.models.resource import CoreResource, ResourceStatus
 
 _NOW = datetime(2024, 1, 15, 12, 0, 0, tzinfo=UTC)
 
@@ -20,7 +20,7 @@ class TestResourceStatus:
 
 class TestResource:
     def test_construction_all_fields(self) -> None:
-        r = Resource(
+        r = CoreResource(
             ecosystem="confluent",
             tenant_id="t-001",
             resource_id="lkc-abc",
@@ -48,7 +48,7 @@ class TestResource:
         assert r.metadata == {"region": "us-east-1"}
 
     def test_defaults_only(self) -> None:
-        r = Resource(
+        r = CoreResource(
             ecosystem="aws",
             tenant_id="t-002",
             resource_id="r-123",
@@ -64,13 +64,13 @@ class TestResource:
         assert r.metadata == {}
 
     def test_metadata_independence(self) -> None:
-        r1 = Resource(ecosystem="a", tenant_id="t", resource_id="r1", resource_type="x")
-        r2 = Resource(ecosystem="a", tenant_id="t", resource_id="r2", resource_type="x")
+        r1 = CoreResource(ecosystem="a", tenant_id="t", resource_id="r1", resource_type="x")
+        r2 = CoreResource(ecosystem="a", tenant_id="t", resource_id="r2", resource_type="x")
         r1.metadata["key"] = "val"
         assert "key" not in r2.metadata
 
     def test_asdict_round_trip(self) -> None:
-        r = Resource(
+        r = CoreResource(
             ecosystem="confluent",
             tenant_id="t-001",
             resource_id="lkc-abc",
@@ -78,5 +78,5 @@ class TestResource:
             created_at=_NOW,
         )
         d = asdict(r)
-        r2 = Resource(**d)
+        r2 = CoreResource(**d)
         assert r == r2

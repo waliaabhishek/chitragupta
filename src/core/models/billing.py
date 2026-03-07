@@ -4,14 +4,50 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
 logger = logging.getLogger(__name__)
 
 
+@runtime_checkable
+class BillingLineItem(Protocol):
+    """Protocol satisfied by any billing line item regardless of ecosystem."""
+
+    @property
+    def ecosystem(self) -> str: ...
+
+    @property
+    def tenant_id(self) -> str: ...
+
+    @property
+    def timestamp(self) -> datetime: ...
+
+    @property
+    def resource_id(self) -> str: ...
+
+    @property
+    def product_category(self) -> str: ...
+
+    @property
+    def product_type(self) -> str: ...
+
+    @property
+    def total_cost(self) -> Decimal: ...
+
+    @property
+    def currency(self) -> str: ...
+
+    @property
+    def granularity(self) -> str: ...
+
+
 @dataclass(frozen=True)
-class BillingLineItem:
-    """An immutable billing line item from an ecosystem's billing API."""
+class CoreBillingLineItem:
+    """Concrete billing line item for core/generic ecosystems.
+
+    Satisfies the BillingLineItem Protocol. Use this when no plugin-specific
+    fields (e.g. env_id) are needed.
+    """
 
     ecosystem: str
     tenant_id: str

@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 
 from fastapi.testclient import TestClient  # noqa: TC002
 
-from core.models.resource import Resource, ResourceStatus
+from core.models.resource import CoreResource, Resource, ResourceStatus
 from core.storage.backends.sqlmodel.unit_of_work import SQLModelBackend  # noqa: TC001
 
 
@@ -35,7 +35,7 @@ class TestListResources:
         with in_memory_backend.create_unit_of_work() as uow:
             for rt in ["kafka_cluster", "ksql_cluster", "connector"]:
                 uow.resources.upsert(
-                    Resource(
+                    CoreResource(
                         ecosystem="test-eco",
                         tenant_id="test-tenant",
                         resource_id=f"r-{rt}",
@@ -61,7 +61,7 @@ class TestListResources:
     ) -> None:
         with in_memory_backend.create_unit_of_work() as uow:
             uow.resources.upsert(
-                Resource(
+                CoreResource(
                     ecosystem="test-eco",
                     tenant_id="test-tenant",
                     resource_id="r1",
@@ -97,7 +97,7 @@ class TestListResources:
     ) -> None:
         with in_memory_backend.create_unit_of_work() as uow:
             uow.resources.upsert(
-                Resource(
+                CoreResource(
                     ecosystem="test-eco",
                     tenant_id="test-tenant",
                     resource_id="r1",
@@ -138,7 +138,7 @@ class TestListResources:
         with in_memory_backend.create_unit_of_work() as uow:
             for i, status in enumerate([ResourceStatus.ACTIVE, ResourceStatus.ACTIVE, ResourceStatus.DELETED]):
                 uow.resources.upsert(
-                    Resource(
+                    CoreResource(
                         ecosystem="test-eco",
                         tenant_id="test-tenant",
                         resource_id=f"r-{i}",
@@ -175,7 +175,7 @@ class TestListResources:
         with in_memory_backend.create_unit_of_work() as uow:
             for i in range(15):
                 uow.resources.upsert(
-                    Resource(
+                    CoreResource(
                         ecosystem="test-eco",
                         tenant_id="test-tenant",
                         resource_id=f"r-{i}",

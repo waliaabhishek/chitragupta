@@ -13,6 +13,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from core.api.routes.pipeline import _run_pipeline
+from core.storage.backends.sqlmodel.module import CoreStorageModule
 from core.storage.backends.sqlmodel.unit_of_work import SQLModelBackend
 
 if TYPE_CHECKING:
@@ -24,7 +25,7 @@ def temp_backend() -> Iterator[SQLModelBackend]:
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
         path = f.name
     conn = f"sqlite:///{path}"
-    backend = SQLModelBackend(conn, use_migrations=False)
+    backend = SQLModelBackend(conn, CoreStorageModule(), use_migrations=False)
     backend.create_tables()
     yield backend
     backend.dispose()

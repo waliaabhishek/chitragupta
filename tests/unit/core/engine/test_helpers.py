@@ -16,7 +16,7 @@ from core.engine.helpers import (
     make_row,
     split_amount_evenly,
 )
-from core.models import CostType, Resource, ResourceStatus
+from core.models import CoreResource, CostType, ResourceStatus
 from core.models.chargeback import AllocationDetail
 
 from .conftest import make_ctx
@@ -308,7 +308,7 @@ class TestAllocateToResource:
 
 class TestComputeActiveFraction:
     def test_fully_active(self) -> None:
-        r = Resource(
+        r = CoreResource(
             ecosystem="c",
             tenant_id="t",
             resource_id="r",
@@ -323,7 +323,7 @@ class TestComputeActiveFraction:
         start = _NOW
         end = _NOW + _DAY
         mid = _NOW + _DAY / 2
-        r = Resource(
+        r = CoreResource(
             ecosystem="c",
             tenant_id="t",
             resource_id="r",
@@ -338,7 +338,7 @@ class TestComputeActiveFraction:
         start = _NOW
         end = _NOW + _DAY
         mid = _NOW + _DAY / 2
-        r = Resource(
+        r = CoreResource(
             ecosystem="c",
             tenant_id="t",
             resource_id="r",
@@ -351,7 +351,7 @@ class TestComputeActiveFraction:
         assert frac == Decimal("0.5")
 
     def test_created_after_window(self) -> None:
-        r = Resource(
+        r = CoreResource(
             ecosystem="c",
             tenant_id="t",
             resource_id="r",
@@ -363,7 +363,7 @@ class TestComputeActiveFraction:
         assert frac == Decimal(0)
 
     def test_deleted_before_window(self) -> None:
-        r = Resource(
+        r = CoreResource(
             ecosystem="c",
             tenant_id="t",
             resource_id="r",
@@ -376,7 +376,7 @@ class TestComputeActiveFraction:
         assert frac == Decimal(0)
 
     def test_created_at_none(self) -> None:
-        r = Resource(
+        r = CoreResource(
             ecosystem="c",
             tenant_id="t",
             resource_id="r",
@@ -388,7 +388,7 @@ class TestComputeActiveFraction:
         assert frac == Decimal(1)
 
     def test_deleted_at_none(self) -> None:
-        r = Resource(
+        r = CoreResource(
             ecosystem="c",
             tenant_id="t",
             resource_id="r",
@@ -401,7 +401,7 @@ class TestComputeActiveFraction:
         assert frac == Decimal(1)
 
     def test_zero_length_window(self) -> None:
-        r = Resource(
+        r = CoreResource(
             ecosystem="c",
             tenant_id="t",
             resource_id="r",
@@ -419,12 +419,16 @@ class TestComputeActiveFraction:
 class TestAllocateEvenlyWithFallback:
     def test_merged_active_used_when_non_empty(self) -> None:
         from core.engine.helpers import allocate_evenly_with_fallback
-        from core.models import Identity, IdentityResolution
-        from core.models.identity import IdentitySet
+        from core.models import IdentityResolution
+        from core.models.identity import CoreIdentity, IdentitySet
 
         iset = IdentitySet()
-        iset.add(Identity(ecosystem="confluent", tenant_id="t-001", identity_id="u-1", identity_type="service_account"))
-        iset.add(Identity(ecosystem="confluent", tenant_id="t-001", identity_id="u-2", identity_type="service_account"))
+        iset.add(
+            CoreIdentity(ecosystem="confluent", tenant_id="t-001", identity_id="u-1", identity_type="service_account")
+        )
+        iset.add(
+            CoreIdentity(ecosystem="confluent", tenant_id="t-001", identity_id="u-2", identity_type="service_account")
+        )
         resolution = IdentityResolution(
             resource_active=iset,
             metrics_derived=IdentitySet(),
@@ -440,11 +444,13 @@ class TestAllocateEvenlyWithFallback:
 
     def test_tenant_period_fallback_when_merged_active_empty(self) -> None:
         from core.engine.helpers import allocate_evenly_with_fallback
-        from core.models import Identity, IdentityResolution
-        from core.models.identity import IdentitySet
+        from core.models import IdentityResolution
+        from core.models.identity import CoreIdentity, IdentitySet
 
         tp = IdentitySet()
-        tp.add(Identity(ecosystem="confluent", tenant_id="t-001", identity_id="tp-1", identity_type="service_account"))
+        tp.add(
+            CoreIdentity(ecosystem="confluent", tenant_id="t-001", identity_id="tp-1", identity_type="service_account")
+        )
         resolution = IdentityResolution(
             resource_active=IdentitySet(),
             metrics_derived=IdentitySet(),

@@ -17,11 +17,11 @@ from core.engine.orchestrator import (
     _ensure_utc,
     billing_window,
 )
-from core.models.billing import BillingLineItem
+from core.models.billing import BillingLineItem, CoreBillingLineItem
 from core.models.chargeback import ChargebackRow, CostType
-from core.models.identity import Identity, IdentityResolution, IdentitySet
+from core.models.identity import CoreIdentity, Identity, IdentityResolution, IdentitySet
 from core.models.pipeline import PipelineState
-from core.models.resource import Resource
+from core.models.resource import CoreResource, Resource
 
 if TYPE_CHECKING:
     from core.models.metrics import MetricQuery, MetricRow
@@ -55,7 +55,7 @@ def _make_billing_line(
     timestamp: datetime | None = None,
     granularity: str = "daily",
 ) -> BillingLineItem:
-    return BillingLineItem(
+    return CoreBillingLineItem(
         ecosystem=ECOSYSTEM,
         tenant_id=TENANT_ID,
         timestamp=timestamp or NOW,
@@ -70,7 +70,7 @@ def _make_billing_line(
 
 
 def _make_resource(resource_id: str = "cluster-1", created_at: datetime | None = None) -> Resource:
-    return Resource(
+    return CoreResource(
         ecosystem=ECOSYSTEM,
         tenant_id=TENANT_ID,
         resource_id=resource_id,
@@ -80,7 +80,7 @@ def _make_resource(resource_id: str = "cluster-1", created_at: datetime | None =
 
 
 def _make_identity(identity_id: str = "user-1") -> Identity:
-    return Identity(
+    return CoreIdentity(
         ecosystem=ECOSYSTEM,
         tenant_id=TENANT_ID,
         identity_id=identity_id,
@@ -929,7 +929,7 @@ class TestTenantPeriod:
             resources=[_make_resource()],
             identities=[
                 _make_identity("user-1"),  # identity_type="user"
-                Identity(
+                CoreIdentity(
                     ecosystem=ECOSYSTEM,
                     tenant_id=TENANT_ID,
                     identity_id="sa-1",
@@ -1285,7 +1285,7 @@ class TestGap004UtcReassignment:
         from datetime import timezone
 
         utc_plus5 = timezone(timedelta(hours=5))
-        resource = Resource(
+        resource = CoreResource(
             ecosystem=ECOSYSTEM,
             tenant_id=TENANT_ID,
             resource_id="r-utc5",

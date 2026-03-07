@@ -7,7 +7,7 @@ from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
-from core.models import Identity, MetricQuery, Resource
+from core.models import CoreIdentity, CoreResource, Identity, MetricQuery, Resource
 
 if TYPE_CHECKING:
     from core.metrics.protocol import MetricsSource
@@ -53,7 +53,7 @@ def gather_cluster_resource(
     The cluster resource must always be created first since all billing lines
     reference resource_id = cluster_id.
     """
-    return Resource(
+    return CoreResource(
         ecosystem=ecosystem,
         tenant_id=tenant_id,
         resource_id=cluster_id,
@@ -91,7 +91,7 @@ def gather_brokers_from_metrics(
         broker_id = row.labels.get("broker")
         if broker_id and broker_id not in seen_brokers:
             seen_brokers.add(broker_id)
-            yield Resource(
+            yield CoreResource(
                 ecosystem=ecosystem,
                 tenant_id=tenant_id,
                 resource_id=f"{cluster_id}:broker:{broker_id}",
@@ -128,7 +128,7 @@ def gather_topics_from_metrics(
         topic_name = row.labels.get("topic")
         if topic_name and topic_name not in seen_topics:
             seen_topics.add(topic_name)
-            yield Resource(
+            yield CoreResource(
                 ecosystem=ecosystem,
                 tenant_id=tenant_id,
                 resource_id=f"{cluster_id}:topic:{topic_name}",
@@ -176,7 +176,7 @@ def _make_principal_identity(
 ) -> Iterable[Identity]:
     """Create an Identity from a principal ID, applying team mapping if configured."""
     team_name = identity_config.principal_to_team.get(principal_id, identity_config.default_team)
-    yield Identity(
+    yield CoreIdentity(
         ecosystem=ecosystem,
         tenant_id=tenant_id,
         identity_id=principal_id,
@@ -196,7 +196,7 @@ def load_static_identities(
 ) -> Iterable[Identity]:
     """Convert StaticIdentityConfig entries to Identity objects."""
     for static in identity_config.static_identities:
-        yield Identity(
+        yield CoreIdentity(
             ecosystem=ecosystem,
             tenant_id=tenant_id,
             identity_id=static.identity_id,

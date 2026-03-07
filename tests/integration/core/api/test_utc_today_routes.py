@@ -5,7 +5,7 @@ from decimal import Decimal
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
-from core.models.billing import BillingLineItem
+from core.models.billing import BillingLineItem, CoreBillingLineItem
 from core.models.chargeback import ChargebackRow, CostType
 from core.storage.backends.sqlmodel.unit_of_work import SQLModelBackend  # noqa: TC001
 
@@ -24,7 +24,7 @@ _OUT_WINDOW_TS = datetime(2026, 1, 20, tzinfo=UTC)
 
 
 def _make_billing(ts: datetime) -> BillingLineItem:
-    return BillingLineItem(
+    return CoreBillingLineItem(
         ecosystem="test-eco",
         tenant_id="test-tenant",
         timestamp=ts,

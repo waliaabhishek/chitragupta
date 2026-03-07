@@ -6,7 +6,13 @@ from datetime import UTC, datetime
 from decimal import Decimal
 
 from core.engine.allocation import AllocationContext
-from core.models import BillingLineItem, CostType, Identity, IdentityResolution, IdentitySet
+from core.models import (
+    CoreBillingLineItem,
+    CoreIdentity,
+    CostType,
+    IdentityResolution,
+    IdentitySet,
+)
 
 
 def _make_identity_set_typed(*entries: tuple[str, str]) -> IdentitySet:
@@ -14,7 +20,7 @@ def _make_identity_set_typed(*entries: tuple[str, str]) -> IdentitySet:
     s = IdentitySet()
     for iid, itype in entries:
         s.add(
-            Identity(
+            CoreIdentity(
                 ecosystem="confluent_cloud",
                 tenant_id="org-123",
                 identity_id=iid,
@@ -29,7 +35,7 @@ def _make_identity_set(*ids: str) -> IdentitySet:
     s = IdentitySet()
     for iid in ids:
         s.add(
-            Identity(
+            CoreIdentity(
                 ecosystem="confluent_cloud",
                 tenant_id="org-123",
                 identity_id=iid,
@@ -46,7 +52,7 @@ def _make_ctx(
     """Build a minimal AllocationContext for org-wide tests."""
     return AllocationContext(
         timeslice=datetime(2026, 2, 1, tzinfo=UTC),
-        billing_line=BillingLineItem(
+        billing_line=CoreBillingLineItem(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             timestamp=datetime(2026, 2, 1, tzinfo=UTC),
@@ -113,7 +119,7 @@ class TestOrgWideAllocator:
         # tenant_period has sa-1, sa-2; resource_active has sa-3 only
         ctx = AllocationContext(
             timeslice=datetime(2026, 2, 1, tzinfo=UTC),
-            billing_line=BillingLineItem(
+            billing_line=CoreBillingLineItem(
                 ecosystem="confluent_cloud",
                 tenant_id="org-123",
                 timestamp=datetime(2026, 2, 1, tzinfo=UTC),
@@ -155,7 +161,7 @@ def _make_ctx_typed(
     """Build an AllocationContext with mixed identity types."""
     return AllocationContext(
         timeslice=datetime(2026, 2, 1, tzinfo=UTC),
-        billing_line=BillingLineItem(
+        billing_line=CoreBillingLineItem(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             timestamp=datetime(2026, 2, 1, tzinfo=UTC),

@@ -4,7 +4,7 @@ from typing import Any
 
 import pytest
 
-from core.models import Resource, ResourceStatus
+from core.models import CoreResource, Resource, ResourceStatus
 
 
 @pytest.fixture
@@ -26,6 +26,6 @@ def make_resource():
             "metadata": metadata or {},
         }
         defaults.update(kwargs)
-        return Resource(**defaults)
+        return CoreResource(**defaults)
 
     return _make

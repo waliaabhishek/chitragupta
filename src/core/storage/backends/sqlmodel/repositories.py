@@ -14,12 +14,13 @@ from sqlmodel import Session, col, select
 from core.models.chargeback import AggregationRow
 
 if TYPE_CHECKING:
-    from core.models.billing import BillingLineItem
+    from core.models.billing import BillingLineItem, CoreBillingLineItem
     from core.models.chargeback import ChargebackDimensionInfo, ChargebackRow, CustomTag
     from core.models.identity import Identity
     from core.models.pipeline import PipelineRun, PipelineState
     from core.models.resource import Resource
 
+from core.storage.backends.sqlmodel.base_tables import BillingTable, IdentityTable, ResourceTable
 from core.storage.backends.sqlmodel.mappers import (
     billing_to_domain,
     billing_to_table,
@@ -38,14 +39,11 @@ from core.storage.backends.sqlmodel.mappers import (
     tag_to_table,
 )
 from core.storage.backends.sqlmodel.tables import (
-    BillingTable,
     ChargebackDimensionTable,
     ChargebackFactTable,
     CustomTagTable,
-    IdentityTable,
     PipelineRunTable,
     PipelineStateTable,
-    ResourceTable,
 )
 
 logger = logging.getLogger(__name__)
@@ -340,8 +338,8 @@ class SQLModelBillingRepository:
     def __init__(self, session: Session) -> None:
         self._session = session
 
-    def upsert(self, line: BillingLineItem) -> BillingLineItem:
-        table_obj = billing_to_table(line)
+    def upsert(self, line: BillingLineItem) -> CoreBillingLineItem:
+        table_obj = billing_to_table(line)  # type: ignore[arg-type]  # CoreBillingLineItem satisfies BillingLineItem
 
         # Check for existing record
         existing = self._session.get(BillingTable, _billing_pk(line))

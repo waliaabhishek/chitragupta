@@ -16,7 +16,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from core.models.identity import Identity, IdentityResolution, IdentitySet
-from core.models.resource import Resource
+from core.models.resource import CoreResource, Resource
 
 # ---------------------------------------------------------------------------
 # Constants & helpers
@@ -40,7 +40,7 @@ def _make_tenant_config(**overrides: Any) -> Any:
 
 
 def _make_resource(resource_id: str = "r-1") -> Resource:
-    return Resource(
+    return CoreResource(
         ecosystem=ECOSYSTEM,
         tenant_id=TENANT_ID,
         resource_id=resource_id,

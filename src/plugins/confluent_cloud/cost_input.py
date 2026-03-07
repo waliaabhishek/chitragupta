@@ -11,7 +11,7 @@ if TYPE_CHECKING:
     from plugins.confluent_cloud.config import CCloudPluginConfig
     from plugins.confluent_cloud.connections import CCloudConnection
 
-from core.models import BillingLineItem
+from core.models import BillingLineItem, CoreBillingLineItem
 from core.plugin.protocols import CostInput
 
 logger = logging.getLogger(__name__)
@@ -76,7 +76,7 @@ def _map_billing_item(
     if "original_amount" in item:
         metadata["original_amount"] = _safe_decimal(item["original_amount"])
 
-    return BillingLineItem(
+    return CoreBillingLineItem(
         ecosystem=ecosystem,
         tenant_id=tenant_id,
         timestamp=_parse_billing_date(item["start_date"]),
@@ -96,7 +96,7 @@ def _map_malformed_item(
     item: dict[str, Any], ecosystem: str, tenant_id: str, idx: int, exc: Exception
 ) -> BillingLineItem:
     """Create a billing line from a malformed API row with best-effort field extraction."""
-    return BillingLineItem(
+    return CoreBillingLineItem(
         ecosystem=ecosystem,
         tenant_id=tenant_id,
         timestamp=_parse_billing_date(item.get("start_date", "1970-01-01")),

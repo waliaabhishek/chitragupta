@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from core.api.app import create_app
 from core.config.models import ApiConfig, AppSettings, LoggingConfig, StorageConfig, TenantConfig
 from core.models.pipeline import PipelineState
+from core.storage.backends.sqlmodel.module import CoreStorageModule
 from core.storage.backends.sqlmodel.unit_of_work import SQLModelBackend
 
 
@@ -31,7 +32,7 @@ class TestListTenants:
             storage=StorageConfig(connection_string=temp_db_path),
         )
         # Create tables first
-        backend = SQLModelBackend(temp_db_path, use_migrations=False)
+        backend = SQLModelBackend(temp_db_path, CoreStorageModule(), use_migrations=False)
         backend.create_tables()
         backend.dispose()
 
@@ -58,7 +59,7 @@ class TestListTenants:
         )
 
         # Pre-populate with pipeline state
-        backend = SQLModelBackend(temp_db_path, use_migrations=False)
+        backend = SQLModelBackend(temp_db_path, CoreStorageModule(), use_migrations=False)
         backend.create_tables()
         with backend.create_unit_of_work() as uow:
             uow.pipeline_state.upsert(

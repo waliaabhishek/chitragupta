@@ -10,17 +10,18 @@ import pytest
 from core.engine.allocation import AllocationContext, AllocationResult
 from core.models import (
     BillingLineItem,
-    Identity,
+    CoreIdentity,
     IdentityResolution,
     IdentitySet,
     MetricRow,
 )
+from core.models.billing import CoreBillingLineItem
 
 
 @pytest.fixture
 def base_billing_line() -> BillingLineItem:
     """Standard Kafka billing line for tests."""
-    return BillingLineItem(
+    return CoreBillingLineItem(
         ecosystem="confluent_cloud",
         tenant_id="org-123",
         timestamp=datetime(2026, 2, 1, tzinfo=UTC),
@@ -38,7 +39,7 @@ def identity_set_two() -> IdentitySet:
     """IdentitySet with two service accounts."""
     iset = IdentitySet()
     iset.add(
-        Identity(
+        CoreIdentity(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             identity_id="sa-1",
@@ -46,7 +47,7 @@ def identity_set_two() -> IdentitySet:
         )
     )
     iset.add(
-        Identity(
+        CoreIdentity(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             identity_id="sa-2",
@@ -207,7 +208,7 @@ class TestKafkaNumCkuAllocator:
 
         single_identity = IdentitySet()
         single_identity.add(
-            Identity(
+            CoreIdentity(
                 ecosystem="confluent_cloud",
                 tenant_id="org-123",
                 identity_id="sa-solo",
@@ -473,7 +474,7 @@ class TestKafkaBaseAllocator:
 
         tenant_period = IdentitySet()
         tenant_period.add(
-            Identity(
+            CoreIdentity(
                 ecosystem="confluent_cloud",
                 tenant_id="org-123",
                 identity_id="sa-tenant",
@@ -507,7 +508,7 @@ class TestKafkaBaseAllocator:
         tp = IdentitySet()
         for sa_id in ("sa-1", "sa-2"):
             tp.add(
-                Identity(
+                CoreIdentity(
                     ecosystem="confluent_cloud",
                     tenant_id="org-123",
                     identity_id=sa_id,
@@ -621,7 +622,7 @@ class TestKafkaNetworkAllocatorTieredFallback:
 
         tenant_period = IdentitySet()
         tenant_period.add(
-            Identity(
+            CoreIdentity(
                 ecosystem="confluent_cloud",
                 tenant_id="org-123",
                 identity_id="sa-tenant",
@@ -726,7 +727,7 @@ class TestKafkaNetworkAllocatorTieredFallback:
 
         tenant_period = IdentitySet()
         tenant_period.add(
-            Identity(
+            CoreIdentity(
                 ecosystem="confluent_cloud",
                 tenant_id="org-123",
                 identity_id="sa-tenant",
@@ -958,7 +959,7 @@ class TestKafkaNetworkDirectionAllocation:
     @pytest.fixture
     def asymmetric_billing_line(self) -> BillingLineItem:
         """Billing line for direction tests (KAFKA_NETWORK_WRITE as base; overridden per test)."""
-        return BillingLineItem(
+        return CoreBillingLineItem(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             timestamp=datetime(2026, 2, 1, tzinfo=UTC),
@@ -975,7 +976,7 @@ class TestKafkaNetworkDirectionAllocation:
         """Two service accounts: sa-A (heavy writer) and sa-B (heavy reader)."""
         iset = IdentitySet()
         iset.add(
-            Identity(
+            CoreIdentity(
                 ecosystem="confluent_cloud",
                 tenant_id="org-123",
                 identity_id="sa-A",
@@ -983,7 +984,7 @@ class TestKafkaNetworkDirectionAllocation:
             )
         )
         iset.add(
-            Identity(
+            CoreIdentity(
                 ecosystem="confluent_cloud",
                 tenant_id="org-123",
                 identity_id="sa-B",
@@ -1129,7 +1130,7 @@ class TestKafkaNetworkDirectionAllocation:
         """KAFKA_NUM_CKU blends bytes_in + bytes_out: equal totals → 50/50 split."""
         from plugins.confluent_cloud.allocators.kafka_allocators import kafka_num_cku_allocator
 
-        cku_line = BillingLineItem(
+        cku_line = CoreBillingLineItem(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             timestamp=asymmetric_billing_line.timestamp,
@@ -1192,7 +1193,7 @@ class TestKafkaNetworkDirectionRegressionFixture:
 
         identity_set = IdentitySet()
         identity_set.add(
-            Identity(
+            CoreIdentity(
                 ecosystem="confluent_cloud",
                 tenant_id="org-123",
                 identity_id="sa-writer",
@@ -1200,7 +1201,7 @@ class TestKafkaNetworkDirectionRegressionFixture:
             )
         )
         identity_set.add(
-            Identity(
+            CoreIdentity(
                 ecosystem="confluent_cloud",
                 tenant_id="org-123",
                 identity_id="sa-reader",
@@ -1208,7 +1209,7 @@ class TestKafkaNetworkDirectionRegressionFixture:
             )
         )
 
-        write_line = BillingLineItem(
+        write_line = CoreBillingLineItem(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             timestamp=ts,
@@ -1219,7 +1220,7 @@ class TestKafkaNetworkDirectionRegressionFixture:
             unit_price=Decimal("100"),
             total_cost=Decimal("100"),
         )
-        read_line = BillingLineItem(
+        read_line = CoreBillingLineItem(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             timestamp=ts,

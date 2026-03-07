@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 
 from core.engine.allocation import AllocationContext
-from core.models import BillingLineItem, CostType, IdentityResolution, IdentitySet
+from core.models import CoreBillingLineItem, CostType, IdentityResolution, IdentitySet
 from core.models.chargeback import AllocationDetail
 from plugins.confluent_cloud.allocators.default_allocators import (
     cluster_linking_allocator,
@@ -27,7 +27,7 @@ def _make_ctx(
     """Build a minimal AllocationContext for default allocator tests."""
     return AllocationContext(
         timeslice=datetime(2026, 2, 1, tzinfo=UTC),
-        billing_line=BillingLineItem(
+        billing_line=CoreBillingLineItem(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             timestamp=datetime(2026, 2, 1, tzinfo=UTC),

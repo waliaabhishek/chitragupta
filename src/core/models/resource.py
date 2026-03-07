@@ -4,7 +4,7 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
 logger = logging.getLogger(__name__)
 
@@ -16,9 +16,50 @@ class ResourceStatus(StrEnum):
     DELETED = "deleted"
 
 
+@runtime_checkable
+class Resource(Protocol):
+    """Protocol for a billable resource within an ecosystem."""
+
+    @property
+    def ecosystem(self) -> str: ...
+
+    @property
+    def tenant_id(self) -> str: ...
+
+    @property
+    def resource_id(self) -> str: ...
+
+    @property
+    def resource_type(self) -> str: ...
+
+    @property
+    def display_name(self) -> str | None: ...
+
+    @property
+    def parent_id(self) -> str | None: ...
+
+    @property
+    def owner_id(self) -> str | None: ...
+
+    @property
+    def status(self) -> ResourceStatus: ...
+
+    @property
+    def created_at(self) -> datetime | None: ...
+
+    @property
+    def deleted_at(self) -> datetime | None: ...
+
+    @property
+    def last_seen_at(self) -> datetime | None: ...
+
+    @property
+    def metadata(self) -> dict[str, Any]: ...
+
+
 @dataclass
-class Resource:
-    """A billable resource within an ecosystem."""
+class CoreResource:
+    """Core implementation of the Resource Protocol."""
 
     ecosystem: str
     tenant_id: str

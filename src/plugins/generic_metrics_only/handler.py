@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 from core.engine.helpers import allocate_by_usage_ratio, allocate_evenly_with_fallback
-from core.models import Identity, IdentityResolution, IdentitySet, MetricQuery, Resource
+from core.models import CoreIdentity, Identity, IdentityResolution, IdentitySet, MetricQuery, Resource
 from plugins.generic_metrics_only.shared_context import GenericSharedContext
 
 if TYPE_CHECKING:
@@ -127,7 +127,7 @@ class GenericMetricsOnlyHandler:
     def _gather_static(self, tenant_id: str) -> Iterable[Identity]:
         now = datetime.now(UTC)
         for static in self._config.identity_source.static_identities:
-            yield Identity(
+            yield CoreIdentity(
                 ecosystem=self._ecosystem,
                 tenant_id=tenant_id,
                 identity_id=static.identity_id,
@@ -142,7 +142,7 @@ class GenericMetricsOnlyHandler:
     def _make_identity(self, identity_id: str, tenant_id: str, now: datetime) -> Identity:
         cfg = self._config.identity_source
         team = cfg.principal_to_team.get(identity_id, cfg.default_team)
-        return Identity(
+        return CoreIdentity(
             ecosystem=self._ecosystem,
             tenant_id=tenant_id,
             identity_id=identity_id,

@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from core.models import Identity
+from core.models import CoreIdentity, CoreResource
 
 
 class TestSchemaRegistryHandlerProperties:
@@ -100,14 +100,14 @@ class TestSchemaRegistryHandlerGatherResources:
         """gather_resources calls gather_schema_registries with env_ids from shared_ctx."""
         from unittest.mock import patch
 
-        from core.models import Resource, ResourceStatus
+        from core.models import ResourceStatus
         from plugins.confluent_cloud.handlers.schema_registry import (
             SchemaRegistryHandler,
         )
         from plugins.confluent_cloud.shared_context import CCloudSharedContext
 
         mock_conn = MagicMock()
-        env_resource = Resource(
+        env_resource = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="env-abc",
@@ -180,7 +180,7 @@ class TestSchemaRegistryHandlerResolveIdentities:
             SchemaRegistryHandler,
         )
 
-        api_key = Identity(
+        api_key = CoreIdentity(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             identity_id="api-key-1",
@@ -188,7 +188,7 @@ class TestSchemaRegistryHandlerResolveIdentities:
             metadata={"resource_id": "lsrc-xyz", "owner_id": "sa-owner"},
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        sa_owner = Identity(
+        sa_owner = CoreIdentity(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             identity_id="sa-owner",

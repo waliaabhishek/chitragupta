@@ -44,9 +44,10 @@ class StorageBackendRegistry:
 
 
 def _sqlmodel_factory(connection_string: str, use_migrations: bool) -> StorageBackend:
+    from core.storage.backends.sqlmodel.module import CoreStorageModule
     from core.storage.backends.sqlmodel.unit_of_work import SQLModelBackend
 
-    return SQLModelBackend(connection_string, use_migrations=use_migrations)
+    return SQLModelBackend(connection_string, CoreStorageModule(), use_migrations=use_migrations)
 
 
 _default_storage_registry = StorageBackendRegistry()

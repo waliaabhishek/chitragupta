@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from core.models import Resource, ResourceStatus
+from core.models import CoreResource, ResourceStatus
 
 
 class TestConnectorHandlerProperties:
@@ -176,7 +176,7 @@ class TestConnectorHandlerGatherResources:
 
         mock_conn = MagicMock()
 
-        kafka_cluster = Resource(
+        kafka_cluster = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="lkc-abc",
@@ -218,7 +218,7 @@ class TestConnectorHandlerGatherResources:
         mock_conn = MagicMock()
 
         # Multiple Kafka clusters in different environments
-        cluster1 = Resource(
+        cluster1 = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="lkc-001",
@@ -227,7 +227,7 @@ class TestConnectorHandlerGatherResources:
             parent_id="env-001",
             metadata={},
         )
-        cluster2 = Resource(
+        cluster2 = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="lkc-002",

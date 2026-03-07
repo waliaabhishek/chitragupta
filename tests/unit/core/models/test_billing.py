@@ -6,14 +6,14 @@ from decimal import Decimal
 
 import pytest
 
-from core.models.billing import BillingLineItem
+from core.models.billing import CoreBillingLineItem
 
 _NOW = datetime(2024, 1, 15, 12, 0, 0, tzinfo=UTC)
 
 
 class TestBillingLineItem:
     def test_construction(self) -> None:
-        b = BillingLineItem(
+        b = CoreBillingLineItem(
             ecosystem="confluent",
             tenant_id="t-001",
             timestamp=_NOW,
@@ -34,7 +34,7 @@ class TestBillingLineItem:
         assert b.metadata == {"invoice": "INV-001"}
 
     def test_defaults(self) -> None:
-        b = BillingLineItem(
+        b = CoreBillingLineItem(
             ecosystem="aws",
             tenant_id="t-001",
             timestamp=_NOW,
@@ -50,7 +50,7 @@ class TestBillingLineItem:
         assert b.metadata == {}
 
     def test_frozen_enforcement(self) -> None:
-        b = BillingLineItem(
+        b = CoreBillingLineItem(
             ecosystem="confluent",
             tenant_id="t-001",
             timestamp=_NOW,
@@ -65,7 +65,7 @@ class TestBillingLineItem:
             b.total_cost = Decimal("999")  # type: ignore[misc] -- intentional write to frozen field
 
     def test_asdict_round_trip(self) -> None:
-        b = BillingLineItem(
+        b = CoreBillingLineItem(
             ecosystem="confluent",
             tenant_id="t-001",
             timestamp=_NOW,
@@ -77,11 +77,11 @@ class TestBillingLineItem:
             total_cost=Decimal("1.005"),
         )
         d = asdict(b)
-        b2 = BillingLineItem(**d)
+        b2 = CoreBillingLineItem(**d)
         assert b == b2
 
     def test_decimal_precision(self) -> None:
-        b = BillingLineItem(
+        b = CoreBillingLineItem(
             ecosystem="confluent",
             tenant_id="t-001",
             timestamp=_NOW,
@@ -97,7 +97,7 @@ class TestBillingLineItem:
         assert b.total_cost == Decimal("0.00000001")
 
     def test_zero_total_cost(self) -> None:
-        b = BillingLineItem(
+        b = CoreBillingLineItem(
             ecosystem="confluent",
             tenant_id="t-001",
             timestamp=_NOW,
@@ -111,7 +111,7 @@ class TestBillingLineItem:
         assert b.total_cost == Decimal("0")
 
     def test_negative_total_cost(self) -> None:
-        b = BillingLineItem(
+        b = CoreBillingLineItem(
             ecosystem="confluent",
             tenant_id="t-001",
             timestamp=_NOW,

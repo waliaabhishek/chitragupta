@@ -15,9 +15,10 @@ import pytest
 from core.engine.allocation import AllocationContext
 from core.models import (
     BillingLineItem,
-    Identity,
+    CoreIdentity,
     MetricRow,
 )
+from core.models.billing import CoreBillingLineItem
 
 
 @pytest.fixture
@@ -26,7 +27,7 @@ def mock_uow_with_identities() -> MagicMock:
     uow = MagicMock()
 
     # Setup identities
-    api_key = Identity(
+    api_key = CoreIdentity(
         ecosystem="confluent_cloud",
         tenant_id="org-123",
         identity_id="api-key-1",
@@ -34,7 +35,7 @@ def mock_uow_with_identities() -> MagicMock:
         metadata={"resource_id": "lkc-abc", "owner_id": "sa-owner-1"},
         created_at=datetime(2026, 1, 1, tzinfo=UTC),
     )
-    sa_owner = Identity(
+    sa_owner = CoreIdentity(
         ecosystem="confluent_cloud",
         tenant_id="org-123",
         identity_id="sa-owner-1",
@@ -50,7 +51,7 @@ def mock_uow_with_identities() -> MagicMock:
 @pytest.fixture
 def kafka_billing_line() -> BillingLineItem:
     """Billing line for KAFKA_NUM_CKU."""
-    return BillingLineItem(
+    return CoreBillingLineItem(
         ecosystem="confluent_cloud",
         tenant_id="org-123",
         timestamp=datetime(2026, 2, 1, tzinfo=UTC),
@@ -178,14 +179,14 @@ class TestKafkaNetworkEndToEnd:
         handler = KafkaHandler(connection=None, config=None, ecosystem="confluent_cloud")
 
         # Add second identity for testing split
-        api_key_2 = Identity(
+        api_key_2 = CoreIdentity(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             identity_id="api-key-2",
             identity_type="api_key",
             metadata={"resource_id": "lkc-abc", "owner_id": "sa-owner-2"},
         )
-        sa_owner_2 = Identity(
+        sa_owner_2 = CoreIdentity(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             identity_id="sa-owner-2",
@@ -195,7 +196,7 @@ class TestKafkaNetworkEndToEnd:
         new_items = existing_items + [api_key_2, sa_owner_2]
         mock_uow_with_identities.identities.find_by_period.return_value = (new_items, len(new_items))
 
-        billing_line = BillingLineItem(
+        billing_line = CoreBillingLineItem(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             timestamp=datetime(2026, 2, 1, tzinfo=UTC),
@@ -271,14 +272,14 @@ class TestSchemaRegistryEndToEnd:
         handler = SchemaRegistryHandler(connection=None, config=None, ecosystem="confluent_cloud")
 
         # Update mock for SR resource
-        api_key = Identity(
+        api_key = CoreIdentity(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             identity_id="api-key-sr",
             identity_type="api_key",
             metadata={"resource_id": "lsrc-xyz", "owner_id": "sa-owner-1"},
         )
-        sa_owner = Identity(
+        sa_owner = CoreIdentity(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             identity_id="sa-owner-1",
@@ -289,7 +290,7 @@ class TestSchemaRegistryEndToEnd:
             2,
         )
 
-        sr_billing = BillingLineItem(
+        sr_billing = CoreBillingLineItem(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             timestamp=datetime(2026, 2, 1, tzinfo=UTC),

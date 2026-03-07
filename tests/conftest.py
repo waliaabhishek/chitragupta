@@ -6,9 +6,9 @@ from typing import Any
 
 import pytest
 
-from core.models.billing import BillingLineItem
-from core.models.identity import Identity
-from core.models.resource import Resource, ResourceStatus
+from core.models.billing import BillingLineItem, CoreBillingLineItem
+from core.models.identity import CoreIdentity, Identity
+from core.models.resource import CoreResource, Resource, ResourceStatus
 
 _NOW = datetime(2024, 1, 15, 12, 0, 0, tzinfo=UTC)
 
@@ -26,7 +26,7 @@ def make_resource(**overrides: Any) -> Resource:
         "metadata": {},
     }
     defaults.update(overrides)
-    return Resource(**defaults)
+    return CoreResource(**defaults)
 
 
 def make_identity(**overrides: Any) -> Identity:
@@ -41,7 +41,7 @@ def make_identity(**overrides: Any) -> Identity:
         "metadata": {},
     }
     defaults.update(overrides)
-    return Identity(**defaults)
+    return CoreIdentity(**defaults)
 
 
 def make_billing_line(**overrides: Any) -> BillingLineItem:
@@ -61,7 +61,7 @@ def make_billing_line(**overrides: Any) -> BillingLineItem:
         "metadata": {},
     }
     defaults.update(overrides)
-    return BillingLineItem(**defaults)
+    return CoreBillingLineItem(**defaults)
 
 
 @pytest.fixture

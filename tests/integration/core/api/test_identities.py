@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 
 from fastapi.testclient import TestClient  # noqa: TC002
 
-from core.models.identity import Identity
+from core.models.identity import CoreIdentity, Identity
 from core.storage.backends.sqlmodel.unit_of_work import SQLModelBackend  # noqa: TC001
 
 
@@ -34,7 +34,7 @@ class TestListIdentities:
     ) -> None:
         with in_memory_backend.create_unit_of_work() as uow:
             uow.identities.upsert(
-                Identity(
+                CoreIdentity(
                     ecosystem="test-eco",
                     tenant_id="test-tenant",
                     identity_id="u1",
@@ -69,7 +69,7 @@ class TestListIdentities:
     ) -> None:
         with in_memory_backend.create_unit_of_work() as uow:
             uow.identities.upsert(
-                Identity(
+                CoreIdentity(
                     ecosystem="test-eco",
                     tenant_id="test-tenant",
                     identity_id="u1",
@@ -109,7 +109,7 @@ class TestListIdentities:
         with in_memory_backend.create_unit_of_work() as uow:
             for itype in ["user", "service_account", "api_key"]:
                 uow.identities.upsert(
-                    Identity(
+                    CoreIdentity(
                         ecosystem="test-eco",
                         tenant_id="test-tenant",
                         identity_id=f"id-{itype}",

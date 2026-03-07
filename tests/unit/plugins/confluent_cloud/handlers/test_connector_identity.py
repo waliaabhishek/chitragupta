@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
-from core.models import Identity, Resource
+from core.models import CoreIdentity, CoreResource, Identity
 
 
 class TestResolveConnectorIdentity:
@@ -17,7 +17,7 @@ class TestResolveConnectorIdentity:
             resolve_connector_identity,
         )
 
-        connector = Resource(
+        connector = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="connector-abc",
@@ -28,7 +28,7 @@ class TestResolveConnectorIdentity:
             },
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        sa_owner = Identity(
+        sa_owner = CoreIdentity(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             identity_id="sa-owner-123",
@@ -62,7 +62,7 @@ class TestResolveConnectorIdentity:
             resolve_connector_identity,
         )
 
-        connector = Resource(
+        connector = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="connector-abc",
@@ -73,7 +73,7 @@ class TestResolveConnectorIdentity:
             },
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        api_key = Identity(
+        api_key = CoreIdentity(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             identity_id="api-key-xyz",
@@ -81,7 +81,7 @@ class TestResolveConnectorIdentity:
             metadata={"owner_id": "u-user-456"},
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        user_owner = Identity(
+        user_owner = CoreIdentity(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             identity_id="u-user-456",
@@ -113,7 +113,7 @@ class TestResolveConnectorIdentity:
             resolve_connector_identity,
         )
 
-        connector = Resource(
+        connector = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="connector-abc",
@@ -167,7 +167,7 @@ class TestResolveConnectorIdentity:
             resolve_connector_identity,
         )
 
-        connector = Resource(
+        connector = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="connector-abc",
@@ -203,7 +203,7 @@ class TestResolveConnectorIdentity:
             resolve_connector_identity,
         )
 
-        connector = Resource(
+        connector = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="connector-abc",
@@ -237,7 +237,7 @@ class TestResolveConnectorIdentity:
             resolve_connector_identity,
         )
 
-        connector = Resource(
+        connector = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="connector-abc",
@@ -248,7 +248,7 @@ class TestResolveConnectorIdentity:
             },
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        api_key = Identity(
+        api_key = CoreIdentity(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             identity_id="api-key-xyz",
@@ -279,7 +279,7 @@ class TestResolveConnectorIdentity:
             resolve_connector_identity,
         )
 
-        connector = Resource(
+        connector = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="connector-abc",
@@ -309,7 +309,7 @@ class TestResolveConnectorIdentity:
             resolve_connector_identity,
         )
 
-        connector = Resource(
+        connector = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="connector-abc",
@@ -338,7 +338,7 @@ class TestResolveConnectorIdentity:
             resolve_connector_identity,
         )
 
-        connector = Resource(
+        connector = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="connector-abc",
@@ -367,7 +367,7 @@ class TestResolveConnectorIdentity:
             resolve_connector_identity,
         )
 
-        Resource(
+        CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="connector-abc",
@@ -378,7 +378,7 @@ class TestResolveConnectorIdentity:
             },
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        Identity(
+        CoreIdentity(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             identity_id="sa-owner-123",
@@ -404,7 +404,7 @@ class TestResolveConnectorIdentity:
             resolve_connector_identity,
         )
 
-        connector_match = Resource(
+        connector_match = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="connector-abc",
@@ -415,7 +415,7 @@ class TestResolveConnectorIdentity:
             },
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        Resource(
+        CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="connector-OTHER",
@@ -426,7 +426,7 @@ class TestResolveConnectorIdentity:
             },
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        sa_correct = Identity(
+        sa_correct = CoreIdentity(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             identity_id="sa-correct",
@@ -457,7 +457,7 @@ class TestResolveConnectorIdentity:
             resolve_connector_identity,
         )
 
-        connector = Resource(
+        connector = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="connector-abc",
@@ -490,7 +490,7 @@ class TestResolveConnectorIdentity:
             resolve_connector_identity,
         )
 
-        connector = Resource(
+        connector = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="connector-abc",
@@ -523,7 +523,7 @@ class TestResolveConnectorIdentity:
             resolve_connector_identity,
         )
 
-        connector = Resource(
+        connector = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="connector-abc",
@@ -556,7 +556,7 @@ class TestResolveConnectorIdentity:
             resolve_connector_identity,
         )
 
-        connector = Resource(
+        connector = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="connector-abc",
@@ -679,7 +679,7 @@ class TestConnectorIdentityDirectLookup:
         """resolve_connector_identity calls uow.resources.get() exactly once, never find_by_period."""
         from plugins.confluent_cloud.handlers.connector_identity import resolve_connector_identity
 
-        connector = Resource(
+        connector = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="connector-abc",
@@ -709,7 +709,7 @@ class TestConnectorIdentityDirectLookup:
         """SERVICE_ACCOUNT mode resolves identity via uow.identities.get(), never find_by_period."""
         from plugins.confluent_cloud.handlers.connector_identity import resolve_connector_identity
 
-        connector = Resource(
+        connector = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="connector-abc",
@@ -720,7 +720,7 @@ class TestConnectorIdentityDirectLookup:
             },
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        sa_owner = Identity(
+        sa_owner = CoreIdentity(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             identity_id="sa-owner-123",
@@ -751,7 +751,7 @@ class TestConnectorIdentityDirectLookup:
         """KAFKA_API_KEY mode makes at most 2 identities.get() calls (api_key + owner), never find_by_period."""
         from plugins.confluent_cloud.handlers.connector_identity import resolve_connector_identity
 
-        connector = Resource(
+        connector = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="connector-abc",
@@ -762,7 +762,7 @@ class TestConnectorIdentityDirectLookup:
             },
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        api_key = Identity(
+        api_key = CoreIdentity(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             identity_id="key-abc",
@@ -770,7 +770,7 @@ class TestConnectorIdentityDirectLookup:
             metadata={"owner_id": "u-user-1"},
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        user = Identity(
+        user = CoreIdentity(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             identity_id="u-user-1",
@@ -830,7 +830,7 @@ class TestConnectorIdentityDirectLookup:
         """API key not in DB (get returns None) → connector_api_key_not_found; no find_by_period."""
         from plugins.confluent_cloud.handlers.connector_identity import resolve_connector_identity
 
-        connector = Resource(
+        connector = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="connector-abc",
@@ -861,7 +861,7 @@ class TestConnectorIdentityDirectLookup:
         """API key found but no owner_id in metadata → connector_credentials_unknown; no find_by_period."""
         from plugins.confluent_cloud.handlers.connector_identity import resolve_connector_identity
 
-        connector = Resource(
+        connector = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="connector-abc",
@@ -872,7 +872,7 @@ class TestConnectorIdentityDirectLookup:
             },
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        api_key = Identity(
+        api_key = CoreIdentity(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             identity_id="key-abc",
@@ -900,7 +900,7 @@ class TestConnectorIdentityDirectLookup:
         """SERVICE_ACCOUNT happy path: resource.get + identity.get → SA owner resolved."""
         from plugins.confluent_cloud.handlers.connector_identity import resolve_connector_identity
 
-        connector = Resource(
+        connector = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="connector-abc",
@@ -911,7 +911,7 @@ class TestConnectorIdentityDirectLookup:
             },
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        sa_owner = Identity(
+        sa_owner = CoreIdentity(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             identity_id="sa-happy",
@@ -941,7 +941,7 @@ class TestConnectorIdentityDirectLookup:
         """KAFKA_API_KEY happy path: api_key.get + owner.get → user owner resolved."""
         from plugins.confluent_cloud.handlers.connector_identity import resolve_connector_identity
 
-        connector = Resource(
+        connector = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="connector-abc",
@@ -952,7 +952,7 @@ class TestConnectorIdentityDirectLookup:
             },
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        api_key = Identity(
+        api_key = CoreIdentity(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             identity_id="key-abc",
@@ -960,7 +960,7 @@ class TestConnectorIdentityDirectLookup:
             metadata={"owner_id": "u-user-1"},
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        user = Identity(
+        user = CoreIdentity(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             identity_id="u-user-1",

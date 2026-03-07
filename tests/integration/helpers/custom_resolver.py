@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
-from core.models.identity import Identity, IdentityResolution, IdentitySet
+from core.models.identity import CoreIdentity, IdentityResolution, IdentitySet
 
 if TYPE_CHECKING:
     from core.models.metrics import MetricRow
@@ -22,7 +22,7 @@ def my_resolver(
     """Custom resolver that returns a fixed 'custom-resolved' identity."""
     ra = IdentitySet()
     ra.add(
-        Identity(
+        CoreIdentity(
             ecosystem="test-eco",
             tenant_id=tenant_id,
             identity_id="custom-resolved",

@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict
 from datetime import UTC, datetime
 
-from core.models.identity import Identity, IdentityResolution, IdentitySet
+from core.models.identity import CoreIdentity, Identity, IdentityResolution, IdentitySet
 
 _NOW = datetime(2024, 1, 15, 12, 0, 0, tzinfo=UTC)
 
@@ -16,12 +16,12 @@ def _make_id(identity_id: str, **kw: object) -> Identity:
         "identity_type": "user",
     }
     defaults.update(kw)
-    return Identity(**defaults)  # type: ignore[arg-type] -- dict[str, object] from **kw merge
+    return CoreIdentity(**defaults)  # type: ignore[arg-type] -- dict[str, object] from **kw merge
 
 
 class TestIdentity:
     def test_construction(self) -> None:
-        i = Identity(
+        i = CoreIdentity(
             ecosystem="confluent",
             tenant_id="t-001",
             identity_id="u-1",
@@ -40,7 +40,7 @@ class TestIdentity:
     def test_asdict_round_trip(self) -> None:
         i = _make_id("u-1", display_name="Bob", created_at=_NOW)
         d = asdict(i)
-        i2 = Identity(**d)
+        i2 = CoreIdentity(**d)
         assert i == i2
 
 

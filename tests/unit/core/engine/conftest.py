@@ -5,7 +5,7 @@ from decimal import Decimal
 from typing import Any
 
 from core.engine.allocation import AllocationContext, AllocationResult
-from core.models import BillingLineItem, IdentityResolution
+from core.models import BillingLineItem, CoreBillingLineItem, IdentityResolution
 from core.models.identity import IdentitySet
 
 _NOW = datetime(2024, 1, 15, 12, 0, 0, tzinfo=UTC)
@@ -24,7 +24,7 @@ def make_billing_line(**overrides: Any) -> BillingLineItem:
         "total_cost": Decimal("1.00"),
     }
     defaults.update(overrides)
-    return BillingLineItem(**defaults)
+    return CoreBillingLineItem(**defaults)
 
 
 def make_identity_resolution() -> IdentityResolution:

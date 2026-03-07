@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from core.models import Resource, ResourceStatus
+from core.models import CoreResource, ResourceStatus
 
 
 class TestKsqldbHandlerProperties:
@@ -102,7 +102,7 @@ class TestKsqldbHandlerGatherResources:
 
         mock_conn = MagicMock()
 
-        environment = Resource(
+        environment = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="env-001",
@@ -142,7 +142,7 @@ class TestKsqldbHandlerGatherResources:
 
         mock_conn = MagicMock()
 
-        env1 = Resource(
+        env1 = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="env-001",
@@ -150,7 +150,7 @@ class TestKsqldbHandlerGatherResources:
             status=ResourceStatus.ACTIVE,
             metadata={},
         )
-        env2 = Resource(
+        env2 = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="env-002",

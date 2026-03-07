@@ -19,12 +19,12 @@ from core.engine.orchestrator import (
     GatherResult,
     RetryManager,
 )
-from core.models.billing import BillingLineItem
+from core.models.billing import BillingLineItem, CoreBillingLineItem
 from core.models.chargeback import ChargebackRow, CostType
-from core.models.identity import Identity, IdentityResolution, IdentitySet
+from core.models.identity import CoreIdentity, Identity, IdentityResolution, IdentitySet
 from core.models.metrics import MetricQuery
 from core.models.pipeline import PipelineState
-from core.models.resource import Resource
+from core.models.resource import CoreResource, Resource
 
 # ---------- Constants ----------
 
@@ -58,7 +58,7 @@ def _make_billing_line(
     timestamp: datetime | None = None,
     granularity: str = "daily",
 ) -> BillingLineItem:
-    return BillingLineItem(
+    return CoreBillingLineItem(
         ecosystem=ECOSYSTEM,
         tenant_id=TENANT_ID,
         timestamp=timestamp or NOW,
@@ -73,7 +73,7 @@ def _make_billing_line(
 
 
 def _make_resource(resource_id: str = "cluster-1", created_at: datetime | None = None) -> Resource:
-    return Resource(
+    return CoreResource(
         ecosystem=ECOSYSTEM,
         tenant_id=TENANT_ID,
         resource_id=resource_id,
@@ -83,7 +83,7 @@ def _make_resource(resource_id: str = "cluster-1", created_at: datetime | None =
 
 
 def _make_identity(identity_id: str = "user-1") -> Identity:
-    return Identity(
+    return CoreIdentity(
         ecosystem=ECOSYSTEM,
         tenant_id=TENANT_ID,
         identity_id=identity_id,
@@ -545,7 +545,7 @@ class TestGatherPhaseHandlerException:
         from core.plugin.registry import EcosystemBundle
 
         identity_with_ts = _make_identity("user-1")
-        identity_with_ts = Identity(
+        identity_with_ts = CoreIdentity(
             ecosystem=ECOSYSTEM,
             tenant_id=TENANT_ID,
             identity_id="user-1",

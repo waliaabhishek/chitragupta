@@ -15,11 +15,12 @@ import pytest
 from core.engine.allocation import AllocationContext
 from core.models import (
     BillingLineItem,
+    CoreIdentity,
     CostType,
-    Identity,
     IdentityResolution,
     IdentitySet,
 )
+from core.models.billing import CoreBillingLineItem
 
 
 def _make_billing_line(
@@ -28,7 +29,7 @@ def _make_billing_line(
     resource_id: str = "org-123",
     amount: Decimal = Decimal("100"),
 ) -> BillingLineItem:
-    return BillingLineItem(
+    return CoreBillingLineItem(
         ecosystem="confluent_cloud",
         tenant_id="org-123",
         timestamp=datetime(2026, 2, 1, tzinfo=UTC),
@@ -45,7 +46,7 @@ def _make_identity_set(*ids: str) -> IdentitySet:
     s = IdentitySet()
     for iid in ids:
         s.add(
-            Identity(
+            CoreIdentity(
                 ecosystem="confluent_cloud",
                 tenant_id="org-123",
                 identity_id=iid,

@@ -6,20 +6,18 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any, Literal, cast, overload
 
-from core.models.billing import BillingLineItem
+from core.models.billing import CoreBillingLineItem
 from core.models.chargeback import ChargebackRow, CostType, CustomTag
-from core.models.identity import Identity
+from core.models.identity import CoreIdentity
 from core.models.pipeline import PipelineRun, PipelineState
-from core.models.resource import Resource, ResourceStatus
+from core.models.resource import CoreResource, ResourceStatus
+from core.storage.backends.sqlmodel.base_tables import BillingTable, IdentityTable, ResourceTable
 from core.storage.backends.sqlmodel.tables import (
-    BillingTable,
     ChargebackDimensionTable,
     ChargebackFactTable,
     CustomTagTable,
-    IdentityTable,
     PipelineRunTable,
     PipelineStateTable,
-    ResourceTable,
 )
 
 logger = logging.getLogger(__name__)
@@ -69,7 +67,7 @@ def _json_to_metadata(json_str: str | None) -> dict[str, Any]:
 # --- Resource ---
 
 
-def resource_to_table(r: Resource) -> ResourceTable:
+def resource_to_table(r: CoreResource) -> ResourceTable:
     remaining = dict(r.metadata)
     cloud = remaining.pop("cloud", None)
     region = remaining.pop("region", None)
@@ -91,13 +89,13 @@ def resource_to_table(r: Resource) -> ResourceTable:
     )
 
 
-def resource_to_domain(t: ResourceTable) -> Resource:
+def resource_to_domain(t: ResourceTable) -> CoreResource:
     metadata = _json_to_metadata(t.metadata_json)
     if t.cloud is not None:
         metadata["cloud"] = t.cloud
     if t.region is not None:
         metadata["region"] = t.region
-    return Resource(
+    return CoreResource(
         ecosystem=t.ecosystem,
         tenant_id=t.tenant_id,
         resource_id=t.resource_id,
@@ -116,7 +114,7 @@ def resource_to_domain(t: ResourceTable) -> Resource:
 # --- Identity ---
 
 
-def identity_to_table(i: Identity) -> IdentityTable:
+def identity_to_table(i: CoreIdentity) -> IdentityTable:
     return IdentityTable(
         ecosystem=i.ecosystem,
         tenant_id=i.tenant_id,
@@ -130,8 +128,8 @@ def identity_to_table(i: Identity) -> IdentityTable:
     )
 
 
-def identity_to_domain(t: IdentityTable) -> Identity:
-    return Identity(
+def identity_to_domain(t: IdentityTable) -> CoreIdentity:
+    return CoreIdentity(
         ecosystem=t.ecosystem,
         tenant_id=t.tenant_id,
         identity_id=t.identity_id,
@@ -147,7 +145,7 @@ def identity_to_domain(t: IdentityTable) -> Identity:
 # --- Billing ---
 
 
-def billing_to_table(b: BillingLineItem) -> BillingTable:
+def billing_to_table(b: CoreBillingLineItem) -> BillingTable:
     return BillingTable(
         ecosystem=b.ecosystem,
         tenant_id=b.tenant_id,
@@ -164,8 +162,8 @@ def billing_to_table(b: BillingLineItem) -> BillingTable:
     )
 
 
-def billing_to_domain(t: BillingTable) -> BillingLineItem:
-    return BillingLineItem(
+def billing_to_domain(t: BillingTable) -> CoreBillingLineItem:
+    return CoreBillingLineItem(
         ecosystem=t.ecosystem,
         tenant_id=t.tenant_id,
         timestamp=ensure_utc(t.timestamp),

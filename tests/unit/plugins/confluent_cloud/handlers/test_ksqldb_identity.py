@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
-from core.models import Identity, Resource
+from core.models import CoreIdentity, CoreResource
 
 # ---------------------------------------------------------------------------
 # TASK-028 — Direct lookup tests appended after existing tests (see below)
@@ -21,7 +21,7 @@ class TestResolveKsqldbIdentity:
             resolve_ksqldb_identity,
         )
 
-        ksqldb_app = Resource(
+        ksqldb_app = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="ksqldb-app-abc",
@@ -29,7 +29,7 @@ class TestResolveKsqldbIdentity:
             metadata={"owner_id": "sa-owner-123"},
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        sa_owner = Identity(
+        sa_owner = CoreIdentity(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             identity_id="sa-owner-123",
@@ -86,7 +86,7 @@ class TestResolveKsqldbIdentity:
             resolve_ksqldb_identity,
         )
 
-        ksqldb_app = Resource(
+        ksqldb_app = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="ksqldb-app-abc",
@@ -119,7 +119,7 @@ class TestResolveKsqldbIdentity:
             resolve_ksqldb_identity,
         )
 
-        ksqldb_app = Resource(
+        ksqldb_app = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="ksqldb-app-abc",
@@ -152,7 +152,7 @@ class TestResolveKsqldbIdentity:
             resolve_ksqldb_identity,
         )
 
-        ksqldb_app = Resource(
+        ksqldb_app = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="ksqldb-app-abc",
@@ -182,7 +182,7 @@ class TestResolveKsqldbIdentity:
             resolve_ksqldb_identity,
         )
 
-        ksqldb_app = Resource(
+        ksqldb_app = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="ksqldb-app-abc",
@@ -212,7 +212,7 @@ class TestResolveKsqldbIdentity:
             resolve_ksqldb_identity,
         )
 
-        ksqldb_app = Resource(
+        ksqldb_app = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="ksqldb-app-abc",
@@ -242,7 +242,7 @@ class TestResolveKsqldbIdentity:
             resolve_ksqldb_identity,
         )
 
-        ksqldb_app = Resource(
+        ksqldb_app = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="ksqldb-app-abc",
@@ -272,7 +272,7 @@ class TestResolveKsqldbIdentity:
             resolve_ksqldb_identity,
         )
 
-        Resource(
+        CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="ksqldb-app-abc",
@@ -280,7 +280,7 @@ class TestResolveKsqldbIdentity:
             metadata={"owner_id": "sa-owner-123"},
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        Identity(
+        CoreIdentity(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             identity_id="sa-owner-123",
@@ -306,7 +306,7 @@ class TestResolveKsqldbIdentity:
             resolve_ksqldb_identity,
         )
 
-        ksqldb_match = Resource(
+        ksqldb_match = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="ksqldb-app-abc",
@@ -314,7 +314,7 @@ class TestResolveKsqldbIdentity:
             metadata={"owner_id": "sa-correct"},
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        Resource(
+        CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="ksqldb-app-OTHER",
@@ -322,7 +322,7 @@ class TestResolveKsqldbIdentity:
             metadata={"owner_id": "sa-wrong"},
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        sa_correct = Identity(
+        sa_correct = CoreIdentity(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             identity_id="sa-correct",
@@ -353,7 +353,7 @@ class TestResolveKsqldbIdentity:
             resolve_ksqldb_identity,
         )
 
-        ksqldb_app = Resource(
+        ksqldb_app = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="ksqldb-app-abc",
@@ -361,7 +361,7 @@ class TestResolveKsqldbIdentity:
             metadata={"owner_id": "u-user-789"},
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        user_owner = Identity(
+        user_owner = CoreIdentity(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             identity_id="u-user-789",
@@ -398,7 +398,7 @@ class TestResolveKsqldbIdentity:
             resolve_ksqldb_identity,
         )
 
-        ksqldb_app = Resource(
+        ksqldb_app = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="ksqldb-app-abc",
@@ -407,7 +407,7 @@ class TestResolveKsqldbIdentity:
             metadata={},
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        sa_owner = Identity(
+        sa_owner = CoreIdentity(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             identity_id="sa-direct-456",
@@ -442,7 +442,7 @@ class TestResolveKsqldbIdentity:
             resolve_ksqldb_identity,
         )
 
-        ksqldb_app = Resource(
+        ksqldb_app = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="ksqldb-app-abc",
@@ -451,7 +451,7 @@ class TestResolveKsqldbIdentity:
             metadata={"owner_id": "sa-metadata-secondary"},  # metadata — should lose
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        sa_primary = Identity(
+        sa_primary = CoreIdentity(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             identity_id="sa-direct-primary",
@@ -459,7 +459,7 @@ class TestResolveKsqldbIdentity:
             display_name="Primary SA",
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        Identity(
+        CoreIdentity(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             identity_id="sa-metadata-secondary",
@@ -491,7 +491,7 @@ class TestResolveKsqldbIdentity:
             resolve_ksqldb_identity,
         )
 
-        ksqldb_app = Resource(
+        ksqldb_app = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="ksqldb-app-abc",
@@ -500,7 +500,7 @@ class TestResolveKsqldbIdentity:
             metadata={"owner_id": "sa-meta-fallback"},
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        sa_owner = Identity(
+        sa_owner = CoreIdentity(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             identity_id="sa-meta-fallback",
@@ -534,7 +534,7 @@ class TestResolveKsqldbIdentity:
             resolve_ksqldb_identity,
         )
 
-        ksqldb_app = Resource(
+        ksqldb_app = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="ksqldb-app-abc",
@@ -569,7 +569,7 @@ class TestResolveKsqldbIdentity:
             resolve_ksqldb_identity,
         )
 
-        ksqldb_app = Resource(
+        ksqldb_app = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="ksqldb-app-abc",
@@ -578,7 +578,7 @@ class TestResolveKsqldbIdentity:
             metadata={"kafka_cluster_id": "lkc-xxx", "csu_count": 4},  # NO owner_id in metadata
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        sa_owner = Identity(
+        sa_owner = CoreIdentity(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             identity_id="sa-12345",
@@ -613,7 +613,7 @@ class TestResolveKsqldbIdentity:
             resolve_ksqldb_identity,
         )
 
-        ksqldb_app = Resource(
+        ksqldb_app = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="ksqldb-app-abc",
@@ -622,7 +622,7 @@ class TestResolveKsqldbIdentity:
             metadata={"owner_id": "sa-67890"},  # fallback in metadata
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        sa_owner = Identity(
+        sa_owner = CoreIdentity(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             identity_id="sa-67890",
@@ -657,7 +657,7 @@ class TestResolveKsqldbIdentity:
             resolve_ksqldb_identity,
         )
 
-        ksqldb_app = Resource(
+        ksqldb_app = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="ksqldb-app-abc",
@@ -702,7 +702,7 @@ class TestKsqldbIdentityDirectLookup:
         """resolve_ksqldb_identity calls uow.resources.get() exactly once, never find_by_period."""
         from plugins.confluent_cloud.handlers.ksqldb_identity import resolve_ksqldb_identity
 
-        ksqldb_app = Resource(
+        ksqldb_app = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="ksqldb-app-abc",
@@ -732,7 +732,7 @@ class TestKsqldbIdentityDirectLookup:
         """Owner resolved via uow.identities.get(), never find_by_period."""
         from plugins.confluent_cloud.handlers.ksqldb_identity import resolve_ksqldb_identity
 
-        ksqldb_app = Resource(
+        ksqldb_app = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="ksqldb-app-abc",
@@ -740,7 +740,7 @@ class TestKsqldbIdentityDirectLookup:
             metadata={"owner_id": "sa-owner-123"},
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        sa_owner = Identity(
+        sa_owner = CoreIdentity(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             identity_id="sa-owner-123",
@@ -771,7 +771,7 @@ class TestKsqldbIdentityDirectLookup:
         """resolve_ksqldb_identity makes exactly one uow.identities.get() call for the owner."""
         from plugins.confluent_cloud.handlers.ksqldb_identity import resolve_ksqldb_identity
 
-        ksqldb_app = Resource(
+        ksqldb_app = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="ksqldb-app-abc",
@@ -779,7 +779,7 @@ class TestKsqldbIdentityDirectLookup:
             metadata={"owner_id": "u-user-789"},
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        user_owner = Identity(
+        user_owner = CoreIdentity(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             identity_id="u-user-789",
@@ -839,7 +839,7 @@ class TestKsqldbIdentityDirectLookup:
             resolve_ksqldb_identity,
         )
 
-        ksqldb_app = Resource(
+        ksqldb_app = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="ksqldb-app-abc",
@@ -867,7 +867,7 @@ class TestKsqldbIdentityDirectLookup:
         """Happy path: resource.get + identity.get → owner resolved; no find_by_period calls."""
         from plugins.confluent_cloud.handlers.ksqldb_identity import resolve_ksqldb_identity
 
-        ksqldb_app = Resource(
+        ksqldb_app = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="ksqldb-app-abc",
@@ -875,7 +875,7 @@ class TestKsqldbIdentityDirectLookup:
             metadata={"owner_id": "sa-owner-123"},
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        sa_owner = Identity(
+        sa_owner = CoreIdentity(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             identity_id="sa-owner-123",

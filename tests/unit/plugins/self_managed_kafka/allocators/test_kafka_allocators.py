@@ -10,16 +10,18 @@ import pytest
 from core.engine.allocation import AllocationContext
 from core.models import (
     BillingLineItem,
+    CoreIdentity,
     Identity,
     IdentityResolution,
     IdentitySet,
     MetricRow,
 )
+from core.models.billing import CoreBillingLineItem
 
 
 @pytest.fixture
 def base_billing_line() -> BillingLineItem:
-    return BillingLineItem(
+    return CoreBillingLineItem(
         ecosystem="self_managed_kafka",
         tenant_id="tenant-1",
         timestamp=datetime(2026, 2, 1, tzinfo=UTC),
@@ -33,7 +35,7 @@ def base_billing_line() -> BillingLineItem:
 
 
 def make_identity(identity_id: str) -> Identity:
-    return Identity(
+    return CoreIdentity(
         ecosystem="self_managed_kafka",
         tenant_id="tenant-1",
         identity_id=identity_id,
@@ -89,7 +91,9 @@ class TestNetworkIngressAllocator:
     def test_usage_ratio_with_bytes_in_only(self, base_billing_line):
         from plugins.self_managed_kafka.allocators.kafka_allocators import self_kafka_network_ingress_allocator
 
-        billing_line = BillingLineItem(**{**base_billing_line.__dict__, "product_type": "SELF_KAFKA_NETWORK_INGRESS"})
+        billing_line = CoreBillingLineItem(
+            **{**base_billing_line.__dict__, "product_type": "SELF_KAFKA_NETWORK_INGRESS"}
+        )
         metrics_data = {
             "bytes_in_per_principal": [
                 make_network_row("bytes_in_per_principal", "User:alice", 700.0),
@@ -111,7 +115,9 @@ class TestNetworkIngressAllocator:
     def test_fallback_to_even_split_when_no_metrics(self, base_billing_line):
         from plugins.self_managed_kafka.allocators.kafka_allocators import self_kafka_network_ingress_allocator
 
-        billing_line = BillingLineItem(**{**base_billing_line.__dict__, "product_type": "SELF_KAFKA_NETWORK_INGRESS"})
+        billing_line = CoreBillingLineItem(
+            **{**base_billing_line.__dict__, "product_type": "SELF_KAFKA_NETWORK_INGRESS"}
+        )
         resolution = make_resolution(metrics_derived=make_identity_set("User:alice", "User:bob"))
         ctx = make_ctx(billing_line, resolution, metrics_data=None)
 
@@ -126,7 +132,9 @@ class TestNetworkIngressAllocator:
     def test_fallback_to_even_split_when_zero_usage(self, base_billing_line):
         from plugins.self_managed_kafka.allocators.kafka_allocators import self_kafka_network_ingress_allocator
 
-        billing_line = BillingLineItem(**{**base_billing_line.__dict__, "product_type": "SELF_KAFKA_NETWORK_INGRESS"})
+        billing_line = CoreBillingLineItem(
+            **{**base_billing_line.__dict__, "product_type": "SELF_KAFKA_NETWORK_INGRESS"}
+        )
         metrics_data = {
             "bytes_in_per_principal": [
                 make_network_row("bytes_in_per_principal", "User:alice", 0.0),
@@ -145,7 +153,9 @@ class TestNetworkIngressAllocator:
     def test_no_identities_goes_to_unallocated(self, base_billing_line):
         from plugins.self_managed_kafka.allocators.kafka_allocators import self_kafka_network_ingress_allocator
 
-        billing_line = BillingLineItem(**{**base_billing_line.__dict__, "product_type": "SELF_KAFKA_NETWORK_INGRESS"})
+        billing_line = CoreBillingLineItem(
+            **{**base_billing_line.__dict__, "product_type": "SELF_KAFKA_NETWORK_INGRESS"}
+        )
         resolution = make_resolution()
         ctx = make_ctx(billing_line, resolution, metrics_data=None)
 
@@ -160,7 +170,9 @@ class TestNetworkIngressAllocator:
         """
         from plugins.self_managed_kafka.allocators.kafka_allocators import self_kafka_network_ingress_allocator
 
-        billing_line = BillingLineItem(**{**base_billing_line.__dict__, "product_type": "SELF_KAFKA_NETWORK_INGRESS"})
+        billing_line = CoreBillingLineItem(
+            **{**base_billing_line.__dict__, "product_type": "SELF_KAFKA_NETWORK_INGRESS"}
+        )
         metrics_data = {
             "bytes_in_per_principal": [
                 make_network_row("bytes_in_per_principal", "A", 100.0),
@@ -186,7 +198,9 @@ class TestNetworkEgressAllocator:
     def test_usage_ratio_with_bytes_out_only(self, base_billing_line):
         from plugins.self_managed_kafka.allocators.kafka_allocators import self_kafka_network_egress_allocator
 
-        billing_line = BillingLineItem(**{**base_billing_line.__dict__, "product_type": "SELF_KAFKA_NETWORK_EGRESS"})
+        billing_line = CoreBillingLineItem(
+            **{**base_billing_line.__dict__, "product_type": "SELF_KAFKA_NETWORK_EGRESS"}
+        )
         metrics_data = {
             "bytes_out_per_principal": [
                 make_network_row("bytes_out_per_principal", "User:alice", 700.0),
@@ -208,7 +222,9 @@ class TestNetworkEgressAllocator:
     def test_fallback_to_even_split_when_no_metrics(self, base_billing_line):
         from plugins.self_managed_kafka.allocators.kafka_allocators import self_kafka_network_egress_allocator
 
-        billing_line = BillingLineItem(**{**base_billing_line.__dict__, "product_type": "SELF_KAFKA_NETWORK_EGRESS"})
+        billing_line = CoreBillingLineItem(
+            **{**base_billing_line.__dict__, "product_type": "SELF_KAFKA_NETWORK_EGRESS"}
+        )
         resolution = make_resolution(metrics_derived=make_identity_set("User:alice", "User:bob"))
         ctx = make_ctx(billing_line, resolution, metrics_data=None)
 
@@ -223,7 +239,9 @@ class TestNetworkEgressAllocator:
     def test_fallback_to_even_split_when_zero_usage(self, base_billing_line):
         from plugins.self_managed_kafka.allocators.kafka_allocators import self_kafka_network_egress_allocator
 
-        billing_line = BillingLineItem(**{**base_billing_line.__dict__, "product_type": "SELF_KAFKA_NETWORK_EGRESS"})
+        billing_line = CoreBillingLineItem(
+            **{**base_billing_line.__dict__, "product_type": "SELF_KAFKA_NETWORK_EGRESS"}
+        )
         metrics_data = {
             "bytes_out_per_principal": [
                 make_network_row("bytes_out_per_principal", "User:alice", 0.0),
@@ -242,7 +260,9 @@ class TestNetworkEgressAllocator:
     def test_no_identities_goes_to_unallocated(self, base_billing_line):
         from plugins.self_managed_kafka.allocators.kafka_allocators import self_kafka_network_egress_allocator
 
-        billing_line = BillingLineItem(**{**base_billing_line.__dict__, "product_type": "SELF_KAFKA_NETWORK_EGRESS"})
+        billing_line = CoreBillingLineItem(
+            **{**base_billing_line.__dict__, "product_type": "SELF_KAFKA_NETWORK_EGRESS"}
+        )
         resolution = make_resolution()
         ctx = make_ctx(billing_line, resolution, metrics_data=None)
 
@@ -257,7 +277,9 @@ class TestNetworkEgressAllocator:
         """
         from plugins.self_managed_kafka.allocators.kafka_allocators import self_kafka_network_egress_allocator
 
-        billing_line = BillingLineItem(**{**base_billing_line.__dict__, "product_type": "SELF_KAFKA_NETWORK_EGRESS"})
+        billing_line = CoreBillingLineItem(
+            **{**base_billing_line.__dict__, "product_type": "SELF_KAFKA_NETWORK_EGRESS"}
+        )
         metrics_data = {
             "bytes_in_per_principal": [
                 make_network_row("bytes_in_per_principal", "A", 100.0),
@@ -343,7 +365,9 @@ class TestTask024NetworkFallbackParity:
         from core.engine.helpers import allocate_evenly_with_fallback
         from plugins.self_managed_kafka.allocators.kafka_allocators import self_kafka_network_ingress_allocator
 
-        billing_line = BillingLineItem(**{**base_billing_line.__dict__, "product_type": "SELF_KAFKA_NETWORK_INGRESS"})
+        billing_line = CoreBillingLineItem(
+            **{**base_billing_line.__dict__, "product_type": "SELF_KAFKA_NETWORK_INGRESS"}
+        )
         resolution = make_resolution(metrics_derived=make_identity_set("User:alice", "User:bob"))
         ctx = make_ctx(billing_line, resolution, metrics_data=None)
 
@@ -357,7 +381,9 @@ class TestTask024NetworkFallbackParity:
         from core.engine.helpers import allocate_evenly_with_fallback
         from plugins.self_managed_kafka.allocators.kafka_allocators import self_kafka_network_egress_allocator
 
-        billing_line = BillingLineItem(**{**base_billing_line.__dict__, "product_type": "SELF_KAFKA_NETWORK_EGRESS"})
+        billing_line = CoreBillingLineItem(
+            **{**base_billing_line.__dict__, "product_type": "SELF_KAFKA_NETWORK_EGRESS"}
+        )
         resolution = make_resolution(metrics_derived=make_identity_set("User:alice", "User:bob"))
         ctx = make_ctx(billing_line, resolution, metrics_data=None)
 
@@ -375,7 +401,9 @@ class TestGap23TenantPeriodFallback:
         """Network fallback: splits evenly across real identities when no metrics available."""
         from plugins.self_managed_kafka.allocators.kafka_allocators import self_kafka_network_ingress_allocator
 
-        billing_line = BillingLineItem(**{**base_billing_line.__dict__, "product_type": "SELF_KAFKA_NETWORK_INGRESS"})
+        billing_line = CoreBillingLineItem(
+            **{**base_billing_line.__dict__, "product_type": "SELF_KAFKA_NETWORK_INGRESS"}
+        )
         tp = make_identity_set("User:alice", "User:bob")
         # No metrics_data and no merged_active → falls to tenant_period via _even_split_fallback
         resolution = make_resolution(tenant_period=tp)

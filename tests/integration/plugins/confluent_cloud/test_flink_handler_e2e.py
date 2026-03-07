@@ -15,11 +15,12 @@ import pytest
 from core.engine.allocation import AllocationContext
 from core.models import (
     BillingLineItem,
+    CoreIdentity,
+    CoreResource,
     CostType,
-    Identity,
     MetricRow,
-    Resource,
 )
+from core.models.billing import CoreBillingLineItem
 
 
 @pytest.fixture
@@ -27,7 +28,7 @@ def mock_uow_for_flink_with_owners() -> MagicMock:
     """Mock UnitOfWork with Flink statement resources and owner identities."""
     uow = MagicMock()
 
-    stmt_a = Resource(
+    stmt_a = CoreResource(
         ecosystem="confluent_cloud",
         tenant_id="org-123",
         resource_id="uid-a",
@@ -36,7 +37,7 @@ def mock_uow_for_flink_with_owners() -> MagicMock:
         owner_id="sa-alice",
         metadata={"statement_name": "stmt-alpha", "compute_pool_id": "lfcp-pool-1"},
     )
-    stmt_b = Resource(
+    stmt_b = CoreResource(
         ecosystem="confluent_cloud",
         tenant_id="org-123",
         resource_id="uid-b",
@@ -46,7 +47,7 @@ def mock_uow_for_flink_with_owners() -> MagicMock:
         metadata={"statement_name": "stmt-beta", "compute_pool_id": "lfcp-pool-1"},
     )
 
-    sa_alice = Identity(
+    sa_alice = CoreIdentity(
         ecosystem="confluent_cloud",
         tenant_id="org-123",
         identity_id="sa-alice",
@@ -54,7 +55,7 @@ def mock_uow_for_flink_with_owners() -> MagicMock:
         display_name="Alice SA",
         created_at=datetime(2026, 1, 1, tzinfo=UTC),
     )
-    sa_bob = Identity(
+    sa_bob = CoreIdentity(
         ecosystem="confluent_cloud",
         tenant_id="org-123",
         identity_id="sa-bob",
@@ -88,7 +89,7 @@ def mock_uow_for_flink_no_statements() -> MagicMock:
 @pytest.fixture
 def flink_billing_line() -> BillingLineItem:
     """Billing line for FLINK_NUM_CFU."""
-    return BillingLineItem(
+    return CoreBillingLineItem(
         ecosystem="confluent_cloud",
         tenant_id="org-123",
         timestamp=datetime(2026, 2, 1, tzinfo=UTC),

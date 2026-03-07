@@ -7,7 +7,7 @@ from decimal import Decimal
 from typing import TYPE_CHECKING
 
 from core.metrics.protocol import MetricsQueryError
-from core.models import BillingLineItem, MetricQuery
+from core.models import BillingLineItem, CoreBillingLineItem, MetricQuery
 from core.plugin.protocols import CostInput
 
 if TYPE_CHECKING:
@@ -121,7 +121,7 @@ class GenericConstructedCostInput(CostInput):
             total_bytes = sum(r.value for r in rows)
             quantity = Decimal(str(total_bytes)) / _BYTES_PER_GIB
 
-        yield BillingLineItem(
+        yield CoreBillingLineItem(
             ecosystem=self._config.ecosystem_name,
             tenant_id=tenant_id,
             timestamp=timestamp,

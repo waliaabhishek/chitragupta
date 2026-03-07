@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from core.models import Resource, ResourceStatus
+from core.models import CoreResource, Resource, ResourceStatus
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -27,7 +27,7 @@ def mock_uow() -> MagicMock:
 
 
 def _make_env_resource(env_id: str = "env-1") -> Resource:
-    return Resource(
+    return CoreResource(
         ecosystem="confluent_cloud",
         tenant_id="org-123",
         resource_id=env_id,
@@ -38,7 +38,7 @@ def _make_env_resource(env_id: str = "env-1") -> Resource:
 
 
 def _make_cluster_resource(cluster_id: str = "lkc-1", parent_id: str = "env-1") -> Resource:
-    return Resource(
+    return CoreResource(
         ecosystem="confluent_cloud",
         tenant_id="org-123",
         resource_id=cluster_id,
@@ -468,7 +468,7 @@ class TestFlinkHandlerGatherResourcesSharedContext:
             environment_resources=(env,),
             kafka_cluster_resources=(),
         )
-        pool = Resource(
+        pool = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="pool-1",

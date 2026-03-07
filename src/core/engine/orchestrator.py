@@ -15,7 +15,7 @@ from core.engine.allocation import AllocationContext, AllocatorRegistry
 from core.engine.helpers import compute_active_fraction
 from core.engine.loading import load_protocol_callable
 from core.models.chargeback import AllocationDetail, ChargebackRow, CostType
-from core.models.identity import Identity, IdentityResolution, IdentitySet
+from core.models.identity import CoreIdentity, IdentityResolution, IdentitySet
 from core.models.pipeline import PipelineState
 from core.plugin.registry import EcosystemBundle
 
@@ -978,7 +978,7 @@ def _load_overrides(
 
 def _ensure_unallocated_identity(uow: UnitOfWork, ecosystem: str, tenant_id: str) -> None:
     """Upsert the UNALLOCATED system identity (idempotent)."""
-    unallocated = Identity(
+    unallocated = CoreIdentity(
         ecosystem=ecosystem,
         tenant_id=tenant_id,
         identity_id="UNALLOCATED",

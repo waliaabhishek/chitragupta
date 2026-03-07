@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
-from core.models import Identity, MetricRow
+from core.models import CoreIdentity, MetricRow
 
 
 class TestResolveKafkaSrIdentities:
@@ -17,7 +17,7 @@ class TestResolveKafkaSrIdentities:
             resolve_kafka_sr_identities,
         )
 
-        api_key = Identity(
+        api_key = CoreIdentity(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             identity_id="api-key-1",
@@ -25,7 +25,7 @@ class TestResolveKafkaSrIdentities:
             metadata={"resource_id": "lkc-abc", "owner_id": "sa-owner"},
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        sa_owner = Identity(
+        sa_owner = CoreIdentity(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             identity_id="sa-owner",
@@ -86,7 +86,7 @@ class TestResolveKafkaSrIdentities:
             resolve_kafka_sr_identities,
         )
 
-        api_key = Identity(
+        api_key = CoreIdentity(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             identity_id="api-key-1",
@@ -114,7 +114,7 @@ class TestResolveKafkaSrIdentities:
             resolve_kafka_sr_identities,
         )
 
-        api_key = Identity(
+        api_key = CoreIdentity(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             identity_id="api-key-1",
@@ -162,21 +162,21 @@ class TestResolveKafkaSrIdentities:
             resolve_kafka_sr_identities,
         )
 
-        api_key_1 = Identity(
+        api_key_1 = CoreIdentity(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             identity_id="api-key-1",
             identity_type="api_key",
             metadata={"resource_id": "lkc-abc", "owner_id": "sa-owner"},
         )
-        api_key_2 = Identity(
+        api_key_2 = CoreIdentity(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             identity_id="api-key-2",
             identity_type="api_key",
             metadata={"resource_id": "lkc-abc", "owner_id": "sa-owner"},
         )
-        sa_owner = Identity(
+        sa_owner = CoreIdentity(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             identity_id="sa-owner",

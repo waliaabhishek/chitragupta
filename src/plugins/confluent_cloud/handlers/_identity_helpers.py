@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import logging
 
-from core.models import Identity
+from core.models import CoreIdentity, Identity
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +35,7 @@ def create_sentinel_from_id(identity_id: str, tenant_id: str, ecosystem: str) ->
     prefix = identity_id.split("-")[0] if "-" in identity_id else ""
     identity_type = _PREFIX_TYPE_MAP.get(prefix, "unknown")
 
-    return Identity(
+    return CoreIdentity(
         ecosystem=ecosystem,
         tenant_id=tenant_id,
         identity_id=identity_id,
@@ -56,7 +56,7 @@ def create_flink_sentinel(identity_id: str, tenant_id: str, ecosystem: str, disp
     Returns:
         A flink_statement_owner sentinel Identity.
     """
-    return Identity(
+    return CoreIdentity(
         ecosystem=ecosystem,
         tenant_id=tenant_id,
         identity_id=identity_id,
@@ -77,7 +77,7 @@ def create_ksqldb_sentinel(identity_id: str, tenant_id: str, ecosystem: str, dis
     Returns:
         A ksqldb_credentials sentinel Identity.
     """
-    return Identity(
+    return CoreIdentity(
         ecosystem=ecosystem,
         tenant_id=tenant_id,
         identity_id=identity_id,
@@ -101,7 +101,7 @@ def create_connector_sentinel(identity_id: str, tenant_id: str, ecosystem: str, 
         A connector_credentials sentinel Identity.
     """
     display_name = "Connector Credentials Masked" if is_masked else "Connector Credentials Unknown"
-    return Identity(
+    return CoreIdentity(
         ecosystem=ecosystem,
         tenant_id=tenant_id,
         identity_id=identity_id,

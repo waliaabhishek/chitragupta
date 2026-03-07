@@ -12,10 +12,11 @@ import pytest
 from core.config.models import TenantConfig
 from core.engine.allocation import AllocationContext, AllocationResult
 from core.engine.orchestrator import ChargebackOrchestrator
-from core.models.billing import BillingLineItem
+from core.models.billing import BillingLineItem, CoreBillingLineItem
 from core.models.chargeback import ChargebackRow, CostType
-from core.models.identity import Identity, IdentityResolution, IdentitySet
-from core.models.resource import Resource
+from core.models.identity import CoreIdentity, Identity, IdentityResolution, IdentitySet
+from core.models.resource import CoreResource, Resource
+from core.storage.backends.sqlmodel.module import CoreStorageModule
 from core.storage.backends.sqlmodel.unit_of_work import SQLModelBackend
 
 if TYPE_CHECKING:
@@ -144,7 +145,7 @@ class IntegrationPlugin:
 
 @pytest.fixture
 def storage() -> SQLModelBackend:
-    backend = SQLModelBackend("sqlite:///:memory:", use_migrations=False)
+    backend = SQLModelBackend("sqlite:///:memory:", CoreStorageModule(), use_migrations=False)
     backend.create_tables()
     return backend
 
@@ -152,14 +153,14 @@ def storage() -> SQLModelBackend:
 class TestEndToEndPipeline:
     def test_full_gather_calculate(self, storage: SQLModelBackend) -> None:
         """End-to-end: gather populates DB, calculate produces chargeback rows."""
-        resource = Resource(
+        resource = CoreResource(
             ecosystem=ECOSYSTEM,
             tenant_id=TENANT_ID,
             resource_id="cluster-1",
             resource_type="kafka_cluster",
             created_at=NOW - timedelta(days=30),
         )
-        identity = Identity(
+        identity = CoreIdentity(
             ecosystem=ECOSYSTEM,
             tenant_id=TENANT_ID,
             identity_id="user-1",
@@ -171,7 +172,7 @@ class TestEndToEndPipeline:
         handler.set_identities([identity])
 
         billing_ts = NOW - timedelta(days=10)
-        line = BillingLineItem(
+        line = CoreBillingLineItem(
             ecosystem=ECOSYSTEM,
             tenant_id=TENANT_ID,
             timestamp=billing_ts,
@@ -219,22 +220,22 @@ class TestEndToEndPipeline:
 
     def test_two_handlers_multiple_product_types(self, storage: SQLModelBackend) -> None:
         """Two handlers each claim different product types."""
-        r1 = Resource(
+        r1 = CoreResource(
             ecosystem=ECOSYSTEM,
             tenant_id=TENANT_ID,
             resource_id="kafka-1",
             resource_type="kafka_cluster",
             created_at=NOW - timedelta(days=30),
         )
-        r2 = Resource(
+        r2 = CoreResource(
             ecosystem=ECOSYSTEM,
             tenant_id=TENANT_ID,
             resource_id="connect-1",
             resource_type="connector",
             created_at=NOW - timedelta(days=30),
         )
-        i1 = Identity(ecosystem=ECOSYSTEM, tenant_id=TENANT_ID, identity_id="u1", identity_type="user")
-        i2 = Identity(ecosystem=ECOSYSTEM, tenant_id=TENANT_ID, identity_id="u2", identity_type="user")
+        i1 = CoreIdentity(ecosystem=ECOSYSTEM, tenant_id=TENANT_ID, identity_id="u1", identity_type="user")
+        i2 = CoreIdentity(ecosystem=ECOSYSTEM, tenant_id=TENANT_ID, identity_id="u2", identity_type="user")
 
         h1 = IntegrationHandler("kafka", ["KAFKA_CKU"])
         h1.set_resources([r1])
@@ -246,7 +247,7 @@ class TestEndToEndPipeline:
 
         billing_ts = NOW - timedelta(days=10)
         lines = [
-            BillingLineItem(
+            CoreBillingLineItem(
                 ecosystem=ECOSYSTEM,
                 tenant_id=TENANT_ID,
                 timestamp=billing_ts,
@@ -257,7 +258,7 @@ class TestEndToEndPipeline:
                 unit_price=Decimal("200"),
                 total_cost=Decimal("200"),
             ),
-            BillingLineItem(
+            CoreBillingLineItem(
                 ecosystem=ECOSYSTEM,
                 tenant_id=TENANT_ID,
                 timestamp=billing_ts,
@@ -287,14 +288,14 @@ class TestEndToEndPipeline:
 class TestOverrideScenario:
     def test_allocator_override(self, storage: SQLModelBackend) -> None:
         """Custom allocator override loaded from dotted path."""
-        resource = Resource(
+        resource = CoreResource(
             ecosystem=ECOSYSTEM,
             tenant_id=TENANT_ID,
             resource_id="cluster-1",
             resource_type="kafka_cluster",
             created_at=NOW - timedelta(days=30),
         )
-        identity = Identity(
+        identity = CoreIdentity(
             ecosystem=ECOSYSTEM,
             tenant_id=TENANT_ID,
             identity_id="user-1",
@@ -305,7 +306,7 @@ class TestOverrideScenario:
         handler.set_identities([identity])
 
         billing_ts = NOW - timedelta(days=10)
-        line = BillingLineItem(
+        line = CoreBillingLineItem(
             ecosystem=ECOSYSTEM,
             tenant_id=TENANT_ID,
             timestamp=billing_ts,
@@ -358,14 +359,14 @@ class TestOverrideScenario:
 
     def test_identity_resolution_override(self, storage: SQLModelBackend) -> None:
         """Custom identity resolver loaded from dotted path."""
-        resource = Resource(
+        resource = CoreResource(
             ecosystem=ECOSYSTEM,
             tenant_id=TENANT_ID,
             resource_id="cluster-1",
             resource_type="kafka_cluster",
             created_at=NOW - timedelta(days=30),
         )
-        identity = Identity(
+        identity = CoreIdentity(
             ecosystem=ECOSYSTEM,
             tenant_id=TENANT_ID,
             identity_id="user-1",
@@ -376,7 +377,7 @@ class TestOverrideScenario:
         handler.set_identities([identity])
 
         billing_ts = NOW - timedelta(days=10)
-        line = BillingLineItem(
+        line = CoreBillingLineItem(
             ecosystem=ECOSYSTEM,
             tenant_id=TENANT_ID,
             timestamp=billing_ts,

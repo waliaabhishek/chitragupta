@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from core.models import IdentityResolution, IdentitySet, Resource, ResourceStatus
+from core.models import CoreResource, IdentityResolution, IdentitySet, ResourceStatus
 
 
 class TestFlinkHandlerProperties:
@@ -195,7 +195,7 @@ class TestFlinkHandlerGatherResources:
 
         mock_conn = MagicMock()
 
-        environment = Resource(
+        environment = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="env-001",
@@ -208,7 +208,7 @@ class TestFlinkHandlerGatherResources:
             kafka_cluster_resources=(),
         )
 
-        pool_resource = Resource(
+        pool_resource = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="lfcp-pool-1",

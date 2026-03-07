@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from core.models import MetricRow
+from core.models import CoreIdentity, MetricRow
 
 
 def make_metric_row(key: str, value: float, labels: dict | None = None) -> MetricRow:
@@ -140,7 +140,11 @@ class TestHandlerGetAllocator:
         from decimal import Decimal
 
         from core.engine.allocation import AllocationContext
-        from core.models import BillingLineItem, Identity, IdentityResolution, IdentitySet
+        from core.models import (
+            CoreBillingLineItem,
+            IdentityResolution,
+            IdentitySet,
+        )
         from plugins.generic_metrics_only.handler import GenericMetricsOnlyHandler
 
         handler = GenericMetricsOnlyHandler(config=pg_config, metrics_source=mock_metrics)
@@ -148,16 +152,16 @@ class TestHandlerGetAllocator:
 
         iset = IdentitySet()
         iset.add(
-            Identity(
+            CoreIdentity(
                 ecosystem="self_managed_postgres", tenant_id="tenant-1", identity_id="alice", identity_type="principal"
             )
         )
         iset.add(
-            Identity(
+            CoreIdentity(
                 ecosystem="self_managed_postgres", tenant_id="tenant-1", identity_id="bob", identity_type="principal"
             )
         )
-        billing_line = BillingLineItem(
+        billing_line = CoreBillingLineItem(
             ecosystem="self_managed_postgres",
             tenant_id="tenant-1",
             timestamp=datetime(2026, 2, 1, tzinfo=UTC),
@@ -190,7 +194,12 @@ class TestHandlerGetAllocator:
         from decimal import Decimal
 
         from core.engine.allocation import AllocationContext
-        from core.models import BillingLineItem, Identity, IdentityResolution, IdentitySet, MetricRow
+        from core.models import (
+            CoreBillingLineItem,
+            IdentityResolution,
+            IdentitySet,
+            MetricRow,
+        )
         from plugins.generic_metrics_only.handler import GenericMetricsOnlyHandler
 
         handler = GenericMetricsOnlyHandler(config=pg_config, metrics_source=mock_metrics)
@@ -198,16 +207,16 @@ class TestHandlerGetAllocator:
 
         iset = IdentitySet()
         iset.add(
-            Identity(
+            CoreIdentity(
                 ecosystem="self_managed_postgres", tenant_id="tenant-1", identity_id="alice", identity_type="principal"
             )
         )
         iset.add(
-            Identity(
+            CoreIdentity(
                 ecosystem="self_managed_postgres", tenant_id="tenant-1", identity_id="bob", identity_type="principal"
             )
         )
-        billing_line = BillingLineItem(
+        billing_line = CoreBillingLineItem(
             ecosystem="self_managed_postgres",
             tenant_id="tenant-1",
             timestamp=datetime(2026, 2, 1, tzinfo=UTC),

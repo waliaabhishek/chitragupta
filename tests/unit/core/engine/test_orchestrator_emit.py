@@ -8,10 +8,10 @@ from unittest.mock import MagicMock, patch
 
 from core.engine.allocation import AllocationContext, AllocationResult
 from core.engine.orchestrator import ChargebackOrchestrator
-from core.models.billing import BillingLineItem
+from core.models.billing import BillingLineItem, CoreBillingLineItem
 from core.models.chargeback import ChargebackRow, CostType
-from core.models.identity import Identity, IdentityResolution, IdentitySet
-from core.models.resource import Resource
+from core.models.identity import CoreIdentity, Identity, IdentityResolution, IdentitySet
+from core.models.resource import CoreResource, Resource
 
 # ---------- constants ----------
 
@@ -42,7 +42,7 @@ def _make_billing_line(
     timestamp: datetime | None = None,
     total_cost: Decimal = Decimal("100.00"),
 ) -> BillingLineItem:
-    return BillingLineItem(
+    return CoreBillingLineItem(
         ecosystem=ECOSYSTEM,
         tenant_id=TENANT_ID,
         timestamp=timestamp or NOW,
@@ -57,7 +57,7 @@ def _make_billing_line(
 
 
 def _make_resource(resource_id: str = "cluster-1") -> Resource:
-    return Resource(
+    return CoreResource(
         ecosystem=ECOSYSTEM,
         tenant_id=TENANT_ID,
         resource_id=resource_id,
@@ -67,7 +67,7 @@ def _make_resource(resource_id: str = "cluster-1") -> Resource:
 
 
 def _make_identity(identity_id: str = "user-1") -> Identity:
-    return Identity(
+    return CoreIdentity(
         ecosystem=ECOSYSTEM,
         tenant_id=TENANT_ID,
         identity_id=identity_id,

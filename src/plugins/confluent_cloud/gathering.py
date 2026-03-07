@@ -12,7 +12,7 @@ from pydantic import SecretStr
 if TYPE_CHECKING:
     from plugins.confluent_cloud.connections import CCloudConnection
 
-from core.models import Identity, Resource, ResourceStatus
+from core.models import CoreIdentity, CoreResource, Identity, Resource, ResourceStatus
 from plugins.confluent_cloud.crn import parse_ccloud_crn
 
 logger = logging.getLogger(__name__)
@@ -58,7 +58,7 @@ def gather_environments(
     for item in conn.get("/org/v2/environments"):
         metadata_obj = item.get("metadata", {})
 
-        yield Resource(
+        yield CoreResource(
             ecosystem=ecosystem,
             tenant_id=tenant_id,
             resource_id=item["id"],
@@ -90,7 +90,7 @@ def gather_kafka_clusters(
             cloud = (spec.get("cloud") or "").lower().strip()
             region = (spec.get("region") or "").lower().strip()
 
-            yield Resource(
+            yield CoreResource(
                 ecosystem=ecosystem,
                 tenant_id=tenant_id,
                 resource_id=item["id"],
@@ -152,7 +152,7 @@ def gather_connectors(
                 metadata["kafka_api_key"] = config.get("kafka.api.key")
 
             # Connector API does not include created_at in response
-            yield Resource(
+            yield CoreResource(
                 ecosystem=ecosystem,
                 tenant_id=tenant_id,
                 resource_id=connector_id_obj.get("id", connector_name),
@@ -183,7 +183,7 @@ def gather_schema_registries(
             cloud = (spec.get("cloud") or "").lower().strip()
             region = (spec.get("region") or "").lower().strip()
 
-            yield Resource(
+            yield CoreResource(
                 ecosystem=ecosystem,
                 tenant_id=tenant_id,
                 resource_id=item["id"],
@@ -221,7 +221,7 @@ def gather_ksqldb_clusters(
             if not owner_id:
                 owner_id = "ksqldb_owner_unknown"
 
-            yield Resource(
+            yield CoreResource(
                 ecosystem=ecosystem,
                 tenant_id=tenant_id,
                 resource_id=item["id"],
@@ -267,7 +267,7 @@ def gather_flink_compute_pools(
             # Allocatable only if we have credentials for this region
             is_allocatable = region in flink_regions
 
-            yield Resource(
+            yield CoreResource(
                 ecosystem=ecosystem,
                 tenant_id=tenant_id,
                 resource_id=item["id"],
@@ -347,7 +347,7 @@ def gather_flink_statements(
                     hash_digest = hashlib.sha256(hash_input.encode()).hexdigest()[:12]
                     resource_id = f"flink_stmt_unknown_{hash_digest}"
 
-                yield Resource(
+                yield CoreResource(
                     ecosystem=ecosystem,
                     tenant_id=tenant_id,
                     resource_id=resource_id,
@@ -384,7 +384,7 @@ def gather_service_accounts(
     """
     for item in conn.get("/iam/v2/service-accounts"):
         metadata_obj = item.get("metadata", {})
-        yield Identity(
+        yield CoreIdentity(
             ecosystem=ecosystem,
             tenant_id=tenant_id,
             identity_id=item["id"],
@@ -408,7 +408,7 @@ def gather_users(
     """
     for item in conn.get("/iam/v2/users"):
         metadata_obj = item.get("metadata", {})
-        yield Identity(
+        yield CoreIdentity(
             ecosystem=ecosystem,
             tenant_id=tenant_id,
             identity_id=item["id"],
@@ -434,7 +434,7 @@ def gather_api_keys(
     for item in conn.get("/iam/v2/api-keys", params={"page_size": 100}):
         spec = item.get("spec", {})
         metadata_obj = item.get("metadata", {})
-        yield Identity(
+        yield CoreIdentity(
             ecosystem=ecosystem,
             tenant_id=tenant_id,
             identity_id=item["id"],
@@ -459,7 +459,7 @@ def gather_identity_providers(
     """
     for item in conn.get("/iam/v2/identity-providers"):
         metadata_obj = item.get("metadata", {})
-        yield Identity(
+        yield CoreIdentity(
             ecosystem=ecosystem,
             tenant_id=tenant_id,
             identity_id=item["id"],
@@ -487,7 +487,7 @@ def gather_identity_pools(
         path = f"/iam/v2/identity-providers/{provider_id}/identity-pools"
         for item in conn.get(path):
             metadata_obj = item.get("metadata", {})
-            yield Identity(
+            yield CoreIdentity(
                 ecosystem=ecosystem,
                 tenant_id=tenant_id,
                 identity_id=item["id"],

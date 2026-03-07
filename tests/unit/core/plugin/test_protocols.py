@@ -96,6 +96,11 @@ class FakeEcosystemPlugin:
     def build_shared_context(self, tenant_id: str) -> None:
         return None
 
+    def get_storage_module(self) -> Any:
+        from core.storage.backends.sqlmodel.module import CoreStorageModule
+
+        return CoreStorageModule()
+
     def close(self) -> None:
         pass
 

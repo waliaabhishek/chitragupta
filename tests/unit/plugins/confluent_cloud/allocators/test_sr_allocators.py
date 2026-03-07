@@ -10,16 +10,17 @@ import pytest
 from core.engine.allocation import AllocationContext
 from core.models import (
     BillingLineItem,
-    Identity,
+    CoreIdentity,
     IdentityResolution,
     IdentitySet,
 )
+from core.models.billing import CoreBillingLineItem
 
 
 @pytest.fixture
 def sr_billing_line() -> BillingLineItem:
     """Standard Schema Registry billing line for tests."""
-    return BillingLineItem(
+    return CoreBillingLineItem(
         ecosystem="confluent_cloud",
         tenant_id="org-123",
         timestamp=datetime(2026, 2, 1, tzinfo=UTC),
@@ -43,7 +44,7 @@ class TestSchemaRegistryAllocator:
 
         iset = IdentitySet()
         iset.add(
-            Identity(
+            CoreIdentity(
                 ecosystem="confluent_cloud",
                 tenant_id="org-123",
                 identity_id="sa-1",
@@ -51,7 +52,7 @@ class TestSchemaRegistryAllocator:
             )
         )
         iset.add(
-            Identity(
+            CoreIdentity(
                 ecosystem="confluent_cloud",
                 tenant_id="org-123",
                 identity_id="sa-2",
@@ -113,7 +114,7 @@ class TestSchemaRegistryAllocator:
 
         iset = IdentitySet()
         iset.add(
-            Identity(
+            CoreIdentity(
                 ecosystem="confluent_cloud",
                 tenant_id="org-123",
                 identity_id="sa-solo",
@@ -149,7 +150,7 @@ class TestSchemaRegistryAllocator:
 
         tenant_period = IdentitySet()
         tenant_period.add(
-            Identity(
+            CoreIdentity(
                 ecosystem="confluent_cloud",
                 tenant_id="org-123",
                 identity_id="sa-tenant",
@@ -184,7 +185,7 @@ class TestSchemaRegistryAllocator:
         tp = IdentitySet()
         for sa_id in ("sa-1", "sa-2"):
             tp.add(
-                Identity(
+                CoreIdentity(
                     ecosystem="confluent_cloud",
                     tenant_id="org-123",
                     identity_id=sa_id,
@@ -227,7 +228,7 @@ class TestSchemaRegistryAllocator:
         iset = IdentitySet()
         for i in range(1, 4):
             iset.add(
-                Identity(
+                CoreIdentity(
                     ecosystem="confluent_cloud",
                     tenant_id="org-123",
                     identity_id=f"sa-{i}",

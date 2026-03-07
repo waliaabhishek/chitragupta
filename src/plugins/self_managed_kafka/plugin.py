@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from core.metrics.protocol import MetricsSource
     from core.plugin.protocols import CostInput, ServiceHandler
     from plugins.self_managed_kafka.shared_context import SMKSharedContext
+    from plugins.self_managed_kafka.storage.module import SelfManagedKafkaStorageModule
 
 logger = logging.getLogger(__name__)
 LOGGER = logging.getLogger(__name__)
@@ -146,6 +147,11 @@ class SelfManagedKafkaPlugin:
             region=self._config.region,
         )
         return SMKSharedContext(cluster_resource=cluster)
+
+    def get_storage_module(self) -> SelfManagedKafkaStorageModule:
+        from plugins.self_managed_kafka.storage.module import SelfManagedKafkaStorageModule
+
+        return SelfManagedKafkaStorageModule()
 
     def close(self) -> None:
         """Clean up resources (AdminClient connection, metrics source)."""

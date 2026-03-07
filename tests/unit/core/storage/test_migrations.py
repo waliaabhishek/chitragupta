@@ -7,6 +7,7 @@ from sqlalchemy import inspect as sa_inspect
 from sqlmodel import create_engine
 
 from core.storage.backends.sqlmodel.engine import _engine_lock, _engines
+from core.storage.backends.sqlmodel.module import CoreStorageModule
 from core.storage.backends.sqlmodel.unit_of_work import SQLModelBackend
 
 
@@ -72,7 +73,7 @@ class TestBaselineMigration:
     def test_upgrade_creates_all_tables(self, tmp_path):
         db_path = tmp_path / "test.db"
         conn = f"sqlite:///{db_path}"
-        backend = SQLModelBackend(conn, use_migrations=True)
+        backend = SQLModelBackend(conn, CoreStorageModule(), use_migrations=True)
         backend.create_tables()
 
         engine = create_engine(conn)
@@ -117,13 +118,13 @@ class TestBaselineMigration:
         # Migration path
         db_migrate = tmp_path / "migrate.db"
         conn_migrate = f"sqlite:///{db_migrate}"
-        backend_m = SQLModelBackend(conn_migrate, use_migrations=True)
+        backend_m = SQLModelBackend(conn_migrate, CoreStorageModule(), use_migrations=True)
         backend_m.create_tables()
 
         # create_all path
         db_direct = tmp_path / "direct.db"
         conn_direct = f"sqlite:///{db_direct}"
-        backend_d = SQLModelBackend(conn_direct, use_migrations=False)
+        backend_d = SQLModelBackend(conn_direct, CoreStorageModule(), use_migrations=False)
         backend_d.create_tables()
 
         engine_m = create_engine(conn_migrate)

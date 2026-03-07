@@ -7,14 +7,12 @@ import pytest
 from sqlalchemy import Engine, inspect
 from sqlmodel import Session, SQLModel, create_engine
 
+from core.storage.backends.sqlmodel.base_tables import BillingTable, IdentityTable, ResourceTable
 from core.storage.backends.sqlmodel.tables import (
-    BillingTable,
     ChargebackDimensionTable,
     ChargebackFactTable,
     CustomTagTable,
-    IdentityTable,
     PipelineStateTable,
-    ResourceTable,
 )
 
 

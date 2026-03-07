@@ -8,11 +8,11 @@ from typing import Any
 import pytest
 from sqlmodel import Session, SQLModel, create_engine, select
 
-from core.models.billing import BillingLineItem
+from core.models.billing import BillingLineItem, CoreBillingLineItem
 from core.models.chargeback import ChargebackRow, CostType
-from core.models.identity import Identity
+from core.models.identity import CoreIdentity, Identity
 from core.models.pipeline import PipelineState
-from core.models.resource import Resource, ResourceStatus
+from core.models.resource import CoreResource, Resource, ResourceStatus
 from core.storage.backends.sqlmodel.repositories import (
     SQLModelBillingRepository,
     SQLModelChargebackRepository,
@@ -48,7 +48,7 @@ class TestResourceRepository:
             metadata={"cloud": "aws"},
         )
         defaults.update(overrides)
-        return Resource(**defaults)
+        return CoreResource(**defaults)
 
     def test_upsert_and_get(self, session: Session) -> None:
         repo = SQLModelResourceRepository(session)
@@ -285,7 +285,7 @@ class TestIdentityRepository:
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
         defaults.update(overrides)
-        return Identity(**defaults)
+        return CoreIdentity(**defaults)
 
     def test_upsert_and_get(self, session: Session) -> None:
         repo = SQLModelIdentityRepository(session)
@@ -401,7 +401,7 @@ class TestBillingRepository:
             total_cost=Decimal("1.00"),
         )
         defaults.update(overrides)
-        return BillingLineItem(**defaults)
+        return CoreBillingLineItem(**defaults)
 
     def test_upsert_and_find_by_date(self, session: Session) -> None:
         repo = SQLModelBillingRepository(session)
@@ -793,7 +793,7 @@ class TestResourceFindPaginated:
             metadata={},
         )
         defaults.update(overrides)
-        return Resource(**defaults)
+        return CoreResource(**defaults)
 
     def test_basic_pagination(self, session: Session) -> None:
         repo = SQLModelResourceRepository(session)
@@ -836,7 +836,7 @@ class TestIdentityFindPaginated:
         repo = SQLModelIdentityRepository(session)
         for i in range(3):
             repo.upsert(
-                Identity(
+                CoreIdentity(
                     ecosystem="eco",
                     tenant_id="t1",
                     identity_id=f"u{i}",
@@ -852,7 +852,7 @@ class TestIdentityFindPaginated:
     def test_with_type_filter(self, session: Session) -> None:
         repo = SQLModelIdentityRepository(session)
         repo.upsert(
-            Identity(
+            CoreIdentity(
                 ecosystem="eco",
                 tenant_id="t1",
                 identity_id="u1",
@@ -861,7 +861,7 @@ class TestIdentityFindPaginated:
             )
         )
         repo.upsert(
-            Identity(
+            CoreIdentity(
                 ecosystem="eco",
                 tenant_id="t1",
                 identity_id="sa1",
@@ -889,7 +889,7 @@ class TestBillingFindByFilters:
             total_cost=Decimal("1.00"),
         )
         defaults.update(overrides)
-        return BillingLineItem(**defaults)
+        return CoreBillingLineItem(**defaults)
 
     def test_all_filters(self, session: Session) -> None:
         repo = SQLModelBillingRepository(session)

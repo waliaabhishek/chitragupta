@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
-from core.models import Identity, MetricRow, Resource
+from core.models import CoreIdentity, CoreResource, Identity, MetricRow, Resource
 
 _BILLING_START = datetime(2026, 2, 1, tzinfo=UTC)
 _BILLING_END = datetime(2026, 2, 2, tzinfo=UTC)
@@ -28,7 +28,7 @@ def _make_metric_row(key: str, stmt_name: str, value: float) -> MetricRow:
 
 
 def _make_stmt_resource(stmt_name: str, owner_id: str) -> Resource:
-    return Resource(
+    return CoreResource(
         ecosystem="confluent_cloud",
         tenant_id=_TENANT,
         resource_id=f"uid-{stmt_name}",
@@ -40,7 +40,7 @@ def _make_stmt_resource(stmt_name: str, owner_id: str) -> Resource:
 
 
 def _make_owner(owner_id: str) -> Identity:
-    return Identity(
+    return CoreIdentity(
         ecosystem="confluent_cloud",
         tenant_id=_TENANT,
         identity_id=owner_id,

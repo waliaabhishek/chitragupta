@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from core.metrics.config import create_metrics_source
-from core.models import Resource
+from core.models import CoreResource
 from plugins.generic_metrics_only.config import GenericMetricsOnlyConfig
 from plugins.generic_metrics_only.cost_input import GenericConstructedCostInput
 from plugins.generic_metrics_only.handler import GenericMetricsOnlyHandler
@@ -14,6 +14,7 @@ from plugins.generic_metrics_only.shared_context import GenericSharedContext
 if TYPE_CHECKING:
     from core.metrics.protocol import MetricsSource
     from core.plugin.protocols import CostInput, ServiceHandler
+    from plugins.generic_metrics_only.storage.module import GenericMetricsOnlyStorageModule
 logger = logging.getLogger(__name__)
 
 
@@ -65,7 +66,7 @@ class GenericMetricsOnlyPlugin:
     def build_shared_context(self, tenant_id: str) -> GenericSharedContext:
         if self._config is None:
             raise RuntimeError("Plugin not initialized.")
-        cluster = Resource(
+        cluster = CoreResource(
             ecosystem=self._config.ecosystem_name,
             tenant_id=tenant_id,
             resource_id=self._config.cluster_id,
@@ -78,6 +79,11 @@ class GenericMetricsOnlyPlugin:
             metadata={},
         )
         return GenericSharedContext(cluster_resource=cluster)
+
+    def get_storage_module(self) -> GenericMetricsOnlyStorageModule:
+        from plugins.generic_metrics_only.storage.module import GenericMetricsOnlyStorageModule
+
+        return GenericMetricsOnlyStorageModule()
 
     def close(self) -> None:
         if self._metrics_source is not None:

@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from core.models import Identity, MetricRow
+from core.models import CoreIdentity, CoreResource, MetricRow
 
 
 class TestKafkaHandlerProperties:
@@ -246,12 +246,12 @@ class TestKafkaHandlerGatherResources:
 
     def test_calls_gather_environments_and_clusters(self, mock_uow: MagicMock) -> None:
         """gather_resources yields environment and cluster resources from shared_ctx."""
-        from core.models import Resource, ResourceStatus
+        from core.models import ResourceStatus
         from plugins.confluent_cloud.handlers.kafka import KafkaHandler
         from plugins.confluent_cloud.shared_context import CCloudSharedContext
 
         mock_conn = MagicMock()
-        env_resource = Resource(
+        env_resource = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="env-abc",
@@ -259,7 +259,7 @@ class TestKafkaHandlerGatherResources:
             status=ResourceStatus.ACTIVE,
             metadata={},
         )
-        cluster_resource = Resource(
+        cluster_resource = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="lkc-abc",
@@ -299,11 +299,11 @@ class TestKafkaHandlerGatherIdentities:
         from plugins.confluent_cloud.handlers.kafka import KafkaHandler
 
         mock_conn = MagicMock()
-        sa = Identity(
+        sa = CoreIdentity(
             ecosystem="confluent_cloud", tenant_id="org-123", identity_id="sa-1", identity_type="service_account"
         )
-        user = Identity(ecosystem="confluent_cloud", tenant_id="org-123", identity_id="u-1", identity_type="user")
-        api_key = Identity(
+        user = CoreIdentity(ecosystem="confluent_cloud", tenant_id="org-123", identity_id="u-1", identity_type="user")
+        api_key = CoreIdentity(
             ecosystem="confluent_cloud", tenant_id="org-123", identity_id="key-1", identity_type="api_key"
         )
 
@@ -337,19 +337,23 @@ class TestKafkaHandlerGatherIdentities:
 
         mock_conn = MagicMock()
         sas = [
-            Identity(
+            CoreIdentity(
                 ecosystem="confluent_cloud", tenant_id="org-123", identity_id="sa-1", identity_type="service_account"
             ),
-            Identity(
+            CoreIdentity(
                 ecosystem="confluent_cloud", tenant_id="org-123", identity_id="sa-2", identity_type="service_account"
             ),
         ]
         users = [
-            Identity(ecosystem="confluent_cloud", tenant_id="org-123", identity_id="u-1", identity_type="user"),
+            CoreIdentity(ecosystem="confluent_cloud", tenant_id="org-123", identity_id="u-1", identity_type="user"),
         ]
         api_keys = [
-            Identity(ecosystem="confluent_cloud", tenant_id="org-123", identity_id="key-1", identity_type="api_key"),
-            Identity(ecosystem="confluent_cloud", tenant_id="org-123", identity_id="key-2", identity_type="api_key"),
+            CoreIdentity(
+                ecosystem="confluent_cloud", tenant_id="org-123", identity_id="key-1", identity_type="api_key"
+            ),
+            CoreIdentity(
+                ecosystem="confluent_cloud", tenant_id="org-123", identity_id="key-2", identity_type="api_key"
+            ),
         ]
 
         with (
@@ -375,7 +379,7 @@ class TestKafkaHandlerGatherIdentitiesProviderPools:
         from plugins.confluent_cloud.handlers.kafka import KafkaHandler
 
         mock_conn = MagicMock()
-        provider = Identity(
+        provider = CoreIdentity(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             identity_id="op-1",
@@ -405,19 +409,19 @@ class TestKafkaHandlerGatherIdentitiesProviderPools:
         from plugins.confluent_cloud.handlers.kafka import KafkaHandler
 
         mock_conn = MagicMock()
-        provider1 = Identity(
+        provider1 = CoreIdentity(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             identity_id="op-aaa",
             identity_type="identity_provider",
         )
-        provider2 = Identity(
+        provider2 = CoreIdentity(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             identity_id="op-bbb",
             identity_type="identity_provider",
         )
-        pool = Identity(
+        pool = CoreIdentity(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             identity_id="pool-1",
@@ -452,19 +456,19 @@ class TestKafkaHandlerGatherIdentitiesProviderPools:
         from plugins.confluent_cloud.handlers.kafka import KafkaHandler
 
         mock_conn = MagicMock()
-        provider = Identity(
+        provider = CoreIdentity(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             identity_id="op-1",
             identity_type="identity_provider",
         )
-        pool1 = Identity(
+        pool1 = CoreIdentity(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             identity_id="pool-1",
             identity_type="identity_pool",
         )
-        pool2 = Identity(
+        pool2 = CoreIdentity(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             identity_id="pool-2",
@@ -501,7 +505,7 @@ class TestKafkaHandlerResolveIdentities:
         """API key owners are resolved to resource_active."""
         from plugins.confluent_cloud.handlers.kafka import KafkaHandler
 
-        api_key = Identity(
+        api_key = CoreIdentity(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             identity_id="api-key-1",
@@ -509,7 +513,7 @@ class TestKafkaHandlerResolveIdentities:
             metadata={"resource_id": "lkc-abc", "owner_id": "sa-owner"},
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        sa_owner = Identity(
+        sa_owner = CoreIdentity(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             identity_id="sa-owner",

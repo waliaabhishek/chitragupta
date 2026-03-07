@@ -6,7 +6,7 @@ import httpx
 import respx
 from pydantic import SecretStr
 
-from core.models import ResourceStatus
+from core.models import CoreResource, ResourceStatus
 from plugins.confluent_cloud.connections import CCloudConnection
 
 
@@ -681,7 +681,7 @@ class TestGatherFlinkStatements:
 
     @respx.mock
     def test_gather_flink_statements_standard(self):
-        from core.models import Resource, ResourceStatus
+        from core.models import ResourceStatus
         from plugins.confluent_cloud.gathering import gather_flink_statements
 
         # Regional Flink API
@@ -704,7 +704,7 @@ class TestGatherFlinkStatements:
             )
         )
 
-        pool = Resource(
+        pool = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="lfcp-abc",
@@ -732,7 +732,7 @@ class TestGatherFlinkStatements:
 
     @respx.mock
     def test_gather_flink_statements_stopped(self):
-        from core.models import Resource, ResourceStatus
+        from core.models import ResourceStatus
         from plugins.confluent_cloud.gathering import gather_flink_statements
 
         respx.get(
@@ -754,7 +754,7 @@ class TestGatherFlinkStatements:
             )
         )
 
-        pool = Resource(
+        pool = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="lfcp-abc",
@@ -777,7 +777,7 @@ class TestGatherFlinkStatements:
     @respx.mock
     def test_gather_flink_statements_regional_url(self):
         """Verify correct regional base URL is constructed."""
-        from core.models import Resource, ResourceStatus
+        from core.models import ResourceStatus
         from plugins.confluent_cloud.gathering import gather_flink_statements
 
         # Expect request to eu-central-1.gcp regional URL
@@ -785,7 +785,7 @@ class TestGatherFlinkStatements:
             "https://flink.eu-central-1.gcp.confluent.cloud/sql/v1/organizations/org-123/environments/env-xyz/statements"
         ).mock(return_value=httpx.Response(200, json={"data": [], "metadata": {}}))
 
-        pool = Resource(
+        pool = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="lfcp-eu",
@@ -810,7 +810,7 @@ class TestGatherFlinkStatements:
     @respx.mock
     def test_gather_flink_statements_missing_id_uses_sentinel(self):
         """Verify deterministic sentinel fallback when uid and name are missing."""
-        from core.models import Resource, ResourceStatus
+        from core.models import ResourceStatus
         from plugins.confluent_cloud.gathering import gather_flink_statements
 
         respx.get(
@@ -832,7 +832,7 @@ class TestGatherFlinkStatements:
             )
         )
 
-        pool = Resource(
+        pool = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="lfcp-abc",
@@ -858,7 +858,7 @@ class TestGatherFlinkStatements:
     @respx.mock
     def test_gather_flink_statements_connection_reuse(self):
         """Verify connections are reused for pools in the same region."""
-        from core.models import Resource, ResourceStatus
+        from core.models import ResourceStatus
         from plugins.confluent_cloud.gathering import gather_flink_statements
 
         # Two pools in same region should reuse connection
@@ -869,7 +869,7 @@ class TestGatherFlinkStatements:
             "https://flink.us-east-1.aws.confluent.cloud/sql/v1/organizations/org-123/environments/env-b/statements"
         ).mock(return_value=httpx.Response(200, json={"data": [], "metadata": {}}))
 
-        pool1 = Resource(
+        pool1 = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="lfcp-1",
@@ -878,7 +878,7 @@ class TestGatherFlinkStatements:
             status=ResourceStatus.ACTIVE,
             metadata={"cloud": "aws", "region": "us-east-1", "is_allocatable": True},
         )
-        pool2 = Resource(
+        pool2 = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="lfcp-2",
@@ -1182,14 +1182,14 @@ class TestPageSizeOverrides:
 
     @respx.mock
     def test_flink_statements_uses_page_size_50(self) -> None:
-        from core.models import Resource, ResourceStatus
+        from core.models import ResourceStatus
         from plugins.confluent_cloud.gathering import gather_flink_statements
 
         respx.get(
             "https://flink.us-east-1.aws.confluent.cloud/sql/v1/organizations/org-123/environments/env-abc/statements"
         ).mock(return_value=httpx.Response(200, json={"data": [], "metadata": {}}))
 
-        pool = Resource(
+        pool = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="lfcp-abc",

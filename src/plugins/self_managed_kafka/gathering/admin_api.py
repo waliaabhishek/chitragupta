@@ -11,7 +11,7 @@ from collections.abc import Iterable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from core.models import Resource
+from core.models import CoreResource, Resource
 
 if TYPE_CHECKING:
     from plugins.self_managed_kafka.config import ResourceSourceConfig
@@ -74,7 +74,7 @@ def gather_brokers_from_admin(
             host = broker.get("host", "")
             port = broker.get("port", "")
             display_name = f"{host}:{port}" if host and port else broker_id
-            yield Resource(
+            yield CoreResource(
                 ecosystem=ecosystem,
                 tenant_id=tenant_id,
                 resource_id=f"{cluster_id}:broker:{broker_id}",
@@ -105,7 +105,7 @@ def gather_topics_from_admin(
     try:
         topics = admin_client.list_topics()
         for topic_name in topics:
-            yield Resource(
+            yield CoreResource(
                 ecosystem=ecosystem,
                 tenant_id=tenant_id,
                 resource_id=f"{cluster_id}:topic:{topic_name}",

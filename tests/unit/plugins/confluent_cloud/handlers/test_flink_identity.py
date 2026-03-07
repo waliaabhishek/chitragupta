@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
-from core.models import Identity, MetricRow, Resource
+from core.models import CoreIdentity, CoreResource, MetricRow
 
 
 class TestResolveFlinkIdentityNoMetrics:
@@ -125,7 +125,7 @@ class TestResolveFlinkIdentityWithStatements:
             ]
         }
 
-        stmt_resource = Resource(
+        stmt_resource = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="stmt-uid-1",
@@ -134,7 +134,7 @@ class TestResolveFlinkIdentityWithStatements:
             owner_id="sa-owner-1",
             metadata={"statement_name": "my-statement", "compute_pool_id": "lfcp-pool-1"},
         )
-        Identity(
+        CoreIdentity(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             identity_id="sa-owner-1",
@@ -179,7 +179,7 @@ class TestResolveFlinkIdentityWithStatements:
             ]
         }
 
-        stmt_a = Resource(
+        stmt_a = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="uid-a",
@@ -188,7 +188,7 @@ class TestResolveFlinkIdentityWithStatements:
             owner_id="sa-1",
             metadata={"statement_name": "stmt-a", "compute_pool_id": "lfcp-pool-1"},
         )
-        stmt_b = Resource(
+        stmt_b = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="uid-b",
@@ -197,13 +197,13 @@ class TestResolveFlinkIdentityWithStatements:
             owner_id="sa-2",
             metadata={"statement_name": "stmt-b", "compute_pool_id": "lfcp-pool-1"},
         )
-        Identity(
+        CoreIdentity(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             identity_id="sa-1",
             identity_type="service_account",
         )
-        Identity(
+        CoreIdentity(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             identity_id="sa-2",
@@ -248,7 +248,7 @@ class TestResolveFlinkIdentityWithStatements:
             ]
         }
 
-        stmt_x = Resource(
+        stmt_x = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="uid-x",
@@ -257,7 +257,7 @@ class TestResolveFlinkIdentityWithStatements:
             owner_id="sa-same",
             metadata={"statement_name": "stmt-x", "compute_pool_id": "lfcp-pool-1"},
         )
-        stmt_y = Resource(
+        stmt_y = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="uid-y",
@@ -266,7 +266,7 @@ class TestResolveFlinkIdentityWithStatements:
             owner_id="sa-same",
             metadata={"statement_name": "stmt-y", "compute_pool_id": "lfcp-pool-1"},
         )
-        Identity(
+        CoreIdentity(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             identity_id="sa-same",
@@ -339,7 +339,7 @@ class TestResolveFlinkIdentityWithStatements:
             ]
         }
 
-        stmt = Resource(
+        stmt = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="uid-orphan",
@@ -379,7 +379,7 @@ class TestResolveFlinkIdentityWithStatements:
             ]
         }
 
-        stmt = Resource(
+        stmt = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="uid-z",
@@ -422,7 +422,7 @@ class TestResolveFlinkIdentityWithStatements:
             ]
         }
 
-        stmt = Resource(
+        stmt = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="uid-1",
@@ -431,7 +431,7 @@ class TestResolveFlinkIdentityWithStatements:
             owner_id="sa-1",
             metadata={"statement_name": "stmt-1", "compute_pool_id": "lfcp-pool-1"},
         )
-        Identity(
+        CoreIdentity(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             identity_id="sa-1",
@@ -475,7 +475,7 @@ class TestResolveFlinkIdentityWithStatements:
             ]
         }
 
-        stmt = Resource(
+        stmt = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="uid-1",
@@ -484,7 +484,7 @@ class TestResolveFlinkIdentityWithStatements:
             owner_id="sa-1",
             metadata={"statement_name": "stmt-1", "compute_pool_id": "lfcp-pool-1"},
         )
-        Identity(
+        CoreIdentity(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             identity_id="sa-1",
@@ -513,7 +513,7 @@ class TestFlinkFallbackFromRunningStatements:
         """No metrics, running statements in DB → owners appear in resource_active with weight 1.0."""
         from plugins.confluent_cloud.handlers.flink_identity import resolve_flink_identity
 
-        running_stmt = Resource(
+        running_stmt = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="stmt-uid-run1",
@@ -522,7 +522,7 @@ class TestFlinkFallbackFromRunningStatements:
             owner_id="sa-owner-1",
             metadata={"compute_pool_id": "lfcp-pool-1", "is_stopped": False},
         )
-        Identity(
+        CoreIdentity(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             identity_id="sa-owner-1",
@@ -551,7 +551,7 @@ class TestFlinkFallbackFromRunningStatements:
         """COMPLETED/FAILED/STOPPED statements excluded; only RUNNING statement owner appears."""
         from plugins.confluent_cloud.handlers.flink_identity import resolve_flink_identity
 
-        running_stmt = Resource(
+        running_stmt = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="stmt-run",
@@ -560,7 +560,7 @@ class TestFlinkFallbackFromRunningStatements:
             owner_id="sa-running",
             metadata={"compute_pool_id": "lfcp-pool-1", "is_stopped": False},
         )
-        stopped_stmt = Resource(
+        stopped_stmt = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="stmt-stop",
@@ -569,7 +569,7 @@ class TestFlinkFallbackFromRunningStatements:
             owner_id="sa-stopped",
             metadata={"compute_pool_id": "lfcp-pool-1", "is_stopped": True},
         )
-        completed_stmt = Resource(
+        completed_stmt = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="stmt-done",
@@ -578,7 +578,7 @@ class TestFlinkFallbackFromRunningStatements:
             owner_id="sa-completed",
             metadata={"compute_pool_id": "lfcp-pool-1", "is_stopped": True},
         )
-        failed_stmt = Resource(
+        failed_stmt = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="stmt-fail",
@@ -587,7 +587,7 @@ class TestFlinkFallbackFromRunningStatements:
             owner_id="sa-failed",
             metadata={"compute_pool_id": "lfcp-pool-1", "is_stopped": True},
         )
-        Identity(
+        CoreIdentity(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             identity_id="sa-running",
@@ -638,7 +638,7 @@ class TestFlinkFallbackFromRunningStatements:
         """No metrics; DB has running statements but for a different compute pool → empty result."""
         from plugins.confluent_cloud.handlers.flink_identity import resolve_flink_identity
 
-        other_pool_stmt = Resource(
+        other_pool_stmt = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="stmt-other",
@@ -668,7 +668,7 @@ class TestFlinkFallbackFromRunningStatements:
         """Running statement with owner_id not in identities table creates sentinel."""
         from plugins.confluent_cloud.handlers.flink_identity import resolve_flink_identity
 
-        stmt = Resource(
+        stmt = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="stmt-uid",
@@ -702,7 +702,7 @@ class TestFallbackFromRunningStatementsDirect:
         """Stopped statement (is_stopped=True) must be excluded; result is empty."""
         from plugins.confluent_cloud.handlers.flink_identity import _fallback_from_running_statements
 
-        stopped_stmt = Resource(
+        stopped_stmt = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="stmt-stopped",
@@ -729,7 +729,7 @@ class TestFallbackFromRunningStatementsDirect:
         """Running statement (is_stopped=False) must appear in the returned IdentitySet."""
         from plugins.confluent_cloud.handlers.flink_identity import _fallback_from_running_statements
 
-        running_stmt = Resource(
+        running_stmt = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="stmt-running",
@@ -738,7 +738,7 @@ class TestFallbackFromRunningStatementsDirect:
             owner_id="sa-active",
             metadata={"compute_pool_id": "pool-1", "is_stopped": False},
         )
-        Identity(
+        CoreIdentity(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             identity_id="sa-active",
@@ -764,7 +764,7 @@ class TestFallbackFromRunningStatementsDirect:
         from plugins.confluent_cloud.handlers.flink_identity import _fallback_from_running_statements
 
         stmts = [
-            Resource(
+            CoreResource(
                 ecosystem="confluent_cloud",
                 tenant_id="org-123",
                 resource_id=f"stmt-run-{i}",
@@ -775,7 +775,7 @@ class TestFallbackFromRunningStatementsDirect:
             )
             for i in range(2)
         ] + [
-            Resource(
+            CoreResource(
                 ecosystem="confluent_cloud",
                 tenant_id="org-123",
                 resource_id=f"stmt-stop-{i}",
@@ -787,7 +787,7 @@ class TestFallbackFromRunningStatementsDirect:
             for i in range(3)
         ]
         [
-            Identity(
+            CoreIdentity(
                 ecosystem="confluent_cloud",
                 tenant_id="org-123",
                 identity_id=f"sa-run-{i}",
@@ -816,7 +816,7 @@ class TestFallbackFromRunningStatementsDirect:
         """Regression: resolve_flink_identity with metrics_data=None must not count stopped statements."""
         from plugins.confluent_cloud.handlers.flink_identity import resolve_flink_identity
 
-        running_stmt = Resource(
+        running_stmt = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="stmt-run",
@@ -825,7 +825,7 @@ class TestFallbackFromRunningStatementsDirect:
             owner_id="sa-active",
             metadata={"compute_pool_id": "pool-reg", "is_stopped": False},
         )
-        stopped_stmt = Resource(
+        stopped_stmt = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="stmt-stop",
@@ -834,7 +834,7 @@ class TestFallbackFromRunningStatementsDirect:
             owner_id="sa-ghost",
             metadata={"compute_pool_id": "pool-reg", "is_stopped": True},
         )
-        Identity(
+        CoreIdentity(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             identity_id="sa-active",
@@ -930,7 +930,7 @@ class TestFlinkIdentityDirectLookup:
         """_fallback_from_running_statements uses uow.identities.get(), never find_by_period."""
         from plugins.confluent_cloud.handlers.flink_identity import resolve_flink_identity
 
-        running_stmt = Resource(
+        running_stmt = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="stmt-uid-run1",
@@ -939,7 +939,7 @@ class TestFlinkIdentityDirectLookup:
             owner_id="sa-owner-1",
             metadata={"compute_pool_id": "lfcp-pool-1", "is_stopped": False},
         )
-        owner = Identity(
+        owner = CoreIdentity(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             identity_id="sa-owner-1",
@@ -976,7 +976,7 @@ class TestFlinkIdentityDirectLookup:
                 )
             ]
         }
-        stmt = Resource(
+        stmt = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="stmt-uid-1",
@@ -985,7 +985,7 @@ class TestFlinkIdentityDirectLookup:
             owner_id="sa-owner-1",
             metadata={"statement_name": "my-stmt", "compute_pool_id": "lfcp-pool-1"},
         )
-        owner = Identity(
+        owner = CoreIdentity(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             identity_id="sa-owner-1",
@@ -1030,7 +1030,7 @@ class TestFlinkIdentityDirectLookup:
                 ),
             ]
         }
-        stmt_x = Resource(
+        stmt_x = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="uid-x",
@@ -1039,7 +1039,7 @@ class TestFlinkIdentityDirectLookup:
             owner_id="sa-shared-owner",
             metadata={"statement_name": "stmt-x", "compute_pool_id": "lfcp-pool-1"},
         )
-        stmt_y = Resource(
+        stmt_y = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="uid-y",
@@ -1048,7 +1048,7 @@ class TestFlinkIdentityDirectLookup:
             owner_id="sa-shared-owner",
             metadata={"statement_name": "stmt-y", "compute_pool_id": "lfcp-pool-1"},
         )
-        shared_owner = Identity(
+        shared_owner = CoreIdentity(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             identity_id="sa-shared-owner",
@@ -1075,7 +1075,7 @@ class TestFlinkIdentityDirectLookup:
         """Fallback path: two running stmts with same owner → only one identities.get() (cache)."""
         from plugins.confluent_cloud.handlers.flink_identity import resolve_flink_identity
 
-        running_stmt_1 = Resource(
+        running_stmt_1 = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="stmt-uid-1",
@@ -1084,7 +1084,7 @@ class TestFlinkIdentityDirectLookup:
             owner_id="sa-shared",
             metadata={"compute_pool_id": "lfcp-pool-1", "is_stopped": False},
         )
-        running_stmt_2 = Resource(
+        running_stmt_2 = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="stmt-uid-2",
@@ -1093,7 +1093,7 @@ class TestFlinkIdentityDirectLookup:
             owner_id="sa-shared",
             metadata={"compute_pool_id": "lfcp-pool-1", "is_stopped": False},
         )
-        owner = Identity(
+        owner = CoreIdentity(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             identity_id="sa-shared",
@@ -1137,7 +1137,7 @@ class TestFlinkIdentityDirectLookup:
             ]
         }
         # DB returns a flink_statement with matching display_name but from a different pool
-        stmt_cross_pool = Resource(
+        stmt_cross_pool = CoreResource(
             ecosystem="confluent_cloud",
             tenant_id="org-123",
             resource_id="uid-cross",

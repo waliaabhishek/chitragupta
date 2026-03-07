@@ -7,14 +7,14 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from core.models import MetricRow, Resource, ResourceStatus
+from core.models import CoreResource, MetricRow, ResourceStatus
 
 
 def _make_smk_ctx(cluster_id: str = "kafka-001") -> object:
     """Create an SMKSharedContext with a cluster resource matching cluster_id."""
     from plugins.self_managed_kafka.shared_context import SMKSharedContext
 
-    cluster = Resource(
+    cluster = CoreResource(
         ecosystem="self_managed_kafka",
         tenant_id="tenant-1",
         resource_id=cluster_id,
