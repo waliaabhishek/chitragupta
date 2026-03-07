@@ -522,6 +522,11 @@ class TestOrchestratorInit:
         assert unalloc.identity_type == "system"
         assert unalloc.display_name == "Unallocated Costs"
 
+    def test_metrics_prefetch_workers_wired_from_tenant_config(self) -> None:
+        """TenantConfig.metrics_prefetch_workers is passed through to CalculatePhase."""
+        orch, _ = _create_orchestrator(metrics_prefetch_workers=7)
+        assert orch._calculate_phase._metrics_prefetch_workers == 7
+
 
 class TestGatherPhase:
     def test_resources_and_identities_gathered(self) -> None:

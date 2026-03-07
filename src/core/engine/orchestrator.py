@@ -5,6 +5,7 @@ import logging
 import time
 from collections import defaultdict
 from collections.abc import Callable, Sequence
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from datetime import date as date_type
@@ -348,6 +349,7 @@ class CalculatePhase:
         allocator_params: dict[str, float | int | str | bool],
         metrics_step: timedelta,
         extra_granularity_durations: dict[str, timedelta] | None = None,
+        metrics_prefetch_workers: int = 4,
     ) -> None:
         self._ecosystem = ecosystem
         self._tenant_id = tenant_id
@@ -358,6 +360,7 @@ class CalculatePhase:
         self._identity_overrides = identity_overrides
         self._allocator_params = allocator_params
         self._metrics_step = metrics_step
+        self._metrics_prefetch_workers = metrics_prefetch_workers
         self._merged_granularity_durations: dict[str, timedelta] = {
             **_DEFAULT_GRANULARITY_DURATION,
             **(extra_granularity_durations or {}),
@@ -403,15 +406,44 @@ class CalculatePhase:
                     metrics_groups[group_key] = existing
 
         prefetched: dict[tuple[str, datetime, datetime], dict[str, list[MetricRow]]] = {}
-        if self._metrics_source:
-            for (resource_id, m_start, m_end), queries in metrics_groups.items():
-                prefetched[(resource_id, m_start, m_end)] = self._metrics_source.query(
-                    queries,
-                    start=m_start,
-                    end=m_end,
-                    step=self._metrics_step,
-                    resource_id_filter=resource_id,
-                )
+        if not self._metrics_source:
+            return prefetched
+        if not metrics_groups:
+            return prefetched
+
+        def _fetch_group(
+            key: tuple[str, datetime, datetime],
+            queries: list[MetricQuery],
+        ) -> tuple[tuple[str, datetime, datetime], dict[str, list[MetricRow]]]:
+            resource_id, m_start, m_end = key
+            result = self._metrics_source.query(  # type: ignore[union-attr]  # non-None: guarded by early-return above
+                queries,
+                start=m_start,
+                end=m_end,
+                step=self._metrics_step,
+                resource_id_filter=resource_id,
+            )
+            return key, result
+
+        n_workers = min(self._metrics_prefetch_workers, len(metrics_groups))
+        with ThreadPoolExecutor(max_workers=n_workers) as executor:
+            future_map = {executor.submit(_fetch_group, key, queries): key for key, queries in metrics_groups.items()}
+            for future in as_completed(future_map):
+                key = future_map[future]
+                try:
+                    _, result = future.result()
+                    prefetched[key] = result
+                except Exception:
+                    resource_id, m_start, m_end = key
+                    logger.warning(
+                        "Metrics prefetch failed for resource=%s window=[%s, %s] — skipping",
+                        resource_id,
+                        m_start,
+                        m_end,
+                        exc_info=True,
+                    )
+                    prefetched[key] = {}
+
         return prefetched
 
     def _compute_billing_windows(self, billing_lines: list[BillingLineItem]) -> set[tuple[datetime, datetime]]:
@@ -766,6 +798,7 @@ class ChargebackOrchestrator:
             allocator_params=allocator_params,
             metrics_step=metrics_step,
             extra_granularity_durations=extra_granularity_durations,
+            metrics_prefetch_workers=tenant_config.metrics_prefetch_workers,
         )
         self._emit_phase = EmitPhase(
             ecosystem=self._ecosystem,

@@ -132,6 +132,7 @@ class TenantConfig(BaseModel):
     zero_gather_deletion_threshold: int = Field(default=-1, ge=-1)
     gather_failure_threshold: int = Field(default=5, gt=0)
     tenant_execution_timeout_seconds: int = Field(default=3600, ge=0)
+    metrics_prefetch_workers: int = Field(default=4, ge=1, le=20)
     storage: StorageConfig = Field(default_factory=StorageConfig)
     plugin_settings: PluginSettingsBase = Field(default_factory=PluginSettingsBase)
 
