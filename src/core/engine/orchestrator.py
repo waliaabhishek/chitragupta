@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import calendar
 import logging
+import time
 from collections import defaultdict
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
@@ -867,23 +868,33 @@ class ChargebackOrchestrator:
             pending_states = all_pending[: self._max_dates_per_run]
 
         for pipeline_state in pending_states:
+            tracking_date = pipeline_state.tracking_date
+            logger.info("Processing billing date: %s", tracking_date)
+            start_time = time.time()
             try:
                 with self._storage_backend.create_unit_of_work() as uow:
-                    rows = self._calculate_phase.run(uow, pipeline_state.tracking_date)
+                    rows = self._calculate_phase.run(uow, tracking_date)
                     chargeback_rows_written += rows
                     dates_calculated += 1
                     uow.commit()
+                elapsed = int(time.time() - start_time)
+                logger.info(
+                    "Processed %d chargeback rows for billing date: %s in %d seconds",
+                    rows,
+                    tracking_date,
+                    elapsed,
+                )
                 # Emit after commit — best-effort, failures logged but not fatal
-                emit_result = self._emit_phase.run(pipeline_state.tracking_date)
+                emit_result = self._emit_phase.run(tracking_date)
                 errors.extend(emit_result.errors)
             except Exception as exc:
                 logger.exception(
                     "Calculate failed for %s date %s: %s",
                     self._tenant_name,
-                    pipeline_state.tracking_date,
+                    tracking_date,
                     exc,
                 )
-                errors.append(f"Calculate failed for date {pipeline_state.tracking_date}: {exc}")
+                errors.append(f"Calculate failed for date {tracking_date}: {exc}")
 
         return PipelineRunResult(
             tenant_name=self._tenant_name,
