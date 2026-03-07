@@ -19,6 +19,7 @@ def base_settings() -> dict:
             "network_ingress_per_gib": "0.01",
             "network_egress_per_gib": "0.02",
         },
+        "identity_source": {"source": "static"},
         "metrics": {"url": "http://prom:9090"},
     }
 

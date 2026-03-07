@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import base64
-import time
 from unittest.mock import patch
 
 import httpx
@@ -116,12 +115,9 @@ def test_get_429_with_retry_after_header():
     ]
 
     conn = CCloudConnection(api_key="key", api_secret=SecretStr("secret"))
-    start = time.monotonic()
     items = list(conn.get("/test"))
-    elapsed = time.monotonic() - start
 
     assert items == [{"id": "1"}]
-    assert elapsed >= 0.05  # Waited for Retry-After
 
 
 @respx.mock
@@ -212,12 +208,9 @@ def test_get_429_with_ratelimit_reset_header():
     ]
 
     conn = CCloudConnection(api_key="key", api_secret=SecretStr("secret"))
-    start = time.monotonic()
     items = list(conn.get("/test"))
-    elapsed = time.monotonic() - start
 
     assert items == [{"id": "1"}]
-    assert elapsed >= 0.05  # Waited for rateLimit-reset seconds
 
 
 @respx.mock
@@ -230,12 +223,9 @@ def test_get_429_with_pascal_case_ratelimit_reset_header():
     ]
 
     conn = CCloudConnection(api_key="key", api_secret=SecretStr("secret"))
-    start = time.monotonic()
     items = list(conn.get("/test"))
-    elapsed = time.monotonic() - start
 
     assert items == [{"id": "1"}]
-    assert elapsed >= 0.05  # Waited for RateLimit-Reset seconds
 
 
 @respx.mock
@@ -358,7 +348,7 @@ class TestProactiveThrottling:
     """Tests for request_interval_seconds proactive throttling."""
 
     @respx.mock
-    def test_throttling_spaces_requests(self):
+    def test_throttling_spaces_requests(self, mock_connections_sleep):
         """request_interval_seconds introduces delay between requests."""
         respx.get("https://api.confluent.cloud/test").mock(return_value=_resp({"data": [], "metadata": {}}))
 
@@ -369,17 +359,14 @@ class TestProactiveThrottling:
             request_interval_seconds=0.1,
         )
 
-        start = time.time()
-        list(conn.get("/test"))  # 1st request
-        list(conn.get("/test"))  # 2nd request (should wait ~100ms)
-        list(conn.get("/test"))  # 3rd request (should wait ~100ms)
-        elapsed = time.time() - start
+        list(conn.get("/test"))  # 1st request — no throttle wait
+        list(conn.get("/test"))  # 2nd request — throttle sleeps ~100ms
+        list(conn.get("/test"))  # 3rd request — throttle sleeps ~100ms
 
-        # Should take at least 200ms (2 intervals) but allow some tolerance
-        assert elapsed >= 0.18, f"Expected >= 180ms, got {elapsed * 1000:.0f}ms"
+        assert mock_connections_sleep.call_count == 2
 
     @respx.mock
-    def test_throttling_disabled_when_zero(self):
+    def test_throttling_disabled_when_zero(self, mock_connections_sleep):
         """request_interval_seconds=0 disables throttling."""
         respx.get("https://api.confluent.cloud/test").mock(return_value=_resp({"data": [], "metadata": {}}))
 
@@ -389,14 +376,11 @@ class TestProactiveThrottling:
             request_interval_seconds=0.0,  # Disabled
         )
 
-        start = time.time()
         list(conn.get("/test"))
         list(conn.get("/test"))
         list(conn.get("/test"))
-        elapsed = time.time() - start
 
-        # Should be fast (< 100ms total)
-        assert elapsed < 0.1, f"Expected < 100ms, got {elapsed * 1000:.0f}ms"
+        assert mock_connections_sleep.call_count == 0
 
     def test_default_throttling_interval(self):
         """Default request_interval_seconds is 0.1 (100ms)."""

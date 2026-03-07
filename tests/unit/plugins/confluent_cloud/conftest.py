@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 
@@ -29,3 +30,10 @@ def make_resource():
         return CoreResource(**defaults)
 
     return _make
+
+
+@pytest.fixture(autouse=True)
+def mock_connections_sleep():
+    """Patch time.sleep in the connections module so retry/backoff tests run instantly."""
+    with patch("plugins.confluent_cloud.connections.time.sleep") as m:
+        yield m
