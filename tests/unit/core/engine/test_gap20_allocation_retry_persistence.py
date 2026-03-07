@@ -107,15 +107,8 @@ class MockBillingRepo:
     def find_by_range(self, *args: Any) -> list[BillingLineItem]:
         return self._data
 
-    def increment_allocation_attempts(
-        self,
-        ecosystem: str,
-        tenant_id: str,
-        timestamp: datetime,
-        resource_id: str,
-        product_type: str,
-    ) -> int:
-        key = (resource_id, product_type, str(timestamp))
+    def increment_allocation_attempts(self, line: BillingLineItem) -> int:
+        key = (line.resource_id, line.product_type, str(line.timestamp))
         self._attempts[key] = self._attempts.get(key, 0) + 1
         return self._attempts[key]
 

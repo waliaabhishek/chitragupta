@@ -89,6 +89,7 @@ class TestTableCreation:
             "timestamp",
             "resource_id",
             "product_type",
+            "product_category",
         }
 
     def test_chargeback_dimension_unique_constraint(self, engine: Engine):
@@ -158,7 +159,7 @@ class TestTableInsert:
             )
             session.add(b)
             session.commit()
-            result = session.get(BillingTable, ("ccloud", "t1", ts, "r1", "kafka"))
+            result = session.get(BillingTable, ("ccloud", "t1", ts, "r1", "kafka", "compute"))
             assert result is not None
             assert result.total_cost == "1.00"
 

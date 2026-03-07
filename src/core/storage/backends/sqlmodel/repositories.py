@@ -331,6 +331,11 @@ class SQLModelIdentityRepository:
 # --- BillingRepository ---
 
 
+def _billing_pk(line: BillingLineItem) -> tuple[str, str, datetime, str, str, str]:
+    """Extract billing table primary key tuple from domain object."""
+    return (line.ecosystem, line.tenant_id, line.timestamp, line.resource_id, line.product_type, line.product_category)
+
+
 class SQLModelBillingRepository:
     def __init__(self, session: Session) -> None:
         self._session = session
@@ -339,16 +344,7 @@ class SQLModelBillingRepository:
         table_obj = billing_to_table(line)
 
         # Check for existing record
-        existing = self._session.get(
-            BillingTable,
-            (
-                table_obj.ecosystem,
-                table_obj.tenant_id,
-                table_obj.timestamp,
-                table_obj.resource_id,
-                table_obj.product_type,
-            ),
-        )
+        existing = self._session.get(BillingTable, _billing_pk(line))
 
         if existing is not None and existing.total_cost != table_obj.total_cost:
             # Detect and log billing revisions
@@ -384,19 +380,13 @@ class SQLModelBillingRepository:
         )
         return [billing_to_domain(r) for r in self._session.exec(stmt).all()]
 
-    def increment_allocation_attempts(
-        self,
-        ecosystem: str,
-        tenant_id: str,
-        timestamp: datetime,
-        resource_id: str,
-        product_type: str,
-    ) -> int:
-        row = self._session.get(BillingTable, (ecosystem, tenant_id, timestamp, resource_id, product_type))
+    def increment_allocation_attempts(self, line: BillingLineItem) -> int:
+        row = self._session.get(BillingTable, _billing_pk(line))
         if row is None:
             msg = (
-                f"Billing line not found: ecosystem={ecosystem!r}, tenant_id={tenant_id!r}, "
-                f"timestamp={timestamp!r}, resource_id={resource_id!r}, product_type={product_type!r}"
+                f"Billing line not found: ecosystem={line.ecosystem!r}, tenant_id={line.tenant_id!r}, "
+                f"timestamp={line.timestamp!r}, resource_id={line.resource_id!r}, "
+                f"product_type={line.product_type!r}, product_category={line.product_category!r}"
             )
             raise KeyError(msg)
         row.allocation_attempts += 1

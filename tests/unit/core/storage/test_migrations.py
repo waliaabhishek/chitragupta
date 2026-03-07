@@ -146,3 +146,64 @@ class TestBaselineMigration:
         engine_d.dispose()
         backend_m.dispose()
         backend_d.dispose()
+
+
+class TestMigration005BillingPK:
+    def _get_alembic_cfg(self, conn: str):
+        import pathlib
+
+        from alembic.config import Config
+
+        migrations_dir = pathlib.Path(__file__).resolve().parents[4] / "src" / "core" / "storage" / "migrations"
+        alembic_ini = migrations_dir / "alembic.ini"
+        cfg = Config(str(alembic_ini))
+        cfg.set_main_option("script_location", str(migrations_dir))
+        cfg.set_main_option("sqlalchemy.url", conn)
+        return cfg
+
+    def test_migration_005_upgrade_adds_product_category_to_pk(self, tmp_path) -> None:
+        """Migration 005 upgrade promotes product_category to PK (pk > 0 in PRAGMA table_info)."""
+        from alembic import command
+        from sqlalchemy import create_engine, text
+
+        db_path = tmp_path / "test.db"
+        conn = f"sqlite:///{db_path}"
+        cfg = self._get_alembic_cfg(conn)
+
+        command.upgrade(cfg, "004")
+        command.upgrade(cfg, "005")
+
+        engine = create_engine(conn)
+        with engine.connect() as c:
+            rows = c.execute(text("PRAGMA table_info(billing)")).fetchall()
+        engine.dispose()
+
+        # PRAGMA table_info columns: cid, name, type, notnull, dflt_value, pk
+        col_pk_map = {row[1]: row[5] for row in rows}
+        assert col_pk_map["product_category"] > 0, (
+            f"product_category must be part of primary key after migration 005 upgrade, "
+            f"but pk={col_pk_map['product_category']!r}"
+        )
+
+    def test_migration_005_downgrade_restores_5_field_pk(self, tmp_path) -> None:
+        """Migration 005 downgrade restores 5-field PK (product_category no longer in PK)."""
+        from alembic import command
+        from sqlalchemy import create_engine, text
+
+        db_path = tmp_path / "test.db"
+        conn = f"sqlite:///{db_path}"
+        cfg = self._get_alembic_cfg(conn)
+
+        command.upgrade(cfg, "005")
+        command.downgrade(cfg, "004")
+
+        engine = create_engine(conn)
+        with engine.connect() as c:
+            rows = c.execute(text("PRAGMA table_info(billing)")).fetchall()
+        engine.dispose()
+
+        col_pk_map = {row[1]: row[5] for row in rows}
+        assert col_pk_map["product_category"] == 0, (
+            f"product_category must NOT be part of primary key after migration 005 downgrade, "
+            f"but pk={col_pk_map['product_category']!r}"
+        )

@@ -485,6 +485,70 @@ class TestBillingRepository:
 
         assert "Billing revision detected" not in caplog.text
 
+    def test_upsert_distinct_product_category_rows_preserved(self, session: Session) -> None:
+        """Two BillingLineItems identical on 5-field key but differing product_category must produce 2 rows."""
+        repo = SQLModelBillingRepository(session)
+        line_a = self._make_billing(product_category="Apache Kafka", total_cost=Decimal("100.00"))
+        line_b = self._make_billing(product_category="Kafka Connect", total_cost=Decimal("25.00"))
+        repo.upsert(line_a)
+        session.commit()
+        repo.upsert(line_b)
+        session.commit()
+        results = repo.find_by_date("eco", "t1", date(2026, 1, 15))
+        assert len(results) == 2
+        costs = {r.total_cost for r in results}
+        assert costs == {Decimal("100.00"), Decimal("25.00")}
+
+    def test_upsert_billing_revision_detected_same_category_different_cost(
+        self, session: Session, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Upserting same 6-field key with different total_cost emits warning and keeps exactly one row."""
+        import logging
+
+        repo = SQLModelBillingRepository(session)
+        line_v1 = self._make_billing(product_category="Apache Kafka", total_cost=Decimal("100.00"))
+        line_v2 = self._make_billing(product_category="Apache Kafka", total_cost=Decimal("50.00"))
+        repo.upsert(line_v1)
+        session.commit()
+        with caplog.at_level(logging.WARNING):
+            repo.upsert(line_v2)
+            session.commit()
+        assert "Billing revision detected" in caplog.text
+        results = repo.find_by_date("eco", "t1", date(2026, 1, 15))
+        assert len(results) == 1
+        assert results[0].total_cost == Decimal("50.00")
+
+    def test_increment_allocation_attempts_success(self, session: Session) -> None:
+        """increment_allocation_attempts(line) returns 1 on first call, 2 on second."""
+        repo = SQLModelBillingRepository(session)
+        line = self._make_billing()
+        repo.upsert(line)
+        session.commit()
+        result1 = repo.increment_allocation_attempts(line)
+        session.commit()
+        assert result1 == 1
+        result2 = repo.increment_allocation_attempts(line)
+        session.commit()
+        assert result2 == 2
+
+    def test_increment_allocation_attempts_not_found_raises_key_error(self, session: Session) -> None:
+        """increment_allocation_attempts(line) raises KeyError for a non-existent line.
+
+        The error message must contain all 6 key fields: ecosystem, tenant_id, timestamp,
+        resource_id, product_type, and product_category.
+        """
+        repo = SQLModelBillingRepository(session)
+        line = self._make_billing()
+        with pytest.raises(KeyError) as exc_info:
+            repo.increment_allocation_attempts(line)
+        error_msg = str(exc_info.value)
+        assert "eco" in error_msg
+        assert "t1" in error_msg
+        assert "r1" in error_msg
+        assert "kafka" in error_msg
+        assert "compute" in error_msg
+        assert "2026" in error_msg
+
 
 # --- Chargeback Repository ---
 

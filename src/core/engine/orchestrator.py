@@ -106,7 +106,7 @@ class GatherResult:
 class RetryChecker(Protocol):
     """DIP boundary — CalculatePhase depends on this, not on RetryManager directly."""
 
-    def increment_and_check(self, ecosystem: str, tenant_id: str, line: BillingLineItem) -> tuple[int, bool]: ...
+    def increment_and_check(self, line: BillingLineItem) -> tuple[int, bool]: ...
 
 
 class RetryManager:
@@ -120,16 +120,10 @@ class RetryManager:
         self._storage_backend = storage_backend
         self._limit = limit
 
-    def increment_and_check(self, ecosystem: str, tenant_id: str, line: BillingLineItem) -> tuple[int, bool]:
+    def increment_and_check(self, line: BillingLineItem) -> tuple[int, bool]:
         """Increment attempt counter. Returns (new_attempts, should_fallback_to_unallocated)."""
         with self._storage_backend.create_unit_of_work() as uow:
-            new_attempts = uow.billing.increment_allocation_attempts(
-                ecosystem,
-                tenant_id,
-                line.timestamp,
-                line.resource_id,
-                line.product_type,
-            )
+            new_attempts = uow.billing.increment_allocation_attempts(line)
             uow.commit()
         return new_attempts, new_attempts >= self._limit
 
@@ -518,9 +512,7 @@ class CalculatePhase:
 
         except Exception as exc:
             try:
-                new_attempts, should_fallback = self._retry_checker.increment_and_check(
-                    self._ecosystem, self._tenant_id, line
-                )
+                new_attempts, should_fallback = self._retry_checker.increment_and_check(line)
             except Exception as retry_exc:
                 logger.warning("Failed to persist retry counter: %s", retry_exc)
                 raise exc from None

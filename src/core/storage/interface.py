@@ -153,18 +153,11 @@ class BillingRepository(Protocol):
         self, ecosystem: str, tenant_id: str, start: datetime, end: datetime
     ) -> list[BillingLineItem]: ...
 
-    def increment_allocation_attempts(
-        self,
-        ecosystem: str,
-        tenant_id: str,
-        timestamp: datetime,
-        resource_id: str,
-        product_type: str,
-    ) -> int:
+    def increment_allocation_attempts(self, line: BillingLineItem) -> int:
         """Increments allocation_attempts in DB and returns the new value.
 
-        Identifies the billing line by its composite key. The domain model
-        (BillingLineItem) is not modified — it remains frozen.
+        Identifies the billing line via the domain object's composite key.
+        The domain model (BillingLineItem) is not modified — it remains frozen.
         """
         ...
 

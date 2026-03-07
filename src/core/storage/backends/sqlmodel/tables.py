@@ -50,7 +50,7 @@ class BillingTable(SQLModel, table=True):
     timestamp: datetime = Field(sa_column=Column(DateTime(timezone=True), primary_key=True))
     resource_id: str = Field(primary_key=True)
     product_type: str = Field(primary_key=True)
-    product_category: str = Field(index=True)
+    product_category: str = Field(primary_key=True)
     quantity: str = ""
     unit_price: str = ""
     total_cost: str = ""

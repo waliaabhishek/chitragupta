@@ -20,8 +20,8 @@ class CostType(StrEnum):
 class AllocationDetail(StrEnum):
     """Standardized reason codes for allocation decisions.
 
-        Values are stored as VARCHAR in the DB; existing free-form strings
-        from older data remain valid (they just won't match enum values).
+    Values are stored as VARCHAR in the DB; existing free-form strings
+    from older data remain valid (they just won't match enum values).
 
     """
 

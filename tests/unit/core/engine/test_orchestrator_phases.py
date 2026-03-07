@@ -764,12 +764,10 @@ class TestRetryManager:
         manager = RetryManager(storage_backend=mock_backend, limit=3)
         line = _make_billing_line()
 
-        manager.increment_and_check(ECOSYSTEM, TENANT_ID, line)
+        manager.increment_and_check(line)
 
         mock_backend.create_unit_of_work.assert_called_once()
-        mock_uow.billing.increment_allocation_attempts.assert_called_once_with(
-            ECOSYSTEM, TENANT_ID, line.timestamp, line.resource_id, line.product_type
-        )
+        mock_uow.billing.increment_allocation_attempts.assert_called_once_with(line)
         mock_uow.commit.assert_called_once()
 
     def test_below_limit_should_fallback_is_false(self) -> None:
@@ -785,7 +783,7 @@ class TestRetryManager:
         manager = RetryManager(storage_backend=mock_backend, limit=3)
         line = _make_billing_line()
 
-        new_attempts, should_fallback = manager.increment_and_check(ECOSYSTEM, TENANT_ID, line)
+        new_attempts, should_fallback = manager.increment_and_check(line)
 
         assert new_attempts == 2
         assert should_fallback is False
@@ -803,7 +801,7 @@ class TestRetryManager:
         manager = RetryManager(storage_backend=mock_backend, limit=3)
         line = _make_billing_line()
 
-        new_attempts, should_fallback = manager.increment_and_check(ECOSYSTEM, TENANT_ID, line)
+        new_attempts, should_fallback = manager.increment_and_check(line)
 
         assert new_attempts == 3
         assert should_fallback is True
@@ -821,7 +819,7 @@ class TestRetryManager:
         manager = RetryManager(storage_backend=mock_backend, limit=3)
         line = _make_billing_line()
 
-        _, should_fallback = manager.increment_and_check(ECOSYSTEM, TENANT_ID, line)
+        _, should_fallback = manager.increment_and_check(line)
         assert should_fallback is True
 
     def test_retry_manager_satisfies_retry_checker_protocol(self) -> None:
