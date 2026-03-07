@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 
-from sqlalchemy import Column, DateTime
+from sqlalchemy import Column, DateTime, PrimaryKeyConstraint
 from sqlmodel import Field, SQLModel
 
 logger = logging.getLogger(__name__)
@@ -14,14 +14,28 @@ class CCloudBillingTable(SQLModel, table=True):
 
     The env_id distinguishes billing rows for the same resource in different
     environments, preventing silent overwrite collisions on the 6-field core PK.
+
+    Uses explicit PrimaryKeyConstraint to guarantee deterministic column order
+    for session.get() lookups.
     """
 
     __tablename__ = "ccloud_billing"
+    __table_args__ = (
+        PrimaryKeyConstraint(
+            "ecosystem",
+            "tenant_id",
+            "timestamp",
+            "env_id",
+            "resource_id",
+            "product_type",
+            "product_category",
+        ),
+    )
 
     ecosystem: str = Field(primary_key=True)
     tenant_id: str = Field(primary_key=True)
     timestamp: datetime = Field(sa_column=Column(DateTime(timezone=True), primary_key=True))
-    env_id: str = Field(primary_key=True)  # CCloud-specific
+    env_id: str = Field(primary_key=True)
     resource_id: str = Field(primary_key=True)
     product_type: str = Field(primary_key=True)
     product_category: str = Field(primary_key=True)
