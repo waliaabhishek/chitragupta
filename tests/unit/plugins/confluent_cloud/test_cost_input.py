@@ -99,7 +99,7 @@ class TestBillingItemMapping:
         assert item.granularity == "daily"
         assert item.currency == "USD"
         assert item.metadata["original_amount"] == Decimal("3.50")
-        assert item.metadata["env_id"] == "env-xyz"
+        assert item.env_id == "env-xyz"  # Now a direct field, not in metadata
         assert item.metadata["resource_name"] == "my-cluster"
 
     def test_map_billing_item_missing_resource_id(self):

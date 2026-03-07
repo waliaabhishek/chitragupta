@@ -132,7 +132,10 @@ class TestBaselineMigration:
         inspector_m = sa_inspect(engine_m)
         inspector_d = sa_inspect(engine_d)
 
-        tables_m = set(inspector_m.get_table_names()) - {"alembic_version"}
+        # Plugin-specific tables created by migrations but not by CoreStorageModule
+        plugin_tables = {"ccloud_billing"}
+
+        tables_m = set(inspector_m.get_table_names()) - {"alembic_version"} - plugin_tables
         tables_d = set(inspector_d.get_table_names())
 
         assert tables_m == tables_d

@@ -11,8 +11,9 @@ if TYPE_CHECKING:
     from plugins.confluent_cloud.config import CCloudPluginConfig
     from plugins.confluent_cloud.connections import CCloudConnection
 
-from core.models import BillingLineItem, CoreBillingLineItem
+from core.models import BillingLineItem
 from core.plugin.protocols import CostInput
+from plugins.confluent_cloud.models.billing import CCloudBillingLineItem
 
 logger = logging.getLogger(__name__)
 
@@ -62,24 +63,25 @@ def _map_billing_item(
     tenant_id: str,
     row_index: int = 0,
 ) -> BillingLineItem:
-    """Map a CCloud billing API response item to BillingLineItem."""
+    """Map a CCloud billing API response item to CCloudBillingLineItem."""
     resource = item.get("resource", {})
+
+    # Extract env_id - required for CCloud billing PK to prevent collisions
+    env_id = resource.get("environment", {}).get("id") or ""
 
     # Build metadata, excluding None values
     metadata: dict[str, Any] = {}
-    env_id = resource.get("environment", {}).get("id")
-    if env_id:
-        metadata["env_id"] = env_id
     resource_name = resource.get("display_name")
     if resource_name:
         metadata["resource_name"] = resource_name
     if "original_amount" in item:
         metadata["original_amount"] = _safe_decimal(item["original_amount"])
 
-    return CoreBillingLineItem(
+    return CCloudBillingLineItem(
         ecosystem=ecosystem,
         tenant_id=tenant_id,
         timestamp=_parse_billing_date(item["start_date"]),
+        env_id=env_id,  # CCloud-specific: part of 7-field PK
         resource_id=resource.get("id") or f"unresolved_billing_{row_index}",
         product_category=item.get("product", ""),
         product_type=item.get("line_type", ""),
@@ -96,10 +98,14 @@ def _map_malformed_item(
     item: dict[str, Any], ecosystem: str, tenant_id: str, idx: int, exc: Exception
 ) -> BillingLineItem:
     """Create a billing line from a malformed API row with best-effort field extraction."""
-    return CoreBillingLineItem(
+    resource = item.get("resource", {})
+    env_id = resource.get("environment", {}).get("id") or ""
+
+    return CCloudBillingLineItem(
         ecosystem=ecosystem,
         tenant_id=tenant_id,
         timestamp=_parse_billing_date(item.get("start_date", "1970-01-01")),
+        env_id=env_id,
         resource_id=f"malformed_billing_{idx}",
         product_category=item.get("product", f"MALFORMED_{idx}"),
         product_type=item.get("line_type", f"MALFORMED_{idx}"),

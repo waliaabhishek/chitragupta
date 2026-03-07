@@ -15,8 +15,14 @@ SRC_ROOT = Path(__file__).parent.parent.parent / "src"
 
 
 def _get_python_files() -> list[Path]:
-    """Return all .py files in src/ excluding __init__.py and __pycache__."""
-    return [p for p in SRC_ROOT.rglob("*.py") if p.name != "__init__.py" and "__pycache__" not in p.parts]
+    """Return all .py files in src/ excluding __init__.py, __pycache__, and alembic migrations."""
+    return [
+        p
+        for p in SRC_ROOT.rglob("*.py")
+        if p.name != "__init__.py"
+        and "__pycache__" not in p.parts
+        and "migrations/versions" not in str(p)  # Alembic migration scripts don't need logging
+    ]
 
 
 # ---------------------------------------------------------------------------
