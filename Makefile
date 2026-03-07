@@ -35,11 +35,13 @@ help:
 
 setup:
 	uv sync --all-groups
+	cd frontend && npm install
 
 install: setup
 
 sync:
 	uv sync --all-groups
+	cd frontend && npm install
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Development
@@ -62,17 +64,17 @@ check: lint typecheck test
 dev:
 	@echo "Starting backend (API + worker) and frontend..."
 	@trap 'kill 0' EXIT; \
-	uv run python -m main --config-file config.yaml --mode both & \
-	cd frontend && npm run dev
+	PYTHONPATH=src uv run python -m main --config-file config.yaml --mode both & \
+	cd frontend && npx vite
 
 dev-api:
-	uv run python -m main --config-file config.yaml --mode both
+	PYTHONPATH=src uv run python -m main --config-file config.yaml --mode both
 
 dev-ui:
 	@echo "Starting backend (API only) and frontend..."
 	@trap 'kill 0' EXIT; \
-	uv run python -m main --config-file config.yaml --mode api & \
-	cd frontend && npm run dev
+	PYTHONPATH=src uv run python -m main --config-file config.yaml --mode api & \
+	cd frontend && npx vite
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Documentation
