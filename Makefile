@@ -1,5 +1,5 @@
 .PHONY: help setup install sync test lint format typecheck check clean \
-        docs docs-serve docs-build
+        docs docs-serve docs-build dev dev-api dev-ui
 
 .DEFAULT_GOAL := help
 
@@ -12,6 +12,9 @@ help:
 	@echo "    sync         - Sync dependencies (after pyproject.toml changes)"
 	@echo ""
 	@echo "  Development:"
+	@echo "    dev          - Start backend (API + worker) and frontend together"
+	@echo "    dev-api      - Start backend only (API + worker)"
+	@echo "    dev-ui       - Start backend (API only) and frontend"
 	@echo "    test         - Run tests with coverage"
 	@echo "    lint         - Run ruff linter"
 	@echo "    format       - Run ruff formatter"
@@ -55,6 +58,21 @@ typecheck:
 	uv run mypy src
 
 check: lint typecheck test
+
+dev:
+	@echo "Starting backend (API + worker) and frontend..."
+	@trap 'kill 0' EXIT; \
+	uv run python -m main --config-file config.yaml --mode both & \
+	cd frontend && npm run dev
+
+dev-api:
+	uv run python -m main --config-file config.yaml --mode both
+
+dev-ui:
+	@echo "Starting backend (API only) and frontend..."
+	@trap 'kill 0' EXIT; \
+	uv run python -m main --config-file config.yaml --mode api & \
+	cd frontend && npm run dev
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Documentation
