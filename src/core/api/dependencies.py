@@ -11,6 +11,7 @@ from fastapi import Depends, HTTPException, Path, Request
 from core.config.models import AppSettings, TenantConfig  # noqa: TC001  # FastAPI evaluates annotations at runtime
 from core.storage.interface import StorageBackend, UnitOfWork  # noqa: TC001
 from core.storage.registry import create_storage_backend
+from plugins.storage_modules import get_storage_module_for_ecosystem
 
 if TYPE_CHECKING:
     from core.config.models import StorageConfig
@@ -70,11 +71,14 @@ def get_tenant_config(
 
 
 def get_or_create_backend(
-    backends: dict[str, StorageBackend], tenant_name: str, storage_config: StorageConfig
+    backends: dict[str, StorageBackend], tenant_name: str, storage_config: StorageConfig, ecosystem: str
 ) -> StorageBackend:
     """Get cached backend or create and cache a new one."""
     if tenant_name not in backends:
-        backends[tenant_name] = create_storage_backend(storage_config, use_migrations=False)
+        storage_module = get_storage_module_for_ecosystem(ecosystem)
+        backends[tenant_name] = create_storage_backend(
+            storage_config, storage_module=storage_module, use_migrations=False
+        )
     return backends[tenant_name]
 
 
@@ -88,7 +92,9 @@ def get_storage_backend(
     if not hasattr(request.app.state, "backends"):
         request.app.state.backends = {}
 
-    return get_or_create_backend(request.app.state.backends, tenant_name, tenant_config.storage)
+    return get_or_create_backend(
+        request.app.state.backends, tenant_name, tenant_config.storage, tenant_config.ecosystem
+    )
 
 
 def get_unit_of_work(

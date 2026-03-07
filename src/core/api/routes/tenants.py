@@ -29,7 +29,7 @@ async def list_tenants(
     logger.debug("GET /tenants")
     summaries: list[TenantStatusSummary] = []
     for tenant_name, tenant_config in settings.tenants.items():
-        backend = get_or_create_backend(request.app.state.backends, tenant_name, tenant_config.storage)
+        backend = get_or_create_backend(request.app.state.backends, tenant_name, tenant_config.storage, tenant_config.ecosystem)
         uow = backend.create_unit_of_work()
         with uow:
             pending = uow.pipeline_state.count_pending(tenant_config.ecosystem, tenant_config.tenant_id)

@@ -47,7 +47,7 @@ class TestBootstrapStorage:
     def test_bootstrap_creates_tables_for_all_tenants(self, mock_storage: MagicMock) -> None:
         backends: list[MagicMock] = []
 
-        def make_backend(config: Any) -> MagicMock:
+        def make_backend(config: Any, **kwargs: Any) -> MagicMock:
             b = MagicMock()
             backends.append(b)
             return b
@@ -688,7 +688,7 @@ class TestTd021TenantRuntimeCaching:
         backends: dict[str, MagicMock] = {}
         plugins: dict[str, MagicMock] = {}
 
-        def make_backend(config: Any) -> MagicMock:
+        def make_backend(config: Any, **kwargs: Any) -> MagicMock:
             b = MagicMock()
             # Use connection string as key (unique per tenant via _make_tenant unique hex)
             backends[config.connection_string] = b
@@ -1025,7 +1025,7 @@ class TestGap021RunTenantBootstrapLatch:
         """
         backends: list[MagicMock] = []
 
-        def make_backend(config: Any) -> MagicMock:
+        def make_backend(config: Any, **kwargs: Any) -> MagicMock:
             b = MagicMock()
             backends.append(b)
             return b
@@ -1094,7 +1094,7 @@ class TestGap021RunTenantBootstrapLatch:
             t2_cfg.storage.connection_string: [],
         }
 
-        def make_backend(config: Any) -> MagicMock:
+        def make_backend(config: Any, **kwargs: Any) -> MagicMock:
             b = MagicMock()
             key = config.connection_string
             conn_backends.setdefault(key, []).append(b)

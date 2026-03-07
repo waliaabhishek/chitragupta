@@ -113,7 +113,7 @@ class WorkflowRunner:
         plugin.initialize(config.plugin_settings.model_dump())
         from core.storage.registry import create_storage_backend
 
-        storage = create_storage_backend(config.storage)
+        storage = create_storage_backend(config.storage, storage_module=plugin.get_storage_module())
         metrics = plugin.get_metrics_source()
         orchestrator = ChargebackOrchestrator(tenant_name, config, plugin, storage, metrics)
 

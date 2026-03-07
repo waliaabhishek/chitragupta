@@ -131,7 +131,7 @@ async def trigger_pipeline(
             message=f"Tenant {tenant_name!r} is already being processed",
         )
 
-    backend = get_or_create_backend(_get_backends(request), tenant_name, tenant_config.storage)
+    backend = get_or_create_backend(_get_backends(request), tenant_name, tenant_config.storage, tenant_config.ecosystem)
 
     with backend.create_unit_of_work() as uow:
         run = uow.pipeline_runs.create_run(tenant_name, datetime.now(UTC))
@@ -156,7 +156,7 @@ async def pipeline_status(
     tenant_config: Annotated[TenantConfig, Depends(get_tenant_config)],
     tenant_name: str,
 ) -> PipelineStatusResponse:
-    backend = get_or_create_backend(_get_backends(request), tenant_name, tenant_config.storage)
+    backend = get_or_create_backend(_get_backends(request), tenant_name, tenant_config.storage, tenant_config.ecosystem)
 
     with backend.create_unit_of_work() as uow:
         latest = uow.pipeline_runs.get_latest_run(tenant_name)

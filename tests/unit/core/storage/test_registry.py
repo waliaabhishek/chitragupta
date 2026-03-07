@@ -11,95 +11,90 @@ if TYPE_CHECKING:
     from core.storage.interface import StorageBackend
 
 
-class TestStorageBackendRegistry:
-    def test_registry_registers_and_creates(self) -> None:
-        from core.storage.registry import StorageBackendRegistry
-
-        registry = StorageBackendRegistry()
-        mock_factory = MagicMock(return_value=MagicMock())
-        registry.register("sqlmodel", mock_factory)
-
-        backend = registry.create("sqlmodel", "sqlite:///:memory:", use_migrations=True)
-
-        mock_factory.assert_called_once_with("sqlite:///:memory:", True)
-        assert backend is mock_factory.return_value
-
-    def test_duplicate_registration_raises(self) -> None:
-        from core.storage.registry import StorageBackendRegistry
-
-        registry = StorageBackendRegistry()
-        registry.register("sqlmodel", lambda cs, um: MagicMock())
-
-        with pytest.raises(ValueError, match="sqlmodel"):
-            registry.register("sqlmodel", lambda cs, um: MagicMock())
-
-    def test_unknown_backend_raises_key_error(self) -> None:
-        from core.storage.registry import StorageBackendRegistry
-
-        registry = StorageBackendRegistry()
-
-        with pytest.raises(KeyError, match="unknown"):
-            registry.create("unknown", "sqlite:///:memory:", use_migrations=False)
-
-    def test_create_passes_use_migrations_false(self) -> None:
-        from core.storage.registry import StorageBackendRegistry
-
-        registry = StorageBackendRegistry()
-        mock_factory = MagicMock(return_value=MagicMock())
-        registry.register("sqlmodel", mock_factory)
-
-        registry.create("sqlmodel", "sqlite:///:memory:", use_migrations=False)
-
-        mock_factory.assert_called_once_with("sqlite:///:memory:", False)
-
-    def test_list_backends_returns_registered_names(self) -> None:
-        from core.storage.registry import StorageBackendRegistry
-
-        registry = StorageBackendRegistry()
-        registry.register("a", lambda cs, um: MagicMock())
-        registry.register("b", lambda cs, um: MagicMock())
-        assert set(registry.list_backends()) == {"a", "b"}
-
-
 class TestCreateStorageBackendFunction:
-    def test_routes_through_default_registry(self) -> None:
-        from core.storage import registry as registry_module
+    def test_creates_sqlmodel_backend(self) -> None:
+        from core.storage.backends.sqlmodel.unit_of_work import SQLModelBackend
+        from core.storage.registry import create_storage_backend
 
         config = StorageConfig(backend="sqlmodel", connection_string="sqlite:///:memory:")
-        mock_backend = MagicMock()
 
-        with patch.object(
-            registry_module._default_storage_registry, "create", return_value=mock_backend
-        ) as mock_create:
-            result = registry_module.create_storage_backend(config)
+        result = create_storage_backend(config, use_migrations=False)
 
-        mock_create.assert_called_once_with("sqlmodel", "sqlite:///:memory:", use_migrations=True)
-        assert result is mock_backend
+        assert isinstance(result, SQLModelBackend)
+        result.dispose()
 
     def test_passes_use_migrations_false(self) -> None:
-        from core.storage import registry as registry_module
         from core.storage.backends.sqlmodel.unit_of_work import SQLModelBackend
+        from core.storage.registry import create_storage_backend
 
         config = StorageConfig(backend="sqlmodel", connection_string="sqlite:///:memory:")
 
-        result = registry_module.create_storage_backend(config, use_migrations=False)
+        result = create_storage_backend(config, use_migrations=False)
 
         assert isinstance(result, SQLModelBackend)
         result.dispose()
 
     def test_default_use_migrations_is_true(self) -> None:
-        from core.storage import registry as registry_module
+        from core.storage.backends.sqlmodel.unit_of_work import SQLModelBackend
+        from core.storage.registry import create_storage_backend
 
         config = StorageConfig(backend="sqlmodel", connection_string="sqlite:///:memory:")
-        mock_backend = MagicMock()
 
-        with patch.object(
-            registry_module._default_storage_registry, "create", return_value=mock_backend
-        ) as mock_create:
-            registry_module.create_storage_backend(config)
+        # Patch the migration runner to avoid actually running migrations
+        with patch.object(SQLModelBackend, "_run_migrations"):
+            result = create_storage_backend(config)
 
-        call_args = mock_create.call_args
-        assert call_args.kwargs.get("use_migrations") is True
+        assert isinstance(result, SQLModelBackend)
+        result.dispose()
+
+    def test_unknown_backend_raises_value_error(self) -> None:
+        from core.storage.registry import create_storage_backend
+
+        config = StorageConfig(backend="unknown", connection_string="sqlite:///:memory:")
+
+        with pytest.raises(ValueError, match="Unknown storage backend"):
+            create_storage_backend(config)
+
+    def test_accepts_storage_module_parameter(self) -> None:
+        from core.storage.backends.sqlmodel.unit_of_work import SQLModelBackend
+        from core.storage.registry import create_storage_backend
+        from plugins.confluent_cloud.storage.module import CCloudStorageModule
+
+        config = StorageConfig(backend="sqlmodel", connection_string="sqlite:///:memory:")
+        storage_module = CCloudStorageModule()
+
+        result = create_storage_backend(config, storage_module=storage_module, use_migrations=False)
+
+        assert isinstance(result, SQLModelBackend)
+        result.dispose()
+
+
+class TestGetStorageModuleForEcosystem:
+    """Tests for plugins.storage_modules.get_storage_module_for_ecosystem."""
+
+    def test_confluent_cloud_returns_ccloud_module(self) -> None:
+        from plugins.confluent_cloud.storage.module import CCloudStorageModule
+        from plugins.storage_modules import get_storage_module_for_ecosystem
+
+        result = get_storage_module_for_ecosystem("confluent_cloud")
+
+        assert isinstance(result, CCloudStorageModule)
+
+    def test_other_ecosystem_returns_core_module(self) -> None:
+        from core.storage.backends.sqlmodel.module import CoreStorageModule
+        from plugins.storage_modules import get_storage_module_for_ecosystem
+
+        result = get_storage_module_for_ecosystem("self_managed_kafka")
+
+        assert isinstance(result, CoreStorageModule)
+
+    def test_unknown_ecosystem_returns_core_module(self) -> None:
+        from core.storage.backends.sqlmodel.module import CoreStorageModule
+        from plugins.storage_modules import get_storage_module_for_ecosystem
+
+        result = get_storage_module_for_ecosystem("some_random_ecosystem")
+
+        assert isinstance(result, CoreStorageModule)
 
 
 class TestWorkflowRunnerNoPrivateFunction:
@@ -113,37 +108,48 @@ class TestWorkflowRunnerNoPrivateFunction:
 
 class TestGetOrCreateBackendAcceptsStorageConfig:
     @patch("core.api.dependencies.create_storage_backend")
-    def test_respects_storage_config_backend(self, mock_create: MagicMock) -> None:
+    @patch("core.api.dependencies.get_storage_module_for_ecosystem")
+    def test_respects_storage_config_backend(
+        self, mock_get_module: MagicMock, mock_create: MagicMock
+    ) -> None:
         from core.api.dependencies import get_or_create_backend
 
+        mock_module = MagicMock()
+        mock_get_module.return_value = mock_module
         mock_backend = MagicMock()
         mock_create.return_value = mock_backend
 
         storage_config = StorageConfig(backend="sqlmodel", connection_string="sqlite:///:memory:")
         backends: dict[str, StorageBackend] = {}
 
-        result = get_or_create_backend(backends, "tenant-a", storage_config)
+        result = get_or_create_backend(backends, "tenant-a", storage_config, "confluent_cloud")
 
-        mock_create.assert_called_once_with(storage_config, use_migrations=False)
+        mock_get_module.assert_called_once_with("confluent_cloud")
+        mock_create.assert_called_once_with(storage_config, storage_module=mock_module, use_migrations=False)
         assert result is mock_backend
 
     @patch("core.api.dependencies.create_storage_backend")
-    def test_caches_backend_per_tenant(self, mock_create: MagicMock) -> None:
+    @patch("core.api.dependencies.get_storage_module_for_ecosystem")
+    def test_caches_backend_per_tenant(
+        self, mock_get_module: MagicMock, mock_create: MagicMock
+    ) -> None:
         from core.api.dependencies import get_or_create_backend
 
+        mock_module = MagicMock()
+        mock_get_module.return_value = mock_module
         mock_backend = MagicMock()
         mock_create.return_value = mock_backend
 
         storage_config = StorageConfig(backend="sqlmodel", connection_string="sqlite:///:memory:")
         backends: dict[str, StorageBackend] = {}
 
-        result1 = get_or_create_backend(backends, "tenant-a", storage_config)
-        result2 = get_or_create_backend(backends, "tenant-a", storage_config)
+        result1 = get_or_create_backend(backends, "tenant-a", storage_config, "confluent_cloud")
+        result2 = get_or_create_backend(backends, "tenant-a", storage_config, "confluent_cloud")
 
         assert mock_create.call_count == 1
         assert result1 is result2
 
-    def test_get_storage_backend_passes_storage_config(self) -> None:
+    def test_get_storage_backend_passes_ecosystem(self) -> None:
         from unittest.mock import patch as _patch
 
         from core.api.dependencies import get_storage_backend
@@ -155,13 +161,14 @@ class TestGetOrCreateBackendAcceptsStorageConfig:
         request.app.state.backends = {}
         tenant_config = MagicMock()
         tenant_config.storage = storage_config
+        tenant_config.ecosystem = "confluent_cloud"
 
         with _patch("core.api.dependencies.get_or_create_backend", return_value=mock_backend) as mock_fn:
             result = get_storage_backend(request, "tenant-a", tenant_config)
 
         mock_fn.assert_called_once()
         call_args = mock_fn.call_args
-        # Third positional arg (or keyword arg storage_config) must be the StorageConfig object
-        passed_config = call_args.args[2] if len(call_args.args) > 2 else call_args.kwargs.get("storage_config")
-        assert passed_config is storage_config
+        # Fourth positional arg is ecosystem
+        passed_ecosystem = call_args.args[3] if len(call_args.args) > 3 else call_args.kwargs.get("ecosystem")
+        assert passed_ecosystem == "confluent_cloud"
         assert result is mock_backend
