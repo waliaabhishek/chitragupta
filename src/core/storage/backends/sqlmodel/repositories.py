@@ -100,7 +100,6 @@ class SQLModelResourceRepository:
     def upsert(self, resource: Resource) -> Resource:
         table_obj = resource_to_table(resource)
         merged = self._session.merge(table_obj)
-        self._session.flush()
         return resource_to_domain(merged)
 
     def get(self, ecosystem: str, tenant_id: str, resource_id: str) -> Resource | None:
@@ -223,7 +222,6 @@ class SQLModelIdentityRepository:
     def upsert(self, identity: Identity) -> Identity:
         table_obj = identity_to_table(identity)
         merged = self._session.merge(table_obj)
-        self._session.flush()
         return identity_to_domain(merged)
 
     def get(self, ecosystem: str, tenant_id: str, identity_id: str) -> Identity | None:
@@ -356,7 +354,6 @@ class SQLModelBillingRepository:
             )
 
         merged = self._session.merge(table_obj)
-        self._session.flush()
         return billing_to_domain(merged)
 
     def find_by_date(self, ecosystem: str, tenant_id: str, target_date: date) -> list[BillingLineItem]:
@@ -465,7 +462,6 @@ class SQLModelChargebackRepository:
         dimension_id = self._get_or_create_dimension(row)
         fact = chargeback_to_fact(row, dimension_id)
         merged = self._session.merge(fact)
-        self._session.flush()
         dim = self._session.get(ChargebackDimensionTable, dimension_id)
         assert dim is not None  # dimension was just created/fetched
         return chargeback_to_domain(dim, merged)
@@ -819,7 +815,6 @@ class SQLModelPipelineStateRepository:
     def upsert(self, state: PipelineState) -> PipelineState:
         table_obj = pipeline_state_to_table(state)
         merged = self._session.merge(table_obj)
-        self._session.flush()
         return pipeline_state_to_domain(merged)
 
     def get(self, ecosystem: str, tenant_id: str, tracking_date: date) -> PipelineState | None:
