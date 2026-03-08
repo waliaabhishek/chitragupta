@@ -88,6 +88,22 @@ class TestFlinkHandlerGetMetrics:
         assert "flink_cfu_fallback" in keys
 
 
+class TestFlinkMetricQueryMode:
+    """Tests for task-054: Flink metrics must use range query mode."""
+
+    def test_primary_query_mode_is_range(self) -> None:
+        """_FLINK_METRICS_PRIMARY.query_mode must be 'range', not 'instant'."""
+        from plugins.confluent_cloud.handlers.flink import _FLINK_METRICS_PRIMARY
+
+        assert _FLINK_METRICS_PRIMARY.query_mode == "range"
+
+    def test_fallback_query_mode_is_range(self) -> None:
+        """_FLINK_METRICS_FALLBACK.query_mode must be 'range', not 'instant'."""
+        from plugins.confluent_cloud.handlers.flink import _FLINK_METRICS_FALLBACK
+
+        assert _FLINK_METRICS_FALLBACK.query_mode == "range"
+
+
 class TestFlinkMetricQueryResourceFilter:
     """Tests for GAP-19: Flink queries must use {} placeholder for resource filter injection."""
 

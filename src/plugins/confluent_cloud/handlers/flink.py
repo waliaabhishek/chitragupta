@@ -34,7 +34,7 @@ _FLINK_METRICS_PRIMARY = MetricQuery(
     query_expression="sum by (compute_pool_id, flink_statement_name)(confluent_flink_num_cfu{})",
     label_keys=("compute_pool_id", "flink_statement_name"),
     resource_label="compute_pool_id",
-    query_mode="instant",
+    query_mode="range",  # range: sum delta values across billing window
 )
 _FLINK_METRICS_FALLBACK = MetricQuery(
     key="flink_cfu_fallback",
@@ -43,7 +43,7 @@ _FLINK_METRICS_FALLBACK = MetricQuery(
     ),
     label_keys=("compute_pool_id", "flink_statement_name"),
     resource_label="compute_pool_id",
-    query_mode="instant",
+    query_mode="range",  # range: sum delta values across billing window
 )
 
 _FLINK_PRODUCT_TYPES: tuple[str, ...] = (

@@ -1238,3 +1238,82 @@ class TestFlinkMetadataFilterTask047:
         resource_ids = {r.resource_id for r in results}
         assert resource_ids == {"stmt-p1"}, f"Expected only pool-1 statement, got: {resource_ids}"
         mock_uow.resources.find_by_period.assert_not_called()
+
+
+class TestExtractActiveStatementsRangeAccumulation:
+    """Tests for task-054: _extract_active_statements must accumulate across multiple range rows."""
+
+    def test_multiple_rows_same_statement_accumulates_total(self) -> None:
+        """Multiple rows for the same statement (range result) accumulate total CFU correctly."""
+        from datetime import UTC, datetime
+
+        from core.models import MetricRow
+        from plugins.confluent_cloud.handlers.flink_identity import _extract_active_statements
+
+        pool_id = "lfcp-pool-1"
+        rows = [
+            MetricRow(
+                timestamp=datetime(2026, 2, 1, 0, tzinfo=UTC),
+                metric_key="confluent_flink_num_cfu",
+                value=3.0,
+                labels={"compute_pool_id": pool_id, "flink_statement_name": "stmt-A"},
+            ),
+            MetricRow(
+                timestamp=datetime(2026, 2, 1, 1, tzinfo=UTC),
+                metric_key="confluent_flink_num_cfu",
+                value=5.0,
+                labels={"compute_pool_id": pool_id, "flink_statement_name": "stmt-A"},
+            ),
+            MetricRow(
+                timestamp=datetime(2026, 2, 1, 2, tzinfo=UTC),
+                metric_key="confluent_flink_num_cfu",
+                value=7.0,
+                labels={"compute_pool_id": pool_id, "flink_statement_name": "stmt-A"},
+            ),
+        ]
+
+        result = _extract_active_statements({"flink_cfu_primary": rows}, pool_id)
+
+        assert result == {"stmt-A": 15.0}
+
+    def test_bursty_statements_accumulate_independently(self) -> None:
+        """Bursty statements: stmt_A active step 1 only, stmt_B active step 2 only — both captured."""
+        from datetime import UTC, datetime
+
+        from core.models import MetricRow
+        from plugins.confluent_cloud.handlers.flink_identity import _extract_active_statements
+
+        pool_id = "lfcp-pool-1"
+        rows = [
+            # Step 1: stmt_A uses 10, stmt_B uses 0 (filtered out)
+            MetricRow(
+                timestamp=datetime(2026, 2, 1, 0, tzinfo=UTC),
+                metric_key="confluent_flink_num_cfu",
+                value=10.0,
+                labels={"compute_pool_id": pool_id, "flink_statement_name": "stmt_A"},
+            ),
+            MetricRow(
+                timestamp=datetime(2026, 2, 1, 0, tzinfo=UTC),
+                metric_key="confluent_flink_num_cfu",
+                value=0.0,
+                labels={"compute_pool_id": pool_id, "flink_statement_name": "stmt_B"},
+            ),
+            # Step 2: stmt_A uses 0 (filtered out), stmt_B uses 50
+            MetricRow(
+                timestamp=datetime(2026, 2, 1, 1, tzinfo=UTC),
+                metric_key="confluent_flink_num_cfu",
+                value=0.0,
+                labels={"compute_pool_id": pool_id, "flink_statement_name": "stmt_A"},
+            ),
+            MetricRow(
+                timestamp=datetime(2026, 2, 1, 1, tzinfo=UTC),
+                metric_key="confluent_flink_num_cfu",
+                value=50.0,
+                labels={"compute_pool_id": pool_id, "flink_statement_name": "stmt_B"},
+            ),
+        ]
+
+        result = _extract_active_statements({"flink_cfu_primary": rows}, pool_id)
+
+        # Must not take only the last-step values; accumulator preserves both statements
+        assert result == {"stmt_A": 10.0, "stmt_B": 50.0}
