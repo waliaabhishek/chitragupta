@@ -91,6 +91,7 @@ class SelfManagedKafkaPlugin:
             brokers, topics, principals = run_combined_discovery(
                 self._metrics_source,  # type: ignore[arg-type]  # set in initialize()
                 step,
+                discovery_window_hours=self._config.discovery_window_hours,  # type: ignore[union-attr]  # set in initialize()
             )
             self._cached_discovery = (brokers, topics, principals)  # cache for first gather cycle
             if not principals:
@@ -157,7 +158,11 @@ class SelfManagedKafkaPlugin:
                     brokers, topics, principals = self._cached_discovery
                     self._cached_discovery = None  # consume once, free memory
                 else:
-                    brokers, topics, principals = run_combined_discovery(self._metrics_source, step)
+                    brokers, topics, principals = run_combined_discovery(
+                        self._metrics_source,
+                        step,
+                        discovery_window_hours=self._config.discovery_window_hours,
+                    )
                 return SMKSharedContext(
                     cluster_resource=cluster,
                     discovered_brokers=brokers,

@@ -54,6 +54,7 @@ def gather_cluster_resource(
 def run_combined_discovery(
     metrics_source: MetricsSource,
     step: timedelta,
+    discovery_window_hours: int = 1,
 ) -> tuple[frozenset[str], frozenset[str], frozenset[str]]:
     """Issue a single query to discover brokers, topics, and principals simultaneously.
 
@@ -64,7 +65,7 @@ def run_combined_discovery(
     now = datetime.now(UTC)
     results = metrics_source.query(
         queries=[_COMBINED_DISCOVERY_QUERY],
-        start=now - timedelta(hours=1),
+        start=now - timedelta(hours=discovery_window_hours),
         end=now,
         step=step,
     )

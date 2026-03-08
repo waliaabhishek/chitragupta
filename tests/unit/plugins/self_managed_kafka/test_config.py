@@ -289,6 +289,29 @@ class TestSelfManagedKafkaConfig:
         config = SelfManagedKafkaConfig.from_plugin_settings(base_settings)
         assert config.resource_source.source == "prometheus"
 
+    def test_discovery_window_hours_accepts_valid_value(self, base_settings):
+        """discovery_window_hours=24 is accepted."""
+        from plugins.self_managed_kafka.config import SelfManagedKafkaConfig
+
+        base_settings["discovery_window_hours"] = 24
+        config = SelfManagedKafkaConfig.from_plugin_settings(base_settings)
+        assert config.discovery_window_hours == 24
+
+    def test_discovery_window_hours_rejects_zero(self, base_settings):
+        """discovery_window_hours=0 raises ValidationError (must be gt=0)."""
+        from plugins.self_managed_kafka.config import SelfManagedKafkaConfig
+
+        base_settings["discovery_window_hours"] = 0
+        with pytest.raises(ValidationError):
+            SelfManagedKafkaConfig.from_plugin_settings(base_settings)
+
+    def test_discovery_window_hours_defaults_to_one(self, base_settings):
+        """discovery_window_hours defaults to 1 when not specified."""
+        from plugins.self_managed_kafka.config import SelfManagedKafkaConfig
+
+        config = SelfManagedKafkaConfig.from_plugin_settings(base_settings)
+        assert config.discovery_window_hours == 1
+
 
 class TestCostModelConfigGiBFields:
     """Issue 2: config fields renamed from _per_gb to _per_gib."""

@@ -371,3 +371,58 @@ class TestPluginPrincipalLabelValidation:
 
         identity_ids = [i.identity_id for i in identities]
         assert "User:alice" in identity_ids
+
+
+class TestPluginDiscoveryWindowHours:
+    """task-050: discovery_window_hours config option threading."""
+
+    def test_validate_principal_label_passes_discovery_window_to_combined(self, base_settings: dict) -> None:
+        """_validate_principal_label passes discovery_window_hours to run_combined_discovery."""
+        from unittest.mock import MagicMock, patch
+
+        from plugins.self_managed_kafka.plugin import SelfManagedKafkaPlugin
+
+        base_settings["identity_source"] = {"source": "prometheus"}
+        base_settings["discovery_window_hours"] = 6
+
+        plugin = SelfManagedKafkaPlugin()
+        with patch("plugins.self_managed_kafka.plugin.create_metrics_source") as mock_create:
+            mock_metrics = MagicMock()
+            mock_metrics.query.return_value = {"combined_discovery": []}
+            mock_create.return_value = mock_metrics
+
+            with patch("plugins.self_managed_kafka.gathering.prometheus.run_combined_discovery") as mock_discovery:
+                mock_discovery.return_value = (frozenset(), frozenset(), frozenset())
+                plugin.initialize(base_settings)
+
+        # Check discovery_window_hours was passed
+        _, call_kwargs = mock_discovery.call_args
+        assert call_kwargs.get("discovery_window_hours") == 6
+
+    def test_build_shared_context_passes_discovery_window_to_combined(self, base_settings: dict) -> None:
+        """build_shared_context passes discovery_window_hours to run_combined_discovery."""
+        from unittest.mock import MagicMock, patch
+
+        from plugins.self_managed_kafka.plugin import SelfManagedKafkaPlugin
+
+        base_settings["identity_source"] = {"source": "prometheus"}
+        base_settings["discovery_window_hours"] = 12
+
+        plugin = SelfManagedKafkaPlugin()
+        with patch("plugins.self_managed_kafka.plugin.create_metrics_source") as mock_create:
+            mock_metrics = MagicMock()
+            mock_create.return_value = mock_metrics
+
+            # Bypass _validate_principal_label to isolate build_shared_context
+            with patch.object(SelfManagedKafkaPlugin, "_validate_principal_label"):
+                plugin.initialize(base_settings)
+
+        # Clear cached discovery so build_shared_context actually calls run_combined_discovery
+        plugin._cached_discovery = None
+
+        with patch("plugins.self_managed_kafka.gathering.prometheus.run_combined_discovery") as mock_discovery:
+            mock_discovery.return_value = (frozenset(), frozenset(), frozenset())
+            plugin.build_shared_context("tenant-1")
+
+        _, call_kwargs = mock_discovery.call_args
+        assert call_kwargs.get("discovery_window_hours") == 12

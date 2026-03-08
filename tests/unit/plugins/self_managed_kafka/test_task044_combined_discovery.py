@@ -511,3 +511,31 @@ class TestPluginHandlerIntegration:
         # build_shared_context consumed cached result from _validate_principal_label — no new query
         # handler gather_resources/gather_identities also make no combined_discovery calls
         mock_ms.query.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Test 10: run_combined_discovery() uses custom discovery_window_hours
+# ---------------------------------------------------------------------------
+
+
+class TestRunCombinedDiscoveryWindow:
+    def test_uses_custom_discovery_window_hours(self, mock_metrics_source: MagicMock) -> None:
+        """run_combined_discovery with discovery_window_hours=6 passes start=now-6h to query."""
+        from datetime import timedelta
+        from unittest.mock import patch
+
+        from plugins.self_managed_kafka.gathering.prometheus import run_combined_discovery
+
+        mock_metrics_source.query.return_value = {"combined_discovery": []}
+
+        # Freeze time for predictable assertions
+        with patch("plugins.self_managed_kafka.gathering.prometheus.datetime") as mock_dt:
+            mock_now = datetime(2026, 3, 1, 12, 0, 0, tzinfo=UTC)
+            mock_dt.now.return_value = mock_now
+
+            run_combined_discovery(mock_metrics_source, timedelta(hours=1), discovery_window_hours=6)
+
+        call_kwargs = mock_metrics_source.query.call_args[1]
+        expected_start = datetime(2026, 3, 1, 6, 0, 0, tzinfo=UTC)  # 12:00 - 6 hours
+        assert call_kwargs["start"] == expected_start
+        assert call_kwargs["end"] == mock_now

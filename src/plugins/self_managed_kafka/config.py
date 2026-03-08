@@ -80,6 +80,7 @@ class SelfManagedKafkaConfig(PluginSettingsBase):
     identity_source: IdentitySourceConfig = Field(default_factory=IdentitySourceConfig)
     resource_source: ResourceSourceConfig = Field(default_factory=ResourceSourceConfig)
     metrics: MetricsConnectionConfig  # Required for cost construction + allocation
+    discovery_window_hours: int = Field(default=1, gt=0)
 
     @classmethod
     def from_plugin_settings(cls, settings: dict[str, Any]) -> SelfManagedKafkaConfig:
