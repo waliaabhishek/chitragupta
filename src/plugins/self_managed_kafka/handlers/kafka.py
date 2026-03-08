@@ -27,6 +27,7 @@ if TYPE_CHECKING:
     from core.plugin.protocols import CostAllocator, ResolveContext
     from core.storage.interface import UnitOfWork
     from plugins.self_managed_kafka.config import SelfManagedKafkaConfig
+    from plugins.self_managed_kafka.shared_context import SMKSharedContext
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +97,7 @@ class SelfManagedKafkaHandler:
         self._admin_client = admin_client
         self._prometheus_principals_available = prometheus_principals_available
         self._ecosystem = "self_managed_kafka"
+        self._current_gather_ctx: SMKSharedContext | None = None
 
     @property
     def service_type(self) -> str:
@@ -117,6 +119,7 @@ class SelfManagedKafkaHandler:
         if not isinstance(shared_ctx, SMKSharedContext):
             return
 
+        self._current_gather_ctx = shared_ctx
         yield shared_ctx.cluster_resource
 
         if self._config.resource_source.source == "admin_api":
@@ -125,19 +128,15 @@ class SelfManagedKafkaHandler:
             yield from self._gather_resources_from_prometheus(tenant_id)
 
     def _gather_resources_from_prometheus(self, tenant_id: str) -> Iterable[Resource]:
-        """Gather brokers and topics from Prometheus metrics."""
-        from plugins.self_managed_kafka.gathering.prometheus import (
-            gather_brokers_from_metrics,
-            gather_topics_from_metrics,
-        )
+        """Gather brokers and topics from cached discovery sets in shared context."""
+        ctx = self._current_gather_ctx
+        if ctx is None or ctx.discovered_brokers is None or ctx.discovered_topics is None:
+            return
 
-        step = timedelta(seconds=self._config.metrics_step_seconds)
-        yield from gather_brokers_from_metrics(
-            self._metrics_source, self._ecosystem, tenant_id, self._config.cluster_id, step=step
-        )
-        yield from gather_topics_from_metrics(
-            self._metrics_source, self._ecosystem, tenant_id, self._config.cluster_id, step=step
-        )
+        from plugins.self_managed_kafka.gathering.prometheus import brokers_to_resources, topics_to_resources
+
+        yield from brokers_to_resources(ctx.discovered_brokers, self._ecosystem, tenant_id, self._config.cluster_id)
+        yield from topics_to_resources(ctx.discovered_topics, self._ecosystem, tenant_id, self._config.cluster_id)
 
     def _gather_resources_from_admin(self, tenant_id: str) -> Iterable[Resource]:
         """Gather brokers and topics from Kafka Admin API."""
@@ -170,16 +169,15 @@ class SelfManagedKafkaHandler:
             yield from self._gather_static_identities(tenant_id)
 
     def _gather_identities_from_prometheus(self, tenant_id: str) -> Iterable[Identity]:
-        """Gather principals from Prometheus metrics."""
-        from plugins.self_managed_kafka.gathering.prometheus import gather_principals_from_metrics
+        """Gather principals from cached discovery sets in shared context."""
+        ctx = self._current_gather_ctx
+        if ctx is None or ctx.discovered_principals is None:
+            return
 
-        step = timedelta(seconds=self._config.metrics_step_seconds)
-        yield from gather_principals_from_metrics(
-            self._metrics_source,
-            self._ecosystem,
-            tenant_id,
-            self._config.identity_source,
-            step=step,
+        from plugins.self_managed_kafka.gathering.prometheus import principals_to_identities
+
+        yield from principals_to_identities(
+            ctx.discovered_principals, self._ecosystem, tenant_id, self._config.identity_source
         )
 
     def _gather_static_identities(self, tenant_id: str) -> Iterable[Identity]:

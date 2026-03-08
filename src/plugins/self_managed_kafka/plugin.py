@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
 from core.metrics.config import create_metrics_source
@@ -20,7 +20,6 @@ if TYPE_CHECKING:
     from plugins.self_managed_kafka.storage.module import SelfManagedKafkaStorageModule
 
 logger = logging.getLogger(__name__)
-LOGGER = logging.getLogger(__name__)
 
 
 class SelfManagedKafkaPlugin:
@@ -80,31 +79,27 @@ class SelfManagedKafkaPlugin:
     def _validate_principal_label(self) -> None:
         """Warn if Prometheus metrics lack 'principal' label.
 
-        Reuses PRINCIPALS_QUERY from gathering/prometheus.py.
+        Uses run_combined_discovery() to check for principal label availability.
         Sets self._prometheus_principals_available = False on missing label or
         Prometheus unreachability. Plugin continues either way (lenient).
         """
-        from plugins.self_managed_kafka.gathering.prometheus import PRINCIPALS_QUERY
+        from plugins.self_managed_kafka.gathering.prometheus import run_combined_discovery
 
-        now = datetime.now(UTC)
+        step = timedelta(seconds=self._config.metrics_step_seconds)  # type: ignore[union-attr]  # set in initialize()
         try:
-            results = self._metrics_source.query(  # type: ignore[union-attr]  # set on line above in initialize()
-                queries=[PRINCIPALS_QUERY],
-                start=now - timedelta(hours=1),
-                end=now,
-                step=timedelta(seconds=self._config.metrics_step_seconds),  # type: ignore[union-attr]  # set in initialize()
+            _brokers, _topics, principals = run_combined_discovery(
+                self._metrics_source,  # type: ignore[arg-type]  # set in initialize()
+                step,
             )
-            rows = results.get("distinct_principals", [])
-            has_principal_label = any(row.labels.get("principal") for row in rows)
-            if not has_principal_label:
-                LOGGER.warning(
+            if not principals:
+                logger.warning(
                     "self_managed_kafka: No 'principal' label found in Prometheus metrics. "
                     "Per-principal identity discovery will be unavailable. "
                     "Costs will be allocated to UNALLOCATED unless static_identities are configured."
                 )
                 self._prometheus_principals_available = False
         except MetricsQueryError:
-            LOGGER.warning(
+            logger.warning(
                 "self_managed_kafka: Could not reach Prometheus during principal label validation. "
                 "Proceeding with principal discovery disabled."
             )
@@ -129,14 +124,13 @@ class SelfManagedKafkaPlugin:
     def build_shared_context(self, tenant_id: str) -> SMKSharedContext:
         """Build the cluster resource once for the gather cycle.
 
-        gather_cluster_resource() is a pure config-to-Resource constructor —
-        no API call is made. This follows the same two-phase pattern as the
-        CCloud plugin for structural consistency.
+        When prometheus is the resource or identity source, also runs the combined
+        discovery query to populate broker/topic/principal sets in one round-trip.
         """
         if self._config is None:
             raise RuntimeError("Plugin not initialized. Call initialize() first.")
 
-        from plugins.self_managed_kafka.gathering.prometheus import gather_cluster_resource
+        from plugins.self_managed_kafka.gathering.prometheus import gather_cluster_resource, run_combined_discovery
         from plugins.self_managed_kafka.shared_context import SMKSharedContext
 
         cluster = gather_cluster_resource(
@@ -146,6 +140,26 @@ class SelfManagedKafkaPlugin:
             broker_count=self._config.broker_count,
             region=self._config.region,
         )
+
+        needs_prom_resources = self._config.resource_source.source == "prometheus"
+        needs_prom_identities = (
+            self._config.identity_source.source in ("prometheus", "both") and self._prometheus_principals_available
+        )
+        needs_prometheus = needs_prom_resources or needs_prom_identities
+
+        if needs_prometheus and self._metrics_source is not None:
+            step = timedelta(seconds=self._config.metrics_step_seconds)
+            try:
+                brokers, topics, principals = run_combined_discovery(self._metrics_source, step)
+                return SMKSharedContext(
+                    cluster_resource=cluster,
+                    discovered_brokers=brokers,
+                    discovered_topics=topics,
+                    discovered_principals=principals,
+                )
+            except MetricsQueryError:
+                logger.warning("self_managed_kafka: Combined discovery query failed. Discovery sets will be None.")
+
         return SMKSharedContext(cluster_resource=cluster)
 
     def get_storage_module(self) -> SelfManagedKafkaStorageModule:

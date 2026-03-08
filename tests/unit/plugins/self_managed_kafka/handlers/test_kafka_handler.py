@@ -117,18 +117,21 @@ class TestGatherResources:
 
     def test_prometheus_source_queries_metrics(self, base_config, mock_metrics_source):
         from plugins.self_managed_kafka.handlers.kafka import SelfManagedKafkaHandler
+        from plugins.self_managed_kafka.shared_context import SMKSharedContext
 
-        mock_metrics_source.query.return_value = {
-            "distinct_brokers": [MetricRow(datetime(2026, 2, 1, tzinfo=UTC), "distinct_brokers", 1.0, {"broker": "0"})],
-            "distinct_topics": [],
-        }
+        ctx = SMKSharedContext(
+            cluster_resource=_make_smk_ctx("kafka-001").cluster_resource,
+            discovered_brokers=frozenset({"0"}),
+            discovered_topics=frozenset(),
+        )
         handler = SelfManagedKafkaHandler(base_config, mock_metrics_source)
         uow = MagicMock()
 
-        resources = list(handler.gather_resources("tenant-1", uow, _make_smk_ctx("kafka-001")))
+        resources = list(handler.gather_resources("tenant-1", uow, ctx))
         resource_types = [r.resource_type for r in resources]
         assert "cluster" in resource_types
         assert "broker" in resource_types
+        mock_metrics_source.query.assert_not_called()
 
     def test_admin_api_source_uses_admin_client(self, mock_metrics_source):
         from plugins.self_managed_kafka.config import SelfManagedKafkaConfig
@@ -202,18 +205,24 @@ class TestGatherResources:
 class TestGatherIdentities:
     def test_prometheus_source_queries_metrics(self, base_config, mock_metrics_source):
         from plugins.self_managed_kafka.handlers.kafka import SelfManagedKafkaHandler
+        from plugins.self_managed_kafka.shared_context import SMKSharedContext
 
-        mock_metrics_source.query.return_value = {
-            "distinct_principals": [
-                MetricRow(datetime(2026, 2, 1, tzinfo=UTC), "distinct_principals", 1.0, {"principal": "User:alice"})
-            ]
-        }
+        ctx = SMKSharedContext(
+            cluster_resource=_make_smk_ctx("kafka-001").cluster_resource,
+            discovered_brokers=frozenset(),
+            discovered_topics=frozenset(),
+            discovered_principals=frozenset({"User:alice"}),
+        )
         handler = SelfManagedKafkaHandler(base_config, mock_metrics_source)
         uow = MagicMock()
+
+        # Populate _current_gather_ctx via gather_resources first
+        list(handler.gather_resources("tenant-1", uow, ctx))
 
         identities = list(handler.gather_identities("tenant-1", uow))
         assert len(identities) == 1
         assert identities[0].identity_id == "User:alice"
+        mock_metrics_source.query.assert_not_called()
 
     def test_static_source_loads_from_config(self, static_config, mock_metrics_source):
         from plugins.self_managed_kafka.handlers.kafka import SelfManagedKafkaHandler
@@ -230,6 +239,7 @@ class TestGatherIdentities:
     def test_both_source_combines_prometheus_and_static(self, mock_metrics_source):
         from plugins.self_managed_kafka.config import SelfManagedKafkaConfig
         from plugins.self_managed_kafka.handlers.kafka import SelfManagedKafkaHandler
+        from plugins.self_managed_kafka.shared_context import SMKSharedContext
 
         config = SelfManagedKafkaConfig.from_plugin_settings(
             {
@@ -248,14 +258,19 @@ class TestGatherIdentities:
                 "metrics": {"url": "http://prom:9090"},
             }
         )
-        mock_metrics_source.query.return_value = {
-            "distinct_principals": [
-                MetricRow(datetime(2026, 2, 1, tzinfo=UTC), "distinct_principals", 1.0, {"principal": "User:alice"})
-            ]
-        }
+
+        ctx = SMKSharedContext(
+            cluster_resource=_make_smk_ctx("kafka-001").cluster_resource,
+            discovered_brokers=frozenset(),
+            discovered_topics=frozenset(),
+            discovered_principals=frozenset({"User:alice"}),
+        )
 
         handler = SelfManagedKafkaHandler(config, mock_metrics_source)
         uow = MagicMock()
+
+        # Populate _current_gather_ctx via gather_resources first
+        list(handler.gather_resources("tenant-1", uow, ctx))
 
         identities = list(handler.gather_identities("tenant-1", uow))
         ids = {i.identity_id for i in identities}
@@ -449,87 +464,3 @@ class TestGetAllocator:
         handler = SelfManagedKafkaHandler(base_config, mock_metrics_source)
         with pytest.raises(ValueError, match="Unknown product type"):
             handler.get_allocator("UNKNOWN_TYPE")
-
-
-class TestMetricsStepForwarding:
-    """task-013: Handler must derive step from config.metrics_step_seconds and forward to gathering functions."""
-
-    def _make_step_config(self, metrics_step_seconds: int = 1800):
-        from plugins.self_managed_kafka.config import SelfManagedKafkaConfig
-
-        return SelfManagedKafkaConfig.from_plugin_settings(
-            {
-                "cluster_id": "kafka-001",
-                "broker_count": 3,
-                "cost_model": {
-                    "compute_hourly_rate": "0.10",
-                    "storage_per_gib_hourly": "0.0001",
-                    "network_ingress_per_gib": "0.01",
-                    "network_egress_per_gib": "0.02",
-                },
-                "metrics_step_seconds": metrics_step_seconds,
-                "metrics": {"url": "http://prom:9090"},
-            }
-        )
-
-    def test_gather_resources_forwards_step_to_brokers(self, mock_metrics_source):
-        """gather_resources() passes step=timedelta(seconds=metrics_step_seconds) to gather_brokers_from_metrics."""
-        from unittest.mock import patch
-
-        from plugins.self_managed_kafka.handlers.kafka import SelfManagedKafkaHandler
-
-        config = self._make_step_config(metrics_step_seconds=1800)
-        handler = SelfManagedKafkaHandler(config, mock_metrics_source)
-        uow = MagicMock()
-
-        prom = "plugins.self_managed_kafka.gathering.prometheus"
-        with (
-            patch(f"{prom}.gather_brokers_from_metrics") as mock_brokers,
-            patch(f"{prom}.gather_topics_from_metrics") as mock_topics,
-        ):
-            mock_brokers.return_value = []
-            mock_topics.return_value = []
-            list(handler.gather_resources("tenant-1", uow, _make_smk_ctx("kafka-001")))
-
-        _, broker_kwargs = mock_brokers.call_args
-        assert broker_kwargs["step"] == timedelta(seconds=1800)
-
-    def test_gather_resources_forwards_step_to_topics(self, mock_metrics_source):
-        """gather_resources() passes step=timedelta(seconds=metrics_step_seconds) to gather_topics_from_metrics."""
-        from unittest.mock import patch
-
-        from plugins.self_managed_kafka.handlers.kafka import SelfManagedKafkaHandler
-
-        config = self._make_step_config(metrics_step_seconds=1800)
-        handler = SelfManagedKafkaHandler(config, mock_metrics_source)
-        uow = MagicMock()
-
-        prom = "plugins.self_managed_kafka.gathering.prometheus"
-        with (
-            patch(f"{prom}.gather_brokers_from_metrics") as mock_brokers,
-            patch(f"{prom}.gather_topics_from_metrics") as mock_topics,
-        ):
-            mock_brokers.return_value = []
-            mock_topics.return_value = []
-            list(handler.gather_resources("tenant-1", uow, _make_smk_ctx("kafka-001")))
-
-        _, topic_kwargs = mock_topics.call_args
-        assert topic_kwargs["step"] == timedelta(seconds=1800)
-
-    def test_gather_identities_forwards_step_to_principals(self, mock_metrics_source):
-        """gather_identities() passes step=timedelta(seconds=metrics_step_seconds) to gather_principals_from_metrics."""
-        from unittest.mock import patch
-
-        from plugins.self_managed_kafka.handlers.kafka import SelfManagedKafkaHandler
-
-        config = self._make_step_config(metrics_step_seconds=1800)
-        handler = SelfManagedKafkaHandler(config, mock_metrics_source)
-        uow = MagicMock()
-
-        prom = "plugins.self_managed_kafka.gathering.prometheus"
-        with patch(f"{prom}.gather_principals_from_metrics") as mock_principals:
-            mock_principals.return_value = []
-            list(handler.gather_identities("tenant-1", uow))
-
-        _, principal_kwargs = mock_principals.call_args
-        assert principal_kwargs["step"] == timedelta(seconds=1800)

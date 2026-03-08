@@ -151,17 +151,19 @@ class TestFullPrometheusPipeline:
         """Cluster resource is created first and billing lines reference it."""
         from plugins.self_managed_kafka.config import SelfManagedKafkaConfig
         from plugins.self_managed_kafka.handlers.kafka import SelfManagedKafkaHandler
+        from plugins.self_managed_kafka.shared_context import SMKSharedContext
 
         config = SelfManagedKafkaConfig.from_plugin_settings(prometheus_settings)
-        mock_prometheus.query.return_value = {
-            "distinct_brokers": [make_row("distinct_brokers", 1.0, {"broker": "0"})],
-            "distinct_topics": [],
-        }
+        ctx = SMKSharedContext(
+            cluster_resource=_make_smk_ctx("kafka-cluster-001").cluster_resource,
+            discovered_brokers=frozenset({"0"}),
+            discovered_topics=frozenset(),
+        )
 
         handler = SelfManagedKafkaHandler(config, mock_prometheus)
         uow = MagicMock()
 
-        resources = list(handler.gather_resources("tenant-1", uow, _make_smk_ctx("kafka-cluster-001")))
+        resources = list(handler.gather_resources("tenant-1", uow, ctx))
         cluster = resources[0]
         assert cluster.resource_type == "cluster"
         assert cluster.resource_id == "kafka-cluster-001"
@@ -169,6 +171,7 @@ class TestFullPrometheusPipeline:
 
         broker = next(r for r in resources if r.resource_type == "broker")
         assert broker.parent_id == "kafka-cluster-001"
+        mock_prometheus.query.assert_not_called()
 
     def test_multi_principal_allocation_with_realistic_metrics(self, prometheus_settings, mock_prometheus):
         """Multi-principal allocation distributes costs proportionally."""

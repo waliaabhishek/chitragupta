@@ -15,28 +15,12 @@ if TYPE_CHECKING:
     from plugins.self_managed_kafka.config import IdentitySourceConfig
 logger = logging.getLogger(__name__)
 
-# PromQL expressions for resource/identity discovery.
-# {} placeholder is replaced by _inject_resource_filter when a filter is needed.
-# For cluster-wide queries, no filter is used (pass resource_id_filter=None).
-_BROKERS_QUERY = MetricQuery(
-    key="distinct_brokers",
-    query_expression="group by (broker) (kafka_server_brokertopicmetrics_bytesin_total{})",
-    label_keys=("broker",),
-    resource_label="broker",
-)
-
-_TOPICS_QUERY = MetricQuery(
-    key="distinct_topics",
-    query_expression="group by (topic) (kafka_server_brokertopicmetrics_bytesin_total{})",
-    label_keys=("topic",),
-    resource_label="topic",
-)
-
-PRINCIPALS_QUERY = MetricQuery(
-    key="distinct_principals",
-    query_expression="group by (principal) (kafka_server_brokertopicmetrics_bytesin_total{})",
-    label_keys=("principal",),
-    resource_label="principal",
+# Combined discovery query — single round-trip to discover brokers, topics, and principals.
+_COMBINED_DISCOVERY_QUERY = MetricQuery(
+    key="combined_discovery",
+    query_expression="group by (broker, topic, principal) (kafka_server_brokertopicmetrics_bytesin_total{})",
+    label_keys=("broker", "topic", "principal"),
+    resource_label=None,
 )
 
 
@@ -67,105 +51,89 @@ def gather_cluster_resource(
     )
 
 
-def gather_brokers_from_metrics(
+def run_combined_discovery(
     metrics_source: MetricsSource,
-    ecosystem: str,
-    tenant_id: str,
-    cluster_id: str,
-    step: timedelta = timedelta(hours=1),
-) -> Iterable[Resource]:
-    """Query Prometheus for distinct broker labels → Resource objects."""
-    now = datetime.now(UTC)
-    # Query a short window to discover current brokers
-    start = now - timedelta(hours=1)
+    step: timedelta,
+) -> tuple[frozenset[str], frozenset[str], frozenset[str]]:
+    """Issue a single query to discover brokers, topics, and principals simultaneously.
 
+    Returns:
+        (brokers, topics, principals) as frozensets of label values.
+        Empty string values are excluded; missing labels are skipped.
+    """
+    now = datetime.now(UTC)
     results = metrics_source.query(
-        queries=[_BROKERS_QUERY],
-        start=start,
+        queries=[_COMBINED_DISCOVERY_QUERY],
+        start=now - timedelta(hours=1),
         end=now,
         step=step,
     )
-
-    seen_brokers: set[str] = set()
-    for row in results.get("distinct_brokers", []):
-        broker_id = row.labels.get("broker")
-        if broker_id and broker_id not in seen_brokers:
-            seen_brokers.add(broker_id)
-            yield CoreResource(
-                ecosystem=ecosystem,
-                tenant_id=tenant_id,
-                resource_id=f"{cluster_id}:broker:{broker_id}",
-                resource_type="broker",
-                display_name=broker_id,
-                parent_id=cluster_id,
-                created_at=None,
-                deleted_at=None,
-                last_seen_at=datetime.now(UTC),
-                metadata={"cluster_id": cluster_id},
-            )
+    brokers: set[str] = set()
+    topics: set[str] = set()
+    principals: set[str] = set()
+    for row in results.get("combined_discovery", []):
+        if b := row.labels.get("broker"):
+            brokers.add(b)
+        if t := row.labels.get("topic"):
+            topics.add(t)
+        if p := row.labels.get("principal"):
+            principals.add(p)
+    return frozenset(brokers), frozenset(topics), frozenset(principals)
 
 
-def gather_topics_from_metrics(
-    metrics_source: MetricsSource,
+def brokers_to_resources(
+    broker_ids: frozenset[str],
     ecosystem: str,
     tenant_id: str,
     cluster_id: str,
-    step: timedelta = timedelta(hours=1),
 ) -> Iterable[Resource]:
-    """Query Prometheus for distinct topic labels → Resource objects."""
-    now = datetime.now(UTC)
-    start = now - timedelta(hours=1)
-
-    results = metrics_source.query(
-        queries=[_TOPICS_QUERY],
-        start=start,
-        end=now,
-        step=step,
-    )
-
-    seen_topics: set[str] = set()
-    for row in results.get("distinct_topics", []):
-        topic_name = row.labels.get("topic")
-        if topic_name and topic_name not in seen_topics:
-            seen_topics.add(topic_name)
-            yield CoreResource(
-                ecosystem=ecosystem,
-                tenant_id=tenant_id,
-                resource_id=f"{cluster_id}:topic:{topic_name}",
-                resource_type="topic",
-                display_name=topic_name,
-                parent_id=cluster_id,
-                created_at=None,
-                deleted_at=None,
-                last_seen_at=datetime.now(UTC),
-                metadata={"cluster_id": cluster_id},
-            )
+    """Convert a set of broker label values to Resource objects."""
+    for broker_id in broker_ids:
+        yield CoreResource(
+            ecosystem=ecosystem,
+            tenant_id=tenant_id,
+            resource_id=f"{cluster_id}:broker:{broker_id}",
+            resource_type="broker",
+            display_name=broker_id,
+            parent_id=cluster_id,
+            created_at=None,
+            deleted_at=None,
+            last_seen_at=datetime.now(UTC),
+            metadata={"cluster_id": cluster_id},
+        )
 
 
-def gather_principals_from_metrics(
-    metrics_source: MetricsSource,
+def topics_to_resources(
+    topic_names: frozenset[str],
+    ecosystem: str,
+    tenant_id: str,
+    cluster_id: str,
+) -> Iterable[Resource]:
+    """Convert a set of topic label values to Resource objects."""
+    for topic_name in topic_names:
+        yield CoreResource(
+            ecosystem=ecosystem,
+            tenant_id=tenant_id,
+            resource_id=f"{cluster_id}:topic:{topic_name}",
+            resource_type="topic",
+            display_name=topic_name,
+            parent_id=cluster_id,
+            created_at=None,
+            deleted_at=None,
+            last_seen_at=datetime.now(UTC),
+            metadata={"cluster_id": cluster_id},
+        )
+
+
+def principals_to_identities(
+    principal_ids: frozenset[str],
     ecosystem: str,
     tenant_id: str,
     identity_config: IdentitySourceConfig,
-    step: timedelta = timedelta(hours=1),
 ) -> Iterable[Identity]:
-    """Query Prometheus for distinct principal labels → Identity objects."""
-    now = datetime.now(UTC)
-    start = now - timedelta(hours=1)
-
-    results = metrics_source.query(
-        queries=[PRINCIPALS_QUERY],
-        start=start,
-        end=now,
-        step=step,
-    )
-
-    seen_principals: set[str] = set()
-    for row in results.get("distinct_principals", []):
-        principal_id = row.labels.get("principal")
-        if principal_id and principal_id not in seen_principals:
-            seen_principals.add(principal_id)
-            yield from _make_principal_identity(principal_id, ecosystem, tenant_id, identity_config)
+    """Convert a set of principal label values to Identity objects."""
+    for principal_id in principal_ids:
+        yield from _make_principal_identity(principal_id, ecosystem, tenant_id, identity_config)
 
 
 def _make_principal_identity(

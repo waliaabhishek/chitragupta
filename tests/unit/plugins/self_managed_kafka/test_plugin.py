@@ -281,12 +281,12 @@ class TestPluginPrincipalLabelValidation:
         base_settings["identity_source"] = {"source": "prometheus"}
 
         mock_row = MagicMock()
-        mock_row.labels = {"principal": "User:alice"}
+        mock_row.labels = {"broker": "0", "topic": "orders", "principal": "User:alice"}
 
         plugin = SelfManagedKafkaPlugin()
         with patch("plugins.self_managed_kafka.plugin.create_metrics_source") as mock_create:
             mock_metrics = MagicMock()
-            mock_metrics.query.return_value = {"distinct_principals": [mock_row]}
+            mock_metrics.query.return_value = {"combined_discovery": [mock_row]}
             mock_create.return_value = mock_metrics
 
             plugin.initialize(base_settings)
@@ -302,15 +302,15 @@ class TestPluginPrincipalLabelValidation:
         base_settings["identity_source"] = {"source": "prometheus"}
 
         mock_row = MagicMock()
-        mock_row.labels = {}  # No 'principal' label
+        mock_row.labels = {"broker": "0", "topic": "orders"}  # No 'principal' label
 
         plugin = SelfManagedKafkaPlugin()
         with patch("plugins.self_managed_kafka.plugin.create_metrics_source") as mock_create:
             mock_metrics = MagicMock()
-            mock_metrics.query.return_value = {"distinct_principals": [mock_row]}
+            mock_metrics.query.return_value = {"combined_discovery": [mock_row]}
             mock_create.return_value = mock_metrics
 
-            with patch("plugins.self_managed_kafka.plugin.LOGGER") as mock_logger:
+            with patch("plugins.self_managed_kafka.plugin.logger") as mock_logger:
                 plugin.initialize(base_settings)
                 mock_logger.warning.assert_called_once()
                 warning_msg = mock_logger.warning.call_args[0][0]
@@ -333,7 +333,7 @@ class TestPluginPrincipalLabelValidation:
             mock_metrics.query.side_effect = MetricsQueryError("connection refused")
             mock_create.return_value = mock_metrics
 
-            with patch("plugins.self_managed_kafka.plugin.LOGGER") as mock_logger:
+            with patch("plugins.self_managed_kafka.plugin.logger") as mock_logger:
                 # Must not raise — plugin continues gracefully
                 plugin.initialize(base_settings)
                 mock_logger.warning.assert_called_once()

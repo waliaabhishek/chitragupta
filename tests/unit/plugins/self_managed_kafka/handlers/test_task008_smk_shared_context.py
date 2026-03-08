@@ -101,30 +101,26 @@ class TestSMKHandlerGatherResourcesSharedContext:
         mock_gather_cluster.assert_not_called()
 
     def test_proceeds_with_broker_gathering_after_cluster(
-        self, base_config: Any, mock_metrics_source: MagicMock, smk_shared_ctx: Any
+        self, base_config: Any, mock_metrics_source: MagicMock
     ) -> None:
         """Handler continues with broker/topic gathering after yielding cluster from shared_ctx."""
         from plugins.self_managed_kafka.handlers.kafka import SelfManagedKafkaHandler
+        from plugins.self_managed_kafka.shared_context import SMKSharedContext
 
-        mock_metrics_source.query.return_value = {
-            "distinct_brokers": [
-                MagicMock(
-                    timestamp=datetime(2026, 2, 1, tzinfo=UTC),
-                    metric_key="distinct_brokers",
-                    value=1.0,
-                    labels={"broker": "0"},
-                )
-            ],
-            "distinct_topics": [],
-        }
+        ctx = SMKSharedContext(
+            cluster_resource=_make_cluster_resource("kafka-001"),
+            discovered_brokers=frozenset({"0"}),
+            discovered_topics=frozenset(),
+        )
         handler = SelfManagedKafkaHandler(base_config, mock_metrics_source)
         uow = MagicMock()
 
-        result = list(handler.gather_resources("tenant-1", uow, smk_shared_ctx))
+        result = list(handler.gather_resources("tenant-1", uow, ctx))
         resource_types = {r.resource_type for r in result}
 
         assert "cluster" in resource_types
         assert "broker" in resource_types
+        mock_metrics_source.query.assert_not_called()
 
     def test_returns_empty_when_shared_ctx_wrong_type(self, base_config: Any, mock_metrics_source: MagicMock) -> None:
         """gather_resources yields nothing when shared_ctx is not SMKSharedContext."""

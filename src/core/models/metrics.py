@@ -15,7 +15,7 @@ class MetricQuery:
     key: str
     query_expression: str
     label_keys: tuple[str, ...]
-    resource_label: str
+    resource_label: str | None
     query_mode: Literal["instant", "range"] = "range"
     metadata: dict[str, Any] = field(default_factory=dict)
 
