@@ -127,7 +127,16 @@ class SQLModelBackend:
         cfg = Config(str(alembic_ini))
         cfg.set_main_option("script_location", str(migrations_dir))
         cfg.set_main_option("sqlalchemy.url", self._connection_string)
-        command.upgrade(cfg, "head")
+
+        # Preserve root logger state — alembic's fileConfig() overwrites it
+        root = logging.root
+        saved_level = root.level
+        saved_handlers = root.handlers[:]
+        try:
+            command.upgrade(cfg, "head")
+        finally:
+            root.setLevel(saved_level)
+            root.handlers[:] = saved_handlers
 
     def dispose(self) -> None:
         self._engine.dispose()
