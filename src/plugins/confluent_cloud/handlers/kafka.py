@@ -54,7 +54,7 @@ _KAFKA_READ_METRICS: list[MetricQuery] = [
         query_expression=_BYTES_OUT_QUERY,
         label_keys=("kafka_id", "principal_id"),
         resource_label="kafka_id",
-        query_mode="instant",
+        query_mode="range",  # range: sum delta values across billing window
     ),
 ]
 
@@ -65,7 +65,7 @@ _KAFKA_WRITE_METRICS: list[MetricQuery] = [
         query_expression=_BYTES_IN_QUERY,
         label_keys=("kafka_id", "principal_id"),
         resource_label="kafka_id",
-        query_mode="instant",
+        query_mode="range",  # range: sum delta values across billing window
     ),
 ]
 
