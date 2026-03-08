@@ -645,6 +645,146 @@ class TestChargebackRepository:
         assert count == 1
 
 
+# --- Chargeback Repository Dimension Cache ---
+
+
+class TestChargebackRepositoryDimensionCache:
+    def _make_row(self, **overrides: Any) -> ChargebackRow:
+        defaults = dict(
+            ecosystem="eco",
+            tenant_id="t1",
+            timestamp=datetime(2026, 1, 15, tzinfo=UTC),
+            resource_id="r1",
+            product_category="compute",
+            product_type="kafka",
+            identity_id="u1",
+            cost_type=CostType.USAGE,
+            amount=Decimal("50.00"),
+            allocation_method="direct",
+            tags=["tag1"],
+        )
+        defaults.update(overrides)
+        return ChargebackRow(**defaults)
+
+    def test_dimension_cache_hit_no_extra_db_select(self, session: Session) -> None:
+        """Second upsert with identical dimension fields uses cache — no extra SELECT issued."""
+        from unittest.mock import patch
+
+        repo = SQLModelChargebackRepository(session)
+        row1 = self._make_row(timestamp=datetime(2026, 1, 15, tzinfo=UTC))
+        row2 = self._make_row(timestamp=datetime(2026, 1, 16, tzinfo=UTC))
+
+        original_exec = session.exec
+        dim_selects: list[Any] = []
+
+        def tracking_exec(stmt: Any, *args: Any, **kwargs: Any) -> Any:
+            stmt_str = str(stmt)
+            if "chargeback_dimensions" in stmt_str.lower():
+                dim_selects.append(stmt_str)
+            return original_exec(stmt, *args, **kwargs)
+
+        with patch.object(session, "exec", side_effect=tracking_exec):
+            repo.upsert(row1)
+            repo.upsert(row2)
+
+        assert len(repo._dimension_cache) == 1
+        assert len(dim_selects) == 1  # cache hit on 2nd upsert: no 2nd SELECT
+
+    def test_dimension_cache_miss_creates_and_caches(self, session: Session) -> None:
+        """Cache miss: first upsert creates dim, flushes, and caches it; subsequent call hits cache."""
+        repo = SQLModelChargebackRepository(session)
+        row = self._make_row()
+
+        assert len(repo._dimension_cache) == 0
+
+        repo.upsert(row)
+
+        assert len(repo._dimension_cache) == 1
+
+        # Second upsert with same dim fields — cache already warm
+        row2 = self._make_row(timestamp=datetime(2026, 1, 16, tzinfo=UTC))
+        repo.upsert(row2)
+
+        assert len(repo._dimension_cache) == 1  # still only one dimension
+
+    def test_upsert_returns_correct_chargeback_row_on_cache_miss(self, session: Session) -> None:
+        """upsert() returns ChargebackRow with all dimension fields populated on cache miss."""
+        repo = SQLModelChargebackRepository(session)
+        row = self._make_row()
+
+        result = repo.upsert(row)
+
+        assert result.ecosystem == "eco"
+        assert result.tenant_id == "t1"
+        assert result.resource_id == "r1"
+        assert result.product_category == "compute"
+        assert result.product_type == "kafka"
+        assert result.identity_id == "u1"
+        assert result.cost_type == CostType.USAGE
+        assert result.amount == Decimal("50.00")
+        assert result.allocation_method == "direct"
+
+    def test_upsert_returns_correct_chargeback_row_on_cache_hit(self, session: Session) -> None:
+        """upsert() returns ChargebackRow with all dimension fields populated on cache hit."""
+        repo = SQLModelChargebackRepository(session)
+        row1 = self._make_row(timestamp=datetime(2026, 1, 15, tzinfo=UTC))
+        row2 = self._make_row(timestamp=datetime(2026, 1, 16, tzinfo=UTC))
+
+        repo.upsert(row1)
+        result = repo.upsert(row2)  # cache hit path
+
+        assert result.ecosystem == "eco"
+        assert result.tenant_id == "t1"
+        assert result.resource_id == "r1"
+        assert result.product_category == "compute"
+        assert result.product_type == "kafka"
+        assert result.identity_id == "u1"
+        assert result.cost_type == CostType.USAGE
+        assert result.amount == Decimal("50.00")
+        assert result.allocation_method == "direct"
+
+    def test_dimension_cache_hit_returns_same_python_object(self, session: Session) -> None:
+        """chargeback_to_domain receives the same ChargebackDimensionTable object on cache hit (identity check)."""
+        repo = SQLModelChargebackRepository(session)
+        row1 = self._make_row(timestamp=datetime(2026, 1, 15, tzinfo=UTC))
+        row2 = self._make_row(timestamp=datetime(2026, 1, 16, tzinfo=UTC))
+
+        repo.upsert(row1)
+        key = repo._make_dimension_key(row1)
+        dim1 = repo._dimension_cache[key]
+
+        repo.upsert(row2)
+        dim2 = repo._dimension_cache[key]
+
+        assert dim1 is dim2  # exact same Python object — not a re-fetched copy
+
+    def test_nullable_fields_produce_correct_cache_keys(self, session: Session) -> None:
+        """resource_id=None and allocation_detail=None produce correct, non-colliding cache keys."""
+        repo = SQLModelChargebackRepository(session)
+
+        row_none_resource = self._make_row(resource_id=None, identity_id="u1")
+        row_none_detail = self._make_row(resource_id="r1", allocation_detail=None, identity_id="u2")
+
+        key1 = repo._make_dimension_key(row_none_resource)
+        key2 = repo._make_dimension_key(row_none_detail)
+
+        assert key1 != key2
+        assert key1[2] is None  # resource_id at index 2 in the key tuple
+        assert key2[-1] is None  # allocation_detail is last in the key tuple
+
+    def test_cache_scope_independent_per_instance(self, session: Session) -> None:
+        """Two separate SQLModelChargebackRepository instances have independent _dimension_cache."""
+        repo1 = SQLModelChargebackRepository(session)
+        repo2 = SQLModelChargebackRepository(session)
+
+        row = self._make_row()
+        repo1.upsert(row)
+        session.commit()
+
+        assert len(repo1._dimension_cache) == 1
+        assert len(repo2._dimension_cache) == 0  # repo2 cache is independent
+
+
 # --- PipelineState Repository ---
 
 

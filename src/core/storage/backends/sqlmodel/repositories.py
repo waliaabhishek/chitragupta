@@ -433,9 +433,29 @@ class SQLModelBillingRepository:
 class SQLModelChargebackRepository:
     def __init__(self, session: Session) -> None:
         self._session = session
+        self._dimension_cache: dict[tuple[str | None, ...], ChargebackDimensionTable] = {}
 
-    def _get_or_create_dimension(self, row: ChargebackRow) -> int:
-        """Get existing dimension by UQ columns, or create a new one."""
+    def _make_dimension_key(self, row: ChargebackRow) -> tuple[str | None, ...]:
+        return (
+            row.ecosystem,
+            row.tenant_id,
+            row.resource_id,
+            row.product_category,
+            row.product_type,
+            row.identity_id,
+            row.cost_type.value,
+            row.allocation_method,
+            row.allocation_detail,
+        )
+
+    def _get_or_create_dimension(self, row: ChargebackRow) -> ChargebackDimensionTable:
+        """Get existing dimension by UQ columns (cached), or create a new one."""
+        key = self._make_dimension_key(row)
+
+        cached = self._dimension_cache.get(key)
+        if cached is not None:
+            return cached
+
         stmt = select(ChargebackDimensionTable).where(
             col(ChargebackDimensionTable.ecosystem) == row.ecosystem,
             col(ChargebackDimensionTable.tenant_id) == row.tenant_id,
@@ -449,21 +469,22 @@ class SQLModelChargebackRepository:
         )
         existing = self._session.exec(stmt).first()
         if existing:
-            assert existing.dimension_id is not None  # auto-incremented PK is always set after flush
-            return existing.dimension_id
+            assert existing.dimension_id is not None
+            self._dimension_cache[key] = existing
+            return existing
 
         dim = chargeback_to_dimension(row)
         self._session.add(dim)
         self._session.flush()
-        assert dim.dimension_id is not None  # auto-incremented PK is always set after flush
-        return dim.dimension_id
+        assert dim.dimension_id is not None  # auto-incremented PK needed as FK
+        self._dimension_cache[key] = dim
+        return dim
 
     def upsert(self, row: ChargebackRow) -> ChargebackRow:
-        dimension_id = self._get_or_create_dimension(row)
-        fact = chargeback_to_fact(row, dimension_id)
+        dim = self._get_or_create_dimension(row)
+        assert dim.dimension_id is not None
+        fact = chargeback_to_fact(row, dim.dimension_id)
         merged = self._session.merge(fact)
-        dim = self._session.get(ChargebackDimensionTable, dimension_id)
-        assert dim is not None  # dimension was just created/fetched
         return chargeback_to_domain(dim, merged)
 
     def _query_joined(self, *where_clauses: Any) -> list[ChargebackRow]:
