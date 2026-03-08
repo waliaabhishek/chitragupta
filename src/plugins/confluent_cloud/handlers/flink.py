@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from core.models import IdentityResolution, MetricRow, Resource
-    from core.plugin.protocols import CostAllocator
+    from core.plugin.protocols import CostAllocator, ResolveContext
     from core.storage.interface import UnitOfWork
     from plugins.confluent_cloud.config import CCloudPluginConfig
     from plugins.confluent_cloud.connections import CCloudConnection
@@ -146,6 +146,7 @@ class FlinkHandler(BaseServiceHandler["CCloudConnection | None", "CCloudPluginCo
         billing_duration: timedelta,
         metrics_data: dict[str, list[MetricRow]] | None,
         uow: UnitOfWork,
+        context: ResolveContext | None = None,
     ) -> IdentityResolution:
         """Resolve identities for a Flink compute pool at billing time.
 
@@ -153,6 +154,7 @@ class FlinkHandler(BaseServiceHandler["CCloudConnection | None", "CCloudPluginCo
         owners from resource metadata. Passes stmt_owner_cfu to allocator
         via IdentityResolution.context.
         """
+        cached_resources = context.get("cached_resources") if context else None
         billing_end = billing_timestamp + billing_duration
         return resolve_flink_identity(
             tenant_id=tenant_id,
@@ -162,6 +164,7 @@ class FlinkHandler(BaseServiceHandler["CCloudConnection | None", "CCloudPluginCo
             metrics_data=metrics_data,
             uow=uow,
             ecosystem=self._ecosystem,
+            cached_resources=cached_resources,
         )
 
     def get_metrics_for_product_type(self, product_type: str) -> list[MetricQuery]:

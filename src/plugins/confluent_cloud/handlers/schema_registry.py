@@ -23,7 +23,7 @@ from plugins.confluent_cloud.handlers.identity_resolution import (
 
 if TYPE_CHECKING:
     from core.models import IdentityResolution, MetricQuery, MetricRow, Resource
-    from core.plugin.protocols import CostAllocator
+    from core.plugin.protocols import CostAllocator, ResolveContext
     from core.storage.interface import UnitOfWork
 
 logger = logging.getLogger(__name__)
@@ -80,6 +80,7 @@ class SchemaRegistryHandler(BaseServiceHandler["CCloudConnection | None", "CClou
         billing_duration: timedelta,
         metrics_data: dict[str, list[MetricRow]] | None,
         uow: UnitOfWork,
+        context: ResolveContext | None = None,
     ) -> IdentityResolution:
         """Resolve identities for SR - same logic as Kafka.
 
@@ -89,6 +90,7 @@ class SchemaRegistryHandler(BaseServiceHandler["CCloudConnection | None", "CClou
         logger.debug(
             "Resolving %s identities resource=%s timestamp=%s", self.service_type, resource_id, billing_timestamp
         )
+        cached_identities = context.get("cached_identities") if context else None
         billing_end = billing_timestamp + billing_duration
         return resolve_kafka_sr_identities(
             tenant_id=tenant_id,
@@ -98,6 +100,7 @@ class SchemaRegistryHandler(BaseServiceHandler["CCloudConnection | None", "CClou
             metrics_data=metrics_data,
             uow=uow,
             ecosystem=self._ecosystem,
+            cached_identities=cached_identities,
         )
 
     def get_metrics_for_product_type(self, product_type: str) -> list[MetricQuery]:

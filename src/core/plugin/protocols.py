@@ -4,7 +4,7 @@ import logging
 from collections.abc import Iterable, Sequence
 from datetime import date as date_type
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, TypedDict, runtime_checkable
 
 if TYPE_CHECKING:
     # Runtime import not needed — protocols use string annotations via
@@ -18,12 +18,20 @@ if TYPE_CHECKING:
         BillingLineItem,
         Identity,
         IdentityResolution,
+        IdentitySet,
         MetricQuery,
         MetricRow,
         Resource,
     )
     from core.models.chargeback import ChargebackRow
     from core.storage.interface import BillingRepository, IdentityRepository, ResourceRepository, UnitOfWork
+
+
+class ResolveContext(TypedDict, total=False):
+    cached_identities: IdentitySet
+    cached_resources: dict[str, Resource]
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -102,6 +110,7 @@ class ServiceHandler(Protocol):
         billing_duration: timedelta,
         metrics_data: dict[str, list[MetricRow]] | None,
         uow: UnitOfWork,
+        context: ResolveContext | None = None,
     ) -> IdentityResolution: ...
 
     def get_metrics_for_product_type(self, product_type: str) -> list[MetricQuery]: ...

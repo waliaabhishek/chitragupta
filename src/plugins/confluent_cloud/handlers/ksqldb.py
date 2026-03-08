@@ -22,7 +22,7 @@ from plugins.confluent_cloud.handlers.ksqldb_identity import (
 
 if TYPE_CHECKING:
     from core.models import IdentityResolution, MetricQuery, MetricRow, Resource
-    from core.plugin.protocols import CostAllocator
+    from core.plugin.protocols import CostAllocator, ResolveContext
     from core.storage.interface import UnitOfWork
 
 logger = logging.getLogger(__name__)
@@ -81,6 +81,7 @@ class KsqldbHandler(BaseServiceHandler["CCloudConnection | None", "CCloudPluginC
         billing_duration: timedelta,
         metrics_data: dict[str, list[MetricRow]] | None,
         uow: UnitOfWork,
+        context: ResolveContext | None = None,
     ) -> IdentityResolution:
         """Resolve identity for a ksqlDB app at billing time.
 

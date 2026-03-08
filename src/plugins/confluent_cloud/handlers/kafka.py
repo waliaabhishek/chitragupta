@@ -26,7 +26,7 @@ from plugins.confluent_cloud.handlers.identity_resolution import (
 
 if TYPE_CHECKING:
     from core.models import Identity, IdentityResolution, MetricRow, Resource
-    from core.plugin.protocols import CostAllocator
+    from core.plugin.protocols import CostAllocator, ResolveContext
     from core.storage.interface import UnitOfWork
 
 logger = logging.getLogger(__name__)
@@ -155,6 +155,7 @@ class KafkaHandler(BaseServiceHandler["CCloudConnection | None", "CCloudPluginCo
         billing_duration: timedelta,
         metrics_data: dict[str, list[MetricRow]] | None,
         uow: UnitOfWork,
+        context: ResolveContext | None = None,
     ) -> IdentityResolution:
         """Resolve identities for a Kafka cluster at billing time.
 
@@ -168,6 +169,7 @@ class KafkaHandler(BaseServiceHandler["CCloudConnection | None", "CCloudPluginCo
             resource_id,
             billing_timestamp,
         )
+        cached_identities = context.get("cached_identities") if context else None
         billing_end = billing_timestamp + billing_duration
         return resolve_kafka_sr_identities(
             tenant_id=tenant_id,
@@ -177,6 +179,7 @@ class KafkaHandler(BaseServiceHandler["CCloudConnection | None", "CCloudPluginCo
             metrics_data=metrics_data,
             uow=uow,
             ecosystem=self._ecosystem,
+            cached_identities=cached_identities,
         )
 
     def get_metrics_for_product_type(self, product_type: str) -> list[MetricQuery]:

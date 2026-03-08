@@ -149,6 +149,7 @@ class MockServiceHandler:
         billing_duration: timedelta,
         metrics_data: dict[str, list[MetricRow]] | None,
         uow: Any,
+        context: Any = None,
     ) -> IdentityResolution:
         if self._resolve_fn:
             return self._resolve_fn(tenant_id, resource_id, billing_timestamp, billing_duration, metrics_data, uow)
@@ -2319,7 +2320,9 @@ class TestComputeBillingWindowsOnce:
         windows: set[tuple[datetime, datetime]] = {(w1_start, w1_end), (w2_start, w2_end)}
 
         # Patch find_by_period to return different resources per window
-        def find_by_period(eco: str, tid: str, start: datetime, end: datetime, **kwargs: Any) -> tuple[list[Resource], Any]:
+        def find_by_period(
+            eco: str, tid: str, start: datetime, end: datetime, **kwargs: Any
+        ) -> tuple[list[Resource], Any]:
             if start == w1_start:
                 return [resource_a], None
             return [resource_b], None

@@ -13,7 +13,7 @@ if TYPE_CHECKING:
     from core.engine.allocation import AllocationContext, AllocationResult
     from core.metrics.protocol import MetricsSource
     from core.models import MetricRow
-    from core.plugin.protocols import CostAllocator
+    from core.plugin.protocols import CostAllocator, ResolveContext
     from core.storage.interface import UnitOfWork
     from plugins.generic_metrics_only.config import GenericMetricsOnlyConfig
 
@@ -162,6 +162,7 @@ class GenericMetricsOnlyHandler:
         billing_duration: timedelta,
         metrics_data: dict[str, list[MetricRow]] | None,
         uow: UnitOfWork,
+        context: ResolveContext | None = None,
     ) -> IdentityResolution:
         logger.debug(
             "Resolving %s identities resource=%s timestamp=%s", self.service_type, resource_id, billing_timestamp

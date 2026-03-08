@@ -304,6 +304,7 @@ class MockServiceHandler:
         billing_duration: timedelta,
         metrics_data: Any,
         uow: Any,
+        context: Any = None,
     ) -> IdentityResolution:
         ra = IdentitySet()
         for i in self._identities:

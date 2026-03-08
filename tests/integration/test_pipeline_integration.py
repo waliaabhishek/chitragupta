@@ -64,6 +64,7 @@ class IntegrationHandler:
         billing_duration: timedelta,
         metrics_data: dict[str, list[MetricRow]] | None,
         uow: Any,
+        context: Any = None,
     ) -> IdentityResolution:
         ra = IdentitySet()
         for i in self._identities:

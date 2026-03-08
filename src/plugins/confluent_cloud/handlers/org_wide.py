@@ -21,7 +21,7 @@ from plugins.confluent_cloud.allocators.org_wide_allocators import org_wide_allo
 
 if TYPE_CHECKING:
     from core.models import Identity, MetricRow, Resource
-    from core.plugin.protocols import CostAllocator
+    from core.plugin.protocols import CostAllocator, ResolveContext
     from core.storage.interface import UnitOfWork
 
 logger = logging.getLogger(__name__)
@@ -66,6 +66,7 @@ class OrgWideCostHandler:
         billing_duration: timedelta,
         metrics_data: dict[str, list[MetricRow]] | None,
         uow: UnitOfWork,
+        context: ResolveContext | None = None,
     ) -> IdentityResolution:
         logger.debug("Resolving %s identities resource=%s (no-op)", self.service_type, resource_id)
         return IdentityResolution(

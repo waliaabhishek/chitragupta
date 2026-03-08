@@ -290,6 +290,7 @@ class TestFlinkHandlerResolveIdentities:
             metrics_data={"some": []},
             uow=mock_uow,
             ecosystem="confluent_cloud",
+            cached_resources=None,
         )
         assert result is mock_resolution
 

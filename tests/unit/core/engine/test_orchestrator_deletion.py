@@ -45,7 +45,9 @@ class _MockEntityRepo:
         self._active_ids = active_ids
         self.mark_deleted_calls: list[tuple[str, datetime]] = []
 
-    def find_active_at(self, ecosystem: str, tenant_id: str, timestamp: datetime, **kwargs: Any) -> tuple[list[_FakeResource], int]:
+    def find_active_at(
+        self, ecosystem: str, tenant_id: str, timestamp: datetime, **kwargs: Any
+    ) -> tuple[list[_FakeResource], int]:
         entities = [_FakeResource(eid) for eid in self._active_ids]
         return entities, len(entities)
 

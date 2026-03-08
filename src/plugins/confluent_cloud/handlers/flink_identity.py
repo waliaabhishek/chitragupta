@@ -19,13 +19,34 @@ from core.models import IdentityResolution, IdentitySet
 from ._identity_helpers import create_flink_sentinel, create_sentinel_from_id
 
 if TYPE_CHECKING:
-    from core.models import Identity, MetricRow
+    from core.models import Identity, MetricRow, Resource
     from core.storage.interface import UnitOfWork
 logger = logging.getLogger(__name__)
 
 
 # Sentinel identity IDs for Flink
 FLINK_STMT_OWNER_UNKNOWN = "flink_stmt_owner_unknown"
+
+
+def _get_flink_statement_resources(
+    cached_resources: dict[str, Resource] | None,
+    uow: UnitOfWork,
+    ecosystem: str,
+    tenant_id: str,
+    billing_start: datetime,
+    billing_end: datetime,
+) -> list[Resource]:
+    if cached_resources is not None:
+        return [r for r in cached_resources.values() if r.resource_type == "flink_statement"]
+    resources, _ = uow.resources.find_by_period(
+        ecosystem=ecosystem,
+        tenant_id=tenant_id,
+        start=billing_start,
+        end=billing_end,
+        resource_type="flink_statement",
+        count=False,
+    )
+    return list(resources)
 
 
 def _extract_active_statements(
@@ -58,6 +79,7 @@ def _fallback_from_running_statements(
     billing_end: datetime,
     uow: UnitOfWork,
     ecosystem: str,
+    cached_resources: dict[str, Resource] | None = None,
 ) -> tuple[dict[str, float], IdentitySet]:
     """Find running statements for a compute pool when metrics are unavailable.
 
@@ -71,13 +93,8 @@ def _fallback_from_running_statements(
     producing the same gate as the old `is_chargeback_allocatable` check
     without requiring an explicit credential check here.
     """
-    all_resources, _ = uow.resources.find_by_period(
-        ecosystem=ecosystem,
-        tenant_id=tenant_id,
-        start=billing_start,
-        end=billing_end,
-        resource_type="flink_statement",
-        count=False,
+    all_resources = _get_flink_statement_resources(
+        cached_resources, uow, ecosystem, tenant_id, billing_start, billing_end
     )
 
     # Filter to running statements belonging to this compute pool
@@ -118,18 +135,14 @@ def _resolve_statement_owners(
     billing_end: datetime,
     uow: UnitOfWork,
     ecosystem: str,
+    cached_resources: dict[str, Resource] | None = None,
 ) -> tuple[dict[str, float], IdentitySet]:
     """Resolve statement owners from resource DB for the metrics-driven primary path.
 
     Returns (stmt_owner_cfu mapping owner_id->cfu, resource_active IdentitySet).
     """
-    resources, _ = uow.resources.find_by_period(
-        ecosystem=ecosystem,
-        tenant_id=tenant_id,
-        start=billing_start,
-        end=billing_end,
-        resource_type="flink_statement",
-        count=False,
+    resources = _get_flink_statement_resources(
+        cached_resources, uow, ecosystem, tenant_id, billing_start, billing_end
     )
 
     # Build statement_name -> owner_id map from flink_statement resources
@@ -180,6 +193,7 @@ def resolve_flink_identity(
     metrics_data: dict[str, list[MetricRow]] | None,
     uow: UnitOfWork,
     ecosystem: str,
+    cached_resources: dict[str, Resource] | None = None,
 ) -> IdentityResolution:
     """Resolve identities for a Flink compute pool.
 
@@ -204,7 +218,14 @@ def resolve_flink_identity(
 
         if active_stmts:
             stmt_owner_cfu, resource_active = _resolve_statement_owners(
-                active_stmts, resource_id, tenant_id, billing_start, billing_end, uow, ecosystem
+                active_stmts,
+                resource_id,
+                tenant_id,
+                billing_start,
+                billing_end,
+                uow,
+                ecosystem,
+                cached_resources=cached_resources,
             )
             if stmt_owner_cfu:
                 return IdentityResolution(
@@ -217,7 +238,13 @@ def resolve_flink_identity(
     # Secondary path: no metrics or no active statements from metrics
     # Find running Flink statements for this compute pool from resource DB
     stmt_owner_cfu, resource_active = _fallback_from_running_statements(
-        resource_id, tenant_id, billing_start, billing_end, uow, ecosystem
+        resource_id,
+        tenant_id,
+        billing_start,
+        billing_end,
+        uow,
+        ecosystem,
+        cached_resources=cached_resources,
     )
     if stmt_owner_cfu:
         return IdentityResolution(

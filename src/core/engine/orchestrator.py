@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     from core.models.billing import BillingLineItem
     from core.models.metrics import MetricQuery, MetricRow
     from core.models.resource import Resource
-    from core.plugin.protocols import CostAllocator, EcosystemPlugin, Emitter, ServiceHandler
+    from core.plugin.protocols import CostAllocator, EcosystemPlugin, Emitter, ResolveContext, ServiceHandler
     from core.storage.interface import StorageBackend, UnitOfWork
 
     class _EntityRepo(Protocol):
@@ -509,8 +509,18 @@ class CalculatePhase:
                     self._tenant_id, line.resource_id, b_start, b_duration, metrics_data, uow
                 )
             else:
+                resolve_context: ResolveContext = {
+                    "cached_identities": tenant_period_cache.get((b_start, b_end), IdentitySet()),
+                    "cached_resources": resource_cache,
+                }
                 identity_resolution = handler.resolve_identities(
-                    self._tenant_id, line.resource_id, b_start, b_duration, metrics_data, uow
+                    self._tenant_id,
+                    line.resource_id,
+                    b_start,
+                    b_duration,
+                    metrics_data,
+                    uow,
+                    context=resolve_context,
                 )
 
             if identity_resolution.tenant_period and len(identity_resolution.tenant_period) > 0:

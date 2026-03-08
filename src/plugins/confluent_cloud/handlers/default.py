@@ -26,7 +26,7 @@ from plugins.confluent_cloud.allocators.default_allocators import (
 
 if TYPE_CHECKING:
     from core.models import Identity, MetricRow, Resource
-    from core.plugin.protocols import CostAllocator
+    from core.plugin.protocols import CostAllocator, ResolveContext
     from core.storage.interface import UnitOfWork
 
 logger = logging.getLogger(__name__)
@@ -85,6 +85,7 @@ class DefaultHandler:
         billing_duration: timedelta,
         metrics_data: dict[str, list[MetricRow]] | None,
         uow: UnitOfWork,
+        context: ResolveContext | None = None,
     ) -> IdentityResolution:
         logger.debug("Resolving %s identities resource=%s (no-op)", self.service_type, resource_id)
         return IdentityResolution(

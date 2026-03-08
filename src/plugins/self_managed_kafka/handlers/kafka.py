@@ -24,7 +24,7 @@ from plugins.self_managed_kafka.allocators.kafka_allocators import (
 if TYPE_CHECKING:
     from core.metrics.protocol import MetricsSource
     from core.models import MetricRow
-    from core.plugin.protocols import CostAllocator
+    from core.plugin.protocols import CostAllocator, ResolveContext
     from core.storage.interface import UnitOfWork
     from plugins.self_managed_kafka.config import SelfManagedKafkaConfig
 
@@ -196,6 +196,7 @@ class SelfManagedKafkaHandler:
         billing_duration: timedelta,
         metrics_data: dict[str, list[MetricRow]] | None,
         uow: UnitOfWork,
+        context: ResolveContext | None = None,
     ) -> IdentityResolution:
         """Resolve identities for a Kafka cluster at billing time.
 

@@ -129,6 +129,7 @@ class MockServiceHandler:
         billing_duration: timedelta,
         metrics_data: dict[str, Any] | None,
         uow: Any,
+        context: Any = None,
     ) -> IdentityResolution:
         ra = IdentitySet()
         for i in self._identities:

@@ -356,6 +356,7 @@ class MockServiceHandler:
         billing_duration: timedelta,
         metrics_data: Any,
         uow: Any,
+        context: Any = None,
     ) -> IdentityResolution:
         if self._resolve_fn:
             return self._resolve_fn(tenant_id, resource_id, billing_timestamp, billing_duration, metrics_data, uow)
