@@ -3,7 +3,6 @@ from __future__ import annotations
 import calendar
 import logging
 import time
-from collections import defaultdict
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field, replace
@@ -719,6 +718,14 @@ class EmitPhase:
                 return rows, tracking_date
 
 
+@dataclass
+class _Bucket:
+    """Running total and first-seen template row for a grouping key."""
+
+    total: Decimal
+    template: ChargebackRow
+
+
 def _aggregate_rows(
     rows: Sequence[ChargebackRow],
     target_granularity: str,
@@ -732,8 +739,7 @@ def _aggregate_rows(
     ``allocation_detail`` is dropped (set to ``None``) in aggregated rows —
     per-row detail is meaningless after summing.
     """
-    aggregated: dict[tuple[Any, ...], Decimal] = defaultdict(Decimal)
-    templates: dict[tuple[Any, ...], ChargebackRow] = {}
+    buckets: dict[tuple[Any, ...], _Bucket] = {}
 
     for row in rows:
         if target_granularity == "daily":
@@ -751,13 +757,14 @@ def _aggregate_rows(
             row.identity_id,
             row.cost_type,
         )
-        aggregated[key] += row.amount
-        templates.setdefault(key, row)
+        if key in buckets:
+            buckets[key].total += row.amount
+        else:
+            buckets[key] = _Bucket(total=row.amount, template=row)
 
     result: list[ChargebackRow] = []
-    for key, total_amount in aggregated.items():
+    for key, bucket in buckets.items():
         ecosystem, tenant_id, timestamp, resource_id, product_category, product_type, identity_id, cost_type = key
-        t = templates[key]
         result.append(
             ChargebackRow(
                 ecosystem=ecosystem,
@@ -768,8 +775,8 @@ def _aggregate_rows(
                 product_type=product_type,
                 identity_id=identity_id,
                 cost_type=cost_type,
-                amount=total_amount,
-                allocation_method=t.allocation_method,
+                amount=bucket.total,
+                allocation_method=bucket.template.allocation_method,
                 allocation_detail=None,  # dropped — meaningless after summing
             )
         )
