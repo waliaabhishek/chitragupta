@@ -18,8 +18,6 @@ import httpx
 from core.metrics.protocol import MetricsQueryError
 from core.models.metrics import MetricQuery, MetricRow  # noqa: TC001 — used at runtime in _parse_response
 
-logger = logging.getLogger(__name__)
-
 LOGGER = logging.getLogger(__name__)
 
 _TRANSIENT_STATUS = frozenset({408, 425, 429, 500, 502, 503, 504})
@@ -50,6 +48,7 @@ class PrometheusConfig:
     auth: AuthConfig | None = None
     timeout: float = 30.0
     max_workers: int = 10
+    max_concurrent_requests: int = 20
     cache_maxsize: int = 512
     cache_ttl_seconds: float | None = 3600.0
     step_seconds: int = 3600
@@ -63,6 +62,8 @@ class PrometheusConfig:
     def __post_init__(self) -> None:
         if self.max_workers < 1:
             raise ValueError(f"max_workers must be >= 1, got {self.max_workers}")
+        if self.max_concurrent_requests < 1:
+            raise ValueError(f"max_concurrent_requests must be >= 1, got {self.max_concurrent_requests}")
 
 
 class PrometheusMetricsSource:
@@ -82,6 +83,7 @@ class PrometheusMetricsSource:
             self._extra_headers["Authorization"] = f"Bearer {self._config.auth.token or ''}"
         self._cache: OrderedDict[tuple[str, ...], tuple[float | None, str]] = OrderedDict()
         self._cache_lock = threading.Lock()
+        self._request_semaphore = threading.BoundedSemaphore(config.max_concurrent_requests)
         # Connection pooling via httpx.Client (injectable for testing)
         if client is not None:
             self._client = client
@@ -229,49 +231,50 @@ class PrometheusMetricsSource:
         headers: dict[str, str],
     ) -> str:
         """POST with exponential backoff + jitter on transient failures."""
-        attempt = 0
-        last_exc: httpx.RequestError | None = None
-        while True:
-            try:
-                resp = self._client.post(
-                    url,
-                    data=data,
-                    headers=headers,
-                )
-                if resp.status_code not in _TRANSIENT_STATUS:
-                    if resp.status_code >= 400:
-                        raise MetricsQueryError(
-                            message=f"HTTP {resp.status_code}: {resp.text[:200]}",
-                            query=data.get("query"),
-                            status_code=resp.status_code,
-                        )
-                    return resp.text
+        with self._request_semaphore:
+            attempt = 0
+            last_exc: httpx.RequestError | None = None
+            while True:
+                try:
+                    resp = self._client.post(
+                        url,
+                        data=data,
+                        headers=headers,
+                    )
+                    if resp.status_code not in _TRANSIENT_STATUS:
+                        if resp.status_code >= 400:
+                            raise MetricsQueryError(
+                                message=f"HTTP {resp.status_code}: {resp.text[:200]}",
+                                query=data.get("query"),
+                                status_code=resp.status_code,
+                            )
+                        return resp.text
 
-                LOGGER.warning(
-                    "Prometheus returned %s, attempt %s/%s",
-                    resp.status_code,
-                    attempt + 1,
-                    self._config.max_retries,
-                )
-            except httpx.RequestError as exc:
-                last_exc = exc
-                LOGGER.warning(
-                    "Request error: %s, attempt %s/%s",
-                    exc,
-                    attempt + 1,
-                    self._config.max_retries,
-                )
+                    LOGGER.warning(
+                        "Prometheus returned %s, attempt %s/%s",
+                        resp.status_code,
+                        attempt + 1,
+                        self._config.max_retries,
+                    )
+                except httpx.RequestError as exc:
+                    last_exc = exc
+                    LOGGER.warning(
+                        "Request error: %s, attempt %s/%s",
+                        exc,
+                        attempt + 1,
+                        self._config.max_retries,
+                    )
 
-            attempt += 1
-            if attempt >= self._config.max_retries:
-                raise MetricsQueryError(
-                    message=f"Exhausted {self._config.max_retries} retries for {url}",
-                    query=data.get("query"),
-                ) from last_exc
+                attempt += 1
+                if attempt >= self._config.max_retries:
+                    raise MetricsQueryError(
+                        message=f"Exhausted {self._config.max_retries} retries for {url}",
+                        query=data.get("query"),
+                    ) from last_exc
 
-            sleep_for = self._config.base_delay * (2**attempt)
-            sleep_for *= 0.8 + random.random() * 0.4  # ±20% jitter
-            time.sleep(sleep_for)
+                sleep_for = self._config.base_delay * (2**attempt)
+                sleep_for *= 0.8 + random.random() * 0.4  # ±20% jitter
+                time.sleep(sleep_for)
 
     def _parse_response(self, response_text: str, query: MetricQuery) -> list[MetricRow]:
         """Parse Prometheus JSON response into MetricRow list."""
@@ -338,7 +341,7 @@ class PrometheusMetricsSource:
 
 def _inject_resource_filter(
     expression: str,
-    resource_label: str,
+    resource_label: str | None,
     resource_id_filter: str | None,
 ) -> str:
     """Inject resource_id_filter into a PromQL expression.
@@ -351,7 +354,8 @@ def _inject_resource_filter(
         return expression.replace("{}", "", 1)
 
     if "{}" in expression:
-        return expression.replace("{}", "{" + f'{resource_label}="{resource_id_filter}"' + "}", 1)
+        label = resource_label or ""
+        return expression.replace("{}", "{" + f'{label}="{resource_id_filter}"' + "}", 1)
 
     LOGGER.warning(
         "Expression %r has no {} placeholder for resource filter %r",

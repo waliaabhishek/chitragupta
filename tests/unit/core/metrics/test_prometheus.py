@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
+import time
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import MagicMock
@@ -156,6 +158,14 @@ class TestPrometheusConfig:
     def test_max_workers_validation(self) -> None:
         with pytest.raises(ValueError, match="max_workers must be >= 1"):
             PrometheusConfig(url="http://prom:9090/", max_workers=0)
+
+    def test_max_concurrent_requests_default(self) -> None:
+        cfg = PrometheusConfig(url="http://prom:9090/")
+        assert cfg.max_concurrent_requests == 20
+
+    def test_max_concurrent_requests_validation(self) -> None:
+        with pytest.raises(ValueError, match="max_concurrent_requests must be >= 1"):
+            PrometheusConfig(url="http://prom:9090/", max_concurrent_requests=0)
 
 
 class TestAuthConfig:
@@ -515,3 +525,79 @@ class TestQueryIntegration:
         result = src.query([], _START, _END, _STEP)
         assert result == {}
         mock_post.assert_not_called()
+
+
+# ===========================================================================
+# Semaphore tests (task-053)
+# ===========================================================================
+
+
+class TestRequestSemaphore:
+    def test_semaphore_is_bounded_semaphore(self) -> None:
+        src = PrometheusMetricsSource(_make_config(max_concurrent_requests=5))
+        assert isinstance(src._request_semaphore, threading.BoundedSemaphore)
+
+    def test_concurrency_peak_does_not_exceed_limit(self) -> None:
+        peak = 0
+        current = 0
+        counter_lock = threading.Lock()
+        release_event = threading.Event()
+
+        def slow_post(*args: Any, **kwargs: Any) -> MagicMock:
+            nonlocal peak, current
+            with counter_lock:
+                current += 1
+                peak = max(peak, current)
+            release_event.wait(timeout=5.0)
+            with counter_lock:
+                current -= 1
+            return _mock_response(_RANGE_RESPONSE, 200)
+
+        mock_post = MagicMock(side_effect=slow_post)
+        src, _ = _make_source_with_mock(
+            mock_post,
+            max_concurrent_requests=2,
+            max_retries=1,
+            base_delay=0.0,
+            cache_ttl_seconds=0.0,
+        )
+
+        errors: list[Exception] = []
+
+        def run_query() -> None:
+            try:
+                src.query([_QUERY], _START, _END, _STEP)
+            except Exception as e:
+                errors.append(e)
+
+        threads = [threading.Thread(target=run_query, daemon=True) for _ in range(10)]
+        for t in threads:
+            t.start()
+
+        # Allow threads to pile up behind the semaphore
+        time.sleep(0.1)
+        release_event.set()
+
+        for t in threads:
+            t.join(timeout=5.0)
+
+        assert peak <= 2, f"Peak concurrency {peak} exceeded limit of 2"
+
+    def test_semaphore_independence_between_instances(self) -> None:
+        mock_post1 = MagicMock(return_value=_mock_response(_RANGE_RESPONSE, 200))
+        mock_post2 = MagicMock(return_value=_mock_response(_RANGE_RESPONSE, 200))
+
+        src1, _ = _make_source_with_mock(mock_post1, max_concurrent_requests=1, max_retries=1, base_delay=0.0)
+        src2, _ = _make_source_with_mock(mock_post2, max_concurrent_requests=1, max_retries=1, base_delay=0.0)
+
+        # Hold src1's semaphore
+        acquired1 = src1._request_semaphore.acquire(blocking=False)
+        assert acquired1, "Should be able to acquire src1's semaphore initially"
+
+        try:
+            # src2's semaphore must be independent — acquiring it must not block
+            acquired2 = src2._request_semaphore.acquire(blocking=False)
+            assert acquired2, "src2 semaphore should be independent of src1's; was blocked or missing"
+            src2._request_semaphore.release()
+        finally:
+            src1._request_semaphore.release()
