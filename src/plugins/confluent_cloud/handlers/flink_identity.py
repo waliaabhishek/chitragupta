@@ -35,15 +35,26 @@ def _get_flink_statement_resources(
     tenant_id: str,
     billing_start: datetime,
     billing_end: datetime,
+    *,
+    compute_pool_id: str | None = None,
 ) -> list[Resource]:
     if cached_resources is not None:
-        return [r for r in cached_resources.values() if r.resource_type == "flink_statement"]
+        return [
+            r
+            for r in cached_resources.values()
+            if r.resource_type == "flink_statement"
+            and (compute_pool_id is None or r.metadata.get("compute_pool_id") == compute_pool_id)
+        ]
+    metadata_filter: dict[str, str | int | float | bool | None] | None = None
+    if compute_pool_id is not None:
+        metadata_filter = {"compute_pool_id": compute_pool_id}
     resources, _ = uow.resources.find_by_period(
         ecosystem=ecosystem,
         tenant_id=tenant_id,
         start=billing_start,
         end=billing_end,
         resource_type="flink_statement",
+        metadata_filter=metadata_filter,
         count=False,
     )
     return list(resources)
@@ -94,15 +105,18 @@ def _fallback_from_running_statements(
     without requiring an explicit credential check here.
     """
     all_resources = _get_flink_statement_resources(
-        cached_resources, uow, ecosystem, tenant_id, billing_start, billing_end
+        cached_resources,
+        uow,
+        ecosystem,
+        tenant_id,
+        billing_start,
+        billing_end,
+        compute_pool_id=compute_pool_id,
     )
 
-    # Filter to running statements belonging to this compute pool
-    pool_stmts = [
-        s
-        for s in all_resources
-        if s.metadata.get("compute_pool_id") == compute_pool_id and not s.metadata.get("is_stopped", False)
-    ]
+    # Filter to running statements only (is_stopped boolean check kept in Python —
+    # json_extract comparison with False is fragile across JSON encoders)
+    pool_stmts = [s for s in all_resources if not s.metadata.get("is_stopped", False)]
 
     if not pool_stmts:
         return {}, IdentitySet()
@@ -142,16 +156,19 @@ def _resolve_statement_owners(
     Returns (stmt_owner_cfu mapping owner_id->cfu, resource_active IdentitySet).
     """
     resources = _get_flink_statement_resources(
-        cached_resources, uow, ecosystem, tenant_id, billing_start, billing_end
+        cached_resources,
+        uow,
+        ecosystem,
+        tenant_id,
+        billing_start,
+        billing_end,
+        compute_pool_id=resource_id,
     )
 
-    # Build statement_name -> owner_id map from flink_statement resources
-    # TD-033: Filter by compute_pool_id to avoid cross-pool collisions
+    # Build statement_name -> owner_id map. Cross-pool collision resolved by DB filter above.
+    # Resolves TD-033.
     stmt_name_to_owner: dict[str, str | None] = {}
     for r in resources:
-        pool_id = r.metadata.get("compute_pool_id", "")
-        if pool_id != resource_id:
-            continue  # Statement belongs to different pool
         display_name = r.display_name or r.metadata.get("statement_name", "")
         if display_name:
             stmt_name_to_owner[display_name] = r.owner_id

@@ -53,6 +53,7 @@ class ResourceRepository(Protocol):
         *,
         resource_type: str | None = None,
         status: str | None = None,
+        metadata_filter: dict[str, str | int | float | bool | None] | None = None,
         limit: int | None = None,
         offset: int = 0,
         count: bool = True,
@@ -61,6 +62,10 @@ class ResourceRepository(Protocol):
 
         Overlapped means: (created_at IS NULL OR created_at < end)
                       AND (deleted_at IS NULL OR deleted_at >= start)
+
+        metadata_filter: dict of {key: scalar_value} matched via json_extract on metadata_json.
+        All entries are ANDed. Values must be scalars (str/int/float/bool/None) — nested
+        dicts or lists would silently return zero rows.
 
         Returns (page_of_resources, total_count). Filters and pagination applied at SQL level.
         When count=False, skips the COUNT query and returns 0 for total_count.

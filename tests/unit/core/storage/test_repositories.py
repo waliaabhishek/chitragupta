@@ -271,6 +271,67 @@ class TestResourceRepository:
         page, _ = repo.find_by_period("eco", "t1", start, end, limit=2, offset=0)
         assert len(page) == 2
 
+    def test_find_by_period_metadata_filter_single_key_returns_matching(self, session: Session) -> None:
+        repo = SQLModelResourceRepository(session)
+        repo.upsert(
+            self._make_resource(
+                resource_id="r-pool1", resource_type="flink_statement", metadata={"compute_pool_id": "pool-1"}
+            )
+        )
+        repo.upsert(
+            self._make_resource(
+                resource_id="r-pool2", resource_type="flink_statement", metadata={"compute_pool_id": "pool-2"}
+            )
+        )
+        session.commit()
+        start, end = datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 2, 1, tzinfo=UTC)
+        results, total = repo.find_by_period("eco", "t1", start, end, metadata_filter={"compute_pool_id": "pool-1"})
+        assert total == 1
+        assert len(results) == 1
+        assert results[0].resource_id == "r-pool1"
+
+    def test_find_by_period_metadata_filter_none_returns_all(self, session: Session) -> None:
+        repo = SQLModelResourceRepository(session)
+        repo.upsert(
+            self._make_resource(
+                resource_id="r-pool1", resource_type="flink_statement", metadata={"compute_pool_id": "pool-1"}
+            )
+        )
+        repo.upsert(
+            self._make_resource(
+                resource_id="r-pool2", resource_type="flink_statement", metadata={"compute_pool_id": "pool-2"}
+            )
+        )
+        session.commit()
+        start, end = datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 2, 1, tzinfo=UTC)
+        results, total = repo.find_by_period("eco", "t1", start, end, metadata_filter=None)
+        assert total == 2
+        assert len(results) == 2
+
+    def test_find_by_period_metadata_filter_no_match_returns_empty(self, session: Session) -> None:
+        repo = SQLModelResourceRepository(session)
+        repo.upsert(self._make_resource(resource_id="r-pool1", resource_type="flink_statement", metadata={"compute_pool_id": "pool-1"}))
+        session.commit()
+        start, end = datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 2, 1, tzinfo=UTC)
+        results, total = repo.find_by_period("eco", "t1", start, end, metadata_filter={"compute_pool_id": "pool-nonexistent"})
+        assert results == []
+        assert total == 0
+
+    def test_find_by_period_metadata_filter_multi_key_ands_conditions(self, session: Session) -> None:
+        repo = SQLModelResourceRepository(session)
+        # Matches both k1 and k2
+        repo.upsert(self._make_resource(resource_id="r-both", metadata={"k1": "v1", "k2": "v2"}))
+        # Matches only k1
+        repo.upsert(self._make_resource(resource_id="r-k1only", metadata={"k1": "v1", "k2": "other"}))
+        # Matches only k2
+        repo.upsert(self._make_resource(resource_id="r-k2only", metadata={"k1": "other", "k2": "v2"}))
+        session.commit()
+        start, end = datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 2, 1, tzinfo=UTC)
+        results, total = repo.find_by_period("eco", "t1", start, end, metadata_filter={"k1": "v1", "k2": "v2"})
+        assert total == 1
+        assert len(results) == 1
+        assert results[0].resource_id == "r-both"
+
 
 # --- Identity Repository ---
 

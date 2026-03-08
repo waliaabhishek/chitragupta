@@ -635,20 +635,15 @@ class TestFlinkFallbackFromRunningStatements:
         mock_uow.resources.find_by_period.assert_called_once()
 
     def test_no_metrics_statements_for_different_pool_returns_empty(self, mock_uow: MagicMock) -> None:
-        """No metrics; DB has running statements but for a different compute pool → empty result."""
+        """No metrics; DB has no running statements for this pool → empty result.
+
+        Cross-pool filtering is now enforced at DB level via metadata_filter, so
+        find_by_period returns empty when called with metadata_filter={"compute_pool_id": "lfcp-pool-1"}.
+        """
         from plugins.confluent_cloud.handlers.flink_identity import resolve_flink_identity
 
-        other_pool_stmt = CoreResource(
-            ecosystem="confluent_cloud",
-            tenant_id="org-123",
-            resource_id="stmt-other",
-            resource_type="flink_statement",
-            display_name="other-stmt",
-            owner_id="sa-other",
-            metadata={"compute_pool_id": "lfcp-OTHER", "is_stopped": False},
-        )
-
-        mock_uow.resources.find_by_period.return_value = ([other_pool_stmt], 1)
+        # DB correctly returns nothing for lfcp-pool-1 (cross-pool resources excluded by metadata_filter)
+        mock_uow.resources.find_by_period.return_value = ([], 0)
 
         result = resolve_flink_identity(
             tenant_id="org-123",
@@ -1116,10 +1111,11 @@ class TestFlinkIdentityDirectLookup:
         assert mock_uow.identities.get.call_count == 1
 
     def test_cross_pool_statement_resource_excluded_uses_unknown_sentinel(self, mock_uow: MagicMock) -> None:
-        """Cross-pool flink_statement resource excluded; statement name resolves to unknown sentinel.
+        """Cross-pool flink_statement excluded at DB level; statement name resolves to unknown sentinel.
 
-        Covers the guard in _resolve_statement_owners:
-            if pool_id != resource_id: continue
+        Cross-pool filtering is now enforced at DB level via metadata_filter={"compute_pool_id": pool}.
+        The mock simulates the DB correctly returning only pool-1 resources (empty in this case),
+        so stmt-target has no owner → unknown sentinel used.
         """
         from plugins.confluent_cloud.handlers.flink_identity import (
             FLINK_STMT_OWNER_UNKNOWN,
@@ -1136,17 +1132,8 @@ class TestFlinkIdentityDirectLookup:
                 )
             ]
         }
-        # DB returns a flink_statement with matching display_name but from a different pool
-        stmt_cross_pool = CoreResource(
-            ecosystem="confluent_cloud",
-            tenant_id="org-123",
-            resource_id="uid-cross",
-            resource_type="flink_statement",
-            display_name="stmt-target",
-            owner_id="sa-wrong",
-            metadata={"statement_name": "stmt-target", "compute_pool_id": "lfcp-pool-2"},
-        )
-        mock_uow.resources.find_by_period.return_value = ([stmt_cross_pool], 1)
+        # DB returns empty for lfcp-pool-1 (the cross-pool pool-2 resource is excluded by metadata_filter)
+        mock_uow.resources.find_by_period.return_value = ([], 0)
 
         result = resolve_flink_identity(
             tenant_id="org-123",
@@ -1158,7 +1145,96 @@ class TestFlinkIdentityDirectLookup:
             ecosystem="confluent_cloud",
         )
 
-        # Cross-pool resource excluded → stmt-target owner unknown → sentinel used
+        # Cross-pool resource excluded by DB → stmt-target owner unknown → sentinel used
         assert FLINK_STMT_OWNER_UNKNOWN in result.resource_active.ids()
         assert "sa-wrong" not in result.resource_active.ids()
         mock_uow.identities.find_by_period.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# TASK-047 — metadata_filter parameter for find_by_period (TDD RED phase)
+# Verify that _get_flink_statement_resources passes compute_pool_id as
+# metadata_filter to find_by_period, and the cached-resource path scopes
+# by pool when compute_pool_id is provided.
+# ---------------------------------------------------------------------------
+
+
+class TestFlinkMetadataFilterTask047:
+    """GAP task-047: find_by_period called with metadata_filter={"compute_pool_id": pool_id}."""
+
+    def test_fallback_calls_find_by_period_with_metadata_filter(self, mock_uow: MagicMock) -> None:
+        """_fallback_from_running_statements must call find_by_period with metadata_filter."""
+        from plugins.confluent_cloud.handlers.flink_identity import _fallback_from_running_statements
+
+        mock_uow.resources.find_by_period.return_value = ([], 0)
+
+        _fallback_from_running_statements(
+            compute_pool_id="pool-1",
+            tenant_id="org-123",
+            billing_start=datetime(2026, 2, 1, tzinfo=UTC),
+            billing_end=datetime(2026, 2, 2, tzinfo=UTC),
+            uow=mock_uow,
+            ecosystem="confluent_cloud",
+        )
+
+        calls = mock_uow.resources.find_by_period.call_args_list
+        assert any(c.kwargs.get("metadata_filter") == {"compute_pool_id": "pool-1"} for c in calls), (
+            f"Expected metadata_filter={{'compute_pool_id': 'pool-1'}} in calls: {calls}"
+        )
+
+    def test_resolve_statement_owners_calls_find_by_period_with_metadata_filter(self, mock_uow: MagicMock) -> None:
+        """_resolve_statement_owners must call find_by_period with metadata_filter scoped to pool."""
+        from plugins.confluent_cloud.handlers.flink_identity import _resolve_statement_owners
+
+        mock_uow.resources.find_by_period.return_value = ([], 0)
+
+        _resolve_statement_owners(
+            stmt_cfu={"stmt-a": 10.0},
+            resource_id="lfcp-pool-1",
+            tenant_id="org-123",
+            billing_start=datetime(2026, 2, 1, tzinfo=UTC),
+            billing_end=datetime(2026, 2, 2, tzinfo=UTC),
+            uow=mock_uow,
+            ecosystem="confluent_cloud",
+        )
+
+        calls = mock_uow.resources.find_by_period.call_args_list
+        assert any(c.kwargs.get("metadata_filter") == {"compute_pool_id": "lfcp-pool-1"} for c in calls), (
+            f"Expected metadata_filter={{'compute_pool_id': 'lfcp-pool-1'}} in calls: {calls}"
+        )
+
+    def test_cached_resources_path_filters_by_compute_pool_id(self, mock_uow: MagicMock) -> None:
+        """When cached_resources provided, _get_flink_statement_resources filters by compute_pool_id."""
+        from plugins.confluent_cloud.handlers.flink_identity import _get_flink_statement_resources
+
+        stmt_pool1 = CoreResource(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            resource_id="stmt-p1",
+            resource_type="flink_statement",
+            display_name="stmt-pool1",
+            metadata={"compute_pool_id": "pool-1"},
+        )
+        stmt_pool2 = CoreResource(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            resource_id="stmt-p2",
+            resource_type="flink_statement",
+            display_name="stmt-pool2",
+            metadata={"compute_pool_id": "pool-2"},
+        )
+        cached: dict[str, CoreResource] = {"stmt-p1": stmt_pool1, "stmt-p2": stmt_pool2}
+
+        results = _get_flink_statement_resources(
+            cached_resources=cached,
+            uow=mock_uow,
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            billing_start=datetime(2026, 2, 1, tzinfo=UTC),
+            billing_end=datetime(2026, 2, 2, tzinfo=UTC),
+            compute_pool_id="pool-1",
+        )
+
+        resource_ids = {r.resource_id for r in results}
+        assert resource_ids == {"stmt-p1"}, f"Expected only pool-1 statement, got: {resource_ids}"
+        mock_uow.resources.find_by_period.assert_not_called()

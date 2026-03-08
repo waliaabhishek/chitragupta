@@ -146,6 +146,7 @@ class SQLModelResourceRepository:
         *,
         resource_type: str | None = None,
         status: str | None = None,
+        metadata_filter: dict[str, str | int | float | bool | None] | None = None,
         limit: int | None = None,
         offset: int = 0,
         count: bool = True,
@@ -155,6 +156,9 @@ class SQLModelResourceRepository:
             where.append(col(ResourceTable.resource_type) == resource_type)
         if status is not None:
             where.append(col(ResourceTable.status) == status)
+        if metadata_filter is not None:
+            for key, value in metadata_filter.items():
+                where.append(func.json_extract(ResourceTable.metadata_json, f"$.{key}") == value)
 
         total: int = 0
         if count:
