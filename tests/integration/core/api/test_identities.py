@@ -139,3 +139,25 @@ class TestListIdentities:
         )
         assert response.status_code == 400
         assert "period_start" in response.json()["detail"]
+
+
+class TestIdentitiesApiCountParamSmoke:
+    """Smoke tests: GET /identities still returns correct total after count param refactor (task-043)."""
+
+    def test_list_identities_total_reflects_actual_count(
+        self,
+        app_with_backend: TestClient,
+        in_memory_backend: SQLModelBackend,
+        sample_identity: Identity,
+    ) -> None:
+        """API endpoint always returns correct total even after internal callers use count=False."""
+        with in_memory_backend.create_unit_of_work() as uow:
+            uow.identities.upsert(sample_identity)
+            uow.commit()
+
+        response = app_with_backend.get("/api/v1/tenants/test-tenant/identities")
+        assert response.status_code == 200
+        data = response.json()
+        assert "total" in data
+        assert data["total"] == 1  # not 0 — API must still use count=True (default)
+        assert len(data["items"]) == 1

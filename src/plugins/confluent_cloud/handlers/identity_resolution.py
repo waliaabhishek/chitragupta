@@ -61,6 +61,7 @@ def resolve_kafka_sr_identities(
         tenant_id=tenant_id,
         start=billing_start,
         end=billing_end,
+        count=False,
     )
 
     # Build lookup dict for O(1) owner resolution

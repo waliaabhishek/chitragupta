@@ -270,7 +270,7 @@ class GatherPhase:
         now: datetime,
     ) -> None:
         threshold = self._tenant_config.zero_gather_deletion_threshold
-        active_entities, _ = repo.find_active_at(self._ecosystem, self._tenant_id, now)
+        active_entities, _ = repo.find_active_at(self._ecosystem, self._tenant_id, now, count=False)
         if not gathered_ids and active_entities:
             self._zero_gather_counters[entity_name] += 1
             consecutive = self._zero_gather_counters[entity_name]
@@ -459,7 +459,7 @@ class CalculatePhase:
     ) -> dict[tuple[datetime, datetime], IdentitySet]:
         cache: dict[tuple[datetime, datetime], IdentitySet] = {}
         for b_start, b_end in billing_windows:
-            identities, _ = uow.identities.find_by_period(self._ecosystem, self._tenant_id, b_start, b_end)
+            identities, _ = uow.identities.find_by_period(self._ecosystem, self._tenant_id, b_start, b_end, count=False)
             tp = IdentitySet()
             for identity in identities:
                 if identity.identity_type != "system":
@@ -472,7 +472,7 @@ class CalculatePhase:
     ) -> dict[str, Resource]:
         cache: dict[str, Resource] = {}
         for b_start, b_end in billing_windows:
-            resources, _ = uow.resources.find_by_period(self._ecosystem, self._tenant_id, b_start, b_end)
+            resources, _ = uow.resources.find_by_period(self._ecosystem, self._tenant_id, b_start, b_end, count=False)
             for r in resources:
                 cache.setdefault(r.resource_id, r)
         return cache

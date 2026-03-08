@@ -77,6 +77,7 @@ def _fallback_from_running_statements(
         start=billing_start,
         end=billing_end,
         resource_type="flink_statement",
+        count=False,
     )
 
     # Filter to running statements belonging to this compute pool
@@ -128,6 +129,7 @@ def _resolve_statement_owners(
         start=billing_start,
         end=billing_end,
         resource_type="flink_statement",
+        count=False,
     )
 
     # Build statement_name -> owner_id map from flink_statement resources

@@ -116,6 +116,7 @@ class SQLModelResourceRepository:
         status: str | None = None,
         limit: int | None = None,
         offset: int = 0,
+        count: bool = True,
     ) -> tuple[list[Resource], int]:
         where = _temporal_active_at_filter(ResourceTable, ecosystem, tenant_id, timestamp)
         if resource_type is not None:
@@ -123,8 +124,10 @@ class SQLModelResourceRepository:
         if status is not None:
             where.append(col(ResourceTable.status) == status)
 
-        count_stmt = select(func.count()).select_from(ResourceTable).where(*where)
-        total: int = self._session.exec(count_stmt).one()
+        total: int = 0
+        if count:
+            count_stmt = select(func.count()).select_from(ResourceTable).where(*where)
+            total = self._session.exec(count_stmt).one()
 
         stmt = select(ResourceTable).where(*where).order_by(col(ResourceTable.resource_id))
         if offset:
@@ -145,6 +148,7 @@ class SQLModelResourceRepository:
         status: str | None = None,
         limit: int | None = None,
         offset: int = 0,
+        count: bool = True,
     ) -> tuple[list[Resource], int]:
         where = _temporal_by_period_filter(ResourceTable, ecosystem, tenant_id, start, end)
         if resource_type is not None:
@@ -152,8 +156,10 @@ class SQLModelResourceRepository:
         if status is not None:
             where.append(col(ResourceTable.status) == status)
 
-        count_stmt = select(func.count()).select_from(ResourceTable).where(*where)
-        total: int = self._session.exec(count_stmt).one()
+        total: int = 0
+        if count:
+            count_stmt = select(func.count()).select_from(ResourceTable).where(*where)
+            total = self._session.exec(count_stmt).one()
 
         stmt = select(ResourceTable).where(*where).order_by(col(ResourceTable.resource_id))
         if offset:
@@ -237,13 +243,16 @@ class SQLModelIdentityRepository:
         identity_type: str | None = None,
         limit: int | None = None,
         offset: int = 0,
+        count: bool = True,
     ) -> tuple[list[Identity], int]:
         where = _temporal_active_at_filter(IdentityTable, ecosystem, tenant_id, timestamp)
         if identity_type is not None:
             where.append(col(IdentityTable.identity_type) == identity_type)
 
-        count_stmt = select(func.count()).select_from(IdentityTable).where(*where)
-        total: int = self._session.exec(count_stmt).one()
+        total: int = 0
+        if count:
+            count_stmt = select(func.count()).select_from(IdentityTable).where(*where)
+            total = self._session.exec(count_stmt).one()
 
         stmt = select(IdentityTable).where(*where).order_by(col(IdentityTable.identity_id))
         if offset:
@@ -263,13 +272,16 @@ class SQLModelIdentityRepository:
         identity_type: str | None = None,
         limit: int | None = None,
         offset: int = 0,
+        count: bool = True,
     ) -> tuple[list[Identity], int]:
         where = _temporal_by_period_filter(IdentityTable, ecosystem, tenant_id, start, end)
         if identity_type is not None:
             where.append(col(IdentityTable.identity_type) == identity_type)
 
-        count_stmt = select(func.count()).select_from(IdentityTable).where(*where)
-        total: int = self._session.exec(count_stmt).one()
+        total: int = 0
+        if count:
+            count_stmt = select(func.count()).select_from(IdentityTable).where(*where)
+            total = self._session.exec(count_stmt).one()
 
         stmt = select(IdentityTable).where(*where).order_by(col(IdentityTable.identity_id))
         if offset:

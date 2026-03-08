@@ -2239,6 +2239,7 @@ class TestComputeBillingWindowsOnce:
 
         # Compute windows the same way the method does internally
         from core.engine.orchestrator import billing_window
+
         b_start, b_end, _ = billing_window(line, orch._calculate_phase._merged_granularity_durations)
         windows: set[tuple[datetime, datetime]] = {(b_start, b_end)}
 
@@ -2260,6 +2261,7 @@ class TestComputeBillingWindowsOnce:
         uow.resources.upsert(resource)
 
         from core.engine.orchestrator import billing_window
+
         b_start, b_end, _ = billing_window(line, orch._calculate_phase._merged_granularity_durations)
         windows: set[tuple[datetime, datetime]] = {(b_start, b_end)}
 
@@ -2317,7 +2319,7 @@ class TestComputeBillingWindowsOnce:
         windows: set[tuple[datetime, datetime]] = {(w1_start, w1_end), (w2_start, w2_end)}
 
         # Patch find_by_period to return different resources per window
-        def find_by_period(eco: str, tid: str, start: datetime, end: datetime) -> tuple[list[Resource], Any]:
+        def find_by_period(eco: str, tid: str, start: datetime, end: datetime, **kwargs: Any) -> tuple[list[Resource], Any]:
             if start == w1_start:
                 return [resource_a], None
             return [resource_b], None
@@ -2347,7 +2349,7 @@ class TestComputeBillingWindowsOnce:
         w2_end = datetime(2026, 2, 12, 0, 0, 0, tzinfo=UTC)
         windows: set[tuple[datetime, datetime]] = {(w1_start, w1_end), (w2_start, w2_end)}
 
-        def find_by_period(eco: str, tid: str, start: datetime, end: datetime) -> tuple[list[Any], Any]:
+        def find_by_period(eco: str, tid: str, start: datetime, end: datetime, **kwargs: Any) -> tuple[list[Any], Any]:
             if start == w1_start:
                 return [identity_a], None
             return [identity_b], None

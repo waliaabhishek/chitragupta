@@ -32,6 +32,7 @@ class ResourceRepository(Protocol):
         status: str | None = None,
         limit: int | None = None,
         offset: int = 0,
+        count: bool = True,
     ) -> tuple[list[Resource], int]:
         """Point-in-time query: resources active at the given timestamp.
 
@@ -39,6 +40,7 @@ class ResourceRepository(Protocol):
                   AND (deleted_at IS NULL OR deleted_at > timestamp)
 
         Returns (page_of_resources, total_count). Filters and pagination applied at SQL level.
+        When count=False, skips the COUNT query and returns 0 for total_count.
         """
         ...
 
@@ -53,6 +55,7 @@ class ResourceRepository(Protocol):
         status: str | None = None,
         limit: int | None = None,
         offset: int = 0,
+        count: bool = True,
     ) -> tuple[list[Resource], int]:
         """Half-open interval [start, end): resources that overlapped this period.
 
@@ -60,6 +63,7 @@ class ResourceRepository(Protocol):
                       AND (deleted_at IS NULL OR deleted_at >= start)
 
         Returns (page_of_resources, total_count). Filters and pagination applied at SQL level.
+        When count=False, skips the COUNT query and returns 0 for total_count.
         """
         ...
 
@@ -99,10 +103,12 @@ class IdentityRepository(Protocol):
         identity_type: str | None = None,
         limit: int | None = None,
         offset: int = 0,
+        count: bool = True,
     ) -> tuple[list[Identity], int]:
         """Point-in-time query. Same semantics as ResourceRepository.find_active_at.
 
         Returns (page_of_identities, total_count). Filters and pagination applied at SQL level.
+        When count=False, skips the COUNT query and returns 0 for total_count.
         """
         ...
 
@@ -116,10 +122,12 @@ class IdentityRepository(Protocol):
         identity_type: str | None = None,
         limit: int | None = None,
         offset: int = 0,
+        count: bool = True,
     ) -> tuple[list[Identity], int]:
         """Half-open interval [start, end). Same semantics as ResourceRepository.find_by_period.
 
         Returns (page_of_identities, total_count). Filters and pagination applied at SQL level.
+        When count=False, skips the COUNT query and returns 0 for total_count.
         """
         ...
 

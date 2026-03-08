@@ -1446,3 +1446,248 @@ class TestPipelineRunRepository:
 
         assert repo.get_latest_run("tenant-b") is None
         assert repo.list_runs_for_tenant("tenant-b") == []
+
+
+# --- count parameter (task-043) ---
+
+
+class TestResourceRepositoryCountParam:
+    """Tests for the count: bool = True parameter on SQLModelResourceRepository."""
+
+    def _make_resource(self, **overrides: Any) -> Resource:
+        defaults = dict(
+            ecosystem="eco",
+            tenant_id="t1",
+            resource_id="r1",
+            resource_type="kafka",
+            status=ResourceStatus.ACTIVE,
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
+            metadata={},
+        )
+        defaults.update(overrides)
+        return CoreResource(**defaults)
+
+    def test_find_active_at_count_false_returns_zero_total(self, session: Session) -> None:
+        """find_active_at(count=False) returns (items, 0) without issuing SELECT COUNT(*)."""
+        from unittest.mock import patch
+
+        repo = SQLModelResourceRepository(session)
+        repo.upsert(self._make_resource())
+        session.commit()
+
+        exec_calls: list[Any] = []
+        original_exec = session.exec
+
+        def tracking_exec(stmt: Any, *args: Any, **kwargs: Any) -> Any:
+            exec_calls.append(stmt)
+            return original_exec(stmt, *args, **kwargs)
+
+        with patch.object(session, "exec", side_effect=tracking_exec):
+            results, total = repo.find_active_at("eco", "t1", datetime(2026, 1, 15, tzinfo=UTC), count=False)
+
+        assert total == 0
+        assert len(results) == 1
+        assert len(exec_calls) == 1  # only main SELECT, no COUNT query
+
+    def test_find_active_at_count_true_returns_actual_total(self, session: Session) -> None:
+        """find_active_at(count=True) returns actual count — existing behaviour preserved."""
+        from unittest.mock import patch
+
+        repo = SQLModelResourceRepository(session)
+        repo.upsert(self._make_resource())
+        session.commit()
+
+        exec_calls: list[Any] = []
+        original_exec = session.exec
+
+        def tracking_exec(stmt: Any, *args: Any, **kwargs: Any) -> Any:
+            exec_calls.append(stmt)
+            return original_exec(stmt, *args, **kwargs)
+
+        with patch.object(session, "exec", side_effect=tracking_exec):
+            results, total = repo.find_active_at("eco", "t1", datetime(2026, 1, 15, tzinfo=UTC), count=True)
+
+        assert total == 1
+        assert len(results) == 1
+        assert len(exec_calls) == 2  # COUNT query + main SELECT
+
+    def test_find_by_period_count_false_returns_zero_total(self, session: Session) -> None:
+        """find_by_period(count=False) returns (items, 0) without issuing SELECT COUNT(*)."""
+        from unittest.mock import patch
+
+        repo = SQLModelResourceRepository(session)
+        repo.upsert(self._make_resource(created_at=datetime(2026, 1, 5, tzinfo=UTC)))
+        session.commit()
+
+        exec_calls: list[Any] = []
+        original_exec = session.exec
+
+        def tracking_exec(stmt: Any, *args: Any, **kwargs: Any) -> Any:
+            exec_calls.append(stmt)
+            return original_exec(stmt, *args, **kwargs)
+
+        with patch.object(session, "exec", side_effect=tracking_exec):
+            results, total = repo.find_by_period(
+                "eco",
+                "t1",
+                datetime(2026, 1, 1, tzinfo=UTC),
+                datetime(2026, 2, 1, tzinfo=UTC),
+                count=False,
+            )
+
+        assert total == 0
+        assert len(results) == 1
+        assert len(exec_calls) == 1  # only main SELECT, no COUNT query
+
+    def test_find_by_period_count_true_returns_actual_total(self, session: Session) -> None:
+        """find_by_period(count=True) returns actual count — existing behaviour preserved."""
+        from unittest.mock import patch
+
+        repo = SQLModelResourceRepository(session)
+        repo.upsert(self._make_resource(created_at=datetime(2026, 1, 5, tzinfo=UTC)))
+        session.commit()
+
+        exec_calls: list[Any] = []
+        original_exec = session.exec
+
+        def tracking_exec(stmt: Any, *args: Any, **kwargs: Any) -> Any:
+            exec_calls.append(stmt)
+            return original_exec(stmt, *args, **kwargs)
+
+        with patch.object(session, "exec", side_effect=tracking_exec):
+            results, total = repo.find_by_period(
+                "eco",
+                "t1",
+                datetime(2026, 1, 1, tzinfo=UTC),
+                datetime(2026, 2, 1, tzinfo=UTC),
+                count=True,
+            )
+
+        assert total == 1
+        assert len(results) == 1
+        assert len(exec_calls) == 2  # COUNT query + main SELECT
+
+
+class TestIdentityRepositoryCountParam:
+    """Tests for the count: bool = True parameter on SQLModelIdentityRepository."""
+
+    def _make_identity(self, **overrides: Any) -> Identity:
+        defaults = dict(
+            ecosystem="eco",
+            tenant_id="t1",
+            identity_id="u1",
+            identity_type="user",
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        )
+        defaults.update(overrides)
+        return CoreIdentity(**defaults)
+
+    def test_find_active_at_count_false_returns_zero_total(self, session: Session) -> None:
+        """find_active_at(count=False) returns (items, 0) without issuing SELECT COUNT(*)."""
+        from unittest.mock import patch
+
+        repo = SQLModelIdentityRepository(session)
+        repo.upsert(self._make_identity())
+        session.commit()
+
+        exec_calls: list[Any] = []
+        original_exec = session.exec
+
+        def tracking_exec(stmt: Any, *args: Any, **kwargs: Any) -> Any:
+            exec_calls.append(stmt)
+            return original_exec(stmt, *args, **kwargs)
+
+        with patch.object(session, "exec", side_effect=tracking_exec):
+            results, total = repo.find_active_at("eco", "t1", datetime(2026, 1, 15, tzinfo=UTC), count=False)
+
+        assert total == 0
+        assert len(results) == 1
+        assert len(exec_calls) == 1  # only main SELECT, no COUNT query
+
+    def test_find_active_at_count_true_returns_actual_total(self, session: Session) -> None:
+        """find_active_at(count=True) returns actual count — existing behaviour preserved."""
+        from unittest.mock import patch
+
+        repo = SQLModelIdentityRepository(session)
+        repo.upsert(self._make_identity())
+        session.commit()
+
+        exec_calls: list[Any] = []
+        original_exec = session.exec
+
+        def tracking_exec(stmt: Any, *args: Any, **kwargs: Any) -> Any:
+            exec_calls.append(stmt)
+            return original_exec(stmt, *args, **kwargs)
+
+        with patch.object(session, "exec", side_effect=tracking_exec):
+            results, total = repo.find_active_at("eco", "t1", datetime(2026, 1, 15, tzinfo=UTC), count=True)
+
+        assert total == 1
+        assert len(results) == 1
+        assert len(exec_calls) == 2  # COUNT query + main SELECT
+
+    def test_find_by_period_count_false_returns_zero_total(self, session: Session) -> None:
+        """find_by_period(count=False) returns (items, 0) without issuing SELECT COUNT(*)."""
+        from unittest.mock import patch
+
+        repo = SQLModelIdentityRepository(session)
+        repo.upsert(
+            self._make_identity(
+                created_at=datetime(2026, 1, 5, tzinfo=UTC),
+                deleted_at=datetime(2026, 1, 20, tzinfo=UTC),
+            )
+        )
+        session.commit()
+
+        exec_calls: list[Any] = []
+        original_exec = session.exec
+
+        def tracking_exec(stmt: Any, *args: Any, **kwargs: Any) -> Any:
+            exec_calls.append(stmt)
+            return original_exec(stmt, *args, **kwargs)
+
+        with patch.object(session, "exec", side_effect=tracking_exec):
+            results, total = repo.find_by_period(
+                "eco",
+                "t1",
+                datetime(2026, 1, 1, tzinfo=UTC),
+                datetime(2026, 2, 1, tzinfo=UTC),
+                count=False,
+            )
+
+        assert total == 0
+        assert len(results) == 1
+        assert len(exec_calls) == 1  # only main SELECT, no COUNT query
+
+    def test_find_by_period_count_true_returns_actual_total(self, session: Session) -> None:
+        """find_by_period(count=True) returns actual count — existing behaviour preserved."""
+        from unittest.mock import patch
+
+        repo = SQLModelIdentityRepository(session)
+        repo.upsert(
+            self._make_identity(
+                created_at=datetime(2026, 1, 5, tzinfo=UTC),
+                deleted_at=datetime(2026, 1, 20, tzinfo=UTC),
+            )
+        )
+        session.commit()
+
+        exec_calls: list[Any] = []
+        original_exec = session.exec
+
+        def tracking_exec(stmt: Any, *args: Any, **kwargs: Any) -> Any:
+            exec_calls.append(stmt)
+            return original_exec(stmt, *args, **kwargs)
+
+        with patch.object(session, "exec", side_effect=tracking_exec):
+            results, total = repo.find_by_period(
+                "eco",
+                "t1",
+                datetime(2026, 1, 1, tzinfo=UTC),
+                datetime(2026, 2, 1, tzinfo=UTC),
+                count=True,
+            )
+
+        assert total == 1
+        assert len(results) == 1
+        assert len(exec_calls) == 2  # COUNT query + main SELECT
