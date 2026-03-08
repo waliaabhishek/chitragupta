@@ -22,8 +22,14 @@ class ResourceTable(SQLModel, table=True):
     status: str = Field(default="active", index=True)
     cloud: str | None = Field(default=None, index=True)
     region: str | None = Field(default=None, index=True)
-    created_at: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True)))
-    deleted_at: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True)))
+    created_at: datetime | None = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), index=True),
+    )
+    deleted_at: datetime | None = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), index=True),
+    )
     last_seen_at: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True)))
     metadata_json: str | None = Field(default=None)
 
@@ -36,8 +42,14 @@ class IdentityTable(SQLModel, table=True):
     identity_id: str = Field(primary_key=True)
     identity_type: str = Field(index=True)
     display_name: str | None = None
-    created_at: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True)))
-    deleted_at: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True)))
+    created_at: datetime | None = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), index=True),
+    )
+    deleted_at: datetime | None = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), index=True),
+    )
     last_seen_at: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True)))
     metadata_json: str | None = Field(default=None)
 

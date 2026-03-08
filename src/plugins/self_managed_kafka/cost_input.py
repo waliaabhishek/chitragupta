@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from core.storage.interface import UnitOfWork
     from plugins.self_managed_kafka.config import CostModelConfig, SelfManagedKafkaConfig
 
-LOGGER = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)
 ECOSYSTEM = "self_managed_kafka"
 
 # Bytes per GiB (2^30)
@@ -119,7 +119,7 @@ class ConstructedCostInput(CostInput):
                 step=timedelta(seconds=self._config.metrics_step_seconds),
             )
         except MetricsQueryError as exc:
-            LOGGER.warning(
+            logger.warning(
                 "Batched Prometheus query failed for tenant=%s range=%s..%s — falling back to per-day queries: %s",
                 tenant_id,
                 start.date(),
@@ -149,7 +149,7 @@ class ConstructedCostInput(CostInput):
                     step=timedelta(seconds=self._config.metrics_step_seconds),
                 )
             except MetricsQueryError as exc:
-                LOGGER.warning(
+                logger.warning(
                     "Per-day Prometheus query failed for tenant=%s date=%s — skipping: %s",
                     tenant_id,
                     day_start.date(),
@@ -168,7 +168,7 @@ class ConstructedCostInput(CostInput):
         """Generate billing lines for a single day from pre-fetched metrics."""
         has_data = any(rows for rows in metrics.values())
         if not has_data:
-            LOGGER.warning(
+            logger.warning(
                 "No Prometheus data for tenant=%s date=%s — skipping billing period",
                 tenant_id,
                 day_start.date(),
