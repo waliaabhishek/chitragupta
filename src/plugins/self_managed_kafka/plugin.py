@@ -38,6 +38,7 @@ class SelfManagedKafkaPlugin:
         self._admin_client: Any = None
         self._handler: SelfManagedKafkaHandler | None = None
         self._prometheus_principals_available: bool = True
+        self._cached_discovery: tuple[frozenset[str], frozenset[str], frozenset[str]] | None = None
 
     @property
     def ecosystem(self) -> str:
@@ -87,10 +88,11 @@ class SelfManagedKafkaPlugin:
 
         step = timedelta(seconds=self._config.metrics_step_seconds)  # type: ignore[union-attr]  # set in initialize()
         try:
-            _brokers, _topics, principals = run_combined_discovery(
+            brokers, topics, principals = run_combined_discovery(
                 self._metrics_source,  # type: ignore[arg-type]  # set in initialize()
                 step,
             )
+            self._cached_discovery = (brokers, topics, principals)  # cache for first gather cycle
             if not principals:
                 logger.warning(
                     "self_managed_kafka: No 'principal' label found in Prometheus metrics. "
@@ -150,7 +152,12 @@ class SelfManagedKafkaPlugin:
         if needs_prometheus and self._metrics_source is not None:
             step = timedelta(seconds=self._config.metrics_step_seconds)
             try:
-                brokers, topics, principals = run_combined_discovery(self._metrics_source, step)
+                # Use cached result from _validate_principal_label (first call only)
+                if self._cached_discovery is not None:
+                    brokers, topics, principals = self._cached_discovery
+                    self._cached_discovery = None  # consume once, free memory
+                else:
+                    brokers, topics, principals = run_combined_discovery(self._metrics_source, step)
                 return SMKSharedContext(
                     cluster_resource=cluster,
                     discovered_brokers=brokers,

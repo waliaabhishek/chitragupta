@@ -69,8 +69,8 @@ def _make_smk_ctx_with_discovery(
     discovered_principals: frozenset[str] | None = None,
 ):
     """Create SMKSharedContext with discovery sets pre-populated."""
-    from plugins.self_managed_kafka.shared_context import SMKSharedContext
     from core.models import CoreResource, ResourceStatus
+    from plugins.self_managed_kafka.shared_context import SMKSharedContext
 
     cluster = CoreResource(
         ecosystem="self_managed_kafka",
@@ -96,8 +96,9 @@ def _make_smk_ctx_with_discovery(
 class TestRunCombinedDiscoveryAllLabels:
     def test_splits_into_three_frozensets(self, mock_metrics_source: MagicMock) -> None:
         """run_combined_discovery returns three frozensets split from combined metric rows."""
-        from plugins.self_managed_kafka.gathering.prometheus import run_combined_discovery
         from datetime import timedelta
+
+        from plugins.self_managed_kafka.gathering.prometheus import run_combined_discovery
 
         # Combined query returns rows where each has broker, topic, and principal labels
         mock_metrics_source.query.return_value = {
@@ -119,8 +120,9 @@ class TestRunCombinedDiscoveryAllLabels:
 
     def test_query_called_exactly_once(self, mock_metrics_source: MagicMock) -> None:
         """run_combined_discovery issues exactly one query call."""
-        from plugins.self_managed_kafka.gathering.prometheus import run_combined_discovery
         from datetime import timedelta
+
+        from plugins.self_managed_kafka.gathering.prometheus import run_combined_discovery
 
         mock_metrics_source.query.return_value = {"combined_discovery": []}
 
@@ -137,8 +139,9 @@ class TestRunCombinedDiscoveryAllLabels:
 class TestRunCombinedDiscoverySparseRows:
     def test_sparse_rows_include_only_present_non_empty_values(self, mock_metrics_source: MagicMock) -> None:
         """Sparse rows: missing labels not included; no empty-string entries."""
-        from plugins.self_managed_kafka.gathering.prometheus import run_combined_discovery
         from datetime import timedelta
+
+        from plugins.self_managed_kafka.gathering.prometheus import run_combined_discovery
 
         mock_metrics_source.query.return_value = {
             "combined_discovery": [
@@ -169,9 +172,9 @@ class TestRunCombinedDiscoverySparseRows:
 class TestBuildSharedContextPrometheusSource:
     def test_discovery_fields_non_none_when_prometheus(self) -> None:
         """build_shared_context with prometheus sources populates all three discovery fields."""
+
         from plugins.self_managed_kafka.plugin import SelfManagedKafkaPlugin
         from plugins.self_managed_kafka.shared_context import SMKSharedContext
-        from datetime import timedelta
 
         settings = _base_plugin_settings(resource_source="prometheus", identity_source="prometheus")
         plugin = SelfManagedKafkaPlugin()
@@ -486,7 +489,7 @@ class TestPluginHandlerIntegration:
         mock_ms.query.reset_mock()
         mock_ms.query.return_value = {"combined_discovery": combined_rows}
 
-        # Phase 1: build shared context (calls combined_discovery once)
+        # Phase 1: build shared context (consumes cached result from _validate_principal_label, no new query)
         ctx = plugin.build_shared_context("tenant-1")
 
         # Phase 2: handler gather cycle using real plugin output
@@ -505,5 +508,6 @@ class TestPluginHandlerIntegration:
         identity_ids = {i.identity_id for i in identities}
         assert "User:alice" in identity_ids
 
-        # Combined query called exactly once in build_shared_context; zero times in handler
-        mock_ms.query.assert_called_once()
+        # build_shared_context consumed cached result from _validate_principal_label — no new query
+        # handler gather_resources/gather_identities also make no combined_discovery calls
+        mock_ms.query.assert_not_called()
