@@ -374,25 +374,36 @@ class CalculatePhase:
             uow.pipeline_state.mark_chargeback_calculated(self._ecosystem, self._tenant_id, tracking_date)
             return 0
 
-        billing_windows = self._compute_billing_windows(billing_lines)
-        prefetched_metrics = self._prefetch_metrics(billing_lines)
+        line_window_cache = self._compute_line_window_cache(billing_lines)
+        billing_windows = self._compute_billing_windows(billing_lines, line_window_cache)
+        prefetched_metrics = self._prefetch_metrics(billing_lines, line_window_cache)
         tenant_period_cache = self._build_tenant_period_cache(uow, billing_windows)
         resource_cache = self._build_resource_cache(uow, billing_windows)
 
         total_rows = 0
         for line in billing_lines:
-            rows = self._process_billing_line(line, uow, prefetched_metrics, tenant_period_cache, resource_cache)
+            rows = self._process_billing_line(
+                line, uow, prefetched_metrics, tenant_period_cache, resource_cache, line_window_cache
+            )
             total_rows += rows
 
         uow.pipeline_state.mark_chargeback_calculated(self._ecosystem, self._tenant_id, tracking_date)
         return total_rows
 
-    def _prefetch_metrics(
+    def _compute_line_window_cache(
         self, billing_lines: list[BillingLineItem]
+    ) -> dict[int, tuple[datetime, datetime, timedelta]]:
+        """Compute billing_window() once per line. Keyed by id(line)."""
+        return {id(line): billing_window(line, self._merged_granularity_durations) for line in billing_lines}
+
+    def _prefetch_metrics(
+        self,
+        billing_lines: list[BillingLineItem],
+        line_window_cache: dict[int, tuple[datetime, datetime, timedelta]],
     ) -> dict[tuple[str, datetime, datetime], dict[str, list[MetricRow]]]:
         metrics_groups: dict[tuple[str, datetime, datetime], list[MetricQuery]] = {}
         for line in billing_lines:
-            b_start, b_end, _ = billing_window(line, self._merged_granularity_durations)
+            b_start, b_end, _ = line_window_cache[id(line)]
             handler = self._bundle.product_type_to_handler.get(line.product_type)
             if handler:
                 metrics_needed = handler.get_metrics_for_product_type(line.product_type)
@@ -447,10 +458,14 @@ class CalculatePhase:
 
         return prefetched
 
-    def _compute_billing_windows(self, billing_lines: list[BillingLineItem]) -> set[tuple[datetime, datetime]]:
+    def _compute_billing_windows(
+        self,
+        billing_lines: list[BillingLineItem],
+        line_window_cache: dict[int, tuple[datetime, datetime, timedelta]],
+    ) -> set[tuple[datetime, datetime]]:
         windows: set[tuple[datetime, datetime]] = set()
         for line in billing_lines:
-            b_start, b_end, _ = billing_window(line, self._merged_granularity_durations)
+            b_start, b_end, _ = line_window_cache[id(line)]
             windows.add((b_start, b_end))
         return windows
 
@@ -484,9 +499,10 @@ class CalculatePhase:
         prefetched_metrics: dict[tuple[str, datetime, datetime], dict[str, list[MetricRow]]],
         tenant_period_cache: dict[tuple[datetime, datetime], IdentitySet],
         resource_cache: dict[str, Resource],
+        line_window_cache: dict[int, tuple[datetime, datetime, timedelta]],
     ) -> int:
         try:
-            b_start, b_end, b_duration = billing_window(line, self._merged_granularity_durations)
+            b_start, b_end, b_duration = line_window_cache[id(line)]
             handler = self._bundle.product_type_to_handler.get(line.product_type)
             if handler is None:
                 logger.warning(
@@ -862,8 +878,9 @@ class ChargebackOrchestrator:
         resource_cache: dict[str, Resource],
     ) -> int:
         """Backward-compatible wrapper — allocation_retry_limit is ignored (RetryManager owns it)."""
+        line_window_cache = self._calculate_phase._compute_line_window_cache([line])
         return self._calculate_phase._process_billing_line(
-            line, uow, prefetched_metrics, tenant_period_cache, resource_cache
+            line, uow, prefetched_metrics, tenant_period_cache, resource_cache, line_window_cache
         )
 
     def _calculate_date(self, uow: UnitOfWork, tracking_date: date_type) -> int:

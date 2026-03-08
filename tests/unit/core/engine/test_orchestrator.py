@@ -2363,3 +2363,70 @@ class TestComputeBillingWindowsOnce:
 
         assert (w1_start, w1_end) in result
         assert (w2_start, w2_end) in result
+
+
+class TestCalculatePhaseLineWindowCache:
+    def test_billing_window_called_once_per_line_not_three_times(self) -> None:
+        """billing_window() must be called exactly len(billing_lines) times, not 3×."""
+        handler = MockServiceHandler(
+            resources=[_make_resource()],
+            identities=[_make_identity()],
+        )
+        lines = [
+            _make_billing_line(resource_id="cluster-1", timestamp=NOW - timedelta(days=10)),
+            _make_billing_line(resource_id="cluster-2", timestamp=NOW - timedelta(days=10)),
+            _make_billing_line(resource_id="cluster-3", timestamp=NOW - timedelta(days=10)),
+        ]
+        cost_input = MockCostInput(lines)
+        orch, storage = _create_orchestrator(handler=handler, cost_input=cost_input)
+        uow = storage.create_unit_of_work()
+
+        tracking_date = lines[0].timestamp.date()
+        ps = PipelineState(
+            ecosystem=ECOSYSTEM,
+            tenant_id=TENANT_ID,
+            tracking_date=tracking_date,
+            billing_gathered=True,
+            resources_gathered=True,
+        )
+        uow.pipeline_state.upsert(ps)
+        uow.pipeline_state.mark_billing_gathered(ECOSYSTEM, TENANT_ID, tracking_date)
+        uow.pipeline_state.mark_resources_gathered(ECOSYSTEM, TENANT_ID, tracking_date)
+        for line in lines:
+            uow.billing.upsert(line)
+
+        with patch("core.engine.orchestrator.billing_window", wraps=billing_window) as mock_bw:
+            orch._calculate_phase.run(uow, tracking_date)
+            assert mock_bw.call_count == len(lines)
+
+    def test_compute_line_window_cache_daily_granularity(self) -> None:
+        """_compute_line_window_cache returns (start, end, duration) for daily lines."""
+        orch, _ = _create_orchestrator()
+        phase = orch._calculate_phase
+
+        ts = datetime(2026, 2, 10, 0, 0, 0, tzinfo=UTC)
+        line = _make_billing_line(timestamp=ts, granularity="daily")
+
+        cache = phase._compute_line_window_cache([line])
+
+        assert id(line) in cache
+        b_start, b_end, b_duration = cache[id(line)]
+        assert b_start == ts
+        assert b_end == ts + timedelta(days=1)
+        assert b_duration == timedelta(days=1)
+
+    def test_compute_line_window_cache_monthly_granularity(self) -> None:
+        """_compute_line_window_cache returns correct duration for monthly lines (28-day Feb)."""
+        orch, _ = _create_orchestrator()
+        phase = orch._calculate_phase
+
+        ts = datetime(2026, 2, 1, 0, 0, 0, tzinfo=UTC)
+        line = _make_billing_line(timestamp=ts, granularity="monthly")
+
+        cache = phase._compute_line_window_cache([line])
+
+        assert id(line) in cache
+        b_start, b_end, b_duration = cache[id(line)]
+        assert b_start == ts
+        assert b_duration == timedelta(days=28)
+        assert b_end == ts + timedelta(days=28)

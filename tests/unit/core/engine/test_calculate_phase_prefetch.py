@@ -123,7 +123,7 @@ class TestPrefetchParallelism:
         lines = [_make_billing_line(resource_id=f"cluster-{i}", timestamp=NOW) for i in range(1, 6)]
 
         start = time.monotonic()
-        result = phase._prefetch_metrics(lines)
+        result = phase._prefetch_metrics(lines, phase._compute_line_window_cache(lines))
         elapsed = time.monotonic() - start
 
         # All 5 groups must be in result
@@ -149,11 +149,11 @@ class TestPrefetchPartialFailure:
         mock_bundle = MagicMock()
         mock_bundle.product_type_to_handler.get.return_value = mock_handler
 
-        FAILING_RESOURCE = "cluster-fail"
+        failing_resource = "cluster-fail"
 
         def selective_query(*args: Any, **kwargs: Any) -> dict[str, list]:
             resource_id = kwargs.get("resource_id_filter", "")
-            if resource_id == FAILING_RESOURCE:
+            if resource_id == failing_resource:
                 raise RuntimeError(f"Prometheus unreachable for {resource_id}")
             return {"bytes_in": [{"value": 42.0, "timestamp": NOW}]}
 
@@ -169,30 +169,30 @@ class TestPrefetchPartialFailure:
         lines = [
             _make_billing_line(resource_id="cluster-ok-1", timestamp=NOW),
             _make_billing_line(resource_id="cluster-ok-2", timestamp=NOW),
-            _make_billing_line(resource_id=FAILING_RESOURCE, timestamp=NOW),
+            _make_billing_line(resource_id=failing_resource, timestamp=NOW),
         ]
 
         with caplog.at_level(logging.WARNING):
-            result = phase._prefetch_metrics(lines)
+            result = phase._prefetch_metrics(lines, phase._compute_line_window_cache(lines))
 
         # All 3 groups must be in result
         assert len(result) == 3
 
         # Find the key for the failing resource
-        failing_keys = [k for k in result if k[0] == FAILING_RESOURCE]
+        failing_keys = [k for k in result if k[0] == failing_resource]
         assert len(failing_keys) == 1
         # Failing group maps to empty dict
         assert result[failing_keys[0]] == {}
 
         # Successful groups have data
-        ok_keys = [k for k in result if k[0] != FAILING_RESOURCE]
+        ok_keys = [k for k in result if k[0] != failing_resource]
         for ok_key in ok_keys:
             assert result[ok_key] != {}, f"Expected non-empty result for {ok_key[0]}"
 
         # Warning must be logged
         warning_messages = [r.message for r in caplog.records if r.levelno == logging.WARNING]
-        assert any(FAILING_RESOURCE in msg for msg in warning_messages), (
-            f"Expected warning mentioning '{FAILING_RESOURCE}', got: {warning_messages}"
+        assert any(failing_resource in msg for msg in warning_messages), (
+            f"Expected warning mentioning '{failing_resource}', got: {warning_messages}"
         )
 
 
@@ -283,7 +283,7 @@ class TestPrefetchNoMetricsSource:
         lines = [_make_billing_line(resource_id=f"cluster-{i}") for i in range(3)]
 
         with patch("concurrent.futures.ThreadPoolExecutor") as mock_executor:
-            result = phase._prefetch_metrics(lines)
+            result = phase._prefetch_metrics(lines, phase._compute_line_window_cache(lines))
 
         assert result == {}
         # ThreadPoolExecutor must NOT be instantiated when metrics_source is None
@@ -319,7 +319,7 @@ class TestPrefetchSingleGroup:
 
         lines = [_make_billing_line(resource_id="cluster-solo", timestamp=NOW)]
 
-        result = phase._prefetch_metrics(lines)
+        result = phase._prefetch_metrics(lines, phase._compute_line_window_cache(lines))
 
         assert len(result) == 1
         group_key = list(result.keys())[0]

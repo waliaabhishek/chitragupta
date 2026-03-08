@@ -328,7 +328,8 @@ def test_orchestrator_passes_context_to_handler() -> None:
     mock_uow = MagicMock()
     mock_uow.chargebacks = MagicMock()
 
-    phase._process_billing_line(line, mock_uow, {}, tenant_period_cache, resource_cache)
+    line_window_cache = phase._compute_line_window_cache([line])
+    phase._process_billing_line(line, mock_uow, {}, tenant_period_cache, resource_cache, line_window_cache)
 
     mock_handler.resolve_identities.assert_called_once()
     call = mock_handler.resolve_identities.call_args

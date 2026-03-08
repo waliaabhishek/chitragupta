@@ -888,8 +888,9 @@ class TestCalculatePhasePrefetchMetrics:
         # Two billing lines for same resource and same timestamp (same daily window)
         line1 = _make_billing_line(product_type="KAFKA_CKU", resource_id="cluster-1")
         line2 = _make_billing_line(product_type="KAFKA_CKU", resource_id="cluster-1")
+        lines = [line1, line2]
 
-        phase._prefetch_metrics([line1, line2])
+        phase._prefetch_metrics(lines, phase._compute_line_window_cache(lines))
 
         # query should be called once with deduplicated query list (length 1, not 2)
         assert mock_metrics.query.call_count == 1
@@ -918,7 +919,7 @@ class TestCalculatePhasePrefetchMetrics:
         )
 
         line = _make_billing_line()
-        phase._prefetch_metrics([line])
+        phase._prefetch_metrics([line], phase._compute_line_window_cache([line]))
 
         mock_metrics.query.assert_called_once()
         call_kwargs = mock_metrics.query.call_args
@@ -947,8 +948,9 @@ class TestCalculatePhasePrefetchMetrics:
 
         line1 = _make_billing_line(resource_id="cluster-1")
         line2 = _make_billing_line(resource_id="cluster-2")
+        lines = [line1, line2]
 
-        phase._prefetch_metrics([line1, line2])
+        phase._prefetch_metrics(lines, phase._compute_line_window_cache(lines))
 
         # Two different resource_ids → two separate query calls
         assert mock_metrics.query.call_count == 2
@@ -972,6 +974,7 @@ class TestCalculatePhaseProcessBillingLine:
             prefetched_metrics={},
             tenant_period_cache={},
             resource_cache={},
+            line_window_cache=phase._compute_line_window_cache([line]),
         )
 
         assert rows_written == 1
@@ -1007,6 +1010,7 @@ class TestCalculatePhaseProcessBillingLine:
                 prefetched_metrics={},
                 tenant_period_cache={},
                 resource_cache={},
+                line_window_cache=phase._compute_line_window_cache([line]),
             )
 
     def test_allocation_exception_with_fallback_writes_unallocated(self) -> None:
@@ -1035,6 +1039,7 @@ class TestCalculatePhaseProcessBillingLine:
             prefetched_metrics={},
             tenant_period_cache={},
             resource_cache={},
+            line_window_cache=phase._compute_line_window_cache([line]),
         )
 
         assert rows_written == 1
@@ -1072,6 +1077,7 @@ class TestCalculatePhaseProcessBillingLine:
                 prefetched_metrics={},
                 tenant_period_cache={},
                 resource_cache={},
+                line_window_cache=phase._compute_line_window_cache([line]),
             )
 
 
