@@ -16,6 +16,8 @@ from urllib.parse import urljoin
 import httpx
 
 from core.metrics.protocol import MetricsQueryError
+
+logger = logging.getLogger(__name__)
 from core.models.metrics import MetricQuery, MetricRow  # noqa: TC001 — used at runtime in _parse_response
 
 LOGGER = logging.getLogger(__name__)

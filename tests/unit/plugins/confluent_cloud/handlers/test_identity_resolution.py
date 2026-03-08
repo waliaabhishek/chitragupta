@@ -200,6 +200,168 @@ class TestResolveKafkaSrIdentities:
         assert len(result.resource_active) == 1
         assert "sa-owner" in result.resource_active.ids()
 
+    def test_metrics_derived_resolves_api_key_to_owner(self, mock_uow: MagicMock) -> None:
+        """API key principal in metrics is resolved to its owner in metrics_derived."""
+        from plugins.confluent_cloud.handlers.identity_resolution import (
+            resolve_kafka_sr_identities,
+        )
+
+        api_key = CoreIdentity(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            identity_id="key-xyz",
+            identity_type="api_key",
+            metadata={"owner_id": "sa-abc"},
+        )
+        sa_owner = CoreIdentity(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            identity_id="sa-abc",
+            identity_type="service_account",
+        )
+        mock_uow.identities.find_by_period.return_value = ([api_key, sa_owner], 2)
+        metrics_data = {
+            "bytes_in": [
+                MetricRow(
+                    timestamp=datetime(2026, 2, 1, tzinfo=UTC),
+                    metric_key="bytes_in",
+                    value=100.0,
+                    labels={"principal_id": "key-xyz"},
+                ),
+            ],
+        }
+
+        result = resolve_kafka_sr_identities(
+            tenant_id="org-123",
+            resource_id="lkc-abc",
+            billing_start=datetime(2026, 2, 1, tzinfo=UTC),
+            billing_end=datetime(2026, 2, 2, tzinfo=UTC),
+            metrics_data=metrics_data,
+            uow=mock_uow,
+            ecosystem="confluent_cloud",
+        )
+
+        assert "sa-abc" in result.metrics_derived.ids()
+        assert "key-xyz" not in result.metrics_derived.ids()
+
+    def test_api_key_to_owner_context_populated(self, mock_uow: MagicMock) -> None:
+        """context['api_key_to_owner'] maps api key to its owner when resolved from metrics."""
+        from plugins.confluent_cloud.handlers.identity_resolution import (
+            resolve_kafka_sr_identities,
+        )
+
+        api_key = CoreIdentity(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            identity_id="key-xyz",
+            identity_type="api_key",
+            metadata={"owner_id": "sa-abc"},
+        )
+        sa_owner = CoreIdentity(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            identity_id="sa-abc",
+            identity_type="service_account",
+        )
+        mock_uow.identities.find_by_period.return_value = ([api_key, sa_owner], 2)
+        metrics_data = {
+            "bytes_in": [
+                MetricRow(
+                    timestamp=datetime(2026, 2, 1, tzinfo=UTC),
+                    metric_key="bytes_in",
+                    value=100.0,
+                    labels={"principal_id": "key-xyz"},
+                ),
+            ],
+        }
+
+        result = resolve_kafka_sr_identities(
+            tenant_id="org-123",
+            resource_id="lkc-abc",
+            billing_start=datetime(2026, 2, 1, tzinfo=UTC),
+            billing_end=datetime(2026, 2, 2, tzinfo=UTC),
+            metrics_data=metrics_data,
+            uow=mock_uow,
+            ecosystem="confluent_cloud",
+        )
+
+        assert result.context["api_key_to_owner"] == {"key-xyz": "sa-abc"}
+
+    def test_api_key_no_owner_dropped_from_metrics_derived(self, mock_uow: MagicMock) -> None:
+        """API key with no owner_id is excluded from metrics_derived and api_key_to_owner."""
+        from plugins.confluent_cloud.handlers.identity_resolution import (
+            resolve_kafka_sr_identities,
+        )
+
+        api_key = CoreIdentity(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            identity_id="key-xyz",
+            identity_type="api_key",
+            metadata={},  # No owner_id
+        )
+        mock_uow.identities.find_by_period.return_value = ([api_key], 1)
+        metrics_data = {
+            "bytes_in": [
+                MetricRow(
+                    timestamp=datetime(2026, 2, 1, tzinfo=UTC),
+                    metric_key="bytes_in",
+                    value=100.0,
+                    labels={"principal_id": "key-xyz"},
+                ),
+            ],
+        }
+
+        result = resolve_kafka_sr_identities(
+            tenant_id="org-123",
+            resource_id="lkc-abc",
+            billing_start=datetime(2026, 2, 1, tzinfo=UTC),
+            billing_end=datetime(2026, 2, 2, tzinfo=UTC),
+            metrics_data=metrics_data,
+            uow=mock_uow,
+            ecosystem="confluent_cloud",
+        )
+
+        assert "key-xyz" not in result.metrics_derived.ids()
+        assert "key-xyz" not in result.context.get("api_key_to_owner", {})
+
+    def test_non_api_key_principal_passes_through(self, mock_uow: MagicMock) -> None:
+        """Non-API-key principal in metrics is added to metrics_derived; api_key_to_owner is empty."""
+        from plugins.confluent_cloud.handlers.identity_resolution import (
+            resolve_kafka_sr_identities,
+        )
+
+        sa = CoreIdentity(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            identity_id="sa-xyz",
+            identity_type="service_account",
+        )
+        mock_uow.identities.find_by_period.return_value = ([sa], 1)
+        metrics_data = {
+            "bytes_in": [
+                MetricRow(
+                    timestamp=datetime(2026, 2, 1, tzinfo=UTC),
+                    metric_key="bytes_in",
+                    value=200.0,
+                    labels={"principal_id": "sa-xyz"},
+                ),
+            ],
+        }
+
+        result = resolve_kafka_sr_identities(
+            tenant_id="org-123",
+            resource_id="lkc-abc",
+            billing_start=datetime(2026, 2, 1, tzinfo=UTC),
+            billing_end=datetime(2026, 2, 2, tzinfo=UTC),
+            metrics_data=metrics_data,
+            uow=mock_uow,
+            ecosystem="confluent_cloud",
+        )
+
+        assert "sa-xyz" in result.metrics_derived.ids()
+        assert result.context.get("api_key_to_owner", {}) == {}
+
 
 class TestCreateSentinel:
     """Tests for create_sentinel_from_id function."""

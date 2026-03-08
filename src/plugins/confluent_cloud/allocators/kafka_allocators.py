@@ -17,6 +17,7 @@ from core.engine.helpers import (
     make_row,
     split_amount_evenly,
 )
+from core.models import OWNER_IDENTITY_TYPES
 from core.models.chargeback import AllocationDetail, CostType
 
 logger = logging.getLogger(__name__)
@@ -69,6 +70,7 @@ def _kafka_usage_allocation(ctx: AllocationContext) -> AllocationResult:
     if not ctx.metrics_data:
         return _fallback_no_metrics(ctx)
 
+    api_key_to_owner: dict[str, str] = ctx.identities.context.get("api_key_to_owner", {})
     identity_bytes: dict[str, float] = {}
     has_metric_rows = False
     for key in ("bytes_in", "bytes_out"):
@@ -76,7 +78,8 @@ def _kafka_usage_allocation(ctx: AllocationContext) -> AllocationResult:
             has_metric_rows = True
             principal = row.labels.get("principal_id")
             if principal and row.value > 0:
-                identity_bytes[principal] = identity_bytes.get(principal, 0.0) + row.value
+                resolved = api_key_to_owner.get(principal, principal)
+                identity_bytes[resolved] = identity_bytes.get(resolved, 0.0) + row.value
 
     if identity_bytes:
         return allocate_by_usage_ratio(ctx, identity_bytes)
@@ -96,7 +99,7 @@ def _fallback_no_metrics(ctx: AllocationContext) -> AllocationResult:
     merged_active = list(ctx.identities.merged_active.ids())
     if merged_active:
         return _even_split_with_detail(ctx, merged_active, AllocationDetail.NO_METRICS_LOCATED)
-    all_merged = list(ctx.identities.tenant_period.ids())
+    all_merged = sorted(ctx.identities.tenant_period.ids_by_type(*OWNER_IDENTITY_TYPES))
     if all_merged:
         return _even_split_with_detail(ctx, all_merged, AllocationDetail.NO_METRICS_NO_ACTIVE_IDENTITIES_LOCATED)
     return _to_resource_with_detail(ctx, AllocationDetail.NO_IDENTITIES_LOCATED)
@@ -109,7 +112,7 @@ def _fallback_zero_usage(ctx: AllocationContext) -> AllocationResult:
         return _even_split_with_detail(
             ctx, merged_active, AllocationDetail.NO_METRICS_PRESENT_MERGED_IDENTITIES_LOCATED
         )
-    all_merged = list(ctx.identities.tenant_period.ids())
+    all_merged = sorted(ctx.identities.tenant_period.ids_by_type(*OWNER_IDENTITY_TYPES))
     if all_merged:
         return _even_split_with_detail(
             ctx, all_merged, AllocationDetail.NO_METRICS_PRESENT_PENALTY_ALLOCATION_FOR_EVERYONE

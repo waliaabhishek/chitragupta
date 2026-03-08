@@ -83,12 +83,21 @@ def resolve_kafka_sr_identities(
             owner = identity_by_id.get(owner_id) or create_sentinel_from_id(owner_id, tenant_id, ecosystem)
             resource_active.add(owner)
 
-    # 3. Extract principals from metrics
+    # 3. Extract principals from metrics; build api_key_to_owner for allocator use
+    api_key_to_owner: dict[str, str] = {}
     if metrics_data:
         principals = _extract_principals_from_metrics(metrics_data)
         for principal_id in principals:
             identity = identity_by_id.get(principal_id) or create_sentinel_from_id(principal_id, tenant_id, ecosystem)
-            metrics_derived.add(identity)
+            if identity.identity_type == "api_key":
+                owner_id = identity.metadata.get("owner_id")
+                if owner_id:
+                    owner = identity_by_id.get(owner_id) or create_sentinel_from_id(owner_id, tenant_id, ecosystem)
+                    metrics_derived.add(owner)
+                    api_key_to_owner[principal_id] = owner_id
+                # If no owner_id on API key, drop — unresolvable API key cannot be billed
+            else:
+                metrics_derived.add(identity)
 
     logger.debug(
         "resolve_kafka_sr_identities resolved=%d identities resource=%s",
@@ -99,6 +108,7 @@ def resolve_kafka_sr_identities(
         resource_active=resource_active,
         metrics_derived=metrics_derived,
         tenant_period=tenant_period,
+        context={"api_key_to_owner": api_key_to_owner},
     )
 
 

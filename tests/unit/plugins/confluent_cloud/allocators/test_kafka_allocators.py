@@ -1282,3 +1282,206 @@ class TestKafkaNetworkDirectionRegressionFixture:
         read_reader = sum(r.amount for r in read_result.rows if r.identity_id == "sa-reader")
         assert read_writer == Decimal("0")
         assert read_reader == Decimal("100")
+
+
+class TestKafkaApiKeyResolution:
+    """Tests for API key → owner translation in usage allocation and fallback filters."""
+
+    def test_kafka_usage_allocation_routes_api_key_bytes_to_owner(
+        self, base_billing_line: BillingLineItem
+    ) -> None:
+        """Bytes attributed to api key principal are mapped to owner before allocation."""
+        from plugins.confluent_cloud.allocators.kafka_allocators import kafka_network_allocator
+
+        sa_abc = CoreIdentity(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            identity_id="sa-abc",
+            identity_type="service_account",
+        )
+        resource_active = IdentitySet()
+        resource_active.add(sa_abc)
+
+        resolution = IdentityResolution(
+            resource_active=resource_active,
+            metrics_derived=IdentitySet(),
+            tenant_period=IdentitySet(),
+            context={"api_key_to_owner": {"key-xyz": "sa-abc"}},
+        )
+        metrics_data = {
+            "bytes_in": [
+                MetricRow(
+                    datetime(2026, 2, 1, tzinfo=UTC),
+                    "bytes_in",
+                    500.0,
+                    {"principal_id": "key-xyz"},
+                ),
+            ],
+        }
+        ctx = AllocationContext(
+            timeslice=base_billing_line.timestamp,
+            billing_line=base_billing_line,
+            identities=resolution,
+            split_amount=Decimal("100"),
+            metrics_data=metrics_data,
+            params={},
+        )
+
+        result = kafka_network_allocator(ctx)
+
+        recipient_ids = {r.identity_id for r in result.rows}
+        assert "sa-abc" in recipient_ids
+        assert "key-xyz" not in recipient_ids
+
+    def test_multiple_api_keys_same_owner_aggregate(
+        self, base_billing_line: BillingLineItem
+    ) -> None:
+        """Multiple api keys with same owner aggregate their bytes before ratio allocation."""
+        from plugins.confluent_cloud.allocators.kafka_allocators import kafka_network_allocator
+
+        sa_abc = CoreIdentity(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            identity_id="sa-abc",
+            identity_type="service_account",
+        )
+        resource_active = IdentitySet()
+        resource_active.add(sa_abc)
+
+        resolution = IdentityResolution(
+            resource_active=resource_active,
+            metrics_derived=IdentitySet(),
+            tenant_period=IdentitySet(),
+            context={"api_key_to_owner": {"key-1": "sa-abc", "key-2": "sa-abc"}},
+        )
+        metrics_data = {
+            "bytes_in": [
+                MetricRow(
+                    datetime(2026, 2, 1, tzinfo=UTC),
+                    "bytes_in",
+                    200.0,
+                    {"principal_id": "key-1"},
+                ),
+                MetricRow(
+                    datetime(2026, 2, 1, tzinfo=UTC),
+                    "bytes_in",
+                    300.0,
+                    {"principal_id": "key-2"},
+                ),
+            ],
+        }
+        ctx = AllocationContext(
+            timeslice=base_billing_line.timestamp,
+            billing_line=base_billing_line,
+            identities=resolution,
+            split_amount=Decimal("100"),
+            metrics_data=metrics_data,
+            params={},
+        )
+
+        result = kafka_network_allocator(ctx)
+
+        # sa-abc should receive all allocation (sole owner of aggregated 500 bytes)
+        recipient_ids = {r.identity_id for r in result.rows}
+        assert "sa-abc" in recipient_ids
+        assert "key-1" not in recipient_ids
+        assert "key-2" not in recipient_ids
+        sa_abc_amount = sum(r.amount for r in result.rows if r.identity_id == "sa-abc")
+        assert sa_abc_amount == Decimal("100")
+
+    def test_fallback_no_metrics_filters_to_owner_types(
+        self, base_billing_line: BillingLineItem
+    ) -> None:
+        """_fallback_no_metrics even split excludes api_key identities from tenant_period."""
+        from plugins.confluent_cloud.allocators.kafka_allocators import kafka_network_allocator
+
+        tenant_period = IdentitySet()
+        tenant_period.add(
+            CoreIdentity(
+                ecosystem="confluent_cloud",
+                tenant_id="org-123",
+                identity_id="sa-1",
+                identity_type="service_account",
+            )
+        )
+        tenant_period.add(
+            CoreIdentity(
+                ecosystem="confluent_cloud",
+                tenant_id="org-123",
+                identity_id="key-xyz",
+                identity_type="api_key",
+            )
+        )
+        resolution = IdentityResolution(
+            resource_active=IdentitySet(),
+            metrics_derived=IdentitySet(),
+            tenant_period=tenant_period,
+        )
+        ctx = AllocationContext(
+            timeslice=base_billing_line.timestamp,
+            billing_line=base_billing_line,
+            identities=resolution,
+            split_amount=Decimal("100"),
+            metrics_data=None,
+            params={},
+        )
+
+        result = kafka_network_allocator(ctx)
+
+        recipient_ids = {r.identity_id for r in result.rows}
+        assert "sa-1" in recipient_ids
+        assert "key-xyz" not in recipient_ids
+
+    def test_fallback_zero_usage_filters_to_owner_types(
+        self, base_billing_line: BillingLineItem
+    ) -> None:
+        """_fallback_zero_usage even split excludes api_key identities from tenant_period."""
+        from plugins.confluent_cloud.allocators.kafka_allocators import kafka_network_allocator
+
+        tenant_period = IdentitySet()
+        tenant_period.add(
+            CoreIdentity(
+                ecosystem="confluent_cloud",
+                tenant_id="org-123",
+                identity_id="sa-1",
+                identity_type="service_account",
+            )
+        )
+        tenant_period.add(
+            CoreIdentity(
+                ecosystem="confluent_cloud",
+                tenant_id="org-123",
+                identity_id="key-xyz",
+                identity_type="api_key",
+            )
+        )
+        resolution = IdentityResolution(
+            resource_active=IdentitySet(),
+            metrics_derived=IdentitySet(),
+            tenant_period=tenant_period,
+        )
+        # Metrics exist but value=0 → zero-usage branch
+        metrics_data = {
+            "bytes_in": [
+                MetricRow(
+                    datetime(2026, 2, 1, tzinfo=UTC),
+                    "bytes_in",
+                    0.0,
+                    {"principal_id": "key-xyz"},
+                ),
+            ],
+        }
+        ctx = AllocationContext(
+            timeslice=base_billing_line.timestamp,
+            billing_line=base_billing_line,
+            identities=resolution,
+            split_amount=Decimal("100"),
+            metrics_data=metrics_data,
+            params={},
+        )
+
+        result = kafka_network_allocator(ctx)
+
+        recipient_ids = {r.identity_id for r in result.rows}
+        assert "sa-1" in recipient_ids
+        assert "key-xyz" not in recipient_ids
