@@ -1,6 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import type { ColDef } from "ag-grid-community";
-import { describe, expect, it, vi } from "vitest";
+import React from "react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { http, HttpResponse } from "msw";
 import { server } from "../../test/mocks/server";
 import { ChargebackGrid } from "./ChargebackGrid";
@@ -8,6 +9,7 @@ import { ChargebackGrid } from "./ChargebackGrid";
 type AgGridProps = {
   columnDefs?: ColDef[];
   onRowClicked?: (e: { data: unknown }) => void;
+  onSelectionChanged?: (e: unknown) => void;
   datasource?: { getRows: (params: unknown) => void };
   rowModelType?: string;
   cacheBlockSize?: number;
@@ -15,39 +17,66 @@ type AgGridProps = {
   style?: object;
 };
 
-// Mock AG Grid — renders columnDefs' cellRenderers so we can test them.
-vi.mock("ag-grid-react", () => ({
-  AgGridReact: vi.fn(
-    ({ columnDefs, onRowClicked, datasource }: AgGridProps) => {
-      const tagsCol = columnDefs?.find((c) => c.field === "tags");
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const TagsCellRenderer = tagsCol?.cellRenderer as any;
-      return (
-        <div>
-          <div
-            data-testid="ag-grid"
-            data-has-datasource={datasource ? "true" : "false"}
-            onClick={() =>
-              onRowClicked?.({
-                data: {
-                  dimension_id: 42,
-                  identity_id: "user@example.com",
-                },
-              })
-            }
-          >
-            AG Grid
-          </div>
-          {TagsCellRenderer && (
-            <div data-testid="tags-cell">
-              <TagsCellRenderer value={["alpha", "beta", "gamma"]} />
+// Hoisted spy — must be declared before vi.mock so the factory can close over it.
+const mockPurgeInfiniteCache = vi.hoisted(() => vi.fn());
+
+// Per-test render override: set before render(), consumed once, then cleared.
+// Tests that need to capture props use this instead of vi.mocked().mockImplementationOnce().
+type RenderOverrideFn = (props: AgGridProps, ref: React.ForwardedRef<unknown>) => JSX.Element;
+let renderOverride: RenderOverrideFn | undefined;
+
+// Mock AG Grid as a forwardRef component so ChargebackGrid's internalRef is
+// properly populated and api.purgeInfiniteCache() can be called through it.
+vi.mock("ag-grid-react", async () => {
+  const React = await import("react");
+  return {
+    AgGridReact: React.forwardRef(
+      (props: AgGridProps, ref: React.ForwardedRef<unknown>) => {
+        const { columnDefs, onRowClicked, datasource } = props;
+
+        // Expose api.purgeInfiniteCache through the forwarded ref.
+        React.useImperativeHandle(ref, () => ({
+          api: { purgeInfiniteCache: mockPurgeInfiniteCache },
+        }));
+
+        // Allow per-test render override (consumed once).
+        if (renderOverride) {
+          const impl = renderOverride;
+          renderOverride = undefined;
+          return impl(props, ref);
+        }
+
+        // Default render — renders columnDefs cellRenderers so we can test them.
+        const tagsCol = columnDefs?.find((c) => c.field === "tags");
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const TagsCellRenderer = tagsCol?.cellRenderer as any;
+        return (
+          <div>
+            <div
+              data-testid="ag-grid"
+              data-has-datasource={datasource ? "true" : "false"}
+              onClick={() =>
+                onRowClicked?.({
+                  data: {
+                    dimension_id: 42,
+                    identity_id: "user@example.com",
+                  },
+                })
+              }
+            >
+              AG Grid
             </div>
-          )}
-        </div>
-      );
-    },
-  ),
-}));
+            {TagsCellRenderer && (
+              <div data-testid="tags-cell">
+                <TagsCellRenderer value={["alpha", "beta", "gamma"]} />
+              </div>
+            )}
+          </div>
+        ) as JSX.Element;
+      },
+    ),
+  };
+});
 
 // Mock AG Grid CSS imports (not available in jsdom).
 vi.mock("ag-grid-community/styles/ag-grid.css", () => ({}));
@@ -59,6 +88,11 @@ vi.mock("antd", () => ({
 }));
 
 describe("ChargebackGrid", () => {
+  beforeEach(() => {
+    mockPurgeInfiniteCache.mockReset();
+    renderOverride = undefined;
+  });
+
   it("renders AG Grid wrapper", () => {
     render(
       <ChargebackGrid
@@ -114,11 +148,10 @@ describe("ChargebackGrid", () => {
   it("datasource fetches data from API", async () => {
     let capturedDatasource: { getRows: (p: { startRow: number; successCallback: (rows: unknown[], total: number) => void; failCallback: () => void }) => void } | undefined;
 
-    const { AgGridReact } = await import("ag-grid-react");
-    vi.mocked(AgGridReact).mockImplementationOnce(({ datasource }: { datasource?: typeof capturedDatasource }) => {
-      capturedDatasource = datasource;
+    renderOverride = ({ datasource }: AgGridProps) => {
+      capturedDatasource = datasource as typeof capturedDatasource;
       return <div data-testid="ag-grid" />;
-    });
+    };
 
     server.use(
       http.get("/api/v1/tenants/acme/chargebacks", () => {
@@ -162,11 +195,10 @@ describe("ChargebackGrid", () => {
   it("datasource calls failCallback on API error", async () => {
     let capturedDatasource: { getRows: (p: { startRow: number; successCallback: (rows: unknown[], total: number) => void; failCallback: () => void }) => void } | undefined;
 
-    const { AgGridReact } = await import("ag-grid-react");
-    vi.mocked(AgGridReact).mockImplementationOnce(({ datasource }: { datasource?: typeof capturedDatasource }) => {
-      capturedDatasource = datasource;
+    renderOverride = ({ datasource }: AgGridProps) => {
+      capturedDatasource = datasource as typeof capturedDatasource;
       return <div data-testid="ag-grid" />;
-    });
+    };
 
     server.use(
       http.get("/api/v1/tenants/acme/chargebacks", () => {
@@ -199,11 +231,10 @@ describe("ChargebackGrid", () => {
   it("calls onSelectionChange when selection changes", async () => {
     let capturedOnSelectionChanged: ((e: unknown) => void) | undefined;
 
-    const { AgGridReact } = await import("ag-grid-react");
-    vi.mocked(AgGridReact).mockImplementationOnce(({ onSelectionChanged }: { onSelectionChanged?: (e: unknown) => void }) => {
+    renderOverride = ({ onSelectionChanged }: AgGridProps) => {
       capturedOnSelectionChanged = onSelectionChanged;
       return <div data-testid="ag-grid" />;
-    });
+    };
 
     const onSelectionChange = vi.fn();
 
@@ -236,11 +267,10 @@ describe("ChargebackGrid", () => {
   it("calls onSelectAll when header checkbox triggers selection", async () => {
     let capturedOnSelectionChanged: ((e: unknown) => void) | undefined;
 
-    const { AgGridReact } = await import("ag-grid-react");
-    vi.mocked(AgGridReact).mockImplementationOnce(({ onSelectionChanged }: { onSelectionChanged?: (e: unknown) => void }) => {
+    renderOverride = ({ onSelectionChanged }: AgGridProps) => {
       capturedOnSelectionChanged = onSelectionChanged;
       return <div data-testid="ag-grid" />;
-    });
+    };
 
     server.use(
       http.get("/api/v1/tenants/acme/chargebacks", () => {
@@ -285,14 +315,32 @@ describe("ChargebackGrid", () => {
     });
   });
 
+  it("calls purgeInfiniteCache on the grid when filters change", () => {
+    const { rerender } = render(
+      <ChargebackGrid tenantName="acme" filters={{}} onRowClick={vi.fn()} />,
+    );
+
+    // Clear calls from initial mount before testing filter-change behavior.
+    mockPurgeInfiniteCache.mockClear();
+
+    rerender(
+      <ChargebackGrid
+        tenantName="acme"
+        filters={{ start_date: "2026-01-01" }}
+        onRowClick={vi.fn()}
+      />,
+    );
+
+    expect(mockPurgeInfiniteCache).toHaveBeenCalledTimes(1);
+  });
+
   it("filters null dimension_ids from selection", async () => {
     let capturedOnSelectionChanged: ((e: unknown) => void) | undefined;
 
-    const { AgGridReact } = await import("ag-grid-react");
-    vi.mocked(AgGridReact).mockImplementationOnce(({ onSelectionChanged }: { onSelectionChanged?: (e: unknown) => void }) => {
+    renderOverride = ({ onSelectionChanged }: AgGridProps) => {
       capturedOnSelectionChanged = onSelectionChanged;
       return <div data-testid="ag-grid" />;
-    });
+    };
 
     const onSelectionChange = vi.fn();
 

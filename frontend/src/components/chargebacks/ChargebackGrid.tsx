@@ -3,7 +3,7 @@ import "ag-grid-community/styles/ag-theme-alpine.css";
 import type { ColDef, IDatasource, IGetRowsParams, SelectionChangedEvent } from "ag-grid-community";
 import { AgGridReact } from "ag-grid-react";
 import { Tag } from "antd";
-import { forwardRef, useMemo, useCallback } from "react";
+import { forwardRef, useMemo, useCallback, useEffect, useRef, useImperativeHandle } from "react";
 import { API_URL } from "../../config";
 import type { ChargebackResponse, PaginatedResponse } from "../../types/api";
 
@@ -107,10 +107,21 @@ function createDatasource(
 
 export const ChargebackGrid = forwardRef<AgGridReact, ChargebackGridProps>(
   ({ tenantName, filters, onRowClick, onSelectionChange, onSelectAll }, ref) => {
+    const internalRef = useRef<AgGridReact>(null);
+
+    // Expose the grid instance via the forwarded ref.
+    useImperativeHandle(ref, () => internalRef.current!, []);
+
     const datasource = useMemo(
       () => createDatasource(tenantName, filters),
       [tenantName, filters],
     );
+
+    // Purge AG Grid's infinite cache whenever the datasource changes.
+    // AG Grid does not auto-refresh when the datasource prop is replaced.
+    useEffect(() => {
+      internalRef.current?.api?.purgeInfiniteCache();
+    }, [datasource]);
 
     const handleSelectionChanged = useCallback(
       (event: SelectionChangedEvent) => {
@@ -158,7 +169,7 @@ export const ChargebackGrid = forwardRef<AgGridReact, ChargebackGridProps>(
     return (
       <div className="ag-theme-alpine" style={{ flex: 1, minHeight: 400 }}>
         <AgGridReact
-          ref={ref}
+          ref={internalRef}
           columnDefs={columnDefs}
           rowModelType="infinite"
           datasource={datasource}

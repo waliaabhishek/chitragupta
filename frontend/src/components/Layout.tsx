@@ -1,5 +1,7 @@
 import {
   BarChartOutlined,
+  BulbFilled,
+  BulbOutlined,
   CloudServerOutlined,
   DashboardOutlined,
   DollarOutlined,
@@ -7,7 +9,7 @@ import {
   TeamOutlined,
   ThunderboltOutlined,
 } from "@ant-design/icons";
-import { Layout as AntLayout, Menu, theme, Typography } from "antd";
+import { Button, Layout as AntLayout, Menu, theme, Typography } from "antd";
 import { useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useTenant } from "../providers/TenantContext";
@@ -18,9 +20,11 @@ const { Title } = Typography;
 
 interface AppLayoutProps {
   children: React.ReactNode;
+  isDark: boolean;
+  onToggleTheme: () => void;
 }
 
-export function AppLayout({ children }: AppLayoutProps): JSX.Element {
+export function AppLayout({ children, isDark, onToggleTheme }: AppLayoutProps): JSX.Element {
   const [collapsed, setCollapsed] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
@@ -117,6 +121,12 @@ export function AppLayout({ children }: AppLayoutProps): JSX.Element {
             gap: 16,
           }}
         >
+          <Button
+            type="text"
+            icon={isDark ? <BulbFilled /> : <BulbOutlined />}
+            onClick={onToggleTheme}
+            title={isDark ? "Switch to light mode" : "Switch to dark mode"}
+          />
           <TenantSelector />
         </Header>
         <Content
