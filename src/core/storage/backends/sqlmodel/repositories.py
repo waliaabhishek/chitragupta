@@ -7,7 +7,7 @@ from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import cast, delete, func, or_
+from sqlalchemy import cast, delete, func, or_, update
 from sqlalchemy.types import String
 from sqlmodel import Session, col, select
 
@@ -878,32 +878,52 @@ class SQLModelPipelineStateRepository:
         return [pipeline_state_to_domain(r) for r in self._session.exec(stmt).all()]
 
     def mark_billing_gathered(self, ecosystem: str, tenant_id: str, tracking_date: date) -> None:
-        row = self._session.get(PipelineStateTable, (ecosystem, tenant_id, tracking_date))
-        if row:
-            row.billing_gathered = True
-            self._session.add(row)
-            self._session.flush()
+        stmt = (
+            update(PipelineStateTable)
+            .where(
+                col(PipelineStateTable.ecosystem) == ecosystem,
+                col(PipelineStateTable.tenant_id) == tenant_id,
+                col(PipelineStateTable.tracking_date) == tracking_date,
+            )
+            .values(billing_gathered=True)
+        )
+        self._session.execute(stmt)
 
     def mark_resources_gathered(self, ecosystem: str, tenant_id: str, tracking_date: date) -> None:
-        row = self._session.get(PipelineStateTable, (ecosystem, tenant_id, tracking_date))
-        if row:
-            row.resources_gathered = True
-            self._session.add(row)
-            self._session.flush()
+        stmt = (
+            update(PipelineStateTable)
+            .where(
+                col(PipelineStateTable.ecosystem) == ecosystem,
+                col(PipelineStateTable.tenant_id) == tenant_id,
+                col(PipelineStateTable.tracking_date) == tracking_date,
+            )
+            .values(resources_gathered=True)
+        )
+        self._session.execute(stmt)
 
     def mark_needs_recalculation(self, ecosystem: str, tenant_id: str, tracking_date: date) -> None:
-        row = self._session.get(PipelineStateTable, (ecosystem, tenant_id, tracking_date))
-        if row:
-            row.chargeback_calculated = False
-            self._session.add(row)
-            self._session.flush()
+        stmt = (
+            update(PipelineStateTable)
+            .where(
+                col(PipelineStateTable.ecosystem) == ecosystem,
+                col(PipelineStateTable.tenant_id) == tenant_id,
+                col(PipelineStateTable.tracking_date) == tracking_date,
+            )
+            .values(chargeback_calculated=False)
+        )
+        self._session.execute(stmt)
 
     def mark_chargeback_calculated(self, ecosystem: str, tenant_id: str, tracking_date: date) -> None:
-        row = self._session.get(PipelineStateTable, (ecosystem, tenant_id, tracking_date))
-        if row:
-            row.chargeback_calculated = True
-            self._session.add(row)
-            self._session.flush()
+        stmt = (
+            update(PipelineStateTable)
+            .where(
+                col(PipelineStateTable.ecosystem) == ecosystem,
+                col(PipelineStateTable.tenant_id) == tenant_id,
+                col(PipelineStateTable.tracking_date) == tracking_date,
+            )
+            .values(chargeback_calculated=True)
+        )
+        self._session.execute(stmt)
 
     def count_pending(self, ecosystem: str, tenant_id: str) -> int:
         stmt = (

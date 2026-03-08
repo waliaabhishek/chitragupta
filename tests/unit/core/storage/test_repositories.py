@@ -833,6 +833,16 @@ class TestPipelineStateRepository:
         assert got is not None
         assert got.billing_gathered is True
 
+    def test_mark_resources_gathered(self, session: Session) -> None:
+        repo = SQLModelPipelineStateRepository(session)
+        repo.upsert(self._make_state(resources_gathered=False))
+        session.commit()
+        repo.mark_resources_gathered("eco", "t1", date(2026, 1, 15))
+        session.commit()
+        got = repo.get("eco", "t1", date(2026, 1, 15))
+        assert got is not None
+        assert got.resources_gathered is True
+
     def test_resources_gathered_transition(self, session: Session) -> None:
         repo = SQLModelPipelineStateRepository(session)
         repo.upsert(self._make_state(resources_gathered=False))
