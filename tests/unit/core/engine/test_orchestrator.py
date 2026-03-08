@@ -2073,3 +2073,288 @@ class TestLoadOverridesMetricsStep:
         mock_metrics.query.assert_called_once()
         _, call_kwargs = mock_metrics.query.call_args
         assert call_kwargs["step"] == timedelta(seconds=1800)
+
+
+# ---------- task-041: _compute_billing_windows called once per calculate cycle ----------
+
+
+class TestComputeBillingWindowsOnce:
+    """GAP-41: _compute_billing_windows must be called exactly once per run() with non-empty lines."""
+
+    def _setup_uow_with_lines(
+        self,
+        lines: list[Any],
+        resource: Resource | None = None,
+        identity: Any | None = None,
+    ) -> MockUnitOfWork:
+        uow = MockUnitOfWork()
+        if resource is None:
+            resource = _make_resource()
+        if identity is None:
+            identity = _make_identity()
+        uow.resources.upsert(resource)
+        uow.identities.upsert(identity)
+        for line in lines:
+            uow.billing.upsert(line)
+        tracking_date = lines[0].timestamp.date() if lines else TODAY
+        ps = PipelineState(
+            ecosystem=ECOSYSTEM,
+            tenant_id=TENANT_ID,
+            tracking_date=tracking_date,
+            billing_gathered=True,
+            resources_gathered=True,
+        )
+        uow.pipeline_state.upsert(ps)
+        uow.pipeline_state.mark_billing_gathered(ECOSYSTEM, TENANT_ID, tracking_date)
+        uow.pipeline_state.mark_resources_gathered(ECOSYSTEM, TENANT_ID, tracking_date)
+        return uow
+
+    def test_compute_billing_windows_called_once_when_lines_nonempty(self) -> None:
+        """_compute_billing_windows is called exactly once per run() when billing lines exist."""
+        line = _make_billing_line(timestamp=NOW - timedelta(days=10))
+        resource = _make_resource()
+        identity = _make_identity()
+
+        handler = MockServiceHandler(
+            product_types=["KAFKA_CKU"],
+            resources=[resource],
+            identities=[identity],
+        )
+        storage = MockStorageBackend()
+        orch, _ = _create_orchestrator(handler=handler, storage=storage)
+
+        uow = storage.create_unit_of_work()
+        uow.resources.upsert(resource)
+        uow.identities.upsert(identity)
+        uow.billing.upsert(line)
+        tracking_date = line.timestamp.date()
+        ps = PipelineState(
+            ecosystem=ECOSYSTEM,
+            tenant_id=TENANT_ID,
+            tracking_date=tracking_date,
+            billing_gathered=True,
+            resources_gathered=True,
+        )
+        uow.pipeline_state.upsert(ps)
+        uow.pipeline_state.mark_billing_gathered(ECOSYSTEM, TENANT_ID, tracking_date)
+        uow.pipeline_state.mark_resources_gathered(ECOSYSTEM, TENANT_ID, tracking_date)
+
+        # Spy on _compute_billing_windows while preserving real behavior
+        original = orch._calculate_phase._compute_billing_windows
+        call_count: list[int] = [0]
+
+        def spy(*args: Any, **kwargs: Any) -> Any:
+            call_count[0] += 1
+            return original(*args, **kwargs)
+
+        orch._calculate_phase._compute_billing_windows = spy  # type: ignore[method-assign]
+
+        orch._calculate_date(uow, tracking_date)
+
+        assert call_count[0] == 1, (
+            f"_compute_billing_windows must be called exactly once per run(), got {call_count[0]}"
+        )
+
+    def test_compute_billing_windows_not_called_when_lines_empty(self) -> None:
+        """_compute_billing_windows is never called when billing lines are empty (early-return path)."""
+        tracking_date = date(2026, 2, 10)
+        handler = MockServiceHandler(resources=[_make_resource()], identities=[_make_identity()])
+        storage = MockStorageBackend()
+        orch, _ = _create_orchestrator(handler=handler, storage=storage)
+
+        uow = storage.create_unit_of_work()
+        ps = PipelineState(
+            ecosystem=ECOSYSTEM,
+            tenant_id=TENANT_ID,
+            tracking_date=tracking_date,
+            billing_gathered=True,
+            resources_gathered=True,
+        )
+        uow.pipeline_state.upsert(ps)
+        uow.pipeline_state.mark_billing_gathered(ECOSYSTEM, TENANT_ID, tracking_date)
+        uow.pipeline_state.mark_resources_gathered(ECOSYSTEM, TENANT_ID, tracking_date)
+        # No billing lines added for this date
+
+        call_count: list[int] = [0]
+        original = orch._calculate_phase._compute_billing_windows
+
+        def spy(*args: Any, **kwargs: Any) -> Any:
+            call_count[0] += 1
+            return original(*args, **kwargs)
+
+        orch._calculate_phase._compute_billing_windows = spy  # type: ignore[method-assign]
+
+        orch._calculate_date(uow, tracking_date)
+
+        assert call_count[0] == 0, (
+            f"_compute_billing_windows must not be called for empty billing lines, got {call_count[0]}"
+        )
+
+    def test_build_tenant_period_cache_accepts_windows_set(self) -> None:
+        """_build_tenant_period_cache accepts set[tuple[datetime, datetime]] (post-fix signature)."""
+        handler = MockServiceHandler(resources=[_make_resource()], identities=[_make_identity()])
+        orch, _ = _create_orchestrator(handler=handler)
+        uow = MockUnitOfWork()
+        identity = _make_identity()
+        uow.identities.upsert(identity)
+
+        b_start = datetime(2026, 2, 10, 0, 0, 0, tzinfo=UTC)
+        b_end = datetime(2026, 2, 11, 0, 0, 0, tzinfo=UTC)
+        windows: set[tuple[datetime, datetime]] = {(b_start, b_end)}
+
+        # Post-fix: accepts set[tuple[datetime, datetime]], not list[BillingLineItem]
+        result = orch._calculate_phase._build_tenant_period_cache(uow, windows)
+
+        assert isinstance(result, dict)
+        assert (b_start, b_end) in result
+
+    def test_build_resource_cache_accepts_windows_set(self) -> None:
+        """_build_resource_cache accepts set[tuple[datetime, datetime]] (post-fix signature)."""
+        resource = _make_resource("r-1")
+        handler = MockServiceHandler(resources=[resource], identities=[_make_identity()])
+        orch, _ = _create_orchestrator(handler=handler)
+        uow = MockUnitOfWork()
+        uow.resources.upsert(resource)
+
+        b_start = datetime(2026, 2, 10, 0, 0, 0, tzinfo=UTC)
+        b_end = datetime(2026, 2, 11, 0, 0, 0, tzinfo=UTC)
+        windows: set[tuple[datetime, datetime]] = {(b_start, b_end)}
+
+        # Post-fix: accepts set[tuple[datetime, datetime]], not list[BillingLineItem]
+        result = orch._calculate_phase._build_resource_cache(uow, windows)
+
+        assert isinstance(result, dict)
+
+    def test_build_tenant_period_cache_output_parity(self) -> None:
+        """_build_tenant_period_cache produces same output whether given windows set or computed from lines."""
+        identity = _make_identity("sa-1")
+        resource = _make_resource()
+        handler = MockServiceHandler(resources=[resource], identities=[identity])
+        orch, _ = _create_orchestrator(handler=handler)
+
+        line = _make_billing_line(timestamp=NOW - timedelta(days=1))
+        uow = MockUnitOfWork()
+        uow.identities.upsert(identity)
+        uow.resources.upsert(resource)
+
+        # Compute windows the same way the method does internally
+        from core.engine.orchestrator import billing_window
+        b_start, b_end, _ = billing_window(line, orch._calculate_phase._merged_granularity_durations)
+        windows: set[tuple[datetime, datetime]] = {(b_start, b_end)}
+
+        # Post-fix call with precomputed windows
+        result = orch._calculate_phase._build_tenant_period_cache(uow, windows)
+
+        assert (b_start, b_end) in result
+        identity_set = result[(b_start, b_end)]
+        assert identity.identity_id in identity_set
+
+    def test_build_resource_cache_output_parity(self) -> None:
+        """_build_resource_cache produces same output whether given windows set or computed from lines."""
+        resource = _make_resource("lkc-parity")
+        handler = MockServiceHandler(resources=[resource], identities=[_make_identity()])
+        orch, _ = _create_orchestrator(handler=handler)
+
+        line = _make_billing_line(resource_id="lkc-parity", timestamp=NOW - timedelta(days=1))
+        uow = MockUnitOfWork()
+        uow.resources.upsert(resource)
+
+        from core.engine.orchestrator import billing_window
+        b_start, b_end, _ = billing_window(line, orch._calculate_phase._merged_granularity_durations)
+        windows: set[tuple[datetime, datetime]] = {(b_start, b_end)}
+
+        result = orch._calculate_phase._build_resource_cache(uow, windows)
+
+        assert "lkc-parity" in result
+        assert result["lkc-parity"].resource_id == "lkc-parity"
+
+    def test_build_tenant_period_cache_excludes_system_identities(self) -> None:
+        """_build_tenant_period_cache still excludes system identities when given a windows set."""
+        system_id = CoreIdentity(
+            identity_id="UNALLOCATED",
+            identity_type="system",
+            display_name="Unallocated Costs",
+            ecosystem=ECOSYSTEM,
+            tenant_id=TENANT_ID,
+            created_at=None,
+            deleted_at=None,
+            last_seen_at=NOW,
+        )
+        regular_id = _make_identity("user-real")
+        resource = _make_resource()
+        handler = MockServiceHandler(resources=[resource], identities=[regular_id])
+        orch, _ = _create_orchestrator(handler=handler)
+
+        uow = MockUnitOfWork()
+        uow.identities.upsert(system_id)
+        uow.identities.upsert(regular_id)
+
+        b_start = datetime(2026, 2, 10, 0, 0, 0, tzinfo=UTC)
+        b_end = datetime(2026, 2, 11, 0, 0, 0, tzinfo=UTC)
+        windows: set[tuple[datetime, datetime]] = {(b_start, b_end)}
+
+        result = orch._calculate_phase._build_tenant_period_cache(uow, windows)
+
+        identity_set = result.get((b_start, b_end), IdentitySet())
+        identity_ids = {i.identity_id for i in identity_set}
+        assert "UNALLOCATED" not in identity_ids
+
+    def test_build_resource_cache_multiple_windows(self) -> None:
+        """_build_resource_cache iterates all windows in the set, not just the first."""
+        resource_a = _make_resource("r-a")
+        resource_b = _make_resource("r-b")
+        handler = MockServiceHandler(resources=[resource_a, resource_b], identities=[_make_identity()])
+        orch, _ = _create_orchestrator(handler=handler)
+
+        uow = MockUnitOfWork()
+        uow.resources.upsert(resource_a)
+        uow.resources.upsert(resource_b)
+
+        w1_start = datetime(2026, 2, 10, 0, 0, 0, tzinfo=UTC)
+        w1_end = datetime(2026, 2, 11, 0, 0, 0, tzinfo=UTC)
+        w2_start = datetime(2026, 2, 11, 0, 0, 0, tzinfo=UTC)
+        w2_end = datetime(2026, 2, 12, 0, 0, 0, tzinfo=UTC)
+        windows: set[tuple[datetime, datetime]] = {(w1_start, w1_end), (w2_start, w2_end)}
+
+        # Patch find_by_period to return different resources per window
+        def find_by_period(eco: str, tid: str, start: datetime, end: datetime) -> tuple[list[Resource], Any]:
+            if start == w1_start:
+                return [resource_a], None
+            return [resource_b], None
+
+        uow.resources.find_by_period = find_by_period  # type: ignore[method-assign]
+
+        result = orch._calculate_phase._build_resource_cache(uow, windows)
+
+        assert "r-a" in result
+        assert "r-b" in result
+
+    def test_build_tenant_period_cache_multiple_windows(self) -> None:
+        """_build_tenant_period_cache iterates all windows in the set, not just the first."""
+        identity_a = _make_identity("sa-win-a")
+        identity_b = _make_identity("sa-win-b")
+        resource = _make_resource()
+        handler = MockServiceHandler(resources=[resource], identities=[identity_a, identity_b])
+        orch, _ = _create_orchestrator(handler=handler)
+
+        uow = MockUnitOfWork()
+        uow.identities.upsert(identity_a)
+        uow.identities.upsert(identity_b)
+
+        w1_start = datetime(2026, 2, 10, 0, 0, 0, tzinfo=UTC)
+        w1_end = datetime(2026, 2, 11, 0, 0, 0, tzinfo=UTC)
+        w2_start = datetime(2026, 2, 11, 0, 0, 0, tzinfo=UTC)
+        w2_end = datetime(2026, 2, 12, 0, 0, 0, tzinfo=UTC)
+        windows: set[tuple[datetime, datetime]] = {(w1_start, w1_end), (w2_start, w2_end)}
+
+        def find_by_period(eco: str, tid: str, start: datetime, end: datetime) -> tuple[list[Any], Any]:
+            if start == w1_start:
+                return [identity_a], None
+            return [identity_b], None
+
+        uow.identities.find_by_period = find_by_period  # type: ignore[method-assign]
+
+        result = orch._calculate_phase._build_tenant_period_cache(uow, windows)
+
+        assert (w1_start, w1_end) in result
+        assert (w2_start, w2_end) in result

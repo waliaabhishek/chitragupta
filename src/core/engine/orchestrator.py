@@ -374,9 +374,10 @@ class CalculatePhase:
             uow.pipeline_state.mark_chargeback_calculated(self._ecosystem, self._tenant_id, tracking_date)
             return 0
 
+        billing_windows = self._compute_billing_windows(billing_lines)
         prefetched_metrics = self._prefetch_metrics(billing_lines)
-        tenant_period_cache = self._build_tenant_period_cache(uow, billing_lines)
-        resource_cache = self._build_resource_cache(uow, billing_lines)
+        tenant_period_cache = self._build_tenant_period_cache(uow, billing_windows)
+        resource_cache = self._build_resource_cache(uow, billing_windows)
 
         total_rows = 0
         for line in billing_lines:
@@ -454,10 +455,10 @@ class CalculatePhase:
         return windows
 
     def _build_tenant_period_cache(
-        self, uow: UnitOfWork, billing_lines: list[BillingLineItem]
+        self, uow: UnitOfWork, billing_windows: set[tuple[datetime, datetime]]
     ) -> dict[tuple[datetime, datetime], IdentitySet]:
         cache: dict[tuple[datetime, datetime], IdentitySet] = {}
-        for b_start, b_end in self._compute_billing_windows(billing_lines):
+        for b_start, b_end in billing_windows:
             identities, _ = uow.identities.find_by_period(self._ecosystem, self._tenant_id, b_start, b_end)
             tp = IdentitySet()
             for identity in identities:
@@ -466,9 +467,11 @@ class CalculatePhase:
             cache[(b_start, b_end)] = tp
         return cache
 
-    def _build_resource_cache(self, uow: UnitOfWork, billing_lines: list[BillingLineItem]) -> dict[str, Resource]:
+    def _build_resource_cache(
+        self, uow: UnitOfWork, billing_windows: set[tuple[datetime, datetime]]
+    ) -> dict[str, Resource]:
         cache: dict[str, Resource] = {}
-        for b_start, b_end in self._compute_billing_windows(billing_lines):
+        for b_start, b_end in billing_windows:
             resources, _ = uow.resources.find_by_period(self._ecosystem, self._tenant_id, b_start, b_end)
             for r in resources:
                 cache.setdefault(r.resource_id, r)
