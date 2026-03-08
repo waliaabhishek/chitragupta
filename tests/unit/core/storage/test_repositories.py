@@ -635,6 +635,46 @@ class TestChargebackRepository:
         assert count == 1
         assert repo.find_by_date("eco", "t1", date(2026, 1, 15)) == []
 
+    def test_delete_by_date_normal_case(self, session: Session) -> None:
+        repo = SQLModelChargebackRepository(session)
+        repo.upsert(self._make_row(identity_id="u1", timestamp=datetime(2026, 1, 15, tzinfo=UTC)))
+        repo.upsert(self._make_row(identity_id="u2", timestamp=datetime(2026, 1, 20, tzinfo=UTC)))
+        session.commit()
+        count = repo.delete_by_date("eco", "t1", date(2026, 1, 15))
+        session.commit()
+        assert count == 1
+        assert repo.find_by_date("eco", "t1", date(2026, 1, 15)) == []
+        assert len(repo.find_by_date("eco", "t1", date(2026, 1, 20))) == 1
+
+    def test_delete_by_date_zero_dimensions(self, session: Session) -> None:
+        repo = SQLModelChargebackRepository(session)
+        count = repo.delete_by_date("eco", "t1", date(2026, 1, 15))
+        assert count == 0
+
+    def test_delete_by_date_zero_facts_in_range(self, session: Session) -> None:
+        repo = SQLModelChargebackRepository(session)
+        repo.upsert(self._make_row(timestamp=datetime(2026, 1, 20, tzinfo=UTC)))
+        session.commit()
+        count = repo.delete_by_date("eco", "t1", date(2026, 1, 15))
+        session.commit()
+        assert count == 0
+        assert len(repo.find_by_date("eco", "t1", date(2026, 1, 20))) == 1
+
+    def test_delete_by_date_large_dimension_set(self, session: Session) -> None:
+        from sqlalchemy.exc import OperationalError
+
+        repo = SQLModelChargebackRepository(session)
+        n = 1001
+        for i in range(n):
+            repo.upsert(self._make_row(identity_id=f"u{i}", timestamp=datetime(2026, 1, 15, tzinfo=UTC)))
+        session.commit()
+        try:
+            count = repo.delete_by_date("eco", "t1", date(2026, 1, 15))
+        except OperationalError:
+            pytest.fail("delete_by_date raised OperationalError with >999 dimensions")
+        session.commit()
+        assert count == n
+
     def test_delete_before(self, session: Session) -> None:
         repo = SQLModelChargebackRepository(session)
         repo.upsert(self._make_row(timestamp=datetime(2025, 6, 1, tzinfo=UTC)))

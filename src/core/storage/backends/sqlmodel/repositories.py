@@ -538,17 +538,18 @@ class SQLModelChargebackRepository:
 
     def delete_by_date(self, ecosystem: str, tenant_id: str, target_date: date) -> int:
         start, end = _date_to_range(target_date)
-        # Get dimension IDs for this ecosystem+tenant
-        dim_stmt = select(ChargebackDimensionTable.dimension_id).where(
-            col(ChargebackDimensionTable.ecosystem) == ecosystem,
-            col(ChargebackDimensionTable.tenant_id) == tenant_id,
+
+        dim_subquery = (
+            select(ChargebackDimensionTable.dimension_id)
+            .where(
+                col(ChargebackDimensionTable.ecosystem) == ecosystem,
+                col(ChargebackDimensionTable.tenant_id) == tenant_id,
+            )
+            .scalar_subquery()
         )
-        dim_ids = list(self._session.exec(dim_stmt).all())
-        if not dim_ids:
-            return 0
-        # Bulk delete facts in the date range for those dimensions
+
         fact_del = delete(ChargebackFactTable).where(
-            col(ChargebackFactTable.dimension_id).in_(dim_ids),
+            col(ChargebackFactTable.dimension_id).in_(dim_subquery),
             col(ChargebackFactTable.timestamp) >= start,
             col(ChargebackFactTable.timestamp) < end,
         )
