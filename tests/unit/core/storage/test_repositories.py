@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import time
 from collections.abc import Generator
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 from sqlmodel import Session, SQLModel, create_engine, select
@@ -310,10 +312,16 @@ class TestResourceRepository:
 
     def test_find_by_period_metadata_filter_no_match_returns_empty(self, session: Session) -> None:
         repo = SQLModelResourceRepository(session)
-        repo.upsert(self._make_resource(resource_id="r-pool1", resource_type="flink_statement", metadata={"compute_pool_id": "pool-1"}))
+        repo.upsert(
+            self._make_resource(
+                resource_id="r-pool1", resource_type="flink_statement", metadata={"compute_pool_id": "pool-1"}
+            )
+        )
         session.commit()
         start, end = datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 2, 1, tzinfo=UTC)
-        results, total = repo.find_by_period("eco", "t1", start, end, metadata_filter={"compute_pool_id": "pool-nonexistent"})
+        results, total = repo.find_by_period(
+            "eco", "t1", start, end, metadata_filter={"compute_pool_id": "pool-nonexistent"}
+        )
         assert results == []
         assert total == 0
 
@@ -1802,3 +1810,220 @@ class TestIdentityRepositoryCountParam:
         assert total == 1
         assert len(results) == 1
         assert len(exec_calls) == 2  # COUNT query + main SELECT
+
+
+# ---------------------------------------------------------------------------
+# Cache behaviour — PERF-M7
+# Strategy: `session.expire_all()` clears SQLAlchemy's identity map so that
+# only the repository-level TTLCache can serve a repeated get().  When the
+# TTLCache is present `session.get` is never invoked on a cache hit
+# (call_count stays at 0); without it the count would increment on every call.
+# ---------------------------------------------------------------------------
+
+
+class TestIdentityRepositoryCache:
+    def _make_identity(self, **overrides: Any) -> CoreIdentity:
+        defaults: dict[str, Any] = dict(
+            ecosystem="eco",
+            tenant_id="t1",
+            identity_id="sa-001",
+            identity_type="service_account",
+            display_name="Test SA",
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
+            metadata={},
+        )
+        defaults.update(overrides)
+        return CoreIdentity(**defaults)
+
+    def test_identity_get_same_key_twice_issues_one_db_call(self, session: Session) -> None:
+        """Verification #1: same key twice issues exactly one session.get() call."""
+        repo = SQLModelIdentityRepository(session, cache_maxsize=100, cache_ttl_seconds=300.0)
+        repo.upsert(self._make_identity())
+        session.commit()
+
+        # First call: DB hit; populates repo-level cache.
+        repo.get("eco", "t1", "sa-001")
+        # Clear SQLAlchemy identity map so only TTLCache can serve the second call.
+        session.expire_all()
+
+        with patch.object(session, "get", wraps=session.get) as mock_get:
+            repo.get("eco", "t1", "sa-001")
+            # With TTLCache: session.get not invoked (count == 0).
+            # Without TTLCache: it would be invoked (count == 1) — RED state.
+            assert mock_get.call_count == 0
+
+    def test_identity_get_nonexistent_caches_none(self, session: Session) -> None:
+        """Verification #2: None result is cached; second call skips DB."""
+        repo = SQLModelIdentityRepository(session, cache_maxsize=100, cache_ttl_seconds=300.0)
+
+        result1 = repo.get("eco", "t1", "nonexistent")
+        assert result1 is None
+
+        with patch.object(session, "get", wraps=session.get) as mock_get:
+            result2 = repo.get("eco", "t1", "nonexistent")
+            assert result2 is None
+            assert mock_get.call_count == 0
+
+    def test_identity_upsert_invalidates_cache(self, session: Session) -> None:
+        """Verification #3: upsert() invalidates cache; subsequent get() hits DB."""
+        repo = SQLModelIdentityRepository(session, cache_maxsize=100, cache_ttl_seconds=300.0)
+        repo.upsert(self._make_identity(display_name="Original"))
+        session.commit()
+
+        repo.get("eco", "t1", "sa-001")
+        session.expire_all()
+
+        # Confirm cache live (pre-condition).
+        with patch.object(session, "get", wraps=session.get) as mock_get:
+            repo.get("eco", "t1", "sa-001")
+            assert mock_get.call_count == 0
+
+        repo.upsert(self._make_identity(display_name="Updated"))
+        session.commit()
+        session.expire_all()
+
+        with patch.object(session, "get", wraps=session.get) as mock_get:
+            result = repo.get("eco", "t1", "sa-001")
+            assert mock_get.call_count == 1  # cache invalidated → DB hit
+
+        assert result is not None
+        assert result.display_name == "Updated"
+
+    def test_identity_mark_deleted_invalidates_cache(self, session: Session) -> None:
+        """Verification #4: mark_deleted() invalidates cache; subsequent get() hits DB."""
+        repo = SQLModelIdentityRepository(session, cache_maxsize=100, cache_ttl_seconds=300.0)
+        repo.upsert(self._make_identity())
+        session.commit()
+
+        repo.get("eco", "t1", "sa-001")
+        session.expire_all()
+
+        with patch.object(session, "get", wraps=session.get) as mock_get:
+            repo.get("eco", "t1", "sa-001")
+            assert mock_get.call_count == 0
+
+        repo.mark_deleted("eco", "t1", "sa-001", datetime(2026, 2, 1, tzinfo=UTC))
+        session.commit()
+        session.expire_all()
+
+        with patch.object(session, "get", wraps=session.get) as mock_get:
+            repo.get("eco", "t1", "sa-001")
+            assert mock_get.call_count == 1  # cache invalidated → DB hit
+
+    def test_identity_cache_entry_expires_after_ttl(self, session: Session) -> None:
+        """Verification #5: after cache_ttl_seconds, get() re-queries the DB."""
+        repo = SQLModelIdentityRepository(session, cache_maxsize=100, cache_ttl_seconds=0.05)
+        repo.upsert(self._make_identity())
+        session.commit()
+
+        repo.get("eco", "t1", "sa-001")
+        session.expire_all()
+
+        with patch.object(session, "get", wraps=session.get) as mock_get:
+            repo.get("eco", "t1", "sa-001")
+            assert mock_get.call_count == 0  # within TTL: cache hit
+
+        time.sleep(0.15)
+
+        with patch.object(session, "get", wraps=session.get) as mock_get:
+            repo.get("eco", "t1", "sa-001")
+            assert mock_get.call_count == 1  # TTL expired → DB hit
+
+    def test_identity_cache_evicts_lru_when_full(self, session: Session) -> None:
+        """Verification #6: LRU entry evicted when maxsize exceeded; evicted key re-queries DB."""
+        repo = SQLModelIdentityRepository(session, cache_maxsize=2, cache_ttl_seconds=300.0)
+
+        for i in range(1, 4):
+            repo.upsert(self._make_identity(identity_id=f"sa-{i:03d}"))
+        session.commit()
+
+        # Fill cache: sa-001 (LRU), sa-002 (MRU).
+        repo.get("eco", "t1", "sa-001")
+        repo.get("eco", "t1", "sa-002")
+        session.expire_all()
+
+        with patch.object(session, "get", wraps=session.get) as mock_get:
+            repo.get("eco", "t1", "sa-001")
+            repo.get("eco", "t1", "sa-002")
+            assert mock_get.call_count == 0
+
+        # sa-003 fills cache → evicts sa-001 (LRU, accessed least recently).
+        repo.get("eco", "t1", "sa-003")
+        session.expire_all()
+
+        with patch.object(session, "get", wraps=session.get) as mock_get:
+            repo.get("eco", "t1", "sa-001")
+            assert mock_get.call_count == 1  # evicted → DB hit required
+
+    def test_two_identity_repo_instances_have_independent_caches(self, session: Session) -> None:
+        """Verification #9: two instances must not share cache state."""
+        repo1 = SQLModelIdentityRepository(session, cache_maxsize=100, cache_ttl_seconds=300.0)
+        repo2 = SQLModelIdentityRepository(session, cache_maxsize=100, cache_ttl_seconds=300.0)
+
+        repo1.upsert(self._make_identity())
+        session.commit()
+
+        repo1.get("eco", "t1", "sa-001")
+        session.expire_all()
+
+        with patch.object(session, "get", wraps=session.get) as mock_get:
+            repo2.get("eco", "t1", "sa-001")
+            assert mock_get.call_count == 1  # repo2 has no cache entry → DB hit
+
+            repo1.get("eco", "t1", "sa-001")
+            assert mock_get.call_count == 1  # repo1 cache intact → no extra DB call
+
+
+class TestResourceRepositoryCache:
+    def _make_resource(self, **overrides: Any) -> CoreResource:
+        defaults: dict[str, Any] = dict(
+            ecosystem="eco",
+            tenant_id="t1",
+            resource_id="lkc-001",
+            resource_type="kafka",
+            status=ResourceStatus.ACTIVE,
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
+            metadata={},
+        )
+        defaults.update(overrides)
+        return CoreResource(**defaults)
+
+    def test_resource_get_same_key_twice_issues_one_db_call(self, session: Session) -> None:
+        """Verification #7: resources.get() same key twice → one session.get() call."""
+        repo = SQLModelResourceRepository(session, cache_maxsize=100, cache_ttl_seconds=300.0)
+        repo.upsert(self._make_resource())
+        session.commit()
+
+        repo.get("eco", "t1", "lkc-001")
+        session.expire_all()
+
+        with patch.object(session, "get", wraps=session.get) as mock_get:
+            result = repo.get("eco", "t1", "lkc-001")
+            assert mock_get.call_count == 0  # cache hit
+
+        assert result is not None
+        assert result.resource_id == "lkc-001"
+
+    def test_resource_upsert_invalidates_cache(self, session: Session) -> None:
+        """Verification #8: resources.upsert() invalidates cache entry."""
+        repo = SQLModelResourceRepository(session, cache_maxsize=100, cache_ttl_seconds=300.0)
+        repo.upsert(self._make_resource(display_name="Original"))
+        session.commit()
+
+        repo.get("eco", "t1", "lkc-001")
+        session.expire_all()
+
+        with patch.object(session, "get", wraps=session.get) as mock_get:
+            repo.get("eco", "t1", "lkc-001")
+            assert mock_get.call_count == 0
+
+        repo.upsert(self._make_resource(display_name="Updated"))
+        session.commit()
+        session.expire_all()
+
+        with patch.object(session, "get", wraps=session.get) as mock_get:
+            result = repo.get("eco", "t1", "lkc-001")
+            assert mock_get.call_count == 1  # cache invalidated → DB hit
+
+        assert result is not None
+        assert result.display_name == "Updated"

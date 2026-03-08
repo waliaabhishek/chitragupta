@@ -7,6 +7,7 @@ from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
+from cachetools import TTLCache
 from sqlalchemy import cast, delete, func, or_, update
 from sqlalchemy.types import String
 from sqlmodel import Session, col, select
@@ -94,17 +95,33 @@ def _temporal_by_period_filter(
 
 
 class SQLModelResourceRepository:
-    def __init__(self, session: Session) -> None:
+    def __init__(
+        self,
+        session: Session,
+        *,
+        cache_maxsize: int = 1000,
+        cache_ttl_seconds: float = 300.0,
+    ) -> None:
         self._session = session
+        self._resource_cache: TTLCache[tuple[str, str, str], Resource | None] = TTLCache(
+            maxsize=cache_maxsize, ttl=cache_ttl_seconds
+        )
 
     def upsert(self, resource: Resource) -> Resource:
         table_obj = resource_to_table(resource)
         merged = self._session.merge(table_obj)
-        return resource_to_domain(merged)
+        result = resource_to_domain(merged)
+        self._resource_cache.pop((result.ecosystem, result.tenant_id, result.resource_id), None)
+        return result
 
     def get(self, ecosystem: str, tenant_id: str, resource_id: str) -> Resource | None:
+        key = (ecosystem, tenant_id, resource_id)
+        if key in self._resource_cache:
+            return self._resource_cache[key]
         row = self._session.get(ResourceTable, (ecosystem, tenant_id, resource_id))
-        return resource_to_domain(row) if row else None
+        result = resource_to_domain(row) if row else None
+        self._resource_cache[key] = result
+        return result
 
     def find_active_at(
         self,
@@ -204,6 +221,7 @@ class SQLModelResourceRepository:
         return items, total
 
     def mark_deleted(self, ecosystem: str, tenant_id: str, resource_id: str, deleted_at: datetime) -> None:
+        self._resource_cache.pop((ecosystem, tenant_id, resource_id), None)
         row = self._session.get(ResourceTable, (ecosystem, tenant_id, resource_id))
         if row:
             row.deleted_at = deleted_at
@@ -226,17 +244,33 @@ class SQLModelResourceRepository:
 
 
 class SQLModelIdentityRepository:
-    def __init__(self, session: Session) -> None:
+    def __init__(
+        self,
+        session: Session,
+        *,
+        cache_maxsize: int = 1000,
+        cache_ttl_seconds: float = 300.0,
+    ) -> None:
         self._session = session
+        self._identity_cache: TTLCache[tuple[str, str, str], Identity | None] = TTLCache(
+            maxsize=cache_maxsize, ttl=cache_ttl_seconds
+        )
 
     def upsert(self, identity: Identity) -> Identity:
         table_obj = identity_to_table(identity)
         merged = self._session.merge(table_obj)
-        return identity_to_domain(merged)
+        result = identity_to_domain(merged)
+        self._identity_cache.pop((result.ecosystem, result.tenant_id, result.identity_id), None)
+        return result
 
     def get(self, ecosystem: str, tenant_id: str, identity_id: str) -> Identity | None:
+        key = (ecosystem, tenant_id, identity_id)
+        if key in self._identity_cache:
+            return self._identity_cache[key]
         row = self._session.get(IdentityTable, (ecosystem, tenant_id, identity_id))
-        return identity_to_domain(row) if row else None
+        result = identity_to_domain(row) if row else None
+        self._identity_cache[key] = result
+        return result
 
     def find_active_at(
         self,
@@ -323,6 +357,7 @@ class SQLModelIdentityRepository:
         return items, total
 
     def mark_deleted(self, ecosystem: str, tenant_id: str, identity_id: str, deleted_at: datetime) -> None:
+        self._identity_cache.pop((ecosystem, tenant_id, identity_id), None)
         row = self._session.get(IdentityTable, (ecosystem, tenant_id, identity_id))
         if row:
             row.deleted_at = deleted_at
