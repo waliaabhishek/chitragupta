@@ -22,7 +22,6 @@ if TYPE_CHECKING:
     from core.models import MetricRow
     from core.storage.interface import UnitOfWork
     from plugins.self_managed_kafka.config import CostModelConfig, SelfManagedKafkaConfig
-logger = logging.getLogger(__name__)
 
 LOGGER = logging.getLogger(__name__)
 ECOSYSTEM = "self_managed_kafka"
@@ -56,6 +55,29 @@ _STORAGE_QUERY = MetricQuery(
 _COST_QUERIES: list[MetricQuery] = [_BYTES_IN_QUERY, _BYTES_OUT_QUERY, _STORAGE_QUERY]
 
 
+def _day_starts(start: datetime, end: datetime) -> Iterable[tuple[datetime, datetime]]:
+    """Yield (day_start, day_end) pairs covering [start, end) one day at a time."""
+    current = start
+    one_day = timedelta(days=1)
+    while current < end:
+        day_end = min(current + one_day, end)
+        yield current, day_end
+        current = day_end
+
+
+def _slice_metrics_for_day(
+    all_metrics: dict[str, list[MetricRow]],
+    day_start: datetime,
+    day_end: datetime,
+) -> dict[str, list[MetricRow]]:
+    """Return a copy of all_metrics filtered to rows in [day_start, day_end).
+
+    O(N×T) where N=days and T=total rows. Acceptable: billing ranges are ≤31 days
+    and row counts are in the hundreds, so pre-grouping adds complexity for no gain.
+    """
+    return {key: [row for row in rows if day_start <= row.timestamp < day_end] for key, rows in all_metrics.items()}
+
+
 class ConstructedCostInput(CostInput):
     """Constructs BillingLineItems from YAML cost model + Prometheus metrics.
 
@@ -84,43 +106,66 @@ class ConstructedCostInput(CostInput):
         end: datetime,
         uow: UnitOfWork,
     ) -> Iterable[BillingLineItem]:
-        """Query Prometheus for usage, calculate costs, yield billing lines.
+        """Query Prometheus once for the full range, then process each day's slice.
 
-        Generates one set of billing lines per day in the [start, end) range.
-        Skips periods where Prometheus data is unavailable.
+        Falls back to per-day queries if the batched query fails, preserving
+        partial billing when only some days are unavailable.
         """
-        # Iterate over each day in the range
-        current = start
-        one_day = timedelta(days=1)
-        while current < end:
-            day_end = min(current + one_day, end)
-            yield from self._gather_day(tenant_id, current, day_end)
-            current = day_end
-
-    def _gather_day(
-        self,
-        tenant_id: str,
-        day_start: datetime,
-        day_end: datetime,
-    ) -> Iterable[BillingLineItem]:
-        """Generate billing lines for a single day."""
         try:
-            metrics = self._metrics_source.query(
+            all_metrics = self._metrics_source.query(
                 queries=_COST_QUERIES,
-                start=day_start,
-                end=day_end,
+                start=start,
+                end=end,
                 step=timedelta(seconds=self._config.metrics_step_seconds),
             )
         except MetricsQueryError as exc:
             LOGGER.warning(
-                "Prometheus query failed for tenant=%s date=%s — skipping billing period: %s",
+                "Batched Prometheus query failed for tenant=%s range=%s..%s — falling back to per-day queries: %s",
                 tenant_id,
-                day_start.date(),
+                start.date(),
+                end.date(),
                 exc,
             )
+            yield from self._gather_day_by_day_fallback(tenant_id, start, end)
             return
 
-        # Check if we got any data at all
+        for day_start, day_end in _day_starts(start, end):
+            day_metrics = _slice_metrics_for_day(all_metrics, day_start, day_end)
+            yield from self._process_day(tenant_id, day_start, day_end, day_metrics)
+
+    def _gather_day_by_day_fallback(
+        self,
+        tenant_id: str,
+        start: datetime,
+        end: datetime,
+    ) -> Iterable[BillingLineItem]:
+        """Original day-by-day query behavior used when the batched query fails."""
+        for day_start, day_end in _day_starts(start, end):
+            try:
+                metrics = self._metrics_source.query(
+                    queries=_COST_QUERIES,
+                    start=day_start,
+                    end=day_end,
+                    step=timedelta(seconds=self._config.metrics_step_seconds),
+                )
+            except MetricsQueryError as exc:
+                LOGGER.warning(
+                    "Per-day Prometheus query failed for tenant=%s date=%s — skipping: %s",
+                    tenant_id,
+                    day_start.date(),
+                    exc,
+                )
+                continue
+            yield from self._process_day(tenant_id, day_start, day_end, metrics)
+
+    def _process_day(
+        self,
+        tenant_id: str,
+        day_start: datetime,
+        day_end: datetime,
+        metrics: dict[str, list[MetricRow]],
+    ) -> Iterable[BillingLineItem]:
+        """Generate billing lines for a single day from pre-fetched metrics."""
         has_data = any(rows for rows in metrics.values())
         if not has_data:
             LOGGER.warning(
@@ -133,7 +178,6 @@ class ConstructedCostInput(CostInput):
         cost_model = self._config.get_effective_cost_model()
         hours = Decimal(str((day_end - day_start).total_seconds() / 3600))
         cluster_id = self._config.cluster_id
-        # Use midnight UTC of the day as billing timestamp
         timestamp = day_start.replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=UTC)
 
         yield from _make_compute_line(tenant_id, cluster_id, timestamp, self._config.broker_count, hours, cost_model)
