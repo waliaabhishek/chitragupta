@@ -1,6 +1,10 @@
 .PHONY: help setup install sync test lint format typecheck check clean \
         docs docs-serve docs-build dev dev-api dev-ui \
-        docker-build docker-up docker-down docker-dev docker-dev-ui docker-logs
+        docker-build docker-up docker-down docker-dev docker-dev-ui docker-logs docker-push
+
+# Docker registry settings (override with: make docker-push REGISTRY=ghcr.io/myorg)
+REGISTRY ?= docker.io/library
+PLATFORMS ?= linux/amd64,linux/arm64
 
 .DEFAULT_GOAL := help
 
@@ -28,7 +32,9 @@ help:
 	@echo "    docs-build   - Build static documentation site"
 	@echo ""
 	@echo "  Docker:"
-	@echo "    docker-build - Force rebuild all docker images"
+	@echo "    docker-build - Force rebuild all docker images (local, single arch)"
+	@echo "    docker-push  - Build multi-arch images and push to registry"
+	@echo "                   Override registry: make docker-push REGISTRY=ghcr.io/myorg"
 	@echo "    docker-up    - Start backend + grafana (detached)"
 	@echo "    docker-down  - Stop all docker services"
 	@echo "    docker-dev   - Start backend + grafana + frontend (detached)"
@@ -119,6 +125,10 @@ docker-dev-ui:
 
 docker-logs:
 	cd deployables && docker compose --profile ui logs -f
+
+docker-push:
+	docker buildx build --platform $(PLATFORMS) -t $(REGISTRY)/chitragupt:latest --push .
+	docker buildx build --platform $(PLATFORMS) -t $(REGISTRY)/chitragupt-ui:latest --push frontend/
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Cleanup
