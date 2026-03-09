@@ -8,7 +8,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
 from core.engine.allocation import AllocationContext, AllocationResult
-from core.models import ChargebackRow, CostType, Resource
+from core.models import OWNER_IDENTITY_TYPES, ChargebackRow, CostType, Resource
 from core.models.chargeback import AllocationDetail
 
 logger = logging.getLogger(__name__)
@@ -150,7 +150,7 @@ def allocate_evenly_with_fallback(ctx: AllocationContext) -> AllocationResult:
     """
     identity_ids = list(ctx.identities.merged_active.ids())
     if not identity_ids:
-        identity_ids = list(ctx.identities.tenant_period.ids())
+        identity_ids = sorted(ctx.identities.tenant_period.ids_by_type(*OWNER_IDENTITY_TYPES))
     if not identity_ids:
         logger.warning(
             "No identities for resource=%s product=%s — allocating to UNALLOCATED",

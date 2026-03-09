@@ -9,7 +9,7 @@ from typing import Any, Protocol, TypedDict, runtime_checkable
 logger = logging.getLogger(__name__)
 
 # Types that represent "owners" (not API keys or system identities)
-OWNER_IDENTITY_TYPES: tuple[str, ...] = ("service_account", "user", "identity_pool")
+OWNER_IDENTITY_TYPES: tuple[str, ...] = ("service_account", "user", "identity_pool", "principal")
 
 
 class FlinkContextDict(TypedDict, total=False):

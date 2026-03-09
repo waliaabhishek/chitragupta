@@ -11,7 +11,7 @@ from dataclasses import replace
 from typing import TYPE_CHECKING
 
 from core.engine.helpers import allocate_evenly, allocate_to_resource
-from core.models import CostType
+from core.models import OWNER_IDENTITY_TYPES, CostType
 
 if TYPE_CHECKING:
     # AllocationContext/AllocationResult are runtime-available but imported under
@@ -40,7 +40,7 @@ def ksqldb_csu_allocator(ctx: AllocationContext) -> AllocationResult:
         return result
 
     # Fallback to tenant_period — keep as SHARED (can't attribute specifically)
-    identity_ids = list(ctx.identities.tenant_period.ids())
+    identity_ids = sorted(ctx.identities.tenant_period.ids_by_type(*OWNER_IDENTITY_TYPES))
     if identity_ids:
         return allocate_evenly(ctx, identity_ids)  # SHARED is the default from allocate_evenly
 

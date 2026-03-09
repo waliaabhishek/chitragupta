@@ -482,3 +482,54 @@ class TestAllocateEvenlyWithFallback:
         assert result.rows[0].identity_id == "UNALLOCATED"
         assert result.rows[0].cost_type == CostType.SHARED
         assert result.rows[0].allocation_detail == AllocationDetail.NO_IDENTITIES_LOCATED
+
+    def test_fallback_tenant_period_filters_to_owner_identity_types(self) -> None:
+        from core.engine.helpers import allocate_evenly_with_fallback
+        from core.models import IdentityResolution
+        from core.models.identity import CoreIdentity, IdentitySet
+
+        tp = IdentitySet()
+        tp.add(
+            CoreIdentity(
+                ecosystem="confluent", tenant_id="t-001", identity_id="sa-owner", identity_type="service_account"
+            )
+        )
+        tp.add(CoreIdentity(ecosystem="confluent", tenant_id="t-001", identity_id="api-key-1", identity_type="api_key"))
+        tp.add(
+            CoreIdentity(ecosystem="confluent", tenant_id="t-001", identity_id="UNALLOCATED", identity_type="system")
+        )
+        resolution = IdentityResolution(
+            resource_active=IdentitySet(),
+            metrics_derived=IdentitySet(),
+            tenant_period=tp,
+        )
+        ctx = make_ctx(split_amount=Decimal("10.00"), identities=resolution)
+
+        result = allocate_evenly_with_fallback(ctx)
+
+        assert {r.identity_id for r in result.rows} == {"sa-owner"}
+        assert len(result.rows) == 1
+
+    def test_fallback_terminal_when_tenant_period_has_only_non_owners(self) -> None:
+        from core.engine.helpers import allocate_evenly_with_fallback
+        from core.models import IdentityResolution
+        from core.models.identity import CoreIdentity, IdentitySet
+
+        tp = IdentitySet()
+        tp.add(CoreIdentity(ecosystem="confluent", tenant_id="t-001", identity_id="api-key-1", identity_type="api_key"))
+        tp.add(
+            CoreIdentity(ecosystem="confluent", tenant_id="t-001", identity_id="UNALLOCATED", identity_type="system")
+        )
+        resolution = IdentityResolution(
+            resource_active=IdentitySet(),
+            metrics_derived=IdentitySet(),
+            tenant_period=tp,
+        )
+        ctx = make_ctx(split_amount=Decimal("5.00"), identities=resolution)
+
+        result = allocate_evenly_with_fallback(ctx)
+
+        assert len(result.rows) == 1
+        assert result.rows[0].identity_id == "UNALLOCATED"
+        assert result.rows[0].cost_type == CostType.SHARED
+        assert result.rows[0].allocation_detail == AllocationDetail.NO_IDENTITIES_LOCATED

@@ -227,3 +227,71 @@ class TestKsqldbCsuAllocator:
         assert result.rows[0].amount == Decimal("100")
         assert result.rows[0].cost_type == CostType.USAGE
         assert result.rows[0].allocation_method == "even_split"
+
+    def test_fallback_tenant_period_filters_to_owner_identity_types(self, ksqldb_billing_line: BillingLineItem) -> None:
+        """GAP-059: tenant_period fallback must exclude api_key and system identities."""
+        tp = IdentitySet()
+        tp.add(
+            CoreIdentity(
+                ecosystem="confluent_cloud", tenant_id="org-123", identity_id="user-owner", identity_type="user"
+            )
+        )
+        tp.add(
+            CoreIdentity(
+                ecosystem="confluent_cloud", tenant_id="org-123", identity_id="UNALLOCATED", identity_type="system"
+            )
+        )
+        resolution = IdentityResolution(
+            resource_active=IdentitySet(),
+            metrics_derived=IdentitySet(),
+            tenant_period=tp,
+        )
+        ctx = AllocationContext(
+            timeslice=ksqldb_billing_line.timestamp,
+            billing_line=ksqldb_billing_line,
+            identities=resolution,
+            split_amount=Decimal("100"),
+            metrics_data=None,
+            params={},
+        )
+
+        result = ksqldb_csu_allocator(ctx)
+
+        assert {r.identity_id for r in result.rows} == {"user-owner"}
+        assert len(result.rows) == 1
+        assert result.rows[0].cost_type == CostType.SHARED
+
+    def test_fallback_terminal_when_tenant_period_has_only_non_owners(
+        self, ksqldb_billing_line: BillingLineItem
+    ) -> None:
+        """GAP-059: when tenant_period has only api_key/system, fall through to allocate_to_resource."""
+        tp = IdentitySet()
+        tp.add(
+            CoreIdentity(
+                ecosystem="confluent_cloud", tenant_id="org-123", identity_id="api-key-1", identity_type="api_key"
+            )
+        )
+        tp.add(
+            CoreIdentity(
+                ecosystem="confluent_cloud", tenant_id="org-123", identity_id="UNALLOCATED", identity_type="system"
+            )
+        )
+        resolution = IdentityResolution(
+            resource_active=IdentitySet(),
+            metrics_derived=IdentitySet(),
+            tenant_period=tp,
+        )
+        ctx = AllocationContext(
+            timeslice=ksqldb_billing_line.timestamp,
+            billing_line=ksqldb_billing_line,
+            identities=resolution,
+            split_amount=Decimal("100"),
+            metrics_data=None,
+            params={},
+        )
+
+        result = ksqldb_csu_allocator(ctx)
+
+        assert len(result.rows) == 1
+        assert result.rows[0].identity_id == ksqldb_billing_line.resource_id
+        assert result.rows[0].cost_type == CostType.SHARED
