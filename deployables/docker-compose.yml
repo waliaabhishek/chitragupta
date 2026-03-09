@@ -1,5 +1,6 @@
 services:
   chitragupt:
+    image: chitragupt:latest
     build:
       context: ..
       dockerfile: Dockerfile
@@ -36,6 +37,7 @@ services:
         condition: service_healthy
 
   chitragupt-ui:
+    image: chitragupt-ui:latest
     build:
       context: ../frontend
       dockerfile: Dockerfile
