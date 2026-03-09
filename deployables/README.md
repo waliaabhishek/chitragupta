@@ -35,6 +35,8 @@
 5. Access:
    - API: http://localhost:8080
    - Grafana: http://localhost:3000 (admin/password)
+   - Frontend (optional): http://localhost:8081
+     Start with: `docker compose --profile ui up -d`
 
 ## Services
 
@@ -42,6 +44,7 @@
 |---------|------|-------------|
 | chitragupt | 8080 | API + pipeline worker |
 | grafana | 3000 | Dashboards |
+| chitragupt-ui | 8081 | Frontend UI (optional, start with `--profile ui`) |
 
 ## Run Modes
 

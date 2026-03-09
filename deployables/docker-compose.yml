@@ -34,3 +34,16 @@ services:
     depends_on:
       chitragupt:
         condition: service_healthy
+
+  chitragupt-ui:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+    profiles:
+      - ui
+    ports:
+      - "8081:80"
+    restart: unless-stopped
+    depends_on:
+      chitragupt:
+        condition: service_healthy
