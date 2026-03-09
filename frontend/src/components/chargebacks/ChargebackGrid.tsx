@@ -187,7 +187,6 @@ export const ChargebackGrid = forwardRef<AgGridReact, ChargebackGridProps>(
               onRowClick(row.dimension_id);
             }
           }}
-          style={{ height: "100%", width: "100%" }}
         />
       </div>
     );

@@ -16,7 +16,7 @@ const { Text, Title } = Typography;
 export function ChargebackListPage(): JSX.Element {
   const { currentTenant } = useTenant();
   const { filters, setFilter, resetFilters, toQueryParams } = useChargebackFilters();
-  const [searchParams, setSearchParams] = useSearchParams();
+  const [searchParams] = useSearchParams();
   const [selectedDimensionId, setSelectedDimensionId] = useState<number | null>(null);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [selectAllFilters, setSelectAllFilters] = useState<Record<string, string> | null>(null);

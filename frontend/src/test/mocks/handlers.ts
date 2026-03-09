@@ -161,6 +161,7 @@ export const handlers = [
         created_at: null,
         identity_id: "user@example.com",
         product_type: "KAFKA_NUM_BYTES",
+        resource_id: null,
       },
     ];
     const response: PaginatedResponse<TagWithDimensionResponse> = {
@@ -185,6 +186,7 @@ export const handlers = [
       created_at: null,
       identity_id: "user@example.com",
       product_type: "KAFKA_NUM_BYTES",
+      resource_id: null,
     };
     return HttpResponse.json(tag);
   }),

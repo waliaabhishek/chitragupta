@@ -122,7 +122,7 @@ vi.mock("antd", () => ({
     children: ReactNode;
     onClick?: () => void;
     type?: string;
-    htmlType?: string;
+    htmlType?: "button" | "submit" | "reset";
     loading?: boolean;
   }) => (
     <button type={htmlType ?? "button"} onClick={onClick} disabled={loading}>
