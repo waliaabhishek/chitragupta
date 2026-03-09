@@ -87,16 +87,38 @@ def run_worker(
     runner: WorkflowRunner | None = None,
     shutdown_event: threading.Event | None = None,
 ) -> None:
-    """Run the pipeline worker.
-
-    Standalone 'worker' mode: creates its own runner, installs signal handlers.
-    'both' mode: accepts injected runner and external shutdown_event.
-    """
     if runner is None:
         runner = _create_runner(settings)
 
     if run_once:
-        results = runner.run_once()
+        if shutdown_event is None:
+            # Standalone run-once: main thread — safe to install signal handlers.
+            local_event = threading.Event()
+
+            def _once_handler(signum: int, frame: object) -> None:
+                logger.info("Received signal %d, shutting down...", signum)
+                local_event.set()
+
+            prev_int = signal.signal(signal.SIGINT, _once_handler)
+            prev_term = signal.signal(signal.SIGTERM, _once_handler)
+            runner.set_shutdown_event(local_event)
+            try:
+                results = runner.run_once()
+            except KeyboardInterrupt:
+                logger.info("Shutdown requested.")
+                results = {}
+            finally:
+                signal.signal(signal.SIGINT, prev_int)
+                signal.signal(signal.SIGTERM, prev_term)
+        else:
+            # Injected event (both mode): caller owns signals, we are in a non-main
+            # thread — calling signal.signal() here would raise ValueError.
+            runner.set_shutdown_event(shutdown_event)
+            try:
+                results = runner.run_once()
+            except KeyboardInterrupt:
+                logger.info("Shutdown requested.")
+                results = {}
         for name, result in results.items():
             if result.errors:
                 logger.error("Tenant %s errors: %s", name, result.errors)
@@ -111,7 +133,6 @@ def run_worker(
         return
 
     if shutdown_event is None:
-        # Standalone worker: install signal handlers (main thread only)
         shutdown_event = threading.Event()
 
         def _signal_handler(signum: int, frame: object) -> None:
@@ -121,6 +142,7 @@ def run_worker(
         signal.signal(signal.SIGINT, _signal_handler)
         signal.signal(signal.SIGTERM, _signal_handler)
 
+    runner.set_shutdown_event(shutdown_event)
     logger.info("Starting chargeback engine worker...")
     runner.run_loop(shutdown_event)
     logger.info("Chargeback engine worker stopped.")

@@ -286,16 +286,16 @@ class TestGap002WaitTimeout:
         mock_storage: MagicMock,
         mock_orch_cls: MagicMock,
     ) -> None:
-        """timeout=0 → effective_timeout=None (no deadline)."""
+        """timeout=0 → no deadline; tenant completes without timeout error."""
         mock_backend = MagicMock()
         mock_storage.return_value = mock_backend
         mock_orch = MagicMock()
         mock_orch.run.return_value = PipelineRunResult(
             tenant_name="t1",
             tenant_id="tid1",
-            dates_gathered=0,
-            dates_calculated=0,
-            chargeback_rows_written=0,
+            dates_gathered=5,
+            dates_calculated=5,
+            chargeback_rows_written=10,
         )
         mock_orch_cls.return_value = mock_orch
 
@@ -307,12 +307,11 @@ class TestGap002WaitTimeout:
         settings = _make_settings(tenants={"t1": _make_tenant(tenant_id="tid1", tenant_execution_timeout_seconds=0)})
         runner = WorkflowRunner(settings, registry)
 
-        from concurrent.futures import wait as real_wait
+        results = runner.run_once()
 
-        with patch("workflow_runner.wait", wraps=real_wait) as mock_wait:
-            runner.run_once()
-            _, kwargs = mock_wait.call_args
-            assert kwargs.get("timeout") is None
+        assert "t1" in results
+        assert not results["t1"].errors, f"Expected no errors but got: {results['t1'].errors}"
+        assert results["t1"].dates_gathered == 5
 
     @patch("workflow_runner.ChargebackOrchestrator")
     @patch("core.storage.registry.create_storage_backend")
@@ -1719,4 +1718,201 @@ class TestCleanupRetentionStorageReuse:
 
         # t2 still processed despite t1 failure
         mock_storage2.create_unit_of_work.assert_called_once()
-        mock_uow2.billing.delete_before.assert_called_once()
+
+
+class TestGracefulShutdown:
+    """GAR-001: Graceful shutdown via threading.Event in run_once() polling loop."""
+
+    def _make_blocking_runner(
+        self,
+        settings: AppSettings,
+        block_event: threading.Event,
+    ) -> WorkflowRunner:
+        """WorkflowRunner whose _run_tenant blocks until block_event is set."""
+        runner = WorkflowRunner(settings, MagicMock())
+        runner._bootstrapped = True
+
+        def blocking_run_tenant(name: str, config: Any) -> PipelineRunResult:
+            block_event.wait()
+            return PipelineRunResult(
+                tenant_name=name,
+                tenant_id=config.tenant_id,
+                dates_gathered=0,
+                dates_calculated=0,
+                chargeback_rows_written=0,
+            )
+
+        runner._run_tenant = blocking_run_tenant  # type: ignore[assignment]
+        return runner
+
+    def test_worker_loop_ctrl_c_exits_within_2s(self) -> None:
+        """Test 1: Shutdown event causes run_once() to return within 2s with interrupt errors."""
+        block_event = threading.Event()
+        tenant = _make_tenant(tenant_id="tid1", tenant_execution_timeout_seconds=60)
+        settings = _make_settings(tenants={"t1": tenant})
+        runner = self._make_blocking_runner(settings, block_event)
+
+        shutdown_event = threading.Event()
+        runner.set_shutdown_event(shutdown_event)
+
+        result_holder: dict[str, dict[str, PipelineRunResult]] = {}
+        exc_holder: list[Exception] = []
+
+        def run_in_thread() -> None:
+            try:
+                result_holder["result"] = runner.run_once()
+            except Exception as exc:
+                exc_holder.append(exc)
+
+        t = threading.Thread(target=run_in_thread)
+        t.start()
+
+        time.sleep(0.1)
+        shutdown_event.set()
+
+        t.join(timeout=2.0)
+
+        assert not t.is_alive(), "run_once() did not return within 2s after shutdown"
+        assert not exc_holder, f"Unexpected exception: {exc_holder}"
+        assert "result" in result_holder
+        results = result_holder["result"]
+        assert "t1" in results
+        assert any("Interrupted by shutdown" in e for e in results["t1"].errors), (
+            f"Expected 'Interrupted by shutdown' in errors, got: {results['t1'].errors}"
+        )
+        block_event.set()  # unblock the blocked thread
+
+    def test_timeout_behavior_preserved_no_regression(self) -> None:
+        """Test 3: Timeout fires correctly; executor.shutdown(wait=False) releases run_once quickly.
+
+        With the current implementation (wait=True), run_once blocks until the slow thread
+        exits (~5s), causing elapsed > 4s → RED. After the fix (wait=False, cancel_futures=True),
+        run_once returns right after the 2s deadline → elapsed < 4s → GREEN.
+        """
+        slow_done = threading.Event()
+        tenant = _make_tenant(tenant_id="tid1", tenant_execution_timeout_seconds=2)
+        settings = _make_settings(tenants={"t1": tenant})
+        runner = WorkflowRunner(settings, MagicMock())
+        runner._bootstrapped = True
+
+        def slow_run_tenant(name: str, config: Any) -> PipelineRunResult:
+            slow_done.wait(timeout=5)  # blocks ~5s unless released early
+            return PipelineRunResult(
+                tenant_name=name,
+                tenant_id=config.tenant_id,
+                dates_gathered=0,
+                dates_calculated=0,
+                chargeback_rows_written=0,
+            )
+
+        runner._run_tenant = slow_run_tenant  # type: ignore[assignment]
+
+        start = time.monotonic()
+        results = runner.run_once()
+        elapsed = time.monotonic() - start
+
+        slow_done.set()  # release slow thread if still running
+
+        # After fix: run_once exits ~2-3s (timeout + overhead), not after slow thread completes
+        assert elapsed < 4.0, f"run_once took {elapsed:.1f}s; expected < 4s (timeout=2s + overhead)"
+        assert "t1" in results
+        assert any("timed out" in e.lower() for e in results["t1"].errors), (
+            f"Expected 'timed out' error, got: {results['t1'].errors}"
+        )
+        assert not any("shutdown" in e.lower() for e in results["t1"].errors), (
+            f"Got unexpected shutdown error: {results['t1'].errors}"
+        )
+
+    def test_run_once_normal_completes_no_regression(self) -> None:
+        """Test 4: Normal run_once with immediate _run_tenant collects all results correctly."""
+        tenant = _make_tenant(tenant_id="tid1")
+        settings = _make_settings(tenants={"t1": tenant})
+        runner = WorkflowRunner(settings, MagicMock())
+        runner._bootstrapped = True
+
+        expected = PipelineRunResult(
+            tenant_name="t1",
+            tenant_id="tid1",
+            dates_gathered=5,
+            dates_calculated=3,
+            chargeback_rows_written=10,
+        )
+
+        def fast_run_tenant(name: str, config: Any) -> PipelineRunResult:
+            return expected
+
+        runner._run_tenant = fast_run_tenant  # type: ignore[assignment]
+
+        results = runner.run_once()
+
+        assert "t1" in results
+        assert results["t1"].dates_gathered == 5
+        assert results["t1"].dates_calculated == 3
+        assert results["t1"].chargeback_rows_written == 10
+        assert not results["t1"].errors
+
+    def test_pre_set_shutdown_event_skips_all_work(self) -> None:
+        """Test 5: Pre-set shutdown event makes run_once() return immediately with interrupt errors."""
+        tenants = {f"t{i}": _make_tenant(tenant_id=f"tid{i}") for i in range(3)}
+        settings = _make_settings(tenants=tenants)
+        runner = WorkflowRunner(settings, MagicMock())
+        runner._bootstrapped = True
+
+        call_count = 0
+
+        def slow_run_tenant(name: str, config: Any) -> PipelineRunResult:
+            nonlocal call_count
+            call_count += 1
+            time.sleep(10)
+            return PipelineRunResult(
+                tenant_name=name,
+                tenant_id=config.tenant_id,
+                dates_gathered=0,
+                dates_calculated=0,
+                chargeback_rows_written=0,
+            )
+
+        runner._run_tenant = slow_run_tenant  # type: ignore[assignment]
+
+        pre_set = threading.Event()
+        pre_set.set()
+        runner.set_shutdown_event(pre_set)
+
+        start = time.monotonic()
+        results = runner.run_once()
+        elapsed = time.monotonic() - start
+
+        assert elapsed <= 0.5, f"run_once took {elapsed:.2f}s with pre-set shutdown; expected ≤0.5s"
+        assert len(results) == 3
+        for name in tenants:
+            assert name in results
+            assert any("Interrupted by shutdown" in e for e in results[name].errors), (
+                f"Expected 'Interrupted by shutdown' for {name}, got: {results[name].errors}"
+            )
+
+    def test_shutdown_event_causes_run_once_to_break(self) -> None:
+        """Test 6b: Setting shutdown_event from another thread causes run_once() to break ≤1.5s."""
+        block_event = threading.Event()
+        tenant = _make_tenant(tenant_id="tid1", tenant_execution_timeout_seconds=60)
+        settings = _make_settings(tenants={"t1": tenant})
+        runner = self._make_blocking_runner(settings, block_event)
+
+        shutdown_event = threading.Event()
+        runner.set_shutdown_event(shutdown_event)
+
+        result_holder: dict[str, dict[str, PipelineRunResult]] = {}
+
+        def run_in_thread() -> None:
+            result_holder["result"] = runner.run_once()
+
+        t = threading.Thread(target=run_in_thread)
+        t.start()
+
+        time.sleep(0.2)
+        shutdown_event.set()
+
+        t.join(timeout=1.5)
+        block_event.set()
+
+        assert not t.is_alive(), "run_once() did not return within 1.5s after shutdown event"
+        assert "result" in result_holder

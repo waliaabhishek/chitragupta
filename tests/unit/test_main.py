@@ -380,3 +380,109 @@ class TestCreateRunnerPluginPath:
         expected = main_file.parent / "plugins"
         assert _DEFAULT_PLUGINS_PATH.is_absolute()
         assert expected == _DEFAULT_PLUGINS_PATH
+
+
+class TestGracefulShutdownSignals:
+    """GAR-001: run_worker signal handler behavior in standalone vs both mode."""
+
+    def test_run_worker_run_once_catches_keyboard_interrupt(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Test 2: Standalone run-once catches KeyboardInterrupt, logs shutdown message, no exception."""
+        import logging
+
+        from core.config.models import AppSettings
+        from main import run_worker
+
+        settings = AppSettings()
+        interrupt_fired = threading.Event()
+
+        def run_once_raises() -> dict:
+            interrupt_fired.set()
+            raise KeyboardInterrupt
+
+        mock_runner = MagicMock()
+        mock_runner.run_once.side_effect = run_once_raises
+
+        keyboard_interrupt_propagated = False
+        with patch("main.signal"):
+            with caplog.at_level(logging.INFO, logger="main"):
+                try:
+                    run_worker(settings, run_once=True, runner=mock_runner)
+                except KeyboardInterrupt:
+                    keyboard_interrupt_propagated = True
+
+        assert interrupt_fired.is_set(), "mock_runner.run_once() was never called"
+        assert not keyboard_interrupt_propagated, (
+            "run_worker() propagated KeyboardInterrupt; expected it to be caught internally"
+        )
+        shutdown_records = [
+            r.message for r in caplog.records if "shutdown" in r.message.lower() or "interrupt" in r.message.lower()
+        ]
+        assert shutdown_records, (
+            f"No shutdown/interrupt log message found. All messages: {[r.message for r in caplog.records]}"
+        )
+
+    def test_both_mode_shutdown_event_wired_to_runner(self) -> None:
+        """Test 6a: run_worker with shutdown_event calls runner.set_shutdown_event(shutdown_event)."""
+        from core.config.models import AppSettings
+        from main import run_worker
+
+        settings = AppSettings()
+        mock_runner = MagicMock()
+        mock_runner.run_once.return_value = {}
+        shutdown_event = threading.Event()
+
+        run_worker(settings, run_once=True, runner=mock_runner, shutdown_event=shutdown_event)
+
+        mock_runner.set_shutdown_event.assert_called_once_with(shutdown_event)
+
+    def test_run_worker_run_once_no_signal_in_non_main_thread(self) -> None:
+        """Test 7: run_worker with shutdown_event from non-main thread does not call signal.signal."""
+        from core.config.models import AppSettings
+        from main import run_worker
+
+        settings = AppSettings()
+        mock_runner = MagicMock()
+        mock_runner.run_once.return_value = {}
+        shutdown_event = threading.Event()
+
+        signal_call_count: list[int] = [0]
+        exc_holder: list[Exception] = []
+
+        def run_in_thread() -> None:
+            try:
+                with patch("main.signal") as mock_sig:
+                    mock_sig.signal.side_effect = lambda *a: signal_call_count.__setitem__(0, signal_call_count[0] + 1)
+                    run_worker(settings, run_once=True, runner=mock_runner, shutdown_event=shutdown_event)
+            except Exception as exc:
+                exc_holder.append(exc)
+
+        t = threading.Thread(target=run_in_thread)
+        t.start()
+        t.join(timeout=5)
+
+        assert not exc_holder, f"Unexpected exception in non-main thread: {exc_holder}"
+        assert signal_call_count[0] == 0, (
+            f"signal.signal was called {signal_call_count[0]} times from non-main thread; expected 0"
+        )
+
+    def test_run_worker_run_once_standalone_installs_signal_handlers(self) -> None:
+        """Test 8: Standalone run-once installs SIGINT and SIGTERM handlers, restores in finally."""
+        import signal as _signal
+
+        from core.config.models import AppSettings
+        from main import run_worker
+
+        settings = AppSettings()
+        mock_runner = MagicMock()
+        mock_runner.run_once.return_value = {}
+
+        with patch("main.signal") as mock_sig:
+            mock_sig.SIGINT = _signal.SIGINT
+            mock_sig.SIGTERM = _signal.SIGTERM
+
+            run_worker(settings, run_once=True, runner=mock_runner)
+
+        registered_sigs = {call.args[0] for call in mock_sig.signal.call_args_list}
+        assert _signal.SIGINT in registered_sigs, "SIGINT handler not installed"
+        assert _signal.SIGTERM in registered_sigs, "SIGTERM handler not installed"
+        assert mock_sig.signal.call_count >= 2, f"signal.signal called {mock_sig.signal.call_count} times; expected ≥2"

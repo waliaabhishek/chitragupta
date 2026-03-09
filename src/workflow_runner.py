@@ -5,7 +5,7 @@ import json
 import logging
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, wait
+from concurrent.futures import Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
@@ -47,7 +47,7 @@ def _config_hash(config: TenantConfig) -> str:
     """Stable hash of tenant config for change detection."""
     try:
         raw = json.dumps(config.model_dump(), sort_keys=True, default=str)
-    except TypeError, ValueError, AttributeError:
+    except (TypeError, ValueError, AttributeError):
         logger.debug("Failed to JSON-serialize config for hashing; falling back to repr()", exc_info=True)
         raw = repr(config)
     return hashlib.sha256(raw.encode()).hexdigest()[:16]
@@ -65,6 +65,14 @@ class WorkflowRunner:
         self._running_lock = threading.Lock()
         self._failed_tenants: dict[str, str] = {}  # name -> error message
         self._failed_tenants_lock = threading.Lock()
+        self._shutdown_event: threading.Event | None = None
+
+    def set_shutdown_event(self, event: threading.Event) -> None:
+        """Register the shutdown event so run_once() can exit early on signal."""
+        self._shutdown_event = event
+
+    def _is_shutdown_requested(self) -> bool:
+        return self._shutdown_event is not None and self._shutdown_event.is_set()
 
     def is_tenant_running(self, tenant_name: str) -> bool:
         """Return True if tenant is currently being processed by any thread."""
@@ -199,45 +207,70 @@ class WorkflowRunner:
         )
         effective_timeout = max_timeout if max_timeout > 0 else None  # 0 means no timeout
 
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = {
+        executor = ThreadPoolExecutor(max_workers=max_workers)
+        try:
+            futures: dict[Future[PipelineRunResult], tuple[str, TenantConfig]] = {
                 executor.submit(self._run_tenant, name, config): (name, config)
                 for name, config in active_tenants.items()
             }
-            done, not_done = wait(futures, timeout=effective_timeout)
+            deadline = time.monotonic() + effective_timeout if effective_timeout is not None else None
+            pending: set[Future[PipelineRunResult]] = set(futures)
+            done: set[Future[PipelineRunResult]] = set()
 
-            # Collect completed results
-            for future in done:
-                name, config = futures[future]
-                try:
-                    results[name] = future.result()
-                except GatherFailureThresholdError as exc:
-                    results[name] = self._mark_tenant_permanently_failed(name, config, exc)
-                except Exception as exc:
-                    logger.exception("Tenant %s failed: %s", name, exc)
-                    results[name] = PipelineRunResult(
-                        tenant_name=name,
-                        tenant_id=config.tenant_id,
-                        dates_gathered=0,
-                        dates_calculated=0,
-                        chargeback_rows_written=0,
-                        errors=[str(exc)],
-                    )
+            while pending and not self._is_shutdown_requested():
+                poll_timeout = 1.0
+                if deadline is not None:
+                    time_left = deadline - time.monotonic()
+                    if time_left <= 0:
+                        break
+                    poll_timeout = min(poll_timeout, time_left)
+                newly_done, pending = wait(pending, timeout=poll_timeout)
+                done.update(newly_done)
 
-            # Mark timed-out tenants
-            for future in not_done:
-                name, config = futures[future]
-                future.cancel()
-                timeout = config.tenant_execution_timeout_seconds
-                logger.error("Tenant %s timed out after %ds", name, timeout)
+            not_done = pending
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
+
+        shutdown_interrupted = self._is_shutdown_requested() and bool(not_done)
+
+        # Collect completed results
+        for future in done:
+            name, config = futures[future]
+            try:
+                results[name] = future.result()
+            except GatherFailureThresholdError as exc:
+                results[name] = self._mark_tenant_permanently_failed(name, config, exc)
+            except Exception as exc:
+                logger.exception("Tenant %s failed: %s", name, exc)
                 results[name] = PipelineRunResult(
                     tenant_name=name,
                     tenant_id=config.tenant_id,
                     dates_gathered=0,
                     dates_calculated=0,
                     chargeback_rows_written=0,
-                    errors=[f"Execution timed out after {timeout}s"],
+                    errors=[str(exc)],
                 )
+
+        # Mark timed-out or shutdown-interrupted tenants
+        if shutdown_interrupted:
+            logger.info("Shutdown requested — %d tenant(s) did not complete", len(not_done))
+        for future in not_done:
+            name, config = futures[future]
+            future.cancel()
+            if shutdown_interrupted:
+                reason = "Interrupted by shutdown"
+            else:
+                timeout = config.tenant_execution_timeout_seconds
+                logger.error("Tenant %s timed out after %ds", name, timeout)
+                reason = f"Execution timed out after {timeout}s"
+            results[name] = PipelineRunResult(
+                tenant_name=name,
+                tenant_id=config.tenant_id,
+                dates_gathered=0,
+                dates_calculated=0,
+                chargeback_rows_written=0,
+                errors=[reason],
+            )
         return results
 
     def _run_tenant(self, name: str, config: TenantConfig) -> PipelineRunResult:
