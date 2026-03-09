@@ -1,5 +1,6 @@
 .PHONY: help setup install sync test lint format typecheck check clean \
-        docs docs-serve docs-build dev dev-api dev-ui
+        docs docs-serve docs-build dev dev-api dev-ui \
+        docker-build docker-up docker-down docker-dev docker-dev-ui docker-logs
 
 .DEFAULT_GOAL := help
 
@@ -25,6 +26,14 @@ help:
 	@echo "    docs         - Serve docs locally at http://127.0.0.1:8000"
 	@echo "    docs-serve   - Alias for docs"
 	@echo "    docs-build   - Build static documentation site"
+	@echo ""
+	@echo "  Docker:"
+	@echo "    docker-build - Force rebuild all docker images"
+	@echo "    docker-up    - Start backend + grafana (detached)"
+	@echo "    docker-down  - Stop all docker services"
+	@echo "    docker-dev   - Start backend + grafana + frontend (detached)"
+	@echo "    docker-dev-ui - Start backend + frontend only (no grafana)"
+	@echo "    docker-logs  - Tail logs from all docker services"
 	@echo ""
 	@echo "  Cleanup:"
 	@echo "    clean        - Remove build artifacts and caches"
@@ -87,6 +96,29 @@ docs-serve:
 
 docs-build:
 	uv run --group docs mkdocs build
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Docker
+# ─────────────────────────────────────────────────────────────────────────────
+
+docker-build:
+	cd deployables && docker compose build --no-cache
+	cd deployables && docker compose --profile ui build --no-cache
+
+docker-up:
+	cd deployables && docker compose up -d
+
+docker-down:
+	cd deployables && docker compose --profile ui down
+
+docker-dev:
+	cd deployables && docker compose --profile ui up -d
+
+docker-dev-ui:
+	cd deployables && docker compose up -d chitragupt chitragupt-ui
+
+docker-logs:
+	cd deployables && docker compose --profile ui logs -f
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Cleanup
