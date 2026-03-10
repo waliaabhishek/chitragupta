@@ -2,8 +2,12 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from decimal import Decimal
+from typing import TYPE_CHECKING
 
 from .conftest import make_billing_line, make_identity_resolution
+
+if TYPE_CHECKING:
+    from core.engine.allocation import AllocationContext
 
 _NOW = datetime(2024, 1, 15, 12, 0, 0, tzinfo=UTC)
 
@@ -20,7 +24,7 @@ class TestAllocationModelImport:
 
 class TestAllocationModelProtocolConformance:
     def test_conforming_class_satisfies_protocol(self) -> None:
-        from core.engine.allocation import AllocationContext, AllocationResult
+        from core.engine.allocation import AllocationResult
         from core.engine.allocation_models import AllocationModel
 
         class GoodAllocator:
@@ -514,3 +518,301 @@ class TestDirectOwnerModelCostAllocatorContract:
         assert result is not None
         assert len(result.rows) == 1
         assert result.rows[0].identity_id == "sa-456"
+
+
+# ---------------------------------------------------------------------------
+# task-064: ChainModel tests (TDD RED phase)
+# ---------------------------------------------------------------------------
+
+
+class _ReturnsNoneModel:
+    def __init__(self) -> None:
+        self.call_count = 0
+
+    def allocate(self, ctx: object) -> None:
+        self.call_count += 1
+        return None
+
+
+class _ReturnsResultModel:
+    def __init__(self, rows: list | None = None) -> None:
+        from core.engine.allocation import AllocationResult
+
+        self.rows = rows or []
+        self._result_class = AllocationResult
+
+    def allocate(self, ctx: object) -> object:
+        from core.engine.allocation import AllocationResult
+
+        return AllocationResult(rows=self.rows)
+
+
+class TestChainModelFirstMatch:
+    def test_first_match_returns_result_from_second_model(self) -> None:
+        from core.engine.allocation_models import ChainModel
+
+        none_model = _ReturnsNoneModel()
+        result_model = _ReturnsResultModel()
+        chain = ChainModel(models=[none_model, result_model])
+        ctx = _make_ctx()
+        result = chain.allocate(ctx)
+        assert result is not None
+        assert none_model.call_count == 1
+
+    def test_first_model_allocate_called_exactly_once_on_skip(self) -> None:
+        from core.engine.allocation_models import ChainModel
+
+        none_model = _ReturnsNoneModel()
+        result_model = _ReturnsResultModel()
+        chain = ChainModel(models=[none_model, result_model])
+        ctx = _make_ctx()
+        chain.allocate(ctx)
+        assert none_model.call_count == 1
+
+
+class TestChainModelChainTierMetadata:
+    def test_chain_tier_0_on_primary_hit(self) -> None:
+        from core.engine.allocation_models import ChainModel
+        from core.models.chargeback import ChargebackRow, CostType
+
+        rows = [
+            ChargebackRow(
+                ecosystem="confluent",
+                tenant_id="t-001",
+                timestamp=_NOW,
+                resource_id="lkc-abc123",
+                product_category="kafka",
+                product_type="kafka_num_ckus",
+                identity_id="a",
+                amount=Decimal("10.00"),
+                cost_type=CostType.SHARED,
+                allocation_method="test",
+                allocation_detail="test",
+            )
+        ]
+        result_model = _ReturnsResultModel(rows=rows)
+        chain = ChainModel(models=[result_model])
+        ctx = _make_ctx()
+        result = chain.allocate(ctx)
+        assert result is not None
+        assert all(row.metadata["chain_tier"] == 0 for row in result.rows)
+
+    def test_chain_tier_1_on_first_fallback(self) -> None:
+        from core.engine.allocation_models import ChainModel
+        from core.models.chargeback import ChargebackRow, CostType
+
+        rows = [
+            ChargebackRow(
+                ecosystem="confluent",
+                tenant_id="t-001",
+                timestamp=_NOW,
+                resource_id="lkc-abc123",
+                product_category="kafka",
+                product_type="kafka_num_ckus",
+                identity_id="a",
+                amount=Decimal("10.00"),
+                cost_type=CostType.SHARED,
+                allocation_method="test",
+                allocation_detail="test",
+            )
+        ]
+        none_model = _ReturnsNoneModel()
+        result_model = _ReturnsResultModel(rows=rows)
+        chain = ChainModel(models=[none_model, result_model])
+        ctx = _make_ctx()
+        result = chain.allocate(ctx)
+        assert result is not None
+        assert all(row.metadata["chain_tier"] == 1 for row in result.rows)
+
+
+class TestChainModelAllocationError:
+    def test_exhausted_chain_raises_allocation_error(self) -> None:
+        import pytest
+
+        from core.engine.allocation_models import AllocationError, ChainModel
+
+        chain = ChainModel(models=[_ReturnsNoneModel(), _ReturnsNoneModel()])
+        ctx = _make_ctx()
+        with pytest.raises(AllocationError):
+            chain.allocate(ctx)
+
+    def test_allocation_error_message_includes_resource_id(self) -> None:
+        import pytest
+
+        from core.engine.allocation_models import AllocationError, ChainModel
+
+        chain = ChainModel(models=[_ReturnsNoneModel()])
+        ctx = _make_ctx()
+        with pytest.raises(AllocationError, match=ctx.billing_line.resource_id):
+            chain.allocate(ctx)
+
+
+class TestChainModelLogFallbacks:
+    def test_log_fallbacks_false_default_no_debug_call(self, caplog: object) -> None:
+        from core.engine.allocation_models import ChainModel
+        from core.models.chargeback import ChargebackRow, CostType
+
+        rows = [
+            ChargebackRow(
+                ecosystem="confluent",
+                tenant_id="t-001",
+                timestamp=_NOW,
+                resource_id="lkc-abc123",
+                product_category="kafka",
+                product_type="kafka_num_ckus",
+                identity_id="a",
+                amount=Decimal("10.00"),
+                cost_type=CostType.SHARED,
+                allocation_method="test",
+                allocation_detail="test",
+            )
+        ]
+        none_model = _ReturnsNoneModel()
+        result_model = _ReturnsResultModel(rows=rows)
+        chain = ChainModel(models=[none_model, result_model], log_fallbacks=False)
+        ctx = _make_ctx()
+        import logging as _logging
+
+        with caplog.at_level(_logging.DEBUG, logger="core.engine.allocation_models"):  # type: ignore[union-attr]
+            chain.allocate(ctx)
+        assert not any(r.levelno == _logging.DEBUG for r in caplog.records)
+
+    def test_log_fallbacks_true_tier_0_hit_no_debug_call(self, caplog: object) -> None:
+        import logging as _logging
+
+        from core.engine.allocation_models import ChainModel
+        from core.models.chargeback import ChargebackRow, CostType
+
+        rows = [
+            ChargebackRow(
+                ecosystem="confluent",
+                tenant_id="t-001",
+                timestamp=_NOW,
+                resource_id="lkc-abc123",
+                product_category="kafka",
+                product_type="kafka_num_ckus",
+                identity_id="a",
+                amount=Decimal("10.00"),
+                cost_type=CostType.SHARED,
+                allocation_method="test",
+                allocation_detail="test",
+            )
+        ]
+        result_model = _ReturnsResultModel(rows=rows)
+        chain = ChainModel(models=[result_model], log_fallbacks=True)
+        ctx = _make_ctx()
+        with caplog.at_level(_logging.DEBUG, logger="core.engine.allocation_models"):  # type: ignore[union-attr]
+            chain.allocate(ctx)
+        assert not any(r.levelno == _logging.DEBUG for r in caplog.records)
+
+    def test_log_fallbacks_true_tier_1_hit_debug_called_once(self, caplog: object) -> None:
+        import logging as _logging
+
+        from core.engine.allocation_models import ChainModel
+        from core.models.chargeback import ChargebackRow, CostType
+
+        rows = [
+            ChargebackRow(
+                ecosystem="confluent",
+                tenant_id="t-001",
+                timestamp=_NOW,
+                resource_id="lkc-abc123",
+                product_category="kafka",
+                product_type="kafka_num_ckus",
+                identity_id="a",
+                amount=Decimal("10.00"),
+                cost_type=CostType.SHARED,
+                allocation_method="test",
+                allocation_detail="test",
+            )
+        ]
+        none_model = _ReturnsNoneModel()
+        result_model = _ReturnsResultModel(rows=rows)
+        chain = ChainModel(models=[none_model, result_model], log_fallbacks=True)
+        ctx = _make_ctx()
+        with caplog.at_level(_logging.DEBUG, logger="core.engine.allocation_models"):  # type: ignore[union-attr]
+            chain.allocate(ctx)
+        debug_records = [r for r in caplog.records if r.levelno == _logging.DEBUG]
+        assert len(debug_records) == 1
+        assert "1" in debug_records[0].getMessage()
+        assert ctx.billing_line.resource_id in debug_records[0].getMessage()
+        assert ctx.billing_line.product_type in debug_records[0].getMessage()
+
+
+class TestChainModelCostAllocatorProtocol:
+    def test_call_delegates_to_allocate(self) -> None:
+        from core.engine.allocation_models import ChainModel
+        from core.models.chargeback import ChargebackRow, CostType
+
+        rows = [
+            ChargebackRow(
+                ecosystem="confluent",
+                tenant_id="t-001",
+                timestamp=_NOW,
+                resource_id="lkc-abc123",
+                product_category="kafka",
+                product_type="kafka_num_ckus",
+                identity_id="a",
+                amount=Decimal("10.00"),
+                cost_type=CostType.SHARED,
+                allocation_method="test",
+                allocation_detail="test",
+            )
+        ]
+        result_model = _ReturnsResultModel(rows=rows)
+        chain = ChainModel(models=[result_model])
+        ctx = _make_ctx()
+        result_via_allocate = chain.allocate(ctx)
+        result_via_call = chain(ctx)
+        assert result_via_call is not None
+        assert len(result_via_call.rows) == len(result_via_allocate.rows)
+        assert result_via_call.rows[0].identity_id == result_via_allocate.rows[0].identity_id
+
+    def test_chain_model_satisfies_cost_allocator_protocol(self) -> None:
+        from core.engine.allocation_models import ChainModel
+        from core.plugin.protocols import CostAllocator
+
+        chain = ChainModel(models=[_ReturnsResultModel()])
+        assert isinstance(chain, CostAllocator)
+
+
+class TestChainModelMetadataNonDestructive:
+    def test_existing_metadata_keys_retained_after_chain_tier_injection(self) -> None:
+        from core.engine.allocation_models import ChainModel
+        from core.models.chargeback import ChargebackRow, CostType
+
+        row = ChargebackRow(
+            ecosystem="confluent",
+            tenant_id="t-001",
+            timestamp=_NOW,
+            resource_id="lkc-abc123",
+            product_category="kafka",
+            product_type="kafka_num_ckus",
+            identity_id="a",
+            amount=Decimal("10.00"),
+            cost_type=CostType.SHARED,
+            allocation_method="test",
+            allocation_detail="test",
+        )
+        row.metadata["existing_key"] = "existing_value"
+        result_model = _ReturnsResultModel(rows=[row])
+        chain = ChainModel(models=[result_model])
+        ctx = _make_ctx()
+        result = chain.allocate(ctx)
+        assert result is not None
+        assert result.rows[0].metadata["existing_key"] == "existing_value"
+        assert result.rows[0].metadata["chain_tier"] == 0
+
+
+class TestChainModelIntegration:
+    def test_chain_model_with_real_models_falls_back_to_terminal(self) -> None:
+        from core.engine.allocation_models import ChainModel, DirectOwnerModel, TerminalModel
+
+        chain = ChainModel([
+            DirectOwnerModel(owner_source=lambda c: None),
+            TerminalModel(identity_id="UNALLOCATED")
+        ])
+        ctx = _make_ctx()
+        result = chain.allocate(ctx)
+        assert result.rows[0].identity_id == "UNALLOCATED"
+        assert result.rows[0].metadata["chain_tier"] == 1

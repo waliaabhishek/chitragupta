@@ -12,6 +12,11 @@ from core.models.chargeback import AllocationDetail
 
 logger = logging.getLogger(__name__)
 
+
+class AllocationError(Exception):
+    """Raised when an allocation chain exhausts all models without a result."""
+
+
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
@@ -174,3 +179,43 @@ class DirectOwnerModel:
             )
             return AllocationResult(rows=[row])
         return result
+
+
+@dataclass(frozen=True)
+class ChainModel:
+    """Try models in sequence until one succeeds.
+
+    The last model should be a TerminalModel to guarantee a result.
+    Raises AllocationError if the chain exhausts without a result —
+    this indicates a misconfigured chain (missing terminal).
+
+    Injects chain_tier metadata (0-based index of the succeeding model)
+    into every ChargebackRow for production observability.
+
+    Implements __call__ for CostAllocator protocol compatibility.
+    """
+
+    models: Sequence[AllocationModel]
+    log_fallbacks: bool = False
+
+    def allocate(self, ctx: AllocationContext) -> AllocationResult:
+        for i, model in enumerate(self.models):
+            result = model.allocate(ctx)
+            if result is not None:
+                if self.log_fallbacks and i > 0:
+                    logger.debug(
+                        "Chain fell back to tier %d for resource=%s product=%s",
+                        i,
+                        ctx.billing_line.resource_id,
+                        ctx.billing_line.product_type,
+                    )
+                for row in result.rows:
+                    row.metadata["chain_tier"] = i
+                return result
+        raise AllocationError(
+            f"Chain exhausted without result for {ctx.billing_line.resource_id}"
+        )
+
+    def __call__(self, ctx: AllocationContext) -> AllocationResult:
+        """Allow ChainModel to be used directly as CostAllocator."""
+        return self.allocate(ctx)
