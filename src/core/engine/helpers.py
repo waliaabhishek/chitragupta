@@ -138,7 +138,7 @@ def allocate_evenly(
             cost_type=cost_type,
             amount=amt,
             allocation_method="even_split",
-            allocation_detail=allocation_detail or AllocationDetail.EVEN_SPLIT_ALLOCATION,
+            allocation_detail=allocation_detail,
         )
         for ident, amt in zip(identity_ids, amounts, strict=True)
     ]

@@ -199,7 +199,7 @@ class TestAllocateEvenly:
     def test_allocation_detail_on_success(self) -> None:
         ctx = make_ctx()
         result = allocate_evenly(ctx, ["u-1", "u-2"])
-        assert all(r.allocation_detail == AllocationDetail.EVEN_SPLIT_ALLOCATION for r in result.rows)
+        assert all(r.allocation_detail is None for r in result.rows)
 
 
 # --- allocate_hybrid ---
@@ -440,7 +440,7 @@ class TestAllocateEvenlyWithFallback:
 
         assert len(result.rows) == 2
         assert {r.identity_id for r in result.rows} == {"u-1", "u-2"}
-        assert all(r.allocation_detail == AllocationDetail.EVEN_SPLIT_ALLOCATION for r in result.rows)
+        assert all(r.allocation_detail is None for r in result.rows)
 
     def test_tenant_period_fallback_when_merged_active_empty(self) -> None:
         from core.engine.helpers import allocate_evenly_with_fallback
@@ -462,7 +462,7 @@ class TestAllocateEvenlyWithFallback:
 
         assert len(result.rows) == 1
         assert result.rows[0].identity_id == "tp-1"
-        assert result.rows[0].allocation_detail == AllocationDetail.EVEN_SPLIT_ALLOCATION
+        assert result.rows[0].allocation_detail is None
 
     def test_both_empty_produces_unallocated(self) -> None:
         from core.engine.helpers import allocate_evenly_with_fallback
