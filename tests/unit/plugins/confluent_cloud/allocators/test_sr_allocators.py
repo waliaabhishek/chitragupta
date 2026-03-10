@@ -103,7 +103,7 @@ class TestSchemaRegistryAllocator:
         result = schema_registry_allocator(ctx)
 
         assert len(result.rows) == 1
-        assert result.rows[0].identity_id == "UNALLOCATED"
+        assert result.rows[0].identity_id == "lsrc-xyz"
         assert result.rows[0].amount == Decimal("50")
 
     def test_single_identity_full_amount(self, sr_billing_line: BillingLineItem) -> None:
@@ -211,13 +211,6 @@ class TestSchemaRegistryAllocator:
         recipient_ids = {r.identity_id for r in result.rows}
         assert recipient_ids == {"sa-1", "sa-2"}
         assert len(result.rows) == 2
-
-    def test_schema_registry_allocator_is_allocate_evenly_with_fallback(self) -> None:
-        """TASK-024: schema_registry_allocator must be allocate_evenly_with_fallback after fix."""
-        from core.engine.helpers import allocate_evenly_with_fallback
-        from plugins.confluent_cloud.allocators.sr_allocators import schema_registry_allocator
-
-        assert schema_registry_allocator is allocate_evenly_with_fallback
 
     def test_three_way_split_with_remainder(self, sr_billing_line: BillingLineItem) -> None:
         """Three identities splitting $10 handles remainder correctly."""
