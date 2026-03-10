@@ -17,8 +17,10 @@ from core.models import MetricQuery
 from core.plugin.base import BaseServiceHandler
 from plugins.confluent_cloud.allocators.kafka_allocators import (
     kafka_base_allocator,
-    kafka_network_allocator,
+    kafka_network_read_allocator,
+    kafka_network_write_allocator,
     kafka_num_cku_allocator,
+    kafka_partition_allocator,
 )
 from plugins.confluent_cloud.handlers.identity_resolution import (
     resolve_kafka_sr_identities,
@@ -78,10 +80,10 @@ _KAFKA_ALLOCATORS: dict[str, CostAllocator] = {
     "KAFKA_NUM_CKU": kafka_num_cku_allocator,
     "KAFKA_NUM_CKUS": kafka_num_cku_allocator,
     "KAFKA_BASE": kafka_base_allocator,
-    "KAFKA_PARTITION": kafka_base_allocator,
+    "KAFKA_PARTITION": kafka_partition_allocator,
     "KAFKA_STORAGE": kafka_base_allocator,
-    "KAFKA_NETWORK_READ": kafka_network_allocator,
-    "KAFKA_NETWORK_WRITE": kafka_network_allocator,
+    "KAFKA_NETWORK_READ": kafka_network_read_allocator,
+    "KAFKA_NETWORK_WRITE": kafka_network_write_allocator,
 }
 
 

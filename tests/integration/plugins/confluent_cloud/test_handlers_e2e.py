@@ -210,21 +210,20 @@ class TestKafkaNetworkEndToEnd:
 
         # sa-owner-1: 80% usage, sa-owner-2: 20% usage
         metrics_data = {
-            "bytes_in": [
+            "bytes_out": [
                 MetricRow(
                     datetime(2026, 2, 1, tzinfo=UTC),
-                    "bytes_in",
+                    "bytes_out",
                     800.0,
                     {"principal_id": "sa-owner-1"},
                 ),
                 MetricRow(
                     datetime(2026, 2, 1, tzinfo=UTC),
-                    "bytes_in",
+                    "bytes_out",
                     200.0,
                     {"principal_id": "sa-owner-2"},
                 ),
             ],
-            "bytes_out": [],
         }
 
         identity_res = handler.resolve_identities(

@@ -61,24 +61,24 @@ class TestKafkaHandlerGetAllocator:
         assert handler.get_allocator("KAFKA_NUM_CKUS") is kafka_num_cku_allocator
 
     def test_network_read_allocator(self) -> None:
-        """KAFKA_NETWORK_READ returns kafka_network_allocator."""
+        """KAFKA_NETWORK_READ returns kafka_network_read_allocator."""
         from plugins.confluent_cloud.allocators.kafka_allocators import (
-            kafka_network_allocator,
+            kafka_network_read_allocator,
         )
         from plugins.confluent_cloud.handlers.kafka import KafkaHandler
 
         handler = KafkaHandler(connection=None, config=None, ecosystem="confluent_cloud")
-        assert handler.get_allocator("KAFKA_NETWORK_READ") is kafka_network_allocator
+        assert handler.get_allocator("KAFKA_NETWORK_READ") is kafka_network_read_allocator
 
     def test_network_write_allocator(self) -> None:
-        """KAFKA_NETWORK_WRITE returns kafka_network_allocator."""
+        """KAFKA_NETWORK_WRITE returns kafka_network_write_allocator."""
         from plugins.confluent_cloud.allocators.kafka_allocators import (
-            kafka_network_allocator,
+            kafka_network_write_allocator,
         )
         from plugins.confluent_cloud.handlers.kafka import KafkaHandler
 
         handler = KafkaHandler(connection=None, config=None, ecosystem="confluent_cloud")
-        assert handler.get_allocator("KAFKA_NETWORK_WRITE") is kafka_network_allocator
+        assert handler.get_allocator("KAFKA_NETWORK_WRITE") is kafka_network_write_allocator
 
     def test_base_allocator(self) -> None:
         """KAFKA_BASE returns kafka_base_allocator."""
@@ -91,14 +91,14 @@ class TestKafkaHandlerGetAllocator:
         assert handler.get_allocator("KAFKA_BASE") is kafka_base_allocator
 
     def test_partition_allocator(self) -> None:
-        """KAFKA_PARTITION returns kafka_base_allocator."""
+        """KAFKA_PARTITION returns kafka_partition_allocator."""
         from plugins.confluent_cloud.allocators.kafka_allocators import (
-            kafka_base_allocator,
+            kafka_partition_allocator,
         )
         from plugins.confluent_cloud.handlers.kafka import KafkaHandler
 
         handler = KafkaHandler(connection=None, config=None, ecosystem="confluent_cloud")
-        assert handler.get_allocator("KAFKA_PARTITION") is kafka_base_allocator
+        assert handler.get_allocator("KAFKA_PARTITION") is kafka_partition_allocator
 
     def test_storage_allocator(self) -> None:
         """KAFKA_STORAGE returns kafka_base_allocator."""

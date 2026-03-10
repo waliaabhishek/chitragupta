@@ -19,6 +19,7 @@ from core.engine.helpers import (
 )
 from core.models import OWNER_IDENTITY_TYPES
 from core.models.chargeback import AllocationDetail, CostType
+from plugins.confluent_cloud.allocation_models import BYTES_IN_MODEL, BYTES_OUT_MODEL, PARTITION_MODEL
 
 logger = logging.getLogger(__name__)
 
@@ -60,9 +61,24 @@ def kafka_network_allocator(ctx: AllocationContext) -> AllocationResult:
 def kafka_base_allocator(ctx: AllocationContext) -> AllocationResult:
     """Even split across active identities.
 
-    Used for KAFKA_BASE, KAFKA_PARTITION, KAFKA_STORAGE.
+    Used for KAFKA_BASE, KAFKA_STORAGE.
     """
     return _fallback_no_metrics(ctx)
+
+
+def kafka_network_read_allocator(ctx: AllocationContext) -> AllocationResult:
+    """KAFKA_NETWORK_READ: bytes_out (response / consume direction)."""
+    return BYTES_OUT_MODEL(ctx)
+
+
+def kafka_network_write_allocator(ctx: AllocationContext) -> AllocationResult:
+    """KAFKA_NETWORK_WRITE: bytes_in (request / produce direction)."""
+    return BYTES_IN_MODEL(ctx)
+
+
+def kafka_partition_allocator(ctx: AllocationContext) -> AllocationResult:
+    """KAFKA_PARTITION: no metrics — always falls to even-split tiers."""
+    return PARTITION_MODEL(ctx)
 
 
 def _kafka_usage_allocation(ctx: AllocationContext) -> AllocationResult:
