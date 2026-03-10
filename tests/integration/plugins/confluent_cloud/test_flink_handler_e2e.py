@@ -220,9 +220,10 @@ class TestFlinkBillingToChargebackEndToEnd:
         result = allocator(ctx)
 
         assert len(result.rows) == 1
-        assert result.rows[0].identity_id == "UNALLOCATED"
+        assert result.rows[0].identity_id == "lfcp-pool-1"
         assert result.rows[0].amount == Decimal("100")
-        assert result.rows[0].cost_type == CostType.USAGE
+        assert result.rows[0].cost_type == CostType.SHARED
+        assert result.rows[0].metadata["chain_tier"] == 3
 
 
 class TestPluginHandlerIntegrationFlink:

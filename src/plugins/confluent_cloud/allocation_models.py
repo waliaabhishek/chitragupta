@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 
-from core.engine.allocation_models import ChainModel, EvenSplitModel, TerminalModel
+from core.engine.allocation_models import ChainModel, EvenSplitModel, TerminalModel, UsageRatioModel
 from core.models import OWNER_IDENTITY_TYPES, CostType
 from core.models.chargeback import AllocationDetail
 
@@ -110,6 +110,40 @@ CONNECTOR_CAPACITY_MODEL = ChainModel(
         EvenSplitModel(
             source=lambda ctx: sorted(ctx.identities.merged_active.ids()),
             cost_type=CostType.SHARED,
+        ),
+        TerminalModel(
+            identity_id=lambda ctx: ctx.billing_line.resource_id,
+            cost_type=CostType.SHARED,
+            detail=AllocationDetail.NO_IDENTITIES_LOCATED,
+        ),
+    ],
+    log_fallbacks=True,
+)
+
+# ---------------------------------------------------------------------------
+# Flink allocation model
+#
+# Mirrors FlinkNumCFUCostAllocator from reference:
+#   Tier 0: UsageRatio by stmt_owner_cfu     -> usage_cost  (CostType.USAGE)
+#   Tier 1: EvenSplit across merged_active   -> usage_cost  + NO_USAGE_FOR_ACTIVE_IDENTITIES
+#   Tier 2: EvenSplit across tenant_period   -> shared_cost + NO_ACTIVE_IDENTITIES_LOCATED
+#   Tier 3: resource_id (terminal)           -> shared_cost + NO_IDENTITIES_LOCATED
+# ---------------------------------------------------------------------------
+
+FLINK_MODEL = ChainModel(
+    models=[
+        UsageRatioModel(
+            usage_source=lambda ctx: ctx.identities.context.get("stmt_owner_cfu", {}),
+        ),
+        EvenSplitModel(
+            source=lambda ctx: sorted(ctx.identities.merged_active.ids()),
+            cost_type=CostType.USAGE,
+            detail=AllocationDetail.NO_USAGE_FOR_ACTIVE_IDENTITIES,
+        ),
+        EvenSplitModel(
+            source=lambda ctx: sorted(ctx.identities.tenant_period.ids_by_type(*OWNER_IDENTITY_TYPES)),
+            cost_type=CostType.SHARED,
+            detail=AllocationDetail.NO_ACTIVE_IDENTITIES_LOCATED,
         ),
         TerminalModel(
             identity_id=lambda ctx: ctx.billing_line.resource_id,
