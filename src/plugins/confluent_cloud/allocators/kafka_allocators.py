@@ -13,41 +13,36 @@ import logging
 from core.engine.allocation import AllocationContext, AllocationResult
 from core.engine.helpers import (
     allocate_by_usage_ratio,
-    allocate_hybrid,
     make_row,
     split_amount_evenly,
 )
 from core.models import OWNER_IDENTITY_TYPES
 from core.models.chargeback import AllocationDetail, CostType
-from plugins.confluent_cloud.allocation_models import BYTES_IN_MODEL, BYTES_OUT_MODEL, PARTITION_MODEL
+from plugins.confluent_cloud.allocation_models import (
+    _CKU_DYNAMIC_MODEL,
+    BYTES_IN_MODEL,
+    BYTES_OUT_MODEL,
+    PARTITION_MODEL,
+)
 
 logger = logging.getLogger(__name__)
 
 
-def kafka_num_cku_allocator(ctx: AllocationContext) -> AllocationResult:
-    """Hybrid allocator: configurable usage/shared ratio.
+def kafka_cku_allocator(ctx: AllocationContext) -> AllocationResult:
+    """CKU allocator: 70% usage-based / 30% shared by default.
 
-    Default: 70% usage-based (bytes in/out ratio), 30% shared (even split).
-    Configurable via allocator_params:
-    - kafka_cku_usage_ratio: float (default 0.70)
-    - kafka_cku_shared_ratio: float (default 0.30)
+    Uses DynamicCompositionModel — reads kafka_cku_usage_ratio and
+    kafka_cku_shared_ratio from ctx.params (defaults: 0.70 / 0.30).
+    CompositionModel injects composition_index and composition_ratio metadata.
+    Raises ValueError if supplied ratios do not sum to 1.0.
     """
     logger.debug(
-        "Allocating kafka_num_cku resource=%s product=%s amount=%s",
+        "Allocating kafka_cku resource=%s product=%s amount=%s",
         ctx.billing_line.resource_id,
         ctx.billing_line.product_type,
         ctx.split_amount,
     )
-    usage_ratio = float(ctx.params.get("kafka_cku_usage_ratio", 0.70))
-    shared_ratio = float(ctx.params.get("kafka_cku_shared_ratio", 0.30))
-
-    return allocate_hybrid(
-        ctx,
-        usage_ratio,
-        shared_ratio,
-        _kafka_usage_allocation,
-        _fallback_no_metrics,
-    )
+    return _CKU_DYNAMIC_MODEL(ctx)
 
 
 def kafka_network_allocator(ctx: AllocationContext) -> AllocationResult:

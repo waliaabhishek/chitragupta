@@ -58,12 +58,12 @@ def identity_set_two() -> IdentitySet:
 
 
 class TestKafkaNumCkuAllocator:
-    """Tests for kafka_num_cku_allocator (hybrid usage/shared)."""
+    """Tests for kafka_cku_allocator (hybrid usage/shared)."""
 
     def test_default_ratios_with_usage(self, base_billing_line: BillingLineItem, identity_set_two: IdentitySet) -> None:
         """Default 70/30 split: 70% usage-based, 30% shared."""
         from plugins.confluent_cloud.allocators.kafka_allocators import (
-            kafka_num_cku_allocator,
+            kafka_cku_allocator as kafka_num_cku_allocator,
         )
 
         # sa-1 has 70% usage, sa-2 has 30%
@@ -109,7 +109,7 @@ class TestKafkaNumCkuAllocator:
     def test_custom_ratios(self, base_billing_line: BillingLineItem, identity_set_two: IdentitySet) -> None:
         """Custom ratios from params override defaults."""
         from plugins.confluent_cloud.allocators.kafka_allocators import (
-            kafka_num_cku_allocator,
+            kafka_cku_allocator as kafka_num_cku_allocator,
         )
 
         metrics_data = {
@@ -147,7 +147,7 @@ class TestKafkaNumCkuAllocator:
     ) -> None:
         """Without metrics, falls back to even split for usage portion."""
         from plugins.confluent_cloud.allocators.kafka_allocators import (
-            kafka_num_cku_allocator,
+            kafka_cku_allocator as kafka_num_cku_allocator,
         )
 
         resolution = IdentityResolution(
@@ -176,7 +176,7 @@ class TestKafkaNumCkuAllocator:
     def test_no_identities_unallocated(self, base_billing_line: BillingLineItem) -> None:
         """Without identities, allocates to the billing resource."""
         from plugins.confluent_cloud.allocators.kafka_allocators import (
-            kafka_num_cku_allocator,
+            kafka_cku_allocator as kafka_num_cku_allocator,
         )
 
         resolution = IdentityResolution(
@@ -203,7 +203,7 @@ class TestKafkaNumCkuAllocator:
     def test_single_identity_gets_full_amount(self, base_billing_line: BillingLineItem) -> None:
         """Single identity gets 100% of allocation."""
         from plugins.confluent_cloud.allocators.kafka_allocators import (
-            kafka_num_cku_allocator,
+            kafka_cku_allocator as kafka_num_cku_allocator,
         )
 
         single_identity = IdentitySet()
@@ -916,12 +916,12 @@ class TestKafkaNetworkAllocatorTieredFallback:
         assert all(r.allocation_method == "even_split" for r in result.rows)
         assert sum(r.amount for r in result.rows) == Decimal("100")
 
-    def test_kafka_num_cku_allocator_shared_half_uses_fallback_no_metrics(
+    def test_kafka_cku_allocator_no_metrics_usage_chain_uses_no_usage_detail(
         self, base_billing_line: BillingLineItem, identity_set_two: IdentitySet
     ) -> None:
-        """kafka_num_cku_allocator: shared half uses _fallback_no_metrics, not _kafka_shared_allocation."""
+        """kafka_cku_allocator: usage chain Tier 1 (no metrics) uses NO_USAGE_FOR_ACTIVE_IDENTITIES."""
         from core.models.chargeback import AllocationDetail
-        from plugins.confluent_cloud.allocators.kafka_allocators import kafka_num_cku_allocator
+        from plugins.confluent_cloud.allocators.kafka_allocators import kafka_cku_allocator
 
         resolution = IdentityResolution(
             resource_active=identity_set_two,
@@ -937,13 +937,12 @@ class TestKafkaNetworkAllocatorTieredFallback:
             params={},
         )
 
-        result = kafka_num_cku_allocator(ctx)
+        result = kafka_cku_allocator(ctx)
 
-        # Both halves go through _fallback_no_metrics when metrics=None:
-        # all even-split rows must carry NO_METRICS_LOCATED (not EVEN_SPLIT_ALLOCATION)
-        even_split_rows = [r for r in result.rows if r.allocation_method == "even_split"]
-        assert len(even_split_rows) > 0
-        assert all(r.allocation_detail == AllocationDetail.NO_METRICS_LOCATED for r in even_split_rows)
+        # Usage chain Tier 1 (no metrics, active identities): NO_USAGE_FOR_ACTIVE_IDENTITIES
+        usage_chain_rows = [r for r in result.rows if r.metadata.get("composition_index") == 0]
+        assert len(usage_chain_rows) > 0
+        assert all(r.allocation_detail == AllocationDetail.NO_USAGE_FOR_ACTIVE_IDENTITIES for r in usage_chain_rows)
 
 
 class TestKafkaNetworkDirectionAllocation:
@@ -1128,7 +1127,7 @@ class TestKafkaNetworkDirectionAllocation:
         self, asymmetric_billing_line: BillingLineItem, asymmetric_identity_set: IdentitySet
     ) -> None:
         """KAFKA_NUM_CKU blends bytes_in + bytes_out: equal totals → 50/50 split."""
-        from plugins.confluent_cloud.allocators.kafka_allocators import kafka_num_cku_allocator
+        from plugins.confluent_cloud.allocators.kafka_allocators import kafka_cku_allocator as kafka_num_cku_allocator
 
         cku_line = CoreBillingLineItem(
             ecosystem="confluent_cloud",
@@ -1287,9 +1286,7 @@ class TestKafkaNetworkDirectionRegressionFixture:
 class TestKafkaApiKeyResolution:
     """Tests for API key → owner translation in usage allocation and fallback filters."""
 
-    def test_kafka_usage_allocation_routes_api_key_bytes_to_owner(
-        self, base_billing_line: BillingLineItem
-    ) -> None:
+    def test_kafka_usage_allocation_routes_api_key_bytes_to_owner(self, base_billing_line: BillingLineItem) -> None:
         """Bytes attributed to api key principal are mapped to owner before allocation."""
         from plugins.confluent_cloud.allocators.kafka_allocators import kafka_network_allocator
 
@@ -1333,9 +1330,7 @@ class TestKafkaApiKeyResolution:
         assert "sa-abc" in recipient_ids
         assert "key-xyz" not in recipient_ids
 
-    def test_multiple_api_keys_same_owner_aggregate(
-        self, base_billing_line: BillingLineItem
-    ) -> None:
+    def test_multiple_api_keys_same_owner_aggregate(self, base_billing_line: BillingLineItem) -> None:
         """Multiple api keys with same owner aggregate their bytes before ratio allocation."""
         from plugins.confluent_cloud.allocators.kafka_allocators import kafka_network_allocator
 
@@ -1389,9 +1384,7 @@ class TestKafkaApiKeyResolution:
         sa_abc_amount = sum(r.amount for r in result.rows if r.identity_id == "sa-abc")
         assert sa_abc_amount == Decimal("100")
 
-    def test_fallback_no_metrics_filters_to_owner_types(
-        self, base_billing_line: BillingLineItem
-    ) -> None:
+    def test_fallback_no_metrics_filters_to_owner_types(self, base_billing_line: BillingLineItem) -> None:
         """_fallback_no_metrics even split excludes api_key identities from tenant_period."""
         from plugins.confluent_cloud.allocators.kafka_allocators import kafka_network_allocator
 
@@ -1432,9 +1425,7 @@ class TestKafkaApiKeyResolution:
         assert "sa-1" in recipient_ids
         assert "key-xyz" not in recipient_ids
 
-    def test_fallback_zero_usage_filters_to_owner_types(
-        self, base_billing_line: BillingLineItem
-    ) -> None:
+    def test_fallback_zero_usage_filters_to_owner_types(self, base_billing_line: BillingLineItem) -> None:
         """_fallback_zero_usage even split excludes api_key identities from tenant_period."""
         from plugins.confluent_cloud.allocators.kafka_allocators import kafka_network_allocator
 
@@ -1485,3 +1476,102 @@ class TestKafkaApiKeyResolution:
         recipient_ids = {r.identity_id for r in result.rows}
         assert "sa-1" in recipient_ids
         assert "key-xyz" not in recipient_ids
+
+
+class TestKafkaDirectionWrappers:
+    """Smoke tests for kafka_network_read_allocator, kafka_network_write_allocator, kafka_partition_allocator."""
+
+    def test_kafka_network_read_allocator_delegates_to_bytes_out_model(
+        self, base_billing_line: BillingLineItem, identity_set_two: IdentitySet
+    ) -> None:
+        """kafka_network_read_allocator allocates by bytes_out (consume direction)."""
+        from plugins.confluent_cloud.allocators.kafka_allocators import kafka_network_read_allocator
+
+        # sa-1: 900 bytes_out, sa-2: 100 bytes_out → 90%/10% split
+        metrics_data = {
+            "bytes_out": [
+                MetricRow(datetime(2026, 2, 1, tzinfo=UTC), "bytes_out", 900.0, {"principal_id": "sa-1"}),
+                MetricRow(datetime(2026, 2, 1, tzinfo=UTC), "bytes_out", 100.0, {"principal_id": "sa-2"}),
+            ],
+        }
+        resolution = IdentityResolution(
+            resource_active=identity_set_two,
+            metrics_derived=IdentitySet(),
+            tenant_period=IdentitySet(),
+        )
+        ctx = AllocationContext(
+            timeslice=base_billing_line.timestamp,
+            billing_line=base_billing_line,
+            identities=resolution,
+            split_amount=Decimal("100"),
+            metrics_data=metrics_data,
+            params={},
+        )
+
+        result = kafka_network_read_allocator(ctx)
+
+        assert isinstance(result, AllocationResult)
+        assert sum(r.amount for r in result.rows) == Decimal("100")
+        row_by_id = {r.identity_id: r for r in result.rows}
+        assert row_by_id["sa-1"].amount > row_by_id["sa-2"].amount
+
+    def test_kafka_network_write_allocator_delegates_to_bytes_in_model(
+        self, base_billing_line: BillingLineItem, identity_set_two: IdentitySet
+    ) -> None:
+        """kafka_network_write_allocator allocates by bytes_in (produce direction)."""
+        from plugins.confluent_cloud.allocators.kafka_allocators import kafka_network_write_allocator
+
+        # sa-1: 200 bytes_in, sa-2: 800 bytes_in → 20%/80% split
+        metrics_data = {
+            "bytes_in": [
+                MetricRow(datetime(2026, 2, 1, tzinfo=UTC), "bytes_in", 200.0, {"principal_id": "sa-1"}),
+                MetricRow(datetime(2026, 2, 1, tzinfo=UTC), "bytes_in", 800.0, {"principal_id": "sa-2"}),
+            ],
+        }
+        resolution = IdentityResolution(
+            resource_active=identity_set_two,
+            metrics_derived=IdentitySet(),
+            tenant_period=IdentitySet(),
+        )
+        ctx = AllocationContext(
+            timeslice=base_billing_line.timestamp,
+            billing_line=base_billing_line,
+            identities=resolution,
+            split_amount=Decimal("100"),
+            metrics_data=metrics_data,
+            params={},
+        )
+
+        result = kafka_network_write_allocator(ctx)
+
+        assert isinstance(result, AllocationResult)
+        assert sum(r.amount for r in result.rows) == Decimal("100")
+        row_by_id = {r.identity_id: r for r in result.rows}
+        assert row_by_id["sa-2"].amount > row_by_id["sa-1"].amount
+
+    def test_kafka_partition_allocator_even_splits_without_metrics(
+        self, base_billing_line: BillingLineItem, identity_set_two: IdentitySet
+    ) -> None:
+        """kafka_partition_allocator falls through to even-split (no partition metrics configured)."""
+        from plugins.confluent_cloud.allocators.kafka_allocators import kafka_partition_allocator
+
+        resolution = IdentityResolution(
+            resource_active=identity_set_two,
+            metrics_derived=IdentitySet(),
+            tenant_period=IdentitySet(),
+        )
+        ctx = AllocationContext(
+            timeslice=base_billing_line.timestamp,
+            billing_line=base_billing_line,
+            identities=resolution,
+            split_amount=Decimal("100"),
+            metrics_data=None,
+            params={},
+        )
+
+        result = kafka_partition_allocator(ctx)
+
+        assert isinstance(result, AllocationResult)
+        assert sum(r.amount for r in result.rows) == Decimal("100")
+        identity_ids = {r.identity_id for r in result.rows}
+        assert identity_ids == {"sa-1", "sa-2"}

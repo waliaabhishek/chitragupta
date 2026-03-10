@@ -8,9 +8,18 @@ import and call these models.
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
+from decimal import Decimal
 from typing import TYPE_CHECKING
 
-from core.engine.allocation_models import ChainModel, EvenSplitModel, TerminalModel, UsageRatioModel
+from core.engine.allocation_models import (
+    AllocationModel,
+    ChainModel,
+    DynamicCompositionModel,
+    EvenSplitModel,
+    TerminalModel,
+    UsageRatioModel,
+)
 from core.models import OWNER_IDENTITY_TYPES, CostType
 from core.models.chargeback import AllocationDetail
 
@@ -243,3 +252,112 @@ BYTES_OUT_MODEL = make_network_model(metric_key="bytes_out", principal_label="pr
 # KAFKA_PARTITION: no metrics configured in handler (get_metrics_for_product_type returns []).
 # Model always falls through Tier 0 to even-split fallbacks (Tiers 1-3).
 PARTITION_MODEL = make_network_model(metric_key="partition_count", principal_label="principal_id")
+
+
+def _extract_combined_usage(
+    ctx: AllocationContext,
+    metric_keys: Sequence[str],
+    principal_label: str,
+) -> dict[str, float]:
+    """Extract per-owner usage across multiple metric keys, summing values.
+
+    Delegates to _extract_usage() per key and merges results — no duplicated loop body.
+    Returns empty dict when metrics_data is absent, all keys missing, or all values <= 0.
+    Used as usage_source for UsageRatioModel in CKU_USAGE_CHAIN.
+    """
+    result: dict[str, float] = {}
+    for key in metric_keys:
+        for owner, value in _extract_usage(ctx, key, principal_label).items():
+            result[owner] = result.get(owner, 0.0) + value
+    return result
+
+
+# ---------------------------------------------------------------------------
+# CKU usage chain
+#
+# Mirrors UsageBasedNetworkCostAllocator from reference (combined bytes):
+#   Tier 0: usage ratio by bytes_in+bytes_out  -> CostType.USAGE  + USAGE_RATIO_ALLOCATION
+#   Tier 1: merged_active even split           -> CostType.SHARED + NO_USAGE_FOR_ACTIVE_IDENTITIES
+#   Tier 2: tenant_period even split           -> CostType.SHARED + NO_METRICS_NO_ACTIVE_IDENTITIES_LOCATED
+#   Tier 3: resource_id (terminal)             -> CostType.SHARED + NO_IDENTITIES_LOCATED
+#
+# Note: Tier 1 fires for both "no metrics at all" and "metrics present but zero
+# usage" — UsageRatioModel cannot distinguish these sub-cases via its dict[str, float]
+# interface. Both sub-cases use NO_USAGE_FOR_ACTIVE_IDENTITIES.
+# ---------------------------------------------------------------------------
+
+CKU_USAGE_CHAIN = ChainModel(
+    models=[
+        UsageRatioModel(
+            usage_source=lambda ctx: _extract_combined_usage(ctx, ("bytes_in", "bytes_out"), "principal_id"),
+            detail=AllocationDetail.USAGE_RATIO_ALLOCATION,
+        ),
+        EvenSplitModel(
+            source=lambda ctx: sorted(ctx.identities.merged_active.ids()),
+            cost_type=CostType.SHARED,
+            detail=AllocationDetail.NO_USAGE_FOR_ACTIVE_IDENTITIES,
+        ),
+        EvenSplitModel(
+            source=lambda ctx: sorted(ctx.identities.tenant_period.ids_by_type(*OWNER_IDENTITY_TYPES)),
+            cost_type=CostType.SHARED,
+            detail=AllocationDetail.NO_METRICS_NO_ACTIVE_IDENTITIES_LOCATED,
+        ),
+        TerminalModel(
+            identity_id=lambda ctx: ctx.billing_line.resource_id,
+            cost_type=CostType.SHARED,
+            detail=AllocationDetail.NO_IDENTITIES_LOCATED,
+        ),
+    ],
+    log_fallbacks=True,
+)
+
+# ---------------------------------------------------------------------------
+# CKU shared chain
+#
+# Mirrors Active_Total_Resource_CostAllocator from reference:
+#   Tier 0: merged_active even split    -> CostType.USAGE  (active clients share capacity)
+#   Tier 1: tenant_period even split    -> CostType.SHARED + NO_ACTIVE_IDENTITIES_LOCATED
+#   Tier 2: resource_id (terminal)      -> CostType.SHARED + NO_IDENTITIES_LOCATED
+# ---------------------------------------------------------------------------
+
+CKU_SHARED_CHAIN = ChainModel(
+    models=[
+        EvenSplitModel(
+            source=lambda ctx: sorted(ctx.identities.merged_active.ids()),
+            cost_type=CostType.USAGE,
+        ),
+        EvenSplitModel(
+            source=lambda ctx: sorted(ctx.identities.tenant_period.ids_by_type(*OWNER_IDENTITY_TYPES)),
+            cost_type=CostType.SHARED,
+            detail=AllocationDetail.NO_ACTIVE_IDENTITIES_LOCATED,
+        ),
+        TerminalModel(
+            identity_id=lambda ctx: ctx.billing_line.resource_id,
+            cost_type=CostType.SHARED,
+            detail=AllocationDetail.NO_IDENTITIES_LOCATED,
+        ),
+    ],
+    log_fallbacks=True,
+)
+
+
+def make_dynamic_cku_model() -> DynamicCompositionModel:
+    """Create a DynamicCompositionModel for CKU with runtime-configurable ratios.
+
+    Reads kafka_cku_usage_ratio and kafka_cku_shared_ratio from ctx.params.
+    Defaults to 70/30 when params are absent.
+    DynamicCompositionModel delegates to CompositionModel, which validates
+    ratio sum == 1.0 at runtime — raises ValueError for invalid overrides.
+    Injects composition_index (0=usage, 1=shared) and composition_ratio
+    into every row's metadata for production auditability.
+    """
+
+    def ratio_source(ctx: AllocationContext) -> Sequence[tuple[Decimal, AllocationModel]]:
+        usage = Decimal(str(ctx.params.get("kafka_cku_usage_ratio", "0.70")))
+        shared = Decimal(str(ctx.params.get("kafka_cku_shared_ratio", "0.30")))
+        return [(usage, CKU_USAGE_CHAIN), (shared, CKU_SHARED_CHAIN)]
+
+    return DynamicCompositionModel(ratio_source=ratio_source)
+
+
+_CKU_DYNAMIC_MODEL = make_dynamic_cku_model()
