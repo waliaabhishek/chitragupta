@@ -104,3 +104,73 @@ class UsageRatioModel:
             )
             return AllocationResult(rows=[row])
         return result
+
+
+@dataclass(frozen=True)
+class TerminalModel:
+    """Always succeeds — assigns full cost to a single identity.
+
+    Used as the last model in a chain. Never returns None.
+    Implements __call__ for standalone use as CostAllocator.
+    """
+
+    identity_id: str | Callable[[AllocationContext], str]
+    detail: str | None = None
+    cost_type: CostType = CostType.SHARED
+
+    def allocate(self, ctx: AllocationContext) -> AllocationResult:
+        ident = self.identity_id(ctx) if callable(self.identity_id) else self.identity_id
+        row = make_row(
+            ctx,
+            identity_id=ident,
+            cost_type=self.cost_type,
+            amount=ctx.split_amount,
+            allocation_method="terminal",
+            allocation_detail=self.detail,
+        )
+        return AllocationResult(rows=[row])
+
+    def __call__(self, ctx: AllocationContext) -> AllocationResult:
+        return self.allocate(ctx)
+
+
+@dataclass(frozen=True)
+class DirectOwnerModel:
+    """Assigns full cost to a specific owner identity.
+
+    Returns None if owner cannot be resolved (signals fallback).
+    Implements __call__ for standalone use as CostAllocator — when owner
+    is unresolvable, falls back to an UNALLOCATED row (never returns None).
+    """
+
+    owner_source: str | Callable[[AllocationContext], str | None]
+    detail: str | None = None
+    cost_type: CostType = CostType.USAGE
+
+    def allocate(self, ctx: AllocationContext) -> AllocationResult | None:
+        owner = self.owner_source(ctx) if callable(self.owner_source) else self.owner_source
+        if not owner:
+            return None
+        row = make_row(
+            ctx,
+            identity_id=owner,
+            cost_type=self.cost_type,
+            amount=ctx.split_amount,
+            allocation_method="direct_owner",
+            allocation_detail=self.detail,
+        )
+        return AllocationResult(rows=[row])
+
+    def __call__(self, ctx: AllocationContext) -> AllocationResult:
+        result = self.allocate(ctx)
+        if result is None:
+            row = make_row(
+                ctx,
+                identity_id="UNALLOCATED",
+                cost_type=CostType.SHARED,
+                amount=ctx.split_amount,
+                allocation_method="direct_owner",
+                allocation_detail=AllocationDetail.NO_IDENTITIES_LOCATED,
+            )
+            return AllocationResult(rows=[row])
+        return result

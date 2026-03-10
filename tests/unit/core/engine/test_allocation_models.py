@@ -111,7 +111,7 @@ class TestCircularImports:
 # ---------------------------------------------------------------------------
 
 
-def _make_ctx(split_amount: Decimal = Decimal("10.00")):  # type: ignore[return]
+def _make_ctx(split_amount: Decimal = Decimal("10.00")) -> AllocationContext:
     from core.engine.allocation import AllocationContext
 
     return AllocationContext(
@@ -333,3 +333,184 @@ class TestBackwardCompatibility:
         assert result is not None
         assert len(result.rows) == 2
         assert sum(r.amount for r in result.rows) == Decimal("10.00")
+
+
+# ---------------------------------------------------------------------------
+# task-063: TerminalModel and DirectOwnerModel tests (TDD RED phase)
+# ---------------------------------------------------------------------------
+
+
+class TestTerminalModelAllocate:
+    def test_static_identity_returns_single_row_with_correct_fields(self) -> None:
+        from core.engine.allocation_models import TerminalModel
+        from core.models.chargeback import CostType
+
+        ctx = _make_ctx(split_amount=Decimal("10.00"))
+        model = TerminalModel(identity_id="sa-123")
+        result = model.allocate(ctx)
+        assert result is not None
+        assert len(result.rows) == 1
+        assert result.rows[0].identity_id == "sa-123"
+        assert result.rows[0].allocation_method == "terminal"
+        assert result.rows[0].amount == Decimal("10.00")
+        assert result.rows[0].cost_type == CostType.SHARED
+
+    def test_allocate_never_returns_none(self) -> None:
+        from core.engine.allocation import AllocationResult
+        from core.engine.allocation_models import TerminalModel
+
+        ctx = _make_ctx(split_amount=Decimal("10.00"))
+        model = TerminalModel(identity_id="sa-123")
+        result = model.allocate(ctx)
+        assert isinstance(result, AllocationResult)
+
+    def test_callable_identity_id_evaluated_against_ctx(self) -> None:
+        from core.engine.allocation_models import TerminalModel
+
+        ctx = _make_ctx(split_amount=Decimal("10.00"))
+        model = TerminalModel(identity_id=lambda c: c.billing_line.resource_id)
+        result = model.allocate(ctx)
+        assert result is not None
+        assert len(result.rows) == 1
+        assert result.rows[0].identity_id == ctx.billing_line.resource_id
+
+    def test_custom_detail_and_cost_type_propagated(self) -> None:
+        from core.engine.allocation_models import TerminalModel
+        from core.models.chargeback import CostType
+
+        ctx = _make_ctx(split_amount=Decimal("10.00"))
+        model = TerminalModel(identity_id="sa-123", detail="fallback_sa", cost_type=CostType.USAGE)
+        result = model.allocate(ctx)
+        assert result is not None
+        assert result.rows[0].allocation_detail == "fallback_sa"
+        assert result.rows[0].cost_type == CostType.USAGE
+
+    def test_call_delegates_to_allocate(self) -> None:
+        from core.engine.allocation_models import TerminalModel
+
+        ctx = _make_ctx(split_amount=Decimal("10.00"))
+        model = TerminalModel(identity_id="sa-123")
+        result_allocate = model.allocate(ctx)
+        result_call = model(ctx)
+        assert result_call is not None
+        assert len(result_call.rows) == 1
+        assert result_call.rows[0].identity_id == result_allocate.rows[0].identity_id
+        assert result_call.rows[0].amount == result_allocate.rows[0].amount
+
+    def test_terminal_model_satisfies_allocation_model_protocol(self) -> None:
+        from core.engine.allocation_models import AllocationModel, TerminalModel
+
+        model = TerminalModel(identity_id="x")
+        assert isinstance(model, AllocationModel)
+
+
+class TestTerminalModelCostAllocatorContract:
+    def test_terminal_model_satisfies_cost_allocator_protocol(self) -> None:
+        from core.engine.allocation_models import TerminalModel
+        from core.plugin.protocols import CostAllocator
+
+        model = TerminalModel(identity_id="sa-123")
+        assert isinstance(model, CostAllocator)
+
+    def test_call_always_returns_allocation_result_not_none(self) -> None:
+        from core.engine.allocation import AllocationResult
+        from core.engine.allocation_models import TerminalModel
+
+        ctx = _make_ctx(split_amount=Decimal("10.00"))
+        model = TerminalModel(identity_id="sa-123")
+        result = model(ctx)
+        assert isinstance(result, AllocationResult)
+
+
+class TestDirectOwnerModelAllocate:
+    def test_callable_owner_source_returns_single_row(self) -> None:
+        from core.engine.allocation_models import DirectOwnerModel
+        from core.models.chargeback import CostType
+
+        ctx = _make_ctx(split_amount=Decimal("10.00"))
+        model = DirectOwnerModel(owner_source=lambda c: "sa-456")
+        result = model.allocate(ctx)
+        assert result is not None
+        assert len(result.rows) == 1
+        assert result.rows[0].identity_id == "sa-456"
+        assert result.rows[0].allocation_method == "direct_owner"
+        assert result.rows[0].amount == Decimal("10.00")
+        assert result.rows[0].cost_type == CostType.USAGE
+
+    def test_static_string_owner_source_returns_single_row(self) -> None:
+        from core.engine.allocation_models import DirectOwnerModel
+
+        ctx = _make_ctx(split_amount=Decimal("10.00"))
+        model = DirectOwnerModel(owner_source="sa-456")
+        result = model.allocate(ctx)
+        assert result is not None
+        assert len(result.rows) == 1
+        assert result.rows[0].identity_id == "sa-456"
+
+    def test_none_owner_source_returns_none(self) -> None:
+        from core.engine.allocation_models import DirectOwnerModel
+
+        ctx = _make_ctx(split_amount=Decimal("10.00"))
+        model = DirectOwnerModel(owner_source=lambda c: None)
+        result = model.allocate(ctx)
+        assert result is None
+
+    def test_empty_string_owner_source_returns_none(self) -> None:
+        from core.engine.allocation_models import DirectOwnerModel
+
+        ctx = _make_ctx(split_amount=Decimal("10.00"))
+        model = DirectOwnerModel(owner_source=lambda c: "")
+        result = model.allocate(ctx)
+        assert result is None
+
+    def test_custom_detail_and_cost_type_propagated(self) -> None:
+        from core.engine.allocation_models import DirectOwnerModel
+        from core.models.chargeback import CostType
+
+        ctx = _make_ctx(split_amount=Decimal("10.00"))
+        model = DirectOwnerModel(
+            owner_source=lambda c: "sa-456",
+            detail="topic_owner",
+            cost_type=CostType.SHARED,
+        )
+        result = model.allocate(ctx)
+        assert result is not None
+        assert result.rows[0].allocation_detail == "topic_owner"
+        assert result.rows[0].cost_type == CostType.SHARED
+
+    def test_direct_owner_model_satisfies_allocation_model_protocol(self) -> None:
+        from core.engine.allocation_models import AllocationModel, DirectOwnerModel
+
+        model = DirectOwnerModel(owner_source=lambda c: None)
+        assert isinstance(model, AllocationModel)
+
+
+class TestDirectOwnerModelCostAllocatorContract:
+    def test_none_owner_call_returns_unallocated_row_not_none(self) -> None:
+        from core.engine.allocation_models import DirectOwnerModel
+        from core.models.chargeback import AllocationDetail
+
+        ctx = _make_ctx(split_amount=Decimal("10.00"))
+        model = DirectOwnerModel(owner_source=lambda c: None)
+        result = model(ctx)
+        assert result is not None
+        assert len(result.rows) == 1
+        assert result.rows[0].identity_id == "UNALLOCATED"
+        assert result.rows[0].allocation_detail == AllocationDetail.NO_IDENTITIES_LOCATED
+
+    def test_direct_owner_model_satisfies_cost_allocator_protocol(self) -> None:
+        from core.engine.allocation_models import DirectOwnerModel
+        from core.plugin.protocols import CostAllocator
+
+        model = DirectOwnerModel(owner_source=lambda c: None)
+        assert isinstance(model, CostAllocator)
+
+    def test_call_with_valid_owner_returns_real_result(self) -> None:
+        from core.engine.allocation_models import DirectOwnerModel
+
+        ctx = _make_ctx(split_amount=Decimal("10.00"))
+        model = DirectOwnerModel(owner_source=lambda c: "sa-456")
+        result = model(ctx)
+        assert result is not None
+        assert len(result.rows) == 1
+        assert result.rows[0].identity_id == "sa-456"
