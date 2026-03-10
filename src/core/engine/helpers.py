@@ -63,6 +63,7 @@ def split_amount_evenly(total: Decimal, count: int) -> list[Decimal]:
 def allocate_by_usage_ratio(
     ctx: AllocationContext,
     identity_values: dict[str, float],
+    allocation_detail: str | None = None,
 ) -> AllocationResult:
     """Allocate cost proportionally based on per-identity usage values."""
     total_value = sum(identity_values.values())
@@ -103,7 +104,7 @@ def allocate_by_usage_ratio(
             cost_type=CostType.USAGE,
             amount=amt,
             allocation_method="usage_ratio",
-            allocation_detail=AllocationDetail.USAGE_RATIO_ALLOCATION,
+            allocation_detail=allocation_detail or AllocationDetail.USAGE_RATIO_ALLOCATION,
             metadata={"ratio": ratio},
         )
         for ident, amt, ratio in zip(ids, quantized, ratios, strict=True)
@@ -114,13 +115,15 @@ def allocate_by_usage_ratio(
 def allocate_evenly(
     ctx: AllocationContext,
     identity_ids: Sequence[str],
+    allocation_detail: str | None = None,
+    cost_type: CostType = CostType.SHARED,
 ) -> AllocationResult:
     """Allocate cost evenly across identities."""
     if not identity_ids:
         row = make_row(
             ctx,
             identity_id="UNALLOCATED",
-            cost_type=CostType.SHARED,
+            cost_type=cost_type,
             amount=ctx.split_amount,
             allocation_method="even_split",
             allocation_detail=AllocationDetail.NO_IDENTITIES_LOCATED,
@@ -132,10 +135,10 @@ def allocate_evenly(
         make_row(
             ctx,
             identity_id=ident,
-            cost_type=CostType.SHARED,
+            cost_type=cost_type,
             amount=amt,
             allocation_method="even_split",
-            allocation_detail=AllocationDetail.EVEN_SPLIT_ALLOCATION,
+            allocation_detail=allocation_detail or AllocationDetail.EVEN_SPLIT_ALLOCATION,
         )
         for ident, amt in zip(identity_ids, amounts, strict=True)
     ]
