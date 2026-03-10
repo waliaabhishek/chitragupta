@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass, replace
+from decimal import ROUND_HALF_UP, Decimal
+from typing import Protocol, runtime_checkable
 
 from core.engine.allocation import AllocationContext, AllocationResult
-from core.engine.helpers import allocate_by_usage_ratio, allocate_evenly, make_row
+from core.engine.helpers import _CENT, allocate_by_usage_ratio, allocate_evenly, make_row
 from core.models import CostType
 from core.models.chargeback import AllocationDetail
 
@@ -15,10 +16,6 @@ logger = logging.getLogger(__name__)
 
 class AllocationError(Exception):
     """Raised when an allocation chain exhausts all models without a result."""
-
-
-if TYPE_CHECKING:
-    from collections.abc import Sequence
 
 
 @runtime_checkable
@@ -212,10 +209,78 @@ class ChainModel:
                 for row in result.rows:
                     row.metadata["chain_tier"] = i
                 return result
-        raise AllocationError(
-            f"Chain exhausted without result for {ctx.billing_line.resource_id}"
-        )
+        raise AllocationError(f"Chain exhausted without result for {ctx.billing_line.resource_id}")
 
     def __call__(self, ctx: AllocationContext) -> AllocationResult:
         """Allow ChainModel to be used directly as CostAllocator."""
+        return self.allocate(ctx)
+
+
+@dataclass(frozen=True)
+class CompositionModel:
+    """Split cost across multiple models by ratio.
+
+    Each component is a (ratio, model) tuple. Ratios must sum to 1.0.
+    All component models must return a result (use ChainModel for fallbacks).
+
+    Injects composition_index (0-based) and composition_ratio (float) into
+    every row's metadata for production auditability.
+
+    Implements __call__ for CostAllocator protocol compatibility.
+    """
+
+    components: Sequence[tuple[Decimal, AllocationModel]]
+
+    def __post_init__(self) -> None:
+        total = sum(ratio for ratio, _ in self.components)
+        if abs(total - Decimal("1")) > Decimal("0.0001"):
+            raise ValueError(f"Composition ratios must sum to 1.0, got {total}")
+
+    def allocate(self, ctx: AllocationContext) -> AllocationResult:
+        rows = []
+        remaining = ctx.split_amount
+        for i, (ratio, model) in enumerate(self.components):
+            if i < len(self.components) - 1:
+                sub_amount = (ctx.split_amount * ratio).quantize(_CENT, rounding=ROUND_HALF_UP)
+                remaining -= sub_amount
+            else:
+                sub_amount = remaining  # last component absorbs rounding remainder
+            sub_ctx = replace(ctx, split_amount=sub_amount)
+            result = model.allocate(sub_ctx)
+            if result is None:
+                raise AllocationError(
+                    f"CompositionModel: component {i} returned None for "
+                    f"{ctx.billing_line.resource_id} — wrap in ChainModel for fallbacks"
+                )
+            for row in result.rows:
+                row.metadata["composition_index"] = i
+                row.metadata["composition_ratio"] = float(ratio)
+            rows.extend(result.rows)
+        return AllocationResult(rows=rows)
+
+    def __call__(self, ctx: AllocationContext) -> AllocationResult:
+        return self.allocate(ctx)
+
+
+@dataclass(frozen=True)
+class DynamicCompositionModel:
+    """Split cost with runtime-determined ratios.
+
+    ratio_source receives AllocationContext and returns a sequence of
+    (ratio, model) tuples. Useful when ratios come from ctx.params or
+    other runtime configuration.
+
+    Delegates to CompositionModel for ratio validation and execution —
+    a ValueError is raised if returned ratios do not sum to 1.0.
+
+    Implements __call__ for CostAllocator protocol compatibility.
+    """
+
+    ratio_source: Callable[[AllocationContext], Sequence[tuple[Decimal, AllocationModel]]]
+
+    def allocate(self, ctx: AllocationContext) -> AllocationResult:
+        components = self.ratio_source(ctx)
+        return CompositionModel(tuple(components)).allocate(ctx)
+
+    def __call__(self, ctx: AllocationContext) -> AllocationResult:
         return self.allocate(ctx)
