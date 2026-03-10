@@ -43,3 +43,50 @@ SR_MODEL = ChainModel(
     ],
     log_fallbacks=True,
 )
+
+# ---------------------------------------------------------------------------
+# Connector allocation models
+#
+# Two models separate cost type semantics by product type:
+#
+# CONNECTOR_TASKS_MODEL — task/throughput-based costs (USAGE):
+#   Tier 0: active identities      -> usage_cost   (CostType.USAGE)
+#   Tier 1: resource_id (terminal) -> shared_cost  + NO_IDENTITIES_LOCATED
+#
+# CONNECTOR_CAPACITY_MODEL — infrastructure costs (SHARED):
+#   Tier 0: active identities      -> shared_cost  (CostType.SHARED)
+#   Tier 1: resource_id (terminal) -> shared_cost  + NO_IDENTITIES_LOCATED
+#
+# Both models: no tenant_period fallback — matches reference behavior
+# and preserves GAP-24 fix (resource-local terminal when no active identities).
+# ---------------------------------------------------------------------------
+
+CONNECTOR_TASKS_MODEL = ChainModel(
+    models=[
+        EvenSplitModel(
+            source=lambda ctx: sorted(ctx.identities.merged_active.ids()),
+            cost_type=CostType.USAGE,
+        ),
+        TerminalModel(
+            identity_id=lambda ctx: ctx.billing_line.resource_id,
+            cost_type=CostType.SHARED,
+            detail=AllocationDetail.NO_IDENTITIES_LOCATED,
+        ),
+    ],
+    log_fallbacks=True,
+)
+
+CONNECTOR_CAPACITY_MODEL = ChainModel(
+    models=[
+        EvenSplitModel(
+            source=lambda ctx: sorted(ctx.identities.merged_active.ids()),
+            cost_type=CostType.SHARED,
+        ),
+        TerminalModel(
+            identity_id=lambda ctx: ctx.billing_line.resource_id,
+            cost_type=CostType.SHARED,
+            detail=AllocationDetail.NO_IDENTITIES_LOCATED,
+        ),
+    ],
+    log_fallbacks=True,
+)
