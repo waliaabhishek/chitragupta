@@ -34,6 +34,7 @@ class AllocationResult:
     """Container for chargeback rows produced by an allocator."""
 
     rows: list[ChargebackRow] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 class AllocatorRegistry:
