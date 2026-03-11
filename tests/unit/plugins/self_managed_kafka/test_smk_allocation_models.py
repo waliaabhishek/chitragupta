@@ -373,31 +373,31 @@ class TestSmkModelIndependence:
 
 
 class TestSmkComputeStorageUnaffected:
-    """COMPUTE and STORAGE allocators remain as allocate_evenly_with_fallback (not ChainModel)."""
+    """COMPUTE and STORAGE allocators are SMK_INFRA_MODEL (a ChainModel)."""
 
-    def test_compute_allocator_is_not_chain_model(self) -> None:
-        """get_allocator('SELF_KAFKA_COMPUTE') returns allocate_evenly_with_fallback, not a ChainModel."""
-        from core.engine.helpers import allocate_evenly_with_fallback
+    def test_compute_allocator_is_infra_model(self) -> None:
+        """get_allocator('SELF_KAFKA_COMPUTE') returns SMK_INFRA_MODEL ChainModel."""
+        from plugins.self_managed_kafka.allocation_models import SMK_INFRA_MODEL
         from plugins.self_managed_kafka.handlers.kafka import SelfManagedKafkaHandler
 
         config = make_smk_config()
         handler = SelfManagedKafkaHandler(config=config, metrics_source=MagicMock())
         allocator = handler.get_allocator("SELF_KAFKA_COMPUTE")
 
-        assert allocator is allocate_evenly_with_fallback
-        assert not isinstance(allocator, ChainModel)
+        assert allocator is SMK_INFRA_MODEL
+        assert isinstance(allocator, ChainModel)
 
-    def test_storage_allocator_is_not_chain_model(self) -> None:
-        """get_allocator('SELF_KAFKA_STORAGE') returns allocate_evenly_with_fallback, not a ChainModel."""
-        from core.engine.helpers import allocate_evenly_with_fallback
+    def test_storage_allocator_is_infra_model(self) -> None:
+        """get_allocator('SELF_KAFKA_STORAGE') returns SMK_INFRA_MODEL ChainModel."""
+        from plugins.self_managed_kafka.allocation_models import SMK_INFRA_MODEL
         from plugins.self_managed_kafka.handlers.kafka import SelfManagedKafkaHandler
 
         config = make_smk_config()
         handler = SelfManagedKafkaHandler(config=config, metrics_source=MagicMock())
         allocator = handler.get_allocator("SELF_KAFKA_STORAGE")
 
-        assert allocator is allocate_evenly_with_fallback
-        assert not isinstance(allocator, ChainModel)
+        assert allocator is SMK_INFRA_MODEL
+        assert isinstance(allocator, ChainModel)
 
 
 # ---------------------------------------------------------------------------
@@ -455,3 +455,82 @@ class TestSmkHandlerWiring:
         row_by_id = {r.identity_id: r for r in result.rows}
         assert set(row_by_id.keys()) == {"User:alice", "User:bob"}
         assert all(r.metadata["chain_tier"] == 0 for r in result.rows)
+
+
+# ---------------------------------------------------------------------------
+# Test 12: SMK_INFRA_MODEL — 3-tier ChainModel for COMPUTE and STORAGE
+# ---------------------------------------------------------------------------
+
+
+class TestSmkInfraModel:
+    """SMK_INFRA_MODEL: 3-tier ChainModel for COMPUTE and STORAGE product types."""
+
+    def test_tier0_metrics_derived_present(self, smk_billing_line: BillingLineItem) -> None:
+        """metrics_derived=[alice, bob] → even split, chain_tier=0, CostType.USAGE."""
+        from plugins.self_managed_kafka.allocation_models import SMK_INFRA_MODEL
+
+        resolution = make_resolution(
+            metrics_derived=make_identity_set("User:alice", "User:bob"),
+        )
+        ctx = make_ctx(smk_billing_line, resolution, Decimal("100"))
+        result = SMK_INFRA_MODEL(ctx)
+        assert len(result.rows) == 2
+        assert all(r.metadata["chain_tier"] == 0 for r in result.rows)
+        assert all(r.cost_type == CostType.USAGE for r in result.rows)
+        assert sum(r.amount for r in result.rows) == Decimal("100")
+
+    def test_tier1_resource_active_fallback(self, smk_billing_line: BillingLineItem) -> None:
+        """metrics_derived=[], resource_active=[alice] → chain_tier=1, NO_ACTIVE_IDENTITIES_LOCATED."""
+        from plugins.self_managed_kafka.allocation_models import SMK_INFRA_MODEL
+
+        resolution = make_resolution(resource_active=make_identity_set("User:alice"))
+        ctx = make_ctx(smk_billing_line, resolution, Decimal("100"))
+        result = SMK_INFRA_MODEL(ctx)
+        assert len(result.rows) == 1
+        assert result.rows[0].identity_id == "User:alice"
+        assert result.rows[0].metadata["chain_tier"] == 1
+        assert result.rows[0].allocation_detail == AllocationDetail.NO_ACTIVE_IDENTITIES_LOCATED
+        assert result.rows[0].cost_type == CostType.SHARED
+
+    def test_tier2_terminal_unallocated(self, smk_billing_line: BillingLineItem) -> None:
+        """All sets empty → UNALLOCATED, chain_tier=2, NO_IDENTITIES_LOCATED."""
+        from plugins.self_managed_kafka.allocation_models import SMK_INFRA_MODEL
+
+        resolution = make_resolution()
+        ctx = make_ctx(smk_billing_line, resolution, Decimal("100"))
+        result = SMK_INFRA_MODEL(ctx)
+        assert len(result.rows) == 1
+        assert result.rows[0].identity_id == "UNALLOCATED"
+        assert result.rows[0].metadata["chain_tier"] == 2
+        assert result.rows[0].allocation_detail == AllocationDetail.NO_IDENTITIES_LOCATED
+        assert result.rows[0].cost_type == CostType.SHARED
+
+    def test_compute_and_storage_share_infra_model(self) -> None:
+        """get_allocator returns SMK_INFRA_MODEL for both COMPUTE and STORAGE."""
+        from plugins.self_managed_kafka.allocation_models import SMK_INFRA_MODEL
+        from plugins.self_managed_kafka.handlers.kafka import SelfManagedKafkaHandler
+
+        config = make_smk_config()
+        handler = SelfManagedKafkaHandler(config=config, metrics_source=MagicMock())
+        assert handler.get_allocator("SELF_KAFKA_COMPUTE") is SMK_INFRA_MODEL
+        assert handler.get_allocator("SELF_KAFKA_STORAGE") is SMK_INFRA_MODEL
+        assert isinstance(handler.get_allocator("SELF_KAFKA_COMPUTE"), ChainModel)
+
+    def test_network_ingress_model_unaffected(self) -> None:
+        """get_allocator('SELF_KAFKA_NETWORK_INGRESS') returns SMK_INGRESS_MODEL, not SMK_INFRA_MODEL."""
+        from plugins.self_managed_kafka.allocation_models import SMK_INFRA_MODEL, SMK_INGRESS_MODEL
+        from plugins.self_managed_kafka.handlers.kafka import SelfManagedKafkaHandler
+
+        config = make_smk_config()
+        handler = SelfManagedKafkaHandler(config=config, metrics_source=MagicMock())
+        assert handler.get_allocator("SELF_KAFKA_NETWORK_INGRESS") is SMK_INGRESS_MODEL
+        assert handler.get_allocator("SELF_KAFKA_NETWORK_INGRESS") is not SMK_INFRA_MODEL
+
+    def test_get_allocator_raises_for_unknown_product_type(self) -> None:
+        """get_allocator raises ValueError for unknown product type."""
+        from plugins.self_managed_kafka.handlers.kafka import SelfManagedKafkaHandler
+
+        config = make_smk_config()
+        handler = SelfManagedKafkaHandler(config=config, metrics_source=MagicMock())
+        with pytest.raises(ValueError, match="Unknown product type"):
+            handler.get_allocator("UNKNOWN_TYPE")

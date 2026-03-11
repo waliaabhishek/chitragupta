@@ -76,3 +76,36 @@ def make_smk_network_model(metric_key: str) -> ChainModel:
 
 SMK_INGRESS_MODEL = make_smk_network_model(metric_key="bytes_in_per_principal")
 SMK_EGRESS_MODEL = make_smk_network_model(metric_key="bytes_out_per_principal")
+
+# ---------------------------------------------------------------------------
+# SMK infrastructure allocation model (COMPUTE, STORAGE)
+#
+# 3-tier chain — SMK-specific conventions:
+#   Tier 0: EvenSplit over metrics_derived  -> CostType.USAGE  (active principals in billing window)
+#   Tier 1: EvenSplit over resource_active  -> CostType.SHARED + NO_ACTIVE_IDENTITIES_LOCATED
+#   Tier 2: Terminal to UNALLOCATED         -> CostType.SHARED + NO_IDENTITIES_LOCATED
+#
+# Tier 0 uses metrics_derived (not merged_active) so that Tier 1 is reachable.
+# merged_active = resource_active ∪ metrics_derived — if Tier 0 used merged_active,
+# Tier 1 (resource_active) could never fire (always a subset of Tier 0).
+# ---------------------------------------------------------------------------
+
+SMK_INFRA_MODEL = ChainModel(
+    models=[
+        EvenSplitModel(
+            source=lambda ctx: sorted(ctx.identities.metrics_derived.ids()),
+            cost_type=CostType.USAGE,
+        ),
+        EvenSplitModel(
+            source=lambda ctx: sorted(ctx.identities.resource_active.ids()),
+            cost_type=CostType.SHARED,
+            detail=AllocationDetail.NO_ACTIVE_IDENTITIES_LOCATED,
+        ),
+        TerminalModel(
+            identity_id="UNALLOCATED",
+            cost_type=CostType.SHARED,
+            detail=AllocationDetail.NO_IDENTITIES_LOCATED,
+        ),
+    ],
+    log_fallbacks=True,
+)

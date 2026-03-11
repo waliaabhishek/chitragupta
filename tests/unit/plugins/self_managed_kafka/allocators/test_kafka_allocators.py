@@ -341,25 +341,29 @@ def smk_config() -> SelfManagedKafkaConfig:
 
 
 class TestTask024HandlerAllocatorIdentity:
-    """TASK-024: handler.get_allocator must return allocate_evenly_with_fallback directly for COMPUTE/STORAGE."""
+    """TASK-079: handler.get_allocator must return SMK_INFRA_MODEL (ChainModel) for COMPUTE/STORAGE."""
 
-    def test_compute_allocator_is_allocate_evenly_with_fallback(self, smk_config) -> None:
+    def test_compute_allocator_is_smk_infra_model(self, smk_config) -> None:
         from unittest.mock import MagicMock
 
-        from core.engine.helpers import allocate_evenly_with_fallback
+        from core.engine.allocation_models import ChainModel
+        from plugins.self_managed_kafka.allocation_models import SMK_INFRA_MODEL
         from plugins.self_managed_kafka.handlers.kafka import SelfManagedKafkaHandler
 
         handler = SelfManagedKafkaHandler(config=smk_config, metrics_source=MagicMock())
-        assert handler.get_allocator("SELF_KAFKA_COMPUTE") is allocate_evenly_with_fallback
+        assert handler.get_allocator("SELF_KAFKA_COMPUTE") is SMK_INFRA_MODEL
+        assert isinstance(handler.get_allocator("SELF_KAFKA_COMPUTE"), ChainModel)
 
-    def test_storage_allocator_is_allocate_evenly_with_fallback(self, smk_config) -> None:
+    def test_storage_allocator_is_smk_infra_model(self, smk_config) -> None:
         from unittest.mock import MagicMock
 
-        from core.engine.helpers import allocate_evenly_with_fallback
+        from core.engine.allocation_models import ChainModel
+        from plugins.self_managed_kafka.allocation_models import SMK_INFRA_MODEL
         from plugins.self_managed_kafka.handlers.kafka import SelfManagedKafkaHandler
 
         handler = SelfManagedKafkaHandler(config=smk_config, metrics_source=MagicMock())
-        assert handler.get_allocator("SELF_KAFKA_STORAGE") is allocate_evenly_with_fallback
+        assert handler.get_allocator("SELF_KAFKA_STORAGE") is SMK_INFRA_MODEL
+        assert isinstance(handler.get_allocator("SELF_KAFKA_STORAGE"), ChainModel)
 
 
 class TestTask024NetworkFallbackParity:

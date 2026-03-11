@@ -14,9 +14,8 @@ from collections.abc import Iterable, Sequence
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
-from core.engine.helpers import allocate_evenly_with_fallback
 from core.models import Identity, IdentityResolution, IdentitySet, MetricQuery, Resource
-from plugins.self_managed_kafka.allocation_models import SMK_EGRESS_MODEL, SMK_INGRESS_MODEL
+from plugins.self_managed_kafka.allocation_models import SMK_EGRESS_MODEL, SMK_INFRA_MODEL, SMK_INGRESS_MODEL
 
 if TYPE_CHECKING:
     from core.metrics.protocol import MetricsSource
@@ -55,8 +54,8 @@ _BYTES_OUT_PER_PRINCIPAL = MetricQuery(
 _PRINCIPAL_USAGE_METRICS: list[MetricQuery] = [_BYTES_IN_PER_PRINCIPAL, _BYTES_OUT_PER_PRINCIPAL]
 
 _ALLOCATOR_MAP: dict[str, CostAllocator] = {
-    "SELF_KAFKA_COMPUTE": allocate_evenly_with_fallback,
-    "SELF_KAFKA_STORAGE": allocate_evenly_with_fallback,
+    "SELF_KAFKA_COMPUTE": SMK_INFRA_MODEL,
+    "SELF_KAFKA_STORAGE": SMK_INFRA_MODEL,
     "SELF_KAFKA_NETWORK_INGRESS": SMK_INGRESS_MODEL,
     "SELF_KAFKA_NETWORK_EGRESS": SMK_EGRESS_MODEL,
 }
