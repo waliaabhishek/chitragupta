@@ -5,42 +5,93 @@ from collections.abc import Iterable, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
-from core.engine.helpers import allocate_by_usage_ratio, allocate_evenly_with_fallback
-from core.models import CoreIdentity, Identity, IdentityResolution, IdentitySet, MetricQuery, Resource
+from core.engine.allocation_models import ChainModel, EvenSplitModel, TerminalModel, UsageRatioModel
+from core.models import CoreIdentity, CostType, Identity, IdentityResolution, IdentitySet, MetricQuery, Resource
+from core.models.chargeback import AllocationDetail
 from plugins.generic_metrics_only.shared_context import GenericSharedContext
 
 if TYPE_CHECKING:
-    from core.engine.allocation import AllocationContext, AllocationResult
+    from core.engine.allocation import AllocationContext
     from core.metrics.protocol import MetricsSource
     from core.models import MetricRow
     from core.plugin.protocols import CostAllocator, ResolveContext
     from core.storage.interface import UnitOfWork
-    from plugins.generic_metrics_only.config import GenericMetricsOnlyConfig
+    from plugins.generic_metrics_only.config import CostTypeConfig, GenericMetricsOnlyConfig
 
 logger = logging.getLogger(__name__)
 
 
-def _make_usage_ratio_allocator(label: str, metric_key: str) -> CostAllocator:
-    def allocator(ctx: AllocationContext) -> AllocationResult:
-        if not ctx.metrics_data:
-            return allocate_evenly_with_fallback(ctx)
-        identity_values: dict[str, float] = {}
-        for row in ctx.metrics_data.get(metric_key, []):
-            identity_id = row.labels.get(label)
-            if identity_id and row.value > 0:
-                identity_values[identity_id] = identity_values.get(identity_id, 0.0) + row.value
-        if not identity_values:
-            return allocate_evenly_with_fallback(ctx)
-        return allocate_by_usage_ratio(ctx, identity_values)
+def make_model_from_config(ct: CostTypeConfig) -> ChainModel:
+    """Build a ChainModel for the given cost type configuration.
 
-    return allocator  # type: ignore[return-value]  # closure satisfies CostAllocator protocol at runtime
+    even_split strategy (2-tier):
+        Tier 0: EvenSplitModel(merged_active)  — metrics + static combined
+        Tier 1: TerminalModel(UNALLOCATED)      — no identities at all
+        (No resource_active tier: merged_active ⊇ resource_active, so a separate
+        resource_active tier is dead code.)
+
+    usage_ratio strategy (3-tier):
+        Tier 0: UsageRatioModel(usage_source)  — allocate by label metric values
+        Tier 1: EvenSplitModel(merged_active)  — fallback when no metric data
+        Tier 2: TerminalModel(UNALLOCATED)      — fallback when no identities
+    """
+    if ct.allocation_strategy == "even_split":
+        return ChainModel(
+            models=[
+                EvenSplitModel(
+                    source=lambda ctx: sorted(ctx.identities.merged_active.ids()),
+                    cost_type=CostType.SHARED,
+                    detail=AllocationDetail.EVEN_SPLIT_ALLOCATION,
+                ),
+                TerminalModel(
+                    identity_id="UNALLOCATED",
+                    cost_type=CostType.SHARED,
+                    detail=AllocationDetail.NO_IDENTITIES_LOCATED,
+                ),
+            ],
+            log_fallbacks=True,
+        )
+    else:
+        # usage_ratio — ct.allocation_label validated non-None by CostTypeConfig.validate_usage_ratio_fields
+        label = ct.allocation_label  # type: ignore[assignment]  # validated non-None
+        metric_key = f"alloc_{ct.name}"
+
+        def usage_source(ctx: AllocationContext) -> dict[str, float]:
+            if not ctx.metrics_data:
+                return {}
+            result: dict[str, float] = {}
+            for row in ctx.metrics_data.get(metric_key, []):
+                identity_id = row.labels.get(label)
+                if identity_id and row.value > 0:
+                    result[identity_id] = result.get(identity_id, 0.0) + row.value
+            return result
+
+        return ChainModel(
+            models=[
+                UsageRatioModel(
+                    usage_source=usage_source,
+                    detail=AllocationDetail.USAGE_RATIO_ALLOCATION,
+                ),
+                EvenSplitModel(
+                    source=lambda ctx: sorted(ctx.identities.merged_active.ids()),
+                    cost_type=CostType.SHARED,
+                    detail=AllocationDetail.NO_METRICS_LOCATED,
+                ),
+                TerminalModel(
+                    identity_id="UNALLOCATED",
+                    cost_type=CostType.SHARED,
+                    detail=AllocationDetail.NO_IDENTITIES_LOCATED,
+                ),
+            ],
+            log_fallbacks=True,
+        )
 
 
 class GenericMetricsOnlyHandler:
     """ServiceHandler for any metrics-only ecosystem.
 
     All cost types are handled by one handler (single cluster resource = single
-    billable unit). Allocators and metrics map are built from config at __init__ time.
+    billable unit). Models and metrics map are built from config at __init__ time.
     """
 
     def __init__(
@@ -52,30 +103,29 @@ class GenericMetricsOnlyHandler:
         self._metrics_source = metrics_source
         self._ecosystem = config.ecosystem_name
         self._handles_product_types: tuple[str, ...] = tuple(ct.name for ct in config.cost_types)
-        # Build allocators and metrics map once from config
-        self._allocator_map: dict[str, CostAllocator] = {}
-        self._metrics_map: dict[str, list[MetricQuery]] = {}
+        # Build discovery query once (reused in _metrics_map and _gather_from_prometheus)
         cfg = config.identity_source
+        self._discovery_query: MetricQuery | None = (
+            MetricQuery(
+                key="discovery",
+                query_expression=cfg.discovery_query,  # type: ignore[arg-type]  # validated non-None by GenericIdentitySourceConfig.validate_discovery_query
+                label_keys=(cfg.label,),
+                resource_label=cfg.label,
+            )
+            if cfg.source in ("prometheus", "both")
+            else None
+        )
+        # Build models and metrics map once from config
+        self._model_map: dict[str, ChainModel] = {}
+        self._metrics_map: dict[str, list[MetricQuery]] = {}
         for ct in config.cost_types:
+            self._model_map[ct.name] = make_model_from_config(ct)
             if ct.allocation_strategy == "even_split":
-                self._allocator_map[ct.name] = allocate_evenly_with_fallback
-                if cfg.source in ("prometheus", "both"):
-                    self._metrics_map[ct.name] = [
-                        MetricQuery(
-                            key="discovery",
-                            query_expression=cfg.discovery_query,  # type: ignore[arg-type]  # validated non-None by GenericIdentitySourceConfig.validate_discovery_query
-                            label_keys=(cfg.label,),
-                            resource_label=cfg.label,
-                        )
-                    ]
+                if self._discovery_query is not None:
+                    self._metrics_map[ct.name] = [self._discovery_query]
                 else:
                     self._metrics_map[ct.name] = []
             else:
-                # metric_key must match what _metrics_map returns
-                self._allocator_map[ct.name] = _make_usage_ratio_allocator(
-                    ct.allocation_label,  # type: ignore[arg-type]  # validated non-None in CostTypeConfig
-                    f"alloc_{ct.name}",
-                )
                 self._metrics_map[ct.name] = [
                     MetricQuery(
                         key=f"alloc_{ct.name}",
@@ -108,12 +158,7 @@ class GenericMetricsOnlyHandler:
 
     def _gather_from_prometheus(self, tenant_id: str) -> Iterable[Identity]:
         cfg = self._config.identity_source
-        query = MetricQuery(
-            key="discovery",
-            query_expression=cfg.discovery_query,  # type: ignore[arg-type]  # validated non-None
-            label_keys=(cfg.label,),
-            resource_label=cfg.label,
-        )
+        query = self._discovery_query
         now = datetime.now(UTC)
         step = timedelta(seconds=self._config.metrics_step_seconds)
         results = self._metrics_source.query(queries=[query], start=now - timedelta(hours=1), end=now, step=step)
@@ -197,7 +242,7 @@ class GenericMetricsOnlyHandler:
 
     def get_allocator(self, product_type: str) -> CostAllocator:
         try:
-            return self._allocator_map[product_type]
+            return self._model_map[product_type]
         except KeyError:
             msg = f"Unknown product type: {product_type}"
             raise ValueError(msg) from None

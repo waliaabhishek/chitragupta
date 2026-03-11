@@ -101,13 +101,16 @@ class TestCircularImports:
     def test_no_circular_import_with_allocation(self) -> None:
         import sys
 
-        # Remove cached modules to force fresh import
-        for key in list(sys.modules.keys()):
-            if "core.engine.allocation" in key:
-                del sys.modules[key]
+        saved = {k: v for k, v in sys.modules.items() if "core.engine.allocation" in k}
+        try:
+            for key in list(sys.modules.keys()):
+                if "core.engine.allocation" in key:
+                    del sys.modules[key]
 
-        import core.engine.allocation  # noqa: F401
-        import core.engine.allocation_models  # noqa: F401
+            import core.engine.allocation  # noqa: F401
+            import core.engine.allocation_models  # noqa: F401
+        finally:
+            sys.modules.update(saved)
 
 
 # ---------------------------------------------------------------------------
