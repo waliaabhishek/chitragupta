@@ -8,7 +8,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
 from core.engine.allocation import AllocationContext, AllocationResult
-from core.models import OWNER_IDENTITY_TYPES, ChargebackRow, CostType, Resource
+from core.models import ChargebackRow, CostType, Resource
 from core.models.chargeback import AllocationDetail
 
 logger = logging.getLogger(__name__)
@@ -143,24 +143,6 @@ def allocate_evenly(
         for ident, amt in zip(identity_ids, amounts, strict=True)
     ]
     return AllocationResult(rows=rows)
-
-
-def allocate_evenly_with_fallback(ctx: AllocationContext) -> AllocationResult:
-    """Even split using standard fallback chain: merged_active → tenant_period → UNALLOCATED.
-
-    Standard allocator for infrastructure costs where all active tenants benefit equally.
-    Delegates to allocate_evenly() which handles the UNALLOCATED terminal case.
-    """
-    identity_ids = list(ctx.identities.merged_active.ids())
-    if not identity_ids:
-        identity_ids = sorted(ctx.identities.tenant_period.ids_by_type(*OWNER_IDENTITY_TYPES))
-    if not identity_ids:
-        logger.warning(
-            "No identities for resource=%s product=%s — allocating to UNALLOCATED",
-            ctx.billing_line.resource_id,
-            ctx.billing_line.product_type,
-        )
-    return allocate_evenly(ctx, identity_ids)
 
 
 def allocate_hybrid(

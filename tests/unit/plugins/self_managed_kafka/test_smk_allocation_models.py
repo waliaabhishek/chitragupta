@@ -368,7 +368,7 @@ class TestSmkModelIndependence:
 
 
 # ---------------------------------------------------------------------------
-# Test 9: COMPUTE/STORAGE unaffected — get_allocator returns allocate_evenly_with_fallback
+# Test 9: COMPUTE/STORAGE use SMK_INFRA_MODEL (ChainModel)
 # ---------------------------------------------------------------------------
 
 

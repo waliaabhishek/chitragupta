@@ -435,18 +435,22 @@ class TestGetMetricsForProductType:
 
 class TestGetAllocator:
     def test_compute_allocator(self, base_config, mock_metrics_source):
-        from core.engine.helpers import allocate_evenly_with_fallback
+        from core.engine.allocation_models import ChainModel
+        from plugins.self_managed_kafka.allocation_models import SMK_INFRA_MODEL
         from plugins.self_managed_kafka.handlers.kafka import SelfManagedKafkaHandler
 
         handler = SelfManagedKafkaHandler(base_config, mock_metrics_source)
-        assert handler.get_allocator("SELF_KAFKA_COMPUTE") is allocate_evenly_with_fallback
+        assert handler.get_allocator("SELF_KAFKA_COMPUTE") is SMK_INFRA_MODEL
+        assert isinstance(handler.get_allocator("SELF_KAFKA_COMPUTE"), ChainModel)
 
     def test_storage_allocator(self, base_config, mock_metrics_source):
-        from core.engine.helpers import allocate_evenly_with_fallback
+        from core.engine.allocation_models import ChainModel
+        from plugins.self_managed_kafka.allocation_models import SMK_INFRA_MODEL
         from plugins.self_managed_kafka.handlers.kafka import SelfManagedKafkaHandler
 
         handler = SelfManagedKafkaHandler(base_config, mock_metrics_source)
-        assert handler.get_allocator("SELF_KAFKA_STORAGE") is allocate_evenly_with_fallback
+        assert handler.get_allocator("SELF_KAFKA_STORAGE") is SMK_INFRA_MODEL
+        assert isinstance(handler.get_allocator("SELF_KAFKA_STORAGE"), ChainModel)
 
     def test_network_ingress_allocator(self, base_config, mock_metrics_source):
         from plugins.self_managed_kafka.allocation_models import SMK_INGRESS_MODEL

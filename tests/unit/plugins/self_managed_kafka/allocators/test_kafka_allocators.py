@@ -366,42 +366,6 @@ class TestTask024HandlerAllocatorIdentity:
         assert isinstance(handler.get_allocator("SELF_KAFKA_STORAGE"), ChainModel)
 
 
-class TestTask024NetworkFallbackParity:
-    """TASK-024: Network allocators fallback to even split when metrics absent."""
-
-    def test_network_ingress_fallback_matches_allocate_evenly_with_fallback(self, base_billing_line) -> None:
-        from core.engine.helpers import allocate_evenly_with_fallback
-        from plugins.self_managed_kafka.allocation_models import SMK_INGRESS_MODEL
-
-        billing_line = CoreBillingLineItem(
-            **{**base_billing_line.__dict__, "product_type": "SELF_KAFKA_NETWORK_INGRESS"}
-        )
-        resolution = make_resolution(resource_active=make_identity_set("User:alice", "User:bob"))
-        ctx = make_ctx(billing_line, resolution, metrics_data=None)
-
-        network_result = SMK_INGRESS_MODEL(ctx)
-        fallback_result = allocate_evenly_with_fallback(ctx)
-
-        assert {r.identity_id for r in network_result.rows} == {r.identity_id for r in fallback_result.rows}
-        assert sum(r.amount for r in network_result.rows) == sum(r.amount for r in fallback_result.rows)
-
-    def test_network_egress_fallback_matches_allocate_evenly_with_fallback(self, base_billing_line) -> None:
-        from core.engine.helpers import allocate_evenly_with_fallback
-        from plugins.self_managed_kafka.allocation_models import SMK_EGRESS_MODEL
-
-        billing_line = CoreBillingLineItem(
-            **{**base_billing_line.__dict__, "product_type": "SELF_KAFKA_NETWORK_EGRESS"}
-        )
-        resolution = make_resolution(resource_active=make_identity_set("User:alice", "User:bob"))
-        ctx = make_ctx(billing_line, resolution, metrics_data=None)
-
-        network_result = SMK_EGRESS_MODEL(ctx)
-        fallback_result = allocate_evenly_with_fallback(ctx)
-
-        assert {r.identity_id for r in network_result.rows} == {r.identity_id for r in fallback_result.rows}
-        assert sum(r.amount for r in network_result.rows) == sum(r.amount for r in fallback_result.rows)
-
-
 class TestGap23TenantPeriodFallback:
     """GAP-23: resource_active fallback splits evenly across static identities."""
 

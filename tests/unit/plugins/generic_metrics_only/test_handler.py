@@ -353,14 +353,14 @@ class TestHandlerResolveIdentities:
 
 
 class TestTask024EvenSplitAllocatorAssignment:
-    """TASK-024: _make_even_split_allocator removed; __init__ assigns allocate_evenly_with_fallback directly."""
+    """TASK-024: _make_even_split_allocator removed; even-split cost types use a ChainModel directly."""
 
     def test_make_even_split_allocator_not_in_handler_module(self) -> None:
         from plugins.generic_metrics_only import handler as handler_module
 
         assert not hasattr(handler_module, "_make_even_split_allocator")
 
-    def test_even_split_cost_type_gets_allocate_evenly_with_fallback_directly(self, pg_config, mock_metrics) -> None:
+    def test_even_split_cost_type_gets_chain_model_directly(self, pg_config, mock_metrics) -> None:
         from core.engine.allocation_models import ChainModel
         from plugins.generic_metrics_only.handler import GenericMetricsOnlyHandler
 

@@ -70,8 +70,7 @@ def make_row(key: str, value: float, labels: dict | None = None) -> MetricRow:
 class TestFullPrometheusPipeline:
     def test_compute_storage_even_split_network_usage_ratio(self, prometheus_settings, mock_prometheus):
         """Full gather→resolve→allocate flow with mixed allocation strategies."""
-        from core.engine.helpers import allocate_evenly_with_fallback as self_kafka_compute_allocator
-        from plugins.self_managed_kafka.allocation_models import SMK_INGRESS_MODEL
+        from plugins.self_managed_kafka.allocation_models import SMK_INFRA_MODEL, SMK_INGRESS_MODEL
         from plugins.self_managed_kafka.config import SelfManagedKafkaConfig
         from plugins.self_managed_kafka.cost_input import ConstructedCostInput
 
@@ -114,7 +113,7 @@ class TestFullPrometheusPipeline:
             split_amount=compute_line.total_cost,
             metrics_data=None,
         )
-        compute_result = self_kafka_compute_allocator(ctx)
+        compute_result = SMK_INFRA_MODEL(ctx)
         compute_total = sum(r.amount for r in compute_result.rows)
         assert compute_total == compute_line.total_cost
         # Even split: alice and bob get equal share
