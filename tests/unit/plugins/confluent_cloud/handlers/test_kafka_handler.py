@@ -43,7 +43,7 @@ class TestKafkaHandlerGetAllocator:
     def test_cku_allocator(self) -> None:
         """KAFKA_NUM_CKU returns kafka_num_cku_allocator."""
         from plugins.confluent_cloud.allocators.kafka_allocators import (
-            kafka_num_cku_allocator,
+            kafka_cku_allocator as kafka_num_cku_allocator,
         )
         from plugins.confluent_cloud.handlers.kafka import KafkaHandler
 
@@ -53,7 +53,7 @@ class TestKafkaHandlerGetAllocator:
     def test_ckus_allocator(self) -> None:
         """KAFKA_NUM_CKUS returns kafka_num_cku_allocator."""
         from plugins.confluent_cloud.allocators.kafka_allocators import (
-            kafka_num_cku_allocator,
+            kafka_cku_allocator as kafka_num_cku_allocator,
         )
         from plugins.confluent_cloud.handlers.kafka import KafkaHandler
 

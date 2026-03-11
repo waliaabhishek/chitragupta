@@ -361,3 +361,36 @@ def make_dynamic_cku_model() -> DynamicCompositionModel:
 
 
 _CKU_DYNAMIC_MODEL = make_dynamic_cku_model()
+
+
+# ---------------------------------------------------------------------------
+# Org-wide allocation model (AUDIT_LOG_READ, SUPPORT)
+#
+# Intentional divergence from reference (which uses cluster_id as terminal):
+#   Tier 0: EvenSplit across tenant_period owners -> shared_cost
+#   Tier 1: UNALLOCATED (terminal)               -> shared_cost + NO_IDENTITIES_LOCATED
+#
+# UNALLOCATED terminal is correct because org-wide costs have no meaningful
+# resource association.
+#
+# _ORG_WIDE_OWNER_TYPES excludes "principal" from OWNER_IDENTITY_TYPES because
+# org-wide costs should not be attributed to raw API-key-resolved principals —
+# only to durable identity types (service accounts, users, pools).
+# ---------------------------------------------------------------------------
+
+_ORG_WIDE_OWNER_TYPES = tuple(t for t in OWNER_IDENTITY_TYPES if t != "principal")
+
+ORG_WIDE_MODEL = ChainModel(
+    models=[
+        EvenSplitModel(
+            source=lambda ctx: sorted(ctx.identities.tenant_period.ids_by_type(*_ORG_WIDE_OWNER_TYPES)),
+            cost_type=CostType.SHARED,
+        ),
+        TerminalModel(
+            identity_id="UNALLOCATED",
+            cost_type=CostType.SHARED,
+            detail=AllocationDetail.NO_IDENTITIES_LOCATED,
+        ),
+    ],
+    log_fallbacks=True,
+)
