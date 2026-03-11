@@ -15,7 +15,7 @@ from plugins.self_managed_kafka.handlers.kafka import SelfManagedKafkaHandler
 
 if TYPE_CHECKING:
     from core.metrics.protocol import MetricsSource
-    from core.plugin.protocols import CostInput, ServiceHandler
+    from core.plugin.protocols import CostAllocator, CostInput, ServiceHandler
     from plugins.self_managed_kafka.shared_context import SMKSharedContext
     from plugins.self_managed_kafka.storage.module import SelfManagedKafkaStorageModule
 
@@ -123,6 +123,9 @@ class SelfManagedKafkaPlugin:
     def get_metrics_source(self) -> MetricsSource | None:
         """Return metrics source (always set after initialize)."""
         return self._metrics_source
+
+    def get_fallback_allocator(self) -> CostAllocator | None:
+        return None
 
     def build_shared_context(self, tenant_id: str) -> SMKSharedContext:
         """Build the cluster resource once for the gather cycle.

@@ -175,3 +175,14 @@ class TestSelfManagedKafkaAsGenericYaml:
             "SELF_KAFKA_NETWORK_INGRESS",
             "SELF_KAFKA_NETWORK_EGRESS",
         ]
+
+
+class TestPluginGetFallbackAllocator:
+    """Tests for get_fallback_allocator() — GAP-074."""
+
+    def test_get_fallback_allocator_returns_none(self) -> None:
+        """GenericMetricsOnlyPlugin.get_fallback_allocator() returns None."""
+        from plugins.generic_metrics_only.plugin import GenericMetricsOnlyPlugin
+
+        plugin = GenericMetricsOnlyPlugin()
+        assert plugin.get_fallback_allocator() is None

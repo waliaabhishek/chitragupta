@@ -10,6 +10,7 @@ from plugins.confluent_cloud.allocators.connector_allocators import (
 from plugins.confluent_cloud.allocators.default_allocators import (
     cluster_linking_allocator,
     default_allocator,
+    unknown_allocator,
 )
 from plugins.confluent_cloud.allocators.flink_allocators import flink_cfu_allocator
 from plugins.confluent_cloud.allocators.kafka_allocators import (
@@ -34,4 +35,5 @@ __all__ = [
     "ksqldb_csu_allocator",
     "org_wide_allocator",
     "schema_registry_allocator",
+    "unknown_allocator",
 ]

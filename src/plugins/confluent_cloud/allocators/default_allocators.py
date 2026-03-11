@@ -49,6 +49,29 @@ def default_allocator(ctx: AllocationContext) -> AllocationResult:
     return AllocationResult(rows=[row])
 
 
+def unknown_allocator(ctx: AllocationContext) -> AllocationResult:
+    """Assign full cost to resource_id for unrecognized product types.
+
+    Mirrors reference UnknownAllocator: principal=cluster_id, shared_cost,
+    USING_UNKNOWN_ALLOCATOR detail. Logs a warning so operators can detect
+    new product types that need a dedicated handler.
+    """
+    logger.warning(
+        "unknown_allocator: unrecognized product_type=%s resource=%s — allocating to resource_id",
+        ctx.billing_line.product_type,
+        ctx.billing_line.resource_id,
+    )
+    row = make_row(
+        ctx=ctx,
+        identity_id=ctx.billing_line.resource_id,
+        cost_type=CostType.SHARED,
+        amount=ctx.split_amount,
+        allocation_method="unknown",
+        allocation_detail=AllocationDetail.USING_UNKNOWN_ALLOCATOR,
+    )
+    return AllocationResult(rows=[row])
+
+
 def cluster_linking_allocator(ctx: AllocationContext) -> AllocationResult:
     """Assign full cost to the resource itself.
 

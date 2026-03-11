@@ -6,8 +6,11 @@ GAP-02: Both allocators should attribute cost to the billing resource
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from decimal import Decimal
+
+import pytest
 
 from core.engine.allocation import AllocationContext
 from core.models import CoreBillingLineItem, CostType, IdentityResolution, IdentitySet
@@ -156,3 +159,81 @@ class TestClusterLinkingAllocator:
         assert result.rows[0].identity_id == "lkc-writer-9"
         assert result.rows[0].cost_type == CostType.USAGE
         assert result.rows[0].allocation_detail == CLUSTER_LINKING_COST
+
+
+class TestUnknownAllocator:
+    """Tests for unknown_allocator — GAP-074: fallback for unregistered product types."""
+
+    def test_emits_warning_log_containing_product_type(self, caplog: pytest.LogCaptureFixture) -> None:
+        """unknown_allocator emits WARNING log containing the product_type."""
+        from plugins.confluent_cloud.allocators.default_allocators import unknown_allocator
+
+        ctx = _make_ctx(product_type="MYSTERY_PRODUCT_XYZ", resource_id="res-unknown-1")
+        with caplog.at_level(logging.WARNING):
+            unknown_allocator(ctx)
+
+        assert any("MYSTERY_PRODUCT_XYZ" in r.message for r in caplog.records)
+
+    def test_emits_warning_log_containing_resource_id(self, caplog: pytest.LogCaptureFixture) -> None:
+        """unknown_allocator emits WARNING log containing the resource_id."""
+        from plugins.confluent_cloud.allocators.default_allocators import unknown_allocator
+
+        ctx = _make_ctx(product_type="MYSTERY_PRODUCT_XYZ", resource_id="res-unknown-42")
+        with caplog.at_level(logging.WARNING):
+            unknown_allocator(ctx)
+
+        assert any("res-unknown-42" in r.message for r in caplog.records)
+
+    def test_returns_single_row(self) -> None:
+        """unknown_allocator returns exactly one row."""
+        from plugins.confluent_cloud.allocators.default_allocators import unknown_allocator
+
+        ctx = _make_ctx()
+        result = unknown_allocator(ctx)
+
+        assert len(result.rows) == 1
+
+    def test_identity_id_equals_resource_id(self) -> None:
+        """unknown_allocator sets identity_id == billing_line.resource_id."""
+        from plugins.confluent_cloud.allocators.default_allocators import unknown_allocator
+
+        ctx = _make_ctx(resource_id="res-fallback-99")
+        result = unknown_allocator(ctx)
+
+        assert result.rows[0].identity_id == "res-fallback-99"
+
+    def test_identity_id_is_not_unallocated(self) -> None:
+        """unknown_allocator never produces UNALLOCATED identity."""
+        from plugins.confluent_cloud.allocators.default_allocators import unknown_allocator
+
+        ctx = _make_ctx(resource_id="res-fallback-99")
+        result = unknown_allocator(ctx)
+
+        assert result.rows[0].identity_id != "UNALLOCATED"
+
+    def test_cost_type_is_shared(self) -> None:
+        """unknown_allocator uses CostType.SHARED."""
+        from plugins.confluent_cloud.allocators.default_allocators import unknown_allocator
+
+        ctx = _make_ctx()
+        result = unknown_allocator(ctx)
+
+        assert result.rows[0].cost_type == CostType.SHARED
+
+    def test_allocation_detail_is_using_unknown_allocator(self) -> None:
+        """unknown_allocator sets AllocationDetail.USING_UNKNOWN_ALLOCATOR."""
+        from plugins.confluent_cloud.allocators.default_allocators import unknown_allocator
+
+        ctx = _make_ctx()
+        result = unknown_allocator(ctx)
+
+        assert result.rows[0].allocation_detail == AllocationDetail.USING_UNKNOWN_ALLOCATOR
+
+    def test_allocation_method_is_unknown(self) -> None:
+        """unknown_allocator sets allocation_method to 'unknown'."""
+        from plugins.confluent_cloud.allocators.default_allocators import unknown_allocator
+
+        ctx = _make_ctx()
+        result = unknown_allocator(ctx)
+
+        assert result.rows[0].allocation_method == "unknown"

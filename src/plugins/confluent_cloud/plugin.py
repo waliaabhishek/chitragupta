@@ -17,7 +17,7 @@ from plugins.confluent_cloud.handlers.schema_registry import SchemaRegistryHandl
 
 if TYPE_CHECKING:
     from core.metrics.protocol import MetricsSource
-    from core.plugin.protocols import CostInput, ServiceHandler
+    from core.plugin.protocols import CostAllocator, CostInput, ServiceHandler
     from plugins.confluent_cloud.shared_context import CCloudSharedContext
     from plugins.confluent_cloud.storage.module import CCloudStorageModule
 
@@ -85,6 +85,12 @@ class ConfluentCloudPlugin:
     def get_metrics_source(self) -> MetricsSource | None:
         """Return metrics source if configured, None otherwise."""
         return self._metrics_source
+
+    def get_fallback_allocator(self) -> CostAllocator | None:
+        """Return unknown_allocator for unrecognized product types."""
+        from plugins.confluent_cloud.allocators import unknown_allocator
+
+        return unknown_allocator
 
     def build_shared_context(self, tenant_id: str) -> CCloudSharedContext | None:
         """Gather environments and Kafka clusters once for the entire gather cycle.

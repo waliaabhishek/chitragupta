@@ -410,6 +410,9 @@ class MockPlugin:
     def get_metrics_source(self) -> None:
         return None
 
+    def get_fallback_allocator(self) -> None:
+        return None
+
     def build_shared_context(self, tenant_id: str) -> None:
         return None
 
@@ -957,11 +960,13 @@ class TestCalculatePhasePrefetchMetrics:
 
 
 class TestCalculatePhaseProcessBillingLine:
-    def test_unknown_product_type_returns_1_and_writes_unallocated(self) -> None:
-        """Billing line with unknown product_type → returns 1, writes UNALLOCATED row."""
+    def test_unknown_product_type_no_fallback_returns_0_and_writes_nothing(self) -> None:
+        """Billing line with unknown product_type and no fallback_allocator → returns 0, writes nothing."""
         mock_bundle = MagicMock()
         # No handler for product type
         mock_bundle.product_type_to_handler.get.return_value = None
+        # No fallback allocator configured
+        mock_bundle.fallback_allocator = None
 
         phase = _make_calculate_phase(bundle=mock_bundle)
 
@@ -977,11 +982,8 @@ class TestCalculatePhaseProcessBillingLine:
             line_window_cache=phase._compute_line_window_cache([line]),
         )
 
-        assert rows_written == 1
-        assert len(uow.chargebacks._data) == 1
-        unalloc_row = uow.chargebacks._data[0]
-        assert unalloc_row.identity_id == "UNALLOCATED"
-        assert unalloc_row.allocation_method == "UNKNOWN_PRODUCT_TYPE"
+        assert rows_written == 0
+        assert len(uow.chargebacks._data) == 0
 
     def test_allocation_exception_no_fallback_reraises(self) -> None:
         """Allocation exception + should_fallback=False → re-raises original exception."""

@@ -426,3 +426,14 @@ class TestPluginDiscoveryWindowHours:
 
         _, call_kwargs = mock_discovery.call_args
         assert call_kwargs.get("discovery_window_hours") == 12
+
+
+class TestPluginGetFallbackAllocator:
+    """Tests for get_fallback_allocator() — GAP-074."""
+
+    def test_get_fallback_allocator_returns_none(self) -> None:
+        """SelfManagedKafkaPlugin.get_fallback_allocator() returns None."""
+        from plugins.self_managed_kafka.plugin import SelfManagedKafkaPlugin
+
+        plugin = SelfManagedKafkaPlugin()
+        assert plugin.get_fallback_allocator() is None

@@ -199,11 +199,25 @@ class MockPlugin:
     def get_metrics_source(self) -> None:
         return None
 
+    def get_fallback_allocator(self) -> None:
+        return None
+
     def build_shared_context(self, tenant_id: str) -> None:
         return None
 
     def close(self) -> None:
         pass
+
+
+class MockPluginWithFallback(MockPlugin):
+    """MockPlugin with get_fallback_allocator() for GAP-074 tests."""
+
+    def __init__(self, fallback_allocator: Any = None, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._fallback_allocator = fallback_allocator
+
+    def get_fallback_allocator(self) -> Any:
+        return self._fallback_allocator
 
 
 class MockUnitOfWork:
@@ -309,7 +323,15 @@ class MockBillingRepo:
         self._data: list[BillingLineItem] = []
         self._attempts: dict[tuple[str, str, str], int] = {}
 
+    def _pk(self, line: BillingLineItem) -> tuple[Any, ...]:
+        return (line.ecosystem, line.tenant_id, line.timestamp, line.resource_id, line.product_type)
+
     def upsert(self, line: BillingLineItem) -> BillingLineItem:
+        pk = self._pk(line)
+        for i, existing in enumerate(self._data):
+            if self._pk(existing) == pk:
+                self._data[i] = line
+                return line
         self._data.append(line)
         return line
 
@@ -652,8 +674,8 @@ class TestCalculatePhase:
         result = orch.run()
         assert result.dates_calculated >= 0  # may be 0 if resources_gathered not set for that date
 
-    def test_unknown_product_type_allocates_to_unallocated(self) -> None:
-        """Billing line with unmapped product_type goes to UNALLOCATED."""
+    def test_unknown_product_type_no_fallback_skips_line(self) -> None:
+        """Billing line with unmapped product_type and no fallback_allocator — skipped, no row written."""
         handler = MockServiceHandler(
             product_types=["KAFKA_CKU"],
             resources=[_make_resource()],
@@ -678,10 +700,9 @@ class TestCalculatePhase:
         uow.billing.upsert(line)
 
         orch.run()
-        # Should have allocated to UNALLOCATED
-        unalloc_rows = [r for r in uow.chargebacks._data if r.identity_id == "UNALLOCATED"]
-        assert len(unalloc_rows) >= 1
-        assert unalloc_rows[0].allocation_method == "UNKNOWN_PRODUCT_TYPE"
+        # No fallback_allocator on MockPlugin — line is skipped, no chargeback row produced
+        unknown_rows = [r for r in uow.chargebacks._data if r.product_type == "UNKNOWN_THING"]
+        assert len(unknown_rows) == 0
 
     def test_empty_billing_marks_calculated(self) -> None:
         handler = MockServiceHandler(resources=[_make_resource()], identities=[_make_identity()])
@@ -2430,3 +2451,124 @@ class TestCalculatePhaseLineWindowCache:
         assert b_start == ts
         assert b_duration == timedelta(days=28)
         assert b_end == ts + timedelta(days=28)
+
+
+# ---------- GAP-074: Fallback allocator tests ----------
+
+
+def _create_orchestrator_with_fallback(
+    handler: MockServiceHandler | None = None,
+    fallback_allocator: Any = None,
+    cost_input: MockCostInput | None = None,
+    storage: MockStorageBackend | None = None,
+) -> tuple[ChargebackOrchestrator, MockStorageBackend]:
+    """Create orchestrator backed by MockPluginWithFallback."""
+    if handler is None:
+        handler = MockServiceHandler(
+            resources=[_make_resource()],
+            identities=[_make_identity()],
+        )
+    if cost_input is None:
+        cost_input = MockCostInput()
+    plugin = MockPluginWithFallback(
+        handlers={"kafka": handler},
+        cost_input=cost_input,
+        fallback_allocator=fallback_allocator,
+    )
+    if storage is None:
+        storage = MockStorageBackend()
+    tc = _make_tenant_config()
+    orch = ChargebackOrchestrator(TENANT_NAME, tc, plugin, storage, None)
+    return orch, storage
+
+
+def _setup_pipeline_state_for_line(uow: MockUnitOfWork, line: Any) -> None:
+    """Pre-populate pipeline state so the orchestrator processes the billing line."""
+    from core.models.pipeline import PipelineState
+
+    ps = PipelineState(
+        ecosystem=ECOSYSTEM,
+        tenant_id=TENANT_ID,
+        tracking_date=line.timestamp.date(),
+        billing_gathered=True,
+        resources_gathered=True,
+    )
+    uow.pipeline_state.upsert(ps)
+    uow.billing.upsert(line)
+
+
+class TestOrchestratorFallbackAllocator:
+    """GAP-074: Orchestrator uses bundle.fallback_allocator for unknown product types."""
+
+    def test_unknown_product_type_uses_fallback_allocator_row(self) -> None:
+        """_process_billing_line calls bundle.fallback_allocator for unregistered product_type."""
+        from plugins.confluent_cloud.allocators.default_allocators import unknown_allocator
+
+        handler = MockServiceHandler(
+            product_types=["KAFKA_CKU"],
+            resources=[_make_resource()],
+            identities=[_make_identity()],
+        )
+        line = _make_billing_line(
+            product_type="TOTALLY_UNKNOWN_PRODUCT",
+            resource_id="res-fallback-001",
+            timestamp=NOW - timedelta(days=10),
+        )
+        cost_input = MockCostInput([line])
+        orch, storage = _create_orchestrator_with_fallback(
+            handler=handler,
+            fallback_allocator=unknown_allocator,
+            cost_input=cost_input,
+        )
+        uow = storage.create_unit_of_work()
+        _setup_pipeline_state_for_line(uow, line)
+
+        orch.run()
+
+        fallback_rows = [r for r in uow.chargebacks._data if r.product_type == "TOTALLY_UNKNOWN_PRODUCT"]
+        assert len(fallback_rows) == 1
+        assert fallback_rows[0].identity_id == "res-fallback-001"
+
+    def test_unknown_product_type_no_unallocated_row_when_fallback_set(self) -> None:
+        """With fallback_allocator set, unknown product_type produces NO UNALLOCATED row."""
+        from plugins.confluent_cloud.allocators.default_allocators import unknown_allocator
+
+        handler = MockServiceHandler(
+            product_types=["KAFKA_CKU"],
+            resources=[_make_resource()],
+            identities=[_make_identity()],
+        )
+        line = _make_billing_line(
+            product_type="TOTALLY_UNKNOWN_PRODUCT",
+            resource_id="res-fallback-002",
+            timestamp=NOW - timedelta(days=10),
+        )
+        cost_input = MockCostInput([line])
+        orch, storage = _create_orchestrator_with_fallback(
+            handler=handler,
+            fallback_allocator=unknown_allocator,
+            cost_input=cost_input,
+        )
+        uow = storage.create_unit_of_work()
+        _setup_pipeline_state_for_line(uow, line)
+
+        orch.run()
+
+        unalloc_rows = [
+            r
+            for r in uow.chargebacks._data
+            if r.identity_id == "UNALLOCATED" and r.product_type == "TOTALLY_UNKNOWN_PRODUCT"
+        ]
+        assert len(unalloc_rows) == 0
+
+    def test_orchestrator_py_has_no_from_plugins_imports(self) -> None:
+        """orchestrator.py must not import from plugins.* (DIP compliance)."""
+        import ast
+        import pathlib
+
+        source = pathlib.Path("src/core/engine/orchestrator.py").read_text()
+        tree = ast.parse(source)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                if node.module and node.module.startswith("plugins"):
+                    pytest.fail(f"orchestrator.py has forbidden import: from {node.module}")

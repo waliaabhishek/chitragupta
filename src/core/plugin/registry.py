@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from core.plugin.protocols import EcosystemPlugin, ServiceHandler
+    from core.plugin.protocols import CostAllocator, EcosystemPlugin, ServiceHandler
 logger = logging.getLogger(__name__)
 
 
@@ -17,6 +17,7 @@ class EcosystemBundle:
     plugin: EcosystemPlugin
     handlers: dict[str, ServiceHandler]
     product_type_to_handler: dict[str, ServiceHandler]
+    fallback_allocator: CostAllocator | None = None
 
     @staticmethod
     def build(plugin: EcosystemPlugin) -> EcosystemBundle:
@@ -43,6 +44,7 @@ class EcosystemBundle:
             plugin=plugin,
             handlers=handlers,
             product_type_to_handler=product_type_to_handler,
+            fallback_allocator=plugin.get_fallback_allocator(),
         )
 
 

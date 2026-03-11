@@ -121,6 +121,9 @@ class _FakePlugin:
     def get_metrics_source(self) -> None:
         return None
 
+    def get_fallback_allocator(self) -> None:
+        return None
+
     def build_shared_context(self, tenant_id: str) -> object:
         self.build_shared_context_call_count += 1
         return self._shared_ctx_value

@@ -104,6 +104,24 @@ class StubPlugin:
     def get_cost_input(self) -> CostInput:
         return StubCostInput()
 
+    def get_fallback_allocator(self) -> None:
+        return None
+
+
+class StubPluginWithFallback(StubPlugin):
+    """StubPlugin with get_fallback_allocator() support."""
+
+    def __init__(
+        self,
+        fallback: Any = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(**kwargs)
+        self._fallback = fallback
+
+    def get_fallback_allocator(self) -> Any:
+        return self._fallback
+
 
 # --- PluginRegistry tests ---
 
@@ -198,3 +216,37 @@ class TestEcosystemBundle:
 
         with pytest.raises(KeyError):
             bundle.product_type_to_handler["NONEXISTENT"]
+
+
+class TestEcosystemBundleFallbackAllocator:
+    """Tests for EcosystemBundle.fallback_allocator — GAP-074."""
+
+    def test_fallback_allocator_set_from_plugin_get_fallback_allocator(self) -> None:
+        """EcosystemBundle.fallback_allocator is set from plugin.get_fallback_allocator()."""
+
+        def my_fallback(ctx: Any) -> Any:
+            return None
+
+        plugin = StubPluginWithFallback(fallback=my_fallback)
+        bundle = EcosystemBundle.build(plugin)
+
+        assert bundle.fallback_allocator is my_fallback
+
+    def test_fallback_allocator_is_none_when_plugin_returns_none(self) -> None:
+        """EcosystemBundle.fallback_allocator is None when plugin returns None."""
+        plugin = StubPluginWithFallback(fallback=None)
+        bundle = EcosystemBundle.build(plugin)
+
+        assert bundle.fallback_allocator is None
+
+    def test_fallback_allocator_callable_is_stored(self) -> None:
+        """EcosystemBundle.fallback_allocator stores the exact callable from the plugin."""
+
+        def specific_fallback(ctx: Any) -> Any:
+            return None
+
+        plugin = StubPluginWithFallback(fallback=specific_fallback)
+        bundle = EcosystemBundle.build(plugin)
+
+        assert bundle.fallback_allocator is specific_fallback
+        assert callable(bundle.fallback_allocator)

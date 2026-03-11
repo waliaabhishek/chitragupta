@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
 from core.engine.allocation import AllocationContext, AllocatorRegistry
 from core.engine.helpers import compute_active_fraction
 from core.engine.loading import load_protocol_callable
-from core.models.chargeback import AllocationDetail, ChargebackRow, CostType
+from core.models.chargeback import ChargebackRow, CostType
 from core.models.identity import CoreIdentity, IdentityResolution, IdentitySet
 from core.models.pipeline import PipelineState
 from core.plugin.registry import EcosystemBundle
@@ -504,15 +504,28 @@ class CalculatePhase:
             b_start, b_end, b_duration = line_window_cache[id(line)]
             handler = self._bundle.product_type_to_handler.get(line.product_type)
             if handler is None:
-                logger.warning(
-                    "No handler for product_type %s — allocating to UNALLOCATED",
-                    line.product_type,
+                if self._bundle.fallback_allocator is None:
+                    logger.warning(
+                        "No handler and no fallback_allocator for product_type %s — skipping",
+                        line.product_type,
+                    )
+                    return 0
+                ctx = AllocationContext(
+                    timeslice=b_start,
+                    billing_line=line,
+                    identities=IdentityResolution(
+                        resource_active=IdentitySet(),
+                        metrics_derived=IdentitySet(),
+                        tenant_period=IdentitySet(),
+                    ),
+                    split_amount=line.total_cost,
+                    metrics_data=None,
+                    params=self._allocator_params,
                 )
-                row = self._allocate_to_unallocated(
-                    line, "UNKNOWN_PRODUCT_TYPE", AllocationDetail.USING_UNKNOWN_ALLOCATOR
-                )
-                uow.chargebacks.upsert(row)
-                return 1
+                result = self._bundle.fallback_allocator(ctx)
+                for row in result.rows:
+                    uow.chargebacks.upsert(row)
+                return len(result.rows)
 
             metrics_data = prefetched_metrics.get((line.resource_id, b_start, b_end))
             resource = resource_cache.get(line.resource_id)

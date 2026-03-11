@@ -208,6 +208,26 @@ def test_plugin_get_metrics_source_with_basic_auth():
     assert isinstance(source, PrometheusMetricsSource)
 
 
+class TestConfluentCloudPluginGetFallbackAllocator:
+    """Tests for get_fallback_allocator() — GAP-074."""
+
+    def test_get_fallback_allocator_returns_unknown_allocator(self) -> None:
+        """ConfluentCloudPlugin.get_fallback_allocator() returns the unknown_allocator callable."""
+        from plugins.confluent_cloud import ConfluentCloudPlugin
+        from plugins.confluent_cloud.allocators.default_allocators import unknown_allocator
+
+        plugin = ConfluentCloudPlugin()
+        assert plugin.get_fallback_allocator() is unknown_allocator
+
+    def test_get_fallback_allocator_is_callable(self) -> None:
+        """ConfluentCloudPlugin.get_fallback_allocator() returns a callable."""
+        from plugins.confluent_cloud import ConfluentCloudPlugin
+
+        plugin = ConfluentCloudPlugin()
+        fallback = plugin.get_fallback_allocator()
+        assert callable(fallback)
+
+
 class TestConfluentCloudPluginClose:
     def test_close_closes_metrics_source(self) -> None:
         """Plugin.close() must close _metrics_source when set."""

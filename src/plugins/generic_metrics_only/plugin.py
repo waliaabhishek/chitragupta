@@ -13,7 +13,7 @@ from plugins.generic_metrics_only.shared_context import GenericSharedContext
 
 if TYPE_CHECKING:
     from core.metrics.protocol import MetricsSource
-    from core.plugin.protocols import CostInput, ServiceHandler
+    from core.plugin.protocols import CostAllocator, CostInput, ServiceHandler
     from plugins.generic_metrics_only.storage.module import GenericMetricsOnlyStorageModule
 logger = logging.getLogger(__name__)
 
@@ -62,6 +62,9 @@ class GenericMetricsOnlyPlugin:
 
     def get_metrics_source(self) -> MetricsSource | None:
         return self._metrics_source
+
+    def get_fallback_allocator(self) -> CostAllocator | None:
+        return None
 
     def build_shared_context(self, tenant_id: str) -> GenericSharedContext:
         if self._config is None:
