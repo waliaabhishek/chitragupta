@@ -16,10 +16,7 @@ from typing import TYPE_CHECKING, Any
 
 from core.engine.helpers import allocate_evenly_with_fallback
 from core.models import Identity, IdentityResolution, IdentitySet, MetricQuery, Resource
-from plugins.self_managed_kafka.allocators.kafka_allocators import (
-    self_kafka_network_egress_allocator,
-    self_kafka_network_ingress_allocator,
-)
+from plugins.self_managed_kafka.allocation_models import SMK_EGRESS_MODEL, SMK_INGRESS_MODEL
 
 if TYPE_CHECKING:
     from core.metrics.protocol import MetricsSource
@@ -60,8 +57,8 @@ _PRINCIPAL_USAGE_METRICS: list[MetricQuery] = [_BYTES_IN_PER_PRINCIPAL, _BYTES_O
 _ALLOCATOR_MAP: dict[str, CostAllocator] = {
     "SELF_KAFKA_COMPUTE": allocate_evenly_with_fallback,
     "SELF_KAFKA_STORAGE": allocate_evenly_with_fallback,
-    "SELF_KAFKA_NETWORK_INGRESS": self_kafka_network_ingress_allocator,
-    "SELF_KAFKA_NETWORK_EGRESS": self_kafka_network_egress_allocator,
+    "SELF_KAFKA_NETWORK_INGRESS": SMK_INGRESS_MODEL,
+    "SELF_KAFKA_NETWORK_EGRESS": SMK_EGRESS_MODEL,
 }
 
 

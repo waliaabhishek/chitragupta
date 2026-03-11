@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
 import pytest
 
 from core.models import CoreResource, MetricRow, ResourceStatus
 
+if TYPE_CHECKING:
+    from plugins.self_managed_kafka.shared_context import SMKSharedContext
 
-def _make_smk_ctx(cluster_id: str = "kafka-001") -> object:
+
+def _make_smk_ctx(cluster_id: str = "kafka-001") -> SMKSharedContext:
     """Create an SMKSharedContext with a cluster resource matching cluster_id."""
     from plugins.self_managed_kafka.shared_context import SMKSharedContext
 
@@ -445,18 +449,18 @@ class TestGetAllocator:
         assert handler.get_allocator("SELF_KAFKA_STORAGE") is allocate_evenly_with_fallback
 
     def test_network_ingress_allocator(self, base_config, mock_metrics_source):
-        from plugins.self_managed_kafka.allocators.kafka_allocators import self_kafka_network_ingress_allocator
+        from plugins.self_managed_kafka.allocation_models import SMK_INGRESS_MODEL
         from plugins.self_managed_kafka.handlers.kafka import SelfManagedKafkaHandler
 
         handler = SelfManagedKafkaHandler(base_config, mock_metrics_source)
-        assert handler.get_allocator("SELF_KAFKA_NETWORK_INGRESS") is self_kafka_network_ingress_allocator
+        assert handler.get_allocator("SELF_KAFKA_NETWORK_INGRESS") is SMK_INGRESS_MODEL
 
     def test_network_egress_allocator(self, base_config, mock_metrics_source):
-        from plugins.self_managed_kafka.allocators.kafka_allocators import self_kafka_network_egress_allocator
+        from plugins.self_managed_kafka.allocation_models import SMK_EGRESS_MODEL
         from plugins.self_managed_kafka.handlers.kafka import SelfManagedKafkaHandler
 
         handler = SelfManagedKafkaHandler(base_config, mock_metrics_source)
-        assert handler.get_allocator("SELF_KAFKA_NETWORK_EGRESS") is self_kafka_network_egress_allocator
+        assert handler.get_allocator("SELF_KAFKA_NETWORK_EGRESS") is SMK_EGRESS_MODEL
 
     def test_unknown_product_type_raises(self, base_config, mock_metrics_source):
         from plugins.self_managed_kafka.handlers.kafka import SelfManagedKafkaHandler
