@@ -45,7 +45,9 @@ def _make_identity_set(*identity_ids: str) -> IdentitySet:
     return iset
 
 
-def _make_billing_line(product_type: str = "KAFKA_NETWORK_READ", total_cost: Decimal = Decimal("100")) -> CoreBillingLineItem:
+def _make_billing_line(
+    product_type: str = "KAFKA_NETWORK_READ", total_cost: Decimal = Decimal("100")
+) -> CoreBillingLineItem:
     return CoreBillingLineItem(
         ecosystem="confluent_cloud",
         tenant_id="org-test",
@@ -317,12 +319,9 @@ class TestUniformUsageEquivalentRatios:
         # Range-like: 3 rows per principal, same bytes per step
         range_metrics: dict[str, list[MetricRow]] = {
             "bytes_out": [
-                MetricRow(ts + timedelta(hours=h), "bytes_out", 100.0, {"principal_id": "sa-aaa"})
-                for h in range(3)
-            ] + [
-                MetricRow(ts + timedelta(hours=h), "bytes_out", 200.0, {"principal_id": "sa-bbb"})
-                for h in range(3)
-            ],
+                MetricRow(ts + timedelta(hours=h), "bytes_out", 100.0, {"principal_id": "sa-aaa"}) for h in range(3)
+            ]
+            + [MetricRow(ts + timedelta(hours=h), "bytes_out", 200.0, {"principal_id": "sa-bbb"}) for h in range(3)],
             "bytes_in": [],
         }
 

@@ -109,9 +109,7 @@ class TestWorkflowRunnerNoPrivateFunction:
 class TestGetOrCreateBackendAcceptsStorageConfig:
     @patch("core.api.dependencies.create_storage_backend")
     @patch("core.api.dependencies.get_storage_module_for_ecosystem")
-    def test_respects_storage_config_backend(
-        self, mock_get_module: MagicMock, mock_create: MagicMock
-    ) -> None:
+    def test_respects_storage_config_backend(self, mock_get_module: MagicMock, mock_create: MagicMock) -> None:
         from core.api.dependencies import get_or_create_backend
 
         mock_module = MagicMock()
@@ -130,9 +128,7 @@ class TestGetOrCreateBackendAcceptsStorageConfig:
 
     @patch("core.api.dependencies.create_storage_backend")
     @patch("core.api.dependencies.get_storage_module_for_ecosystem")
-    def test_caches_backend_per_tenant(
-        self, mock_get_module: MagicMock, mock_create: MagicMock
-    ) -> None:
+    def test_caches_backend_per_tenant(self, mock_get_module: MagicMock, mock_create: MagicMock) -> None:
         from core.api.dependencies import get_or_create_backend
 
         mock_module = MagicMock()

@@ -537,10 +537,12 @@ class TestRequestSemaphore:
         src = PrometheusMetricsSource(_make_config(max_concurrent_requests=5))
         assert isinstance(src._request_semaphore, threading.BoundedSemaphore)
 
-    def test_concurrency_peak_does_not_exceed_limit(self) -> None:
+    def test_concurrent_requests_limited(self) -> None:
+        """Peak concurrency should not exceed max_concurrent_requests."""
         peak = 0
         current = 0
         counter_lock = threading.Lock()
+        gate = threading.Barrier(3)  # 2 threads + 1 main thread to synchronize
         release_event = threading.Event()
 
         def slow_post(*args: Any, **kwargs: Any) -> MagicMock:
@@ -559,23 +561,26 @@ class TestRequestSemaphore:
             max_concurrent_requests=2,
             max_retries=1,
             base_delay=0.0,
-            cache_ttl_seconds=0.0,
         )
 
         errors: list[Exception] = []
 
-        def run_query() -> None:
+        def call_post() -> None:
             try:
-                src.query([_QUERY], _START, _END, _STEP)
+                src._post_with_retry(
+                    "http://prom:9090/api/v1/query_range",
+                    {"query": "test"},
+                    {"Content-Type": "application/x-www-form-urlencoded"},
+                )
             except Exception as e:
                 errors.append(e)
 
-        threads = [threading.Thread(target=run_query, daemon=True) for _ in range(10)]
+        threads = [threading.Thread(target=call_post, daemon=True) for _ in range(10)]
         for t in threads:
             t.start()
 
-        # Allow threads to pile up behind the semaphore
-        time.sleep(0.1)
+        # Allow threads to pile up behind the semaphore before releasing
+        time.sleep(0.05)
         release_event.set()
 
         for t in threads:

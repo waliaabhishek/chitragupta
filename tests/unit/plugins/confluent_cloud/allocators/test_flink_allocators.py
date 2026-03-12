@@ -167,9 +167,7 @@ class TestFlinkCfuAllocatorFallback:
         assert result.rows[0].allocation_detail == AllocationDetail.NO_IDENTITIES_LOCATED
         assert result.rows[0].metadata["chain_tier"] == 3
 
-    def test_metrics_present_no_owner_map_terminal_to_resource_id(
-        self, flink_billing_line: BillingLineItem
-    ) -> None:
+    def test_metrics_present_no_owner_map_terminal_to_resource_id(self, flink_billing_line: BillingLineItem) -> None:
         """metrics_data present, no stmt_owner_cfu, no identities → Tier 3 terminal: resource_id, SHARED."""
         resolution = _make_resolution()
         ctx = AllocationContext(
@@ -323,7 +321,6 @@ class TestFlinkModelTier0UsageRatio:
         assert row_by_id["sa-B"].amount == Decimal("25.0000")
         assert all(r.cost_type == CostType.USAGE for r in result.rows)
         assert all(r.metadata["chain_tier"] == 0 for r in result.rows)
-
 
 
 class TestFlinkModelTier1EvenSplitActive:
@@ -487,9 +484,7 @@ class TestFlinkCfuAllocatorIsFlinkModel:
 class TestFlinkModelIntegration:
     """Integration: FlinkHandler → get_allocator → FLINK_MODEL → allocation rows."""
 
-    def test_handler_allocator_produces_chain_tier_zero_for_cfu_data(
-        self, flink_billing_line: BillingLineItem
-    ) -> None:
+    def test_handler_allocator_produces_chain_tier_zero_for_cfu_data(self, flink_billing_line: BillingLineItem) -> None:
         """FlinkHandler.get_allocator returns FLINK_MODEL; with stmt_owner_cfu → chain_tier=0, USAGE."""
         from plugins.confluent_cloud.handlers.flink import FlinkHandler
 

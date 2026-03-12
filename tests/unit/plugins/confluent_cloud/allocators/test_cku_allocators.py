@@ -563,9 +563,7 @@ class TestCkuCombinedResultStructure:
 class TestCkuIntegration:
     """Integration test: kafka_cku_allocator via KafkaHandler produces correct rows."""
 
-    def test_end_to_end_via_handler_produces_composition_metadata(
-        self, cku_billing_line: BillingLineItem
-    ) -> None:
+    def test_end_to_end_via_handler_produces_composition_metadata(self, cku_billing_line: BillingLineItem) -> None:
         """KafkaHandler.get_allocator('KAFKA_NUM_CKU') returns kafka_cku_allocator with composition metadata."""
         from plugins.confluent_cloud.handlers.kafka import KafkaHandler
 
