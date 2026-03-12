@@ -379,13 +379,14 @@ class CalculatePhase:
         tenant_period_cache = self._build_tenant_period_cache(uow, billing_windows)
         resource_cache = self._build_resource_cache(uow, billing_windows)
 
-        total_rows = 0
+        all_rows: list[ChargebackRow] = []
         for line in billing_lines:
-            rows = self._process_billing_line(
+            rows = self._collect_billing_line_rows(
                 line, uow, prefetched_metrics, tenant_period_cache, resource_cache, line_window_cache
             )
-            total_rows += rows
+            all_rows.extend(rows)
 
+        total_rows = uow.chargebacks.upsert_batch(all_rows)
         uow.pipeline_state.mark_chargeback_calculated(self._ecosystem, self._tenant_id, tracking_date)
         return total_rows
 
@@ -491,7 +492,7 @@ class CalculatePhase:
                 cache.setdefault(r.resource_id, r)
         return cache
 
-    def _process_billing_line(
+    def _collect_billing_line_rows(
         self,
         line: BillingLineItem,
         uow: UnitOfWork,
@@ -499,7 +500,7 @@ class CalculatePhase:
         tenant_period_cache: dict[tuple[datetime, datetime], IdentitySet],
         resource_cache: dict[str, Resource],
         line_window_cache: dict[int, tuple[datetime, datetime, timedelta]],
-    ) -> int:
+    ) -> list[ChargebackRow]:
         try:
             b_start, b_end, b_duration = line_window_cache[id(line)]
             handler = self._bundle.product_type_to_handler.get(line.product_type)
@@ -509,7 +510,7 @@ class CalculatePhase:
                         "No handler and no fallback_allocator for product_type %s — skipping",
                         line.product_type,
                     )
-                    return 0
+                    return []
                 ctx = AllocationContext(
                     timeslice=b_start,
                     billing_line=line,
@@ -523,9 +524,7 @@ class CalculatePhase:
                     params=self._allocator_params,
                 )
                 result = self._bundle.fallback_allocator(ctx)
-                for row in result.rows:
-                    uow.chargebacks.upsert(row)
-                return len(result.rows)
+                return list(result.rows)
 
             metrics_data = prefetched_metrics.get((line.resource_id, b_start, b_end))
             resource = resource_cache.get(line.resource_id)
@@ -577,11 +576,7 @@ class CalculatePhase:
             )
             result = allocator(ctx)
 
-            rows_written = 0
-            for row in result.rows:
-                uow.chargebacks.upsert(row)
-                rows_written += 1
-            return rows_written
+            return list(result.rows)
 
         except Exception as exc:
             try:
@@ -610,8 +605,7 @@ class CalculatePhase:
             row = self._allocate_to_unallocated(
                 line, "ALLOCATION_FAILED", f"Failed after {new_attempts} attempts: {exc}"
             )
-            uow.chargebacks.upsert(row)
-            return 1
+            return [row]
 
     def _resolve_allocator(self, product_type: str, handler: ServiceHandler) -> CostAllocator:
         try:
@@ -898,9 +892,10 @@ class ChargebackOrchestrator:
     ) -> int:
         """Backward-compatible wrapper — allocation_retry_limit is ignored (RetryManager owns it)."""
         line_window_cache = self._calculate_phase._compute_line_window_cache([line])
-        return self._calculate_phase._process_billing_line(
+        rows = self._calculate_phase._collect_billing_line_rows(
             line, uow, prefetched_metrics, tenant_period_cache, resource_cache, line_window_cache
         )
+        return uow.chargebacks.upsert_batch(rows)
 
     def _calculate_date(self, uow: UnitOfWork, tracking_date: date_type) -> int:
         """Backward-compatible wrapper — delegates to CalculatePhase.run()."""

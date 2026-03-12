@@ -538,6 +538,18 @@ class SQLModelChargebackRepository:
         merged = self._session.merge(fact)
         return chargeback_to_domain(dim, merged)
 
+    def upsert_batch(self, rows: list[ChargebackRow]) -> int:
+        """Batch-insert all fact rows using session.add_all()."""
+        unique_facts: dict[tuple[datetime, int], ChargebackFactTable] = {}
+        for row in rows:
+            dim = self._get_or_create_dimension(row)
+            assert dim.dimension_id is not None
+            fact = chargeback_to_fact(row, dim.dimension_id)
+            unique_facts[(fact.timestamp, fact.dimension_id)] = fact
+        if unique_facts:
+            self._session.add_all(unique_facts.values())
+        return len(unique_facts)
+
     def _query_joined(self, *where_clauses: Any) -> list[ChargebackRow]:
         """Execute a joined query on dimensions+facts. where_clauses are SQLAlchemy column elements."""
         stmt = (

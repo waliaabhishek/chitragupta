@@ -124,6 +124,11 @@ class MockChargebackRepo:
         self._data.append(row)
         return row
 
+    def upsert_batch(self, rows: list[ChargebackRow]) -> int:
+        for row in rows:
+            self._data.append(row)
+        return len(rows)
+
     def find_by_date(self, *args: Any) -> list[ChargebackRow]:
         return self._data
 

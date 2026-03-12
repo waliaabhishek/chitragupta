@@ -195,6 +195,11 @@ class MockChargebackRepo:
         self._data.append(row)
         return row
 
+    def upsert_batch(self, rows: list[ChargebackRow]) -> int:
+        for row in rows:
+            self._data.append(row)
+        return len(rows)
+
     def find_by_date(self, ecosystem: str, tenant_id: str, target_date: date) -> list[ChargebackRow]:
         return [r for r in self._data if r.timestamp.date() == target_date]
 

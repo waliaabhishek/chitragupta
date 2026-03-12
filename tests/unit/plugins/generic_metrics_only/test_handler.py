@@ -388,8 +388,16 @@ class TestTask080ChainModelMigration:
         assert isinstance(allocator, ChainModel)
 
         iset = IdentitySet()
-        iset.add(CoreIdentity(ecosystem="self_managed_postgres", tenant_id="t1", identity_id="alice", identity_type="principal"))
-        iset.add(CoreIdentity(ecosystem="self_managed_postgres", tenant_id="t1", identity_id="bob", identity_type="principal"))
+        iset.add(
+            CoreIdentity(
+                ecosystem="self_managed_postgres", tenant_id="t1", identity_id="alice", identity_type="principal"
+            )
+        )
+        iset.add(
+            CoreIdentity(
+                ecosystem="self_managed_postgres", tenant_id="t1", identity_id="bob", identity_type="principal"
+            )
+        )
 
         billing_line = CoreBillingLineItem(
             ecosystem="self_managed_postgres",
@@ -486,8 +494,16 @@ class TestTask080ChainModelMigration:
         assert isinstance(allocator, ChainModel)
 
         iset = IdentitySet()
-        iset.add(CoreIdentity(ecosystem="self_managed_postgres", tenant_id="t1", identity_id="alice", identity_type="principal"))
-        iset.add(CoreIdentity(ecosystem="self_managed_postgres", tenant_id="t1", identity_id="bob", identity_type="principal"))
+        iset.add(
+            CoreIdentity(
+                ecosystem="self_managed_postgres", tenant_id="t1", identity_id="alice", identity_type="principal"
+            )
+        )
+        iset.add(
+            CoreIdentity(
+                ecosystem="self_managed_postgres", tenant_id="t1", identity_id="bob", identity_type="principal"
+            )
+        )
 
         billing_line = CoreBillingLineItem(
             ecosystem="self_managed_postgres",
@@ -539,8 +555,16 @@ class TestTask080ChainModelMigration:
         assert isinstance(allocator, ChainModel)
 
         iset = IdentitySet()
-        iset.add(CoreIdentity(ecosystem="self_managed_postgres", tenant_id="t1", identity_id="alice", identity_type="principal"))
-        iset.add(CoreIdentity(ecosystem="self_managed_postgres", tenant_id="t1", identity_id="bob", identity_type="principal"))
+        iset.add(
+            CoreIdentity(
+                ecosystem="self_managed_postgres", tenant_id="t1", identity_id="alice", identity_type="principal"
+            )
+        )
+        iset.add(
+            CoreIdentity(
+                ecosystem="self_managed_postgres", tenant_id="t1", identity_id="bob", identity_type="principal"
+            )
+        )
 
         billing_line = CoreBillingLineItem(
             ecosystem="self_managed_postgres",
@@ -589,8 +613,16 @@ class TestTask080ChainModelMigration:
         assert isinstance(allocator, ChainModel)
 
         iset = IdentitySet()
-        iset.add(CoreIdentity(ecosystem="self_managed_postgres", tenant_id="t1", identity_id="alice", identity_type="principal"))
-        iset.add(CoreIdentity(ecosystem="self_managed_postgres", tenant_id="t1", identity_id="bob", identity_type="principal"))
+        iset.add(
+            CoreIdentity(
+                ecosystem="self_managed_postgres", tenant_id="t1", identity_id="alice", identity_type="principal"
+            )
+        )
+        iset.add(
+            CoreIdentity(
+                ecosystem="self_managed_postgres", tenant_id="t1", identity_id="bob", identity_type="principal"
+            )
+        )
 
         billing_line = CoreBillingLineItem(
             ecosystem="self_managed_postgres",
@@ -681,9 +713,7 @@ class TestTask080ChainModelMigration:
         assert "allocate_evenly_with_fallback" not in source, (
             "allocate_evenly_with_fallback still present in handler.py"
         )
-        assert "_make_usage_ratio_allocator" not in source, (
-            "_make_usage_ratio_allocator still present in handler.py"
-        )
+        assert "_make_usage_ratio_allocator" not in source, "_make_usage_ratio_allocator still present in handler.py"
 
     def test_get_allocator_unknown_product_type_raises_value_error(self, pg_config, mock_metrics) -> None:
         """get_allocator with unknown product type raises ValueError with descriptive message."""

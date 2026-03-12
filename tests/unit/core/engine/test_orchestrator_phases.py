@@ -215,6 +215,11 @@ class MockChargebackRepo:
         self._data.append(row)
         return row
 
+    def upsert_batch(self, rows: list[ChargebackRow]) -> int:
+        for row in rows:
+            self._data.append(row)
+        return len(rows)
+
     def find_by_date(self, ecosystem: str, tenant_id: str, target_date: date_type) -> list[ChargebackRow]:
         return [r for r in self._data if r.timestamp.date() == target_date]
 
@@ -973,7 +978,7 @@ class TestCalculatePhaseProcessBillingLine:
         line = _make_billing_line(product_type="UNKNOWN_PRODUCT")
         uow = MockUnitOfWork()
 
-        rows_written = phase._process_billing_line(
+        rows = phase._collect_billing_line_rows(
             line=line,
             uow=uow,
             prefetched_metrics={},
@@ -982,7 +987,7 @@ class TestCalculatePhaseProcessBillingLine:
             line_window_cache=phase._compute_line_window_cache([line]),
         )
 
-        assert rows_written == 0
+        assert rows == []
         assert len(uow.chargebacks._data) == 0
 
     def test_allocation_exception_no_fallback_reraises(self) -> None:
@@ -1006,7 +1011,7 @@ class TestCalculatePhaseProcessBillingLine:
         uow = MockUnitOfWork()
 
         with pytest.raises(RuntimeError, match="allocation blew up"):
-            phase._process_billing_line(
+            phase._collect_billing_line_rows(
                 line=line,
                 uow=uow,
                 prefetched_metrics={},
@@ -1035,7 +1040,7 @@ class TestCalculatePhaseProcessBillingLine:
         line = _make_billing_line()
         uow = MockUnitOfWork()
 
-        rows_written = phase._process_billing_line(
+        rows = phase._collect_billing_line_rows(
             line=line,
             uow=uow,
             prefetched_metrics={},
@@ -1044,8 +1049,8 @@ class TestCalculatePhaseProcessBillingLine:
             line_window_cache=phase._compute_line_window_cache([line]),
         )
 
-        assert rows_written == 1
-        unalloc_rows = [r for r in uow.chargebacks._data if r.identity_id == "UNALLOCATED"]
+        assert len(rows) == 1
+        unalloc_rows = [r for r in rows if r.identity_id == "UNALLOCATED"]
         assert len(unalloc_rows) == 1
         assert unalloc_rows[0].allocation_method == "ALLOCATION_FAILED"
 
@@ -1073,7 +1078,7 @@ class TestCalculatePhaseProcessBillingLine:
 
         # Original exception re-raised, not the retry checker exception
         with pytest.raises(RuntimeError, match="original allocation error"):
-            phase._process_billing_line(
+            phase._collect_billing_line_rows(
                 line=line,
                 uow=uow,
                 prefetched_metrics={},
