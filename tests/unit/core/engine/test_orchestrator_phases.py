@@ -1090,14 +1090,12 @@ class TestCalculatePhaseProcessBillingLine:
 
 def _make_orchestrator_with_mocked_phases(
     gather_failure_threshold: int = 3,
-    max_dates_per_run: int = 10,
 ) -> tuple[ChargebackOrchestrator, MagicMock, MagicMock, MockStorageBackend]:
     """Build ChargebackOrchestrator, then replace phases with mocks."""
     plugin = MockPlugin(handlers={}, cost_input=MockCostInput())
     storage = MockStorageBackend()
     tc = _make_tenant_config(
         gather_failure_threshold=gather_failure_threshold,
-        max_dates_per_run=max_dates_per_run,
         plugin_settings={},
     )
 

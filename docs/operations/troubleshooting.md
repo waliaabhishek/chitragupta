@@ -47,7 +47,7 @@
 ### `Execution timed out after Xs`
 
 **Cause**: Tenant run exceeded `tenant_execution_timeout_seconds`.
-**Fix**: Increase timeout or reduce `lookback_days` / `max_dates_per_run`.
+**Fix**: Increase timeout or reduce `lookback_days`.
 
 ### `ALERT: Tenant X has been permanently suspended`
 
@@ -109,10 +109,9 @@
 
 ### Chargeback rows missing for some dates
 
-**Cause**: `cutoff_days` window excludes recent dates, or `max_dates_per_run` limit reached before catching up.
+**Cause**: `cutoff_days` window excludes recent dates.
 **Fix**:
 - Check `lookback_days` and `cutoff_days` — recent dates within `cutoff_days` of today are intentionally skipped.
-- Increase `max_dates_per_run` to process more dates per cycle.
 - Check logs for `gathered=0` — indicates billing API returned no data for those dates.
 
 ## Performance issues
@@ -121,7 +120,6 @@
 
 **Cause**: Large `lookback_days` window on first run fetches many billing dates at once.
 **Fix**:
-- Lower `max_dates_per_run` (default 15) to process dates in smaller batches.
 - Reduce `metrics_step_seconds` only if finer granularity is actually needed — lower values increase Prometheus query volume.
 - For CCloud: lower `billing_api.days_per_query` (default 15) to fetch smaller billing windows.
 

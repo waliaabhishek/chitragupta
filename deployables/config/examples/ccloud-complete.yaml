@@ -32,7 +32,6 @@ tenants:
     cutoff_days: 5                 # Optional — billing finalization lag; 1-30
     retention_days: 250            # Optional — purge records older than N days; 1-730
     allocation_retry_limit: 3      # Optional — retry failed allocations per day; 1-10
-    max_dates_per_run: 15          # Optional — max days processed per refresh cycle; 1-365
     zero_gather_deletion_threshold: -1  # Optional — -1=disabled; N=delete resource after N zero-gather days
     gather_failure_threshold: 5    # Optional — mark resource failed after N consecutive gather errors
     tenant_execution_timeout_seconds: 3600  # Optional — hard timeout per tenant run in seconds; 0=disabled

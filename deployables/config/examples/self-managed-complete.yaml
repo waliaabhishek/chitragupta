@@ -27,7 +27,6 @@ tenants:
     cutoff_days: 3
     retention_days: 180            # Optional — purge after 6 months
     allocation_retry_limit: 3
-    max_dates_per_run: 15
 
     storage:
       backend: sqlmodel

@@ -267,3 +267,30 @@ class TestAppSettings:
         cfg = AppSettings(plugins_path="relative/path")
         assert cfg.plugins_path == Path("relative/path")
         assert not cfg.plugins_path.is_absolute()
+
+
+class TestTenantConfigMaxDatesBackwardCompat:
+    def test_ignores_extra_max_dates_per_run_field(self) -> None:
+        """TenantConfig ignores extra max_dates_per_run field in YAML (backward compat)."""
+        data = {
+            "ecosystem": "test",
+            "tenant_id": "t1",
+            "lookback_days": 30,
+            "cutoff_days": 5,
+            "max_dates_per_run": 15,  # extra field — should be ignored
+        }
+        tc = TenantConfig(**data)
+        assert tc.ecosystem == "test"
+        # No max_dates_per_run attribute should exist
+        assert not hasattr(tc, "max_dates_per_run")
+
+    def test_parses_without_max_dates_per_run(self) -> None:
+        """TenantConfig parses successfully when max_dates_per_run is absent."""
+        data = {
+            "ecosystem": "test",
+            "tenant_id": "t1",
+            "lookback_days": 30,
+            "cutoff_days": 5,
+        }
+        tc = TenantConfig(**data)
+        assert tc.ecosystem == "test"

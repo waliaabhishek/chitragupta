@@ -1031,15 +1031,16 @@ class TestTenantPeriod:
         assert tp_ids == set()
 
 
-class TestMaxDatesPerRun:
-    def test_limits_dates_processed(self) -> None:
+class TestAllDatesProcessed:
+    def test_all_pending_dates_processed_in_one_run(self) -> None:
+        """All pending dates are processed in a single run() call — no artificial cap."""
         handler = MockServiceHandler(resources=[_make_resource()], identities=[_make_identity()])
-        orch, storage = _create_orchestrator(handler=handler, max_dates_per_run=2)
+        orch, storage = _create_orchestrator(handler=handler)
         uow = storage.create_unit_of_work()
 
-        # Set up 5 dates needing calculation
-        for i in range(5):
-            d = date(2026, 2, 1 + i)
+        # Simulate 90-day backfill scenario
+        for i in range(90):
+            d = date(2025, 10, 1) + timedelta(days=i)
             ps = PipelineState(
                 ecosystem=ECOSYSTEM,
                 tenant_id=TENANT_ID,
@@ -1052,7 +1053,29 @@ class TestMaxDatesPerRun:
             uow.pipeline_state.mark_resources_gathered(ECOSYSTEM, TENANT_ID, d)
 
         result = orch.run()
-        assert result.dates_calculated <= 2
+        assert result.dates_calculated == 90  # all 90 processed in one cycle
+
+    def test_steady_state_two_dates_processed(self) -> None:
+        """Steady-state with 1-2 pending dates still works correctly."""
+        handler = MockServiceHandler(resources=[_make_resource()], identities=[_make_identity()])
+        orch, storage = _create_orchestrator(handler=handler)
+        uow = storage.create_unit_of_work()
+
+        for i in range(2):
+            d = date(2026, 3, 1 + i)
+            ps = PipelineState(
+                ecosystem=ECOSYSTEM,
+                tenant_id=TENANT_ID,
+                tracking_date=d,
+                billing_gathered=True,
+                resources_gathered=True,
+            )
+            uow.pipeline_state.upsert(ps)
+            uow.pipeline_state.mark_billing_gathered(ECOSYSTEM, TENANT_ID, d)
+            uow.pipeline_state.mark_resources_gathered(ECOSYSTEM, TENANT_ID, d)
+
+        result = orch.run()
+        assert result.dates_calculated == 2
 
 
 class TestRecalculationWindow:

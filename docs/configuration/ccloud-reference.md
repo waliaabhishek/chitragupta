@@ -51,7 +51,6 @@ tenants:
 | `lookback_days` | int | 200 | Days of billing history to fetch (max 364) |
 | `cutoff_days` | int | 5 | Skip dates within this many days of today (billing lag) |
 | `retention_days` | int | 250 | Delete data older than this (max 730) |
-| `max_dates_per_run` | int | 15 | Limit dates processed per pipeline run |
 | `allocation_retry_limit` | int | 3 | Max identity resolution retries before fallback |
 | `gather_failure_threshold` | int | 5 | Consecutive gather failures before tenant suspension |
 | `tenant_execution_timeout_seconds` | int | 3600 | Per-tenant run timeout (0 = no timeout) |

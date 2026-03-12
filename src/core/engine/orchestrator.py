@@ -858,7 +858,6 @@ class ChargebackOrchestrator:
         )
         self._consecutive_gather_failures = 0
         self._gather_failure_threshold = tenant_config.gather_failure_threshold
-        self._max_dates_per_run = tenant_config.max_dates_per_run
 
         with storage_backend.create_unit_of_work() as uow:
             _ensure_unallocated_identity(uow, self._ecosystem, self._tenant_id)
@@ -939,8 +938,7 @@ class ChargebackOrchestrator:
             )
 
         with self._storage_backend.create_unit_of_work() as uow:
-            all_pending = uow.pipeline_state.find_needing_calculation(self._ecosystem, self._tenant_id)
-            pending_states = all_pending[: self._max_dates_per_run]
+            pending_states = uow.pipeline_state.find_needing_calculation(self._ecosystem, self._tenant_id)
 
         for pipeline_state in pending_states:
             tracking_date = pipeline_state.tracking_date
