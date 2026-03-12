@@ -524,6 +524,7 @@ def _create_orchestrator(
     storage: MockStorageBackend | None = None,
     metrics_source: Any = None,
     plugin_settings: dict[str, Any] | None = None,
+    shutdown_check: Any = None,
     **config_overrides: Any,
 ) -> tuple[ChargebackOrchestrator, MockStorageBackend]:
     if handler is None:
@@ -537,7 +538,7 @@ def _create_orchestrator(
     if storage is None:
         storage = MockStorageBackend()
     tc = _make_tenant_config(plugin_settings=plugin_settings or {}, **config_overrides)
-    orch = ChargebackOrchestrator(TENANT_NAME, tc, plugin, storage, metrics_source)
+    orch = ChargebackOrchestrator(TENANT_NAME, tc, plugin, storage, metrics_source, shutdown_check=shutdown_check)
     return orch, storage
 
 
@@ -2600,3 +2601,94 @@ class TestOrchestratorFallbackAllocator:
             if isinstance(node, ast.ImportFrom):
                 if node.module and node.module.startswith("plugins"):
                     pytest.fail(f"orchestrator.py has forbidden import: from {node.module}")
+
+
+# ---------- Shutdown propagation tests (task-083) ----------
+
+
+def _setup_pending_dates(storage: MockStorageBackend, n: int) -> list[date]:
+    """Pre-populate n pending pipeline states (billing+resources gathered, not calculated)."""
+    uow = storage.create_unit_of_work()
+    dates = []
+    for i in range(n):
+        d = date(2026, 1, i + 1)
+        ps = PipelineState(
+            ecosystem=ECOSYSTEM,
+            tenant_id=TENANT_ID,
+            tracking_date=d,
+            billing_gathered=True,
+            resources_gathered=True,
+        )
+        uow.pipeline_state.upsert(ps)
+        dates.append(d)
+    return dates
+
+
+class TestShutdownCheckOrchestrator:
+    """task-083: shutdown_check parameter propagates shutdown signal into the run() loop."""
+
+    def test_shutdown_check_none_processes_all_dates(self) -> None:
+        """shutdown_check=None (default) — all pending dates are processed."""
+        orch, storage = _create_orchestrator()
+        _setup_pending_dates(storage, 3)
+
+        # No shutdown_check argument — default behavior unchanged
+        result = orch.run()
+
+        assert result.dates_calculated == 3
+
+    def test_shutdown_check_always_false_processes_all_dates(self) -> None:
+        """shutdown_check returning False — no premature exit."""
+        orch, storage = _create_orchestrator(shutdown_check=lambda: False)
+        _setup_pending_dates(storage, 3)
+
+        result = orch.run()
+
+        assert result.dates_calculated == 3
+
+    def test_shutdown_check_triggers_after_n_dates(self) -> None:
+        """shutdown_check returns True after N calls — loop breaks after N dates."""
+        call_count = 0
+
+        def check_after_2() -> bool:
+            nonlocal call_count
+            call_count += 1
+            return call_count > 2
+
+        orch, storage = _create_orchestrator(shutdown_check=check_after_2)
+        _setup_pending_dates(storage, 5)
+
+        result = orch.run()
+
+        assert result.dates_calculated == 2
+
+    def test_shutdown_check_true_immediately_stops_before_first_date(self, caplog: pytest.LogCaptureFixture) -> None:
+        """shutdown_check=lambda: True — loop breaks immediately, dates_calculated == 0."""
+        orch, storage = _create_orchestrator(shutdown_check=lambda: True)
+        _setup_pending_dates(storage, 3)
+
+        with caplog.at_level(logging.INFO):
+            result = orch.run()
+
+        assert result.dates_calculated == 0
+        assert any("shutdown" in r.message.lower() for r in caplog.records)
+
+    def test_shutdown_log_message_contains_dates_processed(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Shutdown mid-run — log contains 'Shutdown requested' and count of processed dates."""
+        call_count = 0
+
+        def check_after_1() -> bool:
+            nonlocal call_count
+            call_count += 1
+            return call_count > 1
+
+        orch, storage = _create_orchestrator(shutdown_check=check_after_1)
+        _setup_pending_dates(storage, 4)
+
+        with caplog.at_level(logging.INFO):
+            result = orch.run()
+
+        assert result.dates_calculated == 1
+        shutdown_messages = [r.message for r in caplog.records if "shutdown" in r.message.lower()]
+        assert len(shutdown_messages) >= 1
+        assert "1" in shutdown_messages[0]

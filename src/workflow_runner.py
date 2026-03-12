@@ -47,7 +47,7 @@ def _config_hash(config: TenantConfig) -> str:
     """Stable hash of tenant config for change detection."""
     try:
         raw = json.dumps(config.model_dump(), sort_keys=True, default=str)
-    except (TypeError, ValueError, AttributeError):
+    except TypeError, ValueError, AttributeError:
         logger.debug("Failed to JSON-serialize config for hashing; falling back to repr()", exc_info=True)
         raw = repr(config)
     return hashlib.sha256(raw.encode()).hexdigest()[:16]
@@ -123,7 +123,14 @@ class WorkflowRunner:
 
         storage = create_storage_backend(config.storage, storage_module=plugin.get_storage_module())
         metrics = plugin.get_metrics_source()
-        orchestrator = ChargebackOrchestrator(tenant_name, config, plugin, storage, metrics)
+        orchestrator = ChargebackOrchestrator(
+            tenant_name,
+            config,
+            plugin,
+            storage,
+            metrics,
+            shutdown_check=self._is_shutdown_requested,
+        )
 
         runtime = TenantRuntime(
             tenant_name=tenant_name,

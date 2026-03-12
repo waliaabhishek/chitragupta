@@ -800,12 +800,14 @@ class ChargebackOrchestrator:
         plugin: EcosystemPlugin,
         storage_backend: StorageBackend,
         metrics_source: MetricsSource | None = None,
+        shutdown_check: Callable[[], bool] | None = None,
     ) -> None:
         self._tenant_name = tenant_name
         self._tenant_id = tenant_config.tenant_id
         self._ecosystem = tenant_config.ecosystem
         self._storage_backend = storage_backend
         self._tenant_config = tenant_config  # kept for backward compatibility
+        self._shutdown_check = shutdown_check
 
         bundle = EcosystemBundle.build(plugin)
         (
@@ -936,6 +938,14 @@ class ChargebackOrchestrator:
             pending_states = uow.pipeline_state.find_needing_calculation(self._ecosystem, self._tenant_id)
 
         for pipeline_state in pending_states:
+            if self._shutdown_check is not None and self._shutdown_check():
+                logger.info(
+                    "Shutdown requested — stopping after %d dates processed for %s",
+                    dates_calculated,
+                    self._tenant_name,
+                )
+                break
+
             tracking_date = pipeline_state.tracking_date
             logger.info("Processing billing date: %s", tracking_date)
             start_time = time.time()

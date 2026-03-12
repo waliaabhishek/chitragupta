@@ -1916,3 +1916,41 @@ class TestGracefulShutdown:
 
         assert not t.is_alive(), "run_once() did not return within 1.5s after shutdown event"
         assert "result" in result_holder
+
+
+class TestShutdownCheckWiring:
+    """task-083: WorkflowRunner wires _is_shutdown_requested into ChargebackOrchestrator."""
+
+    @patch("workflow_runner.ChargebackOrchestrator")
+    @patch("core.storage.registry.create_storage_backend")
+    def test_get_or_create_runtime_passes_shutdown_check(
+        self,
+        mock_storage: MagicMock,
+        mock_orch_cls: MagicMock,
+    ) -> None:
+        """_get_or_create_runtime passes shutdown_check=runner._is_shutdown_requested."""
+        mock_backend = MagicMock()
+        mock_storage.return_value = mock_backend
+        mock_orch = MagicMock()
+        mock_orch.run.return_value = PipelineRunResult(
+            tenant_name="t1",
+            tenant_id="tid1",
+            dates_gathered=0,
+            dates_calculated=0,
+            chargeback_rows_written=0,
+        )
+        mock_orch_cls.return_value = mock_orch
+
+        registry = MagicMock()
+        plugin = MagicMock()
+        plugin.get_metrics_source.return_value = None
+        registry.create.return_value = plugin
+
+        settings = _make_settings(tenants={"t1": _make_tenant(tenant_id="tid1")})
+        runner = WorkflowRunner(settings, registry)
+        runner.run_once()
+
+        mock_orch_cls.assert_called_once()
+        _, kwargs = mock_orch_cls.call_args
+        assert "shutdown_check" in kwargs
+        assert kwargs["shutdown_check"] == runner._is_shutdown_requested
