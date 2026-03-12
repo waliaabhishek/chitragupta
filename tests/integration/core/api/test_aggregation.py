@@ -6,6 +6,7 @@ from decimal import Decimal
 from fastapi.testclient import TestClient  # noqa: TC002
 
 from core.models.chargeback import ChargebackRow, CostType
+from core.models.resource import CoreResource, ResourceStatus
 from core.storage.backends.sqlmodel.unit_of_work import SQLModelBackend  # noqa: TC001
 
 
@@ -396,3 +397,159 @@ class TestAggregateWithFilters:
         data = response.json()
         assert data["buckets"] == []
         assert data["total_rows"] == 0
+
+
+def _make_resource(resource_id: str, parent_id: str | None) -> CoreResource:
+    return CoreResource(
+        ecosystem="test-eco",
+        tenant_id="test-tenant",
+        resource_id=resource_id,
+        resource_type="kafka_cluster",
+        display_name=resource_id,
+        parent_id=parent_id,
+        owner_id=None,
+        status=ResourceStatus.ACTIVE,
+        created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        deleted_at=None,
+        last_seen_at=datetime(2026, 2, 15, tzinfo=UTC),
+        metadata={},
+    )
+
+
+def _make_chargeback(
+    resource_id: str | None,
+    identity_id: str,
+    product_type: str,
+    cost_type: CostType,
+    amount: Decimal,
+    hour: int = 0,
+) -> ChargebackRow:
+    return ChargebackRow(
+        ecosystem="test-eco",
+        tenant_id="test-tenant",
+        timestamp=datetime(2026, 2, 15, hour, tzinfo=UTC),
+        resource_id=resource_id,
+        product_category="compute",
+        product_type=product_type,
+        identity_id=identity_id,
+        cost_type=cost_type,
+        amount=amount,
+        allocation_method="direct",
+        allocation_detail=None,
+        tags=[],
+        metadata={},
+    )
+
+
+class TestAggregateByEnvironment:
+    _BASE_PARAMS = {
+        "time_bucket": "day",
+        "start_date": "2026-02-01",
+        "end_date": "2026-02-28",
+    }
+
+    def _seed_env_chargebacks(self, backend: SQLModelBackend) -> None:
+        """Seed two chargebacks with resources mapped to different environments."""
+        with backend.create_unit_of_work() as uow:
+            uow.resources.upsert(_make_resource("res-env-a", "env-alpha"))
+            uow.resources.upsert(_make_resource("res-env-b", "env-beta"))
+            uow.chargebacks.upsert(
+                _make_chargeback("res-env-a", "user-1", "kafka", CostType.USAGE, Decimal("20.00"), hour=0)
+            )
+            uow.chargebacks.upsert(
+                _make_chargeback("res-env-b", "user-2", "connect", CostType.USAGE, Decimal("15.00"), hour=1)
+            )
+            uow.commit()
+
+    def test_aggregate_group_by_environment_id_returns_buckets(
+        self, app_with_backend: TestClient, in_memory_backend: SQLModelBackend
+    ) -> None:
+        """group_by=environment_id returns distinct buckets per environment."""
+        self._seed_env_chargebacks(in_memory_backend)
+        response = app_with_backend.get(
+            "/api/v1/tenants/test-tenant/chargebacks/aggregate",
+            params={**self._BASE_PARAMS, "group_by": "environment_id"},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        buckets = data["buckets"]
+        assert len(buckets) == 2
+        env_ids = {b["dimensions"]["environment_id"] for b in buckets}
+        assert "env-alpha" in env_ids
+        assert "env-beta" in env_ids
+
+    def test_aggregate_org_wide_cost_has_empty_environment_id(
+        self, app_with_backend: TestClient, in_memory_backend: SQLModelBackend
+    ) -> None:
+        """Chargeback with resource_id=NULL produces environment_id="" (not crash)."""
+        with in_memory_backend.create_unit_of_work() as uow:
+            uow.chargebacks.upsert(
+                _make_chargeback(None, "user-org", "kafka", CostType.USAGE, Decimal("50.00"), hour=0)
+            )
+            uow.commit()
+        response = app_with_backend.get(
+            "/api/v1/tenants/test-tenant/chargebacks/aggregate",
+            params={**self._BASE_PARAMS, "group_by": "environment_id"},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        buckets = data["buckets"]
+        assert len(buckets) == 1
+        assert buckets[0]["dimensions"]["environment_id"] == ""
+
+    def test_aggregate_existing_dimensions_unaffected_by_environment_feature(
+        self, app_with_backend: TestClient, in_memory_backend: SQLModelBackend
+    ) -> None:
+        """group_by=identity_id and group_by=cost_type still produce correct results (regression)."""
+        self._seed_env_chargebacks(in_memory_backend)
+
+        # Test identity_id grouping
+        resp_identity = app_with_backend.get(
+            "/api/v1/tenants/test-tenant/chargebacks/aggregate",
+            params={**self._BASE_PARAMS, "group_by": "identity_id"},
+        )
+        assert resp_identity.status_code == 200
+        identity_data = resp_identity.json()
+        identity_keys = {b["dimensions"]["identity_id"] for b in identity_data["buckets"]}
+        assert "user-1" in identity_keys
+        assert "user-2" in identity_keys
+        assert identity_data["total_rows"] == 2
+
+        # Test cost_type grouping
+        resp_cost = app_with_backend.get(
+            "/api/v1/tenants/test-tenant/chargebacks/aggregate",
+            params={**self._BASE_PARAMS, "group_by": "cost_type"},
+        )
+        assert resp_cost.status_code == 200
+        cost_data = resp_cost.json()
+        cost_keys = {b["dimensions"]["cost_type"] for b in cost_data["buckets"]}
+        assert "usage" in cost_keys
+
+    def test_aggregate_invalid_group_by_returns_400(self, app_with_backend: TestClient) -> None:
+        """group_by=bad_col → HTTP 400."""
+        response = app_with_backend.get(
+            "/api/v1/tenants/test-tenant/chargebacks/aggregate",
+            params={**self._BASE_PARAMS, "group_by": "bad_col"},
+        )
+        assert response.status_code == 400
+        assert "group_by" in response.json()["detail"]
+
+    def test_aggregate_multi_dimension_with_environment_id(
+        self, app_with_backend: TestClient, in_memory_backend: SQLModelBackend
+    ) -> None:
+        """group_by=environment_id&group_by=product_type → buckets have both dimension keys."""
+        self._seed_env_chargebacks(in_memory_backend)
+        response = app_with_backend.get(
+            "/api/v1/tenants/test-tenant/chargebacks/aggregate",
+            params={**self._BASE_PARAMS, "group_by": ["environment_id", "product_type"]},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        buckets = data["buckets"]
+        assert len(buckets) >= 1
+        for bucket in buckets:
+            assert "environment_id" in bucket["dimensions"]
+            assert "product_type" in bucket["dimensions"]
+        env_ids = {b["dimensions"]["environment_id"] for b in buckets}
+        assert "env-alpha" in env_ids
+        assert "env-beta" in env_ids

@@ -24,6 +24,7 @@ _VALID_GROUP_BY = frozenset(
         "product_category",
         "cost_type",
         "allocation_method",
+        "environment_id",
     }
 )
 
