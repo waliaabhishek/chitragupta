@@ -269,6 +269,8 @@ class AggregationBucket(BaseModel):
     dimensions: dict[str, str]
     time_bucket: str
     total_amount: Decimal
+    usage_amount: Decimal
+    shared_amount: Decimal
     row_count: int
 
 
@@ -277,6 +279,8 @@ class AggregationResponse(BaseModel):
 
     buckets: list[AggregationBucket]
     total_amount: Decimal
+    usage_amount: Decimal
+    shared_amount: Decimal
     total_rows: int
 
 

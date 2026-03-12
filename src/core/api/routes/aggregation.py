@@ -93,12 +93,16 @@ async def aggregate_chargebacks(
             dimensions=r.dimensions,
             time_bucket=r.time_bucket,
             total_amount=r.total_amount,
+            usage_amount=r.usage_amount,
+            shared_amount=r.shared_amount,
             row_count=r.row_count,
         )
         for r in rows
     ]
 
     total_amount = sum((b.total_amount for b in buckets), Decimal(0))
+    usage_amount = sum((b.usage_amount for b in buckets), Decimal(0))
+    shared_amount = sum((b.shared_amount for b in buckets), Decimal(0))
     total_rows = sum(b.row_count for b in buckets)
 
     logger.info(
@@ -106,4 +110,10 @@ async def aggregate_chargebacks(
         tenant_config.tenant_id,
         len(buckets),
     )
-    return AggregationResponse(buckets=buckets, total_amount=total_amount, total_rows=total_rows)
+    return AggregationResponse(
+        buckets=buckets,
+        total_amount=total_amount,
+        usage_amount=usage_amount,
+        shared_amount=shared_amount,
+        total_rows=total_rows,
+    )

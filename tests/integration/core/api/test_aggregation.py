@@ -165,6 +165,149 @@ class TestAggregateChargebacks:
         assert data["total_rows"] == 3
 
 
+class TestAggregateCostTypeSplit:
+    _COMMON_PARAMS = {
+        "group_by": "identity_id",
+        "time_bucket": "day",
+        "start_date": "2026-02-01",
+        "end_date": "2026-02-28",
+    }
+
+    def _seed_mixed(self, backend: SQLModelBackend) -> None:
+        """Seed two rows per bucket: one usage, one shared."""
+        rows = [
+            ("user-a", "kafka", "r-a0", CostType.USAGE, Decimal("15.00")),
+            ("user-a", "kafka", "r-a1", CostType.SHARED, Decimal("5.00")),
+            ("user-b", "connect", "r-b0", CostType.USAGE, Decimal("8.00")),
+            ("user-b", "connect", "r-b1", CostType.SHARED, Decimal("2.00")),
+        ]
+        with backend.create_unit_of_work() as uow:
+            for i, (uid, ptype, rid, ctype, amount) in enumerate(rows):
+                uow.chargebacks.upsert(
+                    ChargebackRow(
+                        ecosystem="test-eco",
+                        tenant_id="test-tenant",
+                        timestamp=datetime(2026, 2, 15, i, tzinfo=UTC),
+                        resource_id=rid,
+                        product_category="compute",
+                        product_type=ptype,
+                        identity_id=uid,
+                        cost_type=ctype,
+                        amount=amount,
+                        allocation_method="direct",
+                        allocation_detail=None,
+                        tags=[],
+                        metadata={},
+                    )
+                )
+            uow.commit()
+
+    def _seed_usage_only(self, backend: SQLModelBackend) -> None:
+        """Seed only usage rows, no shared."""
+        rows = [
+            ("user-c", "kafka", "r-c0", CostType.USAGE, Decimal("12.00")),
+            ("user-c", "kafka", "r-c1", CostType.USAGE, Decimal("8.00")),
+        ]
+        with backend.create_unit_of_work() as uow:
+            for i, (uid, ptype, rid, ctype, amount) in enumerate(rows):
+                uow.chargebacks.upsert(
+                    ChargebackRow(
+                        ecosystem="test-eco",
+                        tenant_id="test-tenant",
+                        timestamp=datetime(2026, 2, 15, i, tzinfo=UTC),
+                        resource_id=rid,
+                        product_category="compute",
+                        product_type=ptype,
+                        identity_id=uid,
+                        cost_type=ctype,
+                        amount=amount,
+                        allocation_method="direct",
+                        allocation_detail=None,
+                        tags=[],
+                        metadata={},
+                    )
+                )
+            uow.commit()
+
+    def test_mixed_cost_types_bucket_amounts_sum_to_total(
+        self, app_with_backend: TestClient, in_memory_backend: SQLModelBackend
+    ) -> None:
+        self._seed_mixed(in_memory_backend)
+        response = app_with_backend.get(
+            "/api/v1/tenants/test-tenant/chargebacks/aggregate",
+            params=self._COMMON_PARAMS,
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data["buckets"]) > 0
+        for bucket in data["buckets"]:
+            usage = Decimal(bucket["usage_amount"])
+            shared = Decimal(bucket["shared_amount"])
+            total = Decimal(bucket["total_amount"])
+            assert usage + shared == total
+
+    def test_top_level_totals_sum_to_total_amount(
+        self, app_with_backend: TestClient, in_memory_backend: SQLModelBackend
+    ) -> None:
+        self._seed_mixed(in_memory_backend)
+        response = app_with_backend.get(
+            "/api/v1/tenants/test-tenant/chargebacks/aggregate",
+            params=self._COMMON_PARAMS,
+        )
+        assert response.status_code == 200
+        data = response.json()
+        usage = Decimal(data["usage_amount"])
+        shared = Decimal(data["shared_amount"])
+        total = Decimal(data["total_amount"])
+        assert usage + shared == total
+        assert usage == Decimal("23.00")
+        assert shared == Decimal("7.00")
+        assert total == Decimal("30.00")
+
+    def test_usage_only_shared_amount_is_zero(
+        self, app_with_backend: TestClient, in_memory_backend: SQLModelBackend
+    ) -> None:
+        self._seed_usage_only(in_memory_backend)
+        response = app_with_backend.get(
+            "/api/v1/tenants/test-tenant/chargebacks/aggregate",
+            params=self._COMMON_PARAMS,
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert Decimal(data["shared_amount"]) == Decimal("0")
+        assert Decimal(data["usage_amount"]) == Decimal(data["total_amount"])
+        assert Decimal(data["total_amount"]) == Decimal("20.00")
+
+    def test_empty_result_all_amounts_are_zero(self, app_with_backend: TestClient) -> None:
+        response = app_with_backend.get(
+            "/api/v1/tenants/test-tenant/chargebacks/aggregate",
+            params=self._COMMON_PARAMS,
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["buckets"] == []
+        assert Decimal(data["total_amount"]) == Decimal("0")
+        assert Decimal(data["usage_amount"]) == Decimal("0")
+        assert Decimal(data["shared_amount"]) == Decimal("0")
+
+    def test_backward_compatibility_total_amount_still_present(
+        self, app_with_backend: TestClient, in_memory_backend: SQLModelBackend
+    ) -> None:
+        _seed_chargebacks(in_memory_backend)
+        response = app_with_backend.get(
+            "/api/v1/tenants/test-tenant/chargebacks/aggregate",
+            params=self._COMMON_PARAMS,
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert "total_amount" in data
+        assert Decimal(data["total_amount"]) == Decimal("30.00")
+        assert "total_rows" in data
+        assert data["total_rows"] == 3
+        for bucket in data["buckets"]:
+            assert "total_amount" in bucket
+
+
 class TestAggregateWithFilters:
     _COMMON_PARAMS = {
         "group_by": "identity_id",

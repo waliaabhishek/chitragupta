@@ -111,4 +111,6 @@ class AggregationRow:
     dimensions: dict[str, str]
     time_bucket: str
     total_amount: Decimal
+    usage_amount: Decimal
+    shared_amount: Decimal
     row_count: int

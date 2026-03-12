@@ -8,11 +8,11 @@ from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
 from cachetools import TTLCache
-from sqlalchemy import cast, delete, func, or_, update
+from sqlalchemy import case, cast, delete, func, or_, update
 from sqlalchemy.types import String
 from sqlmodel import Session, col, select
 
-from core.models.chargeback import AggregationRow
+from core.models.chargeback import AggregationRow, CostType
 
 if TYPE_CHECKING:
     from core.models.billing import BillingLineItem, CoreBillingLineItem
@@ -860,10 +860,26 @@ class SQLModelChargebackRepository:
         if cost_type is not None:
             where.append(col(ChargebackDimensionTable.cost_type) == cost_type)
 
+        usage_expr = func.sum(
+            case(
+                (col(ChargebackDimensionTable.cost_type) == CostType.USAGE, col(ChargebackFactTable.amount)),
+                else_=0,
+            )
+        ).label("usage_amount")
+
+        shared_expr = func.sum(
+            case(
+                (col(ChargebackDimensionTable.cost_type) == CostType.SHARED, col(ChargebackFactTable.amount)),
+                else_=0,
+            )
+        ).label("shared_amount")
+
         select_cols = [
             *group_cols,
             time_expr.label("time_bucket"),
             func.sum(col(ChargebackFactTable.amount)).label("total_amount"),
+            usage_expr,
+            shared_expr,
             func.count().label("row_count"),
         ]
         group_by_labels = [*group_labels, "time_bucket"]
@@ -884,6 +900,8 @@ class SQLModelChargebackRepository:
                 dimensions={gb: str(getattr(r, f"dim_{gb}", "") or "") for gb in group_by},
                 time_bucket=str(r.time_bucket),
                 total_amount=Decimal(str(r.total_amount or 0)),
+                usage_amount=Decimal(str(r.usage_amount or 0)),
+                shared_amount=Decimal(str(r.shared_amount or 0)),
                 row_count=int(r.row_count),
             )
             for r in results
