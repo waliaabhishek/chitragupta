@@ -24,6 +24,7 @@ function thirtyDaysAgoStr(): string {
 interface UseChargebackFiltersReturn {
   filters: ChargebackFilters;
   setFilter: (key: keyof ChargebackFilters, value: string | null) => void;
+  setFilters: (updates: Partial<ChargebackFilters>) => void;
   resetFilters: () => void;
   toQueryParams: () => Record<string, string>;
 }
@@ -58,6 +59,26 @@ export function useChargebackFilters(): UseChargebackFiltersReturn {
     [setSearchParams],
   );
 
+  const setFilters = useCallback(
+    (updates: Partial<ChargebackFilters>) => {
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          for (const [key, value] of Object.entries(updates)) {
+            if (value === null || value === undefined || value === "") {
+              next.delete(key);
+            } else {
+              next.set(key, value);
+            }
+          }
+          return next;
+        },
+        { replace: true },
+      );
+    },
+    [setSearchParams],
+  );
+
   const resetFilters = useCallback(() => {
     setSearchParams(
       (prev) => {
@@ -82,5 +103,5 @@ export function useChargebackFilters(): UseChargebackFiltersReturn {
     return result;
   };
 
-  return { filters, setFilter, resetFilters, toQueryParams };
+  return { filters, setFilter, setFilters, resetFilters, toQueryParams };
 }

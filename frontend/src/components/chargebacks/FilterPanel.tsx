@@ -10,12 +10,14 @@ const COST_TYPE_OPTIONS = [
 interface FilterPanelProps {
   filters: ChargebackFilters;
   onChange: (key: keyof ChargebackFilters, value: string | null) => void;
+  onBatchChange?: (updates: Partial<ChargebackFilters>) => void;
   onReset: () => void;
 }
 
 export function FilterPanel({
   filters,
   onChange,
+  onBatchChange,
   onReset,
 }: FilterPanelProps): JSX.Element {
   const startValue = filters.start_date ? dayjs(filters.start_date) : null;
@@ -29,14 +31,14 @@ export function FilterPanel({
             startValue && endValue ? [startValue, endValue] : [null, null]
           }
           onChange={(dates) => {
-            onChange(
-              "start_date",
-              dates?.[0] ? dates[0].format("YYYY-MM-DD") : null,
-            );
-            onChange(
-              "end_date",
-              dates?.[1] ? dates[1].format("YYYY-MM-DD") : null,
-            );
+            const start = dates?.[0] ? dates[0].format("YYYY-MM-DD") : null;
+            const end = dates?.[1] ? dates[1].format("YYYY-MM-DD") : null;
+            if (onBatchChange) {
+              onBatchChange({ start_date: start, end_date: end });
+            } else {
+              onChange("start_date", start);
+              onChange("end_date", end);
+            }
           }}
           allowClear
         />

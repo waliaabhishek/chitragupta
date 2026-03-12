@@ -15,7 +15,7 @@ const { Text, Title } = Typography;
 
 export function ChargebackListPage(): JSX.Element {
   const { currentTenant } = useTenant();
-  const { filters, setFilter, resetFilters, toQueryParams } = useChargebackFilters();
+  const { filters, setFilter, setFilters, resetFilters, toQueryParams } = useChargebackFilters();
   const [searchParams] = useSearchParams();
   const [selectedDimensionId, setSelectedDimensionId] = useState<number | null>(null);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
@@ -94,7 +94,7 @@ export function ChargebackListPage(): JSX.Element {
         </Title>
         <ExportButton filters={toQueryParams()} tenantName={currentTenant.tenant_name} />
       </div>
-      <FilterPanel filters={filters} onChange={setFilter} onReset={resetFilters} />
+      <FilterPanel filters={filters} onChange={setFilter} onBatchChange={setFilters} onReset={resetFilters} />
       {hasSelection && (
         <SelectionToolbar
           selectedCount={totalSelected}

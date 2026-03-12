@@ -99,7 +99,7 @@ function DashboardContent({ tenant, filters, timeBucket }: DashboardContentProps
 /** Top-level page: handles tenant check and filter/time-bucket state. */
 export function CostDashboardPage(): JSX.Element {
   const { currentTenant } = useTenant();
-  const { filters, setFilter, resetFilters } = useChargebackFilters();
+  const { filters, setFilter, setFilters, resetFilters } = useChargebackFilters();
   const [timeBucket, setTimeBucket] = useState<TimeBucket>("day");
 
   return (
@@ -110,7 +110,7 @@ export function CostDashboardPage(): JSX.Element {
         <Text type="secondary">Select a tenant to view cost analytics.</Text>
       ) : (
         <>
-          <FilterPanel filters={filters} onChange={setFilter} onReset={resetFilters} />
+          <FilterPanel filters={filters} onChange={setFilter} onBatchChange={setFilters} onReset={resetFilters} />
 
           <div style={{ margin: "12px 0" }}>
             <Radio.Group
