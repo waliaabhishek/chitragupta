@@ -195,6 +195,12 @@ class ChainModel:
     models: Sequence[AllocationModel]
     log_fallbacks: bool = False
 
+    def __post_init__(self) -> None:
+        if not self.models:
+            raise ValueError("ChainModel requires at least one model; got empty sequence")
+        if not isinstance(self.models[-1], TerminalModel):
+            raise ValueError(f"ChainModel last model must be a TerminalModel; got {type(self.models[-1]).__name__}")
+
     def allocate(self, ctx: AllocationContext) -> AllocationResult:
         for i, model in enumerate(self.models):
             result = model.allocate(ctx)

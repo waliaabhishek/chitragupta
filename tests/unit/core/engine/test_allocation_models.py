@@ -556,22 +556,20 @@ class _ReturnsResultModel:
 
 class TestChainModelFirstMatch:
     def test_first_match_returns_result_from_second_model(self) -> None:
-        from core.engine.allocation_models import ChainModel
+        from core.engine.allocation_models import ChainModel, TerminalModel
 
         none_model = _ReturnsNoneModel()
-        result_model = _ReturnsResultModel()
-        chain = ChainModel(models=[none_model, result_model])
+        chain = ChainModel(models=[none_model, TerminalModel(identity_id="test")])
         ctx = _make_ctx()
         result = chain.allocate(ctx)
         assert result is not None
         assert none_model.call_count == 1
 
     def test_first_model_allocate_called_exactly_once_on_skip(self) -> None:
-        from core.engine.allocation_models import ChainModel
+        from core.engine.allocation_models import ChainModel, TerminalModel
 
         none_model = _ReturnsNoneModel()
-        result_model = _ReturnsResultModel()
-        chain = ChainModel(models=[none_model, result_model])
+        chain = ChainModel(models=[none_model, TerminalModel(identity_id="test")])
         ctx = _make_ctx()
         chain.allocate(ctx)
         assert none_model.call_count == 1
@@ -579,7 +577,7 @@ class TestChainModelFirstMatch:
 
 class TestChainModelChainTierMetadata:
     def test_chain_tier_0_on_primary_hit(self) -> None:
-        from core.engine.allocation_models import ChainModel
+        from core.engine.allocation_models import ChainModel, TerminalModel
         from core.models.chargeback import ChargebackRow, CostType
 
         rows = [
@@ -598,14 +596,14 @@ class TestChainModelChainTierMetadata:
             )
         ]
         result_model = _ReturnsResultModel(rows=rows)
-        chain = ChainModel(models=[result_model])
+        chain = ChainModel(models=[result_model, TerminalModel(identity_id="fallback")])
         ctx = _make_ctx()
         result = chain.allocate(ctx)
         assert result is not None
         assert all(row.metadata["chain_tier"] == 0 for row in result.rows)
 
     def test_chain_tier_1_on_first_fallback(self) -> None:
-        from core.engine.allocation_models import ChainModel
+        from core.engine.allocation_models import ChainModel, TerminalModel
         from core.models.chargeback import ChargebackRow, CostType
 
         rows = [
@@ -625,7 +623,7 @@ class TestChainModelChainTierMetadata:
         ]
         none_model = _ReturnsNoneModel()
         result_model = _ReturnsResultModel(rows=rows)
-        chain = ChainModel(models=[none_model, result_model])
+        chain = ChainModel(models=[none_model, result_model, TerminalModel(identity_id="fallback")])
         ctx = _make_ctx()
         result = chain.allocate(ctx)
         assert result is not None
@@ -636,27 +634,23 @@ class TestChainModelAllocationError:
     def test_exhausted_chain_raises_allocation_error(self) -> None:
         import pytest
 
-        from core.engine.allocation_models import AllocationError, ChainModel
+        from core.engine.allocation_models import ChainModel
 
-        chain = ChainModel(models=[_ReturnsNoneModel(), _ReturnsNoneModel()])
-        ctx = _make_ctx()
-        with pytest.raises(AllocationError):
-            chain.allocate(ctx)
+        with pytest.raises(ValueError, match="last model must be a TerminalModel"):
+            ChainModel(models=[_ReturnsNoneModel(), _ReturnsNoneModel()])
 
     def test_allocation_error_message_includes_resource_id(self) -> None:
         import pytest
 
-        from core.engine.allocation_models import AllocationError, ChainModel
+        from core.engine.allocation_models import ChainModel
 
-        chain = ChainModel(models=[_ReturnsNoneModel()])
-        ctx = _make_ctx()
-        with pytest.raises(AllocationError, match=ctx.billing_line.resource_id):
-            chain.allocate(ctx)
+        with pytest.raises(ValueError, match="last model must be a TerminalModel"):
+            ChainModel(models=[_ReturnsNoneModel()])
 
 
 class TestChainModelLogFallbacks:
     def test_log_fallbacks_false_default_no_debug_call(self, caplog: object) -> None:
-        from core.engine.allocation_models import ChainModel
+        from core.engine.allocation_models import ChainModel, TerminalModel
         from core.models.chargeback import ChargebackRow, CostType
 
         rows = [
@@ -676,7 +670,7 @@ class TestChainModelLogFallbacks:
         ]
         none_model = _ReturnsNoneModel()
         result_model = _ReturnsResultModel(rows=rows)
-        chain = ChainModel(models=[none_model, result_model], log_fallbacks=False)
+        chain = ChainModel(models=[none_model, result_model, TerminalModel(identity_id="a")], log_fallbacks=False)
         ctx = _make_ctx()
         import logging as _logging
 
@@ -687,7 +681,7 @@ class TestChainModelLogFallbacks:
     def test_log_fallbacks_true_tier_0_hit_no_debug_call(self, caplog: object) -> None:
         import logging as _logging
 
-        from core.engine.allocation_models import ChainModel
+        from core.engine.allocation_models import ChainModel, TerminalModel
         from core.models.chargeback import ChargebackRow, CostType
 
         rows = [
@@ -706,7 +700,7 @@ class TestChainModelLogFallbacks:
             )
         ]
         result_model = _ReturnsResultModel(rows=rows)
-        chain = ChainModel(models=[result_model], log_fallbacks=True)
+        chain = ChainModel(models=[result_model, TerminalModel(identity_id="a")], log_fallbacks=True)
         ctx = _make_ctx()
         with caplog.at_level(_logging.DEBUG, logger="core.engine.allocation_models"):  # type: ignore[union-attr]
             chain.allocate(ctx)
@@ -715,7 +709,7 @@ class TestChainModelLogFallbacks:
     def test_log_fallbacks_true_tier_1_hit_debug_called_once(self, caplog: object) -> None:
         import logging as _logging
 
-        from core.engine.allocation_models import ChainModel
+        from core.engine.allocation_models import ChainModel, TerminalModel
         from core.models.chargeback import ChargebackRow, CostType
 
         rows = [
@@ -735,7 +729,7 @@ class TestChainModelLogFallbacks:
         ]
         none_model = _ReturnsNoneModel()
         result_model = _ReturnsResultModel(rows=rows)
-        chain = ChainModel(models=[none_model, result_model], log_fallbacks=True)
+        chain = ChainModel(models=[none_model, result_model, TerminalModel(identity_id="a")], log_fallbacks=True)
         ctx = _make_ctx()
         with caplog.at_level(_logging.DEBUG, logger="core.engine.allocation_models"):  # type: ignore[union-attr]
             chain.allocate(ctx)
@@ -748,7 +742,7 @@ class TestChainModelLogFallbacks:
 
 class TestChainModelCostAllocatorProtocol:
     def test_call_delegates_to_allocate(self) -> None:
-        from core.engine.allocation_models import ChainModel
+        from core.engine.allocation_models import ChainModel, TerminalModel
         from core.models.chargeback import ChargebackRow, CostType
 
         rows = [
@@ -767,7 +761,7 @@ class TestChainModelCostAllocatorProtocol:
             )
         ]
         result_model = _ReturnsResultModel(rows=rows)
-        chain = ChainModel(models=[result_model])
+        chain = ChainModel(models=[result_model, TerminalModel(identity_id="test")])
         ctx = _make_ctx()
         result_via_allocate = chain.allocate(ctx)
         result_via_call = chain(ctx)
@@ -776,16 +770,16 @@ class TestChainModelCostAllocatorProtocol:
         assert result_via_call.rows[0].identity_id == result_via_allocate.rows[0].identity_id
 
     def test_chain_model_satisfies_cost_allocator_protocol(self) -> None:
-        from core.engine.allocation_models import ChainModel
+        from core.engine.allocation_models import ChainModel, TerminalModel
         from core.plugin.protocols import CostAllocator
 
-        chain = ChainModel(models=[_ReturnsResultModel()])
+        chain = ChainModel(models=[TerminalModel(identity_id="test")])
         assert isinstance(chain, CostAllocator)
 
 
 class TestChainModelMetadataNonDestructive:
     def test_existing_metadata_keys_retained_after_chain_tier_injection(self) -> None:
-        from core.engine.allocation_models import ChainModel
+        from core.engine.allocation_models import ChainModel, TerminalModel
         from core.models.chargeback import ChargebackRow, CostType
 
         row = ChargebackRow(
@@ -803,7 +797,7 @@ class TestChainModelMetadataNonDestructive:
         )
         row.metadata["existing_key"] = "existing_value"
         result_model = _ReturnsResultModel(rows=[row])
-        chain = ChainModel(models=[result_model])
+        chain = ChainModel(models=[result_model, TerminalModel(identity_id="fallback")])
         ctx = _make_ctx()
         result = chain.allocate(ctx)
         assert result is not None
@@ -1111,7 +1105,7 @@ class TestChainModelWithCompositionModel:
         t1 = TerminalModel(identity_id="a")
         t2 = TerminalModel(identity_id="b")
         composition = CompositionModel(components=[(Decimal("0.60"), t1), (Decimal("0.40"), t2)])
-        chain = ChainModel(models=[composition])
+        chain = ChainModel(models=[composition, TerminalModel(identity_id="fallback")])
 
         ctx = _make_ctx(split_amount=Decimal("10.00"))
         result = chain.allocate(ctx)
@@ -1126,3 +1120,42 @@ class TestChainModelWithCompositionModel:
         # Verify amounts
         amounts = sorted(r.amount for r in result.rows)
         assert amounts == [Decimal("4.00"), Decimal("6.00")]
+
+
+# ---------------------------------------------------------------------------
+# task-077: ChainModel construction-time validation (TDD RED phase)
+# ---------------------------------------------------------------------------
+
+
+class TestChainModelValidation:
+    def test_empty_models_raises_value_error(self) -> None:
+        import pytest
+
+        from core.engine.allocation_models import ChainModel
+
+        with pytest.raises(ValueError, match="empty"):
+            ChainModel(models=[])
+
+    def test_non_terminal_last_model_raises_value_error_with_type_name(self) -> None:
+        import pytest
+
+        from core.engine.allocation_models import ChainModel, EvenSplitModel
+
+        non_terminal = EvenSplitModel(source=lambda c: ["a", "b"])
+        with pytest.raises(ValueError, match="EvenSplitModel"):
+            ChainModel(models=[non_terminal])
+
+    def test_valid_chain_non_terminal_then_terminal_constructs_without_error(self) -> None:
+        from core.engine.allocation_models import ChainModel, EvenSplitModel, TerminalModel
+
+        non_terminal = EvenSplitModel(source=lambda c: ["a", "b"])
+        terminal = TerminalModel(identity_id="sa-123")
+        chain = ChainModel(models=[non_terminal, terminal])
+        assert chain is not None
+
+    def test_single_terminal_model_constructs_without_error(self) -> None:
+        from core.engine.allocation_models import ChainModel, TerminalModel
+
+        terminal = TerminalModel(identity_id="sa-123")
+        chain = ChainModel(models=[terminal])
+        assert chain is not None
