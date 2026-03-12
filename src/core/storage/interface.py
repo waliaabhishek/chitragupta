@@ -281,6 +281,10 @@ class ChargebackRepository(Protocol):
         """Server-side aggregation with GROUP BY. Returns pre-aggregated buckets."""
         ...
 
+    def get_distinct_dates(self, ecosystem: str, tenant_id: str) -> list[date]:
+        """Return sorted list of distinct dates that have chargeback facts for the tenant."""
+        ...
+
 
 @runtime_checkable
 class PipelineStateRepository(Protocol):

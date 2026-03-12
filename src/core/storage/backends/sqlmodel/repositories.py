@@ -587,6 +587,26 @@ class SQLModelChargebackRepository:
             col(ChargebackDimensionTable.identity_id) == identity_id,
         )
 
+    def get_distinct_dates(self, ecosystem: str, tenant_id: str) -> list[date]:
+        """Return sorted distinct dates with chargeback facts for the tenant."""
+        dim_subquery = (
+            select(ChargebackDimensionTable.dimension_id)
+            .where(
+                col(ChargebackDimensionTable.ecosystem) == ecosystem,
+                col(ChargebackDimensionTable.tenant_id) == tenant_id,
+            )
+            .scalar_subquery()
+        )
+        stmt = (
+            select(func.date(ChargebackFactTable.timestamp))
+            .where(col(ChargebackFactTable.dimension_id).in_(dim_subquery))
+            .distinct()
+            .order_by(func.date(ChargebackFactTable.timestamp))
+        )
+        rows = self._session.execute(stmt).scalars().all()
+        # func.date() returns str in SQLite (e.g. "2026-01-15"); coerce to date
+        return [date.fromisoformat(r) if isinstance(r, str) else r for r in rows]
+
     def delete_by_date(self, ecosystem: str, tenant_id: str, target_date: date) -> int:
         start, end = _date_to_range(target_date)
 

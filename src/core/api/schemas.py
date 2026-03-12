@@ -284,6 +284,12 @@ class AggregationResponse(BaseModel):
     total_rows: int
 
 
+class ChargebackDatesResponse(BaseModel):
+    """Response for the data availability endpoint."""
+
+    dates: list[date]
+
+
 # --- Export ---
 
 

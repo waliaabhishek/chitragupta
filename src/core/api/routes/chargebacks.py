@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query
 
 from core.api.dependencies import get_tenant_config, get_unit_of_work, resolve_date_range
 from core.api.schemas import (
+    ChargebackDatesResponse,
     ChargebackDimensionResponse,
     ChargebackDimensionUpdateRequest,
     ChargebackResponse,
@@ -123,6 +124,23 @@ def _build_dimension_response(uow: UnitOfWork, dimension_id: int) -> ChargebackD
             for t in tags
         ],
     )
+
+
+@router.get(
+    "/tenants/{tenant_name}/chargebacks/dates",
+    response_model=ChargebackDatesResponse,
+)
+async def get_chargeback_dates(
+    tenant_config: Annotated[TenantConfig, Depends(get_tenant_config)],
+    uow: Annotated[UnitOfWork, Depends(get_unit_of_work)],
+) -> ChargebackDatesResponse:
+    """Return all distinct dates that have chargeback facts for the tenant."""
+    with uow:
+        dates = uow.chargebacks.get_distinct_dates(
+            ecosystem=tenant_config.ecosystem,
+            tenant_id=tenant_config.tenant_id,
+        )
+    return ChargebackDatesResponse(dates=dates)
 
 
 @router.get(
