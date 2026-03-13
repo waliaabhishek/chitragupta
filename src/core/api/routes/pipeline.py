@@ -47,8 +47,25 @@ async def _run_pipeline(
 
         workflow_runner = getattr(request.app.state, "workflow_runner", None)
         if workflow_runner is not None:
-            # WorkflowRunner.run_tenant creates its own PipelineRun with progress tracking
             result = await asyncio.to_thread(workflow_runner.run_tenant, tenant_name)
+
+            if run_id is not None:
+                with backend.create_unit_of_work() as uow:
+                    run = uow.pipeline_runs.get_run(run_id)
+                    if run is not None:
+                        if result.already_running:
+                            run.status = "skipped"
+                            run.ended_at = datetime.now(UTC)
+                        else:
+                            run.status = "completed"
+                            run.ended_at = datetime.now(UTC)
+                            run.dates_gathered = result.dates_gathered
+                            run.dates_calculated = result.dates_calculated
+                            run.rows_written = result.chargeback_rows_written
+                            if result.errors:
+                                run.error_message = result.errors[0]
+                        uow.pipeline_runs.update_run(run)
+                        uow.commit()
 
             if result.already_running:
                 logger.info("Pipeline run skipped for tenant %s — already in progress", tenant_name)
@@ -56,7 +73,6 @@ async def _run_pipeline(
 
             logger.info("Pipeline run completed for tenant %s", tenant_name)
         else:
-            # No WorkflowRunner — API-only mode, manage the API-created run_id
             logger.warning(
                 "No WorkflowRunner available for tenant %s — "
                 "pipeline trigger requires 'both' mode or a configured plugin registry",
@@ -120,15 +136,10 @@ async def trigger_pipeline(
 
     backend = get_or_create_backend(_get_backends(request), tenant_name, tenant_config.storage, tenant_config.ecosystem)
 
-    # Only create API-managed PipelineRun when no workflow_runner (API-only mode).
-    # When workflow_runner exists, it creates and manages its own PipelineRun with progress tracking.
-    run_id: int | None = None
-    workflow_runner = getattr(request.app.state, "workflow_runner", None)
-    if workflow_runner is None:
-        with backend.create_unit_of_work() as uow:
-            run = uow.pipeline_runs.create_run(tenant_name, datetime.now(UTC))
-            uow.commit()
-        run_id = run.id
+    with backend.create_unit_of_work() as uow:
+        run = uow.pipeline_runs.create_run(tenant_name, datetime.now(UTC))
+        uow.commit()
+    run_id = run.id
 
     task = asyncio.create_task(_run_pipeline(tenant_name, settings, run_id, backend, request))
     tasks[tenant_name] = task

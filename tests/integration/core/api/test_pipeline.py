@@ -18,7 +18,7 @@ class TestTriggerPipeline:
             latest = uow.pipeline_runs.get_latest_run("test-tenant")
         assert latest is not None
         assert latest.tenant_name == "test-tenant"
-        assert latest.status in ("running", "completed")
+        assert latest.status in ("running", "failed")
 
     def test_trigger_pipeline_nonexistent_tenant(self, app_with_backend: TestClient) -> None:
         response = app_with_backend.post("/api/v1/tenants/no-such-tenant/pipeline/run")

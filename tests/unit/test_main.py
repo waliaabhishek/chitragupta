@@ -280,7 +280,7 @@ class TestBothModeSingleRunner:
         captured_api_runners: list[object] = []
         captured_worker_runners: list[object] = []
 
-        def capture_run_api(settings: object, runner: object = None) -> None:
+        def capture_run_api(settings: object, runner: object = None, mode: str = "api") -> None:
             captured_api_runners.append(runner)
 
         def capture_run_worker(settings: object, **kwargs: object) -> None:

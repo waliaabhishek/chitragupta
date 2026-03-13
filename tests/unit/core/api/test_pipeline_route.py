@@ -119,7 +119,7 @@ class TestRunPipelineBackground:
         assert updated.ended_at is not None
 
     def test_no_workflow_runner_completes_with_error_message(self, temp_backend: SQLModelBackend) -> None:
-        """API-only mode (no WorkflowRunner) sets status='completed' with stub error."""
+        """API-only mode (no WorkflowRunner) sets status='failed' with error message."""
         with temp_backend.create_unit_of_work() as uow:
             run = uow.pipeline_runs.create_run("my-tenant", datetime(2026, 2, 26, 10, 0, tzinfo=UTC))
             uow.commit()
@@ -132,7 +132,7 @@ class TestRunPipelineBackground:
             updated = uow.pipeline_runs.get_run(run_id)
 
         assert updated is not None
-        assert updated.status == "completed"
+        assert updated.status == "failed"
         assert updated.error_message is not None
         assert "WorkflowRunner" in updated.error_message
 
