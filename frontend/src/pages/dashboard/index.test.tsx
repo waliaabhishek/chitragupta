@@ -89,6 +89,10 @@ vi.mock("../../components/dashboard/InventoryCounters", () => ({
   InventoryCounters: vi.fn(() => <div data-testid="inventory-counters" />),
 }));
 
+vi.mock("../../components/dashboard/AllocationIssuesTable", () => ({
+  AllocationIssuesTable: vi.fn(() => <div data-testid="allocation-issues-table" />),
+}));
+
 // Mock antd
 vi.mock("antd", () => ({
   Typography: {

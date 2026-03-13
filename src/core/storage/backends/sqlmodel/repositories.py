@@ -12,7 +12,7 @@ from sqlalchemy import case, cast, delete, func, or_, update
 from sqlalchemy.types import String
 from sqlmodel import Session, col, select
 
-from core.models.chargeback import AggregationRow, CostType
+from core.models.chargeback import AggregationRow, AllocationDetail, AllocationIssueRow, CostType
 
 if TYPE_CHECKING:
     from core.models.billing import BillingLineItem, CoreBillingLineItem
@@ -502,6 +502,13 @@ class SQLModelBillingRepository:
 
 # --- ChargebackRepository ---
 
+_ALLOCATION_SUCCESS_CODES = frozenset(
+    {
+        AllocationDetail.USAGE_RATIO_ALLOCATION,
+        AllocationDetail.EVEN_SPLIT_ALLOCATION,
+    }
+)
+
 
 class SQLModelChargebackRepository:
     def __init__(self, session: Session) -> None:
@@ -628,6 +635,102 @@ class SQLModelChargebackRepository:
         rows = self._session.execute(stmt).scalars().all()
         # func.date() returns str in SQLite (e.g. "2026-01-15"); coerce to date
         return [date.fromisoformat(r) if isinstance(r, str) else r for r in rows]
+
+    def find_allocation_issues(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        identity_id: str | None = None,
+        product_type: str | None = None,
+        resource_id: str | None = None,
+        limit: int = 1000,
+        offset: int = 0,
+    ) -> tuple[list[AllocationIssueRow], int]:
+        join_clause = col(ChargebackDimensionTable.dimension_id) == col(ChargebackFactTable.dimension_id)
+        where: list[Any] = [
+            col(ChargebackDimensionTable.ecosystem) == ecosystem,
+            col(ChargebackDimensionTable.tenant_id) == tenant_id,
+            col(ChargebackDimensionTable.allocation_detail).is_not(None),
+            col(ChargebackDimensionTable.allocation_detail).not_in(_ALLOCATION_SUCCESS_CODES),
+        ]
+        if start is not None:
+            where.append(col(ChargebackFactTable.timestamp) >= start)
+        if end is not None:
+            where.append(col(ChargebackFactTable.timestamp) < end)
+        if identity_id is not None:
+            where.append(col(ChargebackDimensionTable.identity_id) == identity_id)
+        if product_type is not None:
+            where.append(col(ChargebackDimensionTable.product_type) == product_type)
+        if resource_id is not None:
+            where.append(col(ChargebackDimensionTable.resource_id) == resource_id)
+
+        group_cols = [
+            col(ChargebackDimensionTable.ecosystem),
+            col(ChargebackDimensionTable.resource_id),
+            col(ChargebackDimensionTable.product_type),
+            col(ChargebackDimensionTable.identity_id),
+            col(ChargebackDimensionTable.allocation_detail),
+        ]
+
+        usage_expr = func.sum(
+            case(
+                (col(ChargebackDimensionTable.cost_type) == CostType.USAGE, col(ChargebackFactTable.amount)),
+                else_=0,
+            )
+        ).label("usage_cost")
+        shared_expr = func.sum(
+            case(
+                (col(ChargebackDimensionTable.cost_type) == CostType.SHARED, col(ChargebackFactTable.amount)),
+                else_=0,
+            )
+        ).label("shared_cost")
+        total_expr = func.sum(col(ChargebackFactTable.amount)).label("total_cost")
+
+        count_subq = select(func.count()).select_from(
+            select(*group_cols)
+            .select_from(ChargebackDimensionTable)
+            .join(ChargebackFactTable, join_clause)
+            .where(*where)
+            .group_by(*group_cols)
+            .subquery()
+        )
+        total: int = self._session.exec(count_subq).one()
+
+        stmt = (
+            select(
+                *group_cols,
+                func.count().label("row_count"),
+                usage_expr,
+                shared_expr,
+                total_expr,
+            )
+            .select_from(ChargebackDimensionTable)
+            .join(ChargebackFactTable, join_clause)
+            .where(*where)
+            .group_by(*group_cols)
+            .order_by(total_expr.desc())
+            .offset(offset)
+            .limit(limit)
+        )
+
+        rows = self._session.execute(stmt).all()
+        items = [
+            AllocationIssueRow(
+                ecosystem=r.ecosystem,
+                resource_id=r.resource_id,
+                product_type=r.product_type,
+                identity_id=r.identity_id,
+                allocation_detail=r.allocation_detail,
+                row_count=r.row_count,
+                usage_cost=Decimal(str(r.usage_cost or 0)),
+                shared_cost=Decimal(str(r.shared_cost or 0)),
+                total_cost=Decimal(str(r.total_cost or 0)),
+            )
+            for r in rows
+        ]
+        return items, total
 
     def delete_by_date(self, ecosystem: str, tenant_id: str, target_date: date) -> int:
         start, end = _date_to_range(target_date)

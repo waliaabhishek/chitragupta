@@ -7,7 +7,13 @@ from typing import TYPE_CHECKING, Protocol, Self, runtime_checkable
 
 if TYPE_CHECKING:
     from core.models.billing import BillingLineItem
-    from core.models.chargeback import AggregationRow, ChargebackDimensionInfo, ChargebackRow, CustomTag
+    from core.models.chargeback import (
+        AggregationRow,
+        AllocationIssueRow,
+        ChargebackDimensionInfo,
+        ChargebackRow,
+        CustomTag,
+    )
     from core.models.identity import Identity
     from core.models.pipeline import PipelineRun, PipelineState
     from core.models.resource import Resource
@@ -299,6 +305,21 @@ class ChargebackRepository(Protocol):
 
     def get_distinct_dates(self, ecosystem: str, tenant_id: str) -> list[date]:
         """Return sorted list of distinct dates that have chargeback facts for the tenant."""
+        ...
+
+    def find_allocation_issues(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        identity_id: str | None = None,
+        product_type: str | None = None,
+        resource_id: str | None = None,
+        limit: int = 1000,
+        offset: int = 0,
+    ) -> tuple[list[AllocationIssueRow], int]:
+        """Returns (items, total_count) of failed-allocation groups, ordered by total_cost DESC."""
         ...
 
 

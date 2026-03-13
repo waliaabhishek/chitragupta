@@ -114,3 +114,18 @@ class AggregationRow:
     usage_amount: Decimal
     shared_amount: Decimal
     row_count: int
+
+
+@dataclass
+class AllocationIssueRow:
+    """Aggregated row of a failed allocation, grouped by dimension key + error code."""
+
+    ecosystem: str
+    resource_id: str | None
+    product_type: str
+    identity_id: str
+    allocation_detail: str
+    row_count: int
+    usage_cost: Decimal
+    shared_cost: Decimal
+    total_cost: Decimal

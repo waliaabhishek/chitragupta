@@ -95,6 +95,10 @@ vi.mock("../../components/charts/ProductChartTypeToggle", () => ({
   ProductChartTypeToggle: vi.fn(() => <div />),
 }));
 
+vi.mock("../../components/dashboard/AllocationIssuesTable", () => ({
+  AllocationIssuesTable: vi.fn(() => <div data-testid="allocation-issues-table" />),
+}));
+
 // Partial antd mock — includes all components used by InventoryCounters
 vi.mock("antd", () => ({
   Card: ({ children }: { children: ReactNode }) => (

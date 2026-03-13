@@ -290,6 +290,22 @@ class ChargebackDatesResponse(BaseModel):
     dates: list[date]
 
 
+class AllocationIssueResponse(BaseModel):
+    """Aggregated row where cost allocation failed."""
+
+    ecosystem: str
+    resource_id: str | None
+    product_type: str
+    identity_id: str
+    allocation_detail: str
+    row_count: int
+    usage_cost: Decimal
+    shared_cost: Decimal
+    total_cost: Decimal
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 # --- Export ---
 
 

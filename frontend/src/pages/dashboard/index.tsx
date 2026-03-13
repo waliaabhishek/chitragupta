@@ -7,6 +7,7 @@ import type { UseAggregationParams } from "../../hooks/useAggregation";
 import { useAggregation } from "../../hooks/useAggregation";
 import { useDataAvailability } from "../../hooks/useDataAvailability";
 import { useInventorySummary } from "../../hooks/useInventorySummary";
+import { AllocationIssuesTable } from "../../components/dashboard/AllocationIssuesTable";
 import { SummaryStatCards } from "../../components/dashboard/SummaryStatCards";
 import { InventoryCounters } from "../../components/dashboard/InventoryCounters";
 import { FilterPanel } from "../../components/chargebacks/FilterPanel";
@@ -150,6 +151,15 @@ function DashboardContent({ tenant, filters, timeBucket }: DashboardContentProps
           onRetry={productSubTypeData.refetch}
         >
           <DimensionPieChart data={productSubTypeData.data?.buckets ?? []} dimension="product_sub_type" />
+        </ChartCard>
+      </Col>
+
+      <Col span={24}>
+        <ChartCard title="Allocation Issues">
+          <AllocationIssuesTable
+            tenantName={tenant.tenant_name}
+            filters={filters}
+          />
         </ChartCard>
       </Col>
     </Row>

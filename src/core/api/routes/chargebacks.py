@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query
 
 from core.api.dependencies import get_tenant_config, get_unit_of_work, resolve_date_range
 from core.api.schemas import (
+    AllocationIssueResponse,
     ChargebackDatesResponse,
     ChargebackDimensionResponse,
     ChargebackDimensionUpdateRequest,
@@ -144,20 +145,68 @@ async def get_chargeback_dates(
 
 
 @router.get(
-    "/tenants/{tenant_name}/chargebacks/{dimension_id}",
-    response_model=ChargebackDimensionResponse,
+    "/tenants/{tenant_name}/chargebacks/allocation-issues",
+    response_model=PaginatedResponse[AllocationIssueResponse],
 )
-async def get_chargeback_dimension(
+async def list_allocation_issues(
     tenant_config: Annotated[TenantConfig, Depends(get_tenant_config)],
     uow: Annotated[UnitOfWork, Depends(get_unit_of_work)],
-    dimension_id: Annotated[int, Path(description="Chargeback dimension ID")],
-) -> ChargebackDimensionResponse:
-    """Get a single chargeback dimension with its tags."""
+    start_date: Annotated[date | None, Query()] = None,
+    end_date: Annotated[date | None, Query()] = None,
+    identity_id: Annotated[str | None, Query()] = None,
+    product_type: Annotated[str | None, Query()] = None,
+    resource_id: Annotated[str | None, Query()] = None,
+    page: Annotated[int, Query(ge=1)] = 1,
+    page_size: Annotated[int, Query(ge=1, le=1000)] = 100,
+) -> PaginatedResponse[AllocationIssueResponse]:
+    logger.debug(
+        "GET /chargebacks/allocation-issues tenant=%s page=%d",
+        tenant_config.tenant_id,
+        page,
+    )
+    start_dt, end_dt = resolve_date_range(start_date, end_date)
+    offset = (page - 1) * page_size
+
     with uow:
-        dim = uow.chargebacks.get_dimension(dimension_id)
-        if dim is None or dim.ecosystem != tenant_config.ecosystem or dim.tenant_id != tenant_config.tenant_id:
-            raise HTTPException(status_code=404, detail=f"Dimension {dimension_id} not found")
-        return _build_dimension_response(uow, dimension_id)
+        items, total = uow.chargebacks.find_allocation_issues(
+            ecosystem=tenant_config.ecosystem,
+            tenant_id=tenant_config.tenant_id,
+            start=start_dt,
+            end=end_dt,
+            identity_id=identity_id,
+            product_type=product_type,
+            resource_id=resource_id,
+            limit=page_size,
+            offset=offset,
+        )
+
+    pages = math.ceil(total / page_size) if total > 0 else 0
+    logger.info(
+        "Listed allocation issues tenant=%s returned=%d total=%d",
+        tenant_config.tenant_id,
+        len(items),
+        total,
+    )
+    return PaginatedResponse[AllocationIssueResponse](
+        items=[
+            AllocationIssueResponse(
+                ecosystem=r.ecosystem,
+                resource_id=r.resource_id,
+                product_type=r.product_type,
+                identity_id=r.identity_id,
+                allocation_detail=r.allocation_detail,
+                row_count=r.row_count,
+                usage_cost=r.usage_cost,
+                shared_cost=r.shared_cost,
+                total_cost=r.total_cost,
+            )
+            for r in items
+        ],
+        total=total,
+        page=page,
+        page_size=page_size,
+        pages=pages,
+    )
 
 
 @router.patch(
@@ -205,4 +254,21 @@ async def update_chargeback_dimension(
 
         uow.commit()
         logger.info("Updated chargeback dimension %s tenant=%s", dimension_id, tenant_config.tenant_id)
+        return _build_dimension_response(uow, dimension_id)
+
+
+@router.get(
+    "/tenants/{tenant_name}/chargebacks/{dimension_id}",
+    response_model=ChargebackDimensionResponse,
+)
+async def get_chargeback_dimension(
+    tenant_config: Annotated[TenantConfig, Depends(get_tenant_config)],
+    uow: Annotated[UnitOfWork, Depends(get_unit_of_work)],
+    dimension_id: Annotated[int, Path(description="Chargeback dimension ID")],
+) -> ChargebackDimensionResponse:
+    """Get a single chargeback dimension with its tags."""
+    with uow:
+        dim = uow.chargebacks.get_dimension(dimension_id)
+        if dim is None or dim.ecosystem != tenant_config.ecosystem or dim.tenant_id != tenant_config.tenant_id:
+            raise HTTPException(status_code=404, detail=f"Dimension {dimension_id} not found")
         return _build_dimension_response(uow, dimension_id)

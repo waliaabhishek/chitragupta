@@ -119,6 +119,20 @@ export interface ChargebackDatesResponse {
   dates: string[];
 }
 
+// --- Allocation Issues ---
+
+export interface AllocationIssueResponse {
+  ecosystem: string;
+  resource_id: string | null;
+  product_type: string;
+  identity_id: string;
+  allocation_detail: string;
+  row_count: number;
+  usage_cost: string;
+  shared_cost: string;
+  total_cost: string;
+}
+
 // --- Tag ---
 
 export interface TagResponse {
