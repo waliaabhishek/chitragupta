@@ -70,13 +70,13 @@ def _create_runner(settings: AppSettings) -> WorkflowRunner:
     return WorkflowRunner(settings, registry)
 
 
-def run_api(settings: AppSettings, runner: WorkflowRunner | None = None) -> None:
+def run_api(settings: AppSettings, runner: WorkflowRunner | None = None, mode: str = "api") -> None:
     """Start the FastAPI server."""
     import uvicorn
 
     from core.api.app import create_app
 
-    app = create_app(settings, workflow_runner=runner)
+    app = create_app(settings, workflow_runner=runner, mode=mode)
     uvicorn.run(app, host=settings.api.host, port=settings.api.port)
 
 
@@ -156,7 +156,7 @@ def main(argv: list[str] | None = None) -> None:
     mode = args.mode
 
     if mode == "api":
-        run_api(settings)
+        run_api(settings, mode=mode)
     elif mode == "both":
         runner = _create_runner(settings)
         shutdown_event = threading.Event()
@@ -172,7 +172,7 @@ def main(argv: list[str] | None = None) -> None:
         )
         worker_thread.daemon = True
         worker_thread.start()
-        run_api(settings, runner=runner)
+        run_api(settings, runner=runner, mode=mode)
         shutdown_event.set()
         worker_thread.join(timeout=30)
     else:

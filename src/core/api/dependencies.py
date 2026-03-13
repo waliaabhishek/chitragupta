@@ -76,9 +76,11 @@ def get_or_create_backend(
     """Get cached backend or create and cache a new one."""
     if tenant_name not in backends:
         storage_module = get_storage_module_for_ecosystem(ecosystem)
-        backends[tenant_name] = create_storage_backend(
+        backend = create_storage_backend(
             storage_config, storage_module=storage_module, use_migrations=False
         )
+        backend.create_tables()
+        backends[tenant_name] = backend
     return backends[tenant_name]
 
 

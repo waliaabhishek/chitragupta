@@ -31,7 +31,9 @@ if TYPE_CHECKING:
     class _EntityRepo(Protocol):
         """Structural minimum for deletion detection — covers ResourceRepository and IdentityRepository."""
 
-        def find_active_at(self, ecosystem: str, tenant_id: str, timestamp: datetime) -> tuple[Sequence[Any], int]: ...
+        def find_active_at(
+            self, ecosystem: str, tenant_id: str, timestamp: datetime, *, count: bool = True
+        ) -> tuple[Sequence[Any], int]: ...
 
         def mark_deleted(self, ecosystem: str, tenant_id: str, entity_id: str, deleted_at: datetime) -> None: ...
 
@@ -198,6 +200,7 @@ class GatherPhase:
         now = datetime.now(UTC)
 
         if not self._should_refresh(now):
+            assert self._last_resource_gather_at is not None  # guaranteed by _should_refresh logic
             logger.debug(
                 "Skipping resource/billing refresh — last gather was %s ago",
                 now - self._last_resource_gather_at,
@@ -250,12 +253,12 @@ class GatherPhase:
         gathered_identity_ids: set[str] = set()
         for resource in handler.gather_resources(self._tenant_id, uow, shared_ctx):
             if resource.created_at is not None:
-                resource = replace(resource, created_at=_ensure_utc(resource.created_at))
+                resource = replace(resource, created_at=_ensure_utc(resource.created_at))  # type: ignore[type-var]  # runtime objects are dataclasses behind Resource Protocol
             uow.resources.upsert(resource)
             gathered_resource_ids.add(resource.resource_id)
         for identity in handler.gather_identities(self._tenant_id, uow):
             if identity.created_at is not None:
-                identity = replace(identity, created_at=_ensure_utc(identity.created_at))
+                identity = replace(identity, created_at=_ensure_utc(identity.created_at))  # type: ignore[type-var]  # runtime objects are dataclasses behind Identity Protocol
             uow.identities.upsert(identity)
             gathered_identity_ids.add(identity.identity_id)
         return gathered_resource_ids, gathered_identity_ids
@@ -315,7 +318,7 @@ class GatherPhase:
         cost_input = self._bundle.plugin.get_cost_input()
         gathered: set[date_type] = set()
         for line in cost_input.gather(self._tenant_id, start, end, uow):
-            line = replace(line, timestamp=_ensure_utc(line.timestamp))
+            line = replace(line, timestamp=_ensure_utc(line.timestamp))  # type: ignore[type-var]  # runtime objects are dataclasses behind BillingLineItem Protocol
             uow.billing.upsert(line)
             gathered.add(line.timestamp.date())
         return gathered
@@ -801,6 +804,7 @@ class ChargebackOrchestrator:
         storage_backend: StorageBackend,
         metrics_source: MetricsSource | None = None,
         shutdown_check: Callable[[], bool] | None = None,
+        progress_callback: Callable[[str | None, date_type | None], None] | None = None,
     ) -> None:
         self._tenant_name = tenant_name
         self._tenant_id = tenant_config.tenant_id
@@ -808,6 +812,7 @@ class ChargebackOrchestrator:
         self._storage_backend = storage_backend
         self._tenant_config = tenant_config  # kept for backward compatibility
         self._shutdown_check = shutdown_check
+        self._progress_callback = progress_callback
 
         bundle = EcosystemBundle.build(plugin)
         (
@@ -903,12 +908,17 @@ class ChargebackOrchestrator:
         """Backward-compatible wrapper — delegates to CalculatePhase.run()."""
         return self._calculate_phase.run(uow, tracking_date)
 
+    def _report_progress(self, stage: str | None, current_date: date_type | None = None) -> None:
+        if self._progress_callback is not None:
+            self._progress_callback(stage, current_date)
+
     def run(self) -> PipelineRunResult:
         errors: list[str] = []
         dates_gathered = 0
         dates_calculated = 0
         chargeback_rows_written = 0
 
+        self._report_progress("gathering")
         try:
             with self._storage_backend.create_unit_of_work() as uow:
                 gather_result = self._gather_phase.run(uow)
@@ -947,6 +957,7 @@ class ChargebackOrchestrator:
                 break
 
             tracking_date = pipeline_state.tracking_date
+            self._report_progress("calculating", tracking_date)
             logger.info("Processing billing date: %s", tracking_date)
             start_time = time.time()
             try:
@@ -963,6 +974,7 @@ class ChargebackOrchestrator:
                     elapsed,
                 )
                 # Emit after commit — best-effort, failures logged but not fatal
+                self._report_progress("emitting", tracking_date)
                 emit_result = self._emit_phase.run(tracking_date)
                 errors.extend(emit_result.errors)
             except Exception as exc:
@@ -974,6 +986,7 @@ class ChargebackOrchestrator:
                 )
                 errors.append(f"Calculate failed for date {tracking_date}: {exc}")
 
+        self._report_progress(None, None)
         return PipelineRunResult(
             tenant_name=self._tenant_name,
             tenant_id=self._tenant_id,

@@ -6,6 +6,7 @@ interface TagEditorProps {
   tags: TagResponse[];
   onAdd: (key: string, displayName: string) => Promise<void>;
   onRemove: (tagId: number) => Promise<void>;
+  readOnly?: boolean;
 }
 
 interface TagFormValues {
@@ -13,7 +14,7 @@ interface TagFormValues {
   displayName: string;
 }
 
-export function TagEditor({ tags, onAdd, onRemove }: TagEditorProps): JSX.Element {
+export function TagEditor({ tags, onAdd, onRemove, readOnly }: TagEditorProps): JSX.Element {
   const [form] = Form.useForm<TagFormValues>();
   const [loading, setLoading] = useState(false);
 
@@ -34,7 +35,7 @@ export function TagEditor({ tags, onAdd, onRemove }: TagEditorProps): JSX.Elemen
         {tags.map((tag) => (
           <Tag
             key={tag.tag_id}
-            closable
+            closable={!readOnly}
             onClose={() => {
               void onRemove(tag.tag_id);
             }}
@@ -43,22 +44,24 @@ export function TagEditor({ tags, onAdd, onRemove }: TagEditorProps): JSX.Elemen
           </Tag>
         ))}
       </Space>
-      <Form form={form} layout="inline" onFinish={handleSubmit}>
-        <Form.Item name="key" rules={[{ required: true, message: "Key required" }]}>
-          <Input placeholder="Key" maxLength={100} style={{ width: 140 }} />
-        </Form.Item>
-        <Form.Item
-          name="displayName"
-          rules={[{ required: true, message: "Display name required" }]}
-        >
-          <Input placeholder="Display Name" maxLength={500} style={{ width: 180 }} />
-        </Form.Item>
-        <Form.Item>
-          <Button type="primary" htmlType="submit" loading={loading}>
-            Add
-          </Button>
-        </Form.Item>
-      </Form>
+      {!readOnly && (
+        <Form form={form} layout="inline" onFinish={handleSubmit}>
+          <Form.Item name="key" rules={[{ required: true, message: "Key required" }]}>
+            <Input placeholder="Key" maxLength={100} style={{ width: 140 }} />
+          </Form.Item>
+          <Form.Item
+            name="displayName"
+            rules={[{ required: true, message: "Display name required" }]}
+          >
+            <Input placeholder="Display Name" maxLength={500} style={{ width: 180 }} />
+          </Form.Item>
+          <Form.Item>
+            <Button type="primary" htmlType="submit" loading={loading}>
+              Add
+            </Button>
+          </Form.Item>
+        </Form>
+      )}
     </div>
   );
 }

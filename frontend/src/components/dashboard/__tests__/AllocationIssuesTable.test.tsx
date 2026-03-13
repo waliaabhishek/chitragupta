@@ -7,7 +7,6 @@ import type { ChargebackFilters } from "../../../types/filters";
 
 // Capture column definitions and dataSource passed to Table
 let capturedColumns: Array<{ title?: string; dataIndex?: string; defaultSortOrder?: string }> = [];
-let capturedLocale: { emptyText?: ReactNode } | undefined;
 let capturedDataSource: AllocationIssueItem[] = [];
 let capturedPagination: { total?: number; pageSize?: number } | undefined;
 
@@ -28,7 +27,7 @@ vi.mock("antd", () => ({
     pagination?: { total?: number; pageSize?: number };
   }) => {
     capturedColumns = columns ?? [];
-    capturedLocale = locale;
+    void locale; // consumed by antd Table but not asserted in tests
     capturedDataSource = dataSource ?? [];
     capturedPagination = pagination ?? undefined;
     return (

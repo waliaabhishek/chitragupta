@@ -1,14 +1,15 @@
 import { DownloadOutlined } from "@ant-design/icons";
-import { Button, notification } from "antd";
+import { Button, notification, Tooltip } from "antd";
 import { useState } from "react";
 import { API_URL } from "../../config";
 
 interface ExportButtonProps {
   tenantName: string;
   filters: Record<string, string>;
+  disabled?: boolean;
 }
 
-export function ExportButton({ tenantName, filters }: ExportButtonProps): JSX.Element {
+export function ExportButton({ tenantName, filters, disabled }: ExportButtonProps): JSX.Element {
   const [loading, setLoading] = useState(false);
 
   const handleExport = async (): Promise<void> => {
@@ -59,13 +60,20 @@ export function ExportButton({ tenantName, filters }: ExportButtonProps): JSX.El
     }
   };
 
-  return (
+  const btn = (
     <Button
       icon={<DownloadOutlined />}
       loading={loading}
+      disabled={disabled}
       onClick={() => void handleExport()}
     >
       Export CSV
     </Button>
+  );
+
+  return disabled ? (
+    <Tooltip title="Read-only while pipeline is running">{btn}</Tooltip>
+  ) : (
+    btn
   );
 }

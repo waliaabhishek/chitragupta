@@ -60,6 +60,9 @@ vi.mock("../../providers/TenantContext", () => ({
     isLoading: false,
     error: null,
     refetch: vi.fn(),
+    appStatus: "ready" as const,
+    readiness: null,
+    isReadOnly: false,
   })),
 }));
 

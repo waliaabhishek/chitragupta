@@ -10,7 +10,7 @@ const { Title, Text } = Typography;
 const PAGE_SIZE = 100;
 
 export function TagManagementPage(): JSX.Element {
-  const { currentTenant } = useTenant();
+  const { currentTenant, isReadOnly } = useTenant();
   const navigate = useNavigate();
 
   const [tags, setTags] = useState<TagWithDimensionResponse[]>([]);
@@ -122,7 +122,7 @@ export function TagManagementPage(): JSX.Element {
       dataIndex: "display_name",
       key: "display_name",
       render: (value: string, record: TagWithDimensionResponse) => {
-        if (editingTagId === record.tag_id) {
+        if (editingTagId === record.tag_id && !isReadOnly) {
           return (
             <Space>
               <Input
@@ -139,6 +139,9 @@ export function TagManagementPage(): JSX.Element {
               </Button>
             </Space>
           );
+        }
+        if (isReadOnly) {
+          return <span>{value}</span>;
         }
         return (
           <Button
@@ -180,16 +183,18 @@ export function TagManagementPage(): JSX.Element {
           >
             View
           </Button>
-          <Popconfirm
-            title="Delete this tag?"
-            onConfirm={() => void handleDelete(record.tag_id)}
-            okText="Delete"
-            cancelText="Cancel"
-          >
-            <Button type="link" danger size="small">
-              Delete
-            </Button>
-          </Popconfirm>
+          {!isReadOnly && (
+            <Popconfirm
+              title="Delete this tag?"
+              onConfirm={() => void handleDelete(record.tag_id)}
+              okText="Delete"
+              cancelText="Cancel"
+            >
+              <Button type="link" danger size="small">
+                Delete
+              </Button>
+            </Popconfirm>
+          )}
         </Space>
       ),
     },

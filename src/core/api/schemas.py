@@ -365,3 +365,29 @@ class HealthResponse(BaseModel):
 
     status: str
     version: str
+
+
+# --- Readiness ---
+
+
+class TenantReadiness(BaseModel):
+    """Per-tenant readiness state for the readiness endpoint."""
+
+    tenant_name: str
+    tables_ready: bool
+    has_data: bool
+    pipeline_running: bool
+    pipeline_stage: str | None
+    pipeline_current_date: date | None
+    last_run_status: str | None
+    last_run_at: datetime | None
+    permanent_failure: str | None
+
+
+class ReadinessResponse(BaseModel):
+    """Application readiness response."""
+
+    status: str  # "ready" | "initializing" | "no_data" | "error"
+    version: str
+    mode: str
+    tenants: list[TenantReadiness]

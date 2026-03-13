@@ -154,6 +154,9 @@ vi.mock("../../providers/TenantContext", () => ({
     isLoading: false,
     error: null,
     refetch: vi.fn(),
+    appStatus: "ready" as const,
+    readiness: null,
+    isReadOnly: false,
   })),
 }));
 
@@ -185,6 +188,9 @@ describe("CostDashboardPage", () => {
       isLoading: false,
       error: null,
       refetch: vi.fn(),
+      appStatus: "ready" as const,
+      readiness: null,
+      isReadOnly: false,
     });
   });
 
@@ -210,6 +216,9 @@ describe("CostDashboardPage", () => {
       isLoading: false,
       error: null,
       refetch: vi.fn(),
+      appStatus: "ready" as const,
+      readiness: null,
+      isReadOnly: false,
     });
 
     render(<CostDashboardPage />, { wrapper });
@@ -239,6 +248,9 @@ describe("CostDashboardPage", () => {
       isLoading: false,
       error: null,
       refetch: vi.fn(),
+      appStatus: "ready" as const,
+      readiness: null,
+      isReadOnly: false,
     });
 
     const { useAggregation } = await import("../../hooks/useAggregation");
@@ -268,6 +280,9 @@ describe("CostDashboardPage", () => {
       isLoading: false,
       error: null,
       refetch: vi.fn(),
+      appStatus: "ready" as const,
+      readiness: null,
+      isReadOnly: false,
     });
 
     const { useChargebackFilters } = await import("../../hooks/useChargebackFilters");
@@ -310,6 +325,9 @@ describe("CostDashboardPage", () => {
       isLoading: false,
       error: null,
       refetch: vi.fn(),
+      appStatus: "ready" as const,
+      readiness: null,
+      isReadOnly: false,
     });
 
     render(<CostDashboardPage />, { wrapper });

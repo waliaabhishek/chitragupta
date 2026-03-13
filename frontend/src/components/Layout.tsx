@@ -13,6 +13,7 @@ import { Button, Layout as AntLayout, Menu, theme, Typography } from "antd";
 import { useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useTenant } from "../providers/TenantContext";
+import { PipelineStatusBanner } from "./PipelineStatusBanner";
 import { TenantSelector } from "./TenantSelector";
 
 const { Header, Sider, Content } = AntLayout;
@@ -129,6 +130,7 @@ export function AppLayout({ children, isDark, onToggleTheme }: AppLayoutProps): 
           />
           <TenantSelector />
         </Header>
+        <PipelineStatusBanner />
         <Content
           style={{
             margin: "24px 16px",

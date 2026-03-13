@@ -14,7 +14,7 @@ import { ChargebackDetailDrawer } from "./ChargebackDetailDrawer";
 const { Text, Title } = Typography;
 
 export function ChargebackListPage(): JSX.Element {
-  const { currentTenant } = useTenant();
+  const { currentTenant, isReadOnly } = useTenant();
   const { filters, setFilter, setFilters, resetFilters, toQueryParams } = useChargebackFilters();
   const [searchParams] = useSearchParams();
   const [selectedDimensionId, setSelectedDimensionId] = useState<number | null>(null);
@@ -92,7 +92,7 @@ export function ChargebackListPage(): JSX.Element {
         <Title level={3} style={{ margin: 0 }}>
           Chargebacks
         </Title>
-        <ExportButton filters={toQueryParams()} tenantName={currentTenant.tenant_name} />
+        <ExportButton filters={toQueryParams()} tenantName={currentTenant.tenant_name} disabled={isReadOnly} />
       </div>
       <FilterPanel filters={filters} onChange={setFilter} onBatchChange={setFilters} onReset={resetFilters} tenantName={currentTenant.tenant_name} />
       {hasSelection && (
@@ -102,6 +102,7 @@ export function ChargebackListPage(): JSX.Element {
           totalCount={selectAllTotal}
           onClear={handleClearSelection}
           onAddTags={() => setBulkModalOpen(true)}
+          disabled={isReadOnly}
         />
       )}
       <ChargebackGrid
@@ -126,6 +127,7 @@ export function ChargebackListPage(): JSX.Element {
           totalCount={totalSelected}
           onClose={() => setBulkModalOpen(false)}
           onSuccess={handleBulkSuccess}
+          disabled={isReadOnly}
         />
       )}
     </div>

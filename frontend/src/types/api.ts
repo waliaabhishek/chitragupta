@@ -273,3 +273,24 @@ export interface HealthResponse {
   status: string;
   version: string;
 }
+
+// --- Readiness ---
+
+export interface TenantReadiness {
+  tenant_name: string;
+  tables_ready: boolean;
+  has_data: boolean;
+  pipeline_running: boolean;
+  pipeline_stage: string | null;
+  pipeline_current_date: string | null;
+  last_run_status: string | null;
+  last_run_at: string | null;
+  permanent_failure: string | null;
+}
+
+export interface ReadinessResponse {
+  status: "ready" | "initializing" | "no_data" | "error";
+  version: string;
+  mode: string;
+  tenants: TenantReadiness[];
+}

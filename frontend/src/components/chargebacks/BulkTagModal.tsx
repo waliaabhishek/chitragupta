@@ -8,6 +8,7 @@ interface BulkTagModalProps {
   /** Provide selectedIds for per-row bulk, or filters for "tag all filtered" mode. */
   selectedIds: number[] | null;
   filters: Record<string, string> | null;
+  disabled?: boolean;
   totalCount: number;
   onClose: () => void;
   onSuccess: () => void;
@@ -26,6 +27,7 @@ export function BulkTagModal({
   totalCount,
   onClose,
   onSuccess,
+  disabled,
 }: BulkTagModalProps): JSX.Element {
   const [form] = Form.useForm<FormValues>();
   const [submitting, setSubmitting] = useState(false);
@@ -121,7 +123,7 @@ export function BulkTagModal({
           <Checkbox>Override existing tags with the same key</Checkbox>
         </Form.Item>
         <Form.Item>
-          <Button type="primary" htmlType="submit" loading={submitting} block>
+          <Button type="primary" htmlType="submit" loading={submitting} disabled={disabled} block>
             Apply Tags
           </Button>
         </Form.Item>

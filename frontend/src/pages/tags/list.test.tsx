@@ -26,6 +26,9 @@ vi.mock("../../providers/TenantContext", () => ({
     isLoading: false,
     error: null,
     refetch: vi.fn(),
+    appStatus: "ready" as const,
+    readiness: null,
+    isReadOnly: false,
   })),
 }));
 
@@ -52,6 +55,9 @@ describe("TagManagementPage", () => {
       isLoading: false,
       error: null,
       refetch: vi.fn(),
+      appStatus: "ready" as const,
+      readiness: null,
+      isReadOnly: false,
     });
 
     render(<TagManagementPage />, { wrapper });
@@ -72,6 +78,9 @@ describe("TagManagementPage", () => {
       isLoading: false,
       error: null,
       refetch: vi.fn(),
+      appStatus: "ready" as const,
+      readiness: null,
+      isReadOnly: false,
     });
 
     server.use(
@@ -103,6 +112,9 @@ describe("TagManagementPage", () => {
       isLoading: false,
       error: null,
       refetch: vi.fn(),
+      appStatus: "ready" as const,
+      readiness: null,
+      isReadOnly: false,
     });
 
     server.use(
@@ -138,6 +150,9 @@ describe("TagManagementPage", () => {
       isLoading: false,
       error: null,
       refetch: vi.fn(),
+      appStatus: "ready" as const,
+      readiness: null,
+      isReadOnly: false,
     });
 
     server.use(
@@ -168,6 +183,9 @@ describe("TagManagementPage", () => {
       isLoading: false,
       error: null,
       refetch: vi.fn(),
+      appStatus: "ready" as const,
+      readiness: null,
+      isReadOnly: false,
     });
 
     let patchCalled = false;
@@ -222,6 +240,9 @@ describe("TagManagementPage", () => {
       isLoading: false,
       error: null,
       refetch: vi.fn(),
+      appStatus: "ready" as const,
+      readiness: null,
+      isReadOnly: false,
     });
 
     render(<TagManagementPage />, { wrapper });
@@ -257,6 +278,9 @@ describe("TagManagementPage", () => {
       isLoading: false,
       error: null,
       refetch: vi.fn(),
+      appStatus: "ready" as const,
+      readiness: null,
+      isReadOnly: false,
     });
 
     let deleteCalled = false;

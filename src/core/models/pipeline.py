@@ -5,6 +5,8 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Literal
 
+PIPELINE_STAGES = ("gathering", "calculating", "emitting")
+
 logger = logging.getLogger(__name__)
 
 
@@ -29,6 +31,8 @@ class PipelineRun:
     status: Literal["running", "completed", "failed", "skipped"]
     id: int | None = field(default=None)
     ended_at: datetime | None = None
+    stage: str | None = None
+    current_date: date | None = None
     dates_gathered: int = 0
     dates_calculated: int = 0
     rows_written: int = 0

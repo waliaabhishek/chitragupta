@@ -19,7 +19,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def create_app(settings: AppSettings, workflow_runner: WorkflowRunner | None = None) -> FastAPI:
+def create_app(
+    settings: AppSettings, workflow_runner: WorkflowRunner | None = None, mode: str = "api"
+) -> FastAPI:
     """Factory function for creating the FastAPI application."""
 
     @asynccontextmanager
@@ -29,6 +31,7 @@ def create_app(settings: AppSettings, workflow_runner: WorkflowRunner | None = N
         app.state.backends = {}
         app.state.pipeline_runs = {}
         app.state.workflow_runner = workflow_runner
+        app.state.mode = mode
         yield
         logger.info("Chitragupt API shutting down — disposing backends")
         for backend in app.state.backends.values():
@@ -65,12 +68,14 @@ def create_app(settings: AppSettings, workflow_runner: WorkflowRunner | None = N
         identities,
         inventory,
         pipeline,
+        readiness,
         resources,
         tags,
         tenants,
     )
 
     app.include_router(health.router)
+    app.include_router(readiness.router, prefix="/api/v1")
     app.include_router(tenants.router, prefix="/api/v1")
     app.include_router(billing.router, prefix="/api/v1")
     # aggregation must be registered before chargebacks so static /chargebacks/aggregate

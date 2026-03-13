@@ -1,4 +1,4 @@
-import { Button, Space, Typography } from "antd";
+import { Button, Space, Tooltip, Typography } from "antd";
 
 interface SelectionToolbarProps {
   selectedCount: number;
@@ -6,6 +6,7 @@ interface SelectionToolbarProps {
   totalCount: number;
   onClear: () => void;
   onAddTags: () => void;
+  disabled?: boolean;
 }
 
 export function SelectionToolbar({
@@ -14,6 +15,7 @@ export function SelectionToolbar({
   totalCount,
   onClear,
   onAddTags,
+  disabled,
 }: SelectionToolbarProps): JSX.Element {
   const label = isSelectAllMode
     ? `All ${totalCount} matching rows selected`
@@ -36,9 +38,11 @@ export function SelectionToolbar({
         <Button size="small" onClick={onClear}>
           Clear Selection
         </Button>
-        <Button size="small" type="primary" onClick={onAddTags}>
-          Add Tags
-        </Button>
+        <Tooltip title={disabled ? "Read-only while pipeline is running" : undefined}>
+          <Button size="small" type="primary" onClick={onAddTags} disabled={disabled}>
+            Add Tags
+          </Button>
+        </Tooltip>
       </Space>
     </div>
   );

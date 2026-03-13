@@ -66,6 +66,8 @@ class PipelineRunTable(SQLModel, table=True):
     started_at: datetime = Field(sa_column=Column(DateTime(timezone=True)))
     ended_at: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True)))
     status: str  # "running" | "completed" | "failed"
+    stage: str | None = None  # "gathering" | "calculating" | "emitting"
+    current_date: date | None = None
     dates_gathered: int = 0
     dates_calculated: int = 0
     rows_written: int = 0

@@ -5,6 +5,7 @@ import json
 import logging
 import threading
 import time
+from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -13,7 +14,10 @@ from typing import TYPE_CHECKING
 from core.engine.orchestrator import ChargebackOrchestrator, GatherFailureThresholdError, PipelineRunResult
 
 if TYPE_CHECKING:
+    from datetime import date as date_type
+
     from core.config.models import AppSettings, TenantConfig
+    from core.models.pipeline import PipelineRun
     from core.plugin.protocols import EcosystemPlugin
     from core.plugin.registry import PluginRegistry
     from core.storage.interface import StorageBackend
@@ -47,10 +51,91 @@ def _config_hash(config: TenantConfig) -> str:
     """Stable hash of tenant config for change detection."""
     try:
         raw = json.dumps(config.model_dump(), sort_keys=True, default=str)
-    except TypeError, ValueError, AttributeError:
+    except (TypeError, ValueError, AttributeError):
         logger.debug("Failed to JSON-serialize config for hashing; falling back to repr()", exc_info=True)
         raw = repr(config)
     return hashlib.sha256(raw.encode()).hexdigest()[:16]
+
+
+class PipelineRunTracker:
+    """Manages PipelineRun DB records: creation, progress updates, finalization.
+
+    Extracted from WorkflowRunner to separate execution scheduling (WorkflowRunner)
+    from audit-record lifecycle (this class).
+    """
+
+    def __init__(self, storage: StorageBackend) -> None:
+        self._storage = storage
+
+    def _persist(self, pipeline_run: PipelineRun, context: str) -> None:
+        """Best-effort persist of PipelineRun state to DB."""
+        try:
+            with self._storage.create_unit_of_work() as uow:
+                uow.pipeline_runs.update_run(pipeline_run)
+                uow.commit()
+        except Exception:
+            logger.warning("Failed to %s pipeline run", context, exc_info=True)
+
+    def create(self, tenant_name: str) -> PipelineRun:
+        """Create a PipelineRun record with status='running'."""
+        with self._storage.create_unit_of_work() as uow:
+            run = uow.pipeline_runs.create_run(tenant_name, datetime.now(UTC))
+            uow.commit()
+        return run
+
+    def make_progress_callback(
+        self, pipeline_run: PipelineRun
+    ) -> Callable[[str | None, date_type | None], None]:
+        """Build a callback that updates PipelineRun stage/current_date in DB."""
+        def callback(stage: str | None, current_date: date_type | None) -> None:
+            pipeline_run.stage = stage
+            pipeline_run.current_date = current_date
+            self._persist(pipeline_run, "update stage for")
+
+        return callback
+
+    def finalize(self, pipeline_run: PipelineRun, result: PipelineRunResult) -> None:
+        """Update PipelineRun with final status and metrics."""
+        pipeline_run.status = "failed" if result.errors else "completed"
+        pipeline_run.ended_at = datetime.now(UTC)
+        pipeline_run.stage = None
+        pipeline_run.current_date = None
+        pipeline_run.dates_gathered = result.dates_gathered
+        pipeline_run.dates_calculated = result.dates_calculated
+        pipeline_run.rows_written = result.chargeback_rows_written
+        if result.errors:
+            pipeline_run.error_message = "; ".join(result.errors)[:2000]
+        self._persist(pipeline_run, "finalize")
+
+    def fail(self, pipeline_run: PipelineRun, error_message: str = "Unhandled exception — see logs") -> None:
+        """Mark PipelineRun as failed on exception."""
+        pipeline_run.status = "failed"
+        pipeline_run.ended_at = datetime.now(UTC)
+        pipeline_run.stage = None
+        pipeline_run.current_date = None
+        pipeline_run.error_message = error_message
+        self._persist(pipeline_run, "mark as failed")
+
+    def cleanup_orphaned_runs(self, tenant_name: str) -> None:
+        """Mark any 'running' PipelineRuns as failed (stale after restart)."""
+        try:
+            with self._storage.create_unit_of_work() as uow:
+                latest = uow.pipeline_runs.get_latest_run(tenant_name)
+                if latest is not None and latest.status == "running":
+                    latest.status = "failed"
+                    latest.ended_at = datetime.now(UTC)
+                    latest.stage = None
+                    latest.current_date = None
+                    latest.error_message = "Orphaned — process restarted before completion"
+                    uow.pipeline_runs.update_run(latest)
+                    uow.commit()
+                    logger.info(
+                        "Cleaned up orphaned 'running' PipelineRun for tenant %s (id=%s)",
+                        tenant_name,
+                        latest.id,
+                    )
+        except Exception:
+            logger.warning("Failed to clean up orphaned runs for %s", tenant_name, exc_info=True)
 
 
 class WorkflowRunner:
@@ -145,15 +230,20 @@ class WorkflowRunner:
         return runtime
 
     def bootstrap_storage(self) -> None:
-        """Create tables for all tenant storage backends. Call once at startup."""
+        """Create tables for all tenant storage backends and clean up orphaned runs.
+
+        Call once at startup. After table creation, marks any PipelineRuns stuck
+        in 'running' status (from a previous process crash) as failed.
+        """
         if self._bootstrapped:
             return
         from core.storage.registry import create_storage_backend
 
-        for config in self._settings.tenants.values():
+        for tenant_name, config in self._settings.tenants.items():
             storage = create_storage_backend(config.storage)
             try:
                 storage.create_tables()
+                PipelineRunTracker(storage).cleanup_orphaned_runs(tenant_name)
             finally:
                 storage.dispose()
         self._bootstrapped = True
@@ -296,9 +386,19 @@ class WorkflowRunner:
 
         try:
             runtime = self._get_or_create_runtime(name, config)
-            result = runtime.orchestrator.run()  # GatherFailureThresholdError propagates up
-            runtime.last_run_at = datetime.now(UTC)
-            return result
+            tracker = PipelineRunTracker(runtime.storage)
+
+            pipeline_run = tracker.create(name)
+            runtime.orchestrator._progress_callback = tracker.make_progress_callback(pipeline_run)
+
+            try:
+                result = runtime.orchestrator.run()  # GatherFailureThresholdError propagates up
+                runtime.last_run_at = datetime.now(UTC)
+                tracker.finalize(pipeline_run, result)
+                return result
+            except Exception:
+                tracker.fail(pipeline_run)
+                raise
         finally:
             with self._running_lock:
                 self._running_tenants.discard(name)

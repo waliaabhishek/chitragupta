@@ -50,7 +50,7 @@ export function ChargebackDetailDrawer({
   onClose,
   onTagsChanged,
 }: ChargebackDetailDrawerProps): JSX.Element | null {
-  const { currentTenant } = useTenant();
+  const { currentTenant, isReadOnly } = useTenant();
   const [dimension, setDimension] =
     useState<ChargebackDimensionResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -158,6 +158,7 @@ export function ChargebackDetailDrawer({
             tags={dimension.tags}
             onAdd={handleAddTag}
             onRemove={handleRemoveTag}
+            readOnly={isReadOnly}
           />
         </>
       )}
