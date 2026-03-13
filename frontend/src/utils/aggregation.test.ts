@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AggregationBucket } from "../types/api";
-import { aggregateByDimension, aggregateByTime, formatCurrency } from "./aggregation";
+import { aggregateByDimension, aggregateByTime, formatCurrency, topNWithOther } from "./aggregation";
 
 function makeBucket(overrides: Partial<AggregationBucket> = {}): AggregationBucket {
   return {
@@ -82,6 +82,46 @@ describe("aggregateByDimension", () => {
     const bucket = makeBucket({ dimensions: {} });
     const result = aggregateByDimension([bucket], "identity_id");
     expect(result[0].key).toBe("Unknown");
+  });
+});
+
+describe("topNWithOther", () => {
+  it("returns empty array for empty input", () => {
+    expect(topNWithOther([], 10)).toEqual([]);
+  });
+
+  it("returns all items when count <= n (no Other bucket)", () => {
+    const items = [
+      { key: "a", amount: 100 },
+      { key: "b", amount: 50 },
+    ];
+    const result = topNWithOther(items, 10);
+    expect(result).toHaveLength(2);
+    expect(result.find((r) => r.key === "Other")).toBeUndefined();
+  });
+
+  it("sorts by amount descending", () => {
+    const items = [
+      { key: "low", amount: 10 },
+      { key: "high", amount: 100 },
+      { key: "mid", amount: 50 },
+    ];
+    const result = topNWithOther(items, 10);
+    expect(result[0].key).toBe("high");
+    expect(result[1].key).toBe("mid");
+    expect(result[2].key).toBe("low");
+  });
+
+  it("groups items beyond n into Other bucket", () => {
+    const items = Array.from({ length: 12 }, (_, i) => ({
+      key: `item-${i}`,
+      amount: 100 - i * 5,
+    }));
+    const result = topNWithOther(items, 10);
+    expect(result).toHaveLength(11); // 10 + Other
+    expect(result[10].key).toBe("Other");
+    // Items 10 and 11 have amounts 50 and 45
+    expect(result[10].amount).toBe(95);
   });
 });
 

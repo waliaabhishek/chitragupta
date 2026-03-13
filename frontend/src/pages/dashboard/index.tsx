@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Col, Radio, Row, Typography } from "antd";
 import type { TenantStatusSummary } from "../../types/api";
 import { useTenant } from "../../providers/TenantContext";
@@ -13,6 +13,7 @@ import { CostByIdentityChart } from "../../components/charts/CostByIdentityChart
 import { CostByProductChart } from "../../components/charts/CostByProductChart";
 import { CostByResourceChart } from "../../components/charts/CostByResourceChart";
 import { ProductChartTypeToggle } from "../../components/charts/ProductChartTypeToggle";
+import { DimensionPieChart } from "../../components/charts/DimensionPieChart";
 import type { ChargebackFilters } from "../../types/filters";
 
 const { Title, Text } = Typography;
@@ -29,7 +30,7 @@ interface DashboardContentProps {
 function DashboardContent({ tenant, filters, timeBucket }: DashboardContentProps): JSX.Element {
   const [productChartType, setProductChartType] = useState<"pie" | "treemap">("pie");
 
-  const sharedParams: Omit<UseAggregationParams, "groupBy"> = {
+  const sharedParams: Omit<UseAggregationParams, "groupBy"> = useMemo(() => ({
     tenantName: tenant.tenant_name,
     timeBucket,
     startDate: filters.start_date ?? "",
@@ -38,11 +39,13 @@ function DashboardContent({ tenant, filters, timeBucket }: DashboardContentProps
     productType: filters.product_type,
     resourceId: filters.resource_id,
     costType: filters.cost_type,
-  };
+  }), [tenant.tenant_name, timeBucket, filters]);
 
   const trendData = useAggregation({ ...sharedParams, groupBy: ["identity_id"] });
   const productData = useAggregation({ ...sharedParams, groupBy: ["product_type"] });
   const resourceData = useAggregation({ ...sharedParams, groupBy: ["resource_id"] });
+  const environmentData = useAggregation({ ...sharedParams, groupBy: ["environment_id"] });
+  const productSubTypeData = useAggregation({ ...sharedParams, groupBy: ["product_sub_type"] });
 
   return (
     <Row gutter={[16, 16]}>
@@ -61,14 +64,11 @@ function DashboardContent({ tenant, filters, timeBucket }: DashboardContentProps
           error={trendData.error}
           onRetry={trendData.refetch}
         >
-          <CostTrendChart
-            data={trendData.data?.buckets ?? []}
-            timeBucket={timeBucket}
-          />
+          <CostTrendChart data={trendData.data?.buckets ?? []} timeBucket={timeBucket} />
         </ChartCard>
       </Col>
 
-      <Col xs={24} md={12}>
+      <Col span={24}>
         <ChartCard
           title="Cost by Identity"
           loading={trendData.isLoading}
@@ -79,7 +79,29 @@ function DashboardContent({ tenant, filters, timeBucket }: DashboardContentProps
         </ChartCard>
       </Col>
 
-      <Col xs={24} md={12}>
+      <Col xs={24} sm={12} lg={6}>
+        <ChartCard
+          title="Cost by Environment"
+          loading={environmentData.isLoading}
+          error={environmentData.error}
+          onRetry={environmentData.refetch}
+        >
+          <DimensionPieChart data={environmentData.data?.buckets ?? []} dimension="environment_id" />
+        </ChartCard>
+      </Col>
+
+      <Col xs={24} sm={12} lg={6}>
+        <ChartCard
+          title="Cost by Resource"
+          loading={resourceData.isLoading}
+          error={resourceData.error}
+          onRetry={resourceData.refetch}
+        >
+          <CostByResourceChart data={resourceData.data?.buckets ?? []} />
+        </ChartCard>
+      </Col>
+
+      <Col xs={24} sm={12} lg={6}>
         <ChartCard
           title="Cost by Product Type"
           loading={productData.isLoading}
@@ -91,14 +113,14 @@ function DashboardContent({ tenant, filters, timeBucket }: DashboardContentProps
         </ChartCard>
       </Col>
 
-      <Col span={24}>
+      <Col xs={24} sm={12} lg={6}>
         <ChartCard
-          title="Cost by Resource"
-          loading={resourceData.isLoading}
-          error={resourceData.error}
-          onRetry={resourceData.refetch}
+          title="Cost by Product Sub-Type"
+          loading={productSubTypeData.isLoading}
+          error={productSubTypeData.error}
+          onRetry={productSubTypeData.refetch}
         >
-          <CostByResourceChart data={resourceData.data?.buckets ?? []} />
+          <DimensionPieChart data={productSubTypeData.data?.buckets ?? []} dimension="product_sub_type" />
         </ChartCard>
       </Col>
     </Row>

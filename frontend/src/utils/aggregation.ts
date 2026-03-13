@@ -26,6 +26,21 @@ export function aggregateByDimension(
   return Array.from(map.entries()).map(([key, amount]) => ({ key, amount }));
 }
 
+/**
+ * Sort by amount desc, take top N, sum remainder into an "Other" bucket.
+ * If all items fit within topN, no "Other" bucket is added.
+ */
+export function topNWithOther(
+  items: { key: string; amount: number }[],
+  n: number,
+): { key: string; amount: number }[] {
+  const sorted = [...items].sort((a, b) => b.amount - a.amount);
+  if (sorted.length <= n) return sorted;
+  const top = sorted.slice(0, n);
+  const otherAmount = sorted.slice(n).reduce((sum, d) => sum + d.amount, 0);
+  return [...top, { key: "Other", amount: otherAmount }];
+}
+
 /** Format a number as USD currency string. */
 export function formatCurrency(amount: number): string {
   return `$${amount.toLocaleString(undefined, {

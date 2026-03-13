@@ -26,6 +26,9 @@ vi.mock("../../components/charts/CostByProductChart", () => ({
 vi.mock("../../components/charts/CostByResourceChart", () => ({
   CostByResourceChart: vi.fn(() => <div data-testid="cost-by-resource-chart" />),
 }));
+vi.mock("../../components/charts/DimensionPieChart", () => ({
+  DimensionPieChart: vi.fn(() => <div data-testid="dimension-pie-chart" />),
+}));
 
 // Mock FilterPanel
 vi.mock("../../components/chargebacks/FilterPanel", () => ({
@@ -49,6 +52,16 @@ vi.mock("../../components/charts/ChartCard", () => ({
         </div>
       ),
   ),
+}));
+
+// Mock useAggregation so we can spy on calls
+vi.mock("../../hooks/useAggregation", () => ({
+  useAggregation: vi.fn(() => ({
+    data: null,
+    isLoading: false,
+    error: null,
+    refetch: vi.fn(),
+  })),
 }));
 
 // Mock antd
@@ -115,6 +128,16 @@ vi.mock("../../providers/TenantContext", () => ({
   })),
 }));
 
+vi.mock("../../hooks/useChargebackFilters", () => ({
+  useChargebackFilters: vi.fn(() => ({
+    filters: { start_date: null, end_date: null },
+    setFilter: vi.fn(),
+    setFilters: vi.fn(),
+    resetFilters: vi.fn(),
+    toQueryParams: vi.fn(() => ({})),
+  })),
+}));
+
 function wrapper({ children }: { children: ReactNode }): JSX.Element {
   return (
     <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
@@ -149,7 +172,7 @@ describe("CostDashboardPage", () => {
     expect(screen.queryByText("Cost Trend Over Time")).toBeNull();
   });
 
-  it("renders all four chart cards when tenant is selected", async () => {
+  it("renders all six chart cards when tenant is selected", async () => {
     const { useTenant } = await import("../../providers/TenantContext");
     vi.mocked(useTenant).mockReturnValue({
       currentTenant: mockTenant,
@@ -169,8 +192,74 @@ describe("CostDashboardPage", () => {
 
     expect(screen.getByText("Cost Trend Over Time")).toBeInTheDocument();
     expect(screen.getByText("Cost by Identity")).toBeInTheDocument();
-    expect(screen.getByText("Cost by Product Type")).toBeInTheDocument();
+    expect(screen.getByText("Cost by Environment")).toBeInTheDocument();
     expect(screen.getByText("Cost by Resource")).toBeInTheDocument();
+    expect(screen.getByText("Cost by Product Type")).toBeInTheDocument();
+    expect(screen.getByText("Cost by Product Sub-Type")).toBeInTheDocument();
+  });
+
+  it("makes 5 useAggregation calls with environment_id and product_sub_type groupBy", async () => {
+    const { useTenant } = await import("../../providers/TenantContext");
+    vi.mocked(useTenant).mockReturnValue({
+      currentTenant: mockTenant,
+      tenants: [mockTenant],
+      setCurrentTenant: vi.fn(),
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    const { useAggregation } = await import("../../hooks/useAggregation");
+    const mockUseAggregation = vi.mocked(useAggregation);
+
+    render(<CostDashboardPage />, { wrapper });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("filter-panel")).toBeInTheDocument();
+    });
+
+    expect(mockUseAggregation).toHaveBeenCalledTimes(5);
+
+    const groupByValues = mockUseAggregation.mock.calls.map(
+      (call) => call[0].groupBy,
+    );
+    expect(groupByValues.flat()).toContain("environment_id");
+    expect(groupByValues.flat()).toContain("product_sub_type");
+  });
+
+  it("forwards explicit date filters to useAggregation", async () => {
+    const { useTenant } = await import("../../providers/TenantContext");
+    vi.mocked(useTenant).mockReturnValue({
+      currentTenant: mockTenant,
+      tenants: [mockTenant],
+      setCurrentTenant: vi.fn(),
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    const { useChargebackFilters } = await import("../../hooks/useChargebackFilters");
+    vi.mocked(useChargebackFilters).mockReturnValue({
+      filters: { start_date: "2026-01-01", end_date: "2026-01-31" },
+      setFilter: vi.fn(),
+      setFilters: vi.fn(),
+      resetFilters: vi.fn(),
+      toQueryParams: vi.fn(() => ({})),
+    });
+
+    const { useAggregation } = await import("../../hooks/useAggregation");
+    const mockUseAggregation = vi.mocked(useAggregation);
+
+    render(<CostDashboardPage />, { wrapper });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("filter-panel")).toBeInTheDocument();
+    });
+
+    const calls = mockUseAggregation.mock.calls;
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls[0][0].startDate).toBe("2026-01-01");
+    expect(calls[0][0].endDate).toBe("2026-01-31");
   });
 
   it("changes time bucket when selector is clicked", async () => {
