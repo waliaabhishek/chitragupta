@@ -141,7 +141,7 @@ export function CostDashboardPage(): JSX.Element {
         <Text type="secondary">Select a tenant to view cost analytics.</Text>
       ) : (
         <>
-          <FilterPanel filters={filters} onChange={setFilter} onBatchChange={setFilters} onReset={resetFilters} />
+          <FilterPanel filters={filters} onChange={setFilter} onBatchChange={setFilters} onReset={resetFilters} tenantName={currentTenant.tenant_name} />
 
           <div style={{ margin: "12px 0" }}>
             <Radio.Group

@@ -1,5 +1,6 @@
-import { Button, DatePicker, Form, Input, Select, Space } from "antd";
+import { Button, DatePicker, Form, Select } from "antd";
 import dayjs from "dayjs";
+import { useFilterOptions } from "../../hooks/useFilterOptions";
 import type { ChargebackFilters } from "../../types/filters";
 
 const COST_TYPE_OPTIONS = [
@@ -7,11 +8,15 @@ const COST_TYPE_OPTIONS = [
   { label: "Shared", value: "shared" },
 ];
 
+export const filterByLabel = (input: string, option?: { label?: unknown }) =>
+  String(option?.label ?? "").toLowerCase().includes(input.toLowerCase());
+
 interface FilterPanelProps {
   filters: ChargebackFilters;
   onChange: (key: keyof ChargebackFilters, value: string | null) => void;
   onBatchChange?: (updates: Partial<ChargebackFilters>) => void;
   onReset: () => void;
+  tenantName: string;
 }
 
 export function FilterPanel({
@@ -19,17 +24,19 @@ export function FilterPanel({
   onChange,
   onBatchChange,
   onReset,
-}: FilterPanelProps): JSX.Element {
+  tenantName,
+}: FilterPanelProps) {
   const startValue = filters.start_date ? dayjs(filters.start_date) : null;
   const endValue = filters.end_date ? dayjs(filters.end_date) : null;
+
+  const { identityOptions, resourceOptions, productTypeOptions, isLoading } =
+    useFilterOptions(tenantName, filters.start_date, filters.end_date);
 
   return (
     <Form layout="inline" style={{ padding: "8px 0", flexWrap: "wrap" }}>
       <Form.Item label="Date Range">
         <DatePicker.RangePicker
-          value={
-            startValue && endValue ? [startValue, endValue] : [null, null]
-          }
+          value={startValue && endValue ? [startValue, endValue] : [null, null]}
           onChange={(dates) => {
             const start = dates?.[0] ? dates[0].format("YYYY-MM-DD") : null;
             const end = dates?.[1] ? dates[1].format("YYYY-MM-DD") : null;
@@ -45,32 +52,44 @@ export function FilterPanel({
       </Form.Item>
 
       <Form.Item label="Identity">
-        <Input
-          placeholder="Identity ID"
-          value={filters.identity_id ?? ""}
-          onChange={(e) => onChange("identity_id", e.target.value || null)}
-          style={{ width: 180 }}
+        <Select
+          placeholder="Any identity"
+          value={filters.identity_id ?? undefined}
+          onChange={(val: string | undefined) => onChange("identity_id", val ?? null)}
+          options={identityOptions}
+          showSearch
           allowClear
+          loading={isLoading}
+          filterOption={filterByLabel}
+          style={{ width: 220 }}
         />
       </Form.Item>
 
       <Form.Item label="Product Type">
-        <Input
-          placeholder="Product type"
-          value={filters.product_type ?? ""}
-          onChange={(e) => onChange("product_type", e.target.value || null)}
-          style={{ width: 160 }}
+        <Select
+          placeholder="Any product type"
+          value={filters.product_type ?? undefined}
+          onChange={(val: string | undefined) => onChange("product_type", val ?? null)}
+          options={productTypeOptions}
+          showSearch
           allowClear
+          loading={isLoading}
+          filterOption={filterByLabel}
+          style={{ width: 180 }}
         />
       </Form.Item>
 
       <Form.Item label="Resource">
-        <Input
-          placeholder="Resource ID"
-          value={filters.resource_id ?? ""}
-          onChange={(e) => onChange("resource_id", e.target.value || null)}
-          style={{ width: 160 }}
+        <Select
+          placeholder="Any resource"
+          value={filters.resource_id ?? undefined}
+          onChange={(val: string | undefined) => onChange("resource_id", val ?? null)}
+          options={resourceOptions}
+          showSearch
           allowClear
+          loading={isLoading}
+          filterOption={filterByLabel}
+          style={{ width: 220 }}
         />
       </Form.Item>
 
@@ -78,9 +97,7 @@ export function FilterPanel({
         <Select
           placeholder="Any"
           value={filters.cost_type ?? undefined}
-          onChange={(val: string | undefined) =>
-            onChange("cost_type", val ?? null)
-          }
+          onChange={(val: string | undefined) => onChange("cost_type", val ?? null)}
           options={COST_TYPE_OPTIONS}
           allowClear
           style={{ width: 120 }}
@@ -88,9 +105,7 @@ export function FilterPanel({
       </Form.Item>
 
       <Form.Item>
-        <Space>
-          <Button onClick={onReset}>Reset</Button>
-        </Space>
+        <Button onClick={onReset}>Reset</Button>
       </Form.Item>
     </Form>
   );

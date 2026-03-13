@@ -94,7 +94,7 @@ export function ChargebackListPage(): JSX.Element {
         </Title>
         <ExportButton filters={toQueryParams()} tenantName={currentTenant.tenant_name} />
       </div>
-      <FilterPanel filters={filters} onChange={setFilter} onBatchChange={setFilters} onReset={resetFilters} />
+      <FilterPanel filters={filters} onChange={setFilter} onBatchChange={setFilters} onReset={resetFilters} tenantName={currentTenant.tenant_name} />
       {hasSelection && (
         <SelectionToolbar
           selectedCount={totalSelected}
