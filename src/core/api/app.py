@@ -63,6 +63,7 @@ def create_app(settings: AppSettings, workflow_runner: WorkflowRunner | None = N
         export,
         health,
         identities,
+        inventory,
         pipeline,
         resources,
         tags,
@@ -78,6 +79,7 @@ def create_app(settings: AppSettings, workflow_runner: WorkflowRunner | None = N
     app.include_router(chargebacks.router, prefix="/api/v1")
     app.include_router(resources.router, prefix="/api/v1")
     app.include_router(identities.router, prefix="/api/v1")
+    app.include_router(inventory.router, prefix="/api/v1")
     app.include_router(tags.router, prefix="/api/v1")
     app.include_router(pipeline.router, prefix="/api/v1")
     app.include_router(export.router, prefix="/api/v1")

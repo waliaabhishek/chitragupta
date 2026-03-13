@@ -90,6 +90,14 @@ class ResourceRepository(Protocol):
 
     def delete_before(self, ecosystem: str, tenant_id: str, before: datetime) -> int: ...
 
+    def count_by_type(self, ecosystem: str, tenant_id: str) -> dict[str, int]:
+        """Return COUNT(*) GROUP BY resource_type for the given tenant.
+
+        Returns a dict mapping resource_type string to count. Returns empty
+        dict when no resources exist for this tenant.
+        """
+        ...
+
 
 @runtime_checkable
 class IdentityRepository(Protocol):
@@ -152,6 +160,14 @@ class IdentityRepository(Protocol):
     def mark_deleted(self, ecosystem: str, tenant_id: str, identity_id: str, deleted_at: datetime) -> None: ...
 
     def delete_before(self, ecosystem: str, tenant_id: str, before: datetime) -> int: ...
+
+    def count_by_type(self, ecosystem: str, tenant_id: str) -> dict[str, int]:
+        """Return COUNT(*) GROUP BY identity_type for the given tenant.
+
+        Returns a dict mapping identity_type string to count. Returns empty
+        dict when no identities exist for this tenant.
+        """
+        ...
 
 
 @runtime_checkable

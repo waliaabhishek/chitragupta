@@ -331,6 +331,16 @@ class ChargebackDimensionUpdateRequest(BaseModel):
     remove_tag_ids: list[int] | None = None
 
 
+# --- Inventory ---
+
+
+class InventorySummaryResponse(BaseModel):
+    """Counts of resources and identities grouped by type for a tenant."""
+
+    resource_counts: dict[str, int]
+    identity_counts: dict[str, int]
+
+
 # --- Health ---
 
 

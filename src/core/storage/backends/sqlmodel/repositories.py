@@ -239,6 +239,17 @@ class SQLModelResourceRepository:
         result = self._session.execute(stmt)
         return result.rowcount  # type: ignore[attr-defined, no-any-return]  # CursorResult always has rowcount
 
+    def count_by_type(self, ecosystem: str, tenant_id: str) -> dict[str, int]:
+        stmt = (
+            select(ResourceTable.resource_type, func.count())
+            .where(
+                col(ResourceTable.ecosystem) == ecosystem,
+                col(ResourceTable.tenant_id) == tenant_id,
+            )
+            .group_by(ResourceTable.resource_type)
+        )
+        return dict(self._session.exec(stmt).all())
+
 
 # --- IdentityRepository ---
 
@@ -373,6 +384,17 @@ class SQLModelIdentityRepository:
         )
         result = self._session.execute(stmt)
         return result.rowcount  # type: ignore[attr-defined, no-any-return]  # CursorResult always has rowcount
+
+    def count_by_type(self, ecosystem: str, tenant_id: str) -> dict[str, int]:
+        stmt = (
+            select(IdentityTable.identity_type, func.count())
+            .where(
+                col(IdentityTable.ecosystem) == ecosystem,
+                col(IdentityTable.tenant_id) == tenant_id,
+            )
+            .group_by(IdentityTable.identity_type)
+        )
+        return dict(self._session.exec(stmt).all())
 
 
 # --- BillingRepository ---
