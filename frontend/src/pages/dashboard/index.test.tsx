@@ -76,6 +76,19 @@ vi.mock("../../hooks/useDataAvailability", () => ({
   })),
 }));
 
+vi.mock("../../hooks/useInventorySummary", () => ({
+  useInventorySummary: vi.fn(() => ({
+    data: null,
+    isLoading: false,
+    error: null,
+    refetch: vi.fn(),
+  })),
+}));
+
+vi.mock("../../components/dashboard/InventoryCounters", () => ({
+  InventoryCounters: vi.fn(() => <div data-testid="inventory-counters" />),
+}));
+
 // Mock antd
 vi.mock("antd", () => ({
   Typography: {
@@ -202,6 +215,7 @@ describe("CostDashboardPage", () => {
       expect(screen.getByTestId("time-bucket-selector")).toBeInTheDocument();
     });
 
+    expect(screen.getByTestId("inventory-counters")).toBeInTheDocument();
     expect(screen.getByText("Data Availability")).toBeInTheDocument();
     expect(screen.getByTestId("data-availability-timeline")).toBeInTheDocument();
     expect(screen.getByText("Cost Trend Over Time")).toBeInTheDocument();

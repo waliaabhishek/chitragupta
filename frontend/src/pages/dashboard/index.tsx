@@ -6,7 +6,9 @@ import { useChargebackFilters } from "../../hooks/useChargebackFilters";
 import type { UseAggregationParams } from "../../hooks/useAggregation";
 import { useAggregation } from "../../hooks/useAggregation";
 import { useDataAvailability } from "../../hooks/useDataAvailability";
+import { useInventorySummary } from "../../hooks/useInventorySummary";
 import { SummaryStatCards } from "../../components/dashboard/SummaryStatCards";
+import { InventoryCounters } from "../../components/dashboard/InventoryCounters";
 import { FilterPanel } from "../../components/chargebacks/FilterPanel";
 import { ChartCard } from "../../components/charts/ChartCard";
 import { DataAvailabilityTimeline } from "../../components/charts/DataAvailabilityTimeline";
@@ -49,6 +51,7 @@ function DashboardContent({ tenant, filters, timeBucket }: DashboardContentProps
   const environmentData = useAggregation({ ...sharedParams, groupBy: ["environment_id"] });
   const productSubTypeData = useAggregation({ ...sharedParams, groupBy: ["product_sub_type"] });
   const availabilityData = useDataAvailability({ tenantName: tenant.tenant_name });
+  const inventoryData = useInventorySummary({ tenantName: tenant.tenant_name });
 
   return (
     <Row gutter={[16, 16]}>
@@ -57,6 +60,14 @@ function DashboardContent({ tenant, filters, timeBucket }: DashboardContentProps
           data={trendData.data}
           isLoading={trendData.isLoading}
           error={trendData.error}
+        />
+      </Col>
+
+      <Col span={24}>
+        <InventoryCounters
+          data={inventoryData.data}
+          isLoading={inventoryData.isLoading}
+          error={inventoryData.error}
         />
       </Col>
 

@@ -83,6 +83,19 @@ vi.mock("../../../hooks/useDataAvailability", () => ({
   })),
 }));
 
+vi.mock("../../../hooks/useInventorySummary", () => ({
+  useInventorySummary: vi.fn(() => ({
+    data: null,
+    isLoading: false,
+    error: null,
+    refetch: vi.fn(),
+  })),
+}));
+
+vi.mock("../../../components/dashboard/InventoryCounters", () => ({
+  InventoryCounters: () => <div data-testid="inventory-counters" />,
+}));
+
 vi.mock("../../../components/charts/DataAvailabilityTimeline", () => ({
   DataAvailabilityTimeline: () => <div data-testid="data-availability-timeline" />,
 }));

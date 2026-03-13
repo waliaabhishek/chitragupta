@@ -224,6 +224,13 @@ export interface AggregationResponse {
   total_rows: number;
 }
 
+// --- Inventory ---
+
+export interface InventorySummaryResponse {
+  resource_counts: Record<string, number>;
+  identity_counts: Record<string, number>;
+}
+
 // --- Chargeback Dimension ---
 
 export interface ChargebackDimensionResponse {

@@ -2,6 +2,7 @@ import { http, HttpResponse } from "msw";
 import type {
   AggregationResponse,
   BulkTagResponse,
+  InventorySummaryResponse,
   PaginatedResponse,
   TagWithDimensionResponse,
   TenantListResponse,
@@ -98,6 +99,14 @@ export const handlers = [
       page_size: 100,
       pages: 0,
     });
+  }),
+
+  http.get(`${BASE}/tenants/:tenant/inventory/summary`, () => {
+    const response: InventorySummaryResponse = {
+      resource_counts: { kafka_cluster: 5, connector: 3 },
+      identity_counts: { service_account: 12, user: 3 },
+    };
+    return HttpResponse.json(response);
   }),
 
   // Must be before /:id to prevent static paths being captured as ID params
