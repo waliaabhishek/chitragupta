@@ -29,6 +29,9 @@ vi.mock("../../components/charts/CostByResourceChart", () => ({
 vi.mock("../../components/charts/DimensionPieChart", () => ({
   DimensionPieChart: vi.fn(() => <div data-testid="dimension-pie-chart" />),
 }));
+vi.mock("../../components/charts/DataAvailabilityTimeline", () => ({
+  DataAvailabilityTimeline: vi.fn(() => <div data-testid="data-availability-timeline" />),
+}));
 
 // Mock FilterPanel
 vi.mock("../../components/chargebacks/FilterPanel", () => ({
@@ -58,6 +61,15 @@ vi.mock("../../components/charts/ChartCard", () => ({
 vi.mock("../../hooks/useAggregation", () => ({
   useAggregation: vi.fn(() => ({
     data: null,
+    isLoading: false,
+    error: null,
+    refetch: vi.fn(),
+  })),
+}));
+
+vi.mock("../../hooks/useDataAvailability", () => ({
+  useDataAvailability: vi.fn(() => ({
+    dates: [],
     isLoading: false,
     error: null,
     refetch: vi.fn(),
@@ -190,6 +202,8 @@ describe("CostDashboardPage", () => {
       expect(screen.getByTestId("time-bucket-selector")).toBeInTheDocument();
     });
 
+    expect(screen.getByText("Data Availability")).toBeInTheDocument();
+    expect(screen.getByTestId("data-availability-timeline")).toBeInTheDocument();
     expect(screen.getByText("Cost Trend Over Time")).toBeInTheDocument();
     expect(screen.getByText("Cost by Identity")).toBeInTheDocument();
     expect(screen.getByText("Cost by Environment")).toBeInTheDocument();
@@ -240,7 +254,14 @@ describe("CostDashboardPage", () => {
 
     const { useChargebackFilters } = await import("../../hooks/useChargebackFilters");
     vi.mocked(useChargebackFilters).mockReturnValue({
-      filters: { start_date: "2026-01-01", end_date: "2026-01-31" },
+      filters: {
+        start_date: "2026-01-01",
+        end_date: "2026-01-31",
+        identity_id: null,
+        product_type: null,
+        resource_id: null,
+        cost_type: null,
+      },
       setFilter: vi.fn(),
       setFilters: vi.fn(),
       resetFilters: vi.fn(),

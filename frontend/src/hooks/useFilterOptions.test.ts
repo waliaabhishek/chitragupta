@@ -226,7 +226,7 @@ describe("useFilterOptions", () => {
     const { rerender } = renderHook(
       ({ startDate }: { startDate: string | null }) =>
         useFilterOptions("acme", startDate, null),
-      { initialProps: { startDate: null } },
+      { initialProps: { startDate: null as string | null } },
     );
 
     await waitFor(() => expect(callCount).toBeGreaterThanOrEqual(1));
@@ -255,7 +255,7 @@ describe("useFilterOptions", () => {
     const { rerender } = renderHook(
       ({ endDate }: { endDate: string | null }) =>
         useFilterOptions("acme", null, endDate),
-      { initialProps: { endDate: null } },
+      { initialProps: { endDate: null as string | null } },
     );
 
     await waitFor(() => expect(callCount).toBeGreaterThanOrEqual(1));

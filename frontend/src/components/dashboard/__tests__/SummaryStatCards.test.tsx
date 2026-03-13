@@ -74,6 +74,19 @@ vi.mock("../../../hooks/useAggregation", () => ({
   })),
 }));
 
+vi.mock("../../../hooks/useDataAvailability", () => ({
+  useDataAvailability: vi.fn(() => ({
+    dates: [],
+    isLoading: false,
+    error: null,
+    refetch: vi.fn(),
+  })),
+}));
+
+vi.mock("../../../components/charts/DataAvailabilityTimeline", () => ({
+  DataAvailabilityTimeline: () => <div data-testid="data-availability-timeline" />,
+}));
+
 vi.mock("../../../providers/TenantContext", () => ({
   useTenant: vi.fn(() => ({
     currentTenant: {

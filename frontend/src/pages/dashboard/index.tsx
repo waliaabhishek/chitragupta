@@ -5,9 +5,11 @@ import { useTenant } from "../../providers/TenantContext";
 import { useChargebackFilters } from "../../hooks/useChargebackFilters";
 import type { UseAggregationParams } from "../../hooks/useAggregation";
 import { useAggregation } from "../../hooks/useAggregation";
+import { useDataAvailability } from "../../hooks/useDataAvailability";
 import { SummaryStatCards } from "../../components/dashboard/SummaryStatCards";
 import { FilterPanel } from "../../components/chargebacks/FilterPanel";
 import { ChartCard } from "../../components/charts/ChartCard";
+import { DataAvailabilityTimeline } from "../../components/charts/DataAvailabilityTimeline";
 import { CostTrendChart } from "../../components/charts/CostTrendChart";
 import { CostByIdentityChart } from "../../components/charts/CostByIdentityChart";
 import { CostByProductChart } from "../../components/charts/CostByProductChart";
@@ -46,6 +48,7 @@ function DashboardContent({ tenant, filters, timeBucket }: DashboardContentProps
   const resourceData = useAggregation({ ...sharedParams, groupBy: ["resource_id"] });
   const environmentData = useAggregation({ ...sharedParams, groupBy: ["environment_id"] });
   const productSubTypeData = useAggregation({ ...sharedParams, groupBy: ["product_sub_type"] });
+  const availabilityData = useDataAvailability({ tenantName: tenant.tenant_name });
 
   return (
     <Row gutter={[16, 16]}>
@@ -55,6 +58,21 @@ function DashboardContent({ tenant, filters, timeBucket }: DashboardContentProps
           isLoading={trendData.isLoading}
           error={trendData.error}
         />
+      </Col>
+
+      <Col span={24}>
+        <ChartCard
+          title="Data Availability"
+          loading={availabilityData.isLoading}
+          error={availabilityData.error}
+          onRetry={availabilityData.refetch}
+        >
+          <DataAvailabilityTimeline
+            dates={availabilityData.data?.dates ?? []}
+            startDate={filters.start_date ?? ""}
+            endDate={filters.end_date ?? ""}
+          />
+        </ChartCard>
       </Col>
 
       <Col span={24}>

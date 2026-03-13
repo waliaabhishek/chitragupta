@@ -100,7 +100,11 @@ export const handlers = [
     });
   }),
 
-  // Must be before /:id to prevent "aggregate" being captured as an ID param
+  // Must be before /:id to prevent static paths being captured as ID params
+  http.get(`${BASE}/tenants/:tenant/chargebacks/dates`, () => {
+    return HttpResponse.json({ dates: [] });
+  }),
+
   http.get(`${BASE}/tenants/:tenant/chargebacks/aggregate`, () => {
     const response: AggregationResponse = {
       buckets: [

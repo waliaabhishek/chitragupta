@@ -113,6 +113,12 @@ export interface ChargebackResponse {
   metadata: Record<string, unknown>;
 }
 
+// --- Data Availability ---
+
+export interface ChargebackDatesResponse {
+  dates: string[];
+}
+
 // --- Tag ---
 
 export interface TagResponse {
