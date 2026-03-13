@@ -165,11 +165,13 @@ class WorkflowRunner:
             return tenant_name in self._running_tenants
 
     def drain(self, timeout: float) -> None:
-        """Wait for all in-progress tenant runs to complete, then close.
+        """Signal shutdown and wait for in-progress tenant runs to complete, then close.
 
-        Waits up to `timeout` seconds for `_running_tenants` to empty before
-        disposing resources. Prevents tearing down storage mid-run on shutdown.
+        Sets the shutdown event so orchestrators abort early, then waits up to
+        `timeout` seconds for `_running_tenants` to empty before disposing resources.
         """
+        if self._shutdown_event is not None:
+            self._shutdown_event.set()
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             with self._running_lock:
