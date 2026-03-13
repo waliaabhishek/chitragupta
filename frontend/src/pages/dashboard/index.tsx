@@ -5,6 +5,7 @@ import { useTenant } from "../../providers/TenantContext";
 import { useChargebackFilters } from "../../hooks/useChargebackFilters";
 import type { UseAggregationParams } from "../../hooks/useAggregation";
 import { useAggregation } from "../../hooks/useAggregation";
+import { SummaryStatCards } from "../../components/dashboard/SummaryStatCards";
 import { FilterPanel } from "../../components/chargebacks/FilterPanel";
 import { ChartCard } from "../../components/charts/ChartCard";
 import { CostTrendChart } from "../../components/charts/CostTrendChart";
@@ -45,6 +46,14 @@ function DashboardContent({ tenant, filters, timeBucket }: DashboardContentProps
 
   return (
     <Row gutter={[16, 16]}>
+      <Col span={24}>
+        <SummaryStatCards
+          data={trendData.data}
+          isLoading={trendData.isLoading}
+          error={trendData.error}
+        />
+      </Col>
+
       <Col span={24}>
         <ChartCard
           title="Cost Trend Over Time"

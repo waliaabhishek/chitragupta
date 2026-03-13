@@ -7,6 +7,8 @@ function makeBucket(overrides: Partial<AggregationBucket> = {}): AggregationBuck
     dimensions: { identity_id: "user-1" },
     time_bucket: "2026-02-01",
     total_amount: "10.00",
+    usage_amount: "10.00",
+    shared_amount: "0.00",
     row_count: 1,
     ...overrides,
   };

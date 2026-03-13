@@ -26,6 +26,8 @@ function makeBucket(productType: string, amount: string): AggregationBucket {
     dimensions: { product_type: productType },
     time_bucket: "2026-02-01",
     total_amount: amount,
+    usage_amount: amount,
+    shared_amount: "0.00",
     row_count: 1,
   };
 }

@@ -61,6 +61,14 @@ vi.mock("antd", () => ({
   Col: ({ children }: { children: ReactNode; span?: number; xs?: number; md?: number }) => (
     <div>{children}</div>
   ),
+  Card: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  Skeleton: () => <div data-testid="skeleton" />,
+  Statistic: ({ title, value }: { title: string; value: string | number }) => (
+    <div>
+      <span>{title}</span>
+      <span>{value}</span>
+    </div>
+  ),
   Radio: {
     Group: ({
       children,

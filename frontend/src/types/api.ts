@@ -205,12 +205,16 @@ export interface AggregationBucket {
   dimensions: Record<string, string>;
   time_bucket: string;
   total_amount: string;
+  usage_amount: string;
+  shared_amount: string;
   row_count: number;
 }
 
 export interface AggregationResponse {
   buckets: AggregationBucket[];
   total_amount: string;
+  usage_amount: string;
+  shared_amount: string;
   total_rows: number;
 }
 

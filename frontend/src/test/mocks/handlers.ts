@@ -108,16 +108,22 @@ export const handlers = [
           dimensions: { identity_id: "user-1" },
           time_bucket: "2026-02-15",
           total_amount: "10.00",
+          usage_amount: "8.00",
+          shared_amount: "2.00",
           row_count: 1,
         },
         {
           dimensions: { identity_id: "user-2" },
           time_bucket: "2026-02-15",
           total_amount: "5.00",
+          usage_amount: "4.00",
+          shared_amount: "1.00",
           row_count: 1,
         },
       ],
       total_amount: "15.00",
+      usage_amount: "12.00",
+      shared_amount: "3.00",
       total_rows: 2,
     };
     return HttpResponse.json(response);

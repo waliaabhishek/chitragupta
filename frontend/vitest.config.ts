@@ -16,6 +16,7 @@ export default defineConfig({
         "src/hooks/**/*.{ts,tsx}",
         "src/components/chargebacks/**/*.{ts,tsx}",
         "src/components/charts/**/*.{ts,tsx}",
+        "src/components/dashboard/**/*.{ts,tsx}",
         "src/pages/chargebacks/**/*.{ts,tsx}",
         "src/pages/dashboard/**/*.{ts,tsx}",
         "src/pages/tags/**/*.{ts,tsx}",
