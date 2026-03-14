@@ -33,11 +33,16 @@ vi.mock("../../components/charts/DataAvailabilityTimeline", () => ({
   DataAvailabilityTimeline: vi.fn(() => <div data-testid="data-availability-timeline" />),
 }));
 
-// Mock FilterPanel
+// Mock FilterPanel — expose onRefresh so tests can trigger it
 vi.mock("../../components/chargebacks/FilterPanel", () => ({
-  FilterPanel: vi.fn(({ onReset }: { onReset: () => void }) => (
+  FilterPanel: vi.fn(({ onReset, onRefresh }: { onReset: () => void; onRefresh?: () => void }) => (
     <div data-testid="filter-panel">
       <button onClick={onReset}>Reset</button>
+      {onRefresh !== undefined && (
+        <button data-testid="filter-refresh" onClick={onRefresh}>
+          Refresh Data
+        </button>
+      )}
     </div>
   )),
 }));
@@ -339,5 +344,41 @@ describe("CostDashboardPage", () => {
     expect(screen.getByTestId("time-bucket-selector").getAttribute("data-value")).toBe("day");
     await userEvent.click(screen.getByTestId("select-week"));
     expect(screen.getByTestId("time-bucket-selector").getAttribute("data-value")).toBe("week");
+  });
+
+  it("passes onRefresh to FilterPanel and remounts DashboardContent on click", async () => {
+    const { useTenant } = await import("../../providers/TenantContext");
+    vi.mocked(useTenant).mockReturnValue({
+      currentTenant: mockTenant,
+      tenants: [mockTenant],
+      setCurrentTenant: vi.fn(),
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+      appStatus: "ready" as const,
+      readiness: null,
+      isReadOnly: false,
+    });
+
+    const { useAggregation } = await import("../../hooks/useAggregation");
+    vi.mocked(useAggregation).mockClear();
+
+    render(<CostDashboardPage />, { wrapper });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("filter-panel")).toBeInTheDocument();
+    });
+
+    // FilterPanel receives onRefresh — the Refresh Data button should render
+    expect(screen.getByTestId("filter-refresh")).toBeInTheDocument();
+
+    const callsAfterMount = vi.mocked(useAggregation).mock.calls.length;
+    expect(callsAfterMount).toBeGreaterThan(0);
+
+    // Clicking Refresh Data increments refreshKey → DashboardContent remounts
+    await userEvent.click(screen.getByTestId("filter-refresh"));
+
+    // DashboardContent remount triggers useAggregation calls again
+    expect(vi.mocked(useAggregation).mock.calls.length).toBeGreaterThan(callsAfterMount);
   });
 });

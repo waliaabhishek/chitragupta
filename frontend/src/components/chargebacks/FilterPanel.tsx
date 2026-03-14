@@ -16,6 +16,7 @@ interface FilterPanelProps {
   onChange: (key: keyof ChargebackFilters, value: string | null) => void;
   onBatchChange?: (updates: Partial<ChargebackFilters>) => void;
   onReset: () => void;
+  onRefresh?: () => void;
   tenantName: string;
 }
 
@@ -24,8 +25,9 @@ export function FilterPanel({
   onChange,
   onBatchChange,
   onReset,
+  onRefresh,
   tenantName,
-}: FilterPanelProps) {
+}: FilterPanelProps): JSX.Element {
   const startValue = filters.start_date ? dayjs(filters.start_date) : null;
   const endValue = filters.end_date ? dayjs(filters.end_date) : null;
 
@@ -107,6 +109,14 @@ export function FilterPanel({
       <Form.Item>
         <Button onClick={onReset}>Reset</Button>
       </Form.Item>
+
+      {onRefresh !== undefined && (
+        <Form.Item>
+          <Button type="primary" onClick={onRefresh}>
+            Refresh Data
+          </Button>
+        </Form.Item>
+      )}
     </Form>
   );
 }

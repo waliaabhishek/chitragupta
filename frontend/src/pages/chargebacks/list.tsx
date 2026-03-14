@@ -94,7 +94,14 @@ export function ChargebackListPage(): JSX.Element {
         </Title>
         <ExportButton filters={toQueryParams()} tenantName={currentTenant.tenant_name} disabled={isReadOnly} />
       </div>
-      <FilterPanel filters={filters} onChange={setFilter} onBatchChange={setFilters} onReset={resetFilters} tenantName={currentTenant.tenant_name} />
+      <FilterPanel
+        filters={filters}
+        onChange={setFilter}
+        onBatchChange={setFilters}
+        onReset={resetFilters}
+        onRefresh={() => gridRef.current?.api?.refreshInfiniteCache()}
+        tenantName={currentTenant.tenant_name}
+      />
       {hasSelection && (
         <SelectionToolbar
           selectedCount={totalSelected}

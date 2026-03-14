@@ -2,7 +2,7 @@ import { act, renderHook } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { MemoryRouter } from "react-router-dom";
 import { createElement } from "react";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { useChargebackFilters } from "./useChargebackFilters";
 
 function makeWrapper(initialSearch = ""): ({ children }: { children: ReactNode }) => JSX.Element {
@@ -14,6 +14,10 @@ function makeWrapper(initialSearch = ""): ({ children }: { children: ReactNode }
     );
   };
 }
+
+afterEach(() => {
+  localStorage.clear();
+});
 
 describe("useChargebackFilters", () => {
   it("provides default date values when URL has no params", () => {
@@ -105,5 +109,86 @@ describe("useChargebackFilters", () => {
     const params = result.current.toQueryParams();
     expect(params["start_date"]).toBeTruthy();
     expect(params["end_date"]).toBeTruthy();
+  });
+
+  it("useChargebackFilters_localStorage_fallback_loads_dates_when_url_has_no_params", () => {
+    localStorage.setItem(
+      "chargeback_date_range",
+      JSON.stringify({ start_date: "2025-01-01", end_date: "2025-01-31" }),
+    );
+    const { result } = renderHook(() => useChargebackFilters(), {
+      wrapper: makeWrapper(),
+    });
+
+    expect(result.current.filters.start_date).toBe("2025-01-01");
+    expect(result.current.filters.end_date).toBe("2025-01-31");
+  });
+
+  it("useChargebackFilters_url_takes_precedence_over_localStorage", () => {
+    localStorage.setItem(
+      "chargeback_date_range",
+      JSON.stringify({ start_date: "2025-01-01", end_date: "2025-01-31" }),
+    );
+    const { result } = renderHook(() => useChargebackFilters(), {
+      wrapper: makeWrapper("?start_date=2026-03-01&end_date=2026-03-14"),
+    });
+
+    expect(result.current.filters.start_date).toBe("2026-03-01");
+    expect(result.current.filters.end_date).toBe("2026-03-14");
+  });
+
+  it("useChargebackFilters_setFilter_writes_date_to_localStorage", () => {
+    const { result } = renderHook(() => useChargebackFilters(), {
+      wrapper: makeWrapper(),
+    });
+
+    act(() => {
+      result.current.setFilter("start_date", "2026-02-01");
+    });
+
+    const stored = JSON.parse(localStorage.getItem("chargeback_date_range")!);
+    expect(stored.start_date).toBe("2026-02-01");
+  });
+
+  it("useChargebackFilters_setFilters_batch_writes_dates_to_localStorage", () => {
+    const { result } = renderHook(() => useChargebackFilters(), {
+      wrapper: makeWrapper(),
+    });
+
+    act(() => {
+      result.current.setFilters({ start_date: "2026-01-01", end_date: "2026-01-31" });
+    });
+
+    const stored = JSON.parse(localStorage.getItem("chargeback_date_range")!);
+    expect(stored.start_date).toBe("2026-01-01");
+    expect(stored.end_date).toBe("2026-01-31");
+  });
+
+  it("useChargebackFilters_resetFilters_clears_localStorage", () => {
+    localStorage.setItem(
+      "chargeback_date_range",
+      JSON.stringify({ start_date: "2025-01-01", end_date: "2025-01-31" }),
+    );
+    const { result } = renderHook(() => useChargebackFilters(), {
+      wrapper: makeWrapper(),
+    });
+
+    act(() => {
+      result.current.resetFilters();
+    });
+
+    expect(localStorage.getItem("chargeback_date_range")).toBeNull();
+  });
+
+  it("useChargebackFilters_non_date_fields_not_written_to_localStorage", () => {
+    const { result } = renderHook(() => useChargebackFilters(), {
+      wrapper: makeWrapper(),
+    });
+
+    act(() => {
+      result.current.setFilter("identity_id", "sa-123");
+    });
+
+    expect(localStorage.getItem("chargeback_date_range")).toBeNull();
   });
 });

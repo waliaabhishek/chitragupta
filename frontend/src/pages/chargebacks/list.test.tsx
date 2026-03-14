@@ -38,9 +38,14 @@ vi.mock("../../components/chargebacks/ChargebackGrid", () => ({
 }));
 
 vi.mock("../../components/chargebacks/FilterPanel", () => ({
-  FilterPanel: vi.fn(({ onReset }: { onReset: () => void }) => (
+  FilterPanel: vi.fn(({ onReset, onRefresh }: { onReset: () => void; onRefresh?: () => void }) => (
     <div data-testid="filter-panel">
       <button onClick={onReset}>Reset</button>
+      {onRefresh !== undefined && (
+        <button data-testid="filter-refresh" onClick={onRefresh}>
+          Refresh Data
+        </button>
+      )}
     </div>
   )),
 }));
@@ -303,7 +308,7 @@ describe("ChargebackListPage", () => {
     expect(screen.queryByTestId("selection-toolbar")).toBeNull();
   });
 
-  it("calls refreshInfiniteCache (handleTagsChanged) when onTagsChanged fires", async () => {
+  it("handleTagsChanged does not throw when gridRef is null", async () => {
     const { useTenant } = await import("../../providers/TenantContext");
     vi.mocked(useTenant).mockReturnValue({
       currentTenant: mockTenant,
@@ -319,8 +324,30 @@ describe("ChargebackListPage", () => {
 
     render(<ChargebackListPage />, { wrapper });
 
-    // Trigger handleTagsChanged via drawer callback — safe no-op since gridRef.current is null
-    fireEvent.click(screen.getByTestId("trigger-tags-changed"));
-    // No assertion needed — we're covering the code path
+    // Trigger handleTagsChanged via drawer callback — gridRef.current is null so no-op
+    expect(() => fireEvent.click(screen.getByTestId("trigger-tags-changed"))).not.toThrow();
+  });
+
+  it("passes onRefresh to FilterPanel and calling it does not throw when grid not ready", async () => {
+    const { useTenant } = await import("../../providers/TenantContext");
+    vi.mocked(useTenant).mockReturnValue({
+      currentTenant: mockTenant,
+      tenants: [mockTenant],
+      setCurrentTenant: vi.fn(),
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+      appStatus: "ready" as const,
+      readiness: null,
+      isReadOnly: false,
+    });
+
+    render(<ChargebackListPage />, { wrapper });
+
+    // FilterPanel receives onRefresh — the Refresh Data button should render
+    expect(screen.getByTestId("filter-refresh")).toBeInTheDocument();
+
+    // gridRef.current is null in test; calling onRefresh must not throw
+    expect(() => fireEvent.click(screen.getByTestId("filter-refresh"))).not.toThrow();
   });
 });

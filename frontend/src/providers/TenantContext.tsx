@@ -3,6 +3,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type ReactNode,
@@ -35,6 +36,15 @@ interface TenantProviderProps {
   children: ReactNode;
 }
 
+/**
+ * Full JSON fingerprint — PipelineStatusBanner reads pipeline_stage,
+ * pipeline_current_date, permanent_failure, and mode from readiness directly,
+ * so any field change must propagate.
+ */
+function readinessFingerprint(data: ReadinessResponse): string {
+  return JSON.stringify(data);
+}
+
 export function TenantProvider({ children }: TenantProviderProps): JSX.Element {
   const [tenants, setTenants] = useState<TenantStatusSummary[]>([]);
   const [currentTenant, setCurrentTenantState] =
@@ -43,7 +53,11 @@ export function TenantProvider({ children }: TenantProviderProps): JSX.Element {
   const [error, setError] = useState<string | null>(null);
   const [appStatus, setAppStatus] = useState<AppStatus>("loading");
   const [readiness, setReadiness] = useState<ReadinessResponse | null>(null);
-  const [tenantsLoaded, setTenantsLoaded] = useState(false);
+  // useRef instead of useState — does not appear in effect deps, no re-render on set
+  const tenantsLoadedRef = useRef(false);
+  const readinessFingerprintRef = useRef<string | null>(null);
+  // restartKey: the only way to restart the poll loop after an error (incremented by refetch())
+  const [restartKey, setRestartKey] = useState(0);
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const fetchReadiness = useCallback(
@@ -69,7 +83,7 @@ export function TenantProvider({ children }: TenantProviderProps): JSX.Element {
         }
         const data = (await response.json()) as { tenants: TenantStatusSummary[] };
         setTenants(data.tenants);
-        setTenantsLoaded(true);
+        tenantsLoadedRef.current = true;  // ref write — no re-render, no effect re-run
         const savedName = localStorage.getItem(STORAGE_KEY);
         if (savedName) {
           const found = data.tenants.find((t) => t.tenant_name === savedName);
@@ -89,7 +103,7 @@ export function TenantProvider({ children }: TenantProviderProps): JSX.Element {
     [],
   );
 
-  // Main readiness polling loop
+  // Main readiness polling loop — stable deps, never restarts due to tenant load
   useEffect(() => {
     const controller = new AbortController();
 
@@ -98,19 +112,22 @@ export function TenantProvider({ children }: TenantProviderProps): JSX.Element {
       if (controller.signal.aborted) return;
 
       if (data === null) {
-        // Backend not reachable
         setAppStatus("loading");
         setIsLoading(true);
         pollRef.current = setTimeout(() => { void poll(); }, 5000);
         return;
       }
 
-      setReadiness(data);
+      // Only update readiness state when material fields actually changed
+      const fp = readinessFingerprint(data);
+      if (fp !== readinessFingerprintRef.current) {
+        readinessFingerprintRef.current = fp;
+        setReadiness(data);
+      }
 
       if (data.status === "initializing" || data.status === "no_data") {
         setAppStatus(data.status);
         setIsLoading(false);
-        // Fast poll while waiting for data
         pollRef.current = setTimeout(() => { void poll(); }, 5000);
       } else if (data.status === "error") {
         setAppStatus("error");
@@ -123,14 +140,13 @@ export function TenantProvider({ children }: TenantProviderProps): JSX.Element {
         // ready
         setAppStatus("ready");
         setIsLoading(false);
-        // Fast poll during active pipeline; slow poll when idle
         const anyRunning = data.tenants.some((t) => t.pipeline_running);
         const interval = anyRunning ? 5000 : 15000;
         pollRef.current = setTimeout(() => { void poll(); }, interval);
       }
 
-      // Fetch tenant list once readiness is established (not loading)
-      if (!tenantsLoaded && data.status !== "error") {
+      // Fetch tenant list once — ref check never triggers effect re-run
+      if (!tenantsLoadedRef.current && data.status !== "error") {
         void fetchTenants(controller.signal);
       }
     }
@@ -140,12 +156,14 @@ export function TenantProvider({ children }: TenantProviderProps): JSX.Element {
       controller.abort();
       if (pollRef.current) clearTimeout(pollRef.current);
     };
-  }, [fetchReadiness, fetchTenants, tenantsLoaded]);
+  }, [fetchReadiness, fetchTenants, restartKey]);  // restartKey restarts poll after error; tenantsLoaded removed
 
   const refetch = useCallback(() => {
     setIsLoading(true);
     setError(null);
-    setTenantsLoaded(false);
+    tenantsLoadedRef.current = false;         // re-fetch tenants on next poll
+    readinessFingerprintRef.current = null;   // force readiness state update on next poll
+    setRestartKey((k) => k + 1);             // restart poll loop (only mechanism after error branch stops it)
   }, []);
 
   const setCurrentTenant = useCallback(
@@ -160,27 +178,30 @@ export function TenantProvider({ children }: TenantProviderProps): JSX.Element {
     [],
   );
 
-  // Read-only when any tenant for the current selection is running pipeline
   const isReadOnly =
     readiness?.tenants.some(
       (t) =>
         t.tenant_name === currentTenant?.tenant_name && t.pipeline_running,
     ) ?? false;
 
+  // Memoize context value — consumers only re-render when deps actually change
+  const contextValue = useMemo<TenantContextValue>(
+    () => ({
+      tenants,
+      currentTenant,
+      setCurrentTenant,
+      isLoading,
+      error,
+      refetch,
+      appStatus,
+      readiness,
+      isReadOnly,
+    }),
+    [tenants, currentTenant, setCurrentTenant, isLoading, error, refetch, appStatus, readiness, isReadOnly],
+  );
+
   return (
-    <TenantContext.Provider
-      value={{
-        tenants,
-        currentTenant,
-        setCurrentTenant,
-        isLoading,
-        error,
-        refetch,
-        appStatus,
-        readiness,
-        isReadOnly,
-      }}
-    >
+    <TenantContext.Provider value={contextValue}>
       {children}
     </TenantContext.Provider>
   );

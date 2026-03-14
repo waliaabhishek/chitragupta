@@ -156,6 +156,43 @@ describe("TenantContext — adaptive polling interval", () => {
     setTimeoutSpy.mockRestore();
   });
 
+  it("readiness object reference is stable when poll returns identical data (AC4)", async () => {
+    const { server } = await import("../test/mocks/server");
+
+    server.use(
+      http.get("/api/v1/readiness", () => {
+        return HttpResponse.json(makeReadiness(false));
+      }),
+    );
+
+    vi.useFakeTimers();
+
+    try {
+      const { result } = renderHook(() => useTenant(), { wrapper });
+
+      // Let the initial poll (useEffect → fetch → setState) complete.
+      // advanceTimersByTimeAsync advances time AND awaits resulting async work.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(100);
+      });
+
+      const firstRef = result.current.readiness;
+      expect(firstRef).not.toBeNull();
+
+      // Advance past the 15s idle interval to fire the second poll.
+      // Does NOT use runAllTimersAsync — that causes infinite rescheduling.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(15001);
+      });
+
+      // With fingerprinting: setReadiness NOT called for identical data → same ref (PASS)
+      // Without fingerprinting: setReadiness called with new object → different ref (FAIL — red state)
+      expect(result.current.readiness).toBe(firstRef);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("polls at 15000ms when all tenants are idle (pipeline_running=false)", async () => {
     const { server } = await import("../test/mocks/server");
 

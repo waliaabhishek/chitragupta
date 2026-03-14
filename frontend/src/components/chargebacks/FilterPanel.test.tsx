@@ -517,6 +517,49 @@ describe("FilterPanel", () => {
     expect(onChange).toHaveBeenCalledWith("resource_id", null);
   });
 
+  it("FilterPanel_renders_Refresh_Data_button_when_onRefresh_provided", () => {
+    render(
+      <FilterPanel
+        filters={defaultFilters}
+        onChange={vi.fn()}
+        onReset={vi.fn()}
+        onRefresh={vi.fn()}
+        tenantName="t1"
+      />,
+    );
+
+    expect(screen.getByText("Refresh Data")).toBeInTheDocument();
+  });
+
+  it("FilterPanel_no_Refresh_Data_button_when_onRefresh_omitted", () => {
+    render(
+      <FilterPanel
+        filters={defaultFilters}
+        onChange={vi.fn()}
+        onReset={vi.fn()}
+        tenantName="t1"
+      />,
+    );
+
+    expect(screen.queryByText("Refresh Data")).toBeNull();
+  });
+
+  it("FilterPanel_clicking_Refresh_Data_invokes_callback", () => {
+    const onRefresh = vi.fn();
+    render(
+      <FilterPanel
+        filters={defaultFilters}
+        onChange={vi.fn()}
+        onReset={vi.fn()}
+        onRefresh={onRefresh}
+        tenantName="t1"
+      />,
+    );
+
+    fireEvent.click(screen.getByText("Refresh Data"));
+    expect(onRefresh).toHaveBeenCalledOnce();
+  });
+
   describe("filterByLabel", () => {
     it("returns true when label contains the search input (case-insensitive)", () => {
       expect(filterByLabel("alice", { label: "Alice (u-1)" })).toBe(true);

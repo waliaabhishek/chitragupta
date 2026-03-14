@@ -171,6 +171,7 @@ export function CostDashboardPage(): JSX.Element {
   const { currentTenant } = useTenant();
   const { filters, setFilter, setFilters, resetFilters } = useChargebackFilters();
   const [timeBucket, setTimeBucket] = useState<TimeBucket>("day");
+  const [refreshKey, setRefreshKey] = useState(0);
 
   return (
     <div>
@@ -180,7 +181,14 @@ export function CostDashboardPage(): JSX.Element {
         <Text type="secondary">Select a tenant to view cost analytics.</Text>
       ) : (
         <>
-          <FilterPanel filters={filters} onChange={setFilter} onBatchChange={setFilters} onReset={resetFilters} tenantName={currentTenant.tenant_name} />
+          <FilterPanel
+            filters={filters}
+            onChange={setFilter}
+            onBatchChange={setFilters}
+            onReset={resetFilters}
+            onRefresh={() => setRefreshKey((k) => k + 1)}
+            tenantName={currentTenant.tenant_name}
+          />
 
           <div style={{ margin: "12px 0" }}>
             <Radio.Group
@@ -194,6 +202,7 @@ export function CostDashboardPage(): JSX.Element {
           </div>
 
           <DashboardContent
+            key={refreshKey}
             tenant={currentTenant}
             filters={filters}
             timeBucket={timeBucket}

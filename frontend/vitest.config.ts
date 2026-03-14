@@ -5,7 +5,7 @@ export default defineConfig({
   plugins: [react()],
   test: {
     globals: true,
-    environment: "jsdom",
+    environment: "./src/test/vitest-env-jsdom-compat.ts",
     setupFiles: ["./src/test/setup.ts"],
     dangerouslyForceExit: true,
     coverage: {
