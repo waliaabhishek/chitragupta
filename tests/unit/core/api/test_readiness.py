@@ -195,7 +195,8 @@ class TestReadinessHttpIntegration:
         # readiness backend so we control what the DB returns.
         with (
             patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"),
-            patch("core.api.routes.readiness.get_or_create_backend", return_value=backend),TestClient(app) as client
+            patch("core.api.routes.readiness.get_or_create_backend", return_value=backend),
+            TestClient(app) as client,
         ):
             response = client.get("/api/v1/readiness")
 

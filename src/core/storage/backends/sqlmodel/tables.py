@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from datetime import UTC, date, datetime
 
-from sqlalchemy import Column, Date, DateTime, UniqueConstraint
+from sqlalchemy import Column, Date, DateTime, Index, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
 logger = logging.getLogger(__name__)
@@ -24,6 +24,7 @@ class ChargebackDimensionTable(SQLModel, table=True):
             "allocation_detail",
             name="uq_chargeback_dimensions",
         ),
+        Index("ix_chargeback_dimensions_eco_tenant", "ecosystem", "tenant_id"),
     )
 
     dimension_id: int | None = Field(default=None, primary_key=True)
@@ -40,6 +41,7 @@ class ChargebackDimensionTable(SQLModel, table=True):
 
 class ChargebackFactTable(SQLModel, table=True):
     __tablename__ = "chargeback_facts"
+    __table_args__ = (Index("ix_chargeback_facts_dimension_timestamp", "dimension_id", "timestamp"),)
 
     timestamp: datetime = Field(sa_column=Column(DateTime(timezone=True), primary_key=True))
     dimension_id: int = Field(primary_key=True, foreign_key="chargeback_dimensions.dimension_id")

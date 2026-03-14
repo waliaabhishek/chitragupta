@@ -68,7 +68,8 @@ class TestReadinessCacheFirstCall:
 
         with (
             patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"),
-            patch("core.api.routes.readiness.get_or_create_backend", return_value=backend),TestClient(app) as client
+            patch("core.api.routes.readiness.get_or_create_backend", return_value=backend),
+            TestClient(app) as client,
         ):
             client.get("/api/v1/readiness")
 
@@ -86,7 +87,8 @@ class TestReadinessCacheFirstCall:
 
         with (
             patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"),
-            patch("core.api.routes.readiness.get_or_create_backend", mock_get_backend),TestClient(app) as client
+            patch("core.api.routes.readiness.get_or_create_backend", mock_get_backend),
+            TestClient(app) as client,
         ):
             client.get("/api/v1/readiness")
 
@@ -107,7 +109,8 @@ class TestReadinessCacheHit:
 
         with (
             patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"),
-            patch("core.api.routes.readiness.get_or_create_backend", mock_get_backend),TestClient(app) as client
+            patch("core.api.routes.readiness.get_or_create_backend", mock_get_backend),
+            TestClient(app) as client,
         ):
             # Both requests happen well within the 2s TTL window
             client.get("/api/v1/readiness")
@@ -124,7 +127,8 @@ class TestReadinessCacheHit:
 
         with (
             patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"),
-            patch("core.api.routes.readiness.get_or_create_backend", mock_get_backend),TestClient(app) as client
+            patch("core.api.routes.readiness.get_or_create_backend", mock_get_backend),
+            TestClient(app) as client,
         ):
             for _ in range(10):
                 response = client.get("/api/v1/readiness")
@@ -156,7 +160,8 @@ class TestReadinessCacheExpiry:
 
         with (
             patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"),
-            patch("core.api.routes.readiness.get_or_create_backend", mock_get_backend),TestClient(app) as client
+            patch("core.api.routes.readiness.get_or_create_backend", mock_get_backend),
+            TestClient(app) as client,
         ):
             client.get("/api/v1/readiness")
 
