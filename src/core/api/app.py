@@ -5,7 +5,9 @@ import logging
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
+from starlette.responses import JSONResponse, Response
 
 from core.api import API_VERSION
 from core.api.exception_handler import global_exception_handler
@@ -13,8 +15,32 @@ from core.api.exception_handler import global_exception_handler
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
+    from starlette.types import ASGIApp
+
     from core.config.models import AppSettings
     from workflow_runner import WorkflowRunner
+
+
+class RequestTimeoutMiddleware(BaseHTTPMiddleware):
+    """Return 504 to client if request exceeds timeout_seconds.
+
+    Note: for sync def endpoints, the threadpool thread continues running after
+    timeout — this provides client-side backpressure only, not threadpool relief.
+    """
+
+    def __init__(self, app: ASGIApp, timeout_seconds: int) -> None:
+        super().__init__(app)
+        self.timeout_seconds = timeout_seconds
+
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
+        try:
+            return await asyncio.wait_for(call_next(request), timeout=float(self.timeout_seconds))
+        except TimeoutError:
+            return JSONResponse(
+                {"detail": f"Request exceeded {self.timeout_seconds}s timeout"},
+                status_code=504,
+            )
+
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +85,11 @@ def create_app(settings: AppSettings, workflow_runner: WorkflowRunner | None = N
             allow_methods=["GET", "POST", "PATCH", "DELETE"],
             allow_headers=["*"],
         )
+
+    app.add_middleware(
+        RequestTimeoutMiddleware,
+        timeout_seconds=settings.api.request_timeout_seconds,
+    )
 
     from core.api.routes import (
         aggregation,

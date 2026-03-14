@@ -4,7 +4,7 @@ import math
 from collections.abc import Generator
 from datetime import UTC, datetime
 from decimal import Decimal
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock
 
 import pytest
 from sqlalchemy import Engine
@@ -16,14 +16,13 @@ from core.config.models import TenantConfig
 from core.models.chargeback import ChargebackDimensionInfo, ChargebackRow, CostType
 from core.storage.backends.sqlmodel.repositories import SQLModelChargebackRepository, SQLModelTagRepository
 
-
 # ---------------------------------------------------------------------------
 # DB fixtures for integration tests
 # ---------------------------------------------------------------------------
 
 
 @pytest.fixture
-def engine() -> Generator[Engine, None, None]:
+def engine() -> Generator[Engine]:
     eng = create_engine("sqlite://", echo=False)
     SQLModel.metadata.create_all(eng)
     yield eng
@@ -31,7 +30,7 @@ def engine() -> Generator[Engine, None, None]:
 
 
 @pytest.fixture
-def session(engine: Engine) -> Generator[Session, None, None]:
+def session(engine: Engine) -> Generator[Session]:
     with Session(engine) as s:
         yield s
 

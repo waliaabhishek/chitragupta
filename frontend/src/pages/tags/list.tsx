@@ -22,10 +22,14 @@ export function TagManagementPage(): JSX.Element {
   const [editValue, setEditValue] = useState("");
   const [savingTagId, setSavingTagId] = useState<number | null>(null);
   const searchTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
   const fetchTags = useCallback(
     async (p: number, s: string) => {
       if (!currentTenant) return;
+      abortRef.current?.abort();
+      const controller = new AbortController();
+      abortRef.current = controller;
       setLoading(true);
       try {
         const url = new URL(
@@ -35,18 +39,19 @@ export function TagManagementPage(): JSX.Element {
         url.searchParams.set("page_size", String(PAGE_SIZE));
         if (s) url.searchParams.set("search", s);
 
-        const resp = await fetch(url.toString());
+        const resp = await fetch(url.toString(), { signal: controller.signal });
         if (!resp.ok) throw new Error("Failed to fetch tags");
         const data = (await resp.json()) as PaginatedResponse<TagWithDimensionResponse>;
         setTags(data.items);
         setTotal(data.total);
       } catch (err) {
+        if (err instanceof Error && err.name === "AbortError") return;
         notification.error({
           message: "Failed to load tags",
           description: err instanceof Error ? err.message : "Unknown error",
         });
       } finally {
-        setLoading(false);
+        if (!controller.signal.aborted) setLoading(false);
       }
     },
     [currentTenant],

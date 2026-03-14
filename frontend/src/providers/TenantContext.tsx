@@ -46,55 +46,56 @@ export function TenantProvider({ children }: TenantProviderProps): JSX.Element {
   const [tenantsLoaded, setTenantsLoaded] = useState(false);
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const fetchReadiness = useCallback(async (): Promise<ReadinessResponse | null> => {
-    try {
-      const res = await fetch(`${API_URL}/readiness`);
-      if (!res.ok) return null;
-      return (await res.json()) as ReadinessResponse;
-    } catch {
-      return null;
-    }
-  }, []);
-
-  const fetchTenants = useCallback(async (): Promise<void> => {
-    try {
-      const response = await fetch(`${API_URL}/tenants`);
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+  const fetchReadiness = useCallback(
+    async (signal: AbortSignal): Promise<ReadinessResponse | null> => {
+      try {
+        const res = await fetch(`${API_URL}/readiness`, { signal });
+        if (!res.ok) return null;
+        return (await res.json()) as ReadinessResponse;
+      } catch (err) {
+        if (err instanceof Error && err.name === "AbortError") return null;
+        return null;
       }
-      const data = (await response.json()) as {
-        tenants: TenantStatusSummary[];
-      };
+    },
+    [],
+  );
 
-      setTenants(data.tenants);
-      setTenantsLoaded(true);
-
-      // Restore previously selected tenant from localStorage
-      const savedName = localStorage.getItem(STORAGE_KEY);
-      if (savedName) {
-        const found = data.tenants.find((t) => t.tenant_name === savedName);
-        if (found) {
-          setCurrentTenantState(found);
+  const fetchTenants = useCallback(
+    async (signal: AbortSignal): Promise<void> => {
+      try {
+        const response = await fetch(`${API_URL}/tenants`, { signal });
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        const data = (await response.json()) as { tenants: TenantStatusSummary[] };
+        setTenants(data.tenants);
+        setTenantsLoaded(true);
+        const savedName = localStorage.getItem(STORAGE_KEY);
+        if (savedName) {
+          const found = data.tenants.find((t) => t.tenant_name === savedName);
+          if (found) {
+            setCurrentTenantState(found);
+          } else if (data.tenants.length > 0) {
+            setCurrentTenantState(data.tenants[0]);
+          }
         } else if (data.tenants.length > 0) {
           setCurrentTenantState(data.tenants[0]);
         }
-      } else if (data.tenants.length > 0) {
-        setCurrentTenantState(data.tenants[0]);
+      } catch (err) {
+        if (err instanceof Error && err.name === "AbortError") return;
+        setError(err instanceof Error ? err.message : "Failed to load tenants");
       }
-    } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "Failed to load tenants",
-      );
-    }
-  }, []);
+    },
+    [],
+  );
 
   // Main readiness polling loop
   useEffect(() => {
-    let cancelled = false;
+    const controller = new AbortController();
 
     async function poll(): Promise<void> {
-      const data = await fetchReadiness();
-      if (cancelled) return;
+      const data = await fetchReadiness(controller.signal);
+      if (controller.signal.aborted) return;
 
       if (data === null) {
         // Backend not reachable
@@ -130,13 +131,13 @@ export function TenantProvider({ children }: TenantProviderProps): JSX.Element {
 
       // Fetch tenant list once readiness is established (not loading)
       if (!tenantsLoaded && data.status !== "error") {
-        void fetchTenants();
+        void fetchTenants(controller.signal);
       }
     }
 
     void poll();
     return () => {
-      cancelled = true;
+      controller.abort();
       if (pollRef.current) clearTimeout(pollRef.current);
     };
   }, [fetchReadiness, fetchTenants, tenantsLoaded]);

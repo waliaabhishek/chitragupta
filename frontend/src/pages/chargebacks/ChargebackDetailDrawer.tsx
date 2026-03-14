@@ -14,9 +14,11 @@ interface ChargebackDetailDrawerProps {
 async function fetchDimension(
   tenantName: string,
   dimensionId: number,
+  signal?: AbortSignal,
 ): Promise<ChargebackDimensionResponse | null> {
   const resp = await fetch(
     `${API_URL}/tenants/${tenantName}/chargebacks/${dimensionId}`,
+    signal ? { signal } : {},
   );
   if (!resp.ok) return null;
   return (await resp.json()) as ChargebackDimensionResponse;
@@ -58,11 +60,12 @@ export function ChargebackDetailDrawer({
 
   useEffect(() => {
     if (dimensionId === null || !currentTenant) return;
+    const controller = new AbortController();
     setLoading(true);
     setNotFound(false);
     setDimension(null);
 
-    fetchDimension(currentTenant.tenant_name, dimensionId)
+    fetchDimension(currentTenant.tenant_name, dimensionId, controller.signal)
       .then((data) => {
         if (data === null) {
           setNotFound(true);
@@ -70,8 +73,17 @@ export function ChargebackDetailDrawer({
           setDimension(data);
         }
       })
-      .catch(() => setNotFound(true))
-      .finally(() => setLoading(false));
+      .catch((err: unknown) => {
+        if (err instanceof Error && err.name === "AbortError") return;
+        setNotFound(true);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+
+    return () => {
+      controller.abort();
+    };
   }, [dimensionId, currentTenant]);
 
   const handleAddTag = async (key: string, displayName: string): Promise<void> => {

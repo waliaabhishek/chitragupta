@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from datetime import date
 from typing import TYPE_CHECKING, Annotated
 
@@ -17,6 +18,12 @@ from core.config.models import AppSettings  # noqa: TC001  # FastAPI evaluates a
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["readiness"])
+
+# Module-level TTL cache for readiness responses.
+# Prevents N concurrent polls from each hitting the DB.
+# 2s TTL is safe given 5s polling interval.
+_readiness_cache: tuple[ReadinessResponse, float] | None = None
+_READINESS_CACHE_TTL: float = 2.0  # seconds
 
 
 def _get_backends(request: Request) -> dict[str, object]:
@@ -105,7 +112,13 @@ def readiness(
     request: Request,
     settings: Annotated[AppSettings, Depends(get_settings)],
 ) -> ReadinessResponse:
-    """Application readiness check with per-tenant status."""
+    """Application readiness check with per-tenant status. TTL-cached for 2s."""
+    global _readiness_cache  # noqa: PLW0603
+
+    now = time.monotonic()
+    if _readiness_cache is not None and now - _readiness_cache[1] < _READINESS_CACHE_TTL:
+        return _readiness_cache[0]
+
     mode: str = getattr(request.app.state, "mode", "api")
     workflow_runner = getattr(request.app.state, "workflow_runner", None)
     backends = _get_backends(request)
@@ -127,9 +140,11 @@ def readiness(
         for name, cfg in settings.tenants.items()
     ]
 
-    return ReadinessResponse(
+    result = ReadinessResponse(
         status=_derive_status(tenant_statuses),
         version=API_VERSION,
         mode=mode,
         tenants=tenant_statuses,
     )
+    _readiness_cache = (result, now)
+    return result

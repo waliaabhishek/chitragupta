@@ -26,32 +26,29 @@ export function useDataAvailability(params: UseDataAvailabilityParams): UseDataA
   }, []);
 
   useEffect(() => {
-    let cancelled = false;
+    const controller = new AbortController();
     setIsLoading(true);
     setError(null);
 
     const url = `${API_URL}/tenants/${tenantName}/chargebacks/dates`;
 
-    fetch(url)
+    fetch(url, { signal: controller.signal })
       .then((response) => {
         if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         return response.json() as Promise<ChargebackDatesResponse>;
       })
       .then((result) => {
-        if (!cancelled) {
-          setData(result);
-          setIsLoading(false);
-        }
+        setData(result);
+        setIsLoading(false);
       })
       .catch((err: unknown) => {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : "Failed to fetch data availability");
-          setIsLoading(false);
-        }
+        if (err instanceof Error && err.name === "AbortError") return;
+        setError(err instanceof Error ? err.message : "Failed to fetch data availability");
+        setIsLoading(false);
       });
 
     return () => {
-      cancelled = true;
+      controller.abort();
     };
   }, [tenantName, refetchKey]);
 

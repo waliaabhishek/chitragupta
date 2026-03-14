@@ -3,7 +3,7 @@ import "ag-grid-community/styles/ag-theme-alpine.css";
 import type { ColDef, IDatasource, IGetRowsParams, SelectionChangedEvent } from "ag-grid-community";
 import { AgGridReact } from "ag-grid-react";
 import { Tag } from "antd";
-import { forwardRef, useMemo, useCallback, useEffect, useRef, useImperativeHandle } from "react";
+import { type MutableRefObject, forwardRef, useMemo, useCallback, useEffect, useRef, useImperativeHandle } from "react";
 import { API_URL } from "../../config";
 import type { ChargebackResponse, PaginatedResponse } from "../../types/api";
 
@@ -72,6 +72,7 @@ const columnDefs: ColDef[] = [
 function createDatasource(
   tenantName: string,
   filters: Record<string, string>,
+  controllerRef: MutableRefObject<AbortController>,
 ): IDatasource {
   return {
     getRows: (params: IGetRowsParams) => {
@@ -85,7 +86,8 @@ function createDatasource(
         url.searchParams.set(k, v);
       }
 
-      fetch(url.toString())
+      // Read signal at call time so the useEffect's fresh controller is used.
+      fetch(url.toString(), { signal: controllerRef.current.signal })
         .then((resp) => {
           if (!resp.ok) {
             params.failCallback();
@@ -98,7 +100,8 @@ function createDatasource(
             params.successCallback(data.items, data.total);
           }
         })
-        .catch(() => {
+        .catch((err: unknown) => {
+          if (err instanceof Error && err.name === "AbortError") return; // datasource replaced
           params.failCallback();
         });
     },
@@ -108,12 +111,21 @@ function createDatasource(
 export const ChargebackGrid = forwardRef<AgGridReact, ChargebackGridProps>(
   ({ tenantName, filters, onRowClick, onSelectionChange, onSelectAll }, ref) => {
     const internalRef = useRef<AgGridReact>(null);
+    const abortControllerRef = useRef(new AbortController());
 
     // Expose the grid instance via the forwarded ref.
     useImperativeHandle(ref, () => internalRef.current!, []);
 
+    // Side effect: abort previous and create a fresh controller when tenant/filters change.
+    // useEffect (not useMemo) owns this so it doesn't fire spuriously in Strict Mode.
+    useEffect(() => {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = new AbortController();
+    }, [tenantName, filters]);
+
+    // Pure computation: build datasource with ref; getRows reads signal at call time.
     const datasource = useMemo(
-      () => createDatasource(tenantName, filters),
+      () => createDatasource(tenantName, filters, abortControllerRef),
       [tenantName, filters],
     );
 

@@ -47,7 +47,7 @@ export function useAggregation(params: UseAggregationParams): UseAggregationResu
   }, []);
 
   useEffect(() => {
-    let cancelled = false;
+    const controller = new AbortController();
     setIsLoading(true);
     setError(null);
 
@@ -65,26 +65,23 @@ export function useAggregation(params: UseAggregationParams): UseAggregationResu
 
     const url = `${API_URL}/tenants/${tenantName}/chargebacks/aggregate?${qs.toString()}`;
 
-    fetch(url)
+    fetch(url, { signal: controller.signal })
       .then((response) => {
         if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         return response.json() as Promise<AggregationResponse>;
       })
       .then((result) => {
-        if (!cancelled) {
-          setData(result);
-          setIsLoading(false);
-        }
+        setData(result);
+        setIsLoading(false);
       })
       .catch((err: unknown) => {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : "Failed to fetch aggregation data");
-          setIsLoading(false);
-        }
+        if (err instanceof Error && err.name === "AbortError") return;
+        setError(err instanceof Error ? err.message : "Failed to fetch aggregation data");
+        setIsLoading(false);
       });
 
     return () => {
-      cancelled = true;
+      controller.abort();
     };
   }, [
     tenantName,

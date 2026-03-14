@@ -77,7 +77,16 @@ def run_api(settings: AppSettings, runner: WorkflowRunner | None = None, mode: s
     from core.api.app import create_app
 
     app = create_app(settings, workflow_runner=runner, mode=mode)
-    uvicorn.run(app, host=settings.api.host, port=settings.api.port)
+    uvicorn.run(
+        app,
+        host=settings.api.host,
+        port=settings.api.port,
+        # Keep workers=1: --mode both requires shared in-process WorkflowRunner state.
+        # Multiple workers would each have their own runner and race on the DB.
+        workers=1,
+        limit_concurrency=100,  # reject new connections with 503 after 100 concurrent
+        timeout_keep_alive=10,  # close idle keep-alive sockets after 10s (default: 5)
+    )
 
 
 def run_worker(

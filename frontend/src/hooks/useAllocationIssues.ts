@@ -30,7 +30,7 @@ export function useAllocationIssues(params: UseAllocationIssuesParams): UseAlloc
   }, []);
 
   useEffect(() => {
-    let cancelled = false;
+    const controller = new AbortController();
     setIsLoading(true);
     setError(null);
 
@@ -45,26 +45,23 @@ export function useAllocationIssues(params: UseAllocationIssuesParams): UseAlloc
 
     const url = `${API_URL}/tenants/${tenantName}/chargebacks/allocation-issues?${qs.toString()}`;
 
-    fetch(url)
+    fetch(url, { signal: controller.signal })
       .then((response) => {
         if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         return response.json() as Promise<PaginatedResponse<AllocationIssueResponse>>;
       })
       .then((result) => {
-        if (!cancelled) {
-          setData(result);
-          setIsLoading(false);
-        }
+        setData(result);
+        setIsLoading(false);
       })
       .catch((err: unknown) => {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : "Failed to fetch allocation issues");
-          setIsLoading(false);
-        }
+        if (err instanceof Error && err.name === "AbortError") return;
+        setError(err instanceof Error ? err.message : "Failed to fetch allocation issues");
+        setIsLoading(false);
       });
 
     return () => {
-      cancelled = true;
+      controller.abort();
     };
   }, [tenantName, filters, page, pageSize, refetchKey]);
 

@@ -3,7 +3,6 @@ from __future__ import annotations
 from datetime import UTC, date, datetime
 from unittest.mock import MagicMock, patch
 
-import pytest
 from fastapi.testclient import TestClient
 
 from core.api.routes.readiness import _check_tenant_readiness
@@ -196,10 +195,9 @@ class TestReadinessHttpIntegration:
         # readiness backend so we control what the DB returns.
         with (
             patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"),
-            patch("core.api.routes.readiness.get_or_create_backend", return_value=backend),
+            patch("core.api.routes.readiness.get_or_create_backend", return_value=backend),TestClient(app) as client
         ):
-            with TestClient(app) as client:
-                response = client.get("/api/v1/readiness")
+            response = client.get("/api/v1/readiness")
 
         assert response.status_code == 200
         body = response.json()
