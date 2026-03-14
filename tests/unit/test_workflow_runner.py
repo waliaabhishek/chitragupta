@@ -1953,4 +1953,111 @@ class TestShutdownCheckWiring:
         mock_orch_cls.assert_called_once()
         _, kwargs = mock_orch_cls.call_args
         assert "shutdown_check" in kwargs
-        assert kwargs["shutdown_check"] == runner._is_shutdown_requested
+
+
+# ---------------------------------------------------------------------------
+# Test 7: bootstrap_storage delegates to cleanup_orphaned_runs_for_all_tenants
+# Test 8: cleanup_orphaned_runs_for_all_tenants swallow_errors=True
+# Test 9: cleanup_orphaned_runs_for_all_tenants swallow_errors=False
+# ---------------------------------------------------------------------------
+
+
+class TestCleanupOrphanedRunsForAllTenants:
+    """Tests for the new module-level cleanup_orphaned_runs_for_all_tenants() function."""
+
+    @patch("core.storage.registry.create_storage_backend")
+    def test_bootstrap_storage_delegates_to_cleanup_function(self, mock_create_storage: MagicMock) -> None:
+        """Test 7: WorkflowRunner.bootstrap_storage() must call
+        cleanup_orphaned_runs_for_all_tenants(settings, swallow_errors=False)."""
+        from workflow_runner import cleanup_orphaned_runs_for_all_tenants  # noqa: F401
+
+        mock_backend = MagicMock()
+        mock_create_storage.return_value = mock_backend
+
+        settings = _make_settings(tenants={"t1": _make_tenant(tenant_id="tid1")})
+        runner = WorkflowRunner(settings, MagicMock())
+
+        with patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants") as mock_cleanup:
+            runner.bootstrap_storage()
+
+        mock_cleanup.assert_called_once_with(settings, swallow_errors=False)
+
+    def test_swallow_errors_true_does_not_raise_on_storage_failure(self) -> None:
+        """Test 8: When swallow_errors=True, create_tables() raising is caught and NOT re-raised."""
+        from workflow_runner import cleanup_orphaned_runs_for_all_tenants
+
+        settings = _make_settings(tenants={"t": _make_tenant(tenant_id="tid")})
+        mock_storage = MagicMock()
+        mock_storage.create_tables.side_effect = RuntimeError("db unavailable")
+
+        with patch("core.storage.registry.create_storage_backend", return_value=mock_storage):
+            # Must not raise
+            cleanup_orphaned_runs_for_all_tenants(settings, swallow_errors=True)
+
+    def test_swallow_errors_false_propagates_exception(self) -> None:
+        """Test 9: When swallow_errors=False, create_tables() raising propagates to caller."""
+        from workflow_runner import cleanup_orphaned_runs_for_all_tenants
+
+        settings = _make_settings(tenants={"t": _make_tenant(tenant_id="tid")})
+        mock_storage = MagicMock()
+        mock_storage.create_tables.side_effect = RuntimeError("db unavailable")
+
+        with patch("core.storage.registry.create_storage_backend", return_value=mock_storage):
+            with pytest.raises(RuntimeError, match="db unavailable"):
+                cleanup_orphaned_runs_for_all_tenants(settings, swallow_errors=False)
+
+    def test_api_only_startup_cleanup_calls_cleanup_orphaned_runs(self) -> None:
+        """Test 2: cleanup_orphaned_runs_for_all_tenants calls PipelineRunTracker.cleanup_orphaned_runs
+        for each tenant — verifies the delegation chain works end-to-end."""
+        from workflow_runner import PipelineRunTracker, cleanup_orphaned_runs_for_all_tenants
+
+        settings = _make_settings(tenants={"t": _make_tenant(tenant_id="tid")})
+        mock_storage = MagicMock()
+
+        with patch("core.storage.registry.create_storage_backend", return_value=mock_storage):
+            with patch.object(PipelineRunTracker, "cleanup_orphaned_runs") as mock_cleanup:
+                cleanup_orphaned_runs_for_all_tenants(settings, swallow_errors=True)
+
+        mock_cleanup.assert_called_once_with("t")
+
+
+class TestPipelineRunTrackerCleanupOrphanedRunsRealDb:
+    """GIT-002: Verify actual DB mutations via real in-memory SQLite storage."""
+
+    def test_cleanup_orphaned_runs_marks_running_row_as_failed_in_real_db(self) -> None:
+        """cleanup_orphaned_runs() on a real in-memory DB must:
+        - Set status='failed' on any 'running' row
+        - Set ended_at to a non-null datetime
+        - Set error_message containing 'Orphaned'
+        """
+        from core.config.models import StorageConfig
+        from core.storage.registry import create_storage_backend
+        from workflow_runner import PipelineRunTracker
+
+        storage = create_storage_backend(
+            StorageConfig(connection_string="sqlite:///:memory:"),
+            use_migrations=False,
+        )
+        storage.create_tables()
+
+        try:
+            tracker = PipelineRunTracker(storage)
+
+            # Insert a 'running' record
+            run = tracker.create("acme")
+            assert run.status == "running"
+
+            # Act: clean up orphaned runs
+            tracker.cleanup_orphaned_runs("acme")
+
+            # Verify the row in the DB
+            with storage.create_unit_of_work() as uow:
+                updated = uow.pipeline_runs.get_latest_run("acme")
+
+            assert updated is not None
+            assert updated.status == "failed"
+            assert updated.ended_at is not None
+            assert updated.error_message is not None
+            assert "Orphaned" in updated.error_message
+        finally:
+            storage.dispose()

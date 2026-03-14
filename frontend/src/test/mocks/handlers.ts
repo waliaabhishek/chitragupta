@@ -4,6 +4,7 @@ import type {
   BulkTagResponse,
   InventorySummaryResponse,
   PaginatedResponse,
+  ReadinessResponse,
   TagWithDimensionResponse,
   TenantListResponse,
 } from "../../types/api";
@@ -55,7 +56,41 @@ export const chargebackFixtures: PaginatedResponse<unknown> = {
   pages: 1,
 };
 
+export const readinessFixture: ReadinessResponse = {
+  status: "ready",
+  version: "1.0.0",
+  mode: "both",
+  tenants: [
+    {
+      tenant_name: "acme",
+      tables_ready: true,
+      has_data: true,
+      pipeline_running: false,
+      pipeline_stage: null,
+      pipeline_current_date: null,
+      last_run_status: "completed",
+      last_run_at: null,
+      permanent_failure: null,
+    },
+    {
+      tenant_name: "globex",
+      tables_ready: true,
+      has_data: true,
+      pipeline_running: false,
+      pipeline_stage: null,
+      pipeline_current_date: null,
+      last_run_status: "completed",
+      last_run_at: null,
+      permanent_failure: null,
+    },
+  ],
+};
+
 export const handlers = [
+  http.get(`${BASE}/readiness`, () => {
+    return HttpResponse.json(readinessFixture);
+  }),
+
   http.get(`${BASE}/tenants`, () => {
     return HttpResponse.json(tenantFixtures);
   }),

@@ -19,9 +19,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def create_app(
-    settings: AppSettings, workflow_runner: WorkflowRunner | None = None, mode: str = "api"
-) -> FastAPI:
+def create_app(settings: AppSettings, workflow_runner: WorkflowRunner | None = None, mode: str = "api") -> FastAPI:
     """Factory function for creating the FastAPI application."""
 
     @asynccontextmanager
@@ -29,9 +27,12 @@ def create_app(
         logger.info("Chitragupt API starting up version=%s", API_VERSION)
         app.state.settings = settings
         app.state.backends = {}
-        app.state.pipeline_runs = {}
         app.state.workflow_runner = workflow_runner
         app.state.mode = mode
+        if workflow_runner is None:
+            from workflow_runner import cleanup_orphaned_runs_for_all_tenants
+
+            await asyncio.to_thread(cleanup_orphaned_runs_for_all_tenants, settings, swallow_errors=True)
         yield
         logger.info("Chitragupt API shutting down — disposing backends")
         for backend in app.state.backends.values():

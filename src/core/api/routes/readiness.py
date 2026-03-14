@@ -58,15 +58,16 @@ def _check_tenant_readiness(
                 if latest_run.status == "running":
                     # Cross-check: if DB says "running" but workflow_runner disagrees,
                     # the run is orphaned (process restarted). Report as not running.
-                    actually_running = (
-                        workflow_runner is not None
-                        and workflow_runner.is_tenant_running(tenant_name)                    )
-                    if actually_running or workflow_runner is None:
-                        pipeline_running = True
-                        pipeline_stage = latest_run.stage
-                        pipeline_current_date = latest_run.current_date
-                    else:
+                    if workflow_runner is None:
                         last_run_status = "failed"
+                    else:
+                        actually_running = workflow_runner.is_tenant_running(tenant_name)
+                        if actually_running:
+                            pipeline_running = True
+                            pipeline_stage = latest_run.stage
+                            pipeline_current_date = latest_run.current_date
+                        else:
+                            last_run_status = "failed"
 
         # Also check workflow_runner for in-progress runs not yet in DB
         if workflow_runner is not None and not pipeline_running:

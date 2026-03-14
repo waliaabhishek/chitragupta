@@ -51,7 +51,7 @@ def _config_hash(config: TenantConfig) -> str:
     """Stable hash of tenant config for change detection."""
     try:
         raw = json.dumps(config.model_dump(), sort_keys=True, default=str)
-    except (TypeError, ValueError, AttributeError):
+    except TypeError, ValueError, AttributeError:
         logger.debug("Failed to JSON-serialize config for hashing; falling back to repr()", exc_info=True)
         raw = repr(config)
     return hashlib.sha256(raw.encode()).hexdigest()[:16]
@@ -83,10 +83,9 @@ class PipelineRunTracker:
             uow.commit()
         return run
 
-    def make_progress_callback(
-        self, pipeline_run: PipelineRun
-    ) -> Callable[[str | None, date_type | None], None]:
+    def make_progress_callback(self, pipeline_run: PipelineRun) -> Callable[[str | None, date_type | None], None]:
         """Build a callback that updates PipelineRun stage/current_date in DB."""
+
         def callback(stage: str | None, current_date: date_type | None) -> None:
             pipeline_run.stage = stage
             pipeline_run.current_date = current_date
@@ -136,6 +135,27 @@ class PipelineRunTracker:
                     )
         except Exception:
             logger.warning("Failed to clean up orphaned runs for %s", tenant_name, exc_info=True)
+
+
+def cleanup_orphaned_runs_for_all_tenants(
+    settings: AppSettings,
+    *,
+    swallow_errors: bool = False,
+) -> None:
+    """Iterate all tenants: create tables and clean up orphaned pipeline runs."""
+    from core.storage.registry import create_storage_backend
+
+    for tenant_name, config in settings.tenants.items():
+        storage = create_storage_backend(config.storage)
+        try:
+            storage.create_tables()
+            PipelineRunTracker(storage).cleanup_orphaned_runs(tenant_name)
+        except Exception:
+            if not swallow_errors:
+                raise
+            logger.warning("Failed to clean up orphaned runs for %s", tenant_name, exc_info=True)
+        finally:
+            storage.dispose()
 
 
 class WorkflowRunner:
@@ -239,15 +259,7 @@ class WorkflowRunner:
         """
         if self._bootstrapped:
             return
-        from core.storage.registry import create_storage_backend
-
-        for tenant_name, config in self._settings.tenants.items():
-            storage = create_storage_backend(config.storage)
-            try:
-                storage.create_tables()
-                PipelineRunTracker(storage).cleanup_orphaned_runs(tenant_name)
-            finally:
-                storage.dispose()
+        cleanup_orphaned_runs_for_all_tenants(self._settings, swallow_errors=False)
         self._bootstrapped = True
 
     def run_tenant(self, tenant_name: str) -> PipelineRunResult:

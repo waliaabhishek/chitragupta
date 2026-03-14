@@ -122,8 +122,10 @@ export function TenantProvider({ children }: TenantProviderProps): JSX.Element {
         // ready
         setAppStatus("ready");
         setIsLoading(false);
-        // Slow poll to track pipeline state changes
-        pollRef.current = setTimeout(() => { void poll(); }, 15000);
+        // Fast poll during active pipeline; slow poll when idle
+        const anyRunning = data.tenants.some((t) => t.pipeline_running);
+        const interval = anyRunning ? 5000 : 15000;
+        pollRef.current = setTimeout(() => { void poll(); }, interval);
       }
 
       // Fetch tenant list once readiness is established (not loading)

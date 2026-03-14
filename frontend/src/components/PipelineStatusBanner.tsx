@@ -74,6 +74,17 @@ export function PipelineStatusBanner(): JSX.Element | null {
     (t) => t.tenant_name === currentTenant?.tenant_name,
   );
 
+  // Per-tenant failure visible even when other tenants are healthy
+  if (tenantStatus?.permanent_failure) {
+    return (
+      <Alert
+        banner
+        type="error"
+        message={`${currentTenant?.tenant_name}: ${tenantStatus.permanent_failure}`}
+      />
+    );
+  }
+
   if (tenantStatus?.pipeline_running) {
     const stageText = formatStage(
       tenantStatus.pipeline_stage,
@@ -95,11 +106,16 @@ export function PipelineStatusBanner(): JSX.Element | null {
   }
 
   if (appStatus === "no_data") {
+    const isApiOnly = readiness?.mode === "api";
     return (
       <Alert
         banner
         type="warning"
-        message="No data yet. Waiting for pipeline to run."
+        message={
+          isApiOnly
+            ? "No data available. This instance does not run the pipeline."
+            : "No data yet. Waiting for pipeline to run."
+        }
       />
     );
   }

@@ -1,7 +1,9 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { http, HttpResponse } from "msw";
 import { TenantProvider, useTenant } from "./TenantContext";
+import type { ReadinessResponse } from "../types/api";
 
 function wrapper({ children }: { children: ReactNode }): JSX.Element {
   return <TenantProvider>{children}</TenantProvider>;
@@ -98,5 +100,85 @@ describe("TenantContext", () => {
 
     expect(result.current.error).toMatch(/500|Internal Server Error/);
     expect(result.current.tenants).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests 12 & 13: Adaptive polling interval based on pipeline_running state
+// ---------------------------------------------------------------------------
+
+describe("TenantContext — adaptive polling interval", () => {
+  function makeReadiness(pipelineRunning: boolean): ReadinessResponse {
+    return {
+      status: "ready",
+      version: "1.0.0",
+      mode: "both",
+      tenants: [
+        {
+          tenant_name: "acme",
+          tables_ready: true,
+          has_data: true,
+          pipeline_running: pipelineRunning,
+          pipeline_stage: pipelineRunning ? "gathering" : null,
+          pipeline_current_date: null,
+          last_run_status: pipelineRunning ? "running" : "completed",
+          last_run_at: null,
+          permanent_failure: null,
+        },
+      ],
+    };
+  }
+
+  it("polls at 5000ms when any tenant pipeline_running=true", async () => {
+    const { server } = await import("../test/mocks/server");
+
+    server.use(
+      http.get("/api/v1/readiness", () => {
+        return HttpResponse.json(makeReadiness(true));
+      }),
+    );
+
+    const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
+
+    const { result } = renderHook(() => useTenant(), { wrapper });
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    // Extract all delay arguments passed to setTimeout
+    const delays = setTimeoutSpy.mock.calls
+      .map(([, delay]) => delay as number | undefined)
+      .filter((d): d is number => typeof d === "number");
+
+    // After receiving a ready+running response, must schedule next poll at 5000
+    expect(delays).toContain(5000);
+    // Must NOT have scheduled at 15000 for a running pipeline
+    expect(delays).not.toContain(15000);
+
+    setTimeoutSpy.mockRestore();
+  });
+
+  it("polls at 15000ms when all tenants are idle (pipeline_running=false)", async () => {
+    const { server } = await import("../test/mocks/server");
+
+    server.use(
+      http.get("/api/v1/readiness", () => {
+        return HttpResponse.json(makeReadiness(false));
+      }),
+    );
+
+    const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
+
+    const { result } = renderHook(() => useTenant(), { wrapper });
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    const delays = setTimeoutSpy.mock.calls
+      .map(([, delay]) => delay as number | undefined)
+      .filter((d): d is number => typeof d === "number");
+
+    // After receiving a ready+idle response, must schedule next poll at 15000
+    expect(delays).toContain(15000);
+    // Must NOT have scheduled at 5000 for an idle pipeline (only for running)
+    expect(delays.filter((d) => d === 5000)).toHaveLength(0);
+
+    setTimeoutSpy.mockRestore();
   });
 });
