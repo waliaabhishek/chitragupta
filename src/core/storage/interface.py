@@ -399,6 +399,14 @@ class TagRepository(Protocol):
         """Find existing tag by dimension and key. Used for upsert/override logic."""
         ...
 
+    def find_tags_by_dimensions_and_key(self, dimension_ids: list[int], tag_key: str) -> dict[int, CustomTag]:
+        """Batch fetch existing tags for multiple dimensions with a specific key.
+
+        Returns a dict keyed by dimension_id. dimension_ids with no matching tag are absent.
+        Chunks large lists to avoid SQLite parameter limits.
+        """
+        ...
+
     def delete_tag(self, tag_id: int) -> None: ...
 
 

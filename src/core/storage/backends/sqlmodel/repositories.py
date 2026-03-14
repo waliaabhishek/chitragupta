@@ -49,6 +49,10 @@ from core.storage.backends.sqlmodel.tables import (
 
 logger = logging.getLogger(__name__)
 
+# Maximum values per .in_() clause. SQLite hard limit is 32,767; 500 is a safe margin.
+# See also: _BULK_CHUNK_SIZE in tags.py — same rationale, separate constant for API layer.
+_CHUNK_SIZE = 500
+
 
 def _date_to_range(d: date) -> tuple[datetime, datetime]:
     """Convert a date to a half-open datetime range [start_of_day, start_of_next_day) in UTC."""
@@ -190,6 +194,8 @@ class SQLModelResourceRepository:
 
         return [resource_to_domain(r) for r in self._session.exec(stmt).all()], total
 
+    # Result set bounded by gather cardinality (hundreds per tenant+type, not millions).
+    # Not API-exposed; pagination not needed. Review if ever called from bulk/export paths.
     def find_by_type(self, ecosystem: str, tenant_id: str, resource_type: str) -> list[Resource]:
         stmt = select(ResourceTable).where(
             col(ResourceTable.ecosystem) == ecosystem,
@@ -340,6 +346,8 @@ class SQLModelIdentityRepository:
 
         return [identity_to_domain(r) for r in self._session.exec(stmt).all()], total
 
+    # Result set bounded by gather cardinality (hundreds per tenant+type, not millions).
+    # Not API-exposed; pagination not needed. Review if ever called from bulk/export paths.
     def find_by_type(self, ecosystem: str, tenant_id: str, identity_type: str) -> list[Identity]:
         stmt = select(IdentityTable).where(
             col(IdentityTable.ecosystem) == ecosystem,
@@ -789,7 +797,12 @@ class SQLModelChargebackRepository:
         dim_ids = list({row.dimension_id for row in rows if row.dimension_id is not None})
         if not dim_ids:
             return
-        tag_rows = self._session.exec(select(CustomTagTable).where(col(CustomTagTable.dimension_id).in_(dim_ids))).all()
+        tag_rows: list[CustomTagTable] = []
+        for i in range(0, len(dim_ids), _CHUNK_SIZE):
+            chunk = dim_ids[i : i + _CHUNK_SIZE]
+            tag_rows.extend(
+                self._session.exec(select(CustomTagTable).where(col(CustomTagTable.dimension_id).in_(chunk))).all()
+            )
         tags_by_dim: dict[int, list[str]] = {}
         for t in tag_rows:
             tags_by_dim.setdefault(t.dimension_id, []).append(t.display_name)
@@ -862,18 +875,18 @@ class SQLModelChargebackRepository:
             yield from batch
 
     def delete_before(self, ecosystem: str, tenant_id: str, before: datetime) -> int:
-        # Get dimension IDs for this ecosystem+tenant
-        dim_stmt = select(ChargebackDimensionTable.dimension_id).where(
-            col(ChargebackDimensionTable.ecosystem) == ecosystem,
-            col(ChargebackDimensionTable.tenant_id) == tenant_id,
+        dim_subquery = (
+            select(ChargebackDimensionTable.dimension_id)
+            .where(
+                col(ChargebackDimensionTable.ecosystem) == ecosystem,
+                col(ChargebackDimensionTable.tenant_id) == tenant_id,
+            )
+            .scalar_subquery()
         )
-        dim_ids = list(self._session.exec(dim_stmt).all())
-        if not dim_ids:
-            return 0
 
         # Delete facts before cutoff for those dimensions
         fact_del = delete(ChargebackFactTable).where(
-            col(ChargebackFactTable.dimension_id).in_(dim_ids),
+            col(ChargebackFactTable.dimension_id).in_(dim_subquery),
             col(ChargebackFactTable.timestamp) < before,
         )
         result = self._session.execute(fact_del)
@@ -881,7 +894,7 @@ class SQLModelChargebackRepository:
 
         # Clean up orphaned dimensions (no remaining facts)
         orphan_del = delete(ChargebackDimensionTable).where(
-            col(ChargebackDimensionTable.dimension_id).in_(dim_ids),
+            col(ChargebackDimensionTable.dimension_id).in_(dim_subquery),
             ~col(ChargebackDimensionTable.dimension_id).in_(select(ChargebackFactTable.dimension_id).distinct()),
         )
         self._session.execute(orphan_del)
@@ -912,22 +925,24 @@ class SQLModelChargebackRepository:
 
         if not dimension_ids:
             return {}
-        stmt = select(ChargebackDimensionTable).where(col(ChargebackDimensionTable.dimension_id).in_(dimension_ids))
         result: dict[int, ChargebackDimensionInfo] = {}
-        for row in self._session.exec(stmt).all():
-            if row.dimension_id is not None:
-                result[row.dimension_id] = ChargebackDimensionInfo(
-                    dimension_id=row.dimension_id,
-                    ecosystem=row.ecosystem,
-                    tenant_id=row.tenant_id,
-                    resource_id=row.resource_id,
-                    product_category=row.product_category,
-                    product_type=row.product_type,
-                    identity_id=row.identity_id,
-                    cost_type=row.cost_type,
-                    allocation_method=row.allocation_method,
-                    allocation_detail=row.allocation_detail,
-                )
+        for i in range(0, len(dimension_ids), _CHUNK_SIZE):
+            chunk = dimension_ids[i : i + _CHUNK_SIZE]
+            stmt = select(ChargebackDimensionTable).where(col(ChargebackDimensionTable.dimension_id).in_(chunk))
+            for row in self._session.exec(stmt).all():
+                if row.dimension_id is not None:
+                    result[row.dimension_id] = ChargebackDimensionInfo(
+                        dimension_id=row.dimension_id,
+                        ecosystem=row.ecosystem,
+                        tenant_id=row.tenant_id,
+                        resource_id=row.resource_id,
+                        product_category=row.product_category,
+                        product_type=row.product_type,
+                        identity_id=row.identity_id,
+                        cost_type=row.cost_type,
+                        allocation_method=row.allocation_method,
+                        allocation_detail=row.allocation_detail,
+                    )
         return result
 
     def find_dimension_ids_by_filters(
@@ -941,6 +956,12 @@ class SQLModelChargebackRepository:
         resource_id: str | None = None,
         cost_type: str | None = None,
     ) -> list[int]:
+        """Return all distinct dimension IDs matching the given filters.
+
+        Result set is unbounded — callers must chunk their processing (e.g., _run_bulk_tag
+        uses _BULK_CHUNK_SIZE=500 to bound memory and SQL parameter counts).
+        The query itself operates entirely at SQL level; no parameter explosion risk here.
+        """
         where, join_clause = self._build_chargeback_where(
             ecosystem, tenant_id, start, end, identity_id, product_type, resource_id, cost_type
         )
@@ -1312,6 +1333,21 @@ class SQLModelTagRepository:
         )
         row = self._session.exec(stmt).first()
         return tag_to_domain(row) if row else None
+
+    def find_tags_by_dimensions_and_key(self, dimension_ids: list[int], tag_key: str) -> dict[int, CustomTag]:
+        """Batch fetch existing tags. Chunks to stay under SQLite parameter limits."""
+        if not dimension_ids:
+            return {}
+        result: dict[int, CustomTag] = {}
+        for i in range(0, len(dimension_ids), _CHUNK_SIZE):
+            chunk = dimension_ids[i : i + _CHUNK_SIZE]
+            stmt = select(CustomTagTable).where(
+                col(CustomTagTable.dimension_id).in_(chunk),
+                col(CustomTagTable.tag_key) == tag_key,
+            )
+            for row in self._session.exec(stmt).all():
+                result[row.dimension_id] = tag_to_domain(row)
+        return result
 
     def delete_tag(self, tag_id: int) -> None:
         row = self._session.get(CustomTagTable, tag_id)

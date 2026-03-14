@@ -183,6 +183,10 @@ async def delete_tag(
         uow.commit()
 
 
+# Matches _CHUNK_SIZE in repositories.py — both bound by SQLite 32K param limit
+_BULK_CHUNK_SIZE = 500
+
+
 def _run_bulk_tag(
     uow: UnitOfWork,
     tenant_config: TenantConfig,
@@ -192,28 +196,36 @@ def _run_bulk_tag(
     created_by: str,
     override_existing: bool,
 ) -> BulkTagResponse:
-    """Core logic for bulk tagging. Called by both bulk endpoints."""
+    """Core logic for bulk tagging. Batch-fetches to avoid N+1 queries."""
     created_count = 0
     updated_count = 0
     skipped_count = 0
     errors: list[str] = []
 
-    for dim_id in dimension_ids:
-        dim = uow.chargebacks.get_dimension(dim_id)
-        if dim is None or dim.ecosystem != tenant_config.ecosystem or dim.tenant_id != tenant_config.tenant_id:
-            errors.append(str(dim_id))
-            continue
+    for i in range(0, len(dimension_ids), _BULK_CHUNK_SIZE):
+        chunk = dimension_ids[i : i + _BULK_CHUNK_SIZE]
 
-        existing = uow.tags.find_by_dimension_and_key(dim_id, tag_key)
-        if existing is not None:
-            if override_existing:
-                uow.tags.update_display_name(existing.tag_id, display_name)  # type: ignore[arg-type]  # tag_id is UUID but protocol accepts int; SQLModel repo handles both
-                updated_count += 1
+        # 1 query for all dimensions in chunk
+        dims_map = uow.chargebacks.get_dimensions_batch(chunk)
+        # 1 query for all existing tags in chunk
+        existing_tags = uow.tags.find_tags_by_dimensions_and_key(chunk, tag_key)
+
+        for dim_id in chunk:
+            dim = dims_map.get(dim_id)
+            if dim is None or dim.ecosystem != tenant_config.ecosystem or dim.tenant_id != tenant_config.tenant_id:
+                errors.append(str(dim_id))
+                continue
+
+            existing = existing_tags.get(dim_id)
+            if existing is not None:
+                if override_existing:
+                    uow.tags.update_display_name(existing.tag_id, display_name)  # type: ignore[arg-type]  # always set after DB fetch
+                    updated_count += 1
+                else:
+                    skipped_count += 1
             else:
-                skipped_count += 1
-        else:
-            uow.tags.add_tag(dim_id, tag_key, display_name, created_by)
-            created_count += 1
+                uow.tags.add_tag(dim_id, tag_key, display_name, created_by)
+                created_count += 1
 
     uow.commit()
     return BulkTagResponse(
