@@ -1082,6 +1082,7 @@ class TestAllDatesProcessed:
 
         result = orch.run()
         assert result.dates_calculated == 2
+        assert result.dates_pending_calculation == 2  # GIT-001: wiring verified
 
 
 class TestRecalculationWindow:
@@ -1141,6 +1142,27 @@ class TestPipelineRunResult:
         )
         assert r.errors == []
         assert r.dates_gathered == 5
+
+    def test_dates_pending_calculation_default(self) -> None:
+        r = PipelineRunResult(
+            tenant_name="t",
+            tenant_id="tid",
+            dates_gathered=5,
+            dates_calculated=3,
+            chargeback_rows_written=10,
+        )
+        assert r.dates_pending_calculation == 0
+
+    def test_dates_pending_calculation_explicit(self) -> None:
+        r = PipelineRunResult(
+            tenant_name="t",
+            tenant_id="tid",
+            dates_gathered=5,
+            dates_calculated=3,
+            chargeback_rows_written=10,
+            dates_pending_calculation=7,
+        )
+        assert r.dates_pending_calculation == 7
 
 
 class TestMetricsPreFetch:
@@ -1303,6 +1325,7 @@ class TestGatherFailureEarlyReturn:
         assert "Gather phase failed" in result.errors[0]
         # Calculate should NOT have run
         assert result.dates_calculated == 0
+        assert result.dates_pending_calculation == 0  # GIT-003: gather-failure path
         state = uow.pipeline_state.get(ECOSYSTEM, TENANT_ID, date(2026, 2, 10))
         assert state is not None
         assert not state.chargeback_calculated

@@ -344,6 +344,7 @@ class TestGap002WaitTimeout:
         assert "slow" in results
         assert len(results["slow"].errors) == 1
         assert "timed out" in results["slow"].errors[0].lower()
+        assert results["slow"].dates_pending_calculation == 0  # GIT-004: timeout path
 
 
 class TestGap005PeriodicRefresh:
@@ -2061,3 +2062,32 @@ class TestPipelineRunTrackerCleanupOrphanedRunsRealDb:
             assert "Orphaned" in updated.error_message
         finally:
             storage.dispose()
+
+
+class TestLogResults:
+    def test_log_results_includes_pending(self, caplog: pytest.LogCaptureFixture) -> None:
+        """_log_results must emit 'pending=N' in the success log line."""
+        from unittest.mock import MagicMock
+
+        registry = MagicMock()
+        settings = _make_settings(tenants={"t1": _make_tenant(tenant_id="tid1")})
+        runner = WorkflowRunner(settings, registry)
+
+        results = {
+            "t1": PipelineRunResult(
+                tenant_name="t1",
+                tenant_id="tid1",
+                dates_gathered=3,
+                dates_calculated=1,
+                chargeback_rows_written=5,
+                dates_pending_calculation=3,
+            ),
+        }
+
+        with caplog.at_level(logging.INFO, logger="workflow_runner"):
+            runner._log_results(results)
+
+        log_messages = [r.message for r in caplog.records]
+        assert any("pending=3" in m for m in log_messages), (
+            f"Expected 'pending=3' in _log_results output, got: {log_messages}"
+        )

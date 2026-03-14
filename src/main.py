@@ -124,9 +124,10 @@ def run_worker(
                 logger.error("Tenant %s errors: %s", name, result.errors)
             else:
                 logger.info(
-                    "Tenant %s: gathered=%d, calculated=%d, rows=%d",
+                    "Tenant %s: gathered=%d, pending=%d, calculated=%d, rows=%d",
                     name,
                     result.dates_gathered,
+                    result.dates_pending_calculation,
                     result.dates_calculated,
                     result.chargeback_rows_written,
                 )

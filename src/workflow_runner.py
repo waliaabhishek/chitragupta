@@ -359,6 +359,7 @@ class WorkflowRunner:
                     dates_gathered=0,
                     dates_calculated=0,
                     chargeback_rows_written=0,
+                    dates_pending_calculation=0,
                     errors=[str(exc)],
                 )
 
@@ -380,6 +381,7 @@ class WorkflowRunner:
                 dates_gathered=0,
                 dates_calculated=0,
                 chargeback_rows_written=0,
+                dates_pending_calculation=0,
                 errors=[reason],
             )
         return results
@@ -394,6 +396,7 @@ class WorkflowRunner:
                     dates_gathered=0,
                     dates_calculated=0,
                     chargeback_rows_written=0,
+                    dates_pending_calculation=0,
                     already_running=True,
                 )
             self._running_tenants.add(name)
@@ -425,6 +428,7 @@ class WorkflowRunner:
             dates_gathered=0,
             dates_calculated=0,
             chargeback_rows_written=0,
+            dates_pending_calculation=0,
             errors=[error_msg],
             fatal=True,
         )
@@ -455,9 +459,10 @@ class WorkflowRunner:
                 logger.warning("Tenant %s completed with errors: %s", name, result.errors)
             else:
                 logger.info(
-                    "Tenant %s: gathered=%d, calculated=%d, rows=%d",
+                    "Tenant %s: gathered=%d, pending=%d, calculated=%d, rows=%d",
                     name,
                     result.dates_gathered,
+                    result.dates_pending_calculation,
                     result.dates_calculated,
                     result.chargeback_rows_written,
                 )

@@ -91,6 +91,7 @@ class PipelineRunResult:
     dates_gathered: int
     dates_calculated: int
     chargeback_rows_written: int
+    dates_pending_calculation: int = 0
     errors: list[str] = field(default_factory=list)
     already_running: bool = False
     fatal: bool = False  # True when tenant is permanently failed
@@ -941,6 +942,7 @@ class ChargebackOrchestrator:
                 dates_gathered=0,
                 dates_calculated=0,
                 chargeback_rows_written=0,
+                dates_pending_calculation=0,
                 errors=errors,
             )
 
@@ -993,6 +995,7 @@ class ChargebackOrchestrator:
             dates_gathered=dates_gathered,
             dates_calculated=dates_calculated,
             chargeback_rows_written=chargeback_rows_written,
+            dates_pending_calculation=len(pending_states),
             errors=errors,
         )
 

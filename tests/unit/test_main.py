@@ -136,6 +136,46 @@ class TestMain:
             main(["--config-file", "dummy.yaml"])
         mock_runner.run_loop.assert_called_once()
 
+    @patch("main.WorkflowRunner")
+    @patch("main.PluginRegistry")
+    @patch("main.discover_plugins")
+    @patch("main.load_config")
+    def test_run_once_logs_pending_count(
+        self,
+        mock_load: MagicMock,
+        mock_discover: MagicMock,
+        mock_registry_cls: MagicMock,
+        mock_runner_cls: MagicMock,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        import logging
+
+        from core.config.models import AppSettings
+        from core.engine.orchestrator import PipelineRunResult
+
+        mock_load.return_value = AppSettings()
+        mock_discover.return_value = []
+        mock_runner = MagicMock()
+        mock_runner.run_once.return_value = {
+            "t1": PipelineRunResult(
+                tenant_name="t1",
+                tenant_id="tid1",
+                dates_gathered=3,
+                dates_calculated=1,
+                chargeback_rows_written=5,
+                dates_pending_calculation=3,
+            ),
+        }
+        mock_runner_cls.return_value = mock_runner
+
+        from main import main
+
+        with caplog.at_level(logging.INFO, logger="main"):
+            main(["--config-file", "dummy.yaml", "--run-once"])
+
+        log_messages = [r.message for r in caplog.records]
+        assert any("pending=3" in m for m in log_messages), f"Expected 'pending=3' in log output, got: {log_messages}"
+
 
 class TestBothModeSingleRunner:
     """TASK-005: Dual WorkflowRunner Fix — main.py tests."""

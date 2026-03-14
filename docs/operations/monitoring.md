@@ -14,7 +14,7 @@ logging:
 
 | Message | Meaning |
 |---|---|
-| `Tenant X: gathered=N, calculated=M, rows=R` | Successful pipeline run |
+| `Tenant X: gathered=N, pending=P, calculated=M, rows=R` | Successful pipeline run |
 | `Tenant X completed with errors: [...]` | Partial run — some dates failed |
 | `ALERT: Tenant X has been permanently suspended` | Gather failure threshold breached |
 | `ALERT: All N tenant(s) have been permanently suspended` | All tenants failed — engine is idle |

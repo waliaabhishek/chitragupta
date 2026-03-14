@@ -30,7 +30,7 @@ uv run python src/main.py --config-file config.yaml --mode both
 ## Reading logs
 
 ```
-INFO  Tenant my-org: gathered=14, calculated=14, rows=320
+INFO  Tenant my-org: gathered=14, pending=0, calculated=14, rows=320
 ```
 
 `gathered` = billing dates fetched from source
