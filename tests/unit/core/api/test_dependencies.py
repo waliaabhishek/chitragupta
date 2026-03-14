@@ -8,14 +8,16 @@ from fastapi import HTTPException
 
 from core.api.dependencies import (
     TemporalParams,
+    get_or_create_backend,
     get_settings,
+    get_storage_backend,
     get_tenant_config,
     resolve_date_range,
     utc_today,
     validate_datetime_param,
     validate_temporal_params,
 )
-from core.config.models import AppSettings, TenantConfig
+from core.config.models import AppSettings, StorageConfig, TenantConfig
 
 
 def _make_request(settings: AppSettings) -> MagicMock:
@@ -151,6 +153,180 @@ class TestUtcToday:
     def test_returns_date_type(self) -> None:
         result = utc_today()
         assert isinstance(result, date)
+
+
+class TestUoWDependencies:
+    def test_get_unit_of_work_yields_read_only_uow(self, tmp_path: object) -> None:
+        """get_unit_of_work must yield a ReadOnlySQLModelUnitOfWork instance."""
+        from core.api.dependencies import get_unit_of_work
+        from core.storage.backends.sqlmodel.module import CoreStorageModule
+        from core.storage.backends.sqlmodel.unit_of_work import (
+            ReadOnlySQLModelUnitOfWork,  # ImportError = red
+            SQLModelBackend,
+        )
+
+        db_path = tmp_path / "test.db"  # type: ignore[operator]
+        conn = f"sqlite:///{db_path}"
+        backend = SQLModelBackend(conn, CoreStorageModule(), use_migrations=False)
+        backend.create_tables()
+
+        gen = get_unit_of_work(backend)
+        uow = next(gen)
+        assert isinstance(uow, ReadOnlySQLModelUnitOfWork)
+        # Context manager must be entered — session is active
+        assert uow._session is not None  # type: ignore[attr-defined]
+
+        try:
+            next(gen)
+        except StopIteration:
+            pass
+
+        backend.dispose()
+
+    def test_get_write_unit_of_work_yields_plain_uow(self, tmp_path: object) -> None:
+        """get_write_unit_of_work must yield a plain SQLModelUnitOfWork (not the read-only subclass)."""
+        from core.api.dependencies import get_write_unit_of_work  # ImportError = red
+        from core.storage.backends.sqlmodel.module import CoreStorageModule
+        from core.storage.backends.sqlmodel.unit_of_work import SQLModelBackend, SQLModelUnitOfWork
+
+        db_path = tmp_path / "test.db"  # type: ignore[operator]
+        conn = f"sqlite:///{db_path}"
+        backend = SQLModelBackend(conn, CoreStorageModule(), use_migrations=False)
+        backend.create_tables()
+
+        gen = get_write_unit_of_work(backend)
+        uow = next(gen)
+        assert type(uow) is SQLModelUnitOfWork
+
+        try:
+            next(gen)
+        except StopIteration:
+            pass
+
+        backend.dispose()
+
+    def test_get_unit_of_work_session_closed_after_exit(self, tmp_path: object) -> None:
+        """get_unit_of_work must close the session when the generator exits."""
+        from core.api.dependencies import get_unit_of_work
+        from core.storage.backends.sqlmodel.module import CoreStorageModule
+        from core.storage.backends.sqlmodel.unit_of_work import (
+            ReadOnlySQLModelUnitOfWork,  # ImportError = red
+            SQLModelBackend,
+        )
+
+        db_path = tmp_path / "test.db"  # type: ignore[operator]
+        conn = f"sqlite:///{db_path}"
+        backend = SQLModelBackend(conn, CoreStorageModule(), use_migrations=False)
+        backend.create_tables()
+
+        gen = get_unit_of_work(backend)
+        uow = next(gen)
+        assert isinstance(uow, ReadOnlySQLModelUnitOfWork)
+        assert uow._session is not None  # type: ignore[attr-defined]
+
+        try:
+            next(gen)
+        except StopIteration:
+            pass
+
+        # __exit__ must have been called — session is None after cleanup
+        assert uow._session is None  # type: ignore[attr-defined]
+        backend.dispose()
+
+    def test_get_write_unit_of_work_session_closed_after_exit(self, tmp_path: object) -> None:
+        """get_write_unit_of_work must close the session when the generator exits."""
+        from core.api.dependencies import get_write_unit_of_work  # ImportError = red
+        from core.storage.backends.sqlmodel.module import CoreStorageModule
+        from core.storage.backends.sqlmodel.unit_of_work import SQLModelBackend, SQLModelUnitOfWork
+
+        db_path = tmp_path / "test.db"  # type: ignore[operator]
+        conn = f"sqlite:///{db_path}"
+        backend = SQLModelBackend(conn, CoreStorageModule(), use_migrations=False)
+        backend.create_tables()
+
+        gen = get_write_unit_of_work(backend)
+        uow = next(gen)
+        assert type(uow) is SQLModelUnitOfWork
+        assert uow._session is not None  # type: ignore[attr-defined]
+
+        try:
+            next(gen)
+        except StopIteration:
+            pass
+
+        assert uow._session is None  # type: ignore[attr-defined]
+        backend.dispose()
+
+
+class TestGetOrCreateBackend:
+    def test_first_call_creates_and_caches_backend(self) -> None:
+        """get_or_create_backend creates a backend on first call and stores it in the dict."""
+        mock_backend = MagicMock()
+        storage_config = StorageConfig(connection_string="sqlite:///:memory:")
+        backends: dict[str, object] = {}
+
+        with (
+            patch("core.api.dependencies.get_storage_module_for_ecosystem", return_value=MagicMock()),
+            patch("core.api.dependencies.create_storage_backend", return_value=mock_backend),
+        ):
+            result = get_or_create_backend(backends, "acme", storage_config, "ccloud")
+
+        assert result is mock_backend
+        assert "acme" in backends
+        assert backends["acme"] is mock_backend
+        mock_backend.create_tables.assert_called_once()
+
+    def test_second_call_returns_cached_backend(self) -> None:
+        """get_or_create_backend returns the same object on repeated calls without re-creating."""
+        mock_backend = MagicMock()
+        storage_config = StorageConfig(connection_string="sqlite:///:memory:")
+        backends: dict[str, object] = {}
+
+        with (
+            patch("core.api.dependencies.get_storage_module_for_ecosystem", return_value=MagicMock()),
+            patch("core.api.dependencies.create_storage_backend", return_value=mock_backend) as mock_create,
+        ):
+            first = get_or_create_backend(backends, "acme", storage_config, "ccloud")
+            second = get_or_create_backend(backends, "acme", storage_config, "ccloud")
+
+        assert first is second
+        # create_storage_backend called only once — second call hit the cache
+        mock_create.assert_called_once()
+
+
+class TestGetStorageBackend:
+    def test_lazy_init_backends_dict_on_app_state(self) -> None:
+        """get_storage_backend initialises app.state.backends if absent."""
+        mock_backend = MagicMock()
+        tc = TenantConfig(
+            ecosystem="ccloud", tenant_id="t1", storage=StorageConfig(connection_string="sqlite:///:memory:")
+        )
+        request = MagicMock()
+        del request.app.state.backends  # ensure attribute is absent
+
+        with (
+            patch("core.api.dependencies.get_storage_module_for_ecosystem", return_value=MagicMock()),
+            patch("core.api.dependencies.create_storage_backend", return_value=mock_backend),
+        ):
+            result = get_storage_backend(request, "acme", tc)
+
+        assert result is mock_backend
+        assert hasattr(request.app.state, "backends")
+
+    def test_delegates_to_get_or_create_backend(self) -> None:
+        """get_storage_backend delegates to get_or_create_backend with the right args."""
+        mock_backend = MagicMock()
+        tc = TenantConfig(
+            ecosystem="ccloud", tenant_id="t1", storage=StorageConfig(connection_string="sqlite:///:memory:")
+        )
+        request = MagicMock()
+        request.app.state.backends = {}
+
+        with patch("core.api.dependencies.get_or_create_backend", return_value=mock_backend) as mock_goc:
+            result = get_storage_backend(request, "acme", tc)
+
+        assert result is mock_backend
+        mock_goc.assert_called_once_with(request.app.state.backends, "acme", tc.storage, tc.ecosystem)
 
 
 class TestResolveDateRange:

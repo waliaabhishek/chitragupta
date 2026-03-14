@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, Query
 from core.api.dependencies import get_tenant_config, get_unit_of_work, validate_temporal_params
 from core.api.schemas import IdentityResponse, PaginatedResponse
 from core.config.models import TenantConfig  # noqa: TC001  # FastAPI evaluates annotations at runtime
-from core.storage.interface import UnitOfWork  # noqa: TC001
+from core.storage.interface import ReadOnlyUnitOfWork  # noqa: TC001
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +20,7 @@ router = APIRouter(tags=["identities"])
 @router.get("/tenants/{tenant_name}/identities", response_model=PaginatedResponse[IdentityResponse])
 async def list_identities(
     tenant_config: Annotated[TenantConfig, Depends(get_tenant_config)],
-    uow: Annotated[UnitOfWork, Depends(get_unit_of_work)],
+    uow: Annotated[ReadOnlyUnitOfWork, Depends(get_unit_of_work)],
     identity_type: Annotated[str | None, Query()] = None,
     active_at: Annotated[datetime | None, Query()] = None,
     period_start: Annotated[datetime | None, Query()] = None,
@@ -35,31 +35,29 @@ async def list_identities(
     tid = tenant_config.tenant_id
     offset = (page - 1) * page_size
 
-    with uow:
-        if tp.active_at:
-            items, total = uow.identities.find_active_at(
-                eco,
-                tid,
-                tp.active_at,
-                identity_type=identity_type,
-                limit=page_size,
-                offset=offset,
-            )
-        elif tp.period_start and tp.period_end:
-            items, total = uow.identities.find_by_period(
-                eco,
-                tid,
-                tp.period_start,
-                tp.period_end,
-                identity_type=identity_type,
-                limit=page_size,
-                offset=offset,
-            )
-        else:
-            items, total = uow.identities.find_paginated(
-                eco, tid, limit=page_size, offset=offset, identity_type=identity_type
-            )
-
+    if tp.active_at:
+        items, total = uow.identities.find_active_at(
+            eco,
+            tid,
+            tp.active_at,
+            identity_type=identity_type,
+            limit=page_size,
+            offset=offset,
+        )
+    elif tp.period_start and tp.period_end:
+        items, total = uow.identities.find_by_period(
+            eco,
+            tid,
+            tp.period_start,
+            tp.period_end,
+            identity_type=identity_type,
+            limit=page_size,
+            offset=offset,
+        )
+    else:
+        items, total = uow.identities.find_paginated(
+            eco, tid, limit=page_size, offset=offset, identity_type=identity_type
+        )
     pages = math.ceil(total / page_size) if total > 0 else 0
     logger.info("Listed identities tenant=%s returned=%d total=%d", tenant_config.tenant_id, len(items), total)
     return PaginatedResponse[IdentityResponse](

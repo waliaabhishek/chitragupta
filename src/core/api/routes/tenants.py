@@ -14,7 +14,7 @@ from core.api.schemas import (
     TenantStatusSummary,
 )
 from core.config.models import AppSettings, TenantConfig  # noqa: TC001  # FastAPI evaluates annotations at runtime
-from core.storage.interface import UnitOfWork  # noqa: TC001
+from core.storage.interface import ReadOnlyUnitOfWork  # noqa: TC001
 
 logger = logging.getLogger(__name__)
 
@@ -32,8 +32,7 @@ async def list_tenants(
         backend = get_or_create_backend(
             request.app.state.backends, tenant_name, tenant_config.storage, tenant_config.ecosystem
         )
-        uow = backend.create_unit_of_work()
-        with uow:
+        with backend.create_read_only_unit_of_work() as uow:
             pending = uow.pipeline_state.count_pending(tenant_config.ecosystem, tenant_config.tenant_id)
             calculated = uow.pipeline_state.count_calculated(tenant_config.ecosystem, tenant_config.tenant_id)
             last_date = uow.pipeline_state.get_last_calculated_date(tenant_config.ecosystem, tenant_config.tenant_id)
@@ -55,30 +54,29 @@ async def list_tenants(
 async def get_tenant_status(
     tenant_name: str,
     tenant_config: Annotated[TenantConfig, Depends(get_tenant_config)],
-    uow: Annotated[UnitOfWork, Depends(get_unit_of_work)],
+    uow: Annotated[ReadOnlyUnitOfWork, Depends(get_unit_of_work)],
     start_date: Annotated[date | None, Query()] = None,
     end_date: Annotated[date | None, Query()] = None,
 ) -> TenantStatusDetailResponse:
-    with uow:
-        if start_date and end_date:
-            states = uow.pipeline_state.find_by_range(
-                tenant_config.ecosystem, tenant_config.tenant_id, start_date, end_date
-            )
-        elif start_date:
-            # From start to far future
-            states = uow.pipeline_state.find_by_range(
-                tenant_config.ecosystem, tenant_config.tenant_id, start_date, date(9999, 12, 31)
-            )
-        elif end_date:
-            # From far past to end
-            states = uow.pipeline_state.find_by_range(
-                tenant_config.ecosystem, tenant_config.tenant_id, date(2000, 1, 1), end_date
-            )
-        else:
-            # All states — use a very wide range
-            states = uow.pipeline_state.find_by_range(
-                tenant_config.ecosystem, tenant_config.tenant_id, date(2000, 1, 1), date(9999, 12, 31)
-            )
+    if start_date and end_date:
+        states = uow.pipeline_state.find_by_range(
+            tenant_config.ecosystem, tenant_config.tenant_id, start_date, end_date
+        )
+    elif start_date:
+        # From start to far future
+        states = uow.pipeline_state.find_by_range(
+            tenant_config.ecosystem, tenant_config.tenant_id, start_date, date(9999, 12, 31)
+        )
+    elif end_date:
+        # From far past to end
+        states = uow.pipeline_state.find_by_range(
+            tenant_config.ecosystem, tenant_config.tenant_id, date(2000, 1, 1), end_date
+        )
+    else:
+        # All states — use a very wide range
+        states = uow.pipeline_state.find_by_range(
+            tenant_config.ecosystem, tenant_config.tenant_id, date(2000, 1, 1), date(9999, 12, 31)
+        )
 
     return TenantStatusDetailResponse(
         tenant_name=tenant_name,

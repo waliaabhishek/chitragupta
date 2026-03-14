@@ -162,7 +162,7 @@ async def pipeline_status(
 ) -> PipelineStatusResponse:
     backend = get_or_create_backend(_get_backends(request), tenant_name, tenant_config.storage, tenant_config.ecosystem)
 
-    with backend.create_unit_of_work() as uow:
+    with backend.create_read_only_unit_of_work() as uow:
         latest = uow.pipeline_runs.get_latest_run(tenant_name)
 
     if latest is None:

@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Self
 
 from sqlmodel import Session
 
-from core.storage.backends.sqlmodel.engine import get_or_create_engine
+from core.storage.backends.sqlmodel.engine import get_or_create_engine, get_or_create_read_only_engine
 from core.storage.backends.sqlmodel.repositories import (
     SQLModelChargebackRepository,
     SQLModelPipelineRunRepository,
@@ -85,6 +85,22 @@ class SQLModelUnitOfWork:
         self._session.rollback()
 
 
+class ReadOnlySQLModelUnitOfWork(SQLModelUnitOfWork):
+    """Read-only UnitOfWork backed by the query_only engine.
+
+    commit() raises RuntimeError as defense-in-depth: accidentally calling
+    commit() on the default read-only dependency fails loudly at dev-time
+    rather than silently acquiring a write lock at runtime.
+    """
+
+    def __init__(self, connection_string: str, storage_module: StorageModule) -> None:
+        super().__init__(connection_string, storage_module)
+        self._engine = get_or_create_read_only_engine(connection_string)
+
+    def commit(self) -> None:
+        raise RuntimeError("Cannot commit on a read-only UnitOfWork — use get_write_unit_of_work dependency")
+
+
 class SQLModelBackend:
     """SQLModel implementation of StorageBackend protocol."""
 
@@ -99,9 +115,13 @@ class SQLModelBackend:
         self._storage_module = storage_module
         self._use_migrations = use_migrations
         self._engine = get_or_create_engine(connection_string)
+        self._ro_engine = get_or_create_read_only_engine(connection_string)
 
     def create_unit_of_work(self) -> SQLModelUnitOfWork:
         return SQLModelUnitOfWork(self._connection_string, self._storage_module)
+
+    def create_read_only_unit_of_work(self) -> ReadOnlySQLModelUnitOfWork:
+        return ReadOnlySQLModelUnitOfWork(self._connection_string, self._storage_module)
 
     def create_tables(self) -> None:
         if self._use_migrations:
@@ -140,3 +160,4 @@ class SQLModelBackend:
 
     def dispose(self) -> None:
         self._engine.dispose()
+        self._ro_engine.dispose()

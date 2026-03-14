@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Annotated, cast
 from fastapi import Depends, HTTPException, Path, Request
 
 from core.config.models import AppSettings, TenantConfig  # noqa: TC001  # FastAPI evaluates annotations at runtime
-from core.storage.interface import StorageBackend, UnitOfWork  # noqa: TC001
+from core.storage.interface import ReadOnlyUnitOfWork, StorageBackend, UnitOfWork  # noqa: TC001
 from core.storage.registry import create_storage_backend
 from plugins.storage_modules import get_storage_module_for_ecosystem
 
@@ -99,13 +99,26 @@ def get_storage_backend(
 
 def get_unit_of_work(
     backend: Annotated[StorageBackend, Depends(get_storage_backend)],
-) -> Iterator[UnitOfWork]:
-    """Yield a UoW from the shared backend.
+) -> Iterator[ReadOnlyUnitOfWork]:
+    """Yield a read-only UoW. Default for all API read endpoints.
 
-    No cleanup needed: read-only endpoints don't commit, and backends
-    are shared in app.state (disposed on shutdown, not per-request).
+    Uses backend.create_read_only_unit_of_work() so connections never
+    acquire a RESERVED lock — WAL readers and the pipeline writer are
+    fully concurrent with zero contention.
     """
-    yield backend.create_unit_of_work()
+    with backend.create_read_only_unit_of_work() as uow:
+        yield uow
+
+
+def get_write_unit_of_work(
+    backend: Annotated[StorageBackend, Depends(get_storage_backend)],
+) -> Iterator[UnitOfWork]:
+    """Yield a read-write UoW. Explicit opt-in for endpoints that call commit().
+
+    Used by: tag write endpoints (create/update/delete/bulk), chargeback PATCH.
+    """
+    with backend.create_unit_of_work() as uow:
+        yield uow
 
 
 def validate_datetime_param(dt: datetime | None, param_name: str) -> datetime | None:

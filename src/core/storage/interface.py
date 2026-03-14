@@ -434,8 +434,8 @@ class PipelineRunRepository(Protocol):
 
 
 @runtime_checkable
-class UnitOfWork(Protocol):
-    """Transaction coordinator. Provides repository access and commit/rollback."""
+class ReadOnlyUnitOfWork(Protocol):
+    """Read-only transaction coordinator. No commit/rollback."""
 
     resources: ResourceRepository
     identities: IdentityRepository
@@ -447,6 +447,12 @@ class UnitOfWork(Protocol):
 
     def __enter__(self) -> Self: ...
     def __exit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: object) -> None: ...
+
+
+@runtime_checkable
+class UnitOfWork(ReadOnlyUnitOfWork, Protocol):
+    """Transaction coordinator with commit/rollback."""
+
     def commit(self) -> None: ...
     def rollback(self) -> None: ...
 
@@ -456,5 +462,6 @@ class StorageBackend(Protocol):
     """Factory for UnitOfWork instances. Owns engine lifecycle."""
 
     def create_unit_of_work(self) -> UnitOfWork: ...
+    def create_read_only_unit_of_work(self) -> ReadOnlyUnitOfWork: ...
     def create_tables(self) -> None: ...
     def dispose(self) -> None: ...

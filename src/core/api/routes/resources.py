@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, Query
 from core.api.dependencies import get_tenant_config, get_unit_of_work, validate_temporal_params
 from core.api.schemas import PaginatedResponse, ResourceResponse
 from core.config.models import TenantConfig  # noqa: TC001  # FastAPI evaluates annotations at runtime
-from core.storage.interface import UnitOfWork  # noqa: TC001
+from core.storage.interface import ReadOnlyUnitOfWork  # noqa: TC001
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +20,7 @@ router = APIRouter(tags=["resources"])
 @router.get("/tenants/{tenant_name}/resources", response_model=PaginatedResponse[ResourceResponse])
 async def list_resources(
     tenant_config: Annotated[TenantConfig, Depends(get_tenant_config)],
-    uow: Annotated[UnitOfWork, Depends(get_unit_of_work)],
+    uow: Annotated[ReadOnlyUnitOfWork, Depends(get_unit_of_work)],
     resource_type: Annotated[str | None, Query()] = None,
     status: Annotated[str | None, Query()] = None,
     active_at: Annotated[datetime | None, Query()] = None,
@@ -36,33 +36,31 @@ async def list_resources(
     tid = tenant_config.tenant_id
     offset = (page - 1) * page_size
 
-    with uow:
-        if tp.active_at:
-            items, total = uow.resources.find_active_at(
-                eco,
-                tid,
-                tp.active_at,
-                resource_type=resource_type,
-                status=status,
-                limit=page_size,
-                offset=offset,
-            )
-        elif tp.period_start and tp.period_end:
-            items, total = uow.resources.find_by_period(
-                eco,
-                tid,
-                tp.period_start,
-                tp.period_end,
-                resource_type=resource_type,
-                status=status,
-                limit=page_size,
-                offset=offset,
-            )
-        else:
-            items, total = uow.resources.find_paginated(
-                eco, tid, limit=page_size, offset=offset, resource_type=resource_type, status=status
-            )
-
+    if tp.active_at:
+        items, total = uow.resources.find_active_at(
+            eco,
+            tid,
+            tp.active_at,
+            resource_type=resource_type,
+            status=status,
+            limit=page_size,
+            offset=offset,
+        )
+    elif tp.period_start and tp.period_end:
+        items, total = uow.resources.find_by_period(
+            eco,
+            tid,
+            tp.period_start,
+            tp.period_end,
+            resource_type=resource_type,
+            status=status,
+            limit=page_size,
+            offset=offset,
+        )
+    else:
+        items, total = uow.resources.find_paginated(
+            eco, tid, limit=page_size, offset=offset, resource_type=resource_type, status=status
+        )
     pages = math.ceil(total / page_size) if total > 0 else 0
     logger.info("Listed resources tenant=%s returned=%d total=%d", tenant_config.tenant_id, len(items), total)
     return PaginatedResponse[ResourceResponse](

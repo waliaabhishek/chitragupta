@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from core.api.dependencies import get_tenant_config, get_unit_of_work, resolve_date_range
 from core.api.schemas import AggregationBucket, AggregationResponse
 from core.config.models import TenantConfig  # noqa: TC001  # FastAPI evaluates annotations at runtime
-from core.storage.interface import UnitOfWork  # noqa: TC001
+from core.storage.interface import ReadOnlyUnitOfWork  # noqa: TC001
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +37,7 @@ _VALID_TIME_BUCKETS = frozenset({"hour", "day", "week", "month"})
 )
 async def aggregate_chargebacks(
     tenant_config: Annotated[TenantConfig, Depends(get_tenant_config)],
-    uow: Annotated[UnitOfWork, Depends(get_unit_of_work)],
+    uow: Annotated[ReadOnlyUnitOfWork, Depends(get_unit_of_work)],
     group_by: Annotated[list[str] | None, Query(description="Dimension columns to group by")] = None,
     time_bucket: Annotated[str, Query(description="Time bucket: hour, day, week, month")] = "day",
     start_date: Annotated[date | None, Query()] = None,
@@ -74,21 +74,19 @@ async def aggregate_chargebacks(
 
     start_dt, end_dt = resolve_date_range(start_date, end_date)
 
-    with uow:
-        rows = uow.chargebacks.aggregate(
-            ecosystem=tenant_config.ecosystem,
-            tenant_id=tenant_config.tenant_id,
-            group_by=group_by,
-            time_bucket=time_bucket,
-            start=start_dt,
-            end=end_dt,
-            identity_id=identity_id,
-            product_type=product_type,
-            resource_id=resource_id,
-            cost_type=cost_type,
-            limit=10000,
-        )
-
+    rows = uow.chargebacks.aggregate(
+        ecosystem=tenant_config.ecosystem,
+        tenant_id=tenant_config.tenant_id,
+        group_by=group_by,
+        time_bucket=time_bucket,
+        start=start_dt,
+        end=end_dt,
+        identity_id=identity_id,
+        product_type=product_type,
+        resource_id=resource_id,
+        cost_type=cost_type,
+        limit=10000,
+    )
     buckets = [
         AggregationBucket(
             dimensions=r.dimensions,

@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
 
-from core.api.dependencies import get_tenant_config, get_unit_of_work, resolve_date_range
+from core.api.dependencies import get_tenant_config, get_unit_of_work, get_write_unit_of_work, resolve_date_range
 from core.api.schemas import (
     BulkTagByFilterRequest,
     BulkTagRequest,
@@ -18,7 +18,7 @@ from core.api.schemas import (
     TagWithDimensionResponse,
 )
 from core.config.models import TenantConfig  # noqa: TC001  # FastAPI evaluates annotations at runtime
-from core.storage.interface import UnitOfWork  # noqa: TC001
+from core.storage.interface import ReadOnlyUnitOfWork, UnitOfWork  # noqa: TC001
 
 if TYPE_CHECKING:
     from core.models.chargeback import CustomTag
@@ -28,7 +28,7 @@ router = APIRouter(tags=["tags"])
 
 
 def _validate_dimension_ownership(
-    uow: UnitOfWork,
+    uow: ReadOnlyUnitOfWork,
     dimension_id: int,
     tenant_config: TenantConfig,
 ) -> None:
@@ -58,14 +58,12 @@ def _tag_response(tag: CustomTag) -> TagResponse:
 )
 async def list_tags(
     tenant_config: Annotated[TenantConfig, Depends(get_tenant_config)],
-    uow: Annotated[UnitOfWork, Depends(get_unit_of_work)],
+    uow: Annotated[ReadOnlyUnitOfWork, Depends(get_unit_of_work)],
     dimension_id: Annotated[int, Path(description="Chargeback dimension ID")],
 ) -> list[TagResponse]:
     logger.debug("GET /chargebacks/%s/tags tenant=%s", dimension_id, tenant_config.tenant_id)
-    with uow:
-        _validate_dimension_ownership(uow, dimension_id, tenant_config)
-        tags = uow.tags.get_tags(dimension_id)
-
+    _validate_dimension_ownership(uow, dimension_id, tenant_config)
+    tags = uow.tags.get_tags(dimension_id)
     return [_tag_response(t) for t in tags]
 
 
@@ -76,20 +74,18 @@ async def list_tags(
 )
 async def create_tag(
     tenant_config: Annotated[TenantConfig, Depends(get_tenant_config)],
-    uow: Annotated[UnitOfWork, Depends(get_unit_of_work)],
+    uow: Annotated[UnitOfWork, Depends(get_write_unit_of_work)],
     dimension_id: Annotated[int, Path(description="Chargeback dimension ID")],
     body: TagCreateRequest,
 ) -> TagResponse:
-    with uow:
-        _validate_dimension_ownership(uow, dimension_id, tenant_config)
-        tag = uow.tags.add_tag(
-            dimension_id=dimension_id,
-            tag_key=body.tag_key,
-            display_name=body.display_name,
-            created_by=body.created_by,
-        )
-        uow.commit()
-
+    _validate_dimension_ownership(uow, dimension_id, tenant_config)
+    tag = uow.tags.add_tag(
+        dimension_id=dimension_id,
+        tag_key=body.tag_key,
+        display_name=body.display_name,
+        created_by=body.created_by,
+    )
+    uow.commit()
     return _tag_response(tag)
 
 
@@ -99,24 +95,22 @@ async def create_tag(
 )
 async def list_tags_for_tenant(
     tenant_config: Annotated[TenantConfig, Depends(get_tenant_config)],
-    uow: Annotated[UnitOfWork, Depends(get_unit_of_work)],
+    uow: Annotated[ReadOnlyUnitOfWork, Depends(get_unit_of_work)],
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=1000)] = 100,
     search: Annotated[str | None, Query()] = None,
 ) -> PaginatedResponse[TagWithDimensionResponse]:
     offset = (page - 1) * page_size
-    with uow:
-        tags, total = uow.tags.find_tags_for_tenant(
-            ecosystem=tenant_config.ecosystem,
-            tenant_id=tenant_config.tenant_id,
-            limit=page_size,
-            offset=offset,
-            search=search or None,
-        )
-        # Batch fetch dimensions for denormalized context
-        dimension_ids = list({t.dimension_id for t in tags})
-        dims = uow.chargebacks.get_dimensions_batch(dimension_ids)
-
+    tags, total = uow.tags.find_tags_for_tenant(
+        ecosystem=tenant_config.ecosystem,
+        tenant_id=tenant_config.tenant_id,
+        limit=page_size,
+        offset=offset,
+        search=search or None,
+    )
+    # Batch fetch dimensions for denormalized context
+    dimension_ids = list({t.dimension_id for t in tags})
+    dims = uow.chargebacks.get_dimensions_batch(dimension_ids)
     pages = math.ceil(total / page_size) if total > 0 else 0
     items = []
     for tag in tags:
@@ -150,17 +144,16 @@ async def list_tags_for_tenant(
 )
 async def update_tag(
     tenant_config: Annotated[TenantConfig, Depends(get_tenant_config)],
-    uow: Annotated[UnitOfWork, Depends(get_unit_of_work)],
+    uow: Annotated[UnitOfWork, Depends(get_write_unit_of_work)],
     tag_id: Annotated[int, Path(description="Tag ID to update")],
     body: TagUpdateRequest,
 ) -> TagResponse:
-    with uow:
-        tag = uow.tags.get_tag(tag_id)
-        if tag is None:
-            raise HTTPException(status_code=404, detail=f"Tag {tag_id} not found")
-        _validate_dimension_ownership(uow, tag.dimension_id, tenant_config)
-        updated = uow.tags.update_display_name(tag_id, body.display_name)
-        uow.commit()
+    tag = uow.tags.get_tag(tag_id)
+    if tag is None:
+        raise HTTPException(status_code=404, detail=f"Tag {tag_id} not found")
+    _validate_dimension_ownership(uow, tag.dimension_id, tenant_config)
+    updated = uow.tags.update_display_name(tag_id, body.display_name)
+    uow.commit()
     return _tag_response(updated)
 
 
@@ -170,17 +163,16 @@ async def update_tag(
 )
 async def delete_tag(
     tenant_config: Annotated[TenantConfig, Depends(get_tenant_config)],
-    uow: Annotated[UnitOfWork, Depends(get_unit_of_work)],
+    uow: Annotated[UnitOfWork, Depends(get_write_unit_of_work)],
     tag_id: Annotated[int, Path(description="Tag ID to delete")],
 ) -> None:
-    with uow:
-        tag = uow.tags.get_tag(tag_id)
-        if tag is None:
-            raise HTTPException(status_code=404, detail=f"Tag {tag_id} not found")
-        # Validate tenant ownership via dimension
-        _validate_dimension_ownership(uow, tag.dimension_id, tenant_config)
-        uow.tags.delete_tag(tag_id)
-        uow.commit()
+    tag = uow.tags.get_tag(tag_id)
+    if tag is None:
+        raise HTTPException(status_code=404, detail=f"Tag {tag_id} not found")
+    # Validate tenant ownership via dimension
+    _validate_dimension_ownership(uow, tag.dimension_id, tenant_config)
+    uow.tags.delete_tag(tag_id)
+    uow.commit()
 
 
 # Matches _CHUNK_SIZE in repositories.py — both bound by SQLite 32K param limit
@@ -242,19 +234,18 @@ def _run_bulk_tag(
 )
 async def bulk_add_tags(
     tenant_config: Annotated[TenantConfig, Depends(get_tenant_config)],
-    uow: Annotated[UnitOfWork, Depends(get_unit_of_work)],
+    uow: Annotated[UnitOfWork, Depends(get_write_unit_of_work)],
     body: BulkTagRequest,
 ) -> BulkTagResponse:
-    with uow:
-        return _run_bulk_tag(
-            uow=uow,
-            tenant_config=tenant_config,
-            dimension_ids=body.dimension_ids,
-            tag_key=body.tag_key,
-            display_name=body.display_name,
-            created_by=body.created_by,
-            override_existing=body.override_existing,
-        )
+    return _run_bulk_tag(
+        uow=uow,
+        tenant_config=tenant_config,
+        dimension_ids=body.dimension_ids,
+        tag_key=body.tag_key,
+        display_name=body.display_name,
+        created_by=body.created_by,
+        override_existing=body.override_existing,
+    )
 
 
 @router.post(
@@ -263,28 +254,26 @@ async def bulk_add_tags(
 )
 async def bulk_add_tags_by_filter(
     tenant_config: Annotated[TenantConfig, Depends(get_tenant_config)],
-    uow: Annotated[UnitOfWork, Depends(get_unit_of_work)],
+    uow: Annotated[UnitOfWork, Depends(get_write_unit_of_work)],
     body: BulkTagByFilterRequest,
 ) -> BulkTagResponse:
     start_dt, end_dt = resolve_date_range(body.start_date, body.end_date)
-
-    with uow:
-        dimension_ids = uow.chargebacks.find_dimension_ids_by_filters(
-            ecosystem=tenant_config.ecosystem,
-            tenant_id=tenant_config.tenant_id,
-            start=start_dt,
-            end=end_dt,
-            identity_id=body.identity_id,
-            product_type=body.product_type,
-            resource_id=body.resource_id,
-            cost_type=body.cost_type,
-        )
-        return _run_bulk_tag(
-            uow=uow,
-            tenant_config=tenant_config,
-            dimension_ids=dimension_ids,
-            tag_key=body.tag_key,
-            display_name=body.display_name,
-            created_by=body.created_by,
-            override_existing=body.override_existing,
-        )
+    dimension_ids = uow.chargebacks.find_dimension_ids_by_filters(
+        ecosystem=tenant_config.ecosystem,
+        tenant_id=tenant_config.tenant_id,
+        start=start_dt,
+        end=end_dt,
+        identity_id=body.identity_id,
+        product_type=body.product_type,
+        resource_id=body.resource_id,
+        cost_type=body.cost_type,
+    )
+    return _run_bulk_tag(
+        uow=uow,
+        tenant_config=tenant_config,
+        dimension_ids=dimension_ids,
+        tag_key=body.tag_key,
+        display_name=body.display_name,
+        created_by=body.created_by,
+        override_existing=body.override_existing,
+    )

@@ -7,7 +7,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
 
-from core.api.dependencies import get_tenant_config, get_unit_of_work, resolve_date_range
+from core.api.dependencies import get_tenant_config, get_unit_of_work, get_write_unit_of_work, resolve_date_range
 from core.api.schemas import (
     AllocationIssueResponse,
     ChargebackDatesResponse,
@@ -18,7 +18,7 @@ from core.api.schemas import (
     TagResponse,
 )
 from core.config.models import TenantConfig  # noqa: TC001  # FastAPI evaluates annotations at runtime
-from core.storage.interface import UnitOfWork  # noqa: TC001
+from core.storage.interface import ReadOnlyUnitOfWork, UnitOfWork  # noqa: TC001
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +28,7 @@ router = APIRouter(tags=["chargebacks"])
 @router.get("/tenants/{tenant_name}/chargebacks", response_model=PaginatedResponse[ChargebackResponse])
 async def list_chargebacks(
     tenant_config: Annotated[TenantConfig, Depends(get_tenant_config)],
-    uow: Annotated[UnitOfWork, Depends(get_unit_of_work)],
+    uow: Annotated[ReadOnlyUnitOfWork, Depends(get_unit_of_work)],
     start_date: Annotated[date | None, Query()] = None,
     end_date: Annotated[date | None, Query()] = None,
     identity_id: Annotated[str | None, Query()] = None,
@@ -47,20 +47,18 @@ async def list_chargebacks(
     start_dt, end_dt = resolve_date_range(start_date, end_date)
 
     offset = (page - 1) * page_size
-    with uow:
-        items, total = uow.chargebacks.find_by_filters(
-            ecosystem=tenant_config.ecosystem,
-            tenant_id=tenant_config.tenant_id,
-            start=start_dt,
-            end=end_dt,
-            identity_id=identity_id,
-            product_type=product_type,
-            resource_id=resource_id,
-            cost_type=cost_type,
-            limit=page_size,
-            offset=offset,
-        )
-
+    items, total = uow.chargebacks.find_by_filters(
+        ecosystem=tenant_config.ecosystem,
+        tenant_id=tenant_config.tenant_id,
+        start=start_dt,
+        end=end_dt,
+        identity_id=identity_id,
+        product_type=product_type,
+        resource_id=resource_id,
+        cost_type=cost_type,
+        limit=page_size,
+        offset=offset,
+    )
     pages = math.ceil(total / page_size) if total > 0 else 0
     logger.info(
         "Listed chargebacks tenant=%s returned=%d total=%d",
@@ -95,7 +93,7 @@ async def list_chargebacks(
     )
 
 
-def _build_dimension_response(uow: UnitOfWork, dimension_id: int) -> ChargebackDimensionResponse:
+def _build_dimension_response(uow: ReadOnlyUnitOfWork, dimension_id: int) -> ChargebackDimensionResponse:
     """Build ChargebackDimensionResponse with tags for a given dimension."""
     dim = uow.chargebacks.get_dimension(dimension_id)
     if dim is None:
@@ -133,14 +131,13 @@ def _build_dimension_response(uow: UnitOfWork, dimension_id: int) -> ChargebackD
 )
 async def get_chargeback_dates(
     tenant_config: Annotated[TenantConfig, Depends(get_tenant_config)],
-    uow: Annotated[UnitOfWork, Depends(get_unit_of_work)],
+    uow: Annotated[ReadOnlyUnitOfWork, Depends(get_unit_of_work)],
 ) -> ChargebackDatesResponse:
     """Return all distinct dates that have chargeback facts for the tenant."""
-    with uow:
-        dates = uow.chargebacks.get_distinct_dates(
-            ecosystem=tenant_config.ecosystem,
-            tenant_id=tenant_config.tenant_id,
-        )
+    dates = uow.chargebacks.get_distinct_dates(
+        ecosystem=tenant_config.ecosystem,
+        tenant_id=tenant_config.tenant_id,
+    )
     return ChargebackDatesResponse(dates=dates)
 
 
@@ -150,7 +147,7 @@ async def get_chargeback_dates(
 )
 async def list_allocation_issues(
     tenant_config: Annotated[TenantConfig, Depends(get_tenant_config)],
-    uow: Annotated[UnitOfWork, Depends(get_unit_of_work)],
+    uow: Annotated[ReadOnlyUnitOfWork, Depends(get_unit_of_work)],
     start_date: Annotated[date | None, Query()] = None,
     end_date: Annotated[date | None, Query()] = None,
     identity_id: Annotated[str | None, Query()] = None,
@@ -166,20 +163,17 @@ async def list_allocation_issues(
     )
     start_dt, end_dt = resolve_date_range(start_date, end_date)
     offset = (page - 1) * page_size
-
-    with uow:
-        items, total = uow.chargebacks.find_allocation_issues(
-            ecosystem=tenant_config.ecosystem,
-            tenant_id=tenant_config.tenant_id,
-            start=start_dt,
-            end=end_dt,
-            identity_id=identity_id,
-            product_type=product_type,
-            resource_id=resource_id,
-            limit=page_size,
-            offset=offset,
-        )
-
+    items, total = uow.chargebacks.find_allocation_issues(
+        ecosystem=tenant_config.ecosystem,
+        tenant_id=tenant_config.tenant_id,
+        start=start_dt,
+        end=end_dt,
+        identity_id=identity_id,
+        product_type=product_type,
+        resource_id=resource_id,
+        limit=page_size,
+        offset=offset,
+    )
     pages = math.ceil(total / page_size) if total > 0 else 0
     logger.info(
         "Listed allocation issues tenant=%s returned=%d total=%d",
@@ -215,46 +209,43 @@ async def list_allocation_issues(
 )
 async def update_chargeback_dimension(
     tenant_config: Annotated[TenantConfig, Depends(get_tenant_config)],
-    uow: Annotated[UnitOfWork, Depends(get_unit_of_work)],
+    uow: Annotated[UnitOfWork, Depends(get_write_unit_of_work)],
     dimension_id: Annotated[int, Path(description="Chargeback dimension ID")],
     body: ChargebackDimensionUpdateRequest,
 ) -> ChargebackDimensionResponse:
     """Update tags/annotations on a chargeback dimension."""
     logger.debug("PATCH /chargebacks/%s tenant=%s", dimension_id, tenant_config.tenant_id)
-    with uow:
-        dim = uow.chargebacks.get_dimension(dimension_id)
-        if dim is None or dim.ecosystem != tenant_config.ecosystem or dim.tenant_id != tenant_config.tenant_id:
-            raise HTTPException(status_code=404, detail=f"Dimension {dimension_id} not found")
+    dim = uow.chargebacks.get_dimension(dimension_id)
+    if dim is None or dim.ecosystem != tenant_config.ecosystem or dim.tenant_id != tenant_config.tenant_id:
+        raise HTTPException(status_code=404, detail=f"Dimension {dimension_id} not found")
 
-        # Replace all tags
-        if body.tags is not None:
-            existing = uow.tags.get_tags(dimension_id)
-            for existing_tag in existing:
-                if existing_tag.tag_id is not None:
-                    uow.tags.delete_tag(existing_tag.tag_id)
-            for new_tag in body.tags:
-                uow.tags.add_tag(dimension_id, new_tag.tag_key, new_tag.display_name, new_tag.created_by)
+    # Replace all tags
+    if body.tags is not None:
+        existing = uow.tags.get_tags(dimension_id)
+        for existing_tag in existing:
+            if existing_tag.tag_id is not None:
+                uow.tags.delete_tag(existing_tag.tag_id)
+        for new_tag in body.tags:
+            uow.tags.add_tag(dimension_id, new_tag.tag_key, new_tag.display_name, new_tag.created_by)
 
-        # Add tags
-        if body.add_tags is not None:
-            for add_tag in body.add_tags:
-                uow.tags.add_tag(dimension_id, add_tag.tag_key, add_tag.display_name, add_tag.created_by)
+    # Add tags
+    if body.add_tags is not None:
+        for add_tag in body.add_tags:
+            uow.tags.add_tag(dimension_id, add_tag.tag_key, add_tag.display_name, add_tag.created_by)
 
-        # Remove specific tags
-        if body.remove_tag_ids is not None:
-            for tag_id in body.remove_tag_ids:
-                tag = uow.tags.get_tag(tag_id)
-                if tag is None:
-                    raise HTTPException(status_code=404, detail=f"Tag {tag_id} not found")
-                if tag.dimension_id != dimension_id:
-                    raise HTTPException(
-                        status_code=400, detail=f"Tag {tag_id} does not belong to dimension {dimension_id}"
-                    )
-                uow.tags.delete_tag(tag_id)
+    # Remove specific tags
+    if body.remove_tag_ids is not None:
+        for tag_id in body.remove_tag_ids:
+            tag = uow.tags.get_tag(tag_id)
+            if tag is None:
+                raise HTTPException(status_code=404, detail=f"Tag {tag_id} not found")
+            if tag.dimension_id != dimension_id:
+                raise HTTPException(status_code=400, detail=f"Tag {tag_id} does not belong to dimension {dimension_id}")
+            uow.tags.delete_tag(tag_id)
 
-        uow.commit()
-        logger.info("Updated chargeback dimension %s tenant=%s", dimension_id, tenant_config.tenant_id)
-        return _build_dimension_response(uow, dimension_id)
+    uow.commit()
+    logger.info("Updated chargeback dimension %s tenant=%s", dimension_id, tenant_config.tenant_id)
+    return _build_dimension_response(uow, dimension_id)
 
 
 @router.get(
@@ -263,12 +254,11 @@ async def update_chargeback_dimension(
 )
 async def get_chargeback_dimension(
     tenant_config: Annotated[TenantConfig, Depends(get_tenant_config)],
-    uow: Annotated[UnitOfWork, Depends(get_unit_of_work)],
+    uow: Annotated[ReadOnlyUnitOfWork, Depends(get_unit_of_work)],
     dimension_id: Annotated[int, Path(description="Chargeback dimension ID")],
 ) -> ChargebackDimensionResponse:
     """Get a single chargeback dimension with its tags."""
-    with uow:
-        dim = uow.chargebacks.get_dimension(dimension_id)
-        if dim is None or dim.ecosystem != tenant_config.ecosystem or dim.tenant_id != tenant_config.tenant_id:
-            raise HTTPException(status_code=404, detail=f"Dimension {dimension_id} not found")
-        return _build_dimension_response(uow, dimension_id)
+    dim = uow.chargebacks.get_dimension(dimension_id)
+    if dim is None or dim.ecosystem != tenant_config.ecosystem or dim.tenant_id != tenant_config.tenant_id:
+        raise HTTPException(status_code=404, detail=f"Dimension {dimension_id} not found")
+    return _build_dimension_response(uow, dimension_id)

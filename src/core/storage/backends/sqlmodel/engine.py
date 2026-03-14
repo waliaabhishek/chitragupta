@@ -10,6 +10,49 @@ logger = logging.getLogger(__name__)
 _engines: dict[str, Engine] = {}
 _engine_lock = threading.Lock()
 
+_RO_KEY_PREFIX = "readonly:"
+
+_BASE_SQLITE_PRAGMAS = [
+    "PRAGMA journal_mode=WAL;",
+    "PRAGMA cache_size=-65535;",
+    "PRAGMA synchronous=NORMAL;",
+    "PRAGMA temp_store=MEMORY;",
+    "PRAGMA busy_timeout=5000;",
+]
+
+
+def _create_cached_engine(
+    cache_key: str,
+    connection_string: str,
+    extra_pragmas: list[str] | None = None,
+    **engine_kwargs: object,
+) -> Engine:
+    """Create and cache an engine under cache_key with double-checked locking.
+
+    SQLite engines receive _BASE_SQLITE_PRAGMAS plus any extra_pragmas on
+    every new connection. Non-SQLite engines are created without pragmas.
+    """
+    if cache_key not in _engines:
+        with _engine_lock:
+            if cache_key not in _engines:
+                logger.info("Creating new engine for: %s...", connection_string[:30])
+                new_engine = create_engine(connection_string, pool_pre_ping=True, **engine_kwargs)
+
+                if connection_string.startswith("sqlite"):
+                    pragmas = list(_BASE_SQLITE_PRAGMAS)
+                    if extra_pragmas:
+                        pragmas.extend(extra_pragmas)
+
+                    @event.listens_for(new_engine, "connect")
+                    def _set_sqlite_pragma(dbapi_connection: object, _connection_record: object) -> None:
+                        cursor = dbapi_connection.cursor()  # type: ignore[attr-defined]
+                        for pragma in pragmas:
+                            cursor.execute(pragma)
+                        cursor.close()
+
+                _engines[cache_key] = new_engine
+    return _engines[cache_key]
+
 
 def get_or_create_engine(connection_string: str, **engine_kwargs: object) -> Engine:
     """Get or create a cached engine for the given connection string.
@@ -17,26 +60,22 @@ def get_or_create_engine(connection_string: str, **engine_kwargs: object) -> Eng
     Uses double-checked locking to ensure one engine per connection string.
     SQLite engines get WAL mode and performance pragmas.
     """
-    if connection_string not in _engines:
-        with _engine_lock:
-            if connection_string not in _engines:
-                logger.info("Creating new engine for: %s...", connection_string[:30])
-                new_engine = create_engine(connection_string, pool_pre_ping=True, **engine_kwargs)
+    return _create_cached_engine(connection_string, connection_string, **engine_kwargs)
 
-                if connection_string.startswith("sqlite"):
 
-                    @event.listens_for(new_engine, "connect")
-                    def _set_sqlite_pragma(dbapi_connection: object, _connection_record: object) -> None:
-                        cursor = dbapi_connection.cursor()  # type: ignore[attr-defined]
-                        cursor.execute("PRAGMA journal_mode=WAL;")
-                        cursor.execute("PRAGMA cache_size=-65535;")
-                        cursor.execute("PRAGMA synchronous=NORMAL;")
-                        cursor.execute("PRAGMA temp_store=MEMORY;")
-                        cursor.execute("PRAGMA busy_timeout=5000;")
-                        cursor.close()
+def get_or_create_read_only_engine(connection_string: str, **engine_kwargs: object) -> Engine:
+    """Get or create a cached read-only engine for the given connection string.
 
-                _engines[connection_string] = new_engine
-    return _engines[connection_string]
+    SQLite connections get PRAGMA query_only=1 in addition to WAL/cache pragmas,
+    preventing lock escalation beyond SHARED. WAL readers and the pipeline
+    writer proceed concurrently with zero contention.
+    """
+    return _create_cached_engine(
+        _RO_KEY_PREFIX + connection_string,
+        connection_string,
+        extra_pragmas=["PRAGMA query_only=1;"],
+        **engine_kwargs,
+    )
 
 
 def dispose_all_engines() -> None:

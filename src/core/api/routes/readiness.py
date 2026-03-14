@@ -47,7 +47,7 @@ def _check_tenant_readiness(
     try:
         backend = get_or_create_backend(backends, tenant_name, storage_config, ecosystem)  # type: ignore[arg-type]  # backends dict is untyped from app.state
 
-        with backend.create_unit_of_work() as uow:
+        with backend.create_read_only_unit_of_work() as uow:
             has_data = uow.pipeline_state.count_calculated(ecosystem, tenant_id) > 0
 
             latest_run = uow.pipeline_runs.get_latest_run(tenant_name)

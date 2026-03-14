@@ -50,6 +50,7 @@ def _make_backend(latest_run: MagicMock | None = None, count: int = 0) -> MagicM
     mock_uow.__exit__ = MagicMock(return_value=False)
     mock_backend = MagicMock()
     mock_backend.create_unit_of_work.return_value = mock_uow
+    mock_backend.create_read_only_unit_of_work.return_value = mock_uow
     return mock_backend
 
 
