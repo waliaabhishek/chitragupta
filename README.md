@@ -40,7 +40,7 @@ export CCLOUD_API_SECRET=your-secret
 uv run python src/main.py --config-file config.yaml --run-once
 ```
 
-See [Quickstart guide](docs/getting-started/quickstart.md) for step-by-step walkthrough.
+See [Quickstart guide](docs/getting-started/quickstart.md) for step-by-step walkthrough, or the [Docker Quickstart](deployables/QUICKSTART.md) to run the full stack with Docker Compose.
 
 ## Documentation
 
