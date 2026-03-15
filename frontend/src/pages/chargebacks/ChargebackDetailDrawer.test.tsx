@@ -162,6 +162,7 @@ vi.mock("../../providers/TenantContext", () => {
     dates_calculated: 10,
     last_calculated_date: null,
   };
+  // GAP-100 Category B: appStatus/readiness removed — they move to useReadiness().
   return {
     useTenant: () => ({
       currentTenant: tenant,
@@ -170,8 +171,6 @@ vi.mock("../../providers/TenantContext", () => {
       isLoading: false,
       error: null,
       refetch: vi.fn(),
-      appStatus: "ready" as const,
-      readiness: null,
       isReadOnly: false,
     }),
   };

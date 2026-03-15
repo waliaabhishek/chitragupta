@@ -15,7 +15,7 @@ const { Text, Title } = Typography;
 
 export function ChargebackListPage(): JSX.Element {
   const { currentTenant, isReadOnly } = useTenant();
-  const { filters, setFilter, setFilters, resetFilters, toQueryParams } = useChargebackFilters();
+  const { filters, setFilter, setFilters, resetFilters, toQueryParams, queryParams } = useChargebackFilters();
   const [searchParams] = useSearchParams();
   const [selectedDimensionId, setSelectedDimensionId] = useState<number | null>(null);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
@@ -25,6 +25,7 @@ export function ChargebackListPage(): JSX.Element {
   const gridRef = useRef<AgGridReact>(null);
 
   // Read `selected` param from URL to open drawer on mount
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     const selected = searchParams.get("selected");
     if (selected !== null) {
@@ -92,7 +93,7 @@ export function ChargebackListPage(): JSX.Element {
         <Title level={3} style={{ margin: 0 }}>
           Chargebacks
         </Title>
-        <ExportButton filters={toQueryParams()} tenantName={currentTenant.tenant_name} disabled={isReadOnly} />
+        <ExportButton filters={queryParams} tenantName={currentTenant.tenant_name} disabled={isReadOnly} />
       </div>
       <FilterPanel
         filters={filters}
@@ -116,7 +117,7 @@ export function ChargebackListPage(): JSX.Element {
         key={currentTenant.tenant_name}
         ref={gridRef}
         tenantName={currentTenant.tenant_name}
-        filters={toQueryParams()}
+        filters={queryParams}
         onRowClick={(dimensionId) => setSelectedDimensionId(dimensionId)}
         onSelectionChange={handleSelectionChange}
         onSelectAll={handleSelectAll}

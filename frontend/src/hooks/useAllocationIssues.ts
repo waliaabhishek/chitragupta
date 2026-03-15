@@ -19,6 +19,7 @@ export interface UseAllocationIssuesResult {
 
 export function useAllocationIssues(params: UseAllocationIssuesParams): UseAllocationIssuesResult {
   const { tenantName, filters, page, pageSize } = params;
+  const { start_date, end_date, identity_id, product_type, resource_id } = filters;
 
   const [data, setData] = useState<PaginatedResponse<AllocationIssueResponse> | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -63,7 +64,7 @@ export function useAllocationIssues(params: UseAllocationIssuesParams): UseAlloc
     return () => {
       controller.abort();
     };
-  }, [tenantName, filters, page, pageSize, refetchKey]);
+  }, [tenantName, start_date, end_date, identity_id, product_type, resource_id, page, pageSize, refetchKey]);
 
   return { data, isLoading, error, refetch };
 }

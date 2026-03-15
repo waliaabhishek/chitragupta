@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { AppLayout } from "./Layout";
 
 // Mock TenantContext to avoid provider requirement.
+// GAP-100: useReadiness added — PipelineStatusBanner (rendered by AppLayout) now calls both hooks.
 vi.mock("../providers/TenantContext", () => ({
   useTenant: vi.fn(() => ({
     currentTenant: null,
@@ -12,9 +13,11 @@ vi.mock("../providers/TenantContext", () => ({
     isLoading: false,
     error: null,
     refetch: vi.fn(),
+    isReadOnly: false,
+  })),
+  useReadiness: vi.fn(() => ({
     appStatus: "ready" as const,
     readiness: null,
-    isReadOnly: false,
   })),
 }));
 

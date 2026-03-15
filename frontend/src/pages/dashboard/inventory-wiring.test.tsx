@@ -46,6 +46,7 @@ vi.mock("../../hooks/useChargebackFilters", () => ({
 }));
 
 vi.mock("../../providers/TenantContext", () => ({
+  // GAP-100 Category B: appStatus/readiness removed — they move to useReadiness().
   useTenant: vi.fn(() => ({
     currentTenant: {
       tenant_name: "acme",
@@ -60,9 +61,11 @@ vi.mock("../../providers/TenantContext", () => ({
     isLoading: false,
     error: null,
     refetch: vi.fn(),
+    isReadOnly: false,
+  })),
+  useReadiness: vi.fn(() => ({
     appStatus: "ready" as const,
     readiness: null,
-    isReadOnly: false,
   })),
 }));
 

@@ -2,7 +2,7 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { http, HttpResponse } from "msw";
-import { TenantProvider, useTenant } from "./TenantContext";
+import { TenantProvider, useTenant, useReadiness } from "./TenantContext";
 import type { ReadinessResponse } from "../types/api";
 
 function wrapper({ children }: { children: ReactNode }): JSX.Element {
@@ -100,6 +100,85 @@ describe("TenantContext", () => {
 
     expect(result.current.error).toMatch(/500|Internal Server Error/);
     expect(result.current.tenants).toHaveLength(0);
+  });
+
+  it("refetch() resets error state and restarts loading (GIT-001)", async () => {
+    const { result } = renderHook(() => useTenant(), { wrapper });
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    act(() => {
+      result.current.refetch();
+    });
+
+    expect(result.current.isLoading).toBe(true);
+    expect(result.current.error).toBeNull();
+
+    // Let provider finish the second load cycle
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+  });
+
+  it("setCurrentTenant before first poll: isReadOnly stays false (GIT-002)", async () => {
+    // applyIsReadOnly is a no-op when readinessRef.current is null (before first poll).
+    // Calling setCurrentTenant synchronously after renderHook hits that early exit.
+    const { result } = renderHook(() => useTenant(), { wrapper });
+
+    act(() => {
+      result.current.setCurrentTenant({
+        tenant_name: "early-call",
+        tenant_id: "t-early",
+        ecosystem: "ccloud",
+        dates_pending: 0,
+        dates_calculated: 0,
+        last_calculated_date: null,
+      });
+    });
+
+    expect(result.current.isReadOnly).toBe(false);
+
+    // Drain async work to avoid act() warnings
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+  });
+
+  it("fetchReadiness returns null on non-AbortError network failure and retries (GIT-003)", async () => {
+    const { server } = await import("../test/mocks/server");
+
+    let callCount = 0;
+    server.use(
+      http.get("/api/v1/readiness", () => {
+        callCount++;
+        if (callCount === 1) return HttpResponse.error(); // network error → catch → null
+        return HttpResponse.json({
+          status: "ready",
+          version: "1.0.0",
+          mode: "both",
+          tenants: [],
+        });
+      }),
+    );
+
+    vi.useFakeTimers();
+    try {
+      const { result } = renderHook(() => useTenant(), { wrapper });
+
+      // Let first poll complete (network error → null → schedules 5000ms retry)
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(100);
+      });
+
+      expect(result.current.isLoading).toBe(true);
+      expect(callCount).toBe(1);
+
+      // Advance past the retry delay to trigger second poll
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5001);
+      });
+
+      // Second poll succeeds — isLoading becomes false (no waitFor: fake timers mock setTimeout)
+      expect(result.current.isLoading).toBe(false);
+      expect(callCount).toBeGreaterThanOrEqual(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
@@ -217,5 +296,147 @@ describe("TenantContext — adaptive polling interval", () => {
     expect(delays.filter((d) => d === 5000)).toHaveLength(0);
 
     setTimeoutSpy.mockRestore();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GAP-100 Tests: Context split — useReadiness + isReadOnly transition-driven
+// ---------------------------------------------------------------------------
+
+describe("TenantContext — context split (GAP-100)", () => {
+  function makeReadinessForTenants(
+    tenants: Array<{ name: string; running: boolean }>,
+  ): ReadinessResponse {
+    return {
+      status: "ready",
+      version: "1.0.0",
+      mode: "both",
+      tenants: tenants.map((t) => ({
+        tenant_name: t.name,
+        tables_ready: true,
+        has_data: true,
+        pipeline_running: t.running,
+        pipeline_stage: t.running ? "gathering" : null,
+        pipeline_current_date: t.running ? "2026-03-14" : null,
+        last_run_status: t.running ? "running" : "completed",
+        last_run_at: null,
+        permanent_failure: null,
+      })),
+    };
+  }
+
+  it("useReadiness() called outside TenantProvider throws expected error (verification item 1)", () => {
+    // FAILS in red state: useReadiness is not exported from TenantContext yet.
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      expect(() => renderHook(() => useReadiness())).toThrow(
+        "useReadiness must be used within TenantProvider",
+      );
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
+  it("readiness poll does NOT trigger useTenant() consumers to re-render (verification item 2)", async () => {
+    // FAILS in red state: readiness is in TenantContext useMemo deps → every poll
+    // causes contextValue to be a new object → all useTenant consumers re-render.
+    //
+    // To bypass fingerprinting (which would prevent setReadiness on identical data),
+    // we increment a counter in the version field so each poll produces different JSON.
+    const { server } = await import("../test/mocks/server");
+
+    let pollCounter = 0;
+    server.use(
+      http.get("/api/v1/readiness", () => {
+        pollCounter++;
+        return HttpResponse.json({
+          ...makeReadinessForTenants([{ name: "acme", running: true }]),
+          version: `1.0.${pollCounter}`, // Different each poll → fingerprint mismatch → setReadiness called
+        });
+      }),
+    );
+
+    vi.useFakeTimers();
+    try {
+      let tenantRenderCount = 0;
+
+      const { result } = renderHook(
+        () => {
+          tenantRenderCount++;
+          return useTenant();
+        },
+        { wrapper },
+      );
+
+      // Complete initial fetch cycle.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(200);
+      });
+
+      expect(result.current.currentTenant?.tenant_name).toBe("acme");
+      const renderCountAfterInit = tenantRenderCount;
+
+      // Fire 3 more poll cycles (pipeline running → 5 s interval).
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5001);
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5001);
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5001);
+      });
+
+      // With context split: readiness goes to ReadinessContext, useTenant consumers
+      // do NOT re-render on readiness polls.
+      // Without split (current): each poll calls setReadiness → contextValue memo
+      // invalidated → re-render. So renderCount > renderCountAfterInit.
+      expect(tenantRenderCount).toBe(renderCountAfterInit);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("setCurrentTenant immediately sets isReadOnly=true for a running-pipeline tenant (verification item 3)", async () => {
+    // Verify that switching to a tenant with pipeline_running=true reflects in isReadOnly
+    // immediately — without waiting for the next poll cycle.
+    const { server } = await import("../test/mocks/server");
+
+    server.use(
+      http.get("/api/v1/readiness", () =>
+        HttpResponse.json(
+          makeReadinessForTenants([
+            { name: "acme", running: false },
+            { name: "globex", running: true },
+          ]),
+        ),
+      ),
+    );
+
+    const { result } = renderHook(() => useTenant(), { wrapper });
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    // Initial state: acme selected, not running → isReadOnly false.
+    expect(result.current.currentTenant?.tenant_name).toBe("acme");
+    expect(result.current.isReadOnly).toBe(false);
+
+    // Switch to globex (pipeline_running=true) synchronously.
+    act(() => {
+      result.current.setCurrentTenant(result.current.tenants[1]);
+    });
+
+    // isReadOnly must be true immediately — no extra poll wait.
+    expect(result.current.currentTenant?.tenant_name).toBe("globex");
+    expect(result.current.isReadOnly).toBe(true);
+  });
+
+  it("useReadiness() returns appStatus and readiness from within TenantProvider (verification item 10 pre-condition)", async () => {
+    // FAILS in red state: useReadiness is not exported from TenantContext yet.
+    const { result } = renderHook(() => useReadiness(), { wrapper });
+    await waitFor(() => {
+      // After initial readiness fetch, readiness should be non-null.
+      expect(result.current.readiness).not.toBeNull();
+    });
+    expect(result.current.appStatus).toBeDefined();
   });
 });

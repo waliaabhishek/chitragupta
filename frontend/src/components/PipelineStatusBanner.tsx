@@ -1,5 +1,5 @@
 import { Alert, Spin } from "antd";
-import { useTenant } from "../providers/TenantContext";
+import { useTenant, useReadiness } from "../providers/TenantContext";
 
 function formatStage(
   stage: string | null,
@@ -21,7 +21,8 @@ function formatStage(
 }
 
 export function PipelineStatusBanner(): JSX.Element | null {
-  const { appStatus, readiness, currentTenant } = useTenant();
+  const { currentTenant } = useTenant();
+  const { appStatus, readiness } = useReadiness();
 
   if (appStatus === "loading") {
     return (

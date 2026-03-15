@@ -19,6 +19,7 @@ const mockTenant = {
 };
 
 vi.mock("../../providers/TenantContext", () => ({
+  // GAP-100 Category B: appStatus/readiness removed — they move to useReadiness().
   useTenant: vi.fn(() => ({
     currentTenant: null,
     tenants: [],
@@ -26,8 +27,6 @@ vi.mock("../../providers/TenantContext", () => ({
     isLoading: false,
     error: null,
     refetch: vi.fn(),
-    appStatus: "ready" as const,
-    readiness: null,
     isReadOnly: false,
   })),
 }));
@@ -55,8 +54,6 @@ describe("TagManagementPage", () => {
       isLoading: false,
       error: null,
       refetch: vi.fn(),
-      appStatus: "ready" as const,
-      readiness: null,
       isReadOnly: false,
     });
 
@@ -78,8 +75,6 @@ describe("TagManagementPage", () => {
       isLoading: false,
       error: null,
       refetch: vi.fn(),
-      appStatus: "ready" as const,
-      readiness: null,
       isReadOnly: false,
     });
 
@@ -112,8 +107,6 @@ describe("TagManagementPage", () => {
       isLoading: false,
       error: null,
       refetch: vi.fn(),
-      appStatus: "ready" as const,
-      readiness: null,
       isReadOnly: false,
     });
 
@@ -150,8 +143,6 @@ describe("TagManagementPage", () => {
       isLoading: false,
       error: null,
       refetch: vi.fn(),
-      appStatus: "ready" as const,
-      readiness: null,
       isReadOnly: false,
     });
 
@@ -183,8 +174,6 @@ describe("TagManagementPage", () => {
       isLoading: false,
       error: null,
       refetch: vi.fn(),
-      appStatus: "ready" as const,
-      readiness: null,
       isReadOnly: false,
     });
 
@@ -240,8 +229,6 @@ describe("TagManagementPage", () => {
       isLoading: false,
       error: null,
       refetch: vi.fn(),
-      appStatus: "ready" as const,
-      readiness: null,
       isReadOnly: false,
     });
 
@@ -278,8 +265,6 @@ describe("TagManagementPage", () => {
       isLoading: false,
       error: null,
       refetch: vi.fn(),
-      appStatus: "ready" as const,
-      readiness: null,
       isReadOnly: false,
     });
 

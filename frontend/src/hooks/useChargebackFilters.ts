@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
 import type { ChargebackFilters } from "../types/filters";
 
@@ -56,25 +56,39 @@ interface UseChargebackFiltersReturn {
   setFilters: (updates: Partial<ChargebackFilters>) => void;
   resetFilters: () => void;
   toQueryParams: () => Record<string, string>;
+  queryParams: Record<string, string>;   // stable memoized value for render-time use
 }
 
 export function useChargebackFilters(): UseChargebackFiltersReturn {
   const [searchParams, setSearchParams] = useSearchParams();
 
-  // Intentional: called every render — localStorage reads are synchronous & sub-ms;
-  // avoids separate useState sync logic since filters derive from searchParams anyway.
-  const storedDates = loadDatesFromStorage();
+  // Cache localStorage read — only re-read when searchParams change (which triggers a
+  // re-render anyway). Avoids redundant JSON.parse on every render.
+  const storedDates = useMemo(() => loadDatesFromStorage(), [searchParams]);
 
-  const filters: ChargebackFilters = {
-    start_date:
-      searchParams.get("start_date") ?? storedDates.start_date ?? thirtyDaysAgoStr(),
-    end_date:
-      searchParams.get("end_date") ?? storedDates.end_date ?? todayStr(),
-    identity_id: searchParams.get("identity_id"),
-    product_type: searchParams.get("product_type"),
-    resource_id: searchParams.get("resource_id"),
-    cost_type: searchParams.get("cost_type"),
-  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- individual scalar deps are intentional; avoids new object every render
+  const filters: ChargebackFilters = useMemo(
+    () => ({
+      start_date:
+        searchParams.get("start_date") ?? storedDates.start_date ?? thirtyDaysAgoStr(),
+      end_date:
+        searchParams.get("end_date") ?? storedDates.end_date ?? todayStr(),
+      identity_id: searchParams.get("identity_id"),
+      product_type: searchParams.get("product_type"),
+      resource_id: searchParams.get("resource_id"),
+      cost_type: searchParams.get("cost_type"),
+    }),
+    [
+      searchParams.get("start_date"),
+      searchParams.get("end_date"),
+      searchParams.get("identity_id"),
+      searchParams.get("product_type"),
+      searchParams.get("resource_id"),
+      searchParams.get("cost_type"),
+      storedDates.start_date,
+      storedDates.end_date,
+    ],
+  );
 
   const setFilter = useCallback(
     (key: keyof ChargebackFilters, value: string | null) => {
@@ -147,8 +161,8 @@ export function useChargebackFilters(): UseChargebackFiltersReturn {
     clearDatesFromStorage();
   }, [setSearchParams]);
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- individual field deps are intentional; `filters` object changes every render
-  const toQueryParams = useCallback((): Record<string, string> => {
+  // Stable memoized object — only recomputed when filter values change
+  const queryParams: Record<string, string> = useMemo(() => {
     const result: Record<string, string> = {};
     for (const key of FILTER_KEYS) {
       const val = filters[key];
@@ -157,7 +171,13 @@ export function useChargebackFilters(): UseChargebackFiltersReturn {
       }
     }
     return result;
-  }, [filters.start_date, filters.end_date, filters.identity_id, filters.product_type, filters.resource_id, filters.cost_type]);
+  }, [filters]);
 
-  return { filters, setFilter, setFilters, resetFilters, toQueryParams };
+  // Keep toQueryParams for event handler usage (handleSelectAll) — returns stable queryParams
+  const toQueryParams = useCallback(
+    (): Record<string, string> => queryParams,
+    [queryParams],
+  );
+
+  return { filters, setFilter, setFilters, resetFilters, toQueryParams, queryParams };
 }

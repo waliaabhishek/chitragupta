@@ -50,7 +50,7 @@ function DashboardContent({ tenant, filters, timeBucket }: DashboardContentProps
   const productData = useAggregation({ ...sharedParams, groupBy: ["product_type"] });
   const resourceData = useAggregation({ ...sharedParams, groupBy: ["resource_id"] });
   const environmentData = useAggregation({ ...sharedParams, groupBy: ["environment_id"] });
-  const productSubTypeData = useAggregation({ ...sharedParams, groupBy: ["product_sub_type"] });
+  const productCategoryData = useAggregation({ ...sharedParams, groupBy: ["product_category"] });
   const availabilityData = useDataAvailability({ tenantName: tenant.tenant_name });
   const inventoryData = useInventorySummary({ tenantName: tenant.tenant_name });
 
@@ -145,12 +145,12 @@ function DashboardContent({ tenant, filters, timeBucket }: DashboardContentProps
 
       <Col xs={24} sm={12} lg={6}>
         <ChartCard
-          title="Cost by Product Sub-Type"
-          loading={productSubTypeData.isLoading}
-          error={productSubTypeData.error}
-          onRetry={productSubTypeData.refetch}
+          title="Cost by Product Category"
+          loading={productCategoryData.isLoading}
+          error={productCategoryData.error}
+          onRetry={productCategoryData.refetch}
         >
-          <DimensionPieChart data={productSubTypeData.data?.buckets ?? []} dimension="product_sub_type" />
+          <DimensionPieChart data={productCategoryData.data?.buckets ?? []} dimension="product_category" />
         </ChartCard>
       </Col>
 

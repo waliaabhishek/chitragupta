@@ -159,9 +159,11 @@ vi.mock("../../providers/TenantContext", () => ({
     isLoading: false,
     error: null,
     refetch: vi.fn(),
+    isReadOnly: false,
+  })),
+  useReadiness: vi.fn(() => ({
     appStatus: "ready" as const,
     readiness: null,
-    isReadOnly: false,
   })),
 }));
 
@@ -193,8 +195,6 @@ describe("CostDashboardPage", () => {
       isLoading: false,
       error: null,
       refetch: vi.fn(),
-      appStatus: "ready" as const,
-      readiness: null,
       isReadOnly: false,
     });
   });
@@ -221,8 +221,6 @@ describe("CostDashboardPage", () => {
       isLoading: false,
       error: null,
       refetch: vi.fn(),
-      appStatus: "ready" as const,
-      readiness: null,
       isReadOnly: false,
     });
 
@@ -241,10 +239,12 @@ describe("CostDashboardPage", () => {
     expect(screen.getByText("Cost by Environment")).toBeInTheDocument();
     expect(screen.getByText("Cost by Resource")).toBeInTheDocument();
     expect(screen.getByText("Cost by Product Type")).toBeInTheDocument();
-    expect(screen.getByText("Cost by Product Sub-Type")).toBeInTheDocument();
+    // GAP-100 verification item 8: title must be "Cost by Product Category" not Sub-Type.
+    // FAILS in red state: dashboard/index.tsx still uses "Cost by Product Sub-Type".
+    expect(screen.getByText("Cost by Product Category")).toBeInTheDocument();
   });
 
-  it("makes 5 useAggregation calls with environment_id and product_sub_type groupBy", async () => {
+  it("makes 5 useAggregation calls with environment_id and product_category groupBy", async () => {
     const { useTenant } = await import("../../providers/TenantContext");
     vi.mocked(useTenant).mockReturnValue({
       currentTenant: mockTenant,
@@ -253,8 +253,6 @@ describe("CostDashboardPage", () => {
       isLoading: false,
       error: null,
       refetch: vi.fn(),
-      appStatus: "ready" as const,
-      readiness: null,
       isReadOnly: false,
     });
 
@@ -273,7 +271,9 @@ describe("CostDashboardPage", () => {
       (call) => call[0].groupBy,
     );
     expect(groupByValues.flat()).toContain("environment_id");
-    expect(groupByValues.flat()).toContain("product_sub_type");
+    // GAP-100 verification item 9: must use product_category, not product_sub_type.
+    // FAILS in red state: dashboard/index.tsx still calls useAggregation with product_sub_type.
+    expect(groupByValues.flat()).toContain("product_category");
   });
 
   it("forwards explicit date filters to useAggregation", async () => {
@@ -285,8 +285,6 @@ describe("CostDashboardPage", () => {
       isLoading: false,
       error: null,
       refetch: vi.fn(),
-      appStatus: "ready" as const,
-      readiness: null,
       isReadOnly: false,
     });
 
@@ -330,8 +328,6 @@ describe("CostDashboardPage", () => {
       isLoading: false,
       error: null,
       refetch: vi.fn(),
-      appStatus: "ready" as const,
-      readiness: null,
       isReadOnly: false,
     });
 
@@ -355,8 +351,6 @@ describe("CostDashboardPage", () => {
       isLoading: false,
       error: null,
       refetch: vi.fn(),
-      appStatus: "ready" as const,
-      readiness: null,
       isReadOnly: false,
     });
 

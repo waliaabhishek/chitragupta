@@ -1,16 +1,21 @@
+// GAP-100: Updated to split useTenant / useReadiness mocks (Category A).
+// New test 10: PipelineStatusBanner shows stage text during pipeline run after context split.
 import { render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { PipelineStatusBanner } from "./PipelineStatusBanner";
 import type { AppStatus } from "../providers/TenantContext";
 import type { ReadinessResponse, TenantReadiness } from "../types/api";
 
-// Mock useTenant so tests can control context values without a provider tree.
+// Mock both hooks — after context split, PipelineStatusBanner calls useTenant() for
+// currentTenant and useReadiness() for appStatus + readiness.
 vi.mock("../providers/TenantContext", () => ({
   useTenant: vi.fn(),
+  useReadiness: vi.fn(),
 }));
 
-import { useTenant } from "../providers/TenantContext";
+import { useTenant, useReadiness } from "../providers/TenantContext";
 const mockUseTenant = vi.mocked(useTenant);
+const mockUseReadiness = vi.mocked(useReadiness);
 
 function makeTenant(overrides: Partial<TenantReadiness> = {}): TenantReadiness {
   return {
@@ -39,6 +44,16 @@ function makeReadiness(
   };
 }
 
+const baseTenantContext = {
+  currentTenant: null,
+  tenants: [],
+  isLoading: false,
+  error: null,
+  refetch: vi.fn(),
+  setCurrentTenant: vi.fn(),
+  isReadOnly: false,
+};
+
 beforeEach(() => {
   vi.clearAllMocks();
 });
@@ -49,16 +64,12 @@ beforeEach(() => {
 
 describe("PipelineStatusBanner — no_data status", () => {
   it("api mode shows instance-does-not-run-pipeline message", () => {
-    mockUseTenant.mockReturnValue({
+    // GAP-100: appStatus/readiness now come from useReadiness(), not useTenant().
+    // FAILS in red state: PipelineStatusBanner still calls useTenant() for these.
+    mockUseTenant.mockReturnValue(baseTenantContext);
+    mockUseReadiness.mockReturnValue({
       appStatus: "no_data" as AppStatus,
       readiness: makeReadiness({ status: "no_data", mode: "api" }),
-      currentTenant: null,
-      tenants: [],
-      isLoading: false,
-      error: null,
-      refetch: vi.fn(),
-      setCurrentTenant: vi.fn(),
-      isReadOnly: false,
     });
 
     render(<PipelineStatusBanner />);
@@ -68,27 +79,16 @@ describe("PipelineStatusBanner — no_data status", () => {
         /This instance does not run the pipeline/i,
       ),
     ).toBeInTheDocument();
-    // Must NOT show the "waiting" message
     expect(
       screen.queryByText(/Waiting for pipeline to run/i),
     ).not.toBeInTheDocument();
   });
 
-  // ---------------------------------------------------------------------------
-  // Test 11: no_data + both mode
-  // ---------------------------------------------------------------------------
-
   it("both mode shows waiting-for-pipeline message", () => {
-    mockUseTenant.mockReturnValue({
+    mockUseTenant.mockReturnValue(baseTenantContext);
+    mockUseReadiness.mockReturnValue({
       appStatus: "no_data" as AppStatus,
       readiness: makeReadiness({ status: "no_data", mode: "both" }),
-      currentTenant: null,
-      tenants: [],
-      isLoading: false,
-      error: null,
-      refetch: vi.fn(),
-      setCurrentTenant: vi.fn(),
-      isReadOnly: false,
     });
 
     render(<PipelineStatusBanner />);
@@ -100,19 +100,14 @@ describe("PipelineStatusBanner — no_data status", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Test 14: Per-tenant failure banner when appStatus="ready"
+// Per-tenant failure banner when appStatus="ready"
 // ---------------------------------------------------------------------------
 
 describe("PipelineStatusBanner — per-tenant permanent_failure", () => {
   it("shows error banner for current tenant permanent_failure when appStatus=ready", () => {
     const tenant = makeTenant({ permanent_failure: "API credentials invalid" });
     mockUseTenant.mockReturnValue({
-      appStatus: "ready" as AppStatus,
-      readiness: makeReadiness({
-        status: "ready",
-        mode: "both",
-        tenants: [tenant],
-      }),
+      ...baseTenantContext,
       currentTenant: {
         tenant_name: "acme",
         tenant_id: "t-001",
@@ -121,30 +116,24 @@ describe("PipelineStatusBanner — per-tenant permanent_failure", () => {
         dates_calculated: 10,
         last_calculated_date: null,
       },
-      tenants: [],
-      isLoading: false,
-      error: null,
-      refetch: vi.fn(),
-      setCurrentTenant: vi.fn(),
-      isReadOnly: false,
+    });
+    mockUseReadiness.mockReturnValue({
+      appStatus: "ready" as AppStatus,
+      readiness: makeReadiness({ status: "ready", mode: "both", tenants: [tenant] }),
     });
 
     const { container } = render(<PipelineStatusBanner />);
 
-    // Banner must render — not return null
     expect(container.firstChild).not.toBeNull();
-
-    // Must show the tenant name and failure reason
     expect(screen.getByText(/acme.*API credentials invalid/i)).toBeInTheDocument();
 
-    // Must be an error-type alert
     const alert = container.querySelector(".ant-alert-error");
     expect(alert).not.toBeNull();
   });
 });
 
 // ---------------------------------------------------------------------------
-// Test 15: All-tenants-failed — existing error behaviour preserved
+// All-tenants-failed — existing error behaviour preserved
 // ---------------------------------------------------------------------------
 
 describe("PipelineStatusBanner — all tenants failed", () => {
@@ -160,27 +149,57 @@ describe("PipelineStatusBanner — all tenants failed", () => {
       }),
     ];
 
-    mockUseTenant.mockReturnValue({
+    mockUseTenant.mockReturnValue(baseTenantContext);
+    mockUseReadiness.mockReturnValue({
       appStatus: "error" as AppStatus,
-      readiness: makeReadiness({
-        status: "error",
-        mode: "both",
-        tenants,
-      }),
-      currentTenant: null,
-      tenants: [],
-      isLoading: false,
-      error: "acme: Credentials expired; globex: Quota exceeded",
-      refetch: vi.fn(),
-      setCurrentTenant: vi.fn(),
-      isReadOnly: false,
+      readiness: makeReadiness({ status: "error", mode: "both", tenants }),
     });
 
     render(<PipelineStatusBanner />);
 
-    // Banner must show at least one failure message
     expect(
       screen.getByText(/Credentials expired/i),
+    ).toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GAP-100 verification item 10: stage text still renders after context split
+// ---------------------------------------------------------------------------
+
+describe("PipelineStatusBanner — pipeline running stage text (GAP-100 verification item 10)", () => {
+  it("shows stage text and current date during pipeline run after context split", () => {
+    // FAILS in red state: PipelineStatusBanner does not call useReadiness() yet.
+    // After the fix: Banner calls useReadiness() for appStatus/readiness and useTenant()
+    // for currentTenant. This test verifies the stage text still renders correctly.
+    const acmeTenant = makeTenant({
+      tenant_name: "acme",
+      pipeline_running: true,
+      pipeline_stage: "calculating",
+      pipeline_current_date: "2026-03-14",
+    });
+
+    mockUseTenant.mockReturnValue({
+      ...baseTenantContext,
+      currentTenant: {
+        tenant_name: "acme",
+        tenant_id: "t-001",
+        ecosystem: "ccloud",
+        dates_pending: 5,
+        dates_calculated: 10,
+        last_calculated_date: null,
+      },
+    });
+    mockUseReadiness.mockReturnValue({
+      appStatus: "ready" as AppStatus,
+      readiness: makeReadiness({ status: "ready", mode: "both", tenants: [acmeTenant] }),
+    });
+
+    render(<PipelineStatusBanner />);
+
+    // Banner must show the "calculating" stage description with the current date.
+    expect(
+      screen.getByText(/Calculating chargebacks for 2026-03-14/i),
     ).toBeInTheDocument();
   });
 });
