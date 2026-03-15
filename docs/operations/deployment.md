@@ -72,3 +72,7 @@ storage:
 ```
 
 Each tenant needs a separate database/schema.
+
+## Upgrading
+
+See [Upgrading](upgrading.md) for backup procedures, upgrade steps, database migration behavior, and rollback instructions.
