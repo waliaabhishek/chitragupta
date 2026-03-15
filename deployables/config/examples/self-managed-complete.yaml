@@ -83,8 +83,35 @@ tenants:
         password: "${PROM_PASSWORD}"
 
       # --- Orchestration ---
-      chargeback_granularity: daily       # Optional — "hourly"/"daily"/"monthly"
-      metrics_step_seconds: 3600          # Optional — Prometheus step in seconds
+      chargeback_granularity: daily       # Optional — "hourly"/"daily"/"monthly"; default "daily"
+      min_refresh_gap_seconds: 1800       # Optional — minimum seconds between runs; >=0; 0=no minimum
+      metrics_step_seconds: 3600          # Optional — Prometheus step in seconds; >0; lower=finer data + higher load
+
+      # Optional — allocator-specific numeric/string/bool params passed to all allocators.
+      # Keys and semantics are allocator-defined. Useful for tuning without writing code.
+      # Example: set a min byte threshold so tiny producers don't distort usage-ratio allocation.
+      # allocator_params:
+      #   min_bytes_threshold: 1073741824   # 1 GiB — principals below this excluded from usage ratio
+      #   fallback_to_even_split: true      # boolean param; interpretation is allocator-specific
+      allocator_params: {}
+
+      # Optional — override the allocator for specific product types.
+      # Maps product_type (as it appears in billing lines) → Python dotted path to a CostAllocator callable.
+      # Valid product types for self_managed_kafka: SELF_KAFKA_COMPUTE, SELF_KAFKA_STORAGE,
+      #   SELF_KAFKA_NETWORK_INGRESS, SELF_KAFKA_NETWORK_EGRESS
+      # The callable must satisfy the CostAllocator protocol (src/core/plugin/protocols.py).
+      # allocator_overrides:
+      #   SELF_KAFKA_COMPUTE: "my_org.allocators.WeightedTeamAllocator"
+      #   SELF_KAFKA_STORAGE: "my_org.allocators.WeightedTeamAllocator"
+      allocator_overrides: {}
+
+      # Optional — override the identity resolver for a service type.
+      # Maps service_type → Python dotted path to a resolver function.
+      # Valid service_type for self_managed_kafka: "kafka"
+      # Use this to integrate with LDAP, internal directories, or custom principal mapping.
+      # identity_resolution_overrides:
+      #   kafka: "my_org.resolvers.ldap_identity_resolver"
+      identity_resolution_overrides: {}
 
       # --- CSV emitter ---
       emitters:

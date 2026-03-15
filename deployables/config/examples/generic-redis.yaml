@@ -71,3 +71,29 @@ tenants:
             type: fixed
             count: 1                        # Single Redis instance (or sentinel primary)
           allocation_strategy: even_split
+
+      # --- Orchestration ---
+      chargeback_granularity: daily       # Optional — "hourly"/"daily"/"monthly"; default "daily"
+      min_refresh_gap_seconds: 1800       # Optional — minimum seconds between runs; >=0; 0=no minimum
+      metrics_step_seconds: 3600          # Optional — Prometheus step in seconds; >0; lower=finer data + higher load
+
+      # Optional — allocator-specific numeric/string/bool params passed to all allocators.
+      # Keys and semantics are allocator-defined.
+      # allocator_params:
+      #   memory_smoothing_window: 24       # hours — smooth memory usage over N hours before allocating
+      #   exclude_zero_usage: true          # boolean param; interpretation is allocator-specific
+      allocator_params: {}
+
+      # Optional — override the allocator for specific product types.
+      # Maps product_type (cost_types[].name) → Python dotted path to a CostAllocator callable.
+      # Valid product types for this config: REDIS_MEMORY, REDIS_COMPUTE
+      # allocator_overrides:
+      #   REDIS_MEMORY: "my_org.allocators.KeyspaceWeightedAllocator"
+      allocator_overrides: {}
+
+      # Optional — override the identity resolver for a service type.
+      # Maps service_type → Python dotted path to a resolver function.
+      # Valid service_type for generic_metrics_only: "generic"
+      # identity_resolution_overrides:
+      #   generic: "my_org.resolvers.team_directory_resolver"
+      identity_resolution_overrides: {}
