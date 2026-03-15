@@ -34,7 +34,6 @@ function TagsCellRenderer(props: { value: string[] }): JSX.Element {
   return (
     <span>
       {visible.map((tag, i) => (
-        // eslint-disable-next-line react/no-array-index-key
         <Tag key={i} style={{ margin: "0 2px" }}>
           {tag}
         </Tag>
@@ -46,8 +45,6 @@ function TagsCellRenderer(props: { value: string[] }): JSX.Element {
 
 const columnDefs: ColDef[] = [
   {
-    headerCheckboxSelection: true,
-    checkboxSelection: true,
     width: 50,
     pinned: "left",
   },
@@ -167,15 +164,34 @@ export const ChargebackGrid = forwardRef<AgGridReact, ChargebackGridProps>(
           const resp = await fetch(url.toString());
           if (resp.ok) {
             const data = (await resp.json()) as { total: number };
-            if (selectedCount > 0 && data.total > selectedCount) {
+            if (data.total > selectedCount) {
               onSelectAll(data.total);
             }
           }
-        } catch {
-          // ignore
+        } catch (err) {
+          // Total count fetch is best-effort; log but don't disrupt selection.
+          console.error("Failed to fetch total count for select-all:", err);
         }
       },
       [tenantName, filters, onSelectAll],
+    );
+
+    const handleCombinedSelection = useCallback(
+      (e: SelectionChangedEvent) => {
+        void handleHeaderCheckboxChange(e);
+        handleSelectionChanged(e);
+      },
+      [handleHeaderCheckboxChange, handleSelectionChanged],
+    );
+
+    const handleRowClicked = useCallback(
+      (e: { data: unknown }) => {
+        const row = e.data as ChargebackResponse | undefined;
+        if (row?.dimension_id != null) {
+          onRowClick(row.dimension_id);
+        }
+      },
+      [onRowClick],
     );
 
     return (
@@ -187,18 +203,9 @@ export const ChargebackGrid = forwardRef<AgGridReact, ChargebackGridProps>(
           datasource={datasource}
           cacheBlockSize={100}
           maxBlocksInCache={10}
-          rowSelection="multiple"
-          suppressRowClickSelection
-          onSelectionChanged={(e) => {
-            void handleHeaderCheckboxChange(e);
-            handleSelectionChanged(e);
-          }}
-          onRowClicked={(e) => {
-            const row = e.data as ChargebackResponse | undefined;
-            if (row?.dimension_id != null) {
-              onRowClick(row.dimension_id);
-            }
-          }}
+          rowSelection={{ mode: "multiRow" }}
+          onSelectionChanged={handleCombinedSelection}
+          onRowClicked={handleRowClicked}
         />
       </div>
     );

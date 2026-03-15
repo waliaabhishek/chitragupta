@@ -15,6 +15,8 @@ type AgGridProps = {
   cacheBlockSize?: number;
   maxBlocksInCache?: number;
   style?: object;
+  rowSelection?: { mode: string }; // Added: v35 uses object-based rowSelection
+  suppressRowClickSelection?: boolean;
 };
 
 // Hoisted spy — must be declared before vi.mock so the factory can close over it.
@@ -332,6 +334,36 @@ describe("ChargebackGrid", () => {
     );
 
     expect(mockPurgeInfiniteCache).toHaveBeenCalledTimes(1);
+  });
+
+  it("passes v35 object-based rowSelection prop", () => {
+    let capturedProps: AgGridProps | undefined;
+
+    renderOverride = (props: AgGridProps) => {
+      capturedProps = props;
+      return <div data-testid="ag-grid" />;
+    };
+
+    render(
+      <ChargebackGrid tenantName="acme" filters={{}} onRowClick={vi.fn()} />,
+    );
+
+    expect(capturedProps?.rowSelection).toEqual({ mode: "multiRow" });
+  });
+
+  it("does not pass deprecated suppressRowClickSelection prop", () => {
+    let capturedProps: AgGridProps | undefined;
+
+    renderOverride = (props: AgGridProps) => {
+      capturedProps = props;
+      return <div data-testid="ag-grid" />;
+    };
+
+    render(
+      <ChargebackGrid tenantName="acme" filters={{}} onRowClick={vi.fn()} />,
+    );
+
+    expect(capturedProps?.suppressRowClickSelection).toBeUndefined();
   });
 
   it("filters null dimension_ids from selection", async () => {
