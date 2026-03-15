@@ -16,11 +16,9 @@ from urllib.parse import urljoin
 import httpx
 
 from core.metrics.protocol import MetricsQueryError
-
-logger = logging.getLogger(__name__)
 from core.models.metrics import MetricQuery, MetricRow  # noqa: TC001 — used at runtime in _parse_response
 
-LOGGER = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)
 
 _TRANSIENT_STATUS = frozenset({408, 425, 429, 500, 502, 503, 504})
 
@@ -142,7 +140,7 @@ class PrometheusMetricsSource:
 
         if errors:
             for extra in errors[1:]:
-                LOGGER.error("Additional query error: %s", extra)
+                logger.error("Additional query error: %s", extra)
             raise errors[0]
 
         return results
@@ -199,7 +197,7 @@ class PrometheusMetricsSource:
 
         step_seconds = int(step.total_seconds())
         if step_seconds <= 0:
-            LOGGER.warning("Step %s is non-positive; defaulting to %ss", step, self._config.step_seconds)
+            logger.warning("Step %s is non-positive; defaulting to %ss", step, self._config.step_seconds)
             step_seconds = self._config.step_seconds
         step_str = str(step_seconds)
 
@@ -252,7 +250,7 @@ class PrometheusMetricsSource:
                             )
                         return resp.text
 
-                    LOGGER.warning(
+                    logger.warning(
                         "Prometheus returned %s, attempt %s/%s",
                         resp.status_code,
                         attempt + 1,
@@ -260,7 +258,7 @@ class PrometheusMetricsSource:
                     )
                 except httpx.RequestError as exc:
                     last_exc = exc
-                    LOGGER.warning(
+                    logger.warning(
                         "Request error: %s, attempt %s/%s",
                         exc,
                         attempt + 1,
@@ -306,7 +304,7 @@ class PrometheusMetricsSource:
                     ts = datetime.fromtimestamp(float(ts_raw), tz=UTC)
                     val = float(val_raw)
                 except (ValueError, TypeError) as exc:
-                    LOGGER.warning(
+                    logger.warning(
                         "Skipping malformed datapoint for %s: %s",
                         query.key,
                         exc,
@@ -359,7 +357,7 @@ def _inject_resource_filter(
         label = resource_label or ""
         return expression.replace("{}", "{" + f'{label}="{resource_id_filter}"' + "}", 1)
 
-    LOGGER.warning(
+    logger.warning(
         "Expression %r has no {} placeholder for resource filter %r",
         expression,
         resource_id_filter,

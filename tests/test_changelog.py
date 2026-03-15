@@ -81,12 +81,8 @@ def test_git_cliff_integration() -> None:
     assert result.returncode == 0, f"git-cliff failed: {result.stderr}"
     output = result.stdout
     assert output.strip(), "git-cliff produced no output"
-    assert any(
-        header in output for header in ("Fixed", "Changed", "Documentation", "Added", "Features")
-    ), f"No expected section headers found in output:\n{output}"
-    assert "https://github.com/waliaabhishek/chitragupt/commit/" in output, (
-        "Commit links are not full GitHub URLs"
+    assert any(header in output for header in ("Fixed", "Changed", "Documentation", "Added", "Features")), (
+        f"No expected section headers found in output:\n{output}"
     )
-    assert "Update CHANGELOG" not in output, (
-        "Meta CHANGELOG update commit appeared in output — skip parser not working"
-    )
+    assert "https://github.com/waliaabhishek/chitragupt/commit/" in output, "Commit links are not full GitHub URLs"
+    assert "Update CHANGELOG" not in output, "Meta CHANGELOG update commit appeared in output — skip parser not working"

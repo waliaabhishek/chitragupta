@@ -7,17 +7,15 @@ from decimal import Decimal, InvalidOperation
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from core.models import BillingLineItem
     from core.storage.interface import UnitOfWork
     from plugins.confluent_cloud.config import CCloudPluginConfig
     from plugins.confluent_cloud.connections import CCloudConnection
 
-from core.models import BillingLineItem
 from core.plugin.protocols import CostInput
 from plugins.confluent_cloud.models.billing import CCloudBillingLineItem
 
 logger = logging.getLogger(__name__)
-
-LOGGER = logging.getLogger(__name__)
 BILLING_API_PATH = "/billing/v1/costs"
 BILLING_PAGE_SIZE = 2000
 # Billing is inherently CCloud-specific; constant avoids parameter threading
@@ -53,7 +51,7 @@ def _safe_decimal(value: Any) -> Decimal:
     try:
         return Decimal(str(value))
     except InvalidOperation:
-        LOGGER.warning("Could not convert billing value to Decimal: %r — defaulting to 0", value)
+        logger.warning("Could not convert billing value to Decimal: %r — defaulting to 0", value)
         return Decimal("0")
 
 
@@ -168,5 +166,5 @@ class CCloudBillingCostInput(CostInput):
                 yield _map_billing_item(raw_item, ECOSYSTEM, tenant_id, row_index=idx)
             except (KeyError, ValueError) as exc:
                 # Preserve malformed row instead of dropping
-                LOGGER.debug("Preserving malformed billing item %d as sentinel row: %s", idx, exc)
+                logger.debug("Preserving malformed billing item %d as sentinel row: %s", idx, exc)
                 yield _map_malformed_item(raw_item, ECOSYSTEM, tenant_id, idx, exc)

@@ -19,7 +19,6 @@ from core.models import (
 from core.models.billing import CoreBillingLineItem
 from core.models.chargeback import AllocationDetail
 from plugins.confluent_cloud.allocators.flink_allocators import flink_cfu_allocator
-from plugins.confluent_cloud.constants import NO_FLINK_STMT_NAME_TO_OWNER_MAP
 
 
 @pytest.fixture

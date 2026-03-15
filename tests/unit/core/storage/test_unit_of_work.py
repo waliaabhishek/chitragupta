@@ -205,7 +205,9 @@ class TestSQLModelBackend:
 
     def test_storage_backend_protocol_conformance_includes_read_only(self, tmp_path: object) -> None:
         """StorageBackend protocol must include create_read_only_unit_of_work."""
-        from core.storage.backends.sqlmodel.unit_of_work import ReadOnlySQLModelUnitOfWork  # noqa: F401 — ImportError = red
+        from core.storage.backends.sqlmodel.unit_of_work import (
+            ReadOnlySQLModelUnitOfWork,  # noqa: F401 — ImportError = red
+        )
         from core.storage.interface import StorageBackend
 
         db_path = tmp_path / "test.db"  # type: ignore[operator]
@@ -226,10 +228,9 @@ class TestReadOnlySQLModelUnitOfWork:
         backend = SQLModelBackend(conn, CoreStorageModule(), use_migrations=False)
         backend.create_tables()
 
-        with pytest.raises(RuntimeError, match="read-only"):
-            with backend.create_read_only_unit_of_work() as uow:
-                assert isinstance(uow, ReadOnlySQLModelUnitOfWork)
-                uow.commit()
+        with pytest.raises(RuntimeError, match="read-only"), backend.create_read_only_unit_of_work() as uow:
+            assert isinstance(uow, ReadOnlySQLModelUnitOfWork)
+            uow.commit()
 
         backend.dispose()
 

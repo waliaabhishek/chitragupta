@@ -599,7 +599,7 @@ class TestTask080ChainModelMigration:
         assert sum(r.amount for r in result.rows) == Decimal("10.00")
 
     def test_usage_ratio_tier1_metrics_key_absent_falls_back_to_even_split(self, pg_config, mock_metrics) -> None:
-        """Tier 1: metrics_data={} (key absent), non-empty merged_active → even split, chain_tier=1, NO_METRICS_LOCATED."""
+        """Tier 1: key absent → even split, chain_tier=1, NO_METRICS_LOCATED."""
         from decimal import Decimal
 
         from core.engine.allocation import AllocationContext
@@ -703,8 +703,6 @@ class TestTask080ChainModelMigration:
 
     def test_import_hygiene_no_imperative_allocators_in_handler(self) -> None:
         """allocate_evenly_with_fallback and _make_usage_ratio_allocator must not exist in handler module."""
-        import ast
-        import importlib.util
         import pathlib
 
         handler_path = pathlib.Path("src/plugins/generic_metrics_only/handler.py")

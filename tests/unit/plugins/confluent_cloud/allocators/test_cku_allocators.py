@@ -24,7 +24,6 @@ from core.models import (
 from core.models.billing import CoreBillingLineItem
 from core.models.chargeback import AllocationDetail
 
-
 # ---------------------------------------------------------------------------
 # Helpers / fixtures
 # ---------------------------------------------------------------------------

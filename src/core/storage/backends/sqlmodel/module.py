@@ -47,13 +47,13 @@ class CoreStorageModule:
         )
 
         core_tables = [
-            ResourceTable.__table__,
-            IdentityTable.__table__,
-            BillingTable.__table__,
-            ChargebackDimensionTable.__table__,
-            ChargebackFactTable.__table__,
-            PipelineStateTable.__table__,
-            PipelineRunTable.__table__,
-            CustomTagTable.__table__,
+            ResourceTable.__table__,  # type: ignore[attr-defined]  # SQLModel tables have __table__ at runtime via SQLAlchemy metaclass
+            IdentityTable.__table__,  # type: ignore[attr-defined]  # SQLModel tables have __table__ at runtime via SQLAlchemy metaclass
+            BillingTable.__table__,  # type: ignore[attr-defined]  # SQLModel tables have __table__ at runtime via SQLAlchemy metaclass
+            ChargebackDimensionTable.__table__,  # type: ignore[attr-defined]  # SQLModel tables have __table__ at runtime via SQLAlchemy metaclass
+            ChargebackFactTable.__table__,  # type: ignore[attr-defined]  # SQLModel tables have __table__ at runtime via SQLAlchemy metaclass
+            PipelineStateTable.__table__,  # type: ignore[attr-defined]  # SQLModel tables have __table__ at runtime via SQLAlchemy metaclass
+            PipelineRunTable.__table__,  # type: ignore[attr-defined]  # SQLModel tables have __table__ at runtime via SQLAlchemy metaclass
+            CustomTagTable.__table__,  # type: ignore[attr-defined]  # SQLModel tables have __table__ at runtime via SQLAlchemy metaclass
         ]
         SQLModel.metadata.create_all(engine, tables=core_tables)

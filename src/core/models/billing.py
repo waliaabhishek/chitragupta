@@ -32,6 +32,12 @@ class BillingLineItem(Protocol):
     def product_type(self) -> str: ...
 
     @property
+    def quantity(self) -> Decimal: ...
+
+    @property
+    def unit_price(self) -> Decimal: ...
+
+    @property
     def total_cost(self) -> Decimal: ...
 
     @property
@@ -39,6 +45,9 @@ class BillingLineItem(Protocol):
 
     @property
     def granularity(self) -> str: ...
+
+    @property
+    def metadata(self) -> dict[str, Any]: ...
 
 
 @dataclass(frozen=True)

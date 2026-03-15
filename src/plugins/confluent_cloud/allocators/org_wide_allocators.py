@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
 
-from core.engine.allocation_models import ChainModel
 from plugins.confluent_cloud.allocation_models import ORG_WIDE_MODEL
+
+if TYPE_CHECKING:
+    from core.engine.allocation_models import ChainModel
 
 logger = logging.getLogger(__name__)
 

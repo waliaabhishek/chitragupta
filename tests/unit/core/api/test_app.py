@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fastapi import FastAPI
 
+from core.api import get_version
 from core.api.app import create_app
 from core.config.models import ApiConfig, AppSettings, LoggingConfig, StorageConfig, TenantConfig
 
@@ -35,7 +36,7 @@ class TestCreateApp:
         settings = _make_settings()
         app = create_app(settings)
         assert app.title == "Chitragupt API"
-        assert app.version == "1.0.0"
+        assert app.version == get_version()
 
     def test_app_has_all_routers_registered(self) -> None:
         settings = _make_settings()

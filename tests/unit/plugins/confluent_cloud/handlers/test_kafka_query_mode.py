@@ -12,7 +12,6 @@ from decimal import Decimal
 from unittest.mock import MagicMock
 
 import httpx
-import pytest
 
 from core.engine.allocation import AllocationContext, AllocationResult
 from core.metrics.prometheus import PrometheusConfig, PrometheusMetricsSource
@@ -24,7 +23,6 @@ from core.models import (
 )
 from core.models.billing import CoreBillingLineItem
 from core.models.metrics import MetricQuery
-
 
 # ---------------------------------------------------------------------------
 # Helpers

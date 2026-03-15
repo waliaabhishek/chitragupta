@@ -2621,9 +2621,8 @@ class TestOrchestratorFallbackAllocator:
         source = pathlib.Path("src/core/engine/orchestrator.py").read_text()
         tree = ast.parse(source)
         for node in ast.walk(tree):
-            if isinstance(node, ast.ImportFrom):
-                if node.module and node.module.startswith("plugins"):
-                    pytest.fail(f"orchestrator.py has forbidden import: from {node.module}")
+            if isinstance(node, ast.ImportFrom) and node.module and node.module.startswith("plugins"):
+                pytest.fail(f"orchestrator.py has forbidden import: from {node.module}")
 
 
 # ---------- Shutdown propagation tests (task-083) ----------

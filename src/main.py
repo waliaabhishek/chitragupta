@@ -3,10 +3,12 @@ from __future__ import annotations
 import argparse
 import logging
 import signal
+import sys
 import threading
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from core.api import get_version
 from core.config.loader import load_config
 from core.emitters.registry import register as register_emitter
 from core.plugin.loader import discover_plugins
@@ -28,14 +30,32 @@ _DEFAULT_PLUGINS_PATH = Path(__file__).parent / "plugins"
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Chitragupt")
     parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {get_version()}",
+    )
+    parser.add_argument(
         "--config-file",
-        required=True,
+        required=False,
+        default=None,
         help="Path to YAML configuration file",
     )
     parser.add_argument(
         "--env-file",
         default=None,
         help="Path to .env file (optional)",
+    )
+    parser.add_argument(
+        "--validate",
+        action="store_true",
+        default=False,
+        help="Validate config file and exit",
+    )
+    parser.add_argument(
+        "--show-config",
+        action="store_true",
+        default=False,
+        help="Print resolved config (secrets masked) and exit",
     )
     parser.add_argument(
         "--run-once",
@@ -160,7 +180,28 @@ def run_worker(
 
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
-    settings = load_config(args.config_file, env_file=args.env_file)
+    # --version is handled by argparse (prints and exits before reaching here)
+
+    if args.config_file is None:
+        print("error: --config-file is required", file=sys.stderr)
+        sys.exit(2)
+
+    try:
+        settings = load_config(args.config_file, env_file=args.env_file)
+    except Exception as exc:
+        if args.validate:
+            print(f"Config validation failed:\n{exc}", file=sys.stderr)
+            sys.exit(1)
+        raise
+
+    if args.validate:
+        print("Config is valid.")
+        sys.exit(0)
+
+    if args.show_config:
+        print(settings.model_dump_json(indent=2))
+        sys.exit(0)
+
     setup_logging(settings)
 
     mode = args.mode

@@ -60,7 +60,7 @@ def get_or_create_engine(connection_string: str, **engine_kwargs: object) -> Eng
     Uses double-checked locking to ensure one engine per connection string.
     SQLite engines get WAL mode and performance pragmas.
     """
-    return _create_cached_engine(connection_string, connection_string, **engine_kwargs)
+    return _create_cached_engine(connection_string, connection_string, **engine_kwargs)  # type: ignore[arg-type]  # engine kwargs forwarded from caller; extra_pragmas always passed explicitly
 
 
 def get_or_create_read_only_engine(connection_string: str, **engine_kwargs: object) -> Engine:

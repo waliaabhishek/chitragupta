@@ -53,7 +53,8 @@ def make_model_from_config(ct: CostTypeConfig) -> ChainModel:
         )
     else:
         # usage_ratio — ct.allocation_label validated non-None by CostTypeConfig.validate_usage_ratio_fields
-        label = ct.allocation_label  # type: ignore[assignment]  # validated non-None
+        label = ct.allocation_label
+        assert label is not None  # validated by CostTypeConfig.validate_usage_ratio_fields
         metric_key = f"alloc_{ct.name}"
 
         def usage_source(ctx: AllocationContext) -> dict[str, float]:
@@ -131,7 +132,7 @@ class GenericMetricsOnlyHandler:
                         key=f"alloc_{ct.name}",
                         query_expression=ct.allocation_query,  # type: ignore[arg-type]  # validated non-None by CostTypeConfig.validate_usage_ratio_fields
                         label_keys=(ct.allocation_label,),  # type: ignore[arg-type]  # validated non-None by CostTypeConfig.validate_usage_ratio_fields
-                        resource_label=ct.allocation_label,  # type: ignore[arg-type]  # validated non-None by CostTypeConfig.validate_usage_ratio_fields
+                        resource_label=ct.allocation_label,
                     )
                 ]
 
@@ -159,6 +160,8 @@ class GenericMetricsOnlyHandler:
     def _gather_from_prometheus(self, tenant_id: str) -> Iterable[Identity]:
         cfg = self._config.identity_source
         query = self._discovery_query
+        if query is None:
+            return
         now = datetime.now(UTC)
         step = timedelta(seconds=self._config.metrics_step_seconds)
         results = self._metrics_source.query(queries=[query], start=now - timedelta(hours=1), end=now, step=step)

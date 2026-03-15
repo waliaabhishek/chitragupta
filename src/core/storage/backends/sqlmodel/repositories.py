@@ -112,7 +112,7 @@ class SQLModelResourceRepository:
         )
 
     def upsert(self, resource: Resource) -> Resource:
-        table_obj = resource_to_table(resource)
+        table_obj = resource_to_table(resource)  # type: ignore[arg-type]  # domain/table type bridge
         merged = self._session.merge(table_obj)
         result = resource_to_domain(merged)
         self._resource_cache.pop((result.ecosystem, result.tenant_id, result.resource_id), None)
@@ -224,7 +224,7 @@ class SQLModelResourceRepository:
 
         stmt = select(ResourceTable).where(*where).offset(offset).limit(limit)
         items = [resource_to_domain(r) for r in self._session.exec(stmt).all()]
-        return items, total
+        return items, total  # type: ignore[return-value]  # SQLModel returns table types, protocol expects domain types
 
     def mark_deleted(self, ecosystem: str, tenant_id: str, resource_id: str, deleted_at: datetime) -> None:
         self._resource_cache.pop((ecosystem, tenant_id, resource_id), None)
@@ -274,7 +274,7 @@ class SQLModelIdentityRepository:
         )
 
     def upsert(self, identity: Identity) -> Identity:
-        table_obj = identity_to_table(identity)
+        table_obj = identity_to_table(identity)  # type: ignore[arg-type]  # domain/table type bridge
         merged = self._session.merge(table_obj)
         result = identity_to_domain(merged)
         self._identity_cache.pop((result.ecosystem, result.tenant_id, result.identity_id), None)
@@ -373,7 +373,7 @@ class SQLModelIdentityRepository:
 
         stmt = select(IdentityTable).where(*where).offset(offset).limit(limit)
         items = [identity_to_domain(r) for r in self._session.exec(stmt).all()]
-        return items, total
+        return items, total  # type: ignore[return-value]  # SQLModel returns table types, protocol expects domain types
 
     def mark_deleted(self, ecosystem: str, tenant_id: str, identity_id: str, deleted_at: datetime) -> None:
         self._identity_cache.pop((ecosystem, tenant_id, identity_id), None)
@@ -496,7 +496,7 @@ class SQLModelBillingRepository:
 
         stmt = select(BillingTable).where(*where).offset(offset).limit(limit)
         items = [billing_to_domain(r) for r in self._session.exec(stmt).all()]
-        return items, total
+        return items, total  # type: ignore[return-value]  # SQLModel returns table types, protocol expects domain types
 
     def delete_before(self, ecosystem: str, tenant_id: str, before: datetime) -> int:
         stmt = delete(BillingTable).where(
@@ -707,7 +707,7 @@ class SQLModelChargebackRepository:
         total: int = self._session.exec(count_subq).one()
 
         stmt = (
-            select(
+            select(  # type: ignore[call-overload]  # SQLModel select() overload stubs don't cover dynamic column lists
                 *group_cols,
                 func.count().label("row_count"),
                 usage_expr,

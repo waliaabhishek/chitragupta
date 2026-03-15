@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 from datetime import UTC, date, datetime
 from unittest.mock import MagicMock, patch
 
@@ -176,10 +177,8 @@ class TestUoWDependencies:
         # Context manager must be entered — session is active
         assert uow._session is not None  # type: ignore[attr-defined]
 
-        try:
+        with contextlib.suppress(StopIteration):
             next(gen)
-        except StopIteration:
-            pass
 
         backend.dispose()
 
@@ -198,10 +197,8 @@ class TestUoWDependencies:
         uow = next(gen)
         assert type(uow) is SQLModelUnitOfWork
 
-        try:
+        with contextlib.suppress(StopIteration):
             next(gen)
-        except StopIteration:
-            pass
 
         backend.dispose()
 
@@ -224,10 +221,8 @@ class TestUoWDependencies:
         assert isinstance(uow, ReadOnlySQLModelUnitOfWork)
         assert uow._session is not None  # type: ignore[attr-defined]
 
-        try:
+        with contextlib.suppress(StopIteration):
             next(gen)
-        except StopIteration:
-            pass
 
         # __exit__ must have been called — session is None after cleanup
         assert uow._session is None  # type: ignore[attr-defined]
@@ -249,10 +244,8 @@ class TestUoWDependencies:
         assert type(uow) is SQLModelUnitOfWork
         assert uow._session is not None  # type: ignore[attr-defined]
 
-        try:
+        with contextlib.suppress(StopIteration):
             next(gen)
-        except StopIteration:
-            pass
 
         assert uow._session is None  # type: ignore[attr-defined]
         backend.dispose()

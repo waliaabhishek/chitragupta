@@ -3,8 +3,6 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from decimal import Decimal
 
-import pytest
-
 from core.engine.orchestrator import _aggregate_rows
 from core.models.chargeback import AllocationDetail, ChargebackRow, CostType
 

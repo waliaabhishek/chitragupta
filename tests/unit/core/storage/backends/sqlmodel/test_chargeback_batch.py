@@ -10,7 +10,6 @@ from sqlmodel import Session, SQLModel, create_engine
 from core.models.chargeback import ChargebackRow, CostType
 from core.storage.backends.sqlmodel.repositories import SQLModelChargebackRepository
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------

@@ -44,7 +44,7 @@ def _insert_row(
 ) -> None:
     """Insert a dimension + fact pair directly into the session."""
     # Reuse existing dimension if it already exists for this combination
-    from sqlmodel import select, col
+    from sqlmodel import col, select
 
     existing_dim = session.exec(
         select(ChargebackDimensionTable).where(

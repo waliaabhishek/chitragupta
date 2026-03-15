@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 from fastapi.testclient import TestClient
 
 from core.api.routes.readiness import _check_tenant_readiness
-from core.api.schemas import TenantReadiness
 from core.config.models import AppSettings, StorageConfig, TenantConfig
+
+if TYPE_CHECKING:
+    from core.api.schemas import TenantReadiness
 
 
 def _make_app_settings_with_tenant() -> AppSettings:

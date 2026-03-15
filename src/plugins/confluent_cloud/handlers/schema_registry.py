@@ -25,6 +25,8 @@ if TYPE_CHECKING:
     from core.models import IdentityResolution, MetricQuery, MetricRow, Resource
     from core.plugin.protocols import CostAllocator, ResolveContext
     from core.storage.interface import UnitOfWork
+    from plugins.confluent_cloud.config import CCloudPluginConfig  # noqa: F401
+    from plugins.confluent_cloud.connections import CCloudConnection  # noqa: F401
 
 logger = logging.getLogger(__name__)
 

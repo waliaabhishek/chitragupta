@@ -2003,9 +2003,11 @@ class TestCleanupOrphanedRunsForAllTenants:
         mock_storage = MagicMock()
         mock_storage.create_tables.side_effect = RuntimeError("db unavailable")
 
-        with patch("core.storage.registry.create_storage_backend", return_value=mock_storage):
-            with pytest.raises(RuntimeError, match="db unavailable"):
-                cleanup_orphaned_runs_for_all_tenants(settings, swallow_errors=False)
+        with (
+            patch("core.storage.registry.create_storage_backend", return_value=mock_storage),
+            pytest.raises(RuntimeError, match="db unavailable"),
+        ):
+            cleanup_orphaned_runs_for_all_tenants(settings, swallow_errors=False)
 
     def test_api_only_startup_cleanup_calls_cleanup_orphaned_runs(self) -> None:
         """Test 2: cleanup_orphaned_runs_for_all_tenants calls PipelineRunTracker.cleanup_orphaned_runs
@@ -2015,9 +2017,11 @@ class TestCleanupOrphanedRunsForAllTenants:
         settings = _make_settings(tenants={"t": _make_tenant(tenant_id="tid")})
         mock_storage = MagicMock()
 
-        with patch("core.storage.registry.create_storage_backend", return_value=mock_storage):
-            with patch.object(PipelineRunTracker, "cleanup_orphaned_runs") as mock_cleanup:
-                cleanup_orphaned_runs_for_all_tenants(settings, swallow_errors=True)
+        with (
+            patch("core.storage.registry.create_storage_backend", return_value=mock_storage),
+            patch.object(PipelineRunTracker, "cleanup_orphaned_runs") as mock_cleanup,
+        ):
+            cleanup_orphaned_runs_for_all_tenants(settings, swallow_errors=True)
 
         mock_cleanup.assert_called_once_with("t")
 

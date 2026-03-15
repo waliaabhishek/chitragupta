@@ -7,7 +7,6 @@ The critical fix from reference code: filter by billing window, not current stat
 from __future__ import annotations
 
 import logging
-from collections.abc import Collection
 from datetime import datetime
 from typing import TYPE_CHECKING
 
@@ -58,8 +57,9 @@ def resolve_kafka_sr_identities(
     tenant_period = IdentitySet()  # Orchestrator fills this
 
     # 1. Get all identities in billing window (single query, or use cache)
+    all_identities: IdentitySet | list[Identity]
     if cached_identities is not None:
-        all_identities: Collection[Identity] = cached_identities
+        all_identities = cached_identities
     else:
         all_identities, _ = uow.identities.find_by_period(
             ecosystem=ecosystem,

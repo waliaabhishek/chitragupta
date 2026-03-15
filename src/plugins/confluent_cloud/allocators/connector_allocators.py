@@ -17,12 +17,12 @@ from __future__ import annotations
 
 import logging
 
-logger = logging.getLogger(__name__)
-
 from plugins.confluent_cloud.allocation_models import (
     CONNECTOR_CAPACITY_MODEL,
     CONNECTOR_TASKS_MODEL,
 )
+
+logger = logging.getLogger(__name__)
 
 connect_capacity_allocator = CONNECTOR_CAPACITY_MODEL
 connect_tasks_allocator = CONNECTOR_TASKS_MODEL

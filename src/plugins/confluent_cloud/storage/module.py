@@ -43,8 +43,8 @@ class CCloudStorageModule:
         from plugins.confluent_cloud.storage.tables import CCloudBillingTable
 
         ccloud_tables = [
-            ResourceTable.__table__,
-            IdentityTable.__table__,
-            CCloudBillingTable.__table__,
+            ResourceTable.__table__,  # type: ignore[attr-defined]  # SQLModel tables have __table__ at runtime via SQLAlchemy metaclass
+            IdentityTable.__table__,  # type: ignore[attr-defined]  # SQLModel tables have __table__ at runtime via SQLAlchemy metaclass
+            CCloudBillingTable.__table__,  # type: ignore[attr-defined]  # SQLModel tables have __table__ at runtime via SQLAlchemy metaclass
         ]
         SQLModel.metadata.create_all(engine, tables=ccloud_tables)

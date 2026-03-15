@@ -28,6 +28,7 @@ dev = [
     "types-pyyaml>=6.0",
     "respx>=0.21.0",
     "types-cachetools>=5.0",
+    "pre-commit>=4.0",
 ]
 docs = [
     "mkdocs-material>=9.5",
@@ -61,3 +62,13 @@ warn_unused_configs = true
 # Suppress import errors rather than scattering type: ignore comments.
 module = "kafka"
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# python-dotenv has no type stubs.
+module = "dotenv"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# Alembic migrations are auto-generated; not worth strict-typing.
+module = "core.storage.migrations.versions.*"
+ignore_errors = true

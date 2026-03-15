@@ -4,11 +4,14 @@ import math
 from collections.abc import Generator
 from datetime import UTC, datetime
 from decimal import Decimal
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
 import pytest
-from sqlalchemy import Engine
 from sqlmodel import Session, SQLModel, create_engine
+
+if TYPE_CHECKING:
+    from sqlalchemy import Engine
 
 # _BULK_CHUNK_SIZE does not exist yet — importing it will raise ImportError (red state)
 from core.api.routes.tags import _BULK_CHUNK_SIZE, _run_bulk_tag

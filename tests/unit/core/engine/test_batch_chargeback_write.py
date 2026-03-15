@@ -1,21 +1,20 @@
 from __future__ import annotations
 
-from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
 from datetime import date as date_type
 from decimal import Decimal
-from typing import Any
-from unittest.mock import MagicMock, call, patch
-
-import pytest
+from typing import TYPE_CHECKING, Any
+from unittest.mock import MagicMock
 
 from core.engine.allocation import AllocationContext, AllocationResult, AllocatorRegistry
 from core.engine.orchestrator import CalculatePhase
 from core.models.billing import BillingLineItem, CoreBillingLineItem
 from core.models.chargeback import ChargebackRow, CostType
 from core.models.identity import CoreIdentity, Identity, IdentityResolution, IdentitySet
-from core.models.pipeline import PipelineState
-from core.models.resource import CoreResource, Resource
+
+if TYPE_CHECKING:
+    from core.models.pipeline import PipelineState
+    from core.models.resource import Resource
 
 # ---------------------------------------------------------------------------
 # Constants

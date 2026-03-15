@@ -186,10 +186,11 @@ class TestBuildSharedContextPrometheusSource:
             ]
         }
 
-        with patch("plugins.self_managed_kafka.plugin.create_metrics_source", return_value=mock_ms):
-            # Bypass principal validation by patching _validate_principal_label
-            with patch.object(SelfManagedKafkaPlugin, "_validate_principal_label"):
-                plugin.initialize(settings)
+        with (
+            patch("plugins.self_managed_kafka.plugin.create_metrics_source", return_value=mock_ms),
+            patch.object(SelfManagedKafkaPlugin, "_validate_principal_label"),
+        ):
+            plugin.initialize(settings)
 
         mock_ms.query.reset_mock()
         mock_ms.query.return_value = {
@@ -215,9 +216,11 @@ class TestBuildSharedContextPrometheusSource:
         mock_ms = MagicMock()
         mock_ms.query.return_value = {"combined_discovery": []}
 
-        with patch("plugins.self_managed_kafka.plugin.create_metrics_source", return_value=mock_ms):
-            with patch.object(SelfManagedKafkaPlugin, "_validate_principal_label"):
-                plugin.initialize(settings)
+        with (
+            patch("plugins.self_managed_kafka.plugin.create_metrics_source", return_value=mock_ms),
+            patch.object(SelfManagedKafkaPlugin, "_validate_principal_label"),
+        ):
+            plugin.initialize(settings)
 
         mock_ms.query.reset_mock()
         mock_ms.query.return_value = {"combined_discovery": []}
@@ -243,9 +246,11 @@ class TestBuildSharedContextNonPrometheusSource:
 
         mock_ms = MagicMock()
 
-        with patch("plugins.self_managed_kafka.plugin.create_metrics_source", return_value=mock_ms):
-            with patch("plugins.self_managed_kafka.gathering.admin_api.create_admin_client", return_value=MagicMock()):
-                plugin.initialize(settings)
+        with (
+            patch("plugins.self_managed_kafka.plugin.create_metrics_source", return_value=mock_ms),
+            patch("plugins.self_managed_kafka.gathering.admin_api.create_admin_client", return_value=MagicMock()),
+        ):
+            plugin.initialize(settings)
 
         mock_ms.query.reset_mock()
 

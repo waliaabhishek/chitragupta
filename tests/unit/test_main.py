@@ -10,9 +10,10 @@ from main import parse_args
 
 
 class TestParseArgs:
-    def test_config_file_required(self) -> None:
-        with pytest.raises(SystemExit):
-            parse_args([])
+    def test_config_file_optional_in_parser(self) -> None:
+        # --config-file is required=False; presence is validated manually in main()
+        args = parse_args([])
+        assert args.config_file is None
 
     def test_config_file(self) -> None:
         args = parse_args(["--config-file", "config.yaml"])
@@ -443,12 +444,11 @@ class TestGracefulShutdownSignals:
         mock_runner.run_once.side_effect = run_once_raises
 
         keyboard_interrupt_propagated = False
-        with patch("main.signal"):
-            with caplog.at_level(logging.INFO, logger="main"):
-                try:
-                    run_worker(settings, run_once=True, runner=mock_runner)
-                except KeyboardInterrupt:
-                    keyboard_interrupt_propagated = True
+        with patch("main.signal"), caplog.at_level(logging.INFO, logger="main"):
+            try:
+                run_worker(settings, run_once=True, runner=mock_runner)
+            except KeyboardInterrupt:
+                keyboard_interrupt_propagated = True
 
         assert interrupt_fired.is_set(), "mock_runner.run_once() was never called"
         assert not keyboard_interrupt_propagated, (
@@ -526,3 +526,137 @@ class TestGracefulShutdownSignals:
         assert _signal.SIGINT in registered_sigs, "SIGINT handler not installed"
         assert _signal.SIGTERM in registered_sigs, "SIGTERM handler not installed"
         assert mock_sig.signal.call_count >= 2, f"signal.signal called {mock_sig.signal.call_count} times; expected ≥2"
+
+
+# ---------------------------------------------------------------------------
+# TASK-106: CLI experience flags — --version, --validate, --show-config
+# ---------------------------------------------------------------------------
+
+
+class TestVersionFlag:
+    """TASK-106: --version flag exits 0 via argparse built-in."""
+
+    def test_parse_args_version_exits_zero(self) -> None:
+        with pytest.raises(SystemExit) as exc_info:
+            parse_args(["--version"])
+        assert exc_info.value.code == 0
+
+
+class TestNewCLIFlags:
+    """TASK-106: New flags parsed correctly."""
+
+    def test_parse_args_validate_flag(self) -> None:
+        args = parse_args(["--config-file", "x.yaml", "--validate"])
+        assert args.validate is True
+        assert args.show_config is False
+
+    def test_parse_args_show_config_flag(self) -> None:
+        args = parse_args(["--config-file", "x.yaml", "--show-config"])
+        assert args.show_config is True
+        assert args.validate is False
+
+    def test_parse_args_existing_flags_unchanged(self) -> None:
+        """--config-file, --env-file, --run-once, --mode still work after new flags added."""
+        args = parse_args(["--config-file", "c.yaml", "--env-file", ".env", "--run-once", "--mode", "api"])
+        assert args.config_file == "c.yaml"
+        assert args.env_file == ".env"
+        assert args.run_once is True
+        assert args.mode == "api"
+
+
+class TestMainNoConfigFile:
+    """TASK-106: main() without --config-file exits 2."""
+
+    def test_main_no_config_file_exits_2(self, capsys: pytest.CaptureFixture[str]) -> None:
+        from main import main
+
+        with pytest.raises(SystemExit) as exc_info:
+            main([])
+        assert exc_info.value.code == 2
+        captured = capsys.readouterr()
+        assert "--config-file" in captured.err
+
+
+class TestValidateFlag:
+    """TASK-106: --validate flag behaviour."""
+
+    @patch("main.load_config")
+    def test_validate_valid_config_prints_and_exits_0(
+        self,
+        mock_load: MagicMock,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from core.config.models import AppSettings
+        from main import main
+
+        mock_load.return_value = AppSettings()
+
+        with pytest.raises(SystemExit) as exc_info:
+            main(["--config-file", "x.yaml", "--validate"])
+        assert exc_info.value.code == 0
+        captured = capsys.readouterr()
+        assert "Config is valid." in captured.out
+
+    @patch("main.load_config")
+    def test_validate_invalid_config_prints_to_stderr_and_exits_1(
+        self,
+        mock_load: MagicMock,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from pydantic import BaseModel, ValidationError
+
+        from main import main
+
+        class _Dummy(BaseModel):
+            x: int
+
+        try:
+            _Dummy(x="not_an_int")  # type: ignore[arg-type]
+        except ValidationError as exc:
+            validation_error = exc
+
+        mock_load.side_effect = validation_error
+
+        with pytest.raises(SystemExit) as exc_info:
+            main(["--config-file", "x.yaml", "--validate"])
+        assert exc_info.value.code == 1
+        captured = capsys.readouterr()
+        assert "Config validation failed" in captured.err
+
+
+class TestShowConfigFlag:
+    """TASK-106: --show-config flag outputs JSON with masked secrets and exits 0."""
+
+    @patch("main.load_config")
+    def test_show_config_prints_json_and_exits_0(
+        self,
+        mock_load: MagicMock,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        import json
+
+        from core.config.models import AppSettings
+        from main import main
+
+        mock_load.return_value = AppSettings()
+
+        with pytest.raises(SystemExit) as exc_info:
+            main(["--config-file", "x.yaml", "--show-config"])
+        assert exc_info.value.code == 0
+        captured = capsys.readouterr()
+        # stdout must be valid JSON
+        data = json.loads(captured.out)
+        assert isinstance(data, dict)
+
+    def test_show_config_masks_secret_str_fields(self) -> None:
+        """Pydantic v2 serialises SecretStr as '**********' in model_dump_json."""
+        from pydantic import BaseModel, SecretStr
+
+        class _Model(BaseModel):
+            password: SecretStr
+            name: str
+
+        m = _Model(password="s3cr3t", name="alice")
+        output = m.model_dump_json()
+        assert "s3cr3t" not in output
+        assert "**********" in output

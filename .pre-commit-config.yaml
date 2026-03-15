@@ -1,0 +1,30 @@
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.2
+    hooks:
+      - id: ruff
+      - id: ruff-format
+
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.15.0
+    hooks:
+      - id: mypy
+        args: [--strict]
+        additional_dependencies:
+          - pydantic>=2.0
+          - sqlmodel>=0.0.22
+          - fastapi>=0.115.0
+          - httpx>=0.27.0
+          - types-pyyaml>=6.0
+          - types-cachetools>=5.0
+          - cachetools>=5.0
+          - uvicorn>=0.34.0
+          - alembic>=1.13
+        pass_filenames: false
+        entry: mypy src/
+
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets
+        args: [--baseline, .secrets.baseline]

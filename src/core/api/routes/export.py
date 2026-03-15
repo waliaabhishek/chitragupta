@@ -72,7 +72,7 @@ def _stream_csv(
     buf.truncate(0)
 
     # Build filter kwargs
-    filter_kwargs: dict[str, str | None] = dict(filters) if filters else {}
+    filter_kwargs: dict[str, str] = dict(filters) if filters else {}
 
     row_count = 0
     for row in uow.chargebacks.iter_by_filters(
@@ -80,7 +80,10 @@ def _stream_csv(
         tenant_id=tenant_id,
         start=start_dt,
         end=end_dt,
-        **filter_kwargs,
+        identity_id=filter_kwargs.get("identity_id"),
+        product_type=filter_kwargs.get("product_type"),
+        resource_id=filter_kwargs.get("resource_id"),
+        cost_type=filter_kwargs.get("cost_type"),
     ):
         values = []
         for col_name in columns:

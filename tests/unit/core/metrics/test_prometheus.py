@@ -542,7 +542,6 @@ class TestRequestSemaphore:
         peak = 0
         current = 0
         counter_lock = threading.Lock()
-        gate = threading.Barrier(3)  # 2 threads + 1 main thread to synchronize
         release_event = threading.Event()
 
         def slow_post(*args: Any, **kwargs: Any) -> MagicMock:

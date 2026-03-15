@@ -9,8 +9,6 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from decimal import Decimal
 
-import pytest
-
 from core.engine.allocation import AllocationContext, AllocationResult
 from core.models import (
     CoreIdentity,

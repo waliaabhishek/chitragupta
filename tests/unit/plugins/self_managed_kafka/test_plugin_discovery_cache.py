@@ -8,9 +8,7 @@ plugin._cached_discovery and clearing it after the first gather cycle.
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from unittest.mock import MagicMock, call, patch
-
-import pytest
+from unittest.mock import MagicMock, patch
 
 from core.metrics.protocol import MetricsQueryError
 
@@ -140,12 +138,14 @@ class TestCacheNotSetOnMetricsQueryError:
         plugin = SelfManagedKafkaPlugin()
         mock_ms = MagicMock()
 
-        with patch(
-            "plugins.self_managed_kafka.gathering.prometheus.run_combined_discovery",
-            side_effect=MetricsQueryError("Prometheus unreachable"),
+        with (
+            patch(
+                "plugins.self_managed_kafka.gathering.prometheus.run_combined_discovery",
+                side_effect=MetricsQueryError("Prometheus unreachable"),
+            ),
+            patch("plugins.self_managed_kafka.plugin.create_metrics_source", return_value=mock_ms),
         ):
-            with patch("plugins.self_managed_kafka.plugin.create_metrics_source", return_value=mock_ms):
-                plugin.initialize(_base_settings(identity_source="prometheus"))
+            plugin.initialize(_base_settings(identity_source="prometheus"))
 
         assert plugin._cached_discovery is None
 
@@ -156,12 +156,14 @@ class TestCacheNotSetOnMetricsQueryError:
         plugin = SelfManagedKafkaPlugin()
         mock_ms = MagicMock()
 
-        with patch(
-            "plugins.self_managed_kafka.gathering.prometheus.run_combined_discovery",
-            side_effect=MetricsQueryError("timeout"),
+        with (
+            patch(
+                "plugins.self_managed_kafka.gathering.prometheus.run_combined_discovery",
+                side_effect=MetricsQueryError("timeout"),
+            ),
+            patch("plugins.self_managed_kafka.plugin.create_metrics_source", return_value=mock_ms),
         ):
-            with patch("plugins.self_managed_kafka.plugin.create_metrics_source", return_value=mock_ms):
-                plugin.initialize(_base_settings(identity_source="prometheus"))
+            plugin.initialize(_base_settings(identity_source="prometheus"))
 
         assert plugin._prometheus_principals_available is False
         assert plugin._cached_discovery is None
@@ -180,12 +182,14 @@ class TestNoCacheForStaticIdentitySource:
         plugin = SelfManagedKafkaPlugin()
         mock_ms = MagicMock()
 
-        with patch("plugins.self_managed_kafka.plugin.create_metrics_source", return_value=mock_ms):
-            with patch(
+        with (
+            patch("plugins.self_managed_kafka.plugin.create_metrics_source", return_value=mock_ms),
+            patch(
                 "plugins.self_managed_kafka.gathering.admin_api.create_admin_client",
                 return_value=MagicMock(),
-            ):
-                plugin.initialize(_base_settings(identity_source="static", resource_source="admin_api"))
+            ),
+        ):
+            plugin.initialize(_base_settings(identity_source="static", resource_source="admin_api"))
 
         assert plugin._cached_discovery is None
 
@@ -197,12 +201,14 @@ class TestNoCacheForStaticIdentitySource:
         plugin = SelfManagedKafkaPlugin()
         mock_ms = MagicMock()
 
-        with patch("plugins.self_managed_kafka.plugin.create_metrics_source", return_value=mock_ms):
-            with patch(
+        with (
+            patch("plugins.self_managed_kafka.plugin.create_metrics_source", return_value=mock_ms),
+            patch(
                 "plugins.self_managed_kafka.gathering.admin_api.create_admin_client",
                 return_value=MagicMock(),
-            ):
-                plugin.initialize(_base_settings(identity_source="static", resource_source="admin_api"))
+            ),
+        ):
+            plugin.initialize(_base_settings(identity_source="static", resource_source="admin_api"))
 
         result = plugin.build_shared_context("tenant-1")
 

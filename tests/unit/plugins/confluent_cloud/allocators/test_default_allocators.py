@@ -9,8 +9,10 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime
 from decimal import Decimal
+from typing import TYPE_CHECKING
 
-import pytest
+if TYPE_CHECKING:
+    import pytest
 
 from core.engine.allocation import AllocationContext
 from core.models import CoreBillingLineItem, CostType, IdentityResolution, IdentitySet

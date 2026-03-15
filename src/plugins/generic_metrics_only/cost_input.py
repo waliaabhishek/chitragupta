@@ -19,8 +19,6 @@ if TYPE_CHECKING:
         GenericMetricsOnlyConfig,
     )
 logger = logging.getLogger(__name__)
-
-LOGGER = logging.getLogger(__name__)
 _BYTES_PER_GIB = Decimal("1073741824")
 
 
@@ -46,7 +44,7 @@ class GenericConstructedCostInput(CostInput):
                 self._cost_queries.append(
                     MetricQuery(
                         key=f"cost_{ct.name}",
-                        query_expression=q.query,  # type: ignore[union-attr]  # q.type != "fixed" checked above; storage_gib and network_gib both have .query
+                        query_expression=q.query,
                         label_keys=(),
                         resource_label="",
                     )
@@ -77,7 +75,7 @@ class GenericConstructedCostInput(CostInput):
                     step=timedelta(seconds=self._config.metrics_step_seconds),
                 )
             except MetricsQueryError as exc:
-                LOGGER.warning(
+                logger.warning(
                     "Prometheus query failed for tenant=%s date=%s -- skipping: %s",
                     tenant_id,
                     day_start.date(),
@@ -87,7 +85,7 @@ class GenericConstructedCostInput(CostInput):
 
             has_data = any(rows for rows in metrics.values())
             if not has_data:
-                LOGGER.warning(
+                logger.warning(
                     "No Prometheus data for tenant=%s date=%s -- skipping",
                     tenant_id,
                     day_start.date(),
@@ -111,7 +109,7 @@ class GenericConstructedCostInput(CostInput):
         q = ct.cost_quantity
 
         if q.type == "fixed":
-            quantity = Decimal(str(q.count)) * hours  # type: ignore[union-attr]  # q.type == "fixed" checked; CostQuantityFixed has .count
+            quantity = Decimal(str(q.count)) * hours
         elif q.type == "storage_gib":
             rows = metrics.get(f"cost_{ct.name}", [])
             avg_bytes = sum(r.value for r in rows) / len(rows) if rows else 0.0
