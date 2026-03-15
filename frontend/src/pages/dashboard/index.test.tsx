@@ -302,6 +302,7 @@ describe("CostDashboardPage", () => {
       setFilters: vi.fn(),
       resetFilters: vi.fn(),
       toQueryParams: vi.fn(() => ({})),
+      queryParams: {},
     });
 
     const { useAggregation } = await import("../../hooks/useAggregation");

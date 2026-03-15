@@ -12,12 +12,12 @@
  * Vitest's populateGlobal uses an overrideObject map for setters, so assigning
  * to global.AbortController after setup routes through the setter and wins.
  */
-import type { Environment } from "vitest";
-import { builtinEnvironments } from "vitest/environments";
+import type { Environment } from "vitest/runtime";
+import { builtinEnvironments } from "vitest/runtime";
 
 export default {
   name: "jsdom-native-abort",
-  transformMode: "web",
+  viteEnvironment: "client",
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   async setup(global: Record<string, any>, options: Record<string, unknown>) {
     // Capture native classes BEFORE jsdom's populateGlobal installs its getter

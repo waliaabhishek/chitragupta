@@ -247,7 +247,7 @@ describe("TenantContext — adaptive polling interval", () => {
     vi.useFakeTimers();
 
     try {
-      const { result } = renderHook(() => useTenant(), { wrapper });
+      const { result } = renderHook(() => useReadiness(), { wrapper });
 
       // Let the initial poll (useEffect → fetch → setState) complete.
       // advanceTimersByTimeAsync advances time AND awaits resulting async work.
