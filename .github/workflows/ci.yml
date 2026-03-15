@@ -14,6 +14,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # git-cliff integration test needs full history + tags
 
       - name: Set up Python
         uses: actions/setup-python@v5
