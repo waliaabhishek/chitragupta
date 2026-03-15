@@ -10,6 +10,24 @@ logging:
     core.metrics.prometheus: DEBUG
 ```
 
+## Log format
+
+The log format is configurable via `logging.format` using standard Python
+[LogRecord attributes](https://docs.python.org/3/library/logging.html#logrecord-attributes):
+
+```yaml
+logging:
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"  # default
+```
+
+For JSON-style structured logging (useful with log aggregators like Loki or ELK),
+use a format string like:
+
+```yaml
+logging:
+  format: '{"time":"%(asctime)s","logger":"%(name)s","level":"%(levelname)s","msg":"%(message)s"}'
+```
+
 ## Key log messages
 
 | Message | Meaning |
