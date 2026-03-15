@@ -73,7 +73,7 @@ def test_contributing_has_release_process() -> None:
 
 def test_git_cliff_integration() -> None:
     result = subprocess.run(
-        ["uv", "run", "--group", "docs", "git-cliff", "--config", "cliff.toml", "--unreleased"],
+        ["uv", "run", "--group", "docs", "git-cliff", "--config", "cliff.toml", "--latest"],
         capture_output=True,
         text=True,
         cwd=PROJECT_ROOT,
