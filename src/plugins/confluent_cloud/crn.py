@@ -4,8 +4,6 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-LOGGER = logging.getLogger(__name__)
-
 
 def parse_ccloud_crn(crn: str) -> dict[str, str]:
     """Parse a CCloud CRN into key-value pairs.

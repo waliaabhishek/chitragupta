@@ -14,16 +14,16 @@ from core.plugin.protocols import CostAllocator
 class TestLoadProtocolCallableValidPath:
     def test_loads_correct_callable(self) -> None:
         fn = load_protocol_callable(
-            "core.engine.helpers:allocate_to_resource",
+            "tests.unit.core.engine.conftest:stub_allocator",
             CostAllocator,
         )
-        from core.engine.helpers import allocate_to_resource
+        from tests.unit.core.engine.conftest import stub_allocator
 
-        assert fn is allocate_to_resource
+        assert fn is stub_allocator
 
     def test_callable_satisfying_protocol(self) -> None:
         fn = load_protocol_callable(
-            "core.engine.helpers:allocate_to_resource",
+            "tests.unit.core.engine.conftest:stub_allocator",
             CostAllocator,
         )
         assert callable(fn)

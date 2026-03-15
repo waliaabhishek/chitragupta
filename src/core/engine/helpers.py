@@ -169,36 +169,6 @@ def allocate_hybrid(
     return AllocationResult(rows=usage_result.rows + shared_result.rows)
 
 
-def allocate_to_owner(
-    ctx: AllocationContext,
-    owner_id: str,
-) -> AllocationResult:
-    """Allocate full cost to a specific owner identity."""
-    if not owner_id:
-        msg = "owner_id must not be empty"
-        raise ValueError(msg)
-    row = make_row(
-        ctx,
-        identity_id=owner_id,
-        cost_type=CostType.USAGE,
-        amount=ctx.split_amount,
-        allocation_method="direct_owner",
-    )
-    return AllocationResult(rows=[row])
-
-
-def allocate_to_resource(ctx: AllocationContext) -> AllocationResult:
-    """Allocate full cost to the resource itself."""
-    row = make_row(
-        ctx,
-        identity_id=ctx.billing_line.resource_id,
-        cost_type=CostType.SHARED,
-        amount=ctx.split_amount,
-        allocation_method="to_resource",
-    )
-    return AllocationResult(rows=[row])
-
-
 def compute_active_fraction(
     resource: Resource,
     billing_start: datetime,

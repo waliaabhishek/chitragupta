@@ -48,10 +48,10 @@ class TestImportAttrHappyPath:
     def test_returns_correct_object(self) -> None:
         from core.engine.loading import import_attr
 
-        obj = import_attr("core.engine.helpers:allocate_to_resource")
-        from core.engine.helpers import allocate_to_resource
+        obj = import_attr("core.engine.helpers:allocate_evenly")
+        from core.engine.helpers import allocate_evenly
 
-        assert obj is allocate_to_resource
+        assert obj is allocate_evenly
 
     def test_returns_attribute_from_dynamic_module(self) -> None:
         from core.engine.loading import import_attr
@@ -73,7 +73,7 @@ class TestLoadProtocolCallableBackwardsCompat:
         from core.engine.loading import load_protocol_callable
         from core.plugin.protocols import CostAllocator
 
-        fn = load_protocol_callable("core.engine.helpers:allocate_to_resource", CostAllocator)
+        fn = load_protocol_callable("tests.unit.core.engine.conftest:stub_allocator", CostAllocator)
         assert callable(fn)
 
     def test_missing_module_raises_import_error(self) -> None:

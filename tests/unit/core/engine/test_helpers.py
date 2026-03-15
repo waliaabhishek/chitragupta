@@ -10,8 +10,6 @@ from core.engine.helpers import (
     allocate_by_usage_ratio,
     allocate_evenly,
     allocate_hybrid,
-    allocate_to_owner,
-    allocate_to_resource,
     compute_active_fraction,
     make_row,
     split_amount_evenly,
@@ -267,40 +265,6 @@ class TestAllocateHybrid:
             shared_fn=_empty_allocator,
         )
         assert result.rows == []
-
-
-# --- allocate_to_owner ---
-
-
-class TestAllocateToOwner:
-    def test_valid_owner(self) -> None:
-        ctx = make_ctx(split_amount=Decimal("25.00"))
-        result = allocate_to_owner(ctx, "u-owner")
-        assert len(result.rows) == 1
-        assert result.rows[0].identity_id == "u-owner"
-        assert result.rows[0].cost_type == CostType.USAGE
-        assert result.rows[0].amount == Decimal("25.00")
-        assert result.rows[0].allocation_method == "direct_owner"
-
-    def test_empty_string_raises(self) -> None:
-        ctx = make_ctx()
-        with pytest.raises(ValueError, match="must not be empty"):
-            allocate_to_owner(ctx, "")
-
-
-# --- allocate_to_resource ---
-
-
-class TestAllocateToResource:
-    def test_produces_single_row(self) -> None:
-        ctx = make_ctx(split_amount=Decimal("15.00"))
-        result = allocate_to_resource(ctx)
-        assert len(result.rows) == 1
-        row = result.rows[0]
-        assert row.identity_id == "lkc-abc123"
-        assert row.cost_type == CostType.SHARED
-        assert row.allocation_method == "to_resource"
-        assert row.amount == Decimal("15.00")
 
 
 # --- compute_active_fraction ---

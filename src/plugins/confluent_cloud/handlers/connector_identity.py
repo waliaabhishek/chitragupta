@@ -19,8 +19,6 @@ if TYPE_CHECKING:
     from core.storage.interface import UnitOfWork
 logger = logging.getLogger(__name__)
 
-LOGGER = logging.getLogger(__name__)
-
 # Sentinel identity IDs for unknown connector owners
 CONNECTOR_CREDENTIALS_UNKNOWN = "connector_credentials_unknown"
 CONNECTOR_CREDENTIALS_MASKED = "connector_credentials_masked"
@@ -90,7 +88,7 @@ def resolve_connector_identity(
         if api_key_id is not None:
             # Check for masked key (Confluent masks keys with asterisks; empty string also treated as masked)
             if all(ch == "*" for ch in api_key_id):
-                LOGGER.warning("Connector %s API key is masked", connector.resource_id)
+                logger.warning("Connector %s API key is masked", connector.resource_id)
                 owner = create_connector_sentinel(
                     CONNECTOR_API_KEY_MASKED,
                     tenant_id,
@@ -100,7 +98,7 @@ def resolve_connector_identity(
             else:
                 api_key = uow.identities.get(ecosystem=ecosystem, tenant_id=tenant_id, identity_id=api_key_id)
                 if api_key is None:
-                    LOGGER.warning("Connector %s API key %s not found in DB", connector.resource_id, api_key_id)
+                    logger.warning("Connector %s API key %s not found in DB", connector.resource_id, api_key_id)
                     owner = create_connector_sentinel(
                         CONNECTOR_API_KEY_NOT_FOUND,
                         tenant_id,
@@ -124,7 +122,7 @@ def resolve_connector_identity(
 
     else:
         # UNKNOWN mode or missing auth_mode — use connector_id for per-connector attribution
-        LOGGER.warning("Connector %s has unknown auth mode", connector.resource_id)
+        logger.warning("Connector %s has unknown auth mode", connector.resource_id)
         owner = create_connector_sentinel(
             connector.resource_id,
             tenant_id,

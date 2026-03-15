@@ -14,8 +14,6 @@ from pydantic import SecretStr  # noqa: TC002 - runtime use in get_secret_value(
 from plugins.confluent_cloud.exceptions import CCloudApiError, CCloudConnectionError
 
 logger = logging.getLogger(__name__)
-
-LOGGER = logging.getLogger(__name__)
 DEFAULT_PAGE_SIZE = 99  # CCloud API requires page_size < 100
 
 
@@ -130,7 +128,7 @@ class CCloudConnection:
             except httpx.TimeoutException as e:
                 last_exception = CCloudApiError(408, f"Request timeout: {e}")
                 wait = self._calculate_backoff(attempt)
-                LOGGER.warning("Timeout on attempt %d, retrying in %.2fs", attempt + 1, wait)
+                logger.warning("Timeout on attempt %d, retrying in %.2fs", attempt + 1, wait)
                 time.sleep(wait)
                 continue
             except httpx.RequestError as e:
@@ -141,12 +139,12 @@ class CCloudConnection:
             if resp.status_code == 200:
                 return cast("dict[str, Any]", resp.json())
             elif resp.status_code == 404:
-                LOGGER.info("Resource not found: %s", url)
+                logger.info("Resource not found: %s", url)
                 return {"data": [], "metadata": {}}
             elif resp.status_code == 429:
                 last_exception = CCloudApiError(429, resp.text)
                 wait = self._get_rate_limit_wait(resp, attempt)
-                LOGGER.warning("Rate limited on attempt %d, retrying in %.2fs", attempt + 1, wait)
+                logger.warning("Rate limited on attempt %d, retrying in %.2fs", attempt + 1, wait)
                 time.sleep(wait)
                 continue
             else:
