@@ -39,15 +39,21 @@ def test_pyproject_has_git_cliff() -> None:
 
 
 def test_workflow_has_release_steps() -> None:
-    content = (PROJECT_ROOT / ".github" / "workflows" / "docs.yml").read_text()
-    assert "git-cliff" in content
-    assert "softprops/action-gh-release" in content
-    assert "mike deploy" in content
+    # Release creation (git-cliff, GitHub Release) lives in release.yml; docs deploy in docs.yml
+    release_content = (PROJECT_ROOT / ".github" / "workflows" / "release.yml").read_text()
+    assert "git-cliff" in release_content
+    assert "softprops/action-gh-release" in release_content
+    docs_content = (PROJECT_ROOT / ".github" / "workflows" / "docs.yml").read_text()
+    assert "mike deploy" in docs_content
 
 
 def test_workflow_release_steps_gated() -> None:
-    content = (PROJECT_ROOT / ".github" / "workflows" / "docs.yml").read_text()
-    assert "startsWith(github.ref, 'refs/tags/')" in content
+    # release.yml is gated at the workflow level by tag trigger; docs.yml has no release steps
+    release_content = (PROJECT_ROOT / ".github" / "workflows" / "release.yml").read_text()
+    assert "v*.*.*" in release_content
+    docs_content = (PROJECT_ROOT / ".github" / "workflows" / "docs.yml").read_text()
+    assert "softprops/action-gh-release" not in docs_content
+    assert "git-cliff" not in docs_content
 
 
 def test_cliff_config_has_skip_changelog_parser() -> None:
