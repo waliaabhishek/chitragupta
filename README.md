@@ -1,6 +1,10 @@
 # Chitragupt
 
+> In Hindu tradition, [Chitragupta](https://en.wikipedia.org/wiki/Chitragupta) is the deity who maintains a complete record of every being's actions; the divine accountant himself. Fitting name for a system that tracks exactly who used what and how much it cost.
+
 Multi-ecosystem infrastructure cost chargeback engine. Allocates costs to teams and service accounts across Confluent Cloud, self-managed Kafka, and any Prometheus-instrumented system.
+The goal is to support multiple ecosystems and custom cost allocation strategies. 
+This was originally built for Confluent Cloud but has been extended to support other ecosystems. 
 
 ## Features
 
