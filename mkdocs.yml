@@ -89,3 +89,4 @@ nav:
     - Monitoring: operations/monitoring.md
     - Troubleshooting: operations/troubleshooting.md
     - Data Retention: operations/data-retention.md
+  - Changelog: changelog.md

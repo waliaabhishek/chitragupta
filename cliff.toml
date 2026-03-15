@@ -1,0 +1,59 @@
+# cliff.toml
+
+[changelog]
+header = """
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+"""
+body = """
+{% if version %}\
+## [{{ version | trim_start_matches(pat="v") }}] - {{ timestamp | date(format="%Y-%m-%d") }}
+{% else %}\
+## [Unreleased]
+{% endif %}\
+{% for group, commits in commits | group_by(attribute="group") %}
+### {{ group | upper_first }}
+{% for commit in commits %}\
+- {{ commit.message | upper_first | trim }} \
+([{{ commit.id | truncate(length=7, end="") }}](https://github.com/waliaabhishek/chitragupt/commit/{{ commit.id }}))\
+{% if commit.breaking %} **BREAKING**{% endif %}
+{% endfor %}
+{% endfor %}\n
+"""
+trim = true
+footer = ""
+
+[git]
+conventional_commits = false
+filter_unconventional = false
+commit_parsers = [
+  { message = "^[Ff]eat[:(]", group = "Added" },
+  { message = "^[Aa]dd[:(]", group = "Added" },
+  { message = "^[Ff]ix[:(]", group = "Fixed" },
+  { message = "^[Bb]ug[:(]", group = "Fixed" },
+  { message = "^[Rr]efactor[:(]", group = "Changed" },
+  { message = "^[Cc]hange[:(]", group = "Changed" },
+  { message = "^[Uu]pdate[:(]", group = "Changed" },
+  { message = "^[Ss]ecurity[:(]", group = "Security" },
+  { message = "^[Dd]eprecate[:(]", group = "Deprecated" },
+  { message = "^[Rr]emove[:(]", group = "Removed" },
+  # Skip the meta-commit that updates CHANGELOG.md itself (must precede general Docs: parser)
+  { message = "^[Dd]ocs: Update CHANGELOG", skip = true },
+  # Docs: commits appear under Documentation (project-specific extension — not standard KaC)
+  { message = "^[Dd]ocs[:(]", group = "Documentation" },
+  # Chore/Test/CI commits are omitted from the user-facing changelog
+  { message = "^[Cc]hore[:(]", skip = true },
+  { message = "^[Tt]est[:(]", skip = true },
+  { message = "^[Cc][Ii][:(]", skip = true },
+  # Catch-all: include everything else under Changed
+  { message = ".*", group = "Changed" },
+]
+filter_commits = false
+tag_pattern = "v[0-9]+\\.[0-9]+.*"
+topo_order = false
+sort_commits = "newest"
