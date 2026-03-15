@@ -7,8 +7,33 @@
 ## Per ecosystem
 
 ### Confluent Cloud
-- CCloud API key + secret with billing read access
-- (Optional) Metrics API key for usage-ratio allocation
+- A **Service Account** with the following RBAC role bindings:
+    - **MetricsViewer** — base permission for metrics access
+    - **OrganizationAdmin** — required for Objects API, Metrics API, and viewing connector/ksqlDB principals for accurate chargeback
+    - **BillingAdmin** — required to pull billing API data
+
+    ```bash
+    # Create the service account
+    confluent login
+    confluent iam sa create chargeback_handler \
+      --description "Chargeback handler user"
+
+    # Assign required role bindings (replace <sa_id> with the output from above)
+    confluent iam rbac role-binding create --principal User:<sa_id> --role MetricsViewer
+    confluent iam rbac role-binding create --principal User:<sa_id> --role OrganizationAdmin
+    confluent iam rbac role-binding create --principal User:<sa_id> --role BillingAdmin
+    ```
+
+- A **Cloud API key + secret** created for that service account:
+
+    ```bash
+    confluent api-key create --resource cloud --service-account <sa_id>
+    ```
+
+- (Optional) Separate Metrics API key for usage-ratio allocation
+
+!!! note
+    OrganizationAdmin is broader than ideal. Confluent Cloud RBAC doesn't currently allow more granular scoping for the APIs this tool requires.
 
 ### Self-managed Kafka
 - Prometheus endpoint scraping Kafka JMX metrics
