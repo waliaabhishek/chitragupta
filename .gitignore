@@ -25,5 +25,8 @@ __pycache__/
 # Worktrees
 .worktrees/
 
+# Secrets / environment files
+.env*
+
 # OS files
 .DS_Store
