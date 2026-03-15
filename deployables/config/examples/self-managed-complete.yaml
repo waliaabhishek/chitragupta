@@ -31,6 +31,8 @@ tenants:
     storage:
       backend: sqlmodel
       connection_string: "sqlite:////app/data/kafka-dc1.db"
+      # PostgreSQL alternative (requires psycopg2 — see docs/operations/deployment.md):
+      # connection_string: "postgresql+psycopg2://user:pass@host:5432/kafka_dc1"  # one database per tenant
 
     plugin_settings:
       cluster_id: kafka-dc1         # Required — resource_id in billing

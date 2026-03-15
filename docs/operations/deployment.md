@@ -63,15 +63,59 @@ Health endpoint: `GET /health` — returns `{"status": "ok", "version": "..."}`
 
 ## Storage
 
-Default is SQLite. For production with multiple instances or high volume:
+### SQLite (default)
+
+SQLite works well for single-instance deployments with moderate volume:
 
 ```yaml
 storage:
   backend: sqlmodel
-  connection_string: "postgresql+psycopg2://user:pass@host/dbname"
+  connection_string: "sqlite:////app/data/tenant-name.db"
 ```
 
-Each tenant needs a separate database/schema.
+### PostgreSQL
+
+Use PostgreSQL for multi-instance deployments or high-volume/concurrent-access scenarios where SQLite's single-writer lock becomes a bottleneck.
+
+**Driver:** Requires `psycopg2`. Install via `uv add psycopg2-binary` (or `psycopg2` if you prefer building from source with `libpq-dev`).
+
+**Connection string format:**
+
+```yaml
+storage:
+  backend: sqlmodel
+  connection_string: "postgresql+psycopg2://user:pass@host:5432/dbname"
+```
+
+Pass credentials via environment variables to avoid hardcoding secrets:
+
+```yaml
+  connection_string: "postgresql+psycopg2://${PG_USER}:${PG_PASS}@${PG_HOST}:5432/dbname"
+```
+
+**One database per tenant.** Each tenant's `connection_string` must point to a separate PostgreSQL database. Tables are created automatically on first run — no manual migration needed.
+
+```yaml
+tenants:
+  prod-org:
+    storage:
+      connection_string: "postgresql+psycopg2://${PG_USER}:${PG_PASS}@pg:5432/chargeback_prod_org"
+  staging-org:
+    storage:
+      connection_string: "postgresql+psycopg2://${PG_USER}:${PG_PASS}@pg:5432/chargeback_staging_org"
+```
+
+### When to choose PostgreSQL over SQLite
+
+| Consideration | SQLite | PostgreSQL |
+|---|---|---|
+| Concurrent writers | Single writer (locks on write) | Multiple concurrent writers |
+| Multi-instance | Not safe across processes/containers | Designed for it |
+| Operational overhead | Zero — file on disk | Requires running PostgreSQL server |
+| Data volume | Good up to ~10 GB per tenant | Scales further |
+| Backups | Copy the `.db` file | `pg_dump` / replication |
+
+**Rule of thumb:** Start with SQLite. Switch to PostgreSQL when you need multiple application instances or observe lock contention under write-heavy workloads.
 
 ## Upgrading
 

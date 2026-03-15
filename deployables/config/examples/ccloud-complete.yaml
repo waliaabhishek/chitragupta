@@ -39,6 +39,8 @@ tenants:
     storage:
       backend: sqlmodel                                         # Optional — "sqlmodel" (SQLite or PostgreSQL URL)
       connection_string: "sqlite:////app/data/ccloud-prod.db"  # Required — unique per tenant across all tenants
+      # PostgreSQL alternative (requires psycopg2 — see docs/operations/deployment.md):
+      # connection_string: "postgresql+psycopg2://user:pass@host:5432/ccloud_prod"  # one database per tenant
 
     plugin_settings:
       # --- CCloud API credentials ---
