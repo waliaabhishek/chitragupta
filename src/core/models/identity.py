@@ -11,6 +11,9 @@ logger = logging.getLogger(__name__)
 # Types that represent "owners" (not API keys or system identities)
 OWNER_IDENTITY_TYPES: tuple[str, ...] = ("service_account", "user", "identity_pool", "principal")
 
+# Synthetic fallback identities excluded from cost allocation (e.g. UNALLOCATED)
+SENTINEL_IDENTITY_TYPES: tuple[str, ...] = ("system",)
+
 
 class FlinkContextDict(TypedDict, total=False):
     """TypedDict for Flink handler's IdentityResolution.context.

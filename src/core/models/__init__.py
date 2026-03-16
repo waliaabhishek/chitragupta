@@ -4,6 +4,7 @@ from core.models.billing import BillingLineItem, CoreBillingLineItem
 from core.models.chargeback import ChargebackRow, CostType, CustomTag
 from core.models.identity import (
     OWNER_IDENTITY_TYPES,
+    SENTINEL_IDENTITY_TYPES,
     CoreIdentity,
     FlinkContextDict,
     Identity,
@@ -27,6 +28,7 @@ __all__ = [
     "IdentityResolution",
     "IdentitySet",
     "OWNER_IDENTITY_TYPES",
+    "SENTINEL_IDENTITY_TYPES",
     "MetricQuery",
     "MetricRow",
     "PipelineRun",

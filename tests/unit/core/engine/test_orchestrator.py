@@ -2375,6 +2375,85 @@ class TestComputeBillingWindowsOnce:
         identity_ids = {i.identity_id for i in identity_set}
         assert "UNALLOCATED" not in identity_ids
 
+    def test_build_tenant_period_cache_excludes_system_includes_regular(self) -> None:
+        """Exclusion driven by SENTINEL_IDENTITY_TYPES: system excluded, owner-type included."""
+        from core.models import SENTINEL_IDENTITY_TYPES
+
+        system_id = CoreIdentity(
+            identity_id="UNALLOCATED",
+            identity_type="system",
+            display_name="Unallocated Costs",
+            ecosystem=ECOSYSTEM,
+            tenant_id=TENANT_ID,
+            created_at=None,
+            deleted_at=None,
+            last_seen_at=NOW,
+        )
+        regular_id = _make_identity("sa-real")
+        handler = MockServiceHandler(resources=[_make_resource()], identities=[regular_id])
+        orch, _ = _create_orchestrator(handler=handler)
+
+        uow = MockUnitOfWork()
+        uow.identities.upsert(system_id)
+        uow.identities.upsert(regular_id)
+
+        b_start = datetime(2026, 2, 10, 0, 0, 0, tzinfo=UTC)
+        b_end = datetime(2026, 2, 11, 0, 0, 0, tzinfo=UTC)
+        windows: set[tuple[datetime, datetime]] = {(b_start, b_end)}
+
+        result = orch._calculate_phase._build_tenant_period_cache(uow, windows)
+
+        identity_set = result.get((b_start, b_end), IdentitySet())
+        identity_ids = {i.identity_id for i in identity_set}
+        # system type (in SENTINEL_IDENTITY_TYPES) must be excluded
+        assert system_id.identity_id not in identity_ids
+        # regular type must be present
+        assert regular_id.identity_id in identity_ids
+        # sanity: system type is indeed sentinel
+        assert system_id.identity_type in SENTINEL_IDENTITY_TYPES
+
+    def test_build_tenant_period_cache_excludes_all_sentinel_types(self) -> None:
+        """Any type listed in SENTINEL_IDENTITY_TYPES is excluded — documents the contract."""
+        from core.models import SENTINEL_IDENTITY_TYPES
+
+        # Build one identity per sentinel type and verify all are excluded
+        sentinel_identities = [
+            CoreIdentity(
+                identity_id=f"sentinel-{t}",
+                identity_type=t,
+                display_name=f"Sentinel {t}",
+                ecosystem=ECOSYSTEM,
+                tenant_id=TENANT_ID,
+                created_at=None,
+                deleted_at=None,
+                last_seen_at=NOW,
+            )
+            for t in SENTINEL_IDENTITY_TYPES
+        ]
+        regular_id = _make_identity("sa-keep")
+        handler = MockServiceHandler(resources=[_make_resource()], identities=[regular_id])
+        orch, _ = _create_orchestrator(handler=handler)
+
+        uow = MockUnitOfWork()
+        for sid in sentinel_identities:
+            uow.identities.upsert(sid)
+        uow.identities.upsert(regular_id)
+
+        b_start = datetime(2026, 2, 10, 0, 0, 0, tzinfo=UTC)
+        b_end = datetime(2026, 2, 11, 0, 0, 0, tzinfo=UTC)
+        windows: set[tuple[datetime, datetime]] = {(b_start, b_end)}
+
+        result = orch._calculate_phase._build_tenant_period_cache(uow, windows)
+
+        identity_set = result.get((b_start, b_end), IdentitySet())
+        identity_ids = {i.identity_id for i in identity_set}
+        for sid in sentinel_identities:
+            assert sid.identity_id not in identity_ids, (
+                f"Sentinel identity {sid.identity_id!r} (type={sid.identity_type!r}) "
+                "should have been excluded but was present"
+            )
+        assert regular_id.identity_id in identity_ids
+
     def test_build_resource_cache_multiple_windows(self) -> None:
         """_build_resource_cache iterates all windows in the set, not just the first."""
         resource_a = _make_resource("r-a")

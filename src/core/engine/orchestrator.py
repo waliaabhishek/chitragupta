@@ -15,7 +15,7 @@ from core.engine.allocation import AllocationContext, AllocatorRegistry
 from core.engine.helpers import compute_active_fraction
 from core.engine.loading import load_protocol_callable
 from core.models.chargeback import ChargebackRow, CostType
-from core.models.identity import CoreIdentity, IdentityResolution, IdentitySet
+from core.models.identity import SENTINEL_IDENTITY_TYPES, CoreIdentity, IdentityResolution, IdentitySet
 from core.models.pipeline import PipelineState
 from core.plugin.registry import EcosystemBundle
 
@@ -481,7 +481,7 @@ class CalculatePhase:
             identities, _ = uow.identities.find_by_period(self._ecosystem, self._tenant_id, b_start, b_end, count=False)
             tp = IdentitySet()
             for identity in identities:
-                if identity.identity_type != "system":
+                if identity.identity_type not in SENTINEL_IDENTITY_TYPES:
                     tp.add(identity)
             cache[(b_start, b_end)] = tp
         return cache

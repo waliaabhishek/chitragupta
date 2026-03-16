@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict
 from datetime import UTC, datetime
 
+from core.models import SENTINEL_IDENTITY_TYPES
 from core.models.identity import CoreIdentity, Identity, IdentityResolution, IdentitySet
 
 _NOW = datetime(2024, 1, 15, 12, 0, 0, tzinfo=UTC)
@@ -239,3 +240,11 @@ class TestIdentityResolution:
         m2 = ir.merged_active
         assert m1 is not m2
         assert m1 is not ir.resource_active
+
+
+class TestSentinelIdentityTypes:
+    def test_sentinel_identity_types_contains_system(self) -> None:
+        assert "system" in SENTINEL_IDENTITY_TYPES
+
+    def test_sentinel_identity_types_is_tuple(self) -> None:
+        assert isinstance(SENTINEL_IDENTITY_TYPES, tuple)
