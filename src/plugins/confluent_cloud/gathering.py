@@ -66,6 +66,7 @@ def gather_environments(
             display_name=item.get("display_name"),
             status=ResourceStatus.ACTIVE,
             created_at=_parse_iso_datetime(metadata_obj.get("created_at")),
+            last_seen_at=datetime.now(UTC),
             metadata={},
         )
 
@@ -99,6 +100,7 @@ def gather_kafka_clusters(
                 parent_id=spec.get("environment", {}).get("id"),
                 status=ResourceStatus.ACTIVE,
                 created_at=_parse_iso_datetime(metadata_obj.get("created_at")),
+                last_seen_at=datetime.now(UTC),
                 metadata={
                     "bootstrap_url": spec.get("kafka_bootstrap_endpoint"),
                     "cloud": cloud,
@@ -160,6 +162,7 @@ def gather_connectors(
                 display_name=config.get("name", connector_name),
                 parent_id=cluster_id,
                 status=ResourceStatus.ACTIVE,
+                last_seen_at=datetime.now(UTC),
                 metadata=metadata,
             )
 
@@ -192,6 +195,7 @@ def gather_schema_registries(
                 parent_id=spec.get("environment", {}).get("id"),
                 status=ResourceStatus.ACTIVE,
                 created_at=_parse_iso_datetime(metadata_obj.get("created_at")),
+                last_seen_at=datetime.now(UTC),
                 metadata={
                     "http_endpoint": spec.get("http_endpoint"),
                     "cloud": cloud,
@@ -231,6 +235,7 @@ def gather_ksqldb_clusters(
                 owner_id=owner_id,
                 status=ResourceStatus.ACTIVE,
                 created_at=_parse_iso_datetime(metadata_obj.get("created_at")),
+                last_seen_at=datetime.now(UTC),
                 metadata={
                     "kafka_cluster_id": spec.get("kafka_cluster", {}).get("id"),
                     "csu_count": spec.get("csu"),
@@ -276,6 +281,7 @@ def gather_flink_compute_pools(
                 parent_id=env_id,
                 status=ResourceStatus.ACTIVE,
                 created_at=_parse_iso_datetime(metadata_obj.get("created_at")),
+                last_seen_at=datetime.now(UTC),
                 metadata={
                     "cloud": cloud,
                     "region": region,
@@ -356,6 +362,7 @@ def gather_flink_statements(
                     parent_id=env_id,
                     owner_id=spec.get("principal"),
                     status=ResourceStatus.ACTIVE,
+                    last_seen_at=datetime.now(UTC),
                     metadata={
                         "statement_name": item.get("name"),
                         "compute_pool_id": spec.get("compute_pool", {}).get("id", pool.resource_id),
@@ -391,6 +398,7 @@ def gather_service_accounts(
             identity_type="service_account",
             display_name=item.get("display_name"),
             created_at=_parse_iso_datetime(metadata_obj.get("created_at")),
+            last_seen_at=datetime.now(UTC),
             metadata={
                 "description": item.get("description"),
             },
@@ -415,6 +423,7 @@ def gather_users(
             identity_type="user",
             display_name=item.get("full_name"),
             created_at=_parse_iso_datetime(metadata_obj.get("created_at")),
+            last_seen_at=datetime.now(UTC),
             metadata={
                 "crn": metadata_obj.get("resource_name"),
             },
@@ -441,6 +450,7 @@ def gather_api_keys(
             identity_type="api_key",
             display_name=spec.get("description"),
             created_at=_parse_iso_datetime(metadata_obj.get("created_at")),
+            last_seen_at=datetime.now(UTC),
             metadata={
                 "owner_id": spec.get("owner", {}).get("id"),
                 "resource_id": spec.get("resource", {}).get("id"),
@@ -466,6 +476,7 @@ def gather_identity_providers(
             identity_type="identity_provider",
             display_name=item.get("display_name"),
             created_at=_parse_iso_datetime(metadata_obj.get("created_at")),
+            last_seen_at=datetime.now(UTC),
             metadata={
                 "description": item.get("description"),
                 "crn": metadata_obj.get("resource_name"),
@@ -494,6 +505,7 @@ def gather_identity_pools(
                 identity_type="identity_pool",
                 display_name=item.get("display_name"),
                 created_at=_parse_iso_datetime(metadata_obj.get("created_at")),
+                last_seen_at=datetime.now(UTC),
                 metadata={
                     "description": item.get("description"),
                     "provider_id": provider_id,

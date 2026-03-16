@@ -1249,3 +1249,372 @@ class TestPageSizeOverrides:
         assert len(respx.calls) == 1
         url_params = str(respx.calls[0].request.url)
         assert "page_size=50&" in url_params or url_params.endswith("page_size=50")
+
+
+class TestLastSeenAtStamping:
+    """Tests that all gather functions stamp last_seen_at on returned entities."""
+
+    @respx.mock
+    def test_gather_environments_last_seen_at(self) -> None:
+        from plugins.confluent_cloud.gathering import gather_environments
+
+        respx.get("https://api.confluent.cloud/org/v2/environments").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "data": [{"id": "env-abc", "display_name": "prod", "metadata": {}}],
+                    "metadata": {},
+                },
+            )
+        )
+        conn = CCloudConnection(api_key="k", api_secret=SecretStr("s"), request_interval_seconds=0)
+        envs = list(gather_environments(conn, "confluent_cloud", "org-123"))
+
+        assert len(envs) == 1
+        assert envs[0].last_seen_at is not None
+        assert envs[0].last_seen_at.tzinfo is not None
+
+    @respx.mock
+    def test_gather_kafka_clusters_last_seen_at(self) -> None:
+        from plugins.confluent_cloud.gathering import gather_kafka_clusters
+
+        respx.get("https://api.confluent.cloud/cmk/v2/clusters").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "data": [
+                        {
+                            "id": "lkc-1",
+                            "spec": {
+                                "display_name": "cluster",
+                                "environment": {"id": "env-abc"},
+                                "cloud": "AWS",
+                                "region": "us-east-1",
+                            },
+                            "metadata": {},
+                        }
+                    ],
+                    "metadata": {},
+                },
+            )
+        )
+        conn = CCloudConnection(api_key="k", api_secret=SecretStr("s"), request_interval_seconds=0)
+        clusters = list(gather_kafka_clusters(conn, "confluent_cloud", "org-123", ["env-abc"]))
+
+        assert len(clusters) == 1
+        assert clusters[0].last_seen_at is not None
+        assert clusters[0].last_seen_at.tzinfo is not None
+
+    @respx.mock
+    def test_gather_service_accounts_last_seen_at(self) -> None:
+        from plugins.confluent_cloud.gathering import gather_service_accounts
+
+        respx.get("https://api.confluent.cloud/iam/v2/service-accounts").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "data": [{"id": "sa-abc", "display_name": "my-sa", "metadata": {}}],
+                    "metadata": {},
+                },
+            )
+        )
+        conn = CCloudConnection(api_key="k", api_secret=SecretStr("s"), request_interval_seconds=0)
+        sas = list(gather_service_accounts(conn, "confluent_cloud", "org-123"))
+
+        assert len(sas) == 1
+        assert sas[0].last_seen_at is not None
+        assert sas[0].last_seen_at.tzinfo is not None
+
+    @respx.mock
+    def test_gather_identity_pools_last_seen_at(self) -> None:
+        from plugins.confluent_cloud.gathering import gather_identity_pools
+
+        respx.get("https://api.confluent.cloud/iam/v2/identity-providers/op-abc/identity-pools").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "data": [{"id": "pool-1", "display_name": "Engineering", "metadata": {}}],
+                    "metadata": {},
+                },
+            )
+        )
+        conn = CCloudConnection(api_key="k", api_secret=SecretStr("s"), request_interval_seconds=0)
+        pools = list(gather_identity_pools(conn, "confluent_cloud", "org-123", ["op-abc"]))
+
+        assert len(pools) == 1
+        assert pools[0].last_seen_at is not None
+        assert pools[0].last_seen_at.tzinfo is not None
+
+    @respx.mock
+    def test_last_seen_at_is_recent(self) -> None:
+        from plugins.confluent_cloud.gathering import gather_environments
+
+        before = datetime.now(UTC)
+        respx.get("https://api.confluent.cloud/org/v2/environments").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "data": [{"id": "env-abc", "display_name": "prod", "metadata": {}}],
+                    "metadata": {},
+                },
+            )
+        )
+        conn = CCloudConnection(api_key="k", api_secret=SecretStr("s"), request_interval_seconds=0)
+        envs = list(gather_environments(conn, "confluent_cloud", "org-123"))
+        after = datetime.now(UTC)
+
+        assert len(envs) == 1
+        assert envs[0].last_seen_at is not None
+        assert before <= envs[0].last_seen_at <= after
+
+    def test_all_resource_gatherers_stamp_last_seen_at(self) -> None:
+        from core.models import ResourceStatus
+        from plugins.confluent_cloud.gathering import (
+            gather_connectors,
+            gather_environments,
+            gather_flink_compute_pools,
+            gather_flink_statements,
+            gather_kafka_clusters,
+            gather_ksqldb_clusters,
+            gather_schema_registries,
+        )
+
+        conn = CCloudConnection(api_key="k", api_secret=SecretStr("s"), request_interval_seconds=0)
+
+        with respx.mock:
+            respx.get("https://api.confluent.cloud/org/v2/environments").mock(
+                return_value=httpx.Response(
+                    200,
+                    json={"data": [{"id": "env-1", "display_name": "e", "metadata": {}}], "metadata": {}},
+                )
+            )
+            envs = list(gather_environments(conn, "confluent_cloud", "org-1"))
+            assert envs[0].last_seen_at is not None, "gather_environments did not stamp last_seen_at"
+            assert envs[0].last_seen_at.tzinfo is not None, "gather_environments last_seen_at is not UTC-aware"
+
+        with respx.mock:
+            respx.get("https://api.confluent.cloud/cmk/v2/clusters").mock(
+                return_value=httpx.Response(
+                    200,
+                    json={
+                        "data": [
+                            {
+                                "id": "lkc-1",
+                                "spec": {
+                                    "display_name": "c",
+                                    "environment": {"id": "env-1"},
+                                    "cloud": "AWS",
+                                    "region": "us-east-1",
+                                },
+                                "metadata": {},
+                            }
+                        ],
+                        "metadata": {},
+                    },
+                )
+            )
+            clusters = list(gather_kafka_clusters(conn, "confluent_cloud", "org-1", ["env-1"]))
+            assert clusters[0].last_seen_at is not None, "gather_kafka_clusters did not stamp last_seen_at"
+            assert clusters[0].last_seen_at.tzinfo is not None, "gather_kafka_clusters last_seen_at is not UTC-aware"
+
+        with respx.mock:
+            respx.get("https://api.confluent.cloud/connect/v1/environments/env-1/clusters/lkc-1/connectors").mock(
+                return_value=httpx.Response(
+                    200,
+                    json={"conn1": {"info": {"config": {"name": "conn1"}}, "id": {"id": "lcc-1"}}},
+                )
+            )
+            connectors = list(gather_connectors(conn, "confluent_cloud", "org-1", clusters=[("env-1", "lkc-1")]))
+            assert connectors[0].last_seen_at is not None, "gather_connectors did not stamp last_seen_at"
+            assert connectors[0].last_seen_at.tzinfo is not None, "gather_connectors last_seen_at is not UTC-aware"
+
+        with respx.mock:
+            respx.get("https://api.confluent.cloud/srcm/v3/clusters").mock(
+                return_value=httpx.Response(
+                    200,
+                    json={
+                        "data": [
+                            {
+                                "id": "lsrc-1",
+                                "spec": {
+                                    "display_name": "sr",
+                                    "environment": {"id": "env-1"},
+                                    "cloud": "AWS",
+                                    "region": "us-east-1",
+                                },
+                                "metadata": {},
+                            }
+                        ],
+                        "metadata": {},
+                    },
+                )
+            )
+            srs = list(gather_schema_registries(conn, "confluent_cloud", "org-1", ["env-1"]))
+            assert srs[0].last_seen_at is not None, "gather_schema_registries did not stamp last_seen_at"
+            assert srs[0].last_seen_at.tzinfo is not None, "gather_schema_registries last_seen_at is not UTC-aware"
+
+        with respx.mock:
+            respx.get("https://api.confluent.cloud/ksqldbcm/v2/clusters").mock(
+                return_value=httpx.Response(
+                    200,
+                    json={
+                        "data": [
+                            {
+                                "id": "lksqlc-1",
+                                "spec": {"display_name": "ksql", "environment": {"id": "env-1"}},
+                                "metadata": {},
+                            }
+                        ],
+                        "metadata": {},
+                    },
+                )
+            )
+            ksqls = list(gather_ksqldb_clusters(conn, "confluent_cloud", "org-1", ["env-1"]))
+            assert ksqls[0].last_seen_at is not None, "gather_ksqldb_clusters did not stamp last_seen_at"
+            assert ksqls[0].last_seen_at.tzinfo is not None, "gather_ksqldb_clusters last_seen_at is not UTC-aware"
+
+        with respx.mock:
+            respx.get("https://api.confluent.cloud/fcpm/v2/compute-pools").mock(
+                return_value=httpx.Response(
+                    200,
+                    json={
+                        "data": [
+                            {
+                                "id": "lfcp-1",
+                                "spec": {"display_name": "pool", "cloud": "aws", "region": "us-east-1"},
+                                "metadata": {"resource_name": "crn://confluent.cloud/flink-compute-pool=lfcp-1"},
+                            }
+                        ],
+                        "metadata": {},
+                    },
+                )
+            )
+            flink_pools = list(
+                gather_flink_compute_pools(conn, "confluent_cloud", "org-1", ["env-1"], {"us-east-1": ("k", "s")})
+            )
+            assert flink_pools[0].last_seen_at is not None, "gather_flink_compute_pools did not stamp last_seen_at"
+            assert flink_pools[0].last_seen_at.tzinfo is not None, (
+                "gather_flink_compute_pools last_seen_at is not UTC-aware"
+            )
+
+        with respx.mock:
+            respx.get(
+                "https://flink.us-east-1.aws.confluent.cloud/sql/v1/organizations/org-1/environments/env-1/statements"
+            ).mock(
+                return_value=httpx.Response(
+                    200,
+                    json={
+                        "data": [
+                            {
+                                "metadata": {"uid": "stmt-1"},
+                                "name": "my-stmt",
+                                "spec": {"principal": "sa-1", "compute_pool": {"id": "lfcp-1"}},
+                                "status": {"phase": "RUNNING"},
+                            }
+                        ],
+                        "metadata": {},
+                    },
+                )
+            )
+            pool = CoreResource(
+                ecosystem="confluent_cloud",
+                tenant_id="org-1",
+                resource_id="lfcp-1",
+                resource_type="flink_compute_pool",
+                parent_id="env-1",
+                status=ResourceStatus.ACTIVE,
+                metadata={"cloud": "aws", "region": "us-east-1", "is_allocatable": True},
+            )
+            stmts = list(gather_flink_statements("confluent_cloud", "org-1", allocatable_pools=[(pool, "k", "s")]))
+            assert stmts[0].last_seen_at is not None, "gather_flink_statements did not stamp last_seen_at"
+            assert stmts[0].last_seen_at.tzinfo is not None, "gather_flink_statements last_seen_at is not UTC-aware"
+
+    def test_all_identity_gatherers_stamp_last_seen_at(self) -> None:
+        from plugins.confluent_cloud.gathering import (
+            gather_api_keys,
+            gather_identity_pools,
+            gather_identity_providers,
+            gather_service_accounts,
+            gather_users,
+        )
+
+        conn = CCloudConnection(api_key="k", api_secret=SecretStr("s"), request_interval_seconds=0)
+
+        with respx.mock:
+            respx.get("https://api.confluent.cloud/iam/v2/service-accounts").mock(
+                return_value=httpx.Response(
+                    200,
+                    json={"data": [{"id": "sa-1", "display_name": "sa", "metadata": {}}], "metadata": {}},
+                )
+            )
+            sas = list(gather_service_accounts(conn, "confluent_cloud", "org-1"))
+            assert sas[0].last_seen_at is not None, "gather_service_accounts did not stamp last_seen_at"
+            assert sas[0].last_seen_at.tzinfo is not None, "gather_service_accounts last_seen_at is not UTC-aware"
+
+        with respx.mock:
+            respx.get("https://api.confluent.cloud/iam/v2/users").mock(
+                return_value=httpx.Response(
+                    200,
+                    json={
+                        "data": [{"id": "u-1", "full_name": "User One", "metadata": {}}],
+                        "metadata": {},
+                    },
+                )
+            )
+            users = list(gather_users(conn, "confluent_cloud", "org-1"))
+            assert users[0].last_seen_at is not None, "gather_users did not stamp last_seen_at"
+            assert users[0].last_seen_at.tzinfo is not None, "gather_users last_seen_at is not UTC-aware"
+
+        with respx.mock:
+            respx.get("https://api.confluent.cloud/iam/v2/api-keys").mock(
+                return_value=httpx.Response(
+                    200,
+                    json={
+                        "data": [
+                            {
+                                "id": "key-1",
+                                "spec": {
+                                    "description": "k",
+                                    "owner": {"id": "sa-1"},
+                                    "resource": {"id": "lkc-1"},
+                                },
+                                "metadata": {},
+                            }
+                        ],
+                        "metadata": {},
+                    },
+                )
+            )
+            keys = list(gather_api_keys(conn, "confluent_cloud", "org-1"))
+            assert keys[0].last_seen_at is not None, "gather_api_keys did not stamp last_seen_at"
+            assert keys[0].last_seen_at.tzinfo is not None, "gather_api_keys last_seen_at is not UTC-aware"
+
+        with respx.mock:
+            respx.get("https://api.confluent.cloud/iam/v2/identity-providers").mock(
+                return_value=httpx.Response(
+                    200,
+                    json={
+                        "data": [{"id": "op-1", "display_name": "Okta", "metadata": {}}],
+                        "metadata": {},
+                    },
+                )
+            )
+            providers = list(gather_identity_providers(conn, "confluent_cloud", "org-1"))
+            assert providers[0].last_seen_at is not None, "gather_identity_providers did not stamp last_seen_at"
+            assert providers[0].last_seen_at.tzinfo is not None, (
+                "gather_identity_providers last_seen_at is not UTC-aware"
+            )
+
+        with respx.mock:
+            respx.get("https://api.confluent.cloud/iam/v2/identity-providers/op-1/identity-pools").mock(
+                return_value=httpx.Response(
+                    200,
+                    json={
+                        "data": [{"id": "pool-1", "display_name": "p", "metadata": {}}],
+                        "metadata": {},
+                    },
+                )
+            )
+            id_pools = list(gather_identity_pools(conn, "confluent_cloud", "org-1", ["op-1"]))
+            assert id_pools[0].last_seen_at is not None, "gather_identity_pools did not stamp last_seen_at"
+            assert id_pools[0].last_seen_at.tzinfo is not None, "gather_identity_pools last_seen_at is not UTC-aware"
