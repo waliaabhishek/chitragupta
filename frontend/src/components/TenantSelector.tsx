@@ -1,9 +1,10 @@
+import type React from "react";
 import { Button, Select, Space, Spin, Typography } from "antd";
 import { useTenant } from "../providers/TenantContext";
 
 const { Text } = Typography;
 
-export function TenantSelector(): JSX.Element {
+export function TenantSelector(): React.JSX.Element {
   const { tenants, currentTenant, setCurrentTenant, isLoading, error, refetch } =
     useTenant();
 

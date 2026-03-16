@@ -1,3 +1,4 @@
+import type React from "react";
 import {
   BarChartOutlined,
   BulbFilled,
@@ -11,7 +12,7 @@ import {
 } from "@ant-design/icons";
 import { Button, Layout as AntLayout, Menu, theme, Typography } from "antd";
 import { useState } from "react";
-import { useNavigate, useLocation } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router";
 import { useTenant } from "../providers/TenantContext";
 import { PipelineStatusBanner } from "./PipelineStatusBanner";
 import { TenantSelector } from "./TenantSelector";
@@ -25,7 +26,7 @@ interface AppLayoutProps {
   onToggleTheme: () => void;
 }
 
-export function AppLayout({ children, isDark, onToggleTheme }: AppLayoutProps): JSX.Element {
+export function AppLayout({ children, isDark, onToggleTheme }: AppLayoutProps): React.JSX.Element {
   const [collapsed, setCollapsed] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();

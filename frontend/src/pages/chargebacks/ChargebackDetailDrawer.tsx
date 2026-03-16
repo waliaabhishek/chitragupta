@@ -1,3 +1,4 @@
+import type React from "react";
 import { Descriptions, Divider, Drawer, Spin, notification } from "antd";
 import { useEffect, useState } from "react";
 import { TagEditor } from "../../components/chargebacks/TagEditor";
@@ -51,7 +52,7 @@ export function ChargebackDetailDrawer({
   dimensionId,
   onClose,
   onTagsChanged,
-}: ChargebackDetailDrawerProps): JSX.Element | null {
+}: ChargebackDetailDrawerProps): React.JSX.Element | null {
   const { currentTenant, isReadOnly } = useTenant();
   const [dimension, setDimension] =
     useState<ChargebackDimensionResponse | null>(null);

@@ -1,3 +1,4 @@
+import type React from "react";
 import { Button, Checkbox, Form, Input, Modal, notification, Typography } from "antd";
 import { useState } from "react";
 import { API_URL } from "../../config";
@@ -28,7 +29,7 @@ export function BulkTagModal({
   onClose,
   onSuccess,
   disabled,
-}: BulkTagModalProps): JSX.Element {
+}: BulkTagModalProps): React.JSX.Element {
   const [form] = Form.useForm<FormValues>();
   const [submitting, setSubmitting] = useState(false);
 

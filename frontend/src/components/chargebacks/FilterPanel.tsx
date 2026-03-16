@@ -1,3 +1,4 @@
+import type React from "react";
 import { Button, DatePicker, Form, Select } from "antd";
 import dayjs from "dayjs";
 import { useFilterOptions } from "../../hooks/useFilterOptions";
@@ -27,7 +28,7 @@ export function FilterPanel({
   onReset,
   onRefresh,
   tenantName,
-}: FilterPanelProps): JSX.Element {
+}: FilterPanelProps): React.JSX.Element {
   const startValue = filters.start_date ? dayjs(filters.start_date) : null;
   const endValue = filters.end_date ? dayjs(filters.end_date) : null;
 

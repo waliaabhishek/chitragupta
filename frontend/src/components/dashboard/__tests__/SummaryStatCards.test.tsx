@@ -1,6 +1,7 @@
+import type React from "react";
 import { render, screen } from "@testing-library/react";
 import type { ReactNode } from "react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter } from "react-router";
 import { describe, expect, it, vi } from "vitest";
 import type { AggregationResponse } from "../../../types/api";
 import { SummaryStatCards } from "../SummaryStatCards";
@@ -132,9 +133,9 @@ const mockData: AggregationResponse = {
   total_rows: 0,
 };
 
-function wrapper({ children }: { children: ReactNode }): JSX.Element {
+function wrapper({ children }: { children: ReactNode }): React.JSX.Element {
   return (
-    <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+    <MemoryRouter>
       {children}
     </MemoryRouter>
   );

@@ -1,3 +1,4 @@
+import type React from "react";
 import {
   createContext,
   useCallback,
@@ -59,7 +60,7 @@ function computeIsReadOnly(
   return tenants.some((t) => t.tenant_name === tenantName && t.pipeline_running);
 }
 
-export function TenantProvider({ children }: TenantProviderProps): JSX.Element {
+export function TenantProvider({ children }: TenantProviderProps): React.JSX.Element {
   const [tenants, setTenants] = useState<TenantStatusSummary[]>([]);
   const [currentTenant, setCurrentTenantState] =
     useState<TenantStatusSummary | null>(null);

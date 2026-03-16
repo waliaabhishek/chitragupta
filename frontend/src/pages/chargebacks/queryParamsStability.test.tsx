@@ -1,10 +1,10 @@
+import type React from "react";
 // GAP-100 TDD red phase — verification item 7
 // Test MUST fail until ChargebackListPage passes stable `queryParams` (not toQueryParams())
 // to ChargebackGrid, so re-renders from drawer open / row selection do not purge the cache.
 import { fireEvent, render, screen } from "@testing-library/react";
-import { forwardRef } from "react";
 import type { ReactNode } from "react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ChargebackListPage } from "./list";
 
@@ -16,38 +16,33 @@ const capturedFilters = vi.hoisted(
 vi.mock("../../components/chargebacks/ChargebackGrid", () => {
   // Capture the `filters` prop on every render so the test can check reference stability.
   return {
-    ChargebackGrid: forwardRef(
-      (
-        {
-          filters,
-          onSelectionChange,
-          onSelectAll,
-        }: {
-          filters?: Record<string, string>;
-          onSelectionChange?: (ids: number[]) => void;
-          onSelectAll?: (total: number) => void;
-        },
-        _ref: unknown,
-      ) => {
-        capturedFilters.values.push(filters);
-        return (
-          <div data-testid="chargeback-grid">
-            <button
-              data-testid="trigger-selection"
-              onClick={() => onSelectionChange?.([1, 2, 3])}
-            >
-              Trigger Selection
-            </button>
-            <button
-              data-testid="trigger-select-all"
-              onClick={() => onSelectAll?.(99)}
-            >
-              Trigger Select All
-            </button>
-          </div>
-        );
-      },
-    ),
+    ChargebackGrid: ({
+      filters,
+      onSelectionChange,
+      onSelectAll,
+    }: {
+      filters?: Record<string, string>;
+      onSelectionChange?: (ids: number[]) => void;
+      onSelectAll?: (total: number) => void;
+    }) => {
+      capturedFilters.values.push(filters);
+      return (
+        <div data-testid="chargeback-grid">
+          <button
+            data-testid="trigger-selection"
+            onClick={() => onSelectionChange?.([1, 2, 3])}
+          >
+            Trigger Selection
+          </button>
+          <button
+            data-testid="trigger-select-all"
+            onClick={() => onSelectAll?.(99)}
+          >
+            Trigger Select All
+          </button>
+        </div>
+      );
+    },
   };
 });
 
@@ -129,9 +124,9 @@ vi.mock("../../providers/TenantContext", () => ({
   })),
 }));
 
-function wrapper({ children }: { children: ReactNode }): JSX.Element {
+function wrapper({ children }: { children: ReactNode }): React.JSX.Element {
   return (
-    <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+    <MemoryRouter>
       {children}
     </MemoryRouter>
   );

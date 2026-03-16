@@ -18,7 +18,7 @@ export function DimensionPieChart({
   topN = 10,
   loading,
   height = 300,
-}: DimensionPieChartProps): JSX.Element {
+}: DimensionPieChartProps): React.JSX.Element {
   const option: EChartsOption = useMemo(() => {
     const slices = topNWithOther(aggregateByDimension(data, dimension), topN);
 

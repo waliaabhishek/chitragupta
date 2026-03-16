@@ -1,3 +1,4 @@
+import type React from "react";
 import { Button, Space, Tooltip, Typography } from "antd";
 
 interface SelectionToolbarProps {
@@ -16,7 +17,7 @@ export function SelectionToolbar({
   onClear,
   onAddTags,
   disabled,
-}: SelectionToolbarProps): JSX.Element {
+}: SelectionToolbarProps): React.JSX.Element {
   const label = isSelectAllMode
     ? `All ${totalCount} matching rows selected`
     : `${selectedCount} selected`;

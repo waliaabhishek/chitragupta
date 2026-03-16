@@ -1,6 +1,7 @@
+import type React from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { http, HttpResponse } from "msw";
 import { server } from "../../test/mocks/server";
@@ -200,9 +201,9 @@ const dimensionFixture: ChargebackDimensionResponse = {
   ],
 };
 
-function wrapper({ children }: { children: ReactNode }): JSX.Element {
+function wrapper({ children }: { children: ReactNode }): React.JSX.Element {
   return (
-    <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+    <MemoryRouter>
       {children}
     </MemoryRouter>
   );

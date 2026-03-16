@@ -36,7 +36,7 @@ export const dataProvider: DataProvider = {
     const url = new URL(buildUrl(resource, tenantName), window.location.origin);
 
     // Map Refine pagination to API pagination
-    const current = pagination?.current ?? 1;
+    const current = pagination?.currentPage ?? 1;
     const pageSize = pagination?.pageSize ?? 100;
     url.searchParams.set("page", String(current));
     url.searchParams.set("page_size", String(pageSize));

@@ -1,7 +1,8 @@
+import type React from "react";
 import { Typography } from "antd";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { AgGridReact } from "ag-grid-react";
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams } from "react-router";
 import { ChargebackGrid } from "../../components/chargebacks/ChargebackGrid";
 import { FilterPanel } from "../../components/chargebacks/FilterPanel";
 import { ExportButton } from "../../components/chargebacks/ExportButton";
@@ -13,7 +14,7 @@ import { ChargebackDetailDrawer } from "./ChargebackDetailDrawer";
 
 const { Text, Title } = Typography;
 
-export function ChargebackListPage(): JSX.Element {
+export function ChargebackListPage(): React.JSX.Element {
   const { currentTenant, isReadOnly } = useTenant();
   const { filters, setFilter, setFilters, resetFilters, toQueryParams, queryParams } = useChargebackFilters();
   const [searchParams] = useSearchParams();

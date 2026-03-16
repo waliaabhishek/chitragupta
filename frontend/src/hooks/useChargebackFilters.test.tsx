@@ -1,14 +1,15 @@
+import type React from "react";
 // GAP-100 TDD red phase — verification items 4 & 5
 // Tests MUST fail until useChargebackFilters memoizes `filters` and returns `queryParams`.
 import { renderHook } from "@testing-library/react";
 import type { ReactNode } from "react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter } from "react-router";
 import { describe, expect, it } from "vitest";
 import { useChargebackFilters } from "./useChargebackFilters";
 
-function wrapper({ children }: { children: ReactNode }): JSX.Element {
+function wrapper({ children }: { children: ReactNode }): React.JSX.Element {
   return (
-    <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+    <MemoryRouter>
       {children}
     </MemoryRouter>
   );

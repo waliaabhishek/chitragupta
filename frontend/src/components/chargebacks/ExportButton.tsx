@@ -1,3 +1,4 @@
+import type React from "react";
 import { DownloadOutlined } from "@ant-design/icons";
 import { Button, notification, Tooltip } from "antd";
 import { useState } from "react";
@@ -9,7 +10,7 @@ interface ExportButtonProps {
   disabled?: boolean;
 }
 
-export function ExportButton({ tenantName, filters, disabled }: ExportButtonProps): JSX.Element {
+export function ExportButton({ tenantName, filters, disabled }: ExportButtonProps): React.JSX.Element {
   const [loading, setLoading] = useState(false);
 
   const handleExport = async (): Promise<void> => {

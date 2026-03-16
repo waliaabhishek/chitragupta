@@ -1,3 +1,4 @@
+import type React from "react";
 import { Card, Col, Collapse, Empty, Row, Skeleton, Statistic, Typography } from "antd";
 import { useMemo } from "react";
 import type { InventorySummaryResponse } from "../../types/api";
@@ -23,7 +24,7 @@ interface CounterRowProps {
   error: string | null;
 }
 
-function CounterRow({ label, counts, isLoading, error }: CounterRowProps): JSX.Element {
+function CounterRow({ label, counts, isLoading, error }: CounterRowProps): React.JSX.Element {
   const entries = Object.entries(counts);
 
   if (!isLoading && !error && entries.length === 0) {
@@ -69,7 +70,7 @@ function CounterRow({ label, counts, isLoading, error }: CounterRowProps): JSX.E
   );
 }
 
-export function InventoryCounters({ data, isLoading, error }: InventoryCountersProps): JSX.Element {
+export function InventoryCounters({ data, isLoading, error }: InventoryCountersProps): React.JSX.Element {
   const resourceCounts = data?.resource_counts ?? EMPTY_COUNTS;
   const identityCounts = data?.identity_counts ?? EMPTY_COUNTS;
 

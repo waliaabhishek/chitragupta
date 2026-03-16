@@ -1,3 +1,4 @@
+import type React from "react";
 import { Alert, Spin } from "antd";
 import { useTenant, useReadiness } from "../providers/TenantContext";
 
@@ -20,7 +21,7 @@ function formatStage(
   }
 }
 
-export function PipelineStatusBanner(): JSX.Element | null {
+export function PipelineStatusBanner(): React.JSX.Element | null {
   const { currentTenant } = useTenant();
   const { appStatus, readiness } = useReadiness();
 

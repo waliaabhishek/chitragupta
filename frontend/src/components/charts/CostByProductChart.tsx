@@ -17,7 +17,7 @@ export function CostByProductChart({
   chartType = "pie",
   loading,
   height = 300,
-}: CostByProductChartProps): JSX.Element {
+}: CostByProductChartProps): React.JSX.Element {
   const treemapOption: EChartsOption = useMemo(() => {
     if (chartType === "pie") return {};
     const byProduct = aggregateByDimension(data, "product_type");

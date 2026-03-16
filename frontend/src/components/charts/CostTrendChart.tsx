@@ -16,7 +16,7 @@ export function CostTrendChart({
   timeBucket,
   loading,
   height = 300,
-}: CostTrendChartProps): JSX.Element {
+}: CostTrendChartProps): React.JSX.Element {
   const option: EChartsOption = useMemo(() => {
     const byTime = aggregateByTime(data);
 

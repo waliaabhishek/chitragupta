@@ -1,9 +1,10 @@
+import type React from "react";
 import { Typography } from "antd";
 import { useTenant } from "../providers/TenantContext";
 
 const { Title, Text } = Typography;
 
-export function DashboardPage(): JSX.Element {
+export function DashboardPage(): React.JSX.Element {
   const { currentTenant } = useTenant();
 
   return (

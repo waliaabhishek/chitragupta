@@ -24,59 +24,57 @@ const mockPurgeInfiniteCache = vi.hoisted(() => vi.fn());
 
 // Per-test render override: set before render(), consumed once, then cleared.
 // Tests that need to capture props use this instead of vi.mocked().mockImplementationOnce().
-type RenderOverrideFn = (props: AgGridProps, ref: React.ForwardedRef<unknown>) => JSX.Element;
+type RenderOverrideFn = (props: AgGridProps & { ref?: React.Ref<unknown> }) => React.JSX.Element;
 let renderOverride: RenderOverrideFn | undefined;
 
-// Mock AG Grid as a forwardRef component so ChargebackGrid's internalRef is
-// properly populated and api.purgeInfiniteCache() can be called through it.
+// Mock AG Grid so ChargebackGrid's internalRef is properly populated and
+// api.purgeInfiniteCache() can be called through it. React 19: ref as prop.
 vi.mock("ag-grid-react", async () => {
   const React = await import("react");
   return {
-    AgGridReact: React.forwardRef(
-      (props: AgGridProps, ref: React.ForwardedRef<unknown>) => {
-        const { columnDefs, onRowClicked, datasource } = props;
+    AgGridReact: (props: AgGridProps & { ref?: React.Ref<unknown> }) => {
+      const { columnDefs, onRowClicked, datasource } = props;
 
-        // Expose api.purgeInfiniteCache through the forwarded ref.
-        React.useImperativeHandle(ref, () => ({
-          api: { purgeInfiniteCache: mockPurgeInfiniteCache },
-        }));
+      // Expose api.purgeInfiniteCache through the ref prop.
+      React.useImperativeHandle(props.ref, () => ({
+        api: { purgeInfiniteCache: mockPurgeInfiniteCache },
+      }));
 
-        // Allow per-test render override (consumed once).
-        if (renderOverride) {
-          const impl = renderOverride;
-          renderOverride = undefined;
-          return impl(props, ref);
-        }
+      // Allow per-test render override (consumed once).
+      if (renderOverride) {
+        const impl = renderOverride;
+        renderOverride = undefined;
+        return impl(props);
+      }
 
-        // Default render — renders columnDefs cellRenderers so we can test them.
-        const tagsCol = columnDefs?.find((c) => c.field === "tags");
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const TagsCellRenderer = tagsCol?.cellRenderer as any;
-        return (
-          <div>
-            <div
-              data-testid="ag-grid"
-              data-has-datasource={datasource ? "true" : "false"}
-              onClick={() =>
-                onRowClicked?.({
-                  data: {
-                    dimension_id: 42,
-                    identity_id: "user@example.com",
-                  },
-                })
-              }
-            >
-              AG Grid
-            </div>
-            {TagsCellRenderer && (
-              <div data-testid="tags-cell">
-                <TagsCellRenderer value={["alpha", "beta", "gamma"]} />
-              </div>
-            )}
+      // Default render — renders columnDefs cellRenderers so we can test them.
+      const tagsCol = columnDefs?.find((c) => c.field === "tags");
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const TagsCellRenderer = tagsCol?.cellRenderer as any;
+      return (
+        <div>
+          <div
+            data-testid="ag-grid"
+            data-has-datasource={datasource ? "true" : "false"}
+            onClick={() =>
+              onRowClicked?.({
+                data: {
+                  dimension_id: 42,
+                  identity_id: "user@example.com",
+                },
+              })
+            }
+          >
+            AG Grid
           </div>
-        ) as JSX.Element;
-      },
-    ),
+          {TagsCellRenderer && (
+            <div data-testid="tags-cell">
+              <TagsCellRenderer value={["alpha", "beta", "gamma"]} />
+            </div>
+          )}
+        </div>
+      ) as React.JSX.Element;
+    },
   };
 });
 

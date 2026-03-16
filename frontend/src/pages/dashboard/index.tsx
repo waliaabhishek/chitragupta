@@ -1,3 +1,4 @@
+import type React from "react";
 import { useMemo, useState } from "react";
 import { Col, Radio, Row, Typography } from "antd";
 import type { TenantStatusSummary } from "../../types/api";
@@ -32,7 +33,7 @@ interface DashboardContentProps {
 }
 
 /** Inner component: hooks are unconditionally called here (tenant is always set). */
-function DashboardContent({ tenant, filters, timeBucket }: DashboardContentProps): JSX.Element {
+function DashboardContent({ tenant, filters, timeBucket }: DashboardContentProps): React.JSX.Element {
   const [productChartType, setProductChartType] = useState<"pie" | "treemap">("pie");
 
   const sharedParams: Omit<UseAggregationParams, "groupBy"> = useMemo(() => ({
@@ -167,7 +168,7 @@ function DashboardContent({ tenant, filters, timeBucket }: DashboardContentProps
 }
 
 /** Top-level page: handles tenant check and filter/time-bucket state. */
-export function CostDashboardPage(): JSX.Element {
+export function CostDashboardPage(): React.JSX.Element {
   const { currentTenant } = useTenant();
   const { filters, setFilter, setFilters, resetFilters } = useChargebackFilters();
   const [timeBucket, setTimeBucket] = useState<TimeBucket>("day");

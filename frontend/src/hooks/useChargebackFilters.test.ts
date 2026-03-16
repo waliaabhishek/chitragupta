@@ -1,15 +1,16 @@
+import type React from "react";
 import { act, renderHook } from "@testing-library/react";
 import type { ReactNode } from "react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter } from "react-router";
 import { createElement } from "react";
 import { afterEach, describe, expect, it } from "vitest";
 import { useChargebackFilters } from "./useChargebackFilters";
 
-function makeWrapper(initialSearch = ""): ({ children }: { children: ReactNode }) => JSX.Element {
-  return function Wrapper({ children }: { children: ReactNode }): JSX.Element {
+function makeWrapper(initialSearch = ""): ({ children }: { children: ReactNode }) => React.JSX.Element {
+  return function Wrapper({ children }: { children: ReactNode }): React.JSX.Element {
     return createElement(
       MemoryRouter,
-      { initialEntries: [`/${initialSearch}`], future: { v7_startTransition: true, v7_relativeSplatPath: true } },
+      { initialEntries: [`/${initialSearch}`] },
       children,
     );
   };

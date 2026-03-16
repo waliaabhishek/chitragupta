@@ -1,9 +1,10 @@
+import type React from "react";
 import { Typography } from "antd";
 import { useTenant } from "../../providers/TenantContext";
 
 const { Title, Text } = Typography;
 
-export function IdentityListPage(): JSX.Element {
+export function IdentityListPage(): React.JSX.Element {
   const { currentTenant } = useTenant();
 
   if (!currentTenant) {

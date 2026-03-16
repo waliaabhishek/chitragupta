@@ -1,3 +1,4 @@
+import type React from "react";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -5,7 +6,7 @@ import { http, HttpResponse } from "msw";
 import { TenantProvider, useTenant, useReadiness } from "./TenantContext";
 import type { ReadinessResponse } from "../types/api";
 
-function wrapper({ children }: { children: ReactNode }): JSX.Element {
+function wrapper({ children }: { children: ReactNode }): React.JSX.Element {
   return <TenantProvider>{children}</TenantProvider>;
 }
 

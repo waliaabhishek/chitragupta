@@ -1,3 +1,4 @@
+import type React from "react";
 import type { AggregationBucket } from "../../types/api";
 import { DimensionPieChart } from "./DimensionPieChart";
 
@@ -11,7 +12,7 @@ export function CostByResourceChart({
   data,
   loading,
   height = 300,
-}: CostByResourceChartProps): JSX.Element {
+}: CostByResourceChartProps): React.JSX.Element {
   return (
     <DimensionPieChart
       data={data}

@@ -1,6 +1,7 @@
+import type React from "react";
 import { Refine } from "@refinedev/core";
 import { useNotificationProvider } from "@refinedev/antd";
-import { BrowserRouter, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Route, Routes } from "react-router";
 import { App as AntApp, ConfigProvider } from "antd";
 import "@refinedev/antd/dist/reset.css";
 
@@ -17,7 +18,7 @@ import { IdentityListPage } from "./pages/identities/list";
 import { PipelineStatusPage } from "./pages/pipeline/status";
 import { TagManagementPage } from "./pages/tags/list";
 
-export function App(): JSX.Element {
+export function App(): React.JSX.Element {
   const { algorithm, isDark, toggleTheme } = useTheme();
 
   return (

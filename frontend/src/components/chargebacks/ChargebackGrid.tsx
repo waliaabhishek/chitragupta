@@ -1,9 +1,10 @@
+import type React from "react";
 import "ag-grid-community/styles/ag-grid.css";
 import "ag-grid-community/styles/ag-theme-alpine.css";
 import type { ColDef, IDatasource, IGetRowsParams, SelectionChangedEvent } from "ag-grid-community";
 import { AgGridReact } from "ag-grid-react";
 import { Tag } from "antd";
-import { type MutableRefObject, forwardRef, useMemo, useCallback, useEffect, useRef, useImperativeHandle } from "react";
+import { type MutableRefObject, type Ref, useMemo, useCallback, useEffect, useRef, useImperativeHandle } from "react";
 import { API_URL } from "../../config";
 import type { ChargebackResponse, PaginatedResponse } from "../../types/api";
 
@@ -13,6 +14,7 @@ interface ChargebackGridProps {
   onRowClick: (dimensionId: number) => void;
   onSelectionChange?: (ids: number[]) => void;
   onSelectAll?: (total: number) => void;
+  ref?: Ref<AgGridReact>;
 }
 
 function dateFormatter(params: { value: string }): string {
@@ -25,7 +27,7 @@ function currencyFormatter(params: { value: string }): string {
   return `$${Number(params.value).toFixed(2)}`;
 }
 
-function TagsCellRenderer(props: { value: string[] }): JSX.Element {
+function TagsCellRenderer(props: { value: string[] }): React.JSX.Element {
   const tags = props.value ?? [];
   const maxVisible = 2;
   const visible = tags.slice(0, maxVisible);
@@ -105,111 +107,109 @@ function createDatasource(
   };
 }
 
-export const ChargebackGrid = forwardRef<AgGridReact, ChargebackGridProps>(
-  ({ tenantName, filters, onRowClick, onSelectionChange, onSelectAll }, ref) => {
-    const internalRef = useRef<AgGridReact>(null);
-    const abortControllerRef = useRef(new AbortController());
+export function ChargebackGrid({
+  tenantName, filters, onRowClick, onSelectionChange, onSelectAll, ref,
+}: ChargebackGridProps): React.JSX.Element {
+  const internalRef = useRef<AgGridReact>(null);
+  const abortControllerRef = useRef(new AbortController());
 
-    // Expose the grid instance via the forwarded ref.
-    useImperativeHandle(ref, () => internalRef.current!, []);
+  // Expose the grid instance via the forwarded ref.
+  useImperativeHandle(ref, () => internalRef.current!, []);
 
-    // Side effect: abort previous and create a fresh controller when tenant/filters change.
-    // useEffect (not useMemo) owns this so it doesn't fire spuriously in Strict Mode.
-    useEffect(() => {
-      abortControllerRef.current.abort();
-      abortControllerRef.current = new AbortController();
-    }, [tenantName, filters]);
+  // Side effect: abort previous and create a fresh controller when tenant/filters change.
+  // useEffect (not useMemo) owns this so it doesn't fire spuriously in Strict Mode.
+  useEffect(() => {
+    abortControllerRef.current.abort();
+    abortControllerRef.current = new AbortController();
+  }, [tenantName, filters]);
 
-    // Pure computation: build datasource with ref; getRows reads signal at call time.
-    const datasource = useMemo(
-      () => createDatasource(tenantName, filters, abortControllerRef),
-      [tenantName, filters],
-    );
+  // Pure computation: build datasource with ref; getRows reads signal at call time.
+  const datasource = useMemo(
+    () => createDatasource(tenantName, filters, abortControllerRef),
+    [tenantName, filters],
+  );
 
-    // Purge AG Grid's infinite cache whenever the datasource changes.
-    // AG Grid does not auto-refresh when the datasource prop is replaced.
-    useEffect(() => {
-      internalRef.current?.api?.purgeInfiniteCache();
-    }, [datasource]);
+  // Purge AG Grid's infinite cache whenever the datasource changes.
+  // AG Grid does not auto-refresh when the datasource prop is replaced.
+  useEffect(() => {
+    internalRef.current?.api?.purgeInfiniteCache();
+  }, [datasource]);
 
-    const handleSelectionChanged = useCallback(
-      (event: SelectionChangedEvent) => {
-        if (!onSelectionChange) return;
-        const selectedRows = event.api.getSelectedRows() as ChargebackResponse[];
-        const ids = selectedRows
-          .filter((r) => r.dimension_id != null)
-          .map((r) => r.dimension_id as number);
-        onSelectionChange(ids);
-      },
-      [onSelectionChange],
-    );
+  const handleSelectionChanged = useCallback(
+    (event: SelectionChangedEvent) => {
+      if (!onSelectionChange) return;
+      const selectedRows = event.api.getSelectedRows() as ChargebackResponse[];
+      const ids = selectedRows
+        .filter((r) => r.dimension_id != null)
+        .map((r) => r.dimension_id as number);
+      onSelectionChange(ids);
+    },
+    [onSelectionChange],
+  );
 
-    const handleHeaderCheckboxChange = useCallback(
-      async (event: SelectionChangedEvent) => {
-        // Check if all visible rows are selected (header checkbox)
-        if (!onSelectAll) return;
-        const selectedCount = event.api.getSelectedRows().length;
-        if (selectedCount === 0) return;
+  const handleHeaderCheckboxChange = useCallback(
+    async (event: SelectionChangedEvent) => {
+      // Check if all visible rows are selected (header checkbox)
+      if (!onSelectAll) return;
+      const selectedCount = event.api.getSelectedRows().length;
+      if (selectedCount === 0) return;
 
-        // Fetch total count matching current filters
-        const url = new URL(
-          `${window.location.origin}${API_URL}/tenants/${tenantName}/chargebacks`,
-        );
-        url.searchParams.set("page", "1");
-        url.searchParams.set("page_size", "1");
-        for (const [k, v] of Object.entries(filters)) {
-          url.searchParams.set(k, v);
-        }
-        try {
-          const resp = await fetch(url.toString());
-          if (resp.ok) {
-            const data = (await resp.json()) as { total: number };
-            if (data.total > selectedCount) {
-              onSelectAll(data.total);
-            }
+      // Fetch total count matching current filters
+      const url = new URL(
+        `${window.location.origin}${API_URL}/tenants/${tenantName}/chargebacks`,
+      );
+      url.searchParams.set("page", "1");
+      url.searchParams.set("page_size", "1");
+      for (const [k, v] of Object.entries(filters)) {
+        url.searchParams.set(k, v);
+      }
+      try {
+        const resp = await fetch(url.toString());
+        if (resp.ok) {
+          const data = (await resp.json()) as { total: number };
+          if (data.total > selectedCount) {
+            onSelectAll(data.total);
           }
-        } catch (err) {
-          // Total count fetch is best-effort; log but don't disrupt selection.
-          console.error("Failed to fetch total count for select-all:", err);
         }
-      },
-      [tenantName, filters, onSelectAll],
-    );
+      } catch (err) {
+        // Total count fetch is best-effort; log but don't disrupt selection.
+        console.error("Failed to fetch total count for select-all:", err);
+      }
+    },
+    [tenantName, filters, onSelectAll],
+  );
 
-    const handleCombinedSelection = useCallback(
-      (e: SelectionChangedEvent) => {
-        void handleHeaderCheckboxChange(e);
-        handleSelectionChanged(e);
-      },
-      [handleHeaderCheckboxChange, handleSelectionChanged],
-    );
+  const handleCombinedSelection = useCallback(
+    (e: SelectionChangedEvent) => {
+      void handleHeaderCheckboxChange(e);
+      handleSelectionChanged(e);
+    },
+    [handleHeaderCheckboxChange, handleSelectionChanged],
+  );
 
-    const handleRowClicked = useCallback(
-      (e: { data: unknown }) => {
-        const row = e.data as ChargebackResponse | undefined;
-        if (row?.dimension_id != null) {
-          onRowClick(row.dimension_id);
-        }
-      },
-      [onRowClick],
-    );
+  const handleRowClicked = useCallback(
+    (e: { data: unknown }) => {
+      const row = e.data as ChargebackResponse | undefined;
+      if (row?.dimension_id != null) {
+        onRowClick(row.dimension_id);
+      }
+    },
+    [onRowClick],
+  );
 
-    return (
-      <div className="ag-theme-alpine" style={{ flex: 1, minHeight: 400 }}>
-        <AgGridReact
-          ref={internalRef}
-          columnDefs={columnDefs}
-          rowModelType="infinite"
-          datasource={datasource}
-          cacheBlockSize={100}
-          maxBlocksInCache={10}
-          rowSelection={{ mode: "multiRow" }}
-          onSelectionChanged={handleCombinedSelection}
-          onRowClicked={handleRowClicked}
-        />
-      </div>
-    );
-  },
-);
-
-ChargebackGrid.displayName = "ChargebackGrid";
+  return (
+    <div className="ag-theme-alpine" style={{ flex: 1, minHeight: 400 }}>
+      <AgGridReact
+        ref={internalRef}
+        columnDefs={columnDefs}
+        rowModelType="infinite"
+        datasource={datasource}
+        cacheBlockSize={100}
+        maxBlocksInCache={10}
+        rowSelection={{ mode: "multiRow" }}
+        onSelectionChanged={handleCombinedSelection}
+        onRowClicked={handleRowClicked}
+      />
+    </div>
+  );
+}

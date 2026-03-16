@@ -1,3 +1,4 @@
+import type React from "react";
 import { Button, Card, Result, Spin } from "antd";
 import type { ReactNode } from "react";
 
@@ -10,7 +11,7 @@ interface ChartCardProps {
   extra?: ReactNode;
 }
 
-export function ChartCard({ title, children, loading, error, onRetry, extra }: ChartCardProps): JSX.Element {
+export function ChartCard({ title, children, loading, error, onRetry, extra }: ChartCardProps): React.JSX.Element {
   return (
     <Card title={title} extra={extra} style={{ height: "100%" }}>
       {loading ? (

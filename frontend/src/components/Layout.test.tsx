@@ -1,5 +1,6 @@
+import type React from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter } from "react-router";
 import { describe, expect, it, vi } from "vitest";
 import { AppLayout } from "./Layout";
 
@@ -26,9 +27,9 @@ vi.mock("./TenantSelector", () => ({
   TenantSelector: () => <div data-testid="tenant-selector" />,
 }));
 
-function wrapper({ children }: { children: React.ReactNode }): JSX.Element {
+function wrapper({ children }: { children: React.ReactNode }): React.JSX.Element {
   return (
-    <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+    <MemoryRouter>
       {children}
     </MemoryRouter>
   );

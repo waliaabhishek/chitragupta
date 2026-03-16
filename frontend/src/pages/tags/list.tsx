@@ -1,7 +1,8 @@
+import type React from "react";
 import { Button, Input, Popconfirm, Space, Table, Typography, notification } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 import { API_URL } from "../../config";
 import { useTenant } from "../../providers/TenantContext";
 import type { PaginatedResponse, TagWithDimensionResponse } from "../../types/api";
@@ -9,7 +10,7 @@ import type { PaginatedResponse, TagWithDimensionResponse } from "../../types/ap
 const { Title, Text } = Typography;
 const PAGE_SIZE = 100;
 
-export function TagManagementPage(): JSX.Element {
+export function TagManagementPage(): React.JSX.Element {
   const { currentTenant, isReadOnly } = useTenant();
   const navigate = useNavigate();
 

@@ -16,7 +16,7 @@ export function DataAvailabilityTimeline({
   endDate,
   loading,
   height = 80,
-}: DataAvailabilityTimelineProps): JSX.Element {
+}: DataAvailabilityTimelineProps): React.JSX.Element {
   const option: EChartsOption = useMemo(() => {
     const visible = dates.filter((d) => d >= startDate && d <= endDate);
 

@@ -12,13 +12,18 @@ describe("dataProvider.getApiUrl", () => {
 
 describe("dataProvider.getList", () => {
   it("fetches tenant-scoped resource with pagination", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
     const result = await dataProvider.getList({
       resource: "chargebacks",
-      pagination: { current: 2, pageSize: 50 },
+      pagination: { currentPage: 2, pageSize: 50 },
       meta: { tenantName: "acme" },
     });
+    const calledUrl = fetchSpy.mock.calls[0][0] as string;
+    expect(calledUrl).toContain("page=2");
+    expect(calledUrl).toContain("page_size=50");
     expect(result.data).toHaveLength(1);
     expect(result.total).toBe(1);
+    fetchSpy.mockRestore();
   });
 
   it("defaults to page 1, pageSize 100 when pagination omitted", async () => {

@@ -1,3 +1,4 @@
+import type React from "react";
 import { useState } from "react";
 import { Skeleton, Table, Typography } from "antd";
 import type { ColumnsType } from "antd/es/table";
@@ -38,7 +39,7 @@ const columns: ColumnsType<AllocationIssueItem> = [
   },
 ];
 
-export function AllocationIssuesTable({ tenantName, filters }: AllocationIssuesTableProps): JSX.Element {
+export function AllocationIssuesTable({ tenantName, filters }: AllocationIssuesTableProps): React.JSX.Element {
   const [page, setPage] = useState(1);
 
   const { data, isLoading, error } = useAllocationIssues({

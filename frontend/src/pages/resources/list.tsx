@@ -1,9 +1,10 @@
+import type React from "react";
 import { Typography } from "antd";
 import { useTenant } from "../../providers/TenantContext";
 
 const { Title, Text } = Typography;
 
-export function ResourceListPage(): JSX.Element {
+export function ResourceListPage(): React.JSX.Element {
   const { currentTenant } = useTenant();
 
   if (!currentTenant) {

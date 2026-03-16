@@ -1,3 +1,4 @@
+import type React from "react";
 import { Card, Col, Row, Skeleton, Statistic } from "antd";
 import { formatCurrency } from "../../utils/aggregation";
 import type { AggregationResponse } from "../../types/api";
@@ -8,7 +9,7 @@ interface SummaryStatCardsProps {
   error?: string | null;
 }
 
-export function SummaryStatCards({ data, isLoading, error }: SummaryStatCardsProps): JSX.Element {
+export function SummaryStatCards({ data, isLoading, error }: SummaryStatCardsProps): React.JSX.Element {
   const total = data ? parseFloat(data.total_amount) : 0;
   const usage = data ? parseFloat(data.usage_amount) : 0;
   const shared = data ? parseFloat(data.shared_amount) : 0;

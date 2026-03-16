@@ -1,39 +1,33 @@
+import type React from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
 import type { ReactNode } from "react";
-import { forwardRef } from "react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter } from "react-router";
 import { describe, expect, it, vi } from "vitest";
 import { ChargebackListPage } from "./list";
 
 // Mock heavy sub-components
 vi.mock("../../components/chargebacks/ChargebackGrid", () => ({
-  // forwardRef required: list.tsx passes ref={gridRef} to ChargebackGrid.
-  ChargebackGrid: forwardRef(
-    (
-      {
-        onSelectionChange,
-        onSelectAll,
-      }: {
-        onSelectionChange?: (ids: number[]) => void;
-        onSelectAll?: (total: number) => void;
-      },
-      _ref: unknown,
-    ) => (
-      <div data-testid="chargeback-grid">
-        <button
-          data-testid="trigger-selection"
-          onClick={() => onSelectionChange?.([1, 2, 3])}
-        >
-          Trigger Selection
-        </button>
-        <button
-          data-testid="trigger-select-all"
-          onClick={() => onSelectAll?.(99)}
-        >
-          Trigger Select All
-        </button>
-      </div>
-    ),
+  ChargebackGrid: ({
+    onSelectionChange,
+    onSelectAll,
+  }: {
+    onSelectionChange?: (ids: number[]) => void;
+    onSelectAll?: (total: number) => void;
+  }) => (
+    <div data-testid="chargeback-grid">
+      <button
+        data-testid="trigger-selection"
+        onClick={() => onSelectionChange?.([1, 2, 3])}
+      >
+        Trigger Selection
+      </button>
+      <button
+        data-testid="trigger-select-all"
+        onClick={() => onSelectAll?.(99)}
+      >
+        Trigger Select All
+      </button>
+    </div>
   ),
 }));
 
@@ -149,9 +143,9 @@ vi.mock("../../providers/TenantContext", () => ({
   })),
 }));
 
-function wrapper({ children }: { children: ReactNode }): JSX.Element {
+function wrapper({ children }: { children: ReactNode }): React.JSX.Element {
   return (
-    <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+    <MemoryRouter>
       {children}
     </MemoryRouter>
   );

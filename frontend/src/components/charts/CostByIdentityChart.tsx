@@ -16,7 +16,7 @@ export function CostByIdentityChart({
   topN = 10,
   loading,
   height = 400,
-}: CostByIdentityChartProps): JSX.Element {
+}: CostByIdentityChartProps): React.JSX.Element {
   const option: EChartsOption = useMemo(() => {
     const byIdentity = aggregateByDimension(data, "identity_id");
     const sorted = [...byIdentity].sort((a, b) => b.amount - a.amount).slice(0, topN);

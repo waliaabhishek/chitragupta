@@ -1,5 +1,5 @@
 import { useCallback, useMemo } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams } from "react-router";
 import type { ChargebackFilters } from "../types/filters";
 
 const FILTER_KEYS: (keyof ChargebackFilters)[] = [

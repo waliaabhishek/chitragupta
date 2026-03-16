@@ -1,3 +1,4 @@
+import type React from "react";
 import { Button, Form, Input, Space, Tag, Typography } from "antd";
 import { useState } from "react";
 import type { TagResponse } from "../../types/api";
@@ -14,7 +15,7 @@ interface TagFormValues {
   displayName: string;
 }
 
-export function TagEditor({ tags, onAdd, onRemove, readOnly }: TagEditorProps): JSX.Element {
+export function TagEditor({ tags, onAdd, onRemove, readOnly }: TagEditorProps): React.JSX.Element {
   const [form] = Form.useForm<TagFormValues>();
   const [loading, setLoading] = useState(false);
 
