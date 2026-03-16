@@ -85,8 +85,8 @@ def resolve_connector_identity(
     elif auth_mode == "KAFKA_API_KEY":
         # Look up API key, then resolve its owner
         api_key_id = connector.metadata.get("kafka_api_key")
-        if api_key_id is not None:
-            # Check for masked key (Confluent masks keys with asterisks; empty string also treated as masked)
+        if api_key_id:
+            # Check for masked key (Confluent masks keys with asterisks)
             if all(ch == "*" for ch in api_key_id):
                 logger.warning("Connector %s API key is masked", connector.resource_id)
                 owner = create_connector_sentinel(

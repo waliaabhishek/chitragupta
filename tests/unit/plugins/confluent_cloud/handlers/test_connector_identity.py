@@ -484,8 +484,8 @@ class TestResolveConnectorIdentity:
         assert "connector_api_key_masked" in result.resource_active.ids()
         assert "connector_credentials_unknown" not in result.resource_active.ids()
 
-    def test_kafka_api_key_mode_empty_key_creates_masked_sentinel(self, mock_uow: MagicMock) -> None:
-        """Empty-string API key → identity is connector_api_key_masked (all() on empty iter = True)."""
+    def test_kafka_api_key_mode_empty_key_creates_unknown_sentinel(self, mock_uow: MagicMock) -> None:
+        """Empty-string API key is treated as missing, not masked."""
         from plugins.confluent_cloud.handlers.connector_identity import (
             resolve_connector_identity,
         )
@@ -514,8 +514,8 @@ class TestResolveConnectorIdentity:
         )
 
         assert len(result.resource_active) == 1
-        assert "connector_api_key_masked" in result.resource_active.ids()
-        assert "connector_credentials_unknown" not in result.resource_active.ids()
+        assert "connector_credentials_unknown" in result.resource_active.ids()
+        assert "connector_api_key_masked" not in result.resource_active.ids()
 
     def test_kafka_api_key_mode_key_not_in_db_creates_not_found_sentinel(self, mock_uow: MagicMock) -> None:
         """API key present in metadata but not found in DB → identity is connector_api_key_not_found."""
