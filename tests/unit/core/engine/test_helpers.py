@@ -7,6 +7,7 @@ import pytest
 
 from core.engine.allocation import AllocationContext, AllocationResult
 from core.engine.helpers import (
+    _distribute_remainder,
     allocate_by_usage_ratio,
     allocate_evenly,
     allocate_hybrid,
@@ -375,3 +376,52 @@ class TestComputeActiveFraction:
         )
         frac = compute_active_fraction(r, _NOW, _NOW)
         assert frac == Decimal(1)
+
+
+# --- _distribute_remainder ---
+
+
+class TestDistributeRemainder:
+    def test_safety_guard_non_convergent_diff_raises(self) -> None:
+        """diff=0.00005 is not a multiple of _CENT (0.0001); loop cannot converge → RuntimeError."""
+        with pytest.raises(RuntimeError, match="did not converge"):
+            _distribute_remainder([Decimal("1.00")], Decimal("0.00005"))
+
+
+# --- new split_amount_evenly cases ---
+
+
+class TestSplitAmountEvenlyExtended:
+    def test_uneven_first_recipient_gets_extra_cent(self) -> None:
+        """10.00 / 3 = 3.3333 each; extra 0.0001 goes to first recipient."""
+        result = split_amount_evenly(Decimal("10.00"), 3)
+        assert len(result) == 3
+        assert sum(result) == Decimal("10.00")
+        # First recipient gets the extra cent
+        assert result[0] > result[1]
+        assert result[0] > result[2]
+
+    def test_large_count_near_boundary(self) -> None:
+        """0.0001 / 999 = 0.0000 each with diff 0.0001; only first recipient gets 0.0001."""
+        result = split_amount_evenly(Decimal("0.0001"), 999)
+        assert len(result) == 999
+        assert sum(result) == Decimal("0.0001")
+        assert result[0] == Decimal("0.0001")
+        assert all(r == Decimal("0.0000") for r in result[1:])
+
+    def test_zero_diff_no_remainder_loop_needed(self) -> None:
+        """3.00 / 3 = 1.0000 each; diff is zero, distribute returns immediately."""
+        result = split_amount_evenly(Decimal("3.00"), 3)
+        assert result == [Decimal("1.0000"), Decimal("1.0000"), Decimal("1.0000")]
+        assert sum(result) == Decimal("3.00")
+
+
+# --- allocate_by_usage_ratio sum preservation (uneven ratios) ---
+
+
+class TestAllocateByUsageRatioSumPreservationUneven:
+    def test_three_identities_uneven_ratios_sum_preserved(self) -> None:
+        """Uneven ratios (e.g. 1:2:7) must still sum exactly to split_amount."""
+        ctx = make_ctx(split_amount=Decimal("1.00"))
+        result = allocate_by_usage_ratio(ctx, {"u-1": 10.0, "u-2": 20.0, "u-3": 70.0})
+        assert sum(r.amount for r in result.rows) == Decimal("1.00")

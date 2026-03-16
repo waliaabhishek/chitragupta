@@ -14,6 +14,37 @@ from core.models.chargeback import AllocationDetail
 logger = logging.getLogger(__name__)
 
 _CENT = Decimal("0.0001")
+_ZERO = Decimal(0)
+
+
+def _distribute_remainder(amounts: list[Decimal], diff: Decimal) -> list[Decimal]:
+    """Distribute a rounding remainder across leading entries, one cent at a time.
+
+    Iterates through ``amounts`` in round-robin order, adjusting each entry by
+    one cent until ``diff`` reaches zero.  The loop is bounded by
+    ``len(amounts) * 2`` iterations — empirically the maximum observed is
+    approximately ``len(amounts)`` — so the 2x factor provides a safe margin.
+
+    Raises:
+        RuntimeError: If the remainder is not resolved within the safety bound,
+            indicating a programming error (e.g. ``diff`` is not a multiple of
+            ``_CENT``).
+    """
+    if diff == _ZERO:
+        return amounts
+    step = _CENT if diff > 0 else -_CENT
+    max_iterations = len(amounts) * 2
+    idx = 0
+    for _ in range(max_iterations):
+        amounts[idx] += step
+        diff = diff - step  # no quantize — callers pre-quantize; sub-cent diffs must not falsely converge
+        idx = (idx + 1) % len(amounts)
+        if diff == _ZERO:
+            break
+    else:
+        msg = f"_distribute_remainder did not converge after {max_iterations} iterations; remaining diff={diff!r}"
+        raise RuntimeError(msg)
+    return amounts
 
 
 def make_row(
@@ -44,20 +75,19 @@ def make_row(
 
 
 def split_amount_evenly(total: Decimal, count: int) -> list[Decimal]:
-    """Split total into count parts, distributing remainder across leading recipients."""
+    """Split total into count parts, distributing remainder across leading recipients.
+
+    Uses ``_distribute_remainder()`` to assign leftover cents after even
+    division.  The remainder loop is bounded by ``count * 2`` iterations and
+    raises ``RuntimeError`` if exceeded.
+    """
     if count <= 0:
         return []
-    total = total.quantize(_CENT, rounding=ROUND_HALF_UP)  # Quantize first
+    total = total.quantize(_CENT, rounding=ROUND_HALF_UP)
     base = (total / count).quantize(_CENT, rounding=ROUND_HALF_UP)
     amounts = [base] * count
     diff = (total - sum(amounts)).quantize(_CENT)
-    step = _CENT if diff > 0 else -_CENT
-    idx = 0
-    while diff != Decimal(0):
-        amounts[idx] += step
-        diff = (diff - step).quantize(_CENT)
-        idx = (idx + 1) % count  # Modulo wraparound
-    return amounts
+    return _distribute_remainder(amounts, diff)
 
 
 def allocate_by_usage_ratio(
@@ -87,15 +117,9 @@ def allocate_by_usage_ratio(
     ratios = [identity_values[i] / total_value for i in ids]
     split_amount = ctx.split_amount.quantize(_CENT, rounding=ROUND_HALF_UP)
     raw_amounts = [split_amount * Decimal(str(r)) for r in ratios]
-    # Same remainder-distribution algorithm as split_amount_evenly
     quantized = [a.quantize(_CENT, rounding=ROUND_HALF_UP) for a in raw_amounts]
     diff = (split_amount - sum(quantized)).quantize(_CENT)
-    step = _CENT if diff > 0 else -_CENT
-    idx = 0
-    while diff != Decimal(0):
-        quantized[idx] += step
-        diff = (diff - step).quantize(_CENT)
-        idx = (idx + 1) % len(quantized)  # Modulo wraparound
+    quantized = _distribute_remainder(quantized, diff)
 
     rows = [
         make_row(
