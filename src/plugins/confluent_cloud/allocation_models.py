@@ -341,6 +341,10 @@ CKU_SHARED_CHAIN = ChainModel(
 )
 
 
+_DEFAULT_CKU_USAGE_RATIO = "0.70"
+_DEFAULT_CKU_SHARED_RATIO = "0.30"
+
+
 def make_dynamic_cku_model() -> DynamicCompositionModel:
     """Create a DynamicCompositionModel for CKU with runtime-configurable ratios.
 
@@ -353,8 +357,8 @@ def make_dynamic_cku_model() -> DynamicCompositionModel:
     """
 
     def ratio_source(ctx: AllocationContext) -> Sequence[tuple[Decimal, AllocationModel]]:
-        usage = Decimal(str(ctx.params.get("kafka_cku_usage_ratio", "0.70")))
-        shared = Decimal(str(ctx.params.get("kafka_cku_shared_ratio", "0.30")))
+        usage = Decimal(str(ctx.params.get("kafka_cku_usage_ratio", _DEFAULT_CKU_USAGE_RATIO)))
+        shared = Decimal(str(ctx.params.get("kafka_cku_shared_ratio", _DEFAULT_CKU_SHARED_RATIO)))
         return [(usage, CKU_USAGE_CHAIN), (shared, CKU_SHARED_CHAIN)]
 
     return DynamicCompositionModel(ratio_source=ratio_source)

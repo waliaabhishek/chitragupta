@@ -157,3 +157,94 @@ def test_metrics_bearer_auth_requires_token():
                 },
             }
         )
+
+
+def test_cku_ratios_invalid_both_set_wrong_sum() -> None:
+    from plugins.confluent_cloud.config import CCloudPluginConfig
+
+    with pytest.raises(ValidationError, match="must sum to 1.0"):
+        CCloudPluginConfig.from_plugin_settings(
+            {
+                "ccloud_api": {"key": "k", "secret": "s"},
+                "allocator_params": {
+                    "kafka_cku_usage_ratio": 0.60,
+                    "kafka_cku_shared_ratio": 0.20,
+                },
+            }
+        )
+
+
+def test_cku_ratios_invalid_one_set_wrong_sum() -> None:
+    from plugins.confluent_cloud.config import CCloudPluginConfig
+
+    # usage=0.60, shared defaults to 0.30 → total 0.90
+    with pytest.raises(ValidationError, match="must sum to 1.0"):
+        CCloudPluginConfig.from_plugin_settings(
+            {
+                "ccloud_api": {"key": "k", "secret": "s"},
+                "allocator_params": {
+                    "kafka_cku_usage_ratio": 0.60,
+                },
+            }
+        )
+
+
+def test_cku_ratios_valid() -> None:
+    from plugins.confluent_cloud.config import CCloudPluginConfig
+
+    config = CCloudPluginConfig.from_plugin_settings(
+        {
+            "ccloud_api": {"key": "k", "secret": "s"},
+            "allocator_params": {
+                "kafka_cku_usage_ratio": 0.80,
+                "kafka_cku_shared_ratio": 0.20,
+            },
+        }
+    )
+    assert config.allocator_params["kafka_cku_usage_ratio"] == 0.80
+    assert config.allocator_params["kafka_cku_shared_ratio"] == 0.20
+
+
+def test_cku_ratios_none_set_passes() -> None:
+    from plugins.confluent_cloud.config import CCloudPluginConfig
+
+    config = CCloudPluginConfig.from_plugin_settings(
+        {
+            "ccloud_api": {"key": "k", "secret": "s"},
+            "allocator_params": {},
+        }
+    )
+    assert "kafka_cku_usage_ratio" not in config.allocator_params
+    assert "kafka_cku_shared_ratio" not in config.allocator_params
+
+
+def test_cku_ratios_boundary_within_tolerance() -> None:
+    from plugins.confluent_cloud.config import CCloudPluginConfig
+
+    # sum = 1.00001, within 0.0001 tolerance → should pass
+    config = CCloudPluginConfig.from_plugin_settings(
+        {
+            "ccloud_api": {"key": "k", "secret": "s"},
+            "allocator_params": {
+                "kafka_cku_usage_ratio": 0.70001,
+                "kafka_cku_shared_ratio": 0.30,
+            },
+        }
+    )
+    assert config.allocator_params["kafka_cku_usage_ratio"] == 0.70001
+
+
+def test_cku_ratios_boundary_outside_tolerance() -> None:
+    from plugins.confluent_cloud.config import CCloudPluginConfig
+
+    # sum = 1.001, outside 0.0001 tolerance → should fail
+    with pytest.raises(ValidationError, match="must sum to 1.0"):
+        CCloudPluginConfig.from_plugin_settings(
+            {
+                "ccloud_api": {"key": "k", "secret": "s"},
+                "allocator_params": {
+                    "kafka_cku_usage_ratio": 0.701,
+                    "kafka_cku_shared_ratio": 0.30,
+                },
+            }
+        )

@@ -1,14 +1,21 @@
 from __future__ import annotations
 
 import logging
+from decimal import Decimal
 from typing import Any
 
 from pydantic import BaseModel, Field, SecretStr, model_validator
 
 from core.config.models import PluginSettingsBase
 from core.metrics.config import MetricsConnectionConfig  # noqa: TC001 — Pydantic evaluates field annotations at runtime
+from plugins.confluent_cloud.allocation_models import (
+    _DEFAULT_CKU_SHARED_RATIO,
+    _DEFAULT_CKU_USAGE_RATIO,
+)
 
 logger = logging.getLogger(__name__)
+
+_CKU_RATIO_SUM_TOLERANCE = Decimal("0.0001")  # must match CompositionModel.__post_init__ tolerance
 
 
 class CCloudCredentials(BaseModel):
@@ -42,10 +49,18 @@ class CCloudPluginConfig(PluginSettingsBase):
 
     @model_validator(mode="after")
     def validate_allocator_params(self) -> CCloudPluginConfig:
-        """Validate that ratio params are numeric."""
+        """Validate that ratio params are numeric and CKU ratios sum to 1.0."""
         for key, value in self.allocator_params.items():
             if key.endswith("_ratio") and not isinstance(value, (int, float)):
                 raise ValueError(f"allocator_params.{key} must be numeric, got {type(value).__name__}")
+        if "kafka_cku_usage_ratio" in self.allocator_params or "kafka_cku_shared_ratio" in self.allocator_params:
+            usage = Decimal(str(self.allocator_params.get("kafka_cku_usage_ratio", _DEFAULT_CKU_USAGE_RATIO)))
+            shared = Decimal(str(self.allocator_params.get("kafka_cku_shared_ratio", _DEFAULT_CKU_SHARED_RATIO)))
+            if abs(usage + shared - Decimal("1")) > _CKU_RATIO_SUM_TOLERANCE:
+                total = usage + shared
+                raise ValueError(
+                    f"allocator_params kafka_cku_usage_ratio + kafka_cku_shared_ratio must sum to 1.0, got {total}"
+                )
         return self
 
     @classmethod
