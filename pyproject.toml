@@ -17,6 +17,7 @@ dependencies = [
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.34.0",
     "cachetools>=5.0",
+    "prometheus-client>=0.24.1",
 ]
 
 [dependency-groups]
@@ -72,3 +73,11 @@ ignore_missing_imports = true
 # Alembic migrations are auto-generated; not worth strict-typing.
 module = "core.storage.migrations.versions.*"
 ignore_errors = true
+
+[[tool.mypy.overrides]]
+module = "prometheus_client"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "prometheus_client.core"
+ignore_missing_imports = true

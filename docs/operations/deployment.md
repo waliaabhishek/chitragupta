@@ -119,6 +119,39 @@ tenants:
 
 **Rule of thumb:** Start with SQLite. Switch to PostgreSQL when you need multiple application instances or observe lock contention under write-heavy workloads.
 
+## Prometheus collector script
+
+When using the [Prometheus emitter](../configuration/index.md#prometheus-emitter), chargeback data is held in memory and served at `/metrics`. To persist it into a Prometheus TSDB (for long-term retention and historical queries), use the bundled collector script:
+
+```
+deployables/assets/prometheus_for_chargeback/collector.sh
+```
+
+The script scrapes `/metrics` in OpenMetrics format and writes TSDB blocks via `promtool tsdb create-blocks-from openmetrics`. It requires `promtool` on `PATH` (ships with the Prometheus distribution).
+
+**Required environment variables:**
+
+| Variable | Description |
+|---|---|
+| `CHITRAGUPT_METRICS_URL` | URL of the `/metrics` endpoint, e.g. `http://localhost:9090/metrics` |
+| `CHITRAGUPT_HEALTH_URL` | URL of the `/health` endpoint, e.g. `http://localhost:8080/health` |
+| `TSDB_OUT_DIR` | Output directory for TSDB blocks (default: `/data/prometheus`) |
+
+**Optional environment variables:**
+
+| Variable | Default | Description |
+|---|---|---|
+| `CHITRAGUPT_METRICS_FORMAT` | `openmetrics` | Must be `openmetrics`. Setting `text` causes immediate exit — Prometheus text format uses millisecond timestamps that `promtool` misinterprets. |
+
+**Polling modes:**
+
+| Mode | Interval | Trigger |
+|---|---|---|
+| Catch-up (fast) | 1 second | Most recent metric timestamp is older than 5 days |
+| Current (slow) | 600 seconds | Most recent metric timestamp is recent |
+
+The script waits for the health endpoint to return HTTP 200 before scraping. Run it as a sidecar alongside the Chitragupt worker.
+
 ## Upgrading
 
 See [Upgrading](upgrading.md) for backup procedures, upgrade steps, database migration behavior, and rollback instructions.

@@ -72,7 +72,7 @@ class TestLoadEmitters:
     def test_empty_specs_returns_empty_list(self) -> None:
         from core.engine.orchestrator import _load_emitters
 
-        result = _load_emitters([], "daily")
+        result = _load_emitters([], "daily", storage_backend=_make_storage_backend())
         assert result == []
 
     def test_single_csv_spec_returns_one_entry(self) -> None:
@@ -81,7 +81,7 @@ class TestLoadEmitters:
 
         self._register_csv()
         specs = [EmitterSpec(type="csv", params={"output_dir": "/tmp"})]
-        result = _load_emitters(specs, "daily")
+        result = _load_emitters(specs, "daily", storage_backend=_make_storage_backend())
         assert len(result) == 1
         assert isinstance(result[0], _EmitterEntry)
 
@@ -92,7 +92,7 @@ class TestLoadEmitters:
         self._register_csv()
         specs = [EmitterSpec(type="csv", aggregation="hourly", params={"output_dir": "/tmp"})]
         with pytest.raises(ValueError, match="finer"):
-            _load_emitters(specs, "daily")
+            _load_emitters(specs, "daily", storage_backend=_make_storage_backend())
 
     def test_monthly_aggregation_coarser_than_daily_succeeds(self) -> None:
         from core.config.models import EmitterSpec
@@ -100,7 +100,7 @@ class TestLoadEmitters:
 
         self._register_csv()
         specs = [EmitterSpec(type="csv", aggregation="monthly", params={"output_dir": "/tmp"})]
-        result = _load_emitters(specs, "daily")
+        result = _load_emitters(specs, "daily", storage_backend=_make_storage_backend())
         assert len(result) == 1
         assert isinstance(result[0], _EmitterEntry)
         assert result[0].aggregation == "monthly"
@@ -111,7 +111,7 @@ class TestLoadEmitters:
 
         specs = [EmitterSpec(type="nonexistent_emitter_xyz", params={})]
         with pytest.raises(ValueError):
-            _load_emitters(specs, "daily")
+            _load_emitters(specs, "daily", storage_backend=_make_storage_backend())
 
     def test_same_granularity_aggregation_succeeds(self) -> None:
         from core.config.models import EmitterSpec
@@ -119,7 +119,7 @@ class TestLoadEmitters:
 
         self._register_csv()
         specs = [EmitterSpec(type="csv", aggregation="daily", params={"output_dir": "/tmp"})]
-        result = _load_emitters(specs, "daily")
+        result = _load_emitters(specs, "daily", storage_backend=_make_storage_backend())
         assert len(result) == 1
 
 

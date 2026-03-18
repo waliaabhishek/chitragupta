@@ -1,0 +1,41 @@
+# =============================================================================
+# CCloud with Prometheus Emitter — exposes metrics on :9090/metrics.
+# Start the collector script to backfill historical TSDB blocks.
+# Requires env vars: CCLOUD_ORG_ID, CCLOUD_API_KEY, CCLOUD_API_SECRET
+# =============================================================================
+
+logging:
+  level: ${LOG_LEVEL:-INFO}
+
+api:
+  host: "0.0.0.0"
+  port: 8080
+
+tenants:
+  ccloud-prod:
+    ecosystem: confluent_cloud
+    tenant_id: "${CCLOUD_ORG_ID}"
+    lookback_days: 90
+    cutoff_days: 5
+
+    storage:
+      backend: sqlmodel
+      connection_string: "sqlite:////app/data/ccloud-prod.db"
+
+    plugin_settings:
+      ccloud_api:
+        key: "${CCLOUD_API_KEY}"
+        secret: "${CCLOUD_API_SECRET}"
+
+      emitters:
+        # CSV for audit trail
+        - type: csv
+          aggregation: daily
+          params:
+            output_dir: /app/output/chargebacks
+
+        # Prometheus for scraping — one server per process on port 9090
+        - type: prometheus
+          aggregation: daily
+          params:
+            port: 9090

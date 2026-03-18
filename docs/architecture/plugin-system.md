@@ -54,6 +54,22 @@ logs a warning and allocates the cost to UNALLOCATED.
 parameter for caching optimization. `ResolveContext` is a TypedDict containing
 `cached_identities` (IdentitySet) and `cached_resources` (dict of Resource objects).
 
+## Emitter registry
+
+Emitters are registered at application startup via `core.emitters.registry.register(name, factory)`. The factory callable receives `**params` from the YAML config's `params` dict.
+
+**Storage injection:** If a factory needs access to the storage backend (to query billing/resource/identity data at emit time), set the attribute `factory.needs_storage_backend = True`. The orchestrator detects this flag and injects `storage_backend` as a keyword argument alongside the configured params. Factories without this attribute receive only their configured params.
+
+```python
+def make_my_emitter(port: int, storage_backend: StorageBackend) -> MyEmitter:
+    return MyEmitter(port=port, storage_backend=storage_backend)
+
+make_my_emitter.needs_storage_backend = True
+register("my_emitter", make_my_emitter)
+```
+
+The built-in emitters are `csv` (no storage needed) and `prometheus` (`needs_storage_backend = True`).
+
 ## Lifecycle
 
 1. `plugin.initialize(config)` — validate config, create clients

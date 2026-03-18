@@ -825,7 +825,7 @@ class ChargebackOrchestrator:
             extra_granularity_durations,
         ) = _load_overrides(tenant_config.plugin_settings)
         settings = tenant_config.plugin_settings
-        emitter_entries = _load_emitters(settings.emitters, settings.chargeback_granularity)
+        emitter_entries = _load_emitters(settings.emitters, settings.chargeback_granularity, storage_backend)
 
         self._gather_phase = GatherPhase(
             ecosystem=self._ecosystem,
@@ -1003,6 +1003,7 @@ class ChargebackOrchestrator:
 def _load_emitters(
     emitter_specs: list[EmitterSpec],
     chargeback_granularity: str,
+    storage_backend: StorageBackend,
 ) -> list[_EmitterEntry]:
     """Instantiate emitter entries from YAML specs.
 
@@ -1017,10 +1018,16 @@ def _load_emitters(
         ValueError: Unknown emitter type, or aggregation finer than chargeback granularity.
     """
     from core.emitters.registry import get as registry_get
+    from core.emitters.registry import get_factory
 
     entries: list[_EmitterEntry] = []
     for spec in emitter_specs:
-        emitter = registry_get(spec.type, spec.params)  # raises ValueError for unknown type
+        factory = get_factory(spec.type)
+        extra: dict[str, Any] = {}
+        if factory is not None and getattr(factory, "needs_storage_backend", False):
+            extra["storage_backend"] = storage_backend
+
+        emitter = registry_get(spec.type, spec.params, extra=extra)  # raises ValueError for unknown type
 
         if spec.aggregation is not None:
             req_level = _GRANULARITY_ORDER.get(spec.aggregation, -1)

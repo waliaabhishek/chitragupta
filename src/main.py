@@ -14,6 +14,7 @@ from core.emitters.registry import register as register_emitter
 from core.plugin.loader import discover_plugins
 from core.plugin.registry import PluginRegistry
 from emitters.csv_emitter import make_csv_emitter
+from emitters.prometheus_emitter import make_prometheus_emitter
 from workflow_runner import WorkflowRunner
 
 logger = logging.getLogger(__name__)
@@ -21,6 +22,7 @@ logger = logging.getLogger(__name__)
 
 # Register built-in emitters at application startup
 register_emitter("csv", make_csv_emitter)
+register_emitter("prometheus", make_prometheus_emitter)
 
 if TYPE_CHECKING:
     from core.config.models import AppSettings

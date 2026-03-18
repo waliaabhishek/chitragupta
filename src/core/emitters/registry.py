@@ -22,7 +22,12 @@ def register(name: str, factory: Callable[..., Emitter]) -> None:
     _REGISTRY[name] = factory
 
 
-def get(name: str, params: dict[str, Any]) -> Emitter:
+def get_factory(name: str) -> Callable[..., Emitter] | None:
+    """Return the registered factory for *name*, or None if not registered."""
+    return _REGISTRY.get(name)
+
+
+def get(name: str, params: dict[str, Any], extra: dict[str, Any] | None = None) -> Emitter:
     """Instantiate an emitter by registered name.
 
     Raises:
@@ -31,6 +36,7 @@ def get(name: str, params: dict[str, Any]) -> Emitter:
     logger.debug("Creating emitter %r", name)
     if name not in _REGISTRY:
         available = ", ".join(sorted(_REGISTRY)) or "(none)"
-        logger.exception("Unknown emitter %r registered=%s", name, list(_REGISTRY))
+        logger.error("Unknown emitter %r registered=%s", name, list(_REGISTRY))
         raise ValueError(f"Unknown emitter type {name!r}. Available: {available}")
-    return _REGISTRY[name](**params)
+    merged = {**params, **(extra or {})}
+    return _REGISTRY[name](**merged)
