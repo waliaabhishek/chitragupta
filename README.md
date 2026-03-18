@@ -36,7 +36,6 @@ cp deployables/config/examples/ccloud-minimal.yaml config.yaml
 # Edit config.yaml — set your org ID or use env vars
 
 # Set credentials
-export CCLOUD_ORG_ID=org-xxxxx
 export CCLOUD_API_KEY=your-key
 export CCLOUD_API_SECRET=your-secret
 
@@ -44,16 +43,30 @@ export CCLOUD_API_SECRET=your-secret
 uv run python src/main.py --config-file config.yaml --run-once
 ```
 
-See [Quickstart guide](docs/getting-started/quickstart.md) for step-by-step walkthrough, or the [Docker Quickstart](deployables/QUICKSTART.md) to run the full stack with Docker Compose.
+The [Quickstart guide](docs/getting-started/quickstart.md) covers everything end-to-end: service account creation, permissions, API key setup, configuration, and first run. For a containerized setup with Grafana dashboards, see the [Docker Quickstart](deployables/QUICKSTART.md).
+
+## Architecture
+
+```
+AppSettings → WorkflowRunner → ChargebackOrchestrator
+                                  ├── EcosystemPlugin
+                                  │     ├── ServiceHandler×N → CostAllocator
+                                  │     ├── CostInput
+                                  │     └── MetricsSource
+                                  ├── StorageBackend
+                                  └── Emitter×N
+```
+
+Each tenant maps to one ecosystem plugin. The orchestrator runs a per-tenant, per-date pipeline: gather resources → resolve identities → fetch costs → allocate → store → emit.
 
 ## Documentation
 
 Full documentation is in [`docs/`](docs/):
 
-- [Getting Started](docs/getting-started/index.md)
-- [Configuration Reference](docs/configuration/index.md)
-- [Architecture](docs/architecture/index.md)
-- [Operations](docs/operations/index.md)
+- [Getting Started](docs/getting-started/index.md) — prerequisites, quickstart, first run
+- [Architecture](docs/architecture/index.md) — plugin system, data flow, identity resolution
+- [Configuration Reference](docs/configuration/index.md) — all settings and ecosystem options
+- [Operations](docs/operations/index.md) — deployment, monitoring, troubleshooting
 
 ## Development
 

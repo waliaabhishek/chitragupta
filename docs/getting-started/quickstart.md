@@ -1,17 +1,64 @@
-# Quickstart
+# Quickstart — Confluent Cloud
 
-## 1. Install
+Get Chitragupt running against your Confluent Cloud organization in under 10 minutes.
+
+## Prerequisites
+
+- **Confluent CLI** installed ([install guide](https://docs.confluent.io/confluent-cli/current/install.html))
+- **Python 3.14+** and **`uv`** (`pip install uv`)
+- A Confluent Cloud organization
+
+## 1. Create a Service Account
+
+The chargeback engine needs a dedicated service account to access Confluent Cloud APIs.
 
 ```bash
-pip install uv
+confluent login
+confluent iam sa create chargeback_handler \
+  --description "Chargeback handler user"
+```
+
+Save the Service Account ID (`sa-*******`) from the output — you'll need it in the next steps.
+
+## 2. Assign permissions
+
+The service account needs three role bindings:
+
+```bash
+# Replace <sa_id> with your Service Account ID from above
+confluent iam rbac role-binding create --principal User:<sa_id> --role MetricsViewer
+confluent iam rbac role-binding create --principal User:<sa_id> --role OrganizationAdmin
+confluent iam rbac role-binding create --principal User:<sa_id> --role BillingAdmin
+```
+
+| Role | Why it's needed |
+|------|----------------|
+| **MetricsViewer** | Base permission for metrics access |
+| **OrganizationAdmin** | Objects API, Metrics API, and viewing connector/ksqlDB principals |
+| **BillingAdmin** | Pull billing data from the Billing API |
+
+!!! note
+    OrganizationAdmin is broader than ideal. Confluent Cloud RBAC doesn't currently offer more granular scoping for the APIs this tool requires.
+
+## 3. Create an API key
+
+```bash
+confluent api-key create --resource cloud --service-account <sa_id>
+```
+
+Save the **API Key** and **API Secret** from the output.
+
+## 4. Install and set up
+
+```bash
 git clone <repo-url>
 cd chitragupt
 uv sync
 ```
 
-## 2. Write a minimal config
+## 5. Write a minimal config
 
-Confluent Cloud example (save as `config.yaml`):
+Save as `config.yaml` in the project root:
 
 ```yaml
 logging:
@@ -34,20 +81,22 @@ tenants:
             output_dir: ./output
 ```
 
-## 3. Set environment variables
+## 6. Set environment variables
+
+Use the API key and secret from step 3:
 
 ```bash
 export CCLOUD_API_KEY=your-key
 export CCLOUD_API_SECRET=your-secret
 ```
 
-## 4. Run once
+## 7. Run once
 
 ```bash
 uv run python src/main.py --config-file config.yaml --run-once
 ```
 
-## 5. Check output
+## 8. Check output
 
 ```bash
 ls output/
@@ -55,5 +104,7 @@ ls output/
 ```
 
 ## Next steps
-- [Full configuration reference](../configuration/ccloud-reference.md)
-- [Run as a service](../operations/deployment.md)
+
+- [Docker deployment](../../deployables/QUICKSTART.md) — run the full stack with Grafana dashboards
+- [Full configuration reference](../configuration/ccloud-reference.md) — all available settings
+- [Run as a service](../operations/deployment.md) — continuous operation
