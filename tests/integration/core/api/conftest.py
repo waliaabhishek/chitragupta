@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import tempfile
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import TYPE_CHECKING
+from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -63,7 +64,7 @@ def settings_with_tenant(tenant_config: TenantConfig) -> AppSettings:
 def app_with_backend(settings_with_tenant: AppSettings, in_memory_backend: SQLModelBackend) -> Iterator[TestClient]:
     """Create a test app with a pre-initialized backend."""
     app = create_app(settings_with_tenant)
-    with TestClient(app) as client:
+    with patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"), TestClient(app) as client:
         # After lifespan runs, inject our test backend
         app.state.backends["test-tenant"] = in_memory_backend
         yield client
@@ -107,7 +108,7 @@ def sample_billing() -> BillingLineItem:
     return CoreBillingLineItem(
         ecosystem="test-eco",
         tenant_id="test-tenant",
-        timestamp=datetime(2026, 2, 15, tzinfo=UTC),
+        timestamp=datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=1),
         resource_id="resource-1",
         product_category="compute",
         product_type="kafka",
@@ -125,7 +126,7 @@ def sample_chargeback() -> ChargebackRow:
     return ChargebackRow(
         ecosystem="test-eco",
         tenant_id="test-tenant",
-        timestamp=datetime(2026, 2, 15, tzinfo=UTC),
+        timestamp=datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=1),
         resource_id="resource-1",
         product_category="compute",
         product_type="kafka",
