@@ -76,9 +76,11 @@ tenants:
 | `metrics.url` | string | required | Prometheus URL |
 | `identity_source.source` | enum | `prometheus` | `prometheus`, `static`, or `both` |
 | `identity_source.label` | string | `principal` | Prometheus label used as identity ID |
-| `identity_source.discovery_query` | string | required if source=prometheus | PromQL to discover identities |
+| `identity_source.discovery_query` | string | required if source=`prometheus` or `both` | PromQL to discover identities |
 | `identity_source.principal_to_team` | dict | `{}` | Map label value → team name |
 | `identity_source.static_identities` | list | `[]` | Hard-coded identities |
+| `allocator_overrides` | dict | `{}` | Replace allocator for specific product types (see [Advanced Scenarios](advanced-scenarios.md)) |
+| `identity_resolution_overrides` | dict | `{}` | Replace identity resolver for specific product types |
 
 ## cost_types fields
 

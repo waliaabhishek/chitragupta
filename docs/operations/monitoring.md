@@ -41,15 +41,56 @@ logging:
 
 ```
 GET /health
-→ {"status": "ok", "version": "1.0.0"}
+→ {"status": "ok", "version": "<version>"}
 ```
+
+`version` is the installed package version, or `"0.0.0-dev"` when running from source.
+
+## Readiness check
+
+```
+GET /api/v1/readiness
+→ {
+    "status": "ready",           // ready | initializing | no_data | error
+    "version": "<version>",
+    "mode": "both",
+    "tenants": [
+      {
+        "tenant_name": "my-org",
+        "tables_ready": true,
+        "has_data": true,
+        "pipeline_running": false,
+        "pipeline_stage": null,
+        "pipeline_current_date": null,
+        "last_run_status": "completed",
+        "last_run_at": "2026-03-17T12:00:00Z",
+        "permanent_failure": null
+      }
+    ]
+  }
+```
+
+Response is TTL-cached for 2 seconds.
 
 ## Pipeline status
 
 ```
 GET /api/v1/tenants/{tenant_name}/pipeline/status
-→ {"tenant_name": "...", "is_running": false, "last_run": "...", "last_result": {...}}
+→ {
+    "tenant_name": "my-org",
+    "is_running": false,
+    "last_run": "2026-03-17T12:00:00Z",
+    "last_result": {
+      "dates_gathered": 5,
+      "dates_calculated": 5,
+      "chargeback_rows_written": 142,
+      "errors": [],
+      "completed_at": "2026-03-17T12:00:00Z"
+    }
+  }
 ```
+
+`last_result` is `null` if no completed or failed runs exist yet.
 
 ## Failure detection
 

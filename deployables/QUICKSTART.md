@@ -60,8 +60,9 @@ Edit `config/.env` with your actual values:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `LOG_LEVEL` | `INFO` | Log verbosity: `CRITICAL`, `ERROR`, `WARNING`, `INFO`, `DEBUG`. |
 | `GF_ADMIN_PASSWORD` | `password` | Grafana admin password. |
+
+Log level is configured via `logging.level` in the YAML config file (`config/config.yaml`), not via environment variable. Valid values: `CRITICAL`, `ERROR`, `WARNING`, `INFO`, `DEBUG`.
 
 ## Step 3: Create the data directory
 
@@ -99,6 +100,8 @@ Open http://localhost:3000 in your browser.
 - Login: `admin` / `password` (or whatever you set `GF_ADMIN_PASSWORD` to)
 - Go to Dashboards — you should see **Chargeback Overview** and **Chargeback Details**
 - Dashboards will show data after the first pipeline run completes (usually within a few minutes of startup)
+
+> **Multi-tenant note:** The provisioned Grafana datasource points to a single database file (`chargeback.db`). If your config uses per-tenant databases (e.g. `ccloud-prod.db`, `kafka-dc1.db`), you'll need to add a separate SQLite datasource in Grafana for each tenant database.
 
 ## Step 6 (optional): Enable the UI
 

@@ -12,7 +12,7 @@ This was originally built for Confluent Cloud but has been extended to support o
 - Discovers resources and identities via Prometheus or admin APIs
 - Allocates costs using configurable strategies (even split, usage ratio)
 - REST API for querying chargeback data and triggering pipeline runs
-- Pluggable emitters (CSV, custom sinks)
+- CSV emitter built-in; custom emitters via the `Emitter` protocol
 
 ## Supported Ecosystems
 
@@ -65,6 +65,7 @@ Full documentation is in [`docs/`](docs/):
 
 - [Getting Started](docs/getting-started/index.md) — prerequisites, quickstart, first run
 - [Architecture](docs/architecture/index.md) — plugin system, data flow, identity resolution
+- [API Reference](docs/api-reference.md) — all REST endpoints, parameters, and response schemas
 - [Configuration Reference](docs/configuration/index.md) — all settings and ecosystem options
 - [Operations](docs/operations/index.md) — deployment, monitoring, troubleshooting
 

@@ -57,26 +57,47 @@ flowchart TD
    Discovers principals, service accounts, teams.
    Stored in `identities` table.
 
-4. **Fetch metrics** — `metrics_source.query_range(...)` per handler
+4. **Detect deletions** — `_detect_entity_deletions()`
+   Compares gathered entity IDs against previously active entities. Marks missing ones
+   with `deleted_at` timestamp. Skipped if any handler gather failed. A consecutive
+   zero-gather safety threshold prevents bulk deletion from transient API failures.
+
+5. **Fetch metrics** — `metrics_source.query_range(...)` per handler
    Prometheus range queries for the billing period. Returns `MetricRow` objects.
 
-5. **Resolve identities** — `handler.resolve_identities(tenant_id, resource_id, ...)`
+6. **Resolve identities** — `handler.resolve_identities(tenant_id, resource_id, ...)`
    Maps billing line items to identities using metrics data.
    Returns `IdentityResolution` (list of `(identity_id, weight)` pairs).
 
-6. **Allocate** — `allocator(AllocationContext) → AllocationResult`
+7. **Allocate** — `allocator(AllocationContext) → AllocationResult`
    Splits cost across identities using configured strategy.
    UNALLOCATED identity used for unresolved costs.
 
-7. **Commit** — `ChargebackRow` records written to storage.
+8. **Commit** — `ChargebackRow` records written to storage.
 
-8. **Emit** — emitters called with committed rows (aggregated per spec).
+9. **Emit** — emitters called with committed rows (aggregated per spec).
 
 ## Storage schema
 
-Tables: `billing_line_items`, `resources`, `identities`, `chargeback_rows`, `pipeline_runs`.
+| Table | Purpose |
+|---|---|
+| `billing` | Raw billing line items (composite PK: ecosystem, tenant_id, timestamp, resource_id, product_type, product_category) |
+| `resources` | Discovered infrastructure resources with `created_at`, `deleted_at`, `last_seen_at` |
+| `identities` | Discovered principals/service accounts with lifecycle timestamps |
+| `chargeback_dimensions` | Unique (identity, resource, product, cost_type) combinations — the "what" |
+| `chargeback_facts` | Cost amounts linked to dimensions via `dimension_id` — the "how much" |
+| `pipeline_state` | Per-date progress flags: `billing_gathered`, `resources_gathered`, `chargeback_calculated` |
+| `pipeline_runs` | Audit trail: run start/end, status, rows written, errors |
+| `custom_tags` | User-defined key/value tags attached to chargeback dimensions |
 
 Each row is scoped to `(ecosystem, tenant_id)`. No cross-tenant data access.
+
+## Pipeline state tracking
+
+The `pipeline_state` table enables resumption and prevents re-processing. The calculate
+phase only processes dates where billing and resources are gathered but chargebacks not
+yet calculated. When new billing data arrives for recent dates, the recalculation window
+re-clears the `chargeback_calculated` flag so those dates get reprocessed.
 
 ## Concurrency
 

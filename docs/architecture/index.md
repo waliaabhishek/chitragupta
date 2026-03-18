@@ -8,14 +8,20 @@ The engine is a multi-tenant cost allocation pipeline. Each tenant maps to one e
 graph TD
     A[AppSettings] --> B[WorkflowRunner]
     B --> C[ChargebackOrchestrator]
+    C --> GP[GatherPhase]
+    C --> CP[CalculatePhase]
+    C --> EP[EmitPhase]
     C --> D[EcosystemPlugin]
     D --> E[ServiceHandler×N]
     D --> F[CostInput]
     D --> G[MetricsSource]
+    D --> SM[StorageModule]
     E --> H[CostAllocator]
     C --> I[StorageBackend]
     C --> J[Emitter×N]
 ```
+
+The orchestrator delegates to three internal phase classes: `GatherPhase` (billing + resources + identities + deletion detection), `CalculatePhase` (metrics + identity resolution + allocation), and `EmitPhase` (commit + emitters).
 
 ## Layers
 

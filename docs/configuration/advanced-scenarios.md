@@ -49,6 +49,41 @@ plugin_settings:
     KAFKA_NETWORK_READ: mymodule.custom_resolver
 ```
 
+## Validation constraints
+
+These cross-field constraints are enforced at startup:
+
+| Constraint | Error if violated |
+|---|---|
+| `lookback_days` must be > `cutoff_days` | `lookback_days must be > cutoff_days` |
+| CKU ratios must sum to 1.0 (CCloud) | `kafka_cku_usage_ratio + kafka_cku_shared_ratio must equal 1.0` |
+| Each tenant must have a unique `storage.connection_string` | Names the conflicting tenants |
+| `discovery_query` required when `identity_source.source` is `prometheus` or `both` | `discovery_query required` |
+
+## Tuning parameters
+
+These TenantConfig fields have sensible defaults but can be overridden:
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `metrics_prefetch_workers` | int | 4 | Parallel threads for metrics queries (1–20) |
+| `zero_gather_deletion_threshold` | int | -1 | Mark resources deleted after N consecutive zero-gather cycles (-1 = disabled) |
+| `gather_failure_threshold` | int | 5 | Consecutive gather failures before tenant is permanently suspended |
+| `tenant_execution_timeout_seconds` | int | 3600 | Per-tenant pipeline run timeout in seconds (0 = no timeout) |
+| `allocation_retry_limit` | int | 3 | Max identity resolution retries before allocating to UNALLOCATED (1–10) |
+
+## API server configuration
+
+```yaml
+api:
+  host: 0.0.0.0
+  port: 8080                    # 1–65535
+  request_timeout_seconds: 30   # 1–300, returns HTTP 504 on timeout
+  enable_cors: true
+  cors_origins:
+    - "https://your-dashboard.example.com"
+```
+
 ## Metrics authentication
 
 ### Basic auth
@@ -69,6 +104,8 @@ metrics:
   auth_type: bearer
   bearer_token: ${PROM_TOKEN}
 ```
+
+**Validation rules:** `basic` requires both `username` and `password`. `bearer` requires `bearer_token`. `none` rejects any credentials — don't mix auth_type with unrelated credential fields.
 
 ## Custom plugins path
 
@@ -101,7 +138,7 @@ Emitters may not request finer granularity than `chargeback_granularity` produce
 
 ```yaml
 logging:
-  level: INFO
+  level: INFO     # CRITICAL | ERROR | WARNING | INFO | DEBUG
   per_module_levels:
     core.metrics.prometheus: DEBUG
     plugins.confluent_cloud: DEBUG

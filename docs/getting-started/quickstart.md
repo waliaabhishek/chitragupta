@@ -90,6 +90,15 @@ export CCLOUD_API_KEY=your-key
 export CCLOUD_API_SECRET=your-secret
 ```
 
+Alternatively, create a `.env` file in the same directory as `config.yaml`:
+
+```
+CCLOUD_API_KEY=your-key
+CCLOUD_API_SECRET=your-secret
+```
+
+The config loader auto-discovers `.env` from the config file's directory. Variables already in the environment take precedence.
+
 ## 7. Run once
 
 ```bash

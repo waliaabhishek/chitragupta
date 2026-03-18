@@ -48,12 +48,14 @@ tenants:
 |---|---|---|---|
 | `ecosystem` | string | required | Must be `confluent_cloud` |
 | `tenant_id` | string | required | CCloud org ID (e.g. `t-abc123`) |
-| `lookback_days` | int | 200 | Days of billing history to fetch (max 364) |
-| `cutoff_days` | int | 5 | Skip dates within this many days of today (billing lag) |
+| `lookback_days` | int | 200 | Days of billing history to fetch (max 364). Must be > `cutoff_days`. |
+| `cutoff_days` | int | 5 | Skip dates within this many days of today (billing lag, max 30) |
 | `retention_days` | int | 250 | Delete data older than this (max 730) |
-| `allocation_retry_limit` | int | 3 | Max identity resolution retries before fallback |
+| `allocation_retry_limit` | int | 3 | Max identity resolution retries before fallback (max 10) |
 | `gather_failure_threshold` | int | 5 | Consecutive gather failures before tenant suspension |
 | `tenant_execution_timeout_seconds` | int | 3600 | Per-tenant run timeout (0 = no timeout) |
+| `metrics_prefetch_workers` | int | 4 | Parallel metrics query threads (1–20) |
+| `zero_gather_deletion_threshold` | int | -1 | Mark resources deleted after N zero-gather cycles (-1 = disabled) |
 
 ## plugin_settings fields (CCloud)
 
@@ -80,9 +82,9 @@ tenants:
 | `kafka` | `KAFKA_NETWORK_READ`, `KAFKA_NETWORK_WRITE` | Usage ratio (bytes in/out) |
 | `kafka` | `KAFKA_BASE`, `KAFKA_PARTITION`, `KAFKA_STORAGE` | Even split |
 | `schema_registry` | `SCHEMA_REGISTRY`, `GOVERNANCE_BASE`, `NUM_RULES` | Even split |
-| `connector` | `CONNECT_CAPACITY`, `CONNECT_NUM_TASKS`, `CONNECT_THROUGHPUT` | Even split per connector |
+| `connector` | `CONNECT_CAPACITY`, `CONNECT_NUM_TASKS`, `CONNECT_THROUGHPUT`, `CUSTOM_CONNECT_PLUGIN`, `CUSTOM_CONNECT_NUM_TASKS`, `CUSTOM_CONNECT_THROUGHPUT` | Even split per connector |
 | `ksqldb` | `KSQL_NUM_CSU`, `KSQL_NUM_CSUS` | Even split |
-| `flink` | `FLINK_NUM_CFU`, `FLINK_NUM_CFUS` | Even split per statement |
+| `flink` | `FLINK_NUM_CFU`, `FLINK_NUM_CFUS` | Usage ratio by statement owner CFU consumption (fallback: even split) |
 | `org_wide` | `AUDIT_LOG_READ`, `SUPPORT` | Even split |
 | `default` | `TABLEFLOW_*` | Shared (to resource) |
 | `default` | `CLUSTER_LINKING_*` | Usage (to resource) |
@@ -98,6 +100,8 @@ allocator_params:
   kafka_cku_usage_ratio: 0.70   # fraction allocated by bytes (default 0.70)
   kafka_cku_shared_ratio: 0.30  # fraction allocated evenly (default 0.30)
 ```
+
+`kafka_cku_usage_ratio` + `kafka_cku_shared_ratio` must sum to 1.0 (tolerance: 0.0001). Startup fails if they don't.
 
 ## Emitters
 

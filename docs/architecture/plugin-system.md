@@ -4,7 +4,7 @@
 
 File: `src/core/plugin/protocols.py`
 
-Five runtime-checkable protocols:
+Runtime-checkable protocols:
 
 | Protocol | Responsibility |
 |---|---|
@@ -13,6 +13,8 @@ Five runtime-checkable protocols:
 | `CostInput` | Yield `BillingLineItem` objects for a date range |
 | `CostAllocator` | Callable: `AllocationContext → AllocationResult` |
 | `Emitter` | Callable: `(tenant_id, date, rows) → None` |
+| `StorageModule` | Plugin-supplied table schemas: custom billing/resource/identity repositories |
+| `IdentityResolver` | Standalone callable override for identity resolution per product type |
 
 ## Plugin discovery
 
@@ -43,6 +45,14 @@ def handles_product_types(self) -> Sequence[str]: ...
 ```
 
 The orchestrator routes each `BillingLineItem.product_type` to the matching handler.
+When no handler matches, `plugin.get_fallback_allocator()` is called. CCloud's fallback
+logs a warning and allocates the cost to UNALLOCATED.
+
+## ResolveContext
+
+`ServiceHandler.resolve_identities()` accepts an optional `context: ResolveContext | None`
+parameter for caching optimization. `ResolveContext` is a TypedDict containing
+`cached_identities` (IdentitySet) and `cached_resources` (dict of Resource objects).
 
 ## Lifecycle
 
@@ -50,5 +60,8 @@ The orchestrator routes each `BillingLineItem.product_type` to the matching hand
 2. `plugin.get_service_handlers()` → dict of handlers by service_type
 3. `plugin.get_cost_input()` → CostInput
 4. `plugin.get_metrics_source()` → MetricsSource or None
-5. Per billing date: gather → allocate → commit → emit
-6. `plugin.close()` — clean up connections
+5. `plugin.get_storage_module()` → StorageModule (custom table schemas, e.g. CCloud billing with `env_id` in PK)
+6. `plugin.get_fallback_allocator()` → CostAllocator or None (handles unknown product types)
+7. `plugin.build_shared_context(tenant_id)` → shared state accessible to all handlers
+8. Per billing date: gather → detect deletions → allocate → commit → emit
+9. `plugin.close()` — clean up connections

@@ -30,13 +30,15 @@ WantedBy=multi-user.target
 
 ## Docker
 
-```dockerfile
-FROM python:3.14-slim
-WORKDIR /app
-COPY . .
-RUN pip install uv && uv sync
-CMD ["uv", "run", "python", "src/main.py", "--config-file", "/config/config.yaml", "--mode", "both"]
+The project includes a multi-stage `Dockerfile` in the repo root (builder stage with `uv` for dependency resolution, slim runtime stage with non-root user). Build from the repo root:
+
+```bash
+docker build -t chitragupt .
+docker run -v ./config:/app/config:ro -v ./data:/app/data chitragupt \
+  --config-file /app/config/config.yaml --mode both
 ```
+
+See [`deployables/QUICKSTART.md`](../deployables/QUICKSTART.md) for a full Docker Compose setup with Grafana.
 
 ## Environment variables
 

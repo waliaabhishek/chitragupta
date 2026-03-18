@@ -65,9 +65,14 @@ tenants:
 | `resource_source.source` | enum | `prometheus` | `prometheus` or `admin_api` |
 | `resource_source.bootstrap_servers` | string | optional | Required for `admin_api` source |
 | `resource_source.sasl_mechanism` | enum | optional | `PLAIN`, `SCRAM-SHA-256`, `SCRAM-SHA-512` |
+| `resource_source.sasl_username` | string | optional | SASL username (required when `sasl_mechanism` is set) |
+| `resource_source.sasl_password` | secret | optional | SASL password (required when `sasl_mechanism` is set) |
 | `resource_source.security_protocol` | enum | `PLAINTEXT` | `PLAINTEXT`, `SSL`, `SASL_PLAINTEXT`, `SASL_SSL` |
+| `identity_source.discovery_window_hours` | int | 1 | Hours of Prometheus data to scan for identity discovery (must be > 0) |
 | `metrics.url` | string | required | Prometheus URL |
 | `metrics.auth_type` | enum | `none` | `basic`, `bearer`, or `none` |
+| `allocator_overrides` | dict | `{}` | Replace allocator for specific product types (see [Advanced Scenarios](advanced-scenarios.md)) |
+| `identity_resolution_overrides` | dict | `{}` | Replace identity resolver for specific product types |
 
 ## Required Prometheus metrics
 
@@ -80,6 +85,15 @@ The cost model derives costs from these JMX exporter metrics:
 | `kafka_log_log_size` | Storage (cluster-wide average) |
 
 All metrics are summed cluster-wide with `sum(increase(...[1h]))` per step.
+
+## Produced product types
+
+| Product type | Cost source | Allocation strategy |
+|---|---|---|
+| `SELF_KAFKA_COMPUTE` | `compute_hourly_rate × broker_count × hours` | Even split |
+| `SELF_KAFKA_STORAGE` | `storage_per_gib_hourly × avg_storage × hours` | Even split |
+| `SELF_KAFKA_NETWORK_INGRESS` | `network_ingress_per_gib × sum_bytes_in` | Usage ratio (bytes in per principal) |
+| `SELF_KAFKA_NETWORK_EGRESS` | `network_egress_per_gib × sum_bytes_out` | Usage ratio (bytes out per principal) |
 
 ## Identity discovery via Prometheus
 
