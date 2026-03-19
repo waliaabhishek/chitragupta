@@ -30,6 +30,8 @@ jobs:
         with:
           context: .
           push: true
+          build-args: |
+            APP_VERSION=${{ github.ref_name }}
           tags: |
             ghcr.io/${{ github.repository_owner }}/chitragupt:${{ github.ref_name }}
             ghcr.io/${{ github.repository_owner }}/chitragupt:latest

@@ -1,10 +1,10 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [project]
 name = "chitragupt"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Multi-ecosystem chargeback engine"
 requires-python = ">=3.14"
 dependencies = [
@@ -37,8 +37,15 @@ docs = [
     "git-cliff>=2.0",
 ]
 
+[project.scripts]
+chitragupt = "main:main"
+
+[tool.hatch.version]
+source = "vcs"
+fallback-version = "0.0.0.dev0"
+
 [tool.hatch.build.targets.wheel]
-packages = ["src"]
+packages = ["src/core", "src/emitters", "src/plugins"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

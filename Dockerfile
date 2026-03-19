@@ -13,11 +13,15 @@ WORKDIR /app
 # Copy uv binary from official image (no curl/wget needed)
 COPY --from=uv /uv /usr/local/bin/uv
 
+# Version injected from git tag at build time (hatch-vcs fallback for no .git)
+ARG APP_VERSION=""
+
 # Copy dependency definitions and source
 COPY pyproject.toml uv.lock ./
 COPY src/ ./src/
 
 # Create venv, install deps AND local project
+ENV SETUPTOOLS_SCM_PRETEND_VERSION=${APP_VERSION:-0.0.0.dev0}
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv venv /app/.venv && \
     uv sync --frozen
