@@ -114,6 +114,6 @@ ls output/
 
 ## Next steps
 
-- [Docker deployment](../../deployables/QUICKSTART.md) — run the full stack with Grafana dashboards
+- [Docker deployment](https://github.com/waliaabhishek/chitragupt/blob/main/deployables/QUICKSTART.md) — run the full stack with Grafana dashboards
 - [Full configuration reference](../configuration/ccloud-reference.md) — all available settings
 - [Run as a service](../operations/deployment.md) — continuous operation

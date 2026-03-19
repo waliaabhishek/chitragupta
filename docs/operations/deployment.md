@@ -38,7 +38,7 @@ docker run -v ./config:/app/config:ro -v ./data:/app/data chitragupt \
   --config-file /app/config/config.yaml --mode both
 ```
 
-See [`deployables/QUICKSTART.md`](../deployables/QUICKSTART.md) for a full Docker Compose setup with Grafana.
+See [`deployables/QUICKSTART.md`](https://github.com/waliaabhishek/chitragupt/blob/main/deployables/QUICKSTART.md) for a full Docker Compose setup with Grafana.
 
 ## Environment variables
 

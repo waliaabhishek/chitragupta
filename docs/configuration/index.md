@@ -2,6 +2,12 @@
 
 This section provides complete configuration documentation for each supported ecosystem.
 
+!!! tip "Start with the guide"
+    If you're building a configuration from scratch, start with the
+    [Configuration Guide](guide.md). It walks through the decisions you need to make
+    and explains the tradeoffs. The reference pages below cover every field, but
+    the guide explains *when and why* to use them.
+
 ## Model hierarchy
 
 ```mermaid
@@ -76,7 +82,7 @@ All samples carry the billing date as a Unix timestamp (midnight UTC), not the w
 
 **Server lifecycle:** The HTTP server starts once per process on the configured port. When multiple tenants share a process, they share the server — configure the same port for all tenants or use only one tenant per process.
 
-See [`deployables/assets/prometheus_for_chargeback/collector.sh`](../deployables/assets/prometheus_for_chargeback/collector.sh) and [Deployment](../operations/deployment.md#prometheus-collector-script) for TSDB backfill instructions.
+See [`deployables/assets/prometheus_for_chargeback/collector.sh`](https://github.com/waliaabhishek/chitragupt/blob/main/deployables/assets/prometheus_for_chargeback/collector.sh) and [Deployment](../operations/deployment.md#prometheus-collector-script) for TSDB backfill instructions.
 
 ## Advanced configuration
 

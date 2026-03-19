@@ -1,5 +1,10 @@
 # Self-Managed Kafka Configuration Reference
 
+!!! tip "New to self-managed Kafka configuration?"
+    Read the [Configuration Guide](guide.md#configuring-self-managed-kafka) first
+    for a walkthrough of the decisions you'll make, then come back here for the
+    full field reference.
+
 ## ecosystem key
 
 ```yaml
@@ -78,27 +83,66 @@ tenants:
 
 The cost model derives costs from these JMX exporter metrics:
 
-| Metric | Used for |
-|---|---|
-| `kafka_server_brokertopicmetrics_bytesin_total` | Network ingress (per topic/principal) |
-| `kafka_server_brokertopicmetrics_bytesout_total` | Network egress (per topic/principal) |
-| `kafka_log_log_size` | Storage (cluster-wide average) |
+| Metric | Type | Used for |
+|---|---|---|
+| `kafka_server_brokertopicmetrics_bytesin_total` | counter | Network ingress cost, identity discovery (principal label), CKU-equivalent usage attribution |
+| `kafka_server_brokertopicmetrics_bytesout_total` | counter | Network egress cost, identity discovery |
+| `kafka_log_log_size` | gauge | Storage cost (cluster-wide average) |
 
-All metrics are summed cluster-wide with `sum(increase(...[1h]))` per step.
+Network metrics are queried with `sum(increase(...[1h]))` per step (summing hourly
+deltas gives total bytes transferred). Storage is averaged across all samples in the
+day (since it's a point-in-time gauge, not a cumulative counter).
+
+!!! note "Labels matter"
+    For identity discovery via Prometheus, the `principal` label must be present on
+    `kafka_server_brokertopicmetrics_bytesin_total`. If your JMX exporter doesn't
+    include this label, set `identity_source.source: static` and list identities
+    manually.
+
+    The engine runs a combined discovery query at gather time:
+    ```promql
+    group by (broker, topic, principal) (kafka_server_brokertopicmetrics_bytesin_total{})
+    ```
+    This single query extracts brokers, topics, and principals in one round-trip.
 
 ## Produced product types
 
-| Product type | Cost source | Allocation strategy |
-|---|---|---|
-| `SELF_KAFKA_COMPUTE` | `compute_hourly_rate × broker_count × hours` | Even split |
-| `SELF_KAFKA_STORAGE` | `storage_per_gib_hourly × avg_storage × hours` | Even split |
-| `SELF_KAFKA_NETWORK_INGRESS` | `network_ingress_per_gib × sum_bytes_in` | Usage ratio (bytes in per principal) |
-| `SELF_KAFKA_NETWORK_EGRESS` | `network_egress_per_gib × sum_bytes_out` | Usage ratio (bytes out per principal) |
+| Product type | Cost formula | Allocation strategy | Why this strategy |
+|---|---|---|---|
+| `SELF_KAFKA_COMPUTE` | `broker_count × 24h × compute_hourly_rate` | Even split | Compute is shared infrastructure — every team benefits equally from broker availability regardless of their traffic volume. |
+| `SELF_KAFKA_STORAGE` | `avg_gib × 24h × storage_per_gib_hourly` | Even split | Storage is cluster-wide; individual principal contribution to log size is not directly measurable from JMX metrics. |
+| `SELF_KAFKA_NETWORK_INGRESS` | `sum_bytes_in ÷ 2^30 × network_ingress_per_gib` | Usage ratio (bytes in per principal) | Ingress is directly attributable — the `principal` label on `bytesin_total` tells you exactly who produced the data. |
+| `SELF_KAFKA_NETWORK_EGRESS` | `sum_bytes_out ÷ 2^30 × network_egress_per_gib` | Usage ratio (bytes out per principal) | Same as ingress — `bytesout_total` by principal measures actual consumption. |
+
+See [How Costs Work](../architecture/cost-model.md) for the complete math with
+worked examples.
 
 ## Identity discovery via Prometheus
 
-With `identity_source.source: prometheus`, principals are extracted from metric labels:
+With `identity_source.source: prometheus`, principals are extracted from metric labels
+during the discovery phase and again during identity resolution for each billing window:
 
 ```promql
-sum by (principal) (kafka_server_brokertopicmetrics_bytesin_total)
+# Discovery (gather phase) — find all principals with any traffic
+group by (broker, topic, principal) (kafka_server_brokertopicmetrics_bytesin_total{})
+
+# Billing resolution (calculate phase) — per-principal bytes in a specific window
+sum by (principal) (increase(kafka_server_brokertopicmetrics_bytesin_total[1h]))
 ```
+
+The first query runs once per gather cycle and populates the resource and identity
+inventory. The second runs per billing window and determines which principals were
+active during that specific period (stored as `metrics_derived` identities).
+
+### Fallback behavior
+
+If the engine discovers zero principals from Prometheus (e.g., the metric exists but
+has no `principal` label), the allocation chain falls through:
+
+1. **Usage ratio** — skipped (no per-principal data)
+2. **Even split across `resource_active`** — uses static identities if configured
+3. **Even split across `tenant_period`** — all identities seen during the billing period
+4. **Terminal** — allocates to `UNALLOCATED`
+
+Check `allocation_detail` on chargeback rows to see which tier fired. If you see
+`NO_METRICS_LOCATED` on network costs, your principal labels are likely missing.

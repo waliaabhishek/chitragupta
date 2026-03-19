@@ -149,4 +149,4 @@ Keep a copy of your `config.yaml` alongside your database backup so you can reve
 
 ## Breaking changes policy
 
-Breaking changes (configuration format, API contracts, database schema) will be documented in the [CHANGELOG](../../CHANGELOG.md). Releases that contain breaking changes will be called out explicitly in release notes.
+Breaking changes (configuration format, API contracts, database schema) will be documented in the [CHANGELOG](https://github.com/waliaabhishek/chitragupt/blob/main/CHANGELOG.md). Releases that contain breaking changes will be called out explicitly in release notes.

@@ -62,15 +62,17 @@ These cross-field constraints are enforced at startup:
 
 ## Tuning parameters
 
-These TenantConfig fields have sensible defaults but can be overridden:
+These TenantConfig fields have sensible defaults but can be overridden. See the
+[Configuration Guide — Pipeline Tuning](guide.md#pipeline-tuning) for guidance on
+when and how to adjust these.
 
-| Field | Type | Default | Description |
-|---|---|---|---|
-| `metrics_prefetch_workers` | int | 4 | Parallel threads for metrics queries (1–20) |
-| `zero_gather_deletion_threshold` | int | -1 | Mark resources deleted after N consecutive zero-gather cycles (-1 = disabled) |
-| `gather_failure_threshold` | int | 5 | Consecutive gather failures before tenant is permanently suspended |
-| `tenant_execution_timeout_seconds` | int | 3600 | Per-tenant pipeline run timeout in seconds (0 = no timeout) |
-| `allocation_retry_limit` | int | 3 | Max identity resolution retries before allocating to UNALLOCATED (1–10) |
+| Field | Type | Default | Description | When to change |
+|---|---|---|---|---|
+| `metrics_prefetch_workers` | int | 4 | Parallel threads for metrics queries (1–20) | Increase for 100+ resources with fast Prometheus. Decrease if Prometheus is rate-limited. |
+| `zero_gather_deletion_threshold` | int | -1 | Mark resources deleted after N consecutive zero-gather cycles (-1 = disabled) | Enable (e.g., 3) if you want automatic cleanup of decommissioned resources. Leave disabled if gather cycles are unreliable. |
+| `gather_failure_threshold` | int | 5 | Consecutive gather failures before tenant is permanently suspended | Increase if transient API errors are common (rate limiting, network blips). Decrease to fail fast on bad credentials. |
+| `tenant_execution_timeout_seconds` | int | 3600 | Per-tenant pipeline run timeout in seconds (0 = no timeout) | Increase for large backfills (200+ lookback days on first run). Decrease for alerting on stuck pipelines. |
+| `allocation_retry_limit` | int | 3 | Max identity resolution retries before allocating to UNALLOCATED (1–10) | Increase if identity data arrives with a delay (eventual consistency). Rarely needs changing. |
 
 ## API server configuration
 

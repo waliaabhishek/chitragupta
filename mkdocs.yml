@@ -49,7 +49,10 @@ markdown_extensions:
       permalink: true
       toc_depth: 3
       baselevel: 1
-      slugify: !!python/name:pymdownx.slugs.uslugify
+      slugify: !!python/object/apply:pymdownx.slugs.slugify
+        kwds:
+          case: lower
+          percent_encode: true
 
 extra:
   version:
@@ -74,6 +77,7 @@ nav:
     - First Run: getting-started/first-run.md
   - Configuration Reference:
     - configuration/index.md
+    - Configuration Guide: configuration/guide.md
     - Confluent Cloud: configuration/ccloud-reference.md
     - Self-Managed Kafka: configuration/self-managed-reference.md
     - Generic Metrics: configuration/generic-metrics-reference.md
@@ -82,6 +86,7 @@ nav:
     - architecture/index.md
     - Plugin System: architecture/plugin-system.md
     - Data Flow: architecture/data-flow.md
+    - How Costs Work: architecture/cost-model.md
     - Identity Resolution: architecture/identity-resolution.md
   - Operations:
     - operations/index.md
@@ -89,4 +94,6 @@ nav:
     - Monitoring: operations/monitoring.md
     - Troubleshooting: operations/troubleshooting.md
     - Data Retention: operations/data-retention.md
+    - Upgrading: operations/upgrading.md
+  - API Reference: api-reference.md
   - Changelog: changelog.md

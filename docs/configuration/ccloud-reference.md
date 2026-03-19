@@ -1,5 +1,10 @@
 # Confluent Cloud Configuration Reference
 
+!!! tip "New to Confluent Cloud configuration?"
+    Read the [Configuration Guide](guide.md#configuring-confluent-cloud) first
+    for a walkthrough of the decisions you'll make, then come back here for the
+    full field reference.
+
 ## ecosystem key
 
 ```yaml
@@ -76,20 +81,29 @@ tenants:
 
 ## Handled product types
 
-| Handler | Product types | Allocation strategy |
-|---|---|---|
-| `kafka` | `KAFKA_NUM_CKU`, `KAFKA_NUM_CKUS` | Hybrid: 70% usage ratio (bytes), 30% even split |
-| `kafka` | `KAFKA_NETWORK_READ`, `KAFKA_NETWORK_WRITE` | Usage ratio (bytes in/out) |
-| `kafka` | `KAFKA_BASE`, `KAFKA_PARTITION`, `KAFKA_STORAGE` | Even split |
-| `schema_registry` | `SCHEMA_REGISTRY`, `GOVERNANCE_BASE`, `NUM_RULES` | Even split |
-| `connector` | `CONNECT_CAPACITY`, `CONNECT_NUM_TASKS`, `CONNECT_THROUGHPUT`, `CUSTOM_CONNECT_PLUGIN`, `CUSTOM_CONNECT_NUM_TASKS`, `CUSTOM_CONNECT_THROUGHPUT` | Even split per connector |
-| `ksqldb` | `KSQL_NUM_CSU`, `KSQL_NUM_CSUS` | Even split |
-| `flink` | `FLINK_NUM_CFU`, `FLINK_NUM_CFUS` | Usage ratio by statement owner CFU consumption (fallback: even split) |
-| `org_wide` | `AUDIT_LOG_READ`, `SUPPORT` | Even split |
-| `default` | `TABLEFLOW_*` | Shared (to resource) |
-| `default` | `CLUSTER_LINKING_*` | Usage (to resource) |
+Each product type from the CCloud billing API is routed to a handler that knows
+how to resolve identities and allocate costs for that service. The allocation
+strategy reflects the nature of the cost — usage-driven costs are split by
+measured consumption, shared costs are split evenly.
 
-Unknown product types are allocated to UNALLOCATED.
+| Handler | Product types | Allocation strategy | Why |
+|---|---|---|---|
+| `kafka` | `KAFKA_NUM_CKU`, `KAFKA_NUM_CKUS` | Hybrid: 70% usage ratio (bytes), 30% even split | CKUs are the main Kafka compute cost. Part of the cost is driven by traffic volume (usage), part is base infrastructure overhead (shared). The 70/30 default is configurable via `allocator_params`. |
+| `kafka` | `KAFKA_NETWORK_READ`, `KAFKA_NETWORK_WRITE` | Usage ratio (bytes in/out per principal) | Network transfer is directly attributable to the principal that produced or consumed the data. Requires Telemetry API metrics. |
+| `kafka` | `KAFKA_BASE`, `KAFKA_PARTITION`, `KAFKA_STORAGE` | Even split | Base fees, partition counts, and storage are cluster-level costs with no per-principal usage metric. |
+| `schema_registry` | `SCHEMA_REGISTRY`, `GOVERNANCE_BASE`, `NUM_RULES` | Even split | Schema Registry is a shared service — all principals benefit equally from schema validation. |
+| `connector` | `CONNECT_CAPACITY`, `CONNECT_NUM_TASKS`, `CONNECT_THROUGHPUT`, `CUSTOM_CONNECT_*` | Even split per connector | Connectors are typically owned by teams. Costs are split among identities active on the connector's resource. |
+| `ksqldb` | `KSQL_NUM_CSU`, `KSQL_NUM_CSUS` | Even split | ksqlDB compute units are application-level — split across active identities. |
+| `flink` | `FLINK_NUM_CFU`, `FLINK_NUM_CFUS` | Usage ratio by statement owner CFU consumption | Flink CFU costs are directly traceable to the user who created the SQL statement. Uses a 4-tier chain: statement owner → active identities → period identities → resource. |
+| `org_wide` | `AUDIT_LOG_READ`, `SUPPORT` | Even split across tenant, then to UNALLOCATED | Org-wide costs have no resource or principal — they apply to the whole organization. |
+| `default` | `TABLEFLOW_*` | Shared (to resource) | New product types without a dedicated handler fall back to resource-level allocation. |
+| `default` | `CLUSTER_LINKING_*` | Usage (to resource) | Cluster linking costs are attributed to the linked resource. |
+
+Unknown product types are allocated to UNALLOCATED. Check the `allocation_detail`
+field on chargeback rows to understand which fallback tier was used.
+
+See [How Costs Work](../architecture/cost-model.md) for the complete allocation
+model including the fallback chain and composite CKU allocation.
 
 ## Allocator params
 
@@ -102,6 +116,22 @@ allocator_params:
 ```
 
 `kafka_cku_usage_ratio` + `kafka_cku_shared_ratio` must sum to 1.0 (tolerance: 0.0001). Startup fails if they don't.
+
+!!! note "How to think about the ratio"
+    The usage portion is allocated proportionally to `bytes_in + bytes_out` per
+    principal. The shared portion is split evenly across all active identities.
+
+    - **High usage ratio (0.90/0.10):** Heavy producers/consumers pay proportionally
+      more. Good when your cluster is right-sized and traffic volume drives cost.
+    - **Balanced (0.70/0.30):** Default. Acknowledges that the cluster has a base
+      cost regardless of traffic.
+    - **High shared ratio (0.50/0.50):** Spreads cost more evenly. Good when the
+      cluster is over-provisioned and most cost is fixed overhead.
+
+    If metrics are unavailable for a billing window, the usage portion falls back
+    to even-split anyway — so at 1.0/0.0, you effectively get even-split when
+    Telemetry API data is missing. See [How Costs Work](../architecture/cost-model.md#composite-allocation-cku-model)
+    for a worked example.
 
 ## Emitters
 

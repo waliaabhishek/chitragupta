@@ -1,7 +1,14 @@
 # Generic Metrics Configuration Reference
 
 The `generic_metrics_only` plugin allocates costs for any Prometheus-instrumented system
-using a YAML-defined cost model. No vendor API calls are made.
+using a YAML-defined cost model. No vendor API calls are made — you define everything:
+cost types, quantities (from Prometheus queries or fixed counts), and how costs are
+split across identities.
+
+!!! tip "New to generic metrics configuration?"
+    Read the [Configuration Guide](guide.md#configuring-generic-metrics) first
+    for a walkthrough of defining cost types and allocation strategies, then come
+    back here for the full field reference.
 
 ## ecosystem key
 
@@ -98,8 +105,23 @@ tenants:
 
 ## Cost quantity types
 
-| Type | Query | Result |
-|---|---|---|
-| `fixed` | none | `count × rate × hours` |
-| `storage_gib` | cluster-wide avg PromQL | `avg_bytes / 2^30 × rate × hours` |
-| `network_gib` | cluster-wide sum PromQL | `sum_bytes / 2^30 × rate` |
+| Type | Query | Formula | Rate unit | When to use |
+|---|---|---|---|---|
+| `fixed` | none | `count × rate × 24h` | $/instance/hour | Fixed infrastructure: server instances, fixed-size clusters, license seats |
+| `storage_gib` | cluster-wide avg PromQL | `avg(query) ÷ 2^30 × rate × 24h` | $/GiB/hour | Gauge metrics: disk usage, memory, database size — anything measured as "how much right now" |
+| `network_gib` | cluster-wide sum PromQL | `sum(increase(query)) ÷ 2^30 × rate` | $/GiB | Counter metrics: bytes transferred, I/O throughput — anything measured as "how much total" |
+
+!!! note "Storage vs. network: the math is different because the metrics are different"
+    **Storage** queries return a gauge (current value at a point in time). Averaging
+    gives the representative size held over the day. The rate is per GiB per hour
+    because you're paying for storage *over time*.
+
+    **Network** queries return a counter (cumulative total). Summing `increase()`
+    values gives total bytes transferred. The rate is per GiB (flat) because you're
+    paying for data *moved*, not data held.
+
+    If you accidentally use `storage_gib` for a counter metric (or vice versa), your
+    costs will be wrong — the engine applies the wrong aggregation function.
+
+See [How Costs Work](../architecture/cost-model.md#constructed-cost-math) for
+detailed examples of how each quantity type is computed.
