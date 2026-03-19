@@ -78,6 +78,8 @@ def kafka_partition_allocator(ctx: AllocationContext) -> AllocationResult:
 
 def _kafka_usage_allocation(ctx: AllocationContext) -> AllocationResult:
     """Allocate network costs by bytes with tiered fallback."""
+    if ctx.metrics_fetch_failed:
+        return _fallback_fetch_failed(ctx)
     if not ctx.metrics_data:
         return _fallback_no_metrics(ctx)
 
@@ -99,6 +101,23 @@ def _kafka_usage_allocation(ctx: AllocationContext) -> AllocationResult:
         return _fallback_zero_usage(ctx)
 
     return _fallback_no_metrics(ctx)
+
+
+def _fallback_fetch_failed(ctx: AllocationContext) -> AllocationResult:
+    """Metrics infrastructure failure — Prometheus unreachable or errored."""
+    logger.warning(
+        "Metrics fetch failed for resource=%s — cost unallocated with METRICS_FETCH_FAILED",
+        ctx.billing_line.resource_id,
+    )
+    row = make_row(
+        ctx,
+        identity_id="UNALLOCATED",
+        cost_type=CostType.SHARED,
+        amount=ctx.split_amount,
+        allocation_method="usage_ratio",
+        allocation_detail=AllocationDetail.METRICS_FETCH_FAILED,
+    )
+    return AllocationResult(rows=[row])
 
 
 def _fallback_no_metrics(ctx: AllocationContext) -> AllocationResult:

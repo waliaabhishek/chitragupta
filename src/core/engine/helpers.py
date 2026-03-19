@@ -96,6 +96,18 @@ def allocate_by_usage_ratio(
     allocation_detail: str | None = None,
 ) -> AllocationResult:
     """Allocate cost proportionally based on per-identity usage values."""
+    # Defense-in-depth: currently unreachable via _kafka_usage_allocation (which guards
+    # ctx.metrics_fetch_failed before building identity_bytes), but protects future direct callers.
+    if ctx.metrics_fetch_failed:
+        row = make_row(
+            ctx,
+            identity_id="UNALLOCATED",
+            cost_type=CostType.SHARED,
+            amount=ctx.split_amount,
+            allocation_method="usage_ratio",
+            allocation_detail=AllocationDetail.METRICS_FETCH_FAILED,
+        )
+        return AllocationResult(rows=[row])
     total_value = sum(identity_values.values())
     if not identity_values or total_value == 0:
         logger.warning(

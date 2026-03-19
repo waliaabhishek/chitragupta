@@ -36,6 +36,7 @@ class AllocationDetail(StrEnum):
     # Metrics failures
     NO_METRICS_LOCATED = "no_metrics_located"
     NO_USAGE_FOR_ACTIVE_IDENTITIES = "no_usage_for_active_identities"
+    METRICS_FETCH_FAILED = "metrics_fetch_failed"
 
     # Combined failures
     NO_METRICS_NO_ACTIVE_IDENTITIES = "no_metrics_no_active_identities"

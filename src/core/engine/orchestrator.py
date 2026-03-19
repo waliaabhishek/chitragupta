@@ -379,14 +379,20 @@ class CalculatePhase:
 
         line_window_cache = self._compute_line_window_cache(billing_lines)
         billing_windows = self._compute_billing_windows(billing_lines, line_window_cache)
-        prefetched_metrics = self._prefetch_metrics(billing_lines, line_window_cache)
+        prefetched_metrics, failed_metric_keys = self._prefetch_metrics(billing_lines, line_window_cache)
         tenant_period_cache = self._build_tenant_period_cache(uow, billing_windows)
         resource_cache = self._build_resource_cache(uow, billing_windows)
 
         all_rows: list[ChargebackRow] = []
         for line in billing_lines:
             rows = self._collect_billing_line_rows(
-                line, uow, prefetched_metrics, tenant_period_cache, resource_cache, line_window_cache
+                line,
+                uow,
+                prefetched_metrics,
+                failed_metric_keys,
+                tenant_period_cache,
+                resource_cache,
+                line_window_cache,
             )
             all_rows.extend(rows)
 
@@ -404,7 +410,10 @@ class CalculatePhase:
         self,
         billing_lines: list[BillingLineItem],
         line_window_cache: dict[int, tuple[datetime, datetime, timedelta]],
-    ) -> dict[tuple[str, datetime, datetime], dict[str, list[MetricRow]]]:
+    ) -> tuple[
+        dict[tuple[str, datetime, datetime], dict[str, list[MetricRow]]],
+        frozenset[tuple[str, datetime, datetime]],
+    ]:
         metrics_groups: dict[tuple[str, datetime, datetime], list[MetricQuery]] = {}
         for line in billing_lines:
             b_start, b_end, _ = line_window_cache[id(line)]
@@ -422,10 +431,11 @@ class CalculatePhase:
                     metrics_groups[group_key] = existing
 
         prefetched: dict[tuple[str, datetime, datetime], dict[str, list[MetricRow]]] = {}
+        failed_keys: set[tuple[str, datetime, datetime]] = set()
         if not self._metrics_source:
-            return prefetched
+            return prefetched, frozenset()
         if not metrics_groups:
-            return prefetched
+            return prefetched, frozenset()
 
         def _fetch_group(
             key: tuple[str, datetime, datetime],
@@ -459,8 +469,9 @@ class CalculatePhase:
                         exc_info=True,
                     )
                     prefetched[key] = {}
+                    failed_keys.add(key)
 
-        return prefetched
+        return prefetched, frozenset(failed_keys)
 
     def _compute_billing_windows(
         self,
@@ -501,6 +512,7 @@ class CalculatePhase:
         line: BillingLineItem,
         uow: UnitOfWork,
         prefetched_metrics: dict[tuple[str, datetime, datetime], dict[str, list[MetricRow]]],
+        failed_metric_keys: frozenset[tuple[str, datetime, datetime]],
         tenant_period_cache: dict[tuple[datetime, datetime], IdentitySet],
         resource_cache: dict[str, Resource],
         line_window_cache: dict[int, tuple[datetime, datetime, timedelta]],
@@ -531,6 +543,7 @@ class CalculatePhase:
                 return list(result.rows)
 
             metrics_data = prefetched_metrics.get((line.resource_id, b_start, b_end))
+            metrics_fetch_failed = (line.resource_id, b_start, b_end) in failed_metric_keys
             resource = resource_cache.get(line.resource_id)
             active_fraction = Decimal(1) if resource is None else compute_active_fraction(resource, b_start, b_end)
             split_amount = line.total_cost * active_fraction
@@ -576,6 +589,7 @@ class CalculatePhase:
                 identities=identity_resolution,
                 split_amount=split_amount,
                 metrics_data=metrics_data,
+                metrics_fetch_failed=metrics_fetch_failed,
                 params=self._allocator_params,
             )
             result = allocator(ctx)
@@ -901,7 +915,7 @@ class ChargebackOrchestrator:
         """Backward-compatible wrapper — allocation_retry_limit is ignored (RetryManager owns it)."""
         line_window_cache = self._calculate_phase._compute_line_window_cache([line])
         rows = self._calculate_phase._collect_billing_line_rows(
-            line, uow, prefetched_metrics, tenant_period_cache, resource_cache, line_window_cache
+            line, uow, prefetched_metrics, frozenset(), tenant_period_cache, resource_cache, line_window_cache
         )
         return uow.chargebacks.upsert_batch(rows)
 

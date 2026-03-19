@@ -26,6 +26,7 @@ class AllocationContext:
     identities: IdentityResolution
     split_amount: Decimal = Decimal(0)
     metrics_data: dict[str, list[MetricRow]] | None = None
+    metrics_fetch_failed: bool = False
     params: dict[str, Any] = field(default_factory=dict)
 
 

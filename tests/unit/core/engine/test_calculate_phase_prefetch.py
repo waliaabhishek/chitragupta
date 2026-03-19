@@ -123,7 +123,7 @@ class TestPrefetchParallelism:
         lines = [_make_billing_line(resource_id=f"cluster-{i}", timestamp=NOW) for i in range(1, 6)]
 
         start = time.monotonic()
-        result = phase._prefetch_metrics(lines, phase._compute_line_window_cache(lines))
+        result, _failed = phase._prefetch_metrics(lines, phase._compute_line_window_cache(lines))
         elapsed = time.monotonic() - start
 
         # All 5 groups must be in result
@@ -173,7 +173,7 @@ class TestPrefetchPartialFailure:
         ]
 
         with caplog.at_level(logging.WARNING):
-            result = phase._prefetch_metrics(lines, phase._compute_line_window_cache(lines))
+            result, _failed = phase._prefetch_metrics(lines, phase._compute_line_window_cache(lines))
 
         # All 3 groups must be in result
         assert len(result) == 3
@@ -283,9 +283,10 @@ class TestPrefetchNoMetricsSource:
         lines = [_make_billing_line(resource_id=f"cluster-{i}") for i in range(3)]
 
         with patch("concurrent.futures.ThreadPoolExecutor") as mock_executor:
-            result = phase._prefetch_metrics(lines, phase._compute_line_window_cache(lines))
+            result, failed = phase._prefetch_metrics(lines, phase._compute_line_window_cache(lines))
 
         assert result == {}
+        assert failed == frozenset()
         # ThreadPoolExecutor must NOT be instantiated when metrics_source is None
         mock_executor.assert_not_called()
 
@@ -319,7 +320,7 @@ class TestPrefetchSingleGroup:
 
         lines = [_make_billing_line(resource_id="cluster-solo", timestamp=NOW)]
 
-        result = phase._prefetch_metrics(lines, phase._compute_line_window_cache(lines))
+        result, _failed = phase._prefetch_metrics(lines, phase._compute_line_window_cache(lines))
 
         assert len(result) == 1
         group_key = list(result.keys())[0]

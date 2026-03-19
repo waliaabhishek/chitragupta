@@ -88,6 +88,8 @@ class UsageRatioModel:
     detail: str | None = None
 
     def allocate(self, ctx: AllocationContext) -> AllocationResult | None:
+        if ctx.metrics_fetch_failed:
+            return None
         usage = self.usage_source(ctx)
         if not usage or sum(usage.values()) == 0:
             return None
@@ -96,13 +98,18 @@ class UsageRatioModel:
     def __call__(self, ctx: AllocationContext) -> AllocationResult:
         result = self.allocate(ctx)
         if result is None:
+            detail = (
+                AllocationDetail.METRICS_FETCH_FAILED
+                if ctx.metrics_fetch_failed
+                else AllocationDetail.NO_USAGE_FOR_ACTIVE_IDENTITIES
+            )
             row = make_row(
                 ctx,
                 identity_id="UNALLOCATED",
                 cost_type=CostType.SHARED,
                 amount=ctx.split_amount,
                 allocation_method="usage_ratio",
-                allocation_detail=AllocationDetail.NO_USAGE_FOR_ACTIVE_IDENTITIES,
+                allocation_detail=detail,
             )
             return AllocationResult(rows=[row])
         return result

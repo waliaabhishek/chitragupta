@@ -6,3 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 <!-- Run `uv run git-cliff --config cliff.toml --tag vX.Y.Z --output CHANGELOG.md` locally before tagging a release. -->
+
+## [Unreleased]
+
+### Fixed
+
+- Metrics prefetch failures now produce a distinct `METRICS_FETCH_FAILED` allocation detail instead of being silently conflated with empty data (`NO_USAGE_FOR_ACTIVE_IDENTITIES`). Chargeback rows produced during Prometheus outages are now identifiable and filterable in the database. New `metrics_fetch_failed` field on `AllocationContext` propagates failure state from `_prefetch_metrics` through allocators. (TASK-135)
