@@ -67,8 +67,8 @@ jobs:
 
       - name: Create release branch
         run: |
-          git checkout -b "${{ github.ref_name }}"
-          git push origin "${{ github.ref_name }}"
+          git checkout -b "release/${{ github.ref_name }}"
+          git push origin "release/${{ github.ref_name }}"
 
       - name: Set up Python
         uses: actions/setup-python@v5
