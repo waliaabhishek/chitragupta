@@ -4,9 +4,9 @@ This section covers everything you need to run the chargeback engine for the fir
 
 | Page | Purpose |
 |---|---|
-| [Quickstart](quickstart.md) | Service account setup, config, and first run — all on one page |
+| [Quickstart](quickstart.md) | Docker Compose setup with Grafana dashboards — running in under 10 minutes |
+| [Prerequisites](prerequisites.md) | CCloud service account, self-managed Kafka, and storage requirements |
 | [Configuration](configuration.md) | Config file structure and concepts |
 | [First Run](first-run.md) | What to expect when you run the engine |
-| [Prerequisites](prerequisites.md) | Reference for self-managed Kafka and other ecosystems |
 
-Start with the [Quickstart](quickstart.md) — it covers prerequisites through first output.
+Start with the [Quickstart](quickstart.md) — it walks through CCloud setup from credentials to running dashboards.

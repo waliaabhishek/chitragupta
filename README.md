@@ -32,25 +32,22 @@ This was originally built for Confluent Cloud but has been extended to support o
 ## Quick Start
 
 ```bash
-# Install
-pip install uv
 git clone https://github.com/waliaabhishek/chitragupt.git
-cd chitragupt
-uv sync
+cd chitragupt/examples/ccloud-full
 
-# Copy and configure
-cp examples/ccloud-grafana/config.yaml config.yaml
-# Edit config.yaml — set your org ID or use env vars
+# Fill in your CCloud API credentials
+cp .env.example .env
+vim .env
 
-# Set credentials
-export CCLOUD_API_KEY=your-key
-export CCLOUD_API_SECRET=your-secret
-
-# Run once
-uv run python src/main.py --config-file config.yaml --run-once
+# Start the full stack (API + Grafana + UI)
+docker compose up -d
 ```
 
-The [Quickstart guide](docs/getting-started/quickstart.md) covers everything end-to-end: service account creation, permissions, API key setup, configuration, and first run. For a containerized setup with Grafana dashboards, see the [examples/](examples/) directory — each example is self-contained with a `docker-compose.yml`, `config.yaml`, and setup instructions.
+- API: http://localhost:8080
+- Grafana dashboards: http://localhost:3000 (admin / password)
+- Frontend UI: http://localhost:8081
+
+The [Quickstart guide](docs/getting-started/quickstart.md) covers everything end-to-end: service account creation, permissions, API key setup, and running with Docker Compose. Three self-contained examples are available in [`examples/`](examples/) — see `ccloud-grafana/`, `ccloud-full/`, or `self-managed-full/`.
 
 ## Architecture
 

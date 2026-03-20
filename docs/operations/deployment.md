@@ -30,15 +30,36 @@ WantedBy=multi-user.target
 
 ## Docker
 
-The project includes a multi-stage `Dockerfile` in the repo root (builder stage with `uv` for dependency resolution, slim runtime stage with non-root user). Build from the repo root:
+The project includes a multi-stage `Dockerfile` in the repo root (builder stage with `uv` for dependency resolution, slim runtime stage with non-root user).
+
+### Docker Compose (recommended)
+
+The `examples/` directory contains self-contained Docker Compose setups. Each includes a `docker-compose.yml`, `config.yaml`, `.env.example`, and `README.md`:
+
+| Example | Services | Best for |
+|---------|----------|----------|
+| `examples/ccloud-grafana/` | Pipeline (worker) + Grafana | Lightweight dashboards, no API |
+| `examples/ccloud-full/` | Pipeline + API + Grafana + UI | Full CCloud stack |
+| `examples/self-managed-full/` | Pipeline + API + Grafana + UI | Self-managed Kafka |
+
+```bash
+cd examples/ccloud-full        # or ccloud-grafana, self-managed-full
+cp .env.example .env
+vim .env                        # fill in credentials
+docker compose up -d
+```
+
+See the [Quickstart](../getting-started/quickstart.md) for a step-by-step walkthrough.
+
+### Standalone Docker (no Compose)
+
+Build and run directly if you don't need Grafana or the UI:
 
 ```bash
 docker build -t chitragupt .
 docker run -v ./config:/app/config:ro -v ./data:/app/data chitragupt \
   --config-file /app/config/config.yaml --mode both
 ```
-
-See the [`examples/`](https://github.com/waliaabhishek/chitragupt/blob/main/examples/) directory for self-contained Docker Compose setups with Grafana — choose from `ccloud-grafana/`, `ccloud-full/`, or `self-managed-full/`.
 
 ## Environment variables
 

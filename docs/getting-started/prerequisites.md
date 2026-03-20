@@ -1,8 +1,9 @@
 # Prerequisites
 
 ## Runtime
-- Python 3.14+
-- `uv` package manager (`pip install uv`)
+
+- **Docker Engine 24+** and **Docker Compose v2+** (recommended)
+- For local development without Docker: Python 3.14+ and `uv` (`pip install uv`)
 
 ## Per ecosystem
 
@@ -47,5 +48,5 @@
 - SQLite (default, no setup needed) or PostgreSQL
 - Write access to the configured database path
 
-## Docker (optional)
-- For containerized deployment
+## Local development (optional)
+- Python 3.14+ and `uv` for running without Docker — see [Quickstart](quickstart.md#alternative-local-development-without-docker)
