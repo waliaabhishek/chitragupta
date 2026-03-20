@@ -389,7 +389,7 @@ class TestMultiTenantSingleton:
 
 
 class TestCollectorScript:
-    _SCRIPT_PATH = Path("deployables/assets/prometheus_for_chargeback/collector.sh")
+    _SCRIPT_PATH = Path("examples/shared/scripts/collector.sh")
 
     def test_collector_script_exists(self) -> None:
         assert self._SCRIPT_PATH.exists(), f"Expected {self._SCRIPT_PATH} to exist"

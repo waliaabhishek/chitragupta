@@ -16,7 +16,7 @@ Full stack for self-managed Kafka: chargeback engine (pipeline + REST API), Graf
 
 - Docker Engine 24+ and Docker Compose v2+
 - A Prometheus instance reachable from the Docker network, scraping Kafka brokers via [prometheus-jmx-exporter](https://github.com/prometheus/jmx_exporter)
-- See `deployables/assets/prometheus_for_chargeback/collector.sh` for a helper that configures the required JMX metrics
+- See `examples/shared/scripts/collector.sh` for a helper that configures the required JMX metrics
 
 ## Quick start
 

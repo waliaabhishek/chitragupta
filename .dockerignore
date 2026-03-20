@@ -22,8 +22,7 @@ __pycache__
 tests/
 backlog/
 ccloud-chargeback-helper-reference/
-deployables/
-configs/
+examples/
 docs/
 *.md
 !README.md

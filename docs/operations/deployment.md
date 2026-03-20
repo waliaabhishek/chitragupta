@@ -124,7 +124,7 @@ tenants:
 When using the [Prometheus emitter](../configuration/index.md#prometheus-emitter), chargeback data is held in memory and served at `/metrics`. To persist it into a Prometheus TSDB (for long-term retention and historical queries), use the bundled collector script:
 
 ```
-deployables/assets/prometheus_for_chargeback/collector.sh
+examples/shared/scripts/collector.sh
 ```
 
 The script scrapes `/metrics` in OpenMetrics format and writes TSDB blocks via `promtool tsdb create-blocks-from openmetrics`. It requires `promtool` on `PATH` (ships with the Prometheus distribution).
