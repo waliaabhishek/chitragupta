@@ -2,8 +2,13 @@ name: Deploy Documentation
 
 on:
   push:
+    branches: [main]
     tags: ['v*.*.*']
   workflow_dispatch:
+
+concurrency:
+  group: gh-pages-deploy
+  cancel-in-progress: false
 
 permissions:
   contents: write
