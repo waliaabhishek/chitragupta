@@ -12,3 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Metrics prefetch failures now produce a distinct `METRICS_FETCH_FAILED` allocation detail instead of being silently conflated with empty data (`NO_USAGE_FOR_ACTIVE_IDENTITIES`). Chargeback rows produced during Prometheus outages are now identifiable and filterable in the database. New `metrics_fetch_failed` field on `AllocationContext` propagates failure state from `_prefetch_metrics` through allocators. (TASK-135)
+
+### Enhanced
+
+- `--validate` CLI flag now validates plugin-specific configs (e.g., CCloud CKU ratios, self-managed Kafka cost model) for each configured tenant, not just top-level `AppSettings`. Previously, plugin config errors were only caught at first pipeline run. (TASK-132)

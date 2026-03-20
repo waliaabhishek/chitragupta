@@ -82,14 +82,47 @@ def setup_logging(settings: AppSettings) -> None:
         logging.getLogger(module).setLevel(level)
 
 
-def _create_runner(settings: AppSettings) -> WorkflowRunner:
-    """Create a WorkflowRunner with all plugins discovered from configured plugins path."""
+def _build_registry(settings: AppSettings) -> PluginRegistry:
+    """Resolve plugins path from settings and build a populated PluginRegistry."""
     plugins_path = _DEFAULT_PLUGINS_PATH if settings.plugins_path is None else Path.cwd() / settings.plugins_path
-
     registry = PluginRegistry()
     for ecosystem, factory in discover_plugins(plugins_path):
         registry.register(ecosystem, factory)
-    return WorkflowRunner(settings, registry)
+    return registry
+
+
+def _create_runner(settings: AppSettings) -> WorkflowRunner:
+    """Create a WorkflowRunner with all plugins discovered from configured plugins path."""
+    return WorkflowRunner(settings, _build_registry(settings))
+
+
+def _validate_plugin_configs(settings: AppSettings) -> None:
+    """Instantiate plugin-specific config models for all configured tenants.
+
+    Calls validate_plugin_settings() on each plugin instance if the method
+    exists. Plugins without this method are skipped (graceful degradation for
+    third-party plugins).
+
+    Raises ValueError with tenant context on the first validation failure.
+    """
+    registry = _build_registry(settings)
+    errors: list[str] = []
+    for tenant_name, tenant_config in settings.tenants.items():
+        ecosystem = tenant_config.ecosystem
+        try:
+            plugin = registry.create(ecosystem)
+        except KeyError:
+            errors.append(f"tenant {tenant_name!r}: unknown ecosystem {ecosystem!r}")
+            continue
+        validate_fn = getattr(plugin, "validate_plugin_settings", None)
+        if validate_fn is None:
+            continue
+        try:
+            validate_fn(tenant_config.plugin_settings.model_dump())
+        except Exception as exc:
+            errors.append(f"tenant {tenant_name!r} ({ecosystem}): {exc}")
+    if errors:
+        raise ValueError("\n".join(errors))
 
 
 def run_api(settings: AppSettings, runner: WorkflowRunner | None = None, mode: str = "api") -> None:
@@ -197,6 +230,11 @@ def main(argv: list[str] | None = None) -> None:
         raise
 
     if args.validate:
+        try:
+            _validate_plugin_configs(settings)
+        except Exception as exc:
+            print(f"Config validation failed:\n{exc}", file=sys.stderr)
+            sys.exit(1)
         print("Config is valid.")
         sys.exit(0)
 

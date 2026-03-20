@@ -88,6 +88,10 @@ class GenericMetricsOnlyPlugin:
 
         return GenericMetricsOnlyStorageModule()
 
+    def validate_plugin_settings(self, config: dict[str, Any]) -> None:
+        """Validate plugin-specific config without creating live connections."""
+        GenericMetricsOnlyConfig.from_plugin_settings(config)
+
     def close(self) -> None:
         if self._metrics_source is not None:
             self._metrics_source.close()

@@ -660,3 +660,292 @@ class TestShowConfigFlag:
         output = m.model_dump_json()
         assert "s3cr3t" not in output
         assert "**********" in output
+
+
+class TestValidatePluginConfigs:
+    """TASK-132: _validate_plugin_configs() catches plugin-specific config errors."""
+
+    # ------------------------------------------------------------------ test 1
+    @patch("main.discover_plugins")
+    @patch("main.load_config")
+    def test_cku_ratio_sum_failure_caught(
+        self,
+        mock_load: MagicMock,
+        mock_discover: MagicMock,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from core.config.models import AppSettings, PluginSettingsBase, TenantConfig
+        from main import main
+        from plugins.confluent_cloud import ConfluentCloudPlugin
+
+        mock_discover.return_value = [("confluent_cloud", ConfluentCloudPlugin)]
+        settings = AppSettings(
+            tenants={
+                "prod": TenantConfig(
+                    ecosystem="confluent_cloud",
+                    tenant_id="t-prod",
+                    plugin_settings=PluginSettingsBase(
+                        ccloud_api={"key": "k", "secret": "s"},
+                        allocator_params={
+                            "kafka_cku_usage_ratio": 0.7,
+                            "kafka_cku_shared_ratio": 0.5,  # sum = 1.2, invalid
+                        },
+                    ),
+                )
+            }
+        )
+        mock_load.return_value = settings
+
+        with pytest.raises(SystemExit) as exc_info:
+            main(["--config-file", "x.yaml", "--validate"])
+        assert exc_info.value.code == 1
+        assert "sum to 1.0" in capsys.readouterr().err
+
+    # ------------------------------------------------------------------ test 2
+    @patch("main.discover_plugins")
+    @patch("main.load_config")
+    def test_missing_ccloud_api_field_caught(
+        self,
+        mock_load: MagicMock,
+        mock_discover: MagicMock,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from core.config.models import AppSettings, PluginSettingsBase, TenantConfig
+        from main import main
+        from plugins.confluent_cloud import ConfluentCloudPlugin
+
+        mock_discover.return_value = [("confluent_cloud", ConfluentCloudPlugin)]
+        settings = AppSettings(
+            tenants={
+                "prod": TenantConfig(
+                    ecosystem="confluent_cloud",
+                    tenant_id="t-prod",
+                    plugin_settings=PluginSettingsBase(),  # no ccloud_api
+                )
+            }
+        )
+        mock_load.return_value = settings
+
+        with pytest.raises(SystemExit) as exc_info:
+            main(["--config-file", "x.yaml", "--validate"])
+        assert exc_info.value.code == 1
+        assert "ccloud_api" in capsys.readouterr().err
+
+    # ------------------------------------------------------------------ test 3
+    @patch("main.discover_plugins")
+    @patch("main.load_config")
+    def test_valid_config_exits_0(
+        self,
+        mock_load: MagicMock,
+        mock_discover: MagicMock,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from core.config.models import AppSettings, PluginSettingsBase, TenantConfig
+        from main import main
+        from plugins.confluent_cloud import ConfluentCloudPlugin
+
+        mock_discover.return_value = [("confluent_cloud", ConfluentCloudPlugin)]
+        settings = AppSettings(
+            tenants={
+                "prod": TenantConfig(
+                    ecosystem="confluent_cloud",
+                    tenant_id="t-prod",
+                    plugin_settings=PluginSettingsBase(
+                        ccloud_api={"key": "k", "secret": "s"},
+                    ),
+                )
+            }
+        )
+        mock_load.return_value = settings
+
+        with pytest.raises(SystemExit) as exc_info:
+            main(["--config-file", "x.yaml", "--validate"])
+        assert exc_info.value.code == 0
+        assert "Config is valid." in capsys.readouterr().out
+
+    # ------------------------------------------------------------------ test 4
+    @patch("main.discover_plugins")
+    @patch("main.load_config")
+    def test_self_managed_kafka_invalid_config_caught(
+        self,
+        mock_load: MagicMock,
+        mock_discover: MagicMock,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from core.config.models import AppSettings, PluginSettingsBase, TenantConfig
+        from main import main
+        from plugins.self_managed_kafka import SelfManagedKafkaPlugin
+
+        mock_discover.return_value = [("self_managed_kafka", SelfManagedKafkaPlugin)]
+        settings = AppSettings(
+            tenants={
+                "kafka-prod": TenantConfig(
+                    ecosystem="self_managed_kafka",
+                    tenant_id="t-kafka",
+                    # missing required: cluster_id, broker_count, cost_model, metrics
+                    plugin_settings=PluginSettingsBase(),
+                )
+            }
+        )
+        mock_load.return_value = settings
+
+        with pytest.raises(SystemExit) as exc_info:
+            main(["--config-file", "x.yaml", "--validate"])
+        assert exc_info.value.code == 1
+        assert "kafka-prod" in capsys.readouterr().err
+
+    # ------------------------------------------------------------------ test 5
+    @patch("main.discover_plugins")
+    @patch("main.load_config")
+    def test_generic_metrics_only_empty_cost_types_caught(
+        self,
+        mock_load: MagicMock,
+        mock_discover: MagicMock,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from core.config.models import AppSettings, PluginSettingsBase, TenantConfig
+        from main import main
+        from plugins.generic_metrics_only import GenericMetricsOnlyPlugin
+
+        mock_discover.return_value = [("generic_metrics_only", GenericMetricsOnlyPlugin)]
+        settings = AppSettings(
+            tenants={
+                "pg-prod": TenantConfig(
+                    ecosystem="generic_metrics_only",
+                    tenant_id="t-pg",
+                    plugin_settings=PluginSettingsBase(
+                        ecosystem_name="self_managed_postgres",
+                        cluster_id="cluster-1",
+                        metrics={"url": "http://prom:9090"},
+                        identity_source={"source": "static"},
+                        cost_types=[],  # violates min_length=1
+                    ),
+                )
+            }
+        )
+        mock_load.return_value = settings
+
+        with pytest.raises(SystemExit) as exc_info:
+            main(["--config-file", "x.yaml", "--validate"])
+        assert exc_info.value.code == 1
+
+    # ------------------------------------------------------------------ test 6
+    @patch("main.discover_plugins")
+    @patch("main.load_config")
+    def test_unknown_ecosystem_exits_1(
+        self,
+        mock_load: MagicMock,
+        mock_discover: MagicMock,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from core.config.models import AppSettings, PluginSettingsBase, TenantConfig
+        from main import main
+
+        mock_discover.return_value = []  # no plugins registered
+        settings = AppSettings(
+            tenants={
+                "mystery": TenantConfig(
+                    ecosystem="nonexistent",
+                    tenant_id="t-mystery",
+                    plugin_settings=PluginSettingsBase(),
+                )
+            }
+        )
+        mock_load.return_value = settings
+
+        with pytest.raises(SystemExit) as exc_info:
+            main(["--config-file", "x.yaml", "--validate"])
+        assert exc_info.value.code == 1
+        assert "unknown ecosystem" in capsys.readouterr().err.lower()
+
+    # ------------------------------------------------------------------ test 7
+    @patch("main.discover_plugins")
+    @patch("main.load_config")
+    def test_multiple_tenant_errors_all_reported(
+        self,
+        mock_load: MagicMock,
+        mock_discover: MagicMock,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from core.config.models import AppSettings, PluginSettingsBase, StorageConfig, TenantConfig
+        from main import main
+        from plugins.confluent_cloud import ConfluentCloudPlugin
+
+        mock_discover.return_value = [("confluent_cloud", ConfluentCloudPlugin)]
+        settings = AppSettings(
+            tenants={
+                "alpha": TenantConfig(
+                    ecosystem="confluent_cloud",
+                    tenant_id="t-alpha",
+                    storage=StorageConfig(connection_string="sqlite:///alpha.db"),
+                    plugin_settings=PluginSettingsBase(),  # no ccloud_api
+                ),
+                "beta": TenantConfig(
+                    ecosystem="confluent_cloud",
+                    tenant_id="t-beta",
+                    storage=StorageConfig(connection_string="sqlite:///beta.db"),
+                    plugin_settings=PluginSettingsBase(),  # no ccloud_api
+                ),
+            }
+        )
+        mock_load.return_value = settings
+
+        with pytest.raises(SystemExit) as exc_info:
+            main(["--config-file", "x.yaml", "--validate"])
+        assert exc_info.value.code == 1
+        err = capsys.readouterr().err
+        assert "alpha" in err
+        assert "beta" in err
+
+    # ------------------------------------------------------------------ test 8
+    @patch("main.discover_plugins")
+    @patch("main.load_config")
+    def test_plugin_without_validate_method_skipped_silently(
+        self,
+        mock_load: MagicMock,
+        mock_discover: MagicMock,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from core.config.models import AppSettings, PluginSettingsBase, TenantConfig
+        from main import main
+
+        class _NoValidatePlugin:
+            """Minimal plugin stub — no validate_plugin_settings method."""
+
+        mock_discover.return_value = [("no_validate_eco", _NoValidatePlugin)]
+        settings = AppSettings(
+            tenants={
+                "prod": TenantConfig(
+                    ecosystem="no_validate_eco",
+                    tenant_id="t-prod",
+                    plugin_settings=PluginSettingsBase(),
+                )
+            }
+        )
+        mock_load.return_value = settings
+
+        with pytest.raises(SystemExit) as exc_info:
+            main(["--config-file", "x.yaml", "--validate"])
+        assert exc_info.value.code == 0
+
+    # ------------------------------------------------------------------ test 9
+    def test_ecosystem_plugin_protocol_unchanged(self) -> None:
+        from core.plugin.protocols import EcosystemPlugin
+
+        assert not hasattr(EcosystemPlugin, "validate_plugin_settings"), (
+            "validate_plugin_settings must NOT be added to the EcosystemPlugin protocol"
+        )
+
+    # ------------------------------------------------------------------ test 10
+    @patch("main.discover_plugins")
+    def test_build_registry_importable_and_populates_registry(
+        self,
+        mock_discover: MagicMock,
+    ) -> None:
+        from core.config.models import AppSettings
+        from main import _build_registry
+        from plugins.confluent_cloud import ConfluentCloudPlugin
+
+        mock_discover.return_value = [("confluent_cloud", ConfluentCloudPlugin)]
+        registry = _build_registry(AppSettings())
+        assert "confluent_cloud" in registry.list_ecosystems()

@@ -129,6 +129,10 @@ class ConfluentCloudPlugin:
 
         return CCloudStorageModule()
 
+    def validate_plugin_settings(self, config: dict[str, Any]) -> None:
+        """Validate plugin-specific config without creating live connections."""
+        CCloudPluginConfig.from_plugin_settings(config)
+
     def close(self) -> None:
         """Release plugin resources (HTTP connections).
 

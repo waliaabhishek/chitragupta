@@ -182,6 +182,10 @@ class SelfManagedKafkaPlugin:
 
         return SelfManagedKafkaStorageModule()
 
+    def validate_plugin_settings(self, config: dict[str, Any]) -> None:
+        """Validate plugin-specific config without creating live connections."""
+        SelfManagedKafkaConfig.from_plugin_settings(config)
+
     def close(self) -> None:
         """Clean up resources (AdminClient connection, metrics source)."""
         if self._admin_client is not None:
