@@ -2,7 +2,7 @@ services:
   chitragupt:
     # The chargeback engine image — built from the repo root Dockerfile.
     # Build context is two levels up because this file lives at examples/ccloud-grafana/.
-    image: chitragupt:latest
+    image: ghcr.io/waliaabhishek/chitragupt:latest
     build:
       context: ../..
       dockerfile: Dockerfile
