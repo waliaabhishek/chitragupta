@@ -22,7 +22,7 @@ tenants:
   # --- Production org ---
   ccloud-prod:
     ecosystem: confluent_cloud     # Required — "confluent_cloud"
-    tenant_id: "${CCLOUD_PROD_ORG_ID}"  # Required — production org ID
+    tenant_id: "${CCLOUD_PROD_TENANT_ID}"  # Required — unique partition key (any string, not the CCloud org ID)
     lookback_days: 90
     cutoff_days: 5
     storage:
@@ -36,7 +36,7 @@ tenants:
   # --- Staging org ---
   ccloud-staging:
     ecosystem: confluent_cloud
-    tenant_id: "${CCLOUD_STAGING_ORG_ID}"  # Required — staging org ID
+    tenant_id: "${CCLOUD_STAGING_TENANT_ID}"  # Required — unique partition key (any string, not the CCloud org ID)
     lookback_days: 30            # Optional — shorter lookback for staging
     cutoff_days: 5
     storage:

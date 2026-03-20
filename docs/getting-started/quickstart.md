@@ -67,7 +67,7 @@ logging:
 tenants:
   my-org:
     ecosystem: confluent_cloud
-    tenant_id: t-abc123
+    tenant_id: my-org              # internal partition key (not the CCloud org ID)
     storage:
       connection_string: "sqlite:///data/my-org.db"
     plugin_settings:

@@ -123,7 +123,14 @@ class PluginSettingsBase(BaseModel):
 
 class TenantConfig(BaseModel):
     ecosystem: str
-    tenant_id: str
+    tenant_id: str = Field(
+        description=(
+            "Unique partition key for DB records and storage. "
+            "Not sent to any external API — CCloud APIs are scoped by credentials. "
+            "Can be any string (e.g. 'prod', 'acme-corp'). "
+            "The dict key under 'tenants:' is a separate human-friendly label for logs/filenames."
+        ),
+    )
     lookback_days: int = Field(default=200, gt=0, le=364)
     cutoff_days: int = Field(default=5, gt=0, le=30)
     retention_days: int = Field(default=250, gt=0, le=730)

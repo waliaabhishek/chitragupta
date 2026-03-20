@@ -35,7 +35,7 @@ All tenants share these `TenantConfig` fields:
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `ecosystem` | string | required | Plugin key from the table above |
-| `tenant_id` | string | required | Unique identifier for this tenant |
+| `tenant_id` | string | required | Unique partition key for DB records. Can be any string (e.g. `prod`, `acme-corp`). This is **not** a vendor-specific ID (e.g. not your CCloud Organization ID) — it is an internal label used to isolate data across tenants in the database. |
 | `lookback_days` | int | 200 | Days of billing history to fetch |
 | `cutoff_days` | int | 5 | Skip dates within this many days of today |
 | `retention_days` | int | 250 | Delete data older than this |

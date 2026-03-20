@@ -67,7 +67,7 @@ tenants:
   # One tenant per billing boundary
   ccloud-prod:
     ecosystem: confluent_cloud
-    tenant_id: t-abc123           # CCloud org ID
+    tenant_id: ccloud-prod         # internal partition key (not the CCloud org ID)
     storage:
       connection_string: "sqlite:///data/ccloud-prod.db"
     plugin_settings: ...
@@ -550,7 +550,7 @@ tenants:
   # Confluent Cloud organization
   ccloud-prod:
     ecosystem: confluent_cloud
-    tenant_id: t-abc123
+    tenant_id: ccloud-prod         # internal partition key (not the CCloud org ID)
     lookback_days: 200
     cutoff_days: 5
     retention_days: 365

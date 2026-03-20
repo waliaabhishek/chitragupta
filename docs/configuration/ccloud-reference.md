@@ -17,7 +17,7 @@ ecosystem: confluent_cloud
 tenants:
   my-ccloud-org:
     ecosystem: confluent_cloud
-    tenant_id: t-abc123
+    tenant_id: my-ccloud-org       # internal partition key (not the CCloud org ID)
     lookback_days: 200
     cutoff_days: 5
     retention_days: 250
@@ -52,7 +52,7 @@ tenants:
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `ecosystem` | string | required | Must be `confluent_cloud` |
-| `tenant_id` | string | required | CCloud org ID (e.g. `t-abc123`) |
+| `tenant_id` | string | required | Unique partition key for DB records. Can be any string (e.g. `prod`, `acme-corp`). This is **not** your Confluent Cloud Organization ID — it is an internal label used to isolate data across tenants in the database. |
 | `lookback_days` | int | 200 | Days of billing history to fetch (max 364). Must be > `cutoff_days`. |
 | `cutoff_days` | int | 5 | Skip dates within this many days of today (billing lag, max 30) |
 | `retention_days` | int | 250 | Delete data older than this (max 730) |

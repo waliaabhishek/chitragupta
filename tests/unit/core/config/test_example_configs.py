@@ -11,7 +11,7 @@ from core.config.loader import load_config
 EXAMPLES_DIR = Path(__file__).parents[4] / "deployables" / "config" / "examples"
 
 CCLOUD_ENV = {
-    "CCLOUD_ORG_ID": "org-test123",
+    "CCLOUD_TENANT_ID": "ccloud-test",
     "CCLOUD_API_KEY": "TESTKEY",
     "CCLOUD_API_SECRET": "testsecret",
 }
@@ -40,10 +40,10 @@ class TestCCloudExamples:
 
     def test_multi_tenant(self, monkeypatch: pytest.MonkeyPatch) -> None:
         env = {
-            "CCLOUD_PROD_ORG_ID": "org-prod",
+            "CCLOUD_PROD_TENANT_ID": "ccloud-prod",
             "CCLOUD_PROD_API_KEY": "KEY1",
             "CCLOUD_PROD_API_SECRET": "SEC1",
-            "CCLOUD_STAGING_ORG_ID": "org-staging",
+            "CCLOUD_STAGING_TENANT_ID": "ccloud-staging",
             "CCLOUD_STAGING_API_KEY": "KEY2",
             "CCLOUD_STAGING_API_SECRET": "SEC2",
         }

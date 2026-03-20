@@ -13,7 +13,7 @@ api:
 tenants:
   prod-ccloud:
     ecosystem: confluent_cloud
-    tenant_id: "${CCLOUD_ORG_ID}"
+    tenant_id: "${CCLOUD_TENANT_ID}"  # unique partition key (any string, not the CCloud org ID)
     lookback_days: 200
     cutoff_days: 5
     retention_days: 250
@@ -27,7 +27,7 @@ tenants:
 
   staging-ccloud:
     ecosystem: confluent_cloud
-    tenant_id: "${CCLOUD_STAGING_ORG_ID}"
+    tenant_id: "${CCLOUD_STAGING_TENANT_ID}"  # unique partition key (any string, not the CCloud org ID)
     lookback_days: 90
     cutoff_days: 3
     retention_days: 120

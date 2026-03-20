@@ -27,7 +27,7 @@ api:
 tenants:
   ccloud-prod:
     ecosystem: confluent_cloud     # Required — must be "confluent_cloud"
-    tenant_id: "${CCLOUD_ORG_ID}"  # Required — Confluent Cloud org ID
+    tenant_id: "${CCLOUD_TENANT_ID}"  # Required — unique partition key for DB records (any string, not the CCloud org ID)
     lookback_days: 90              # Optional — backfill window; 1-364; must be > cutoff_days
     cutoff_days: 5                 # Optional — billing finalization lag; 1-30
     retention_days: 250            # Optional — purge records older than N days; 1-730

@@ -12,7 +12,7 @@ api:
 tenants:
   ccloud-prod:
     ecosystem: confluent_cloud
-    tenant_id: "${CCLOUD_ORG_ID}"
+    tenant_id: "${CCLOUD_TENANT_ID}"  # unique partition key for DB records (any string, not the CCloud org ID)
     lookback_days: 90
     cutoff_days: 5
     storage:

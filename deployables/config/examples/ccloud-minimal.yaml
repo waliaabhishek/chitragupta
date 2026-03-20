@@ -1,7 +1,7 @@
 # =============================================================================
 # CCloud Minimal — Single Confluent Cloud organization, defaults everywhere.
 # Who: First-time setup, evaluation, small teams.
-# Requires env vars: CCLOUD_ORG_ID, CCLOUD_API_KEY, CCLOUD_API_SECRET
+# Requires env vars: CCLOUD_TENANT_ID, CCLOUD_API_KEY, CCLOUD_API_SECRET
 # =============================================================================
 
 logging:
@@ -19,7 +19,7 @@ api:
 tenants:
   ccloud-prod:                     # Required — unique tenant key (used in logs/storage paths)
     ecosystem: confluent_cloud     # Required — plugin selector; must be "confluent_cloud"
-    tenant_id: "${CCLOUD_ORG_ID}"  # Required — Confluent Cloud org ID (e.g., "org-abc123")
+    tenant_id: "${CCLOUD_TENANT_ID}"  # Required — unique partition key for DB records (any string, not the CCloud org ID)
     lookback_days: 90              # Optional — historical backfill window; 1-364; must be > cutoff_days
     cutoff_days: 5                 # Optional — skip last N days for billing finalization lag; 1-30
 
