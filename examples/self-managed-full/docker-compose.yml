@@ -1,0 +1,74 @@
+services:
+  chitragupt:
+    # The chargeback engine image — built from the repo root Dockerfile.
+    # Build context is two levels up because this file lives at examples/self-managed-full/.
+    image: chitragupt:latest
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    volumes:
+      # Mount config read-only so the container cannot modify it.
+      - ./config.yaml:/app/config/config.yaml:ro
+      # Named volume shared with Grafana so it can read the SQLite database directly.
+      - chitragupt-data:/app/data:rw
+    env_file:
+      # Populated from .env.example — copy to .env and fill in your credentials.
+      - .env
+    # Both mode: runs the REST API server (port 8080) AND the periodic pipeline worker.
+    command: ["--config-file", "/app/config/config.yaml", "--mode", "both"]
+    ports:
+      # REST API — access at http://localhost:8080
+      - "8080:8080"
+    restart: unless-stopped
+    healthcheck:
+      # Probe the /health endpoint. Grafana and UI wait for this to pass before starting.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  grafana:
+    # Grafana reads the SQLite database directly from the shared volume.
+    image: grafana/grafana:12.4.0
+    ports:
+      # Grafana UI — access at http://localhost:3000
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      # Admin password — override via GF_ADMIN_PASSWORD in .env, defaults to "password".
+      GF_SECURITY_ADMIN_PASSWORD: ${GF_ADMIN_PASSWORD:-password}
+      # The frser-sqlite-datasource plugin is required to read SQLite files.
+      GF_INSTALL_PLUGINS: frser-sqlite-datasource
+    volumes:
+      # Pre-provisioned dashboards and datasource — shared across all examples.
+      - ../shared/grafana/provisioning:/etc/grafana/provisioning:ro
+      # Read-only access to the chargeback database written by chitragupt.
+      # Path inside container must match the datasource.yml path: /var/lib/grafana/data/chargeback/chargeback.db
+      - chitragupt-data:/var/lib/grafana/data/chargeback:ro
+    restart: unless-stopped
+    depends_on:
+      chitragupt:
+        # Wait for chitragupt's healthcheck to pass before starting Grafana.
+        condition: service_healthy
+
+  chitragupt-ui:
+    # The React frontend served by nginx, built from the frontend/ directory.
+    # Build context is two levels up to frontend/ because this file is at examples/self-managed-full/.
+    image: chitragupt-ui:latest
+    build:
+      context: ../../frontend
+      dockerfile: Dockerfile
+    ports:
+      # Frontend UI — access at http://localhost:8081
+      - "8081:80"
+    restart: unless-stopped
+    depends_on:
+      chitragupt:
+        # Wait for chitragupt's healthcheck to pass — UI proxies API calls to it.
+        condition: service_healthy
+
+volumes:
+  # Named volume shared between chitragupt (writes) and grafana (reads).
+  # Docker manages the lifecycle — data persists across container restarts.
+  chitragupt-data:

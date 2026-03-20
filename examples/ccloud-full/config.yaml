@@ -1,0 +1,83 @@
+# Chitragupt configuration — CCloud full stack example
+# This example runs the pipeline + REST API + Grafana + frontend UI.
+# See examples/ccloud-grafana/config.yaml for the lightweight worker-only version.
+
+# ── Logging ──────────────────────────────────────────────────────────────────
+logging:
+  # Log level for all engine output. Valid: DEBUG, INFO, WARNING, ERROR, CRITICAL.
+  level: INFO
+
+# ── Features ─────────────────────────────────────────────────────────────────
+features:
+  # Run the pipeline on a recurring schedule (rather than once and exit).
+  enable_periodic_refresh: true
+  # How often to re-run the pipeline, in seconds.
+  # 3600 = 1 hour. CCloud billing data updates hourly, so running more often is wasteful.
+  refresh_interval: 3600
+
+# ── API server ────────────────────────────────────────────────────────────────
+# Required in --mode both. Configures the REST API that Grafana and the UI consume.
+api:
+  # Listen on all interfaces inside the container so Docker can route traffic to it.
+  host: "0.0.0.0"
+  # Port the API server listens on inside the container (mapped to host port 8080).
+  port: 8080
+  # CORS must be enabled when the frontend runs on a different origin (port 8081).
+  enable_cors: true
+  cors_origins:
+    # The frontend origin — must match the host port in docker-compose.yml.
+    - "http://localhost:8081"
+
+# ── Tenants ──────────────────────────────────────────────────────────────────
+# Each tenant is an independent pipeline instance with its own config and database.
+# Add multiple entries here for multi-tenant setups (e.g., prod + staging).
+tenants:
+  ccloud-prod:
+    # ecosystem: tells the engine which plugin to load (confluent_cloud or self_managed_kafka).
+    ecosystem: confluent_cloud
+
+    # tenant_id: an internal partition key for DB records.
+    # This is NOT your Confluent Cloud organization ID — it can be any unique string.
+    # Used to namespace records when multiple tenants share the same database.
+    tenant_id: "${CCLOUD_TENANT_ID}"
+
+    # lookback_days: how far back to pull historical billing data on the first run.
+    # Subsequent runs only fetch new data. 90 days gives a good historical baseline.
+    lookback_days: 90
+
+    # cutoff_days: skip the most recent N days of billing data (data may still be incomplete).
+    # CCloud billing data for very recent days is often not fully settled.
+    cutoff_days: 5
+
+    storage:
+      # backend: sqlmodel uses SQLAlchemy + SQLite (or Postgres if you change the connection string).
+      backend: sqlmodel
+      # connection_string: path to the SQLite file inside the container.
+      # /app/data/ is mounted from the chitragupt-data named volume.
+      connection_string: "sqlite:////app/data/chargeback.db"
+
+    plugin_settings:
+      # ── CCloud API credentials ────────────────────────────────────────────
+      # Required. Create a Cloud API key in Confluent Cloud Console with:
+      #   - MetricsViewer role (for usage metrics)
+      #   - BillingAdmin role (for billing data)
+      ccloud_api:
+        key: "${CCLOUD_API_KEY}"
+        secret: "${CCLOUD_API_SECRET}"
+
+      # ── Prometheus metrics (optional) ─────────────────────────────────────
+      # Uncomment to enable usage-based allocation (bytes in/out per principal).
+      # Requires a Prometheus instance scraping CCloud metrics via the Confluent metrics exporter.
+      # Without this, costs are allocated evenly across tenants.
+      # metrics:
+      #   type: prometheus
+      #   url: "${PROMETHEUS_URL}"  # e.g. http://prometheus:9090
+      #   auth_type: none           # options: none, basic, bearer
+
+      # ── Flink cost gathering (optional) ───────────────────────────────────
+      # Uncomment to include Confluent Flink compute pool costs.
+      # Each entry covers one Flink region; add multiple entries for multi-region setups.
+      # flink:
+      # - region_id: "${FLINK_REGION_ID}"   # e.g. us-east-1
+      #   key: "${FLINK_API_KEY}"
+      #   secret: "${FLINK_API_SECRET}"

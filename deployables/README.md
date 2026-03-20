@@ -1,92 +1,25 @@
-# Chitragupt — Docker Deployment
+# Chitragupt — Deployment Assets
 
-## Prerequisites
-- Docker and Docker Compose v2+
-- API credentials for your ecosystem (CCloud or self-managed)
+Self-contained deployment examples have moved to `examples/`. Pick the topology that fits your setup:
 
-## Quick Start
+| Directory | Topology | Use when |
+|-----------|----------|----------|
+| [`examples/ccloud-grafana/`](../examples/ccloud-grafana/) | CCloud pipeline + Grafana | Lightweight dashboards, no API needed |
+| [`examples/ccloud-full/`](../examples/ccloud-full/) | CCloud pipeline + API + Grafana + UI | Full stack with REST API and frontend |
+| [`examples/self-managed-full/`](../examples/self-managed-full/) | Self-managed Kafka + API + Grafana + UI | On-prem/self-hosted Kafka clusters |
 
-1. Configure credentials:
-   ```bash
-   cd deployables
-   cp config/.env.example config/.env
-   # Edit config/.env with your credentials
-   ```
+Each example directory is self-contained: it includes a `docker-compose.yml`, a `config.yaml`, a `.env.example`, and a `README.md` with setup instructions.
 
-2. Select ecosystem config:
-   ```bash
-   # For Confluent Cloud:
-   cp config/config-ccloud.yaml config/config.yaml
+## Quick start
 
-   # For self-managed Kafka:
-   cp config/config-self-managed.yaml config/config.yaml
-   ```
-
-3. Create data directory:
-   ```bash
-   mkdir -p data
-   ```
-
-4. Start services:
-   ```bash
-   docker compose up -d
-   ```
-
-5. Access:
-   - API: http://localhost:8080
-   - Grafana: http://localhost:3000 (admin/password)
-   - Frontend (optional): http://localhost:8081
-     Start with: `docker compose --profile ui up -d`
-
-## Services
-
-| Service | Port | Description |
-|---------|------|-------------|
-| chitragupt | 8080 | API + pipeline worker |
-| grafana | 3000 | Dashboards |
-| chitragupt-ui | 8081 | Frontend UI (optional, start with `--profile ui`) |
-
-## Run Modes
-
-Edit `docker-compose.yml` command to change mode:
-- `--mode both` (default): API server + periodic pipeline
-- `--mode api`: API server only
-- `--mode worker`: Pipeline worker only
-- Add `--run-once`: Single pipeline run then exit
-
-## Configuration
-
-### Volume Mounts
-| Host Path | Container Path | Purpose |
-|-----------|----------------|---------|
-| `./config/` | `/app/config/` | Config files (read-only) |
-| `./data/` | `/app/data/` | SQLite database (read-write) |
-
-### Environment Variables
-Set in `config/.env`. See `.env.example` for required variables per ecosystem.
-
-## Building the Image
-
-From repo root:
 ```bash
-docker build -t chitragupt .
+# Choose an example, e.g.:
+cd examples/ccloud-full
+cp .env.example .env
+vim .env
+docker compose up -d
 ```
 
-The build uses multi-stage caching for fast rebuilds.
+## What remains here
 
-## Troubleshooting
-
-**Engine fails to start**
-- Check credentials: `docker compose logs chitragupt`
-- Verify config syntax: mount and run with `--run-once` to test
-
-**Grafana shows "No data"**
-- Ensure engine has run at least once (pipeline populates database)
-- Check time range covers dates with data
-- Verify datasource: Connections > Data Sources > Chargeback SQLite > Test
-
-**Permission denied on data directory**
-- Ensure `./data/` is writable by uid 1000: `chown 1000:1000 data` or `chmod 755 data`
-
-**Port conflicts**
-- Change ports in `docker-compose.yml` under `ports:`
+- `assets/prometheus_for_chargeback/collector.sh` — helper script for configuring Prometheus to scrape the JMX metrics required by the self-managed Kafka plugin

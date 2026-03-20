@@ -39,7 +39,7 @@ cd chitragupt
 uv sync
 
 # Copy and configure
-cp deployables/config/examples/ccloud-minimal.yaml config.yaml
+cp examples/ccloud-grafana/config.yaml config.yaml
 # Edit config.yaml — set your org ID or use env vars
 
 # Set credentials

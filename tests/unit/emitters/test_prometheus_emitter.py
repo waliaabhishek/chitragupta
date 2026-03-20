@@ -484,7 +484,7 @@ class TestDependencyDeclared:
 
 
 class TestExampleConfigExists:
-    _CONFIG_PATH = Path("deployables/config/examples/ccloud-with-prometheus-emitter.yaml")
+    _CONFIG_PATH = Path("examples/self-managed-full/config.yaml")
 
     def test_example_config_exists(self) -> None:
         assert self._CONFIG_PATH.exists(), f"Expected {self._CONFIG_PATH} to exist"
@@ -493,9 +493,9 @@ class TestExampleConfigExists:
         content = self._CONFIG_PATH.read_text()
         assert "type: prometheus" in content
 
-    def test_example_config_contains_port_9090(self) -> None:
+    def test_example_config_contains_prometheus_url(self) -> None:
         content = self._CONFIG_PATH.read_text()
-        assert "port: 9090" in content
+        assert "url:" in content
 
 
 # ---------------------------------------------------------------------------

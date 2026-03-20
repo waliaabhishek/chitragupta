@@ -1,0 +1,144 @@
+# Chitragupt configuration — Self-managed Kafka full stack example
+# This example runs the pipeline + REST API + Grafana + frontend UI for on-prem/self-managed Kafka.
+# The engine reads Prometheus metrics (Kafka JMX exporter) to derive usage and allocate costs.
+# See examples/ccloud-full/config.yaml for the Confluent Cloud equivalent.
+
+# ── Logging ──────────────────────────────────────────────────────────────────
+logging:
+  # Log level for all engine output. Valid: DEBUG, INFO, WARNING, ERROR, CRITICAL.
+  level: INFO
+
+# ── Features ─────────────────────────────────────────────────────────────────
+features:
+  # Run the pipeline on a recurring schedule (rather than once and exit).
+  enable_periodic_refresh: true
+  # How often to re-run the pipeline, in seconds.
+  # 900 = 15 minutes. Self-managed metrics update more frequently than CCloud billing,
+  # so a shorter interval keeps cost attribution fresh.
+  refresh_interval: 900
+
+# ── API server ────────────────────────────────────────────────────────────────
+# Required in --mode both. Configures the REST API that Grafana and the UI consume.
+api:
+  # Listen on all interfaces inside the container so Docker can route traffic to it.
+  host: "0.0.0.0"
+  # Port the API server listens on inside the container (mapped to host port 8080).
+  port: 8080
+  # CORS must be enabled when the frontend runs on a different origin (port 8081).
+  enable_cors: true
+  cors_origins:
+    # The frontend origin — must match the host port in docker-compose.yml.
+    - "http://localhost:8081"
+
+# ── Tenants ──────────────────────────────────────────────────────────────────
+# Each tenant is an independent pipeline instance with its own config and database.
+# Add multiple entries here for multi-cluster setups (e.g., dc1 + dc2).
+tenants:
+  kafka-dc1:
+    # ecosystem: tells the engine which plugin to load (confluent_cloud or self_managed_kafka).
+    ecosystem: self_managed_kafka
+
+    # tenant_id: an internal partition key for DB records.
+    # This is NOT a Kafka cluster ID — it can be any unique string identifying this cluster.
+    # Used to namespace records when multiple tenants share the same database.
+    tenant_id: kafka-dc1
+
+    # lookback_days: how far back to compute historical costs on the first run.
+    # Self-managed clusters typically have shorter retention, so 30 days is a reasonable default.
+    lookback_days: 30
+
+    # cutoff_days: skip the most recent N days (data may still be accumulating in Prometheus).
+    cutoff_days: 3
+
+    storage:
+      # backend: sqlmodel uses SQLAlchemy + SQLite (or Postgres if you change the connection string).
+      backend: sqlmodel
+      # connection_string: path to the SQLite file inside the container.
+      # /app/data/ is mounted from the chitragupt-data named volume.
+      connection_string: "sqlite:////app/data/chargeback.db"
+
+    plugin_settings:
+      # ── Cluster identity ──────────────────────────────────────────────────
+      # cluster_id: identifier used internally to reference this cluster's resources.
+      # Does not need to match the Kafka cluster.id property — it's for Chitragupt's DB only.
+      cluster_id: kafka-dc1
+
+      # broker_count: number of brokers in this cluster.
+      # Used to compute total compute cost = broker_count * compute_hourly_rate * hours.
+      broker_count: 3
+
+      # ── Cost model ────────────────────────────────────────────────────────
+      # All rates are in USD. Adjust to match your infrastructure costs.
+      cost_model:
+        # Cost per broker per hour (covers compute + memory).
+        # Example: 3 brokers at $0.50/hr = $1.50/hr total compute cost.
+        compute_hourly_rate: "0.50"
+
+        # Cost per GiB of storage per hour.
+        # Example: 1 TiB stored for 1 hour = 1024 * 0.000125 = $0.128.
+        storage_per_gib_hourly: "0.000125"
+
+        # Network ingress cost per GiB (data entering the cluster from producers).
+        network_ingress_per_gib: "0.01"
+
+        # Network egress cost per GiB (data leaving the cluster to consumers + replication).
+        network_egress_per_gib: "0.09"
+
+        # region_overrides: per-region rate multipliers or overrides (optional).
+        # Useful if brokers span multiple regions with different pricing.
+        # region_overrides:
+        #   us-west-2:
+        #     compute_hourly_rate: "0.60"
+
+      # ── Prometheus metrics ────────────────────────────────────────────────
+      # Required. The engine queries Prometheus for JMX metrics to derive usage.
+      # Your Prometheus must scrape Kafka brokers using prometheus-jmx-exporter.
+      metrics:
+        type: prometheus
+        # URL must be reachable from inside the Docker network.
+        url: "${PROMETHEUS_URL}"
+        # Authentication type: none, basic, or bearer.
+        auth_type: none
+        # Uncomment if auth_type: basic
+        # username: "${PROMETHEUS_USERNAME}"
+        # password: "${PROMETHEUS_PASSWORD}"
+        # Uncomment if auth_type: bearer
+        # bearer_token: "${PROMETHEUS_TOKEN}"
+
+      # ── Identity source ───────────────────────────────────────────────────
+      # How to discover which principals (users/service accounts) are active.
+      # 'prometheus': extracts principals from metric labels (recommended — no extra setup).
+      # 'static': load from the principal_to_team mapping below.
+      # 'both': combine prometheus discovery with the static mapping.
+      identity_source:
+        source: prometheus
+
+        # default_team: team assigned to principals that have no explicit mapping.
+        default_team: UNASSIGNED
+
+        # principal_to_team: map Kafka principals to internal team names.
+        # Used for allocation — costs are grouped by team in reports.
+        # Uncomment and fill in to enable team-level chargeback.
+        # principal_to_team:
+        #   User:alice: platform-team
+        #   User:bob: data-team
+        #   User:svc-ingestion: ingest-team
+
+      # ── Resource source ───────────────────────────────────────────────────
+      # How to discover Kafka resources (topics, partitions).
+      # 'prometheus': extract resource labels from JMX metrics (no extra network calls).
+      # 'admin_api': query Kafka Admin API directly (more complete, requires network access).
+      resource_source:
+        source: prometheus
+        # Uncomment to use Admin API instead:
+        # source: admin_api
+        # bootstrap_servers: "${KAFKA_BOOTSTRAP_SERVERS}"  # e.g. kafka:9092
+        # sasl_mechanism: PLAIN      # options: PLAIN, SCRAM-SHA-256, SCRAM-SHA-512
+        # sasl_username: "${KAFKA_USERNAME}"
+        # sasl_password: "${KAFKA_PASSWORD}"
+        # security_protocol: SASL_PLAINTEXT  # options: PLAINTEXT, SSL, SASL_PLAINTEXT, SASL_SSL
+
+      # ── Discovery window ──────────────────────────────────────────────────
+      # How many hours of Prometheus data to scan when discovering resources and identities.
+      # Default 1 hour is sufficient for most setups. Increase if metrics are sparse.
+      # discovery_window_hours: 1
