@@ -50,7 +50,7 @@ export CCLOUD_API_SECRET=your-secret
 uv run python src/main.py --config-file config.yaml --run-once
 ```
 
-The [Quickstart guide](docs/getting-started/quickstart.md) covers everything end-to-end: service account creation, permissions, API key setup, configuration, and first run. For a containerized setup with Grafana dashboards, see the [Docker Quickstart](deployables/QUICKSTART.md).
+The [Quickstart guide](docs/getting-started/quickstart.md) covers everything end-to-end: service account creation, permissions, API key setup, configuration, and first run. For a containerized setup with Grafana dashboards, see the [examples/](examples/) directory — each example is self-contained with a `docker-compose.yml`, `config.yaml`, and setup instructions.
 
 ## Architecture
 
