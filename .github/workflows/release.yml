@@ -65,6 +65,11 @@ jobs:
         with:
           fetch-depth: 0  # git-cliff needs full history
 
+      - name: Create release branch
+        run: |
+          git checkout -b "${{ github.ref_name }}"
+          git push origin "${{ github.ref_name }}"
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
