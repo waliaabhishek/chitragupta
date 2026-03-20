@@ -330,10 +330,16 @@ def gather_flink_statements(
             region = pool.metadata.get("region", "")
             env_id = pool.parent_id or ""
 
-            # Extract org_id from CRN (fallback to tenant_id)
+            # Extract org_id from CRN — fail hard if organization segment is missing
             crn = pool.metadata.get("crn", "")
             crn_parts = parse_ccloud_crn(crn)
-            org_id = crn_parts.get("organization", tenant_id)
+            if "organization" not in crn_parts:
+                raise ValueError(
+                    f"Flink compute pool {pool.resource_id!r} has a CRN missing the "
+                    f"'organization' segment (crn={crn!r}). Cannot determine org_id for "
+                    f"Flink Statements API call."
+                )
+            org_id = crn_parts["organization"]
 
             # Get or create regional connection (cached)
             regional_conn = get_or_create_connection(region, cloud, api_key, api_secret)

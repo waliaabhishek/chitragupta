@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 import httpx
+import pytest
 import respx
 from pydantic import SecretStr
 
@@ -711,7 +712,12 @@ class TestGatherFlinkStatements:
             resource_type="flink_compute_pool",
             parent_id="env-abc",
             status=ResourceStatus.ACTIVE,
-            metadata={"cloud": "aws", "region": "us-east-1", "is_allocatable": True},
+            metadata={
+                "cloud": "aws",
+                "region": "us-east-1",
+                "is_allocatable": True,
+                "crn": "crn://confluent.cloud/organization=org-123/environment=env-abc/flink-compute-pool=lfcp-abc",
+            },
         )
 
         statements = list(
@@ -761,7 +767,12 @@ class TestGatherFlinkStatements:
             resource_type="flink_compute_pool",
             parent_id="env-abc",
             status=ResourceStatus.ACTIVE,
-            metadata={"cloud": "aws", "region": "us-east-1", "is_allocatable": True},
+            metadata={
+                "cloud": "aws",
+                "region": "us-east-1",
+                "is_allocatable": True,
+                "crn": "crn://confluent.cloud/organization=org-123/environment=env-abc/flink-compute-pool=lfcp-abc",
+            },
         )
 
         stmts = list(
@@ -792,7 +803,12 @@ class TestGatherFlinkStatements:
             resource_type="flink_compute_pool",
             parent_id="env-xyz",
             status=ResourceStatus.ACTIVE,
-            metadata={"cloud": "gcp", "region": "eu-central-1", "is_allocatable": True},
+            metadata={
+                "cloud": "gcp",
+                "region": "eu-central-1",
+                "is_allocatable": True,
+                "crn": "crn://confluent.cloud/organization=org-123/environment=env-xyz/flink-compute-pool=lfcp-eu",
+            },
         )
 
         list(
@@ -839,7 +855,12 @@ class TestGatherFlinkStatements:
             resource_type="flink_compute_pool",
             parent_id="env-abc",
             status=ResourceStatus.ACTIVE,
-            metadata={"cloud": "aws", "region": "us-east-1", "is_allocatable": True},
+            metadata={
+                "cloud": "aws",
+                "region": "us-east-1",
+                "is_allocatable": True,
+                "crn": "crn://confluent.cloud/organization=org-123/environment=env-abc/flink-compute-pool=lfcp-abc",
+            },
         )
 
         stmts = list(
@@ -876,7 +897,12 @@ class TestGatherFlinkStatements:
             resource_type="flink_compute_pool",
             parent_id="env-a",
             status=ResourceStatus.ACTIVE,
-            metadata={"cloud": "aws", "region": "us-east-1", "is_allocatable": True},
+            metadata={
+                "cloud": "aws",
+                "region": "us-east-1",
+                "is_allocatable": True,
+                "crn": "crn://confluent.cloud/organization=org-123/environment=env-a/flink-compute-pool=lfcp-1",
+            },
         )
         pool2 = CoreResource(
             ecosystem="confluent_cloud",
@@ -885,7 +911,12 @@ class TestGatherFlinkStatements:
             resource_type="flink_compute_pool",
             parent_id="env-b",
             status=ResourceStatus.ACTIVE,
-            metadata={"cloud": "aws", "region": "us-east-1", "is_allocatable": True},
+            metadata={
+                "cloud": "aws",
+                "region": "us-east-1",
+                "is_allocatable": True,
+                "crn": "crn://confluent.cloud/organization=org-123/environment=env-b/flink-compute-pool=lfcp-2",
+            },
         )
 
         # Same credentials → same cache key → connection reused
@@ -902,6 +933,165 @@ class TestGatherFlinkStatements:
 
         # Both requests made to same regional endpoint
         assert len(respx.calls) == 2
+
+    @respx.mock
+    def test_gather_flink_statements_crn_org_id_used(self) -> None:
+        """Happy path: org_id is extracted from CRN, not tenant_id."""
+        from core.models import ResourceStatus
+        from plugins.confluent_cloud.gathering import gather_flink_statements
+
+        # Mock URL uses org_id="abc123" from CRN, NOT tenant_id="different-tenant"
+        respx.get(
+            "https://flink.us-east-1.aws.confluent.cloud/sql/v1/organizations/abc123/environments/env-xyz/statements"
+        ).mock(return_value=httpx.Response(200, json={"data": [], "metadata": {}}))
+
+        pool = CoreResource(
+            ecosystem="confluent_cloud",
+            tenant_id="different-tenant",
+            resource_id="lfcp-crn-test",
+            resource_type="flink_compute_pool",
+            parent_id="env-xyz",
+            status=ResourceStatus.ACTIVE,
+            metadata={
+                "cloud": "aws",
+                "region": "us-east-1",
+                "is_allocatable": True,
+                "crn": "crn://confluent.cloud/organization=abc123/environment=env-xyz",
+            },
+        )
+
+        # Must not raise; URL must use org_id from CRN
+        list(
+            gather_flink_statements(
+                "confluent_cloud",
+                "different-tenant",
+                allocatable_pools=[(pool, "k", "s")],
+            )
+        )
+
+        assert len(respx.calls) == 1
+        assert "/organizations/abc123/" in str(respx.calls[0].request.url)
+
+    @respx.mock
+    def test_gather_flink_statements_empty_crn_raises(self) -> None:
+        """Empty CRN raises ValueError with pool resource_id and crn in message."""
+        from core.models import ResourceStatus
+        from plugins.confluent_cloud.gathering import gather_flink_statements
+
+        pool = CoreResource(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            resource_id="lfcp-bad-crn",
+            resource_type="flink_compute_pool",
+            parent_id="env-abc",
+            status=ResourceStatus.ACTIVE,
+            metadata={
+                "cloud": "aws",
+                "region": "us-east-1",
+                "is_allocatable": True,
+                "crn": "",
+            },
+        )
+
+        with pytest.raises(ValueError) as exc_info:
+            list(
+                gather_flink_statements(
+                    "confluent_cloud",
+                    "org-123",
+                    allocatable_pools=[(pool, "k", "s")],
+                )
+            )
+
+        message = str(exc_info.value)
+        assert "lfcp-bad-crn" in message
+        assert "crn=" in message
+
+    @respx.mock
+    def test_gather_flink_statements_crn_missing_org_segment_raises(self) -> None:
+        """CRN without organization segment raises ValueError with pool resource_id and CRN."""
+        from core.models import ResourceStatus
+        from plugins.confluent_cloud.gathering import gather_flink_statements
+
+        bad_crn = "crn://confluent.cloud/environment=env-xyz"
+
+        pool = CoreResource(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            resource_id="lfcp-no-org",
+            resource_type="flink_compute_pool",
+            parent_id="env-xyz",
+            status=ResourceStatus.ACTIVE,
+            metadata={
+                "cloud": "aws",
+                "region": "us-east-1",
+                "is_allocatable": True,
+                "crn": bad_crn,
+            },
+        )
+
+        with pytest.raises(ValueError) as exc_info:
+            list(
+                gather_flink_statements(
+                    "confluent_cloud",
+                    "org-123",
+                    allocatable_pools=[(pool, "k", "s")],
+                )
+            )
+
+        message = str(exc_info.value)
+        assert "lfcp-no-org" in message
+        assert bad_crn in message
+
+    @respx.mock
+    def test_gather_flink_statements_regression_valid_crn_passes(self) -> None:
+        """Regression: valid CRN with org segment yields statements without error."""
+        from core.models import ResourceStatus
+        from plugins.confluent_cloud.gathering import gather_flink_statements
+
+        respx.get(
+            "https://flink.us-east-1.aws.confluent.cloud/sql/v1/organizations/org-123/environments/env-abc/statements"
+        ).mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "data": [
+                        {
+                            "metadata": {"uid": "stmt-reg-001"},
+                            "name": "regression-stmt",
+                            "spec": {"principal": "sa-reg"},
+                            "status": {"phase": "RUNNING"},
+                        }
+                    ],
+                    "metadata": {},
+                },
+            )
+        )
+
+        pool = CoreResource(
+            ecosystem="confluent_cloud",
+            tenant_id="org-123",
+            resource_id="lfcp-reg",
+            resource_type="flink_compute_pool",
+            parent_id="env-abc",
+            status=ResourceStatus.ACTIVE,
+            metadata={
+                "cloud": "aws",
+                "region": "us-east-1",
+                "is_allocatable": True,
+                "crn": "crn://confluent.cloud/organization=org-123/environment=env-abc",
+            },
+        )
+
+        stmts = list(
+            gather_flink_statements(
+                "confluent_cloud",
+                "org-123",
+                allocatable_pools=[(pool, "k", "s")],
+            )
+        )
+
+        assert len(stmts) == 1
+        assert stmts[0].resource_id == "stmt-reg-001"
 
 
 class TestGatherServiceAccounts:
@@ -1196,7 +1386,12 @@ class TestPageSizeOverrides:
             resource_type="flink_compute_pool",
             parent_id="env-abc",
             status=ResourceStatus.ACTIVE,
-            metadata={"cloud": "aws", "region": "us-east-1", "is_allocatable": True},
+            metadata={
+                "cloud": "aws",
+                "region": "us-east-1",
+                "is_allocatable": True,
+                "crn": "crn://confluent.cloud/organization=org-123/environment=env-abc/flink-compute-pool=lfcp-abc",
+            },
         )
 
         list(gather_flink_statements("confluent_cloud", "org-123", allocatable_pools=[(pool, "k", "s")]))
@@ -1523,7 +1718,12 @@ class TestLastSeenAtStamping:
                 resource_type="flink_compute_pool",
                 parent_id="env-1",
                 status=ResourceStatus.ACTIVE,
-                metadata={"cloud": "aws", "region": "us-east-1", "is_allocatable": True},
+                metadata={
+                    "cloud": "aws",
+                    "region": "us-east-1",
+                    "is_allocatable": True,
+                    "crn": "crn://confluent.cloud/organization=org-1/environment=env-1/flink-compute-pool=lfcp-1",
+                },
             )
             stmts = list(gather_flink_statements("confluent_cloud", "org-1", allocatable_pools=[(pool, "k", "s")]))
             assert stmts[0].last_seen_at is not None, "gather_flink_statements did not stamp last_seen_at"
