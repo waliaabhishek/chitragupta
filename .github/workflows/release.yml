@@ -83,6 +83,18 @@ jobs:
       - name: Install docs dependencies
         run: uv sync --group docs
 
+      - name: Update changelog on main
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          uv run git-cliff --config cliff.toml --tag ${{ github.ref_name }} --output /tmp/CHANGELOG.md
+          git checkout main
+          cp /tmp/CHANGELOG.md CHANGELOG.md
+          git add CHANGELOG.md
+          git commit -m "Docs: Update CHANGELOG for ${{ github.ref_name }}"
+          git push origin main
+          git checkout ${{ github.ref_name }}
+
       - name: Generate release notes
         run: |
           uv run git-cliff --config cliff.toml --latest --strip header --output release-notes.md
