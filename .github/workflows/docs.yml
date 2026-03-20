@@ -34,9 +34,13 @@ jobs:
       - name: Install documentation dependencies
         run: uv sync --group docs
 
-      - name: Generate changelog for release
-        if: startsWith(github.ref, 'refs/tags/')
-        run: uv run git-cliff --config cliff.toml --tag ${{ github.ref_name }} --output CHANGELOG.md
+      - name: Generate changelog
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            uv run git-cliff --config cliff.toml --tag "$GITHUB_REF_NAME" --output CHANGELOG.md
+          else
+            uv run git-cliff --config cliff.toml --unreleased --output CHANGELOG.md
+          fi
 
       - name: Configure Git
         run: |
