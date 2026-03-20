@@ -1,11 +1,27 @@
-# Chitragupt configuration — CCloud worker + Grafana example
-# This example runs the pipeline in worker mode (no API server).
+# =============================================================================
+# Chitragupt — CCloud Worker + Grafana Example
+#
+# Runs the pipeline in worker mode (no API server). Grafana reads SQLite directly.
 # See examples/ccloud-full/config.yaml for the full-stack version with API + UI.
+#
+# Required env vars: CCLOUD_API_KEY, CCLOUD_API_SECRET, CCLOUD_TENANT_ID
+# =============================================================================
 
 # ── Logging ──────────────────────────────────────────────────────────────────
 logging:
   # Log level for all engine output. Valid: DEBUG, INFO, WARNING, ERROR, CRITICAL.
   level: INFO
+  # Python logging format string. Default shown below.
+  # format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+  # Per-module log level overrides. Useful for silencing noisy modules or
+  # increasing verbosity on specific subsystems without changing the global level.
+  # per_module_levels:
+  #   httpx: WARNING                                  # suppress HTTP client noise
+  #   urllib3: WARNING                                # suppress connection pool logs
+  #   plugins.confluent_cloud.allocators: DEBUG       # trace allocation decisions
+  #   core.engine.orchestrator: DEBUG                 # trace orchestration flow
+  #   core.metrics.prometheus: INFO                   # reduce Prometheus query noise
 
 # ── Features ─────────────────────────────────────────────────────────────────
 features:
@@ -14,6 +30,9 @@ features:
   # How often to re-run the pipeline, in seconds.
   # 3600 = 1 hour. CCloud billing data updates hourly, so running more often is wasteful.
   refresh_interval: 3600
+  # Maximum number of tenants processed concurrently. Increase for multi-tenant setups.
+  # Range: 1–64. Default: 4.
+  # max_parallel_tenants: 4
 
 # Note: no `api:` section — worker mode starts no HTTP server, so API config is unused.
 
@@ -30,43 +49,141 @@ tenants:
     # Used to namespace records when multiple tenants share the same database.
     tenant_id: "${CCLOUD_TENANT_ID}"
 
+    # ── Backfill & retention ─────────────────────────────────────────────────
     # lookback_days: how far back to pull historical billing data on the first run.
-    # Subsequent runs only fetch new data. 90 days gives a good historical baseline.
+    # Subsequent runs only fetch new data. Range: 1–364. Must be > cutoff_days.
     lookback_days: 90
-
     # cutoff_days: skip the most recent N days of billing data (data may still be incomplete).
-    # CCloud billing data for very recent days is often not fully settled.
+    # CCloud billing data for very recent days is often not fully settled. Range: 1–30.
     cutoff_days: 5
+    # retention_days: how long to keep chargeback records in the database.
+    # Records older than this are purged automatically. Range: 1–730.
+    # retention_days: 250
+
+    # ── Processing tuning ────────────────────────────────────────────────────
+    # allocation_retry_limit: how many times to retry a failed allocation per billing day.
+    # Range: 1–10. Default: 3.
+    # allocation_retry_limit: 3
+
+    # zero_gather_deletion_threshold: auto-delete a resource after N consecutive days
+    # of zero-gather results. -1 = disabled (never auto-delete). Default: -1.
+    # zero_gather_deletion_threshold: -1
+
+    # gather_failure_threshold: mark a resource as failed after N consecutive gather errors.
+    # The resource is skipped until the next successful gather. Default: 5.
+    # gather_failure_threshold: 5
+
+    # tenant_execution_timeout_seconds: hard timeout for the entire tenant pipeline run.
+    # 0 = no timeout. Protects against runaway runs. Default: 3600 (1 hour).
+    # tenant_execution_timeout_seconds: 3600
+
+    # metrics_prefetch_workers: number of parallel threads for prefetching Prometheus metrics.
+    # Higher values speed up large-scale metric queries but increase Prometheus load.
+    # Range: 1–20. Default: 4.
+    # metrics_prefetch_workers: 4
 
     storage:
       # backend: sqlmodel uses SQLAlchemy + SQLite (or Postgres if you change the connection string).
       backend: sqlmodel
       # connection_string: path to the SQLite file inside the container.
       # /app/data/ is mounted from the chitragupt-data named volume.
+      # Each tenant must use a separate database file.
+      # PostgreSQL alternative: "postgresql+psycopg2://user:pass@host:5432/ccloud_prod"
       connection_string: "sqlite:////app/data/chargeback.db"
 
     plugin_settings:
-      # ── CCloud API credentials ────────────────────────────────────────────
-      # Required. Create a Cloud API key in Confluent Cloud Console with:
+      # ── CCloud API credentials (required) ──────────────────────────────────
+      # Create a Cloud API key in Confluent Cloud Console with:
       #   - MetricsViewer role (for usage metrics)
       #   - BillingAdmin role (for billing data)
       ccloud_api:
         key: "${CCLOUD_API_KEY}"
         secret: "${CCLOUD_API_SECRET}"
 
-      # ── Prometheus metrics (optional) ─────────────────────────────────────
-      # Uncomment to enable usage-based allocation (bytes in/out per principal).
-      # Requires a Prometheus instance scraping CCloud metrics via the Confluent metrics exporter.
-      # Without this, costs are allocated evenly across tenants.
+      # ── Billing API tuning (optional) ──────────────────────────────────────
+      # Controls how many days of billing data are fetched per API request.
+      # Smaller values = more requests but less memory per request. Range: 1–30. Default: 15.
+      # billing_api:
+      #   days_per_query: 15
+
+      # ── Prometheus metrics (optional but recommended) ──────────────────────
+      # Required for: identity-level allocation (who used what).
+      # Without this: resources are discovered via CCloud API only,
+      #               costs are allocated evenly (no usage-based split).
+      #
+      # Points to your Prometheus instance that scrapes Confluent Cloud
+      # Metrics API (https://api.telemetry.confluent.cloud/v2/metrics/cloud/export)
+      # or your own Prometheus federation endpoint.
       # metrics:
       #   type: prometheus
-      #   url: "${PROMETHEUS_URL}"  # e.g. http://prometheus:9090
-      #   auth_type: none           # options: none, basic, bearer
+      #   url: "${PROMETHEUS_URL}"            # e.g. http://prometheus:9090
+      #   auth_type: none                     # options: none, basic, bearer
+      #   # For basic auth:
+      #   # auth_type: basic
+      #   # username: "${PROMETHEUS_USERNAME}"
+      #   # password: "${PROMETHEUS_PASSWORD}"
+      #   # For bearer token:
+      #   # auth_type: bearer
+      #   # bearer_token: "${PROMETHEUS_TOKEN}"
 
-      # ── Flink cost gathering (optional) ───────────────────────────────────
-      # Uncomment to include Confluent Flink compute pool costs.
-      # Each entry covers one Flink region; add multiple entries for multi-region setups.
+      # ── Flink cost gathering (optional) ────────────────────────────────────
+      # Required only if you use Confluent Cloud Flink and want per-statement
+      # cost attribution. One entry per Flink region.
+      # Cloud Console > Flink > your region > API keys
+      # Needs: FlinkAdmin or FlinkDeveloper role for each region.
       # flink:
-      # - region_id: "${FLINK_REGION_ID}"   # e.g. us-east-1
+      # - region_id: "${FLINK_REGION_ID}"     # e.g. aws.us-east-1
       #   key: "${FLINK_API_KEY}"
       #   secret: "${FLINK_API_SECRET}"
+
+      # ── Allocation tuning (optional) ───────────────────────────────────────
+      # Controls how Kafka CKU costs are split between usage-based and shared
+      # (even-split) allocation. The two ratios must sum to 1.0.
+      # Default: 0.7 usage / 0.3 shared.
+      # allocator_params:
+      #   kafka_cku_usage_ratio: 0.7          # portion allocated by actual bytes usage
+      #   kafka_cku_shared_ratio: 0.3         # portion split evenly across all principals
+
+      # ── Allocator overrides (optional) ─────────────────────────────────────
+      # Override the default allocation strategy for specific product types.
+      # Maps product_type → Python dotted path to a CostAllocator callable.
+      # allocator_overrides:
+      #   kafka: "my_org.allocators.WeightedTeamAllocator"
+
+      # ── Identity resolution overrides (optional) ───────────────────────────
+      # Override how identities are resolved for specific service types.
+      # Maps service_type → Python dotted path to a resolver function.
+      # identity_resolution_overrides:
+      #   ksqldb: "my_org.resolvers.ldap_identity_resolver"
+
+      # ── Metrics step / chargeback granularity (optional) ───────────────────
+      # metrics_step_seconds: Prometheus range query step in seconds.
+      # Controls billing granularity and Prometheus server load.
+      # Default 3600 = 1-hour resolution. Lower = finer-grained data at higher load.
+      # metrics_step_seconds: 3600
+
+      # chargeback_granularity: granularity of billing data produced by the plugin.
+      # Controls emitter aggregation — emitters may not request finer granularity
+      # than the chargeback data provides. Options: hourly, daily, monthly.
+      # chargeback_granularity: daily
+
+      # min_refresh_gap_seconds: minimum time between pipeline runs for this tenant.
+      # Prevents accidental rapid-fire runs. 0 = no minimum. Default: 1800.
+      # min_refresh_gap_seconds: 1800
+
+      # ── Emitters (optional) ────────────────────────────────────────────────
+      # Where to send chargeback output after each pipeline run.
+      # Multiple emitters can run simultaneously.
+      # emitters:
+      #   # CSV output — writes one file per tenant per date
+      #   - type: csv
+      #     aggregation: daily                # null, hourly, daily, or monthly
+      #     params:
+      #       output_dir: "/app/data/csv"     # directory for CSV files (created if missing)
+      #       filename_template: "{tenant_id}_{date}.csv"
+      #
+      #   # Prometheus output — exposes metrics on an HTTP endpoint
+      #   - type: prometheus
+      #     aggregation: daily
+      #     params:
+      #       port: 9090                      # Prometheus scrape port (separate from API port)

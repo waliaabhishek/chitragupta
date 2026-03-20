@@ -1,12 +1,27 @@
-# Chitragupt configuration — Self-managed Kafka full stack example
-# This example runs the pipeline + REST API + Grafana + frontend UI for on-prem/self-managed Kafka.
-# The engine reads Prometheus metrics (Kafka JMX exporter) to derive usage and allocate costs.
+# =============================================================================
+# Chitragupt — Self-Managed Kafka Full Stack Example
+#
+# Runs the pipeline + REST API + Grafana dashboards + frontend UI for
+# on-prem / self-managed Kafka. The engine reads Prometheus metrics (Kafka JMX
+# exporter) to derive usage and allocate costs.
 # See examples/ccloud-full/config.yaml for the Confluent Cloud equivalent.
+#
+# Required env vars: PROMETHEUS_URL
+# =============================================================================
 
 # ── Logging ──────────────────────────────────────────────────────────────────
 logging:
   # Log level for all engine output. Valid: DEBUG, INFO, WARNING, ERROR, CRITICAL.
   level: INFO
+  # Python logging format string. Default shown below.
+  # format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+  # Per-module log level overrides. Useful for silencing noisy modules or
+  # increasing verbosity on specific subsystems without changing the global level.
+  # per_module_levels:
+  #   kafka: WARNING                                  # suppress verbose confluent-kafka client logs
+  #   core.engine.orchestrator: DEBUG                 # trace orchestration flow
+  #   core.metrics.prometheus: INFO                   # reduce Prometheus query noise
 
 # ── Features ─────────────────────────────────────────────────────────────────
 features:
@@ -16,8 +31,12 @@ features:
   # 900 = 15 minutes. Self-managed metrics update more frequently than CCloud billing,
   # so a shorter interval keeps cost attribution fresh.
   refresh_interval: 900
+  # Maximum number of tenants processed concurrently. Increase for multi-cluster setups.
+  # Set lower if tenants share a Prometheus instance to avoid overwhelming it.
+  # Range: 1–64. Default: 4.
+  # max_parallel_tenants: 2
 
-# ── API server ────────────────────────────────────────────────────────────────
+# ── API server ───────────────────────────────────────────────────────────────
 # Required in --mode both. Configures the REST API that Grafana and the UI consume.
 api:
   # Listen on all interfaces inside the container so Docker can route traffic to it.
@@ -29,6 +48,8 @@ api:
   cors_origins:
     # The frontend origin — must match the host port in docker-compose.yml.
     - "http://localhost:8081"
+  # Per-request timeout in seconds. Applies to all API endpoints. Range: 1–300.
+  # request_timeout_seconds: 30
 
 # ── Tenants ──────────────────────────────────────────────────────────────────
 # Each tenant is an independent pipeline instance with its own config and database.
@@ -43,22 +64,49 @@ tenants:
     # Used to namespace records when multiple tenants share the same database.
     tenant_id: kafka-dc1
 
+    # ── Backfill & retention ─────────────────────────────────────────────────
     # lookback_days: how far back to compute historical costs on the first run.
-    # Self-managed clusters typically have shorter retention, so 30 days is a reasonable default.
+    # Self-managed clusters typically have shorter Prometheus retention. Range: 1–364.
     lookback_days: 30
-
-    # cutoff_days: skip the most recent N days (data may still be accumulating in Prometheus).
+    # cutoff_days: skip the most recent N days (data may still be accumulating). Range: 1–30.
     cutoff_days: 3
+    # retention_days: how long to keep chargeback records in the database.
+    # Records older than this are purged automatically. Range: 1–730.
+    # retention_days: 180
+
+    # ── Processing tuning ────────────────────────────────────────────────────
+    # allocation_retry_limit: how many times to retry a failed allocation per billing day.
+    # Range: 1–10. Default: 3.
+    # allocation_retry_limit: 3
+
+    # zero_gather_deletion_threshold: auto-delete a resource after N consecutive days
+    # of zero-gather results. -1 = disabled (never auto-delete). Default: -1.
+    # zero_gather_deletion_threshold: -1
+
+    # gather_failure_threshold: mark a resource as failed after N consecutive gather errors.
+    # The resource is skipped until the next successful gather. Default: 5.
+    # gather_failure_threshold: 5
+
+    # tenant_execution_timeout_seconds: hard timeout for the entire tenant pipeline run.
+    # 0 = no timeout. Protects against runaway runs. Default: 3600 (1 hour).
+    # tenant_execution_timeout_seconds: 3600
+
+    # metrics_prefetch_workers: number of parallel threads for prefetching Prometheus metrics.
+    # Higher values speed up large-scale metric queries but increase Prometheus load.
+    # Range: 1–20. Default: 4.
+    # metrics_prefetch_workers: 4
 
     storage:
       # backend: sqlmodel uses SQLAlchemy + SQLite (or Postgres if you change the connection string).
       backend: sqlmodel
       # connection_string: path to the SQLite file inside the container.
       # /app/data/ is mounted from the chitragupt-data named volume.
+      # Each tenant must use a separate database file.
+      # PostgreSQL alternative: "postgresql+psycopg2://user:pass@host:5432/kafka_dc1"
       connection_string: "sqlite:////app/data/chargeback.db"
 
     plugin_settings:
-      # ── Cluster identity ──────────────────────────────────────────────────
+      # ── Cluster identity ───────────────────────────────────────────────────
       # cluster_id: identifier used internally to reference this cluster's resources.
       # Does not need to match the Kafka cluster.id property — it's for Chitragupt's DB only.
       cluster_id: kafka-dc1
@@ -67,7 +115,11 @@ tenants:
       # Used to compute total compute cost = broker_count * compute_hourly_rate * hours.
       broker_count: 3
 
-      # ── Cost model ────────────────────────────────────────────────────────
+      # region: optional region identifier. When set, activates region_overrides
+      # in the cost_model below — allowing per-region cost rates.
+      # region: us-west-2
+
+      # ── Cost model (required) ──────────────────────────────────────────────
       # All rates are in USD. Adjust to match your infrastructure costs.
       cost_model:
         # Cost per broker per hour (covers compute + memory).
@@ -84,14 +136,16 @@ tenants:
         # Network egress cost per GiB (data leaving the cluster to consumers + replication).
         network_egress_per_gib: "0.09"
 
-        # region_overrides: per-region rate multipliers or overrides (optional).
-        # Useful if brokers span multiple regions with different pricing.
+        # region_overrides: per-region rate overrides (optional).
+        # Override specific rates for a region; unset fields inherit base rates.
+        # Activated only when `region` is set above and matches a key here.
         # region_overrides:
         #   us-west-2:
-        #     compute_hourly_rate: "0.60"
+        #     compute_hourly_rate: "0.55"
+        #     network_egress_per_gib: "0.10"
 
-      # ── Prometheus metrics ────────────────────────────────────────────────
-      # Required. The engine queries Prometheus for JMX metrics to derive usage.
+      # ── Prometheus metrics (required) ──────────────────────────────────────
+      # The engine queries Prometheus for JMX metrics to derive usage.
       # Your Prometheus must scrape Kafka brokers using prometheus-jmx-exporter.
       metrics:
         type: prometheus
@@ -99,32 +153,40 @@ tenants:
         url: "${PROMETHEUS_URL}"
         # Authentication type: none, basic, or bearer.
         auth_type: none
-        # Uncomment if auth_type: basic
+        # For basic auth:
+        # auth_type: basic
         # username: "${PROMETHEUS_USERNAME}"
         # password: "${PROMETHEUS_PASSWORD}"
-        # Uncomment if auth_type: bearer
+        # For bearer token:
+        # auth_type: bearer
         # bearer_token: "${PROMETHEUS_TOKEN}"
 
-      # ── Identity source ───────────────────────────────────────────────────
+      # ── Identity source ────────────────────────────────────────────────────
       # How to discover which principals (users/service accounts) are active.
       # 'prometheus': extracts principals from metric labels (recommended — no extra setup).
-      # 'static': load from the principal_to_team mapping below.
-      # 'both': combine prometheus discovery with the static mapping.
+      # 'static': load from the static_identities list below.
+      # 'both': combine prometheus discovery with the static list.
       identity_source:
         source: prometheus
 
         # default_team: team assigned to principals that have no explicit mapping.
         default_team: UNASSIGNED
 
-        # principal_to_team: map Kafka principals to internal team names.
+        # principal_to_team: map Kafka principals to internal team names (optional).
         # Used for allocation — costs are grouped by team in reports.
-        # Uncomment and fill in to enable team-level chargeback.
         # principal_to_team:
-        #   User:alice: platform-team
-        #   User:bob: data-team
-        #   User:svc-ingestion: ingest-team
+        #   "User:alice": platform-team
+        #   "User:bob": data-team
+        #   "ServiceAccount:etl": ingest-team
 
-      # ── Resource source ───────────────────────────────────────────────────
+        # static_identities: manually-defined identities (used when source=static or both).
+        # static_identities:
+        #   - identity_id: "User:alice"
+        #     identity_type: principal        # principal, team, or service_account
+        #     display_name: Alice Smith       # optional — human-readable label
+        #     team: platform-team             # optional — explicit team assignment
+
+      # ── Resource source ────────────────────────────────────────────────────
       # How to discover Kafka resources (topics, partitions).
       # 'prometheus': extract resource labels from JMX metrics (no extra network calls).
       # 'admin_api': query Kafka Admin API directly (more complete, requires network access).
@@ -132,13 +194,66 @@ tenants:
         source: prometheus
         # Uncomment to use Admin API instead:
         # source: admin_api
-        # bootstrap_servers: "${KAFKA_BOOTSTRAP_SERVERS}"  # e.g. kafka:9092
-        # sasl_mechanism: PLAIN      # options: PLAIN, SCRAM-SHA-256, SCRAM-SHA-512
+        # bootstrap_servers: "${KAFKA_BOOTSTRAP_SERVERS}"   # e.g. kafka:9092
+        # security_protocol: SASL_PLAINTEXT                 # options: PLAINTEXT, SSL, SASL_PLAINTEXT, SASL_SSL
+        # sasl_mechanism: PLAIN                             # options: PLAIN, SCRAM-SHA-256, SCRAM-SHA-512
         # sasl_username: "${KAFKA_USERNAME}"
         # sasl_password: "${KAFKA_PASSWORD}"
-        # security_protocol: SASL_PLAINTEXT  # options: PLAINTEXT, SSL, SASL_PLAINTEXT, SASL_SSL
 
-      # ── Discovery window ──────────────────────────────────────────────────
+      # ── Discovery window ───────────────────────────────────────────────────
       # How many hours of Prometheus data to scan when discovering resources and identities.
       # Default 1 hour is sufficient for most setups. Increase if metrics are sparse.
       # discovery_window_hours: 1
+
+      # ── Allocation tuning (optional) ───────────────────────────────────────
+      # Allocator-specific numeric/string/bool params passed to all allocators.
+      # Keys and semantics are allocator-defined.
+      # allocator_params:
+      #   min_bytes_threshold: 1073741824    # 1 GiB — principals below this excluded from usage ratio
+      #   fallback_to_even_split: true       # boolean param; interpretation is allocator-specific
+
+      # ── Allocator overrides (optional) ─────────────────────────────────────
+      # Override the default allocation strategy for specific product types.
+      # Valid product types for self_managed_kafka:
+      #   SELF_KAFKA_COMPUTE, SELF_KAFKA_STORAGE,
+      #   SELF_KAFKA_NETWORK_INGRESS, SELF_KAFKA_NETWORK_EGRESS
+      # allocator_overrides:
+      #   SELF_KAFKA_COMPUTE: "my_org.allocators.WeightedTeamAllocator"
+
+      # ── Identity resolution overrides (optional) ───────────────────────────
+      # Override the identity resolver for a service type.
+      # Valid service_type for self_managed_kafka: "kafka"
+      # identity_resolution_overrides:
+      #   kafka: "my_org.resolvers.ldap_identity_resolver"
+
+      # ── Metrics step / chargeback granularity (optional) ───────────────────
+      # metrics_step_seconds: Prometheus range query step in seconds.
+      # Controls billing granularity and Prometheus server load.
+      # Default 3600 = 1-hour resolution. Lower = finer-grained data at higher load.
+      # metrics_step_seconds: 3600
+
+      # chargeback_granularity: granularity of billing data produced by the plugin.
+      # Controls emitter aggregation — emitters may not request finer granularity
+      # than the chargeback data provides. Options: hourly, daily, monthly.
+      # chargeback_granularity: daily
+
+      # min_refresh_gap_seconds: minimum time between pipeline runs for this tenant.
+      # Prevents accidental rapid-fire runs. 0 = no minimum. Default: 1800.
+      # min_refresh_gap_seconds: 1800
+
+      # ── Emitters (optional) ────────────────────────────────────────────────
+      # Where to send chargeback output after each pipeline run.
+      # Multiple emitters can run simultaneously.
+      # emitters:
+      #   # CSV output — writes one file per tenant per date
+      #   - type: csv
+      #     aggregation: daily                # null, hourly, daily, or monthly
+      #     params:
+      #       output_dir: "/app/data/csv"     # directory for CSV files (created if missing)
+      #       filename_template: "{tenant_id}_{date}.csv"
+      #
+      #   # Prometheus output — exposes metrics on an HTTP endpoint
+      #   - type: prometheus
+      #     aggregation: daily
+      #     params:
+      #       port: 9090                      # Prometheus scrape port (separate from API port)
