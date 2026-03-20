@@ -81,8 +81,13 @@ def test_git_cliff_integration() -> None:
     assert result.returncode == 0, f"git-cliff failed: {result.stderr}"
     output = result.stdout
     assert output.strip(), "git-cliff produced no output"
-    assert any(header in output for header in ("Fixed", "Changed", "Documentation", "Added", "Features")), (
-        f"No expected section headers found in output:\n{output}"
+    # A version section header (e.g., "## [0.3.2] - 2026-03-20") must always be present
+    assert "## [" in output, f"No version section header found in output:\n{output}"
+    # Section headers are optional — CI-only releases legitimately have none (all commits skipped)
+    has_section_headers = any(
+        header in output
+        for header in ("Fixed", "Changed", "Documentation", "Added", "Features", "Security", "Deprecated", "Removed")
     )
-    assert "https://github.com/waliaabhishek/chitragupt/commit/" in output, "Commit links are not full GitHub URLs"
+    if has_section_headers:
+        assert "https://github.com/waliaabhishek/chitragupt/commit/" in output, "Commit links are not full GitHub URLs"
     assert "Update CHANGELOG" not in output, "Meta CHANGELOG update commit appeared in output — skip parser not working"
