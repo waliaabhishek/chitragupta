@@ -56,6 +56,7 @@ jobs:
           push: true
           tags: |
             ghcr.io/${{ github.repository_owner }}/chitragupt-ui:${{ github.ref_name }}
+            ghcr.io/${{ github.repository_owner }}/chitragupt-ui:latest
 
   release:
     needs: [docker-backend, docker-frontend]
