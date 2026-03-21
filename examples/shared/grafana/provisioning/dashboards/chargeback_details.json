@@ -223,9 +223,9 @@
             "type": "frser-sqlite-datasource",
             "uid": "chargeback-sqlite"
           },
-          "queryText": "SELECT\n  b.ecosystem,\n  b.tenant_id,\n  b.resource_id,\n  b.product_category,\n  b.product_type,\n  SUM(b.quantity) AS quantity,\n  SUM(CAST(b.total AS REAL)) AS total\nFROM billing b\nWHERE b.ecosystem = '${ecosystem}'\n  AND b.tenant_id IN (${tenant_id:sqlstring})\n  AND b.product_category IN (${product_category:sqlstring})\n  AND b.product_type IN (${product_type:sqlstring})\n  AND b.timestamp BETWEEN datetime($__from/1000, 'unixepoch')\n                      AND datetime($__to/1000, 'unixepoch')\nGROUP BY b.ecosystem, b.tenant_id, b.resource_id, b.product_category, b.product_type\nORDER BY total DESC\nLIMIT 1000",
+          "queryText": "SELECT\n  b.ecosystem,\n  b.tenant_id,\n  b.resource_id,\n  b.product_category,\n  b.product_type,\n  SUM(b.quantity) AS quantity,\n  SUM(CAST(b.total_cost AS REAL)) AS total\nFROM billing b\nWHERE b.ecosystem = '${ecosystem}'\n  AND b.tenant_id IN (${tenant_id:sqlstring})\n  AND b.product_category IN (${product_category:sqlstring})\n  AND b.product_type IN (${product_type:sqlstring})\n  AND b.timestamp BETWEEN datetime($__from/1000, 'unixepoch')\n                      AND datetime($__to/1000, 'unixepoch')\nGROUP BY b.ecosystem, b.tenant_id, b.resource_id, b.product_category, b.product_type\nORDER BY total DESC\nLIMIT 1000",
           "queryType": "table",
-          "rawQueryText": "SELECT\n  b.ecosystem,\n  b.tenant_id,\n  b.resource_id,\n  b.product_category,\n  b.product_type,\n  SUM(b.quantity) AS quantity,\n  SUM(CAST(b.total AS REAL)) AS total\nFROM billing b\nWHERE b.ecosystem = '${ecosystem}'\n  AND b.tenant_id IN (${tenant_id:sqlstring})\n  AND b.product_category IN (${product_category:sqlstring})\n  AND b.product_type IN (${product_type:sqlstring})\n  AND b.timestamp BETWEEN datetime($__from/1000, 'unixepoch')\n                      AND datetime($__to/1000, 'unixepoch')\nGROUP BY b.ecosystem, b.tenant_id, b.resource_id, b.product_category, b.product_type\nORDER BY total DESC\nLIMIT 1000",
+          "rawQueryText": "SELECT\n  b.ecosystem,\n  b.tenant_id,\n  b.resource_id,\n  b.product_category,\n  b.product_type,\n  SUM(b.quantity) AS quantity,\n  SUM(CAST(b.total_cost AS REAL)) AS total\nFROM billing b\nWHERE b.ecosystem = '${ecosystem}'\n  AND b.tenant_id IN (${tenant_id:sqlstring})\n  AND b.product_category IN (${product_category:sqlstring})\n  AND b.product_type IN (${product_type:sqlstring})\n  AND b.timestamp BETWEEN datetime($__from/1000, 'unixepoch')\n                      AND datetime($__to/1000, 'unixepoch')\nGROUP BY b.ecosystem, b.tenant_id, b.resource_id, b.product_category, b.product_type\nORDER BY total DESC\nLIMIT 1000",
           "refId": "A",
           "timeColumns": ["time", "ts"]
         }
@@ -526,9 +526,9 @@
             "type": "frser-sqlite-datasource",
             "uid": "chargeback-sqlite"
           },
-          "queryText": "SELECT\n  r.ecosystem,\n  r.tenant_id,\n  r.resource_id,\n  r.display_name,\n  r.resource_type,\n  r.parent_id,\n  r.status,\n  r.updated_at\nFROM resources r\nWHERE r.ecosystem = '${ecosystem}'\n  AND r.tenant_id IN (${tenant_id:sqlstring})\n  AND ('${environment}' = '$__all' OR r.parent_id IN (${environment:sqlstring}))\nORDER BY r.tenant_id, r.resource_type, r.display_name",
+          "queryText": "SELECT\n  r.ecosystem,\n  r.tenant_id,\n  r.resource_id,\n  r.display_name,\n  r.resource_type,\n  r.parent_id,\n  r.status,\n  r.last_seen_at\nFROM resources r\nWHERE r.ecosystem = '${ecosystem}'\n  AND r.tenant_id IN (${tenant_id:sqlstring})\n  AND ('${environment}' = '$__all' OR r.parent_id IN (${environment:sqlstring}))\nORDER BY r.tenant_id, r.resource_type, r.display_name",
           "queryType": "table",
-          "rawQueryText": "SELECT\n  r.ecosystem,\n  r.tenant_id,\n  r.resource_id,\n  r.display_name,\n  r.resource_type,\n  r.parent_id,\n  r.status,\n  r.updated_at\nFROM resources r\nWHERE r.ecosystem = '${ecosystem}'\n  AND r.tenant_id IN (${tenant_id:sqlstring})\n  AND ('${environment}' = '$__all' OR r.parent_id IN (${environment:sqlstring}))\nORDER BY r.tenant_id, r.resource_type, r.display_name",
+          "rawQueryText": "SELECT\n  r.ecosystem,\n  r.tenant_id,\n  r.resource_id,\n  r.display_name,\n  r.resource_type,\n  r.parent_id,\n  r.status,\n  r.last_seen_at\nFROM resources r\nWHERE r.ecosystem = '${ecosystem}'\n  AND r.tenant_id IN (${tenant_id:sqlstring})\n  AND ('${environment}' = '$__all' OR r.parent_id IN (${environment:sqlstring}))\nORDER BY r.tenant_id, r.resource_type, r.display_name",
           "refId": "A",
           "timeColumns": ["time", "ts"]
         }
@@ -629,9 +629,9 @@
             "type": "frser-sqlite-datasource",
             "uid": "chargeback-sqlite"
           },
-          "queryText": "SELECT\n  i.ecosystem,\n  i.tenant_id,\n  i.identity_id,\n  i.display_name,\n  i.identity_type,\n  i.updated_at\nFROM identities i\nWHERE i.ecosystem = '${ecosystem}'\n  AND i.tenant_id IN (${tenant_id:sqlstring})\nORDER BY i.tenant_id, i.identity_type, i.display_name",
+          "queryText": "SELECT\n  i.ecosystem,\n  i.tenant_id,\n  i.identity_id,\n  i.display_name,\n  i.identity_type,\n  i.last_seen_at\nFROM identities i\nWHERE i.ecosystem = '${ecosystem}'\n  AND i.tenant_id IN (${tenant_id:sqlstring})\nORDER BY i.tenant_id, i.identity_type, i.display_name",
           "queryType": "table",
-          "rawQueryText": "SELECT\n  i.ecosystem,\n  i.tenant_id,\n  i.identity_id,\n  i.display_name,\n  i.identity_type,\n  i.updated_at\nFROM identities i\nWHERE i.ecosystem = '${ecosystem}'\n  AND i.tenant_id IN (${tenant_id:sqlstring})\nORDER BY i.tenant_id, i.identity_type, i.display_name",
+          "rawQueryText": "SELECT\n  i.ecosystem,\n  i.tenant_id,\n  i.identity_id,\n  i.display_name,\n  i.identity_type,\n  i.last_seen_at\nFROM identities i\nWHERE i.ecosystem = '${ecosystem}'\n  AND i.tenant_id IN (${tenant_id:sqlstring})\nORDER BY i.tenant_id, i.identity_type, i.display_name",
           "refId": "A",
           "timeColumns": ["time", "ts"]
         }
