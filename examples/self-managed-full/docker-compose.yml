@@ -1,11 +1,7 @@
 services:
   chitragupt:
-    # The chargeback engine image — built from the repo root Dockerfile.
-    # Build context is two levels up because this file lives at examples/self-managed-full/.
+    # The chargeback engine — pulled from GHCR.
     image: ghcr.io/waliaabhishek/chitragupt:latest
-    build:
-      context: ../..
-      dockerfile: Dockerfile
     volumes:
       # Mount config read-only so the container cannot modify it.
       - ./config.yaml:/app/config/config.yaml:ro
@@ -53,12 +49,8 @@ services:
         condition: service_healthy
 
   chitragupt-ui:
-    # The React frontend served by nginx, built from the frontend/ directory.
-    # Build context is two levels up to frontend/ because this file is at examples/self-managed-full/.
+    # The React frontend served by nginx — pulled from GHCR.
     image: ghcr.io/waliaabhishek/chitragupt-ui:latest
-    build:
-      context: ../../frontend
-      dockerfile: Dockerfile
     ports:
       # Frontend UI — access at http://localhost:8081
       - "8081:80"
