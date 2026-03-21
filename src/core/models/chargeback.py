@@ -123,6 +123,7 @@ class AllocationIssueRow:
     """Aggregated row of a failed allocation, grouped by dimension key + error code."""
 
     ecosystem: str
+    env_id: str
     resource_id: str | None
     product_type: str
     identity_id: str

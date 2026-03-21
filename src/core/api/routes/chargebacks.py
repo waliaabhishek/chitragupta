@@ -102,6 +102,7 @@ def _build_dimension_response(uow: ReadOnlyUnitOfWork, dimension_id: int) -> Cha
     return ChargebackDimensionResponse(
         dimension_id=dim.dimension_id,
         ecosystem=dim.ecosystem,
+        env_id=dim.env_id,
         tenant_id=dim.tenant_id,
         resource_id=dim.resource_id,
         product_category=dim.product_category,
@@ -185,6 +186,7 @@ async def list_allocation_issues(
         items=[
             AllocationIssueResponse(
                 ecosystem=r.ecosystem,
+                env_id=r.env_id,
                 resource_id=r.resource_id,
                 product_type=r.product_type,
                 identity_id=r.identity_id,

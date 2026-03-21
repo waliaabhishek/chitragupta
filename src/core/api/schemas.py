@@ -294,6 +294,7 @@ class AllocationIssueResponse(BaseModel):
     """Aggregated row where cost allocation failed."""
 
     ecosystem: str
+    env_id: str
     resource_id: str | None
     product_type: str
     identity_id: str
@@ -326,6 +327,7 @@ class ChargebackDimensionResponse(BaseModel):
 
     dimension_id: int
     ecosystem: str
+    env_id: str
     tenant_id: str
     resource_id: str | None
     product_category: str

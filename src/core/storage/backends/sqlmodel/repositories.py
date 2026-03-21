@@ -676,6 +676,7 @@ class SQLModelChargebackRepository:
 
         group_cols = [
             col(ChargebackDimensionTable.ecosystem),
+            col(ChargebackDimensionTable.env_id),
             col(ChargebackDimensionTable.resource_id),
             col(ChargebackDimensionTable.product_type),
             col(ChargebackDimensionTable.identity_id),
@@ -727,6 +728,7 @@ class SQLModelChargebackRepository:
         items = [
             AllocationIssueRow(
                 ecosystem=r.ecosystem,
+                env_id=r.env_id,
                 resource_id=r.resource_id,
                 product_type=r.product_type,
                 identity_id=r.identity_id,

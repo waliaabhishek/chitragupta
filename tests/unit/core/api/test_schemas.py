@@ -176,6 +176,7 @@ class TestChargebackDimensionResponse:
         d = ChargebackDimensionResponse(
             dimension_id=42,
             ecosystem="ccloud",
+            env_id="env-001",
             tenant_id="t-001",
             resource_id="r-001",
             product_category="KAFKA",
@@ -195,6 +196,7 @@ class TestChargebackDimensionResponse:
         d = ChargebackDimensionResponse(
             dimension_id=1,
             ecosystem="ccloud",
+            env_id="",
             tenant_id="t-001",
             resource_id=None,
             product_category="KAFKA",
