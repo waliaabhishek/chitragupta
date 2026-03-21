@@ -31,6 +31,7 @@ compose up. Python/uv is documented as an alternative at the bottom.
 
 
 ### Fixed
+- **Chargeback environment_id aggregation**: `environment_id` group_by now returns correct results. Previously relied on a resource table join that failed for 94% of historical billing resources. env_id is now stored directly on chargeback dimensions via plugin-extensible chargeback repository. Includes migration 009 to backfill existing data from ccloud_billing table.
 - Fix: Add latest tag to chitragupt-ui Docker image on release ([2af79bd](https://github.com/waliaabhishek/chitragupt/commit/2af79bd4126e4299d8d6db7c62b84bca23c49205))
 - Fix: Update changelog test to allow git-cliff in docs workflow
 

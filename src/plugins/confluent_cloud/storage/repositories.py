@@ -9,11 +9,15 @@ from typing import TYPE_CHECKING, Any, cast
 from sqlalchemy import delete, func
 from sqlmodel import Session, col, select
 
+from core.storage.backends.sqlmodel.mappers import chargeback_to_dimension
+from core.storage.backends.sqlmodel.repositories import SQLModelChargebackRepository
+from core.storage.backends.sqlmodel.tables import ChargebackDimensionTable
 from plugins.confluent_cloud.models.billing import CCloudBillingLineItem
 from plugins.confluent_cloud.storage.tables import CCloudBillingTable
 
 if TYPE_CHECKING:
     from core.models.billing import BillingLineItem
+    from core.models.chargeback import ChargebackRow
 
 logger = logging.getLogger(__name__)
 
@@ -196,3 +200,57 @@ class CCloudBillingRepository:
         stmt = select(CCloudBillingTable).where(*where).offset(offset).limit(limit)
         items = [_table_to_line(r) for r in self._session.exec(stmt).all()]
         return items, total
+
+
+class CCloudChargebackRepository(SQLModelChargebackRepository):
+    """ChargebackRepository for Confluent Cloud.
+
+    Extends the core repo to include env_id in the dimension natural key and
+    lookup query. env_id is read from row.metadata (set by orchestrator via
+    AllocationContext.dimension_metadata).
+
+    All other methods (find_*, aggregate, delete_*, iter_*) are inherited
+    unchanged — aggregate() uses ChargebackDimensionTable.env_id natively
+    after the core aggregate() fix.
+    """
+
+    def _make_dimension_key(self, row: ChargebackRow) -> tuple[str | None, ...]:
+        base = super()._make_dimension_key(row)
+        return (*base, row.metadata.get("env_id", ""))
+
+    def _get_or_create_dimension(self, row: ChargebackRow) -> ChargebackDimensionTable:
+        # Full override (not super()) required because the SQL WHERE clause must include
+        # env_id to match the 10-field unique constraint. The parent's WHERE clause only
+        # covers 9 fields — reusing it would produce false cache hits for rows that share
+        # all fields except env_id.
+        key = self._make_dimension_key(row)
+        cached = self._dimension_cache.get(key)
+        if cached is not None:
+            return cached
+
+        env_id = row.metadata.get("env_id", "")
+        stmt = select(ChargebackDimensionTable).where(
+            col(ChargebackDimensionTable.ecosystem) == row.ecosystem,
+            col(ChargebackDimensionTable.tenant_id) == row.tenant_id,
+            col(ChargebackDimensionTable.resource_id) == row.resource_id,
+            col(ChargebackDimensionTable.product_category) == row.product_category,
+            col(ChargebackDimensionTable.product_type) == row.product_type,
+            col(ChargebackDimensionTable.identity_id) == row.identity_id,
+            col(ChargebackDimensionTable.cost_type) == row.cost_type.value,
+            col(ChargebackDimensionTable.allocation_method) == row.allocation_method,
+            col(ChargebackDimensionTable.allocation_detail) == row.allocation_detail,
+            col(ChargebackDimensionTable.env_id) == env_id,
+        )
+        existing = self._session.exec(stmt).first()
+        if existing:
+            assert existing.dimension_id is not None
+            self._dimension_cache[key] = existing
+            return existing
+
+        # chargeback_to_dimension() already sets env_id via row.metadata.get("env_id", "")
+        dim = chargeback_to_dimension(row)
+        self._session.add(dim)
+        self._session.flush()
+        assert dim.dimension_id is not None
+        self._dimension_cache[key] = dim
+        return dim

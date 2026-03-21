@@ -6,13 +6,13 @@ from typing import TYPE_CHECKING
 from sqlmodel import SQLModel
 
 from plugins.confluent_cloud.storage import tables as _tables  # noqa: F401 — registers CCloudBillingTable
-from plugins.confluent_cloud.storage.repositories import CCloudBillingRepository
+from plugins.confluent_cloud.storage.repositories import CCloudBillingRepository, CCloudChargebackRepository
 
 if TYPE_CHECKING:
     from sqlalchemy import Engine
     from sqlmodel import Session
 
-    from core.storage.interface import BillingRepository, IdentityRepository, ResourceRepository
+    from core.storage.interface import BillingRepository, ChargebackRepository, IdentityRepository, ResourceRepository
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +36,9 @@ class CCloudStorageModule:
         from core.storage.backends.sqlmodel.repositories import SQLModelIdentityRepository
 
         return SQLModelIdentityRepository(session)
+
+    def create_chargeback_repository(self, session: Session) -> ChargebackRepository:
+        return CCloudChargebackRepository(session)
 
     def register_tables(self, engine: Engine) -> None:
         """Ensure CCloud plugin tables are created (idempotent)."""

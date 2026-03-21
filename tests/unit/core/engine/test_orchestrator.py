@@ -2793,3 +2793,72 @@ class TestShutdownCheckOrchestrator:
         shutdown_messages = [r.message for r in caplog.records if "shutdown" in r.message.lower()]
         assert len(shutdown_messages) >= 1
         assert "1" in shutdown_messages[0]
+
+
+class TestOrchestratorEnvIdExtraction:
+    """Verify env_id on CCloudBillingLineItem flows into ChargebackRow.metadata via dimension_metadata."""
+
+    def test_ccloud_billing_env_id_propagates_to_chargeback_metadata(self) -> None:
+        """env_id on CCloudBillingLineItem is present in ChargebackRow.metadata after allocation.
+
+        The orchestrator extracts env_id via getattr(line, 'env_id', None), stores it in
+        AllocationContext.dimension_metadata, and make_row() merges it into the ChargebackRow.
+        """
+        from core.engine.helpers import make_row
+        from plugins.confluent_cloud.models.billing import CCloudBillingLineItem
+
+        def _make_row_allocator(ctx: AllocationContext) -> AllocationResult:
+            ids = list(ctx.identities.merged_active.ids())
+            identity_id = ids[0] if ids else "UNALLOCATED"
+            row = make_row(
+                ctx,
+                identity_id=identity_id,
+                cost_type=CostType.USAGE,
+                amount=ctx.split_amount,
+                allocation_method="test_direct",
+            )
+            return AllocationResult(rows=[row])
+
+        ccloud_line = CCloudBillingLineItem(
+            ecosystem=ECOSYSTEM,
+            tenant_id=TENANT_ID,
+            timestamp=NOW - timedelta(days=10),
+            env_id="env-test",
+            resource_id="cluster-1",
+            product_category="kafka",
+            product_type="KAFKA_CKU",
+            quantity=Decimal("1"),
+            unit_price=Decimal("100.00"),
+            total_cost=Decimal("100.00"),
+        )
+
+        handler = MockServiceHandler(
+            product_types=["KAFKA_CKU"],
+            resources=[_make_resource()],
+            identities=[_make_identity()],
+            allocator=_make_row_allocator,
+        )
+        cost_input = MockCostInput(lines=[ccloud_line])
+        plugin = MockPlugin(handlers={"kafka": handler}, cost_input=cost_input)
+        storage = MockStorageBackend()
+        tc = _make_tenant_config()
+        orch = ChargebackOrchestrator(TENANT_NAME, tc, plugin, storage, None)
+        uow = storage.create_unit_of_work()
+
+        ps = PipelineState(
+            ecosystem=ECOSYSTEM,
+            tenant_id=TENANT_ID,
+            tracking_date=ccloud_line.timestamp.date(),
+            billing_gathered=True,
+            resources_gathered=True,
+        )
+        uow.pipeline_state.upsert(ps)
+        uow.pipeline_state.mark_billing_gathered(ECOSYSTEM, TENANT_ID, ccloud_line.timestamp.date())
+        uow.pipeline_state.mark_resources_gathered(ECOSYSTEM, TENANT_ID, ccloud_line.timestamp.date())
+        uow.billing.upsert(ccloud_line)
+
+        orch.run()
+
+        rows = [r for r in uow.chargebacks._data if r.resource_id == "cluster-1"]
+        assert len(rows) >= 1
+        assert rows[0].metadata.get("env_id") == "env-test"

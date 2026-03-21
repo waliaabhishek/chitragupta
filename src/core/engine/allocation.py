@@ -28,6 +28,7 @@ class AllocationContext:
     metrics_data: dict[str, list[MetricRow]] | None = None
     metrics_fetch_failed: bool = False
     params: dict[str, Any] = field(default_factory=dict)
+    dimension_metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass

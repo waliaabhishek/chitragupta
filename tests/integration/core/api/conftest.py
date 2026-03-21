@@ -43,6 +43,28 @@ def in_memory_backend(temp_db_path: str) -> Iterator[SQLModelBackend]:
 
 
 @pytest.fixture
+def in_memory_ccloud_backend(temp_db_path: str) -> Iterator[SQLModelBackend]:
+    """Create a fresh SQLite backend using CCloudStorageModule."""
+    from plugins.confluent_cloud.storage.module import CCloudStorageModule
+
+    backend = SQLModelBackend(temp_db_path, CCloudStorageModule(), use_migrations=False)
+    backend.create_tables()
+    yield backend
+    backend.dispose()
+
+
+@pytest.fixture
+def app_with_ccloud_backend(
+    settings_with_tenant: AppSettings, in_memory_ccloud_backend: SQLModelBackend
+) -> Iterator[TestClient]:
+    """Create a test app backed by CCloudStorageModule — exercises CCloudChargebackRepository."""
+    app = create_app(settings_with_tenant)
+    with patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"), TestClient(app) as client:
+        app.state.backends["test-tenant"] = in_memory_ccloud_backend
+        yield client
+
+
+@pytest.fixture
 def tenant_config(temp_db_path: str) -> TenantConfig:
     return TenantConfig(
         tenant_id="test-tenant",

@@ -988,14 +988,13 @@ class SQLModelChargebackRepository:
         cost_type: str | None = None,
         limit: int = 10000,
     ) -> list[AggregationRow]:
-        needs_resource_join = "environment_id" in group_by
-
         # Build dimension group columns
         group_cols = []
         group_labels = []
         for gb in group_by:
             if gb == "environment_id":
-                group_cols.append(cast(col(ResourceTable.parent_id), String).label("dim_environment_id"))
+                # env_id is now a native column — no resource table join needed
+                group_cols.append(cast(col(ChargebackDimensionTable.env_id), String).label("dim_environment_id"))
             else:
                 col_ref = getattr(ChargebackDimensionTable, gb)
                 group_cols.append(cast(col(col_ref), String).label(f"dim_{gb}"))
@@ -1054,17 +1053,15 @@ class SQLModelChargebackRepository:
         ]
         group_by_labels = [*group_labels, "time_bucket"]
 
-        stmt = select(*select_cols).select_from(ChargebackDimensionTable).join(ChargebackFactTable, join_clause)
-
-        if needs_resource_join:
-            resource_join_clause = (
-                (col(ResourceTable.ecosystem) == col(ChargebackDimensionTable.ecosystem))
-                & (col(ResourceTable.tenant_id) == col(ChargebackDimensionTable.tenant_id))
-                & (col(ResourceTable.resource_id) == col(ChargebackDimensionTable.resource_id))
-            )
-            stmt = stmt.outerjoin(ResourceTable, resource_join_clause)
-
-        stmt = stmt.where(*where).group_by(*group_by_labels).order_by("time_bucket", *group_labels).limit(limit)
+        stmt = (
+            select(*select_cols)
+            .select_from(ChargebackDimensionTable)
+            .join(ChargebackFactTable, join_clause)
+            .where(*where)
+            .group_by(*group_by_labels)
+            .order_by("time_bucket", *group_labels)
+            .limit(limit)
+        )
 
         results = self._session.execute(stmt).all()
         return [

@@ -56,8 +56,13 @@ def make_row(
     allocation_detail: str | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> ChargebackRow:
-    """Build a ChargebackRow from AllocationContext fields."""
+    """Build a ChargebackRow from AllocationContext fields.
+
+    ctx.dimension_metadata is merged first so caller-supplied metadata can
+    override individual keys (e.g. allocation ratio) without clobbering env_id.
+    """
     bl = ctx.billing_line
+    merged_metadata = {**ctx.dimension_metadata, **(metadata or {})}
     return ChargebackRow(
         ecosystem=bl.ecosystem,
         tenant_id=bl.tenant_id,
@@ -70,7 +75,7 @@ def make_row(
         amount=amount,
         allocation_method=allocation_method,
         allocation_detail=allocation_detail,
-        metadata=metadata or {},
+        metadata=merged_metadata,
     )
 
 

@@ -519,6 +519,13 @@ class CalculatePhase:
     ) -> list[ChargebackRow]:
         try:
             b_start, b_end, b_duration = line_window_cache[id(line)]
+            # Extract plugin-specific dimension metadata from the billing line.
+            # env_id is present on CCloudBillingLineItem; absent on core BillingLineItem.
+            dimension_metadata: dict[str, Any] = {}
+            env_id = getattr(line, "env_id", None)
+            if env_id is not None:
+                dimension_metadata["env_id"] = env_id
+
             handler = self._bundle.product_type_to_handler.get(line.product_type)
             if handler is None:
                 if self._bundle.fallback_allocator is None:
@@ -538,6 +545,7 @@ class CalculatePhase:
                     split_amount=line.total_cost,
                     metrics_data=None,
                     params=self._allocator_params,
+                    dimension_metadata=dimension_metadata,
                 )
                 result = self._bundle.fallback_allocator(ctx)
                 return list(result.rows)
@@ -591,6 +599,7 @@ class CalculatePhase:
                 metrics_data=metrics_data,
                 metrics_fetch_failed=metrics_fetch_failed,
                 params=self._allocator_params,
+                dimension_metadata=dimension_metadata,
             )
             result = allocator(ctx)
 

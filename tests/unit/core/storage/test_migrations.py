@@ -211,3 +211,149 @@ class TestMigration005BillingPK:
             f"product_category must NOT be part of primary key after migration 005 downgrade, "
             f"but pk={col_pk_map['product_category']!r}"
         )
+
+
+class TestMigration009EnvIdChargebackDimensions:
+    """Verification items 6-7: Migration 009 adds/removes env_id column with backfill."""
+
+    def _get_alembic_cfg(self, conn: str):
+        import pathlib
+
+        from alembic.config import Config
+
+        migrations_dir = pathlib.Path(__file__).resolve().parents[4] / "src" / "core" / "storage" / "migrations"
+        alembic_ini = migrations_dir / "alembic.ini"
+        cfg = Config(str(alembic_ini))
+        cfg.set_main_option("script_location", str(migrations_dir))
+        cfg.set_main_option("sqlalchemy.url", conn)
+        return cfg
+
+    def test_migration_009_upgrade_adds_env_id_column(self, tmp_path) -> None:
+        """Item 6 (partial): Migration 009 upgrade adds env_id column to chargeback_dimensions."""
+        from alembic import command
+        from sqlalchemy import create_engine
+        from sqlalchemy import inspect as sa_inspect
+
+        db_path = tmp_path / "test.db"
+        conn = f"sqlite:///{db_path}"
+        cfg = self._get_alembic_cfg(conn)
+
+        command.upgrade(cfg, "008")
+        command.upgrade(cfg, "009")
+
+        engine = create_engine(conn)
+        inspector = sa_inspect(engine)
+        columns = {c["name"] for c in inspector.get_columns("chargeback_dimensions")}
+        engine.dispose()
+
+        assert "env_id" in columns
+
+    def test_migration_009_upgrade_ccloud_rows_backfilled_from_ccloud_billing(self, tmp_path) -> None:
+        """Item 6: CCloud rows in chargeback_dimensions backfilled with env_id from ccloud_billing."""
+        from alembic import command
+        from sqlalchemy import create_engine, text
+
+        db_path = tmp_path / "test.db"
+        conn = f"sqlite:///{db_path}"
+        cfg = self._get_alembic_cfg(conn)
+
+        # Upgrade to 008 (pre-env_id state)
+        command.upgrade(cfg, "008")
+
+        engine = create_engine(conn)
+        with engine.connect() as c:
+            # Seed a CCloud billing row
+            c.execute(
+                text("""
+                INSERT INTO ccloud_billing
+                    (ecosystem, tenant_id, timestamp, env_id, resource_id,
+                     product_type, product_category, quantity, unit_price, total_cost, currency, granularity)
+                VALUES
+                    ('confluent_cloud', 't-1', '2026-01-01 00:00:00', 'env-abc', 'lkc-001',
+                     'kafka', 'compute', '100', '0.01', '1.00', 'USD', 'daily')
+            """)
+            )
+            # Seed a matching chargeback dimension row (CCloud)
+            c.execute(
+                text("""
+                INSERT INTO chargeback_dimensions
+                    (ecosystem, tenant_id, resource_id, product_category, product_type,
+                     identity_id, cost_type, allocation_method, allocation_detail)
+                VALUES
+                    ('confluent_cloud', 't-1', 'lkc-001', 'compute', 'kafka',
+                     'u-1', 'usage', 'direct', NULL)
+            """)
+            )
+            # Seed a non-CCloud dimension row
+            c.execute(
+                text("""
+                INSERT INTO chargeback_dimensions
+                    (ecosystem, tenant_id, resource_id, product_category, product_type,
+                     identity_id, cost_type, allocation_method, allocation_detail)
+                VALUES
+                    ('self_managed', 't-1', 'broker-1', 'compute', 'kafka',
+                     'u-2', 'usage', 'direct', NULL)
+            """)
+            )
+            c.commit()
+        engine.dispose()
+
+        # Run migration 009
+        command.upgrade(cfg, "009")
+
+        engine = create_engine(conn)
+        with engine.connect() as c:
+            rows = c.execute(
+                text("SELECT ecosystem, resource_id, env_id FROM chargeback_dimensions ORDER BY ecosystem")
+            ).fetchall()
+        engine.dispose()
+
+        row_map = {r[1]: r[2] for r in rows}
+        # CCloud row must be backfilled
+        assert row_map.get("lkc-001") == "env-abc", f"CCloud row env_id mismatch: {row_map}"
+        # Non-CCloud row must have empty string
+        assert row_map.get("broker-1") == "", f"Non-CCloud row env_id must be empty: {row_map}"
+
+    def test_migration_009_downgrade_removes_env_id_column(self, tmp_path) -> None:
+        """Item 7: Migration 009 downgrade removes env_id column from chargeback_dimensions."""
+        from alembic import command
+        from sqlalchemy import create_engine
+        from sqlalchemy import inspect as sa_inspect
+
+        db_path = tmp_path / "test.db"
+        conn = f"sqlite:///{db_path}"
+        cfg = self._get_alembic_cfg(conn)
+
+        command.upgrade(cfg, "009")
+        command.downgrade(cfg, "008")
+
+        engine = create_engine(conn)
+        inspector = sa_inspect(engine)
+        columns = {c["name"] for c in inspector.get_columns("chargeback_dimensions")}
+        engine.dispose()
+
+        assert "env_id" not in columns
+
+    def test_migration_009_downgrade_restores_9_field_unique_constraint(self, tmp_path) -> None:
+        """Item 7: Downgrade restores original 9-field unique constraint (no env_id)."""
+        from alembic import command
+        from sqlalchemy import create_engine, text
+
+        db_path = tmp_path / "test.db"
+        conn = f"sqlite:///{db_path}"
+        cfg = self._get_alembic_cfg(conn)
+
+        command.upgrade(cfg, "009")
+        command.downgrade(cfg, "008")
+
+        engine = create_engine(conn)
+        with engine.connect() as c:
+            rows = c.execute(
+                text("SELECT sql FROM sqlite_master WHERE type='index' AND name='uq_chargeback_dimensions'")
+            ).fetchall()
+        engine.dispose()
+
+        assert rows, "uq_chargeback_dimensions index not found after downgrade"
+        index_sql = rows[0][0] or ""
+        # env_id must NOT be in the 9-field constraint after downgrade
+        assert "env_id" not in index_sql

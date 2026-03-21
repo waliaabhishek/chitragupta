@@ -7,7 +7,6 @@ from sqlmodel import Session
 
 from core.storage.backends.sqlmodel.engine import get_or_create_engine, get_or_create_read_only_engine
 from core.storage.backends.sqlmodel.repositories import (
-    SQLModelChargebackRepository,
     SQLModelPipelineRunRepository,
     SQLModelPipelineStateRepository,
     SQLModelTagRepository,
@@ -52,7 +51,7 @@ class SQLModelUnitOfWork:
         self.resources = self._storage_module.create_resource_repository(self._session)
         self.identities = self._storage_module.create_identity_repository(self._session)
         self.billing = self._storage_module.create_billing_repository(self._session)
-        self.chargebacks = SQLModelChargebackRepository(self._session)
+        self.chargebacks = self._storage_module.create_chargeback_repository(self._session)  # plugin-extensible
         self.pipeline_state = SQLModelPipelineStateRepository(self._session)
         self.pipeline_runs = SQLModelPipelineRunRepository(self._session)
         self.tags = SQLModelTagRepository(self._session)

@@ -6,6 +6,8 @@ Create Date: 2026-03-07 00:53:41.458979
 
 """
 
+from __future__ import annotations
+
 import sqlalchemy as sa
 import sqlmodel
 from alembic import op
@@ -33,7 +35,7 @@ def upgrade() -> None:
         sa.Column("total_cost", sqlmodel.sql.sqltypes.AutoString(), nullable=False),
         sa.Column("currency", sqlmodel.sql.sqltypes.AutoString(), nullable=False),
         sa.Column("granularity", sqlmodel.sql.sqltypes.AutoString(), nullable=False),
-        sa.Column("allocation_attempts", sa.Integer(), nullable=False),
+        sa.Column("allocation_attempts", sa.Integer(), nullable=False, server_default=sa.text("0")),
         sa.Column("metadata_json", sqlmodel.sql.sqltypes.AutoString(), nullable=True),
         sa.PrimaryKeyConstraint(
             "ecosystem", "tenant_id", "timestamp", "env_id", "resource_id", "product_type", "product_category"

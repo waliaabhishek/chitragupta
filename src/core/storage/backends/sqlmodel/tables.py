@@ -22,6 +22,7 @@ class ChargebackDimensionTable(SQLModel, table=True):
             "cost_type",
             "allocation_method",
             "allocation_detail",
+            "env_id",
             name="uq_chargeback_dimensions",
         ),
         Index("ix_chargeback_dimensions_eco_tenant", "ecosystem", "tenant_id"),
@@ -37,6 +38,7 @@ class ChargebackDimensionTable(SQLModel, table=True):
     cost_type: str = ""
     allocation_method: str | None = None
     allocation_detail: str | None = None
+    env_id: str = Field(default="")  # "" for non-CCloud; CCloud populates via CCloudChargebackRepository
 
 
 class ChargebackFactTable(SQLModel, table=True):

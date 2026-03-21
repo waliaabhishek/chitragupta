@@ -193,6 +193,7 @@ def chargeback_to_dimension(row: ChargebackRow) -> ChargebackDimensionTable:
         cost_type=row.cost_type.value,
         allocation_method=row.allocation_method,
         allocation_detail=row.allocation_detail,
+        env_id=row.metadata.get("env_id", ""),
     )
 
 

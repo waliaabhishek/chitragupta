@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from decimal import Decimal
+from typing import Any
 
 from fastapi.testclient import TestClient  # noqa: TC002
 
@@ -423,6 +424,7 @@ def _make_chargeback(
     cost_type: CostType,
     amount: Decimal,
     hour: int = 0,
+    metadata: dict[str, Any] | None = None,
 ) -> ChargebackRow:
     return ChargebackRow(
         ecosystem="test-eco",
@@ -437,7 +439,7 @@ def _make_chargeback(
         allocation_method="direct",
         allocation_detail=None,
         tags=[],
-        metadata={},
+        metadata=metadata or {},
     )
 
 
@@ -449,15 +451,33 @@ class TestAggregateByEnvironment:
     }
 
     def _seed_env_chargebacks(self, backend: SQLModelBackend) -> None:
-        """Seed two chargebacks with resources mapped to different environments."""
+        """Seed two CCloud chargebacks with env_id populated via metadata (production path).
+
+        Deliberately does NOT seed the resources table — env_id must come from
+        metadata, not resource.parent_id, to match production behaviour.
+        """
         with backend.create_unit_of_work() as uow:
-            uow.resources.upsert(_make_resource("res-env-a", "env-alpha"))
-            uow.resources.upsert(_make_resource("res-env-b", "env-beta"))
             uow.chargebacks.upsert(
-                _make_chargeback("res-env-a", "user-1", "kafka", CostType.USAGE, Decimal("20.00"), hour=0)
+                _make_chargeback(
+                    "res-env-a",
+                    "user-1",
+                    "kafka",
+                    CostType.USAGE,
+                    Decimal("20.00"),
+                    hour=0,
+                    metadata={"env_id": "env-alpha"},
+                )
             )
             uow.chargebacks.upsert(
-                _make_chargeback("res-env-b", "user-2", "connect", CostType.USAGE, Decimal("15.00"), hour=1)
+                _make_chargeback(
+                    "res-env-b",
+                    "user-2",
+                    "connect",
+                    CostType.USAGE,
+                    Decimal("15.00"),
+                    hour=1,
+                    metadata={"env_id": "env-beta"},
+                )
             )
             uow.commit()
 
@@ -553,3 +573,153 @@ class TestAggregateByEnvironment:
         env_ids = {b["dimensions"]["environment_id"] for b in buckets}
         assert "env-alpha" in env_ids
         assert "env-beta" in env_ids
+
+    def test_aggregate_env_id_from_metadata_no_resources_table_required(
+        self, app_with_backend: TestClient, in_memory_backend: SQLModelBackend
+    ) -> None:
+        """Item 4: aggregate(group_by=["environment_id"]) returns correct env grouping without seeding resources.
+
+        env_id comes from chargeback_dimensions.env_id (written from metadata), not from
+        a join to the resources table.
+        """
+        # Seed chargebacks without seeding resources — verify precondition via resource get
+        # (any known ID should return None since nothing is seeded)
+        with in_memory_backend.create_unit_of_work() as uow:
+            no_resource = uow.resources.get("test-eco", "test-tenant", "res-env-a")
+        assert no_resource is None, "Test precondition: resources table must be empty"
+
+        self._seed_env_chargebacks(in_memory_backend)
+
+        response = app_with_backend.get(
+            "/api/v1/tenants/test-tenant/chargebacks/aggregate",
+            params={**self._BASE_PARAMS, "group_by": "environment_id"},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        buckets = data["buckets"]
+        assert len(buckets) == 2
+        env_ids = {b["dimensions"]["environment_id"] for b in buckets}
+        assert "env-alpha" in env_ids
+        assert "env-beta" in env_ids
+
+    def test_aggregate_env_id_with_zero_resources_table_rows_returns_non_null(
+        self, app_with_backend: TestClient, in_memory_backend: SQLModelBackend
+    ) -> None:
+        """Item 5: tenant with no resources table rows returns correct non-NULL env grouping.
+
+        This is the production scenario: resources snapshot is partial/stale, but
+        chargeback_dimensions.env_id is populated from billing metadata.
+        """
+        self._seed_env_chargebacks(in_memory_backend)
+
+        response = app_with_backend.get(
+            "/api/v1/tenants/test-tenant/chargebacks/aggregate",
+            params={**self._BASE_PARAMS, "group_by": "environment_id"},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        buckets = data["buckets"]
+        # Must not return NULL grouping — both env buckets must be non-empty strings
+        for bucket in buckets:
+            env_val = bucket["dimensions"]["environment_id"]
+            assert env_val != "", f"Expected non-empty env_id, got {env_val!r}"
+        env_ids = {b["dimensions"]["environment_id"] for b in buckets}
+        assert "env-alpha" in env_ids
+        assert "env-beta" in env_ids
+
+
+class TestAggregateByEnvironmentCCloud:
+    """Verify environment_id aggregation path with CCloudStorageModule.
+
+    Exercises CCloudChargebackRepository._get_or_create_dimension() end-to-end
+    through the HTTP aggregate API, confirming env_id is stored and returned
+    as distinct buckets.
+    """
+
+    _BASE_PARAMS = {
+        "time_bucket": "day",
+        "start_date": "2026-02-01",
+        "end_date": "2026-02-28",
+    }
+
+    def _seed_env_chargebacks(self, backend: SQLModelBackend) -> None:
+        with backend.create_unit_of_work() as uow:
+            uow.chargebacks.upsert(
+                _make_chargeback(
+                    "res-env-a",
+                    "user-1",
+                    "kafka",
+                    CostType.USAGE,
+                    Decimal("20.00"),
+                    hour=0,
+                    metadata={"env_id": "env-alpha"},
+                )
+            )
+            uow.chargebacks.upsert(
+                _make_chargeback(
+                    "res-env-b",
+                    "user-2",
+                    "connect",
+                    CostType.USAGE,
+                    Decimal("15.00"),
+                    hour=1,
+                    metadata={"env_id": "env-beta"},
+                )
+            )
+            uow.commit()
+
+    def test_aggregate_group_by_environment_id_returns_distinct_buckets(
+        self, app_with_ccloud_backend: TestClient, in_memory_ccloud_backend: SQLModelBackend
+    ) -> None:
+        """CCloudChargebackRepository stores env_id on dimension; API returns distinct env buckets."""
+        self._seed_env_chargebacks(in_memory_ccloud_backend)
+        response = app_with_ccloud_backend.get(
+            "/api/v1/tenants/test-tenant/chargebacks/aggregate",
+            params={**self._BASE_PARAMS, "group_by": "environment_id"},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["total_rows"] == 2
+        env_ids = {b["dimensions"]["environment_id"] for b in data["buckets"]}
+        assert "env-alpha" in env_ids
+        assert "env-beta" in env_ids
+
+    def test_two_rows_same_dims_different_env_id_produce_distinct_dimension_rows(
+        self, app_with_ccloud_backend: TestClient, in_memory_ccloud_backend: SQLModelBackend
+    ) -> None:
+        """Same resource/identity/product but different env_id → two dimension rows → two env buckets."""
+        with in_memory_ccloud_backend.create_unit_of_work() as uow:
+            uow.chargebacks.upsert(
+                _make_chargeback(
+                    "res-shared",
+                    "user-x",
+                    "kafka",
+                    CostType.USAGE,
+                    Decimal("10.00"),
+                    hour=0,
+                    metadata={"env_id": "env-x"},
+                )
+            )
+            uow.chargebacks.upsert(
+                _make_chargeback(
+                    "res-shared",
+                    "user-x",
+                    "kafka",
+                    CostType.USAGE,
+                    Decimal("20.00"),
+                    hour=1,
+                    metadata={"env_id": "env-y"},
+                )
+            )
+            uow.commit()
+
+        response = app_with_ccloud_backend.get(
+            "/api/v1/tenants/test-tenant/chargebacks/aggregate",
+            params={**self._BASE_PARAMS, "group_by": "environment_id"},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        env_ids = {b["dimensions"]["environment_id"] for b in data["buckets"]}
+        assert "env-x" in env_ids
+        assert "env-y" in env_ids
+        assert len(data["buckets"]) == 2

@@ -24,7 +24,13 @@ if TYPE_CHECKING:
         Resource,
     )
     from core.models.chargeback import ChargebackRow
-    from core.storage.interface import BillingRepository, IdentityRepository, ResourceRepository, UnitOfWork
+    from core.storage.interface import (
+        BillingRepository,
+        ChargebackRepository,
+        IdentityRepository,
+        ResourceRepository,
+        UnitOfWork,
+    )
 
 
 class ResolveContext(TypedDict, total=False):
@@ -37,17 +43,15 @@ logger = logging.getLogger(__name__)
 
 @runtime_checkable
 class StorageModule(Protocol):
-    """Plugin-owned factory for billing, resource, and identity repositories.
-
-    Each plugin provides its own StorageModule so it can use plugin-specific
-    table schemas (e.g. CCloud billing with env_id in the PK).
-    """
+    """Plugin-owned factory for billing, resource, identity, and chargeback repositories."""
 
     def create_billing_repository(self, session: Session) -> BillingRepository: ...
 
     def create_resource_repository(self, session: Session) -> ResourceRepository: ...
 
     def create_identity_repository(self, session: Session) -> IdentityRepository: ...
+
+    def create_chargeback_repository(self, session: Session) -> ChargebackRepository: ...
 
     def register_tables(self, engine: Engine) -> None: ...
 

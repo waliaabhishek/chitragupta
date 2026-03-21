@@ -9,7 +9,7 @@ if TYPE_CHECKING:
     from sqlalchemy import Engine
     from sqlmodel import Session
 
-    from core.storage.interface import BillingRepository, IdentityRepository, ResourceRepository
+    from core.storage.interface import BillingRepository, ChargebackRepository, IdentityRepository, ResourceRepository
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +34,11 @@ class CoreStorageModule:
         from core.storage.backends.sqlmodel.repositories import SQLModelIdentityRepository
 
         return SQLModelIdentityRepository(session)
+
+    def create_chargeback_repository(self, session: Session) -> ChargebackRepository:
+        from core.storage.backends.sqlmodel.repositories import SQLModelChargebackRepository
+
+        return SQLModelChargebackRepository(session)
 
     def register_tables(self, engine: Engine) -> None:
         """Ensure core tables are created (idempotent)."""
