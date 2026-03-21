@@ -48,12 +48,12 @@ def test_workflow_has_release_steps() -> None:
 
 
 def test_workflow_release_steps_gated() -> None:
-    # release.yml is gated at the workflow level by tag trigger; docs.yml has no release steps
+    # release.yml is gated at the workflow level by tag trigger;
+    # docs.yml uses git-cliff for changelog generation but must NOT create GitHub Releases
     release_content = (PROJECT_ROOT / ".github" / "workflows" / "release.yml").read_text()
     assert "v*.*.*" in release_content
     docs_content = (PROJECT_ROOT / ".github" / "workflows" / "docs.yml").read_text()
     assert "softprops/action-gh-release" not in docs_content
-    assert "git-cliff" not in docs_content
 
 
 def test_cliff_config_has_skip_changelog_parser() -> None:
