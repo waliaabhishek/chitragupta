@@ -103,6 +103,7 @@ class ChargebackDimensionInfo:
     cost_type: str
     allocation_method: str | None
     allocation_detail: str | None
+    env_id: str = ""
 
 
 @dataclass

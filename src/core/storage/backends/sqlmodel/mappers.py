@@ -220,7 +220,7 @@ def chargeback_to_domain(dim: ChargebackDimensionTable, fact: ChargebackFactTabl
         allocation_method=dim.allocation_method,
         allocation_detail=dim.allocation_detail,
         tags=json.loads(fact.tags_json),
-        metadata={},
+        metadata={"env_id": dim.env_id} if dim.env_id else {},
         dimension_id=dim.dimension_id,
     )
 

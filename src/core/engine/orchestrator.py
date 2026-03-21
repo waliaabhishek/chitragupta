@@ -517,14 +517,16 @@ class CalculatePhase:
         resource_cache: dict[str, Resource],
         line_window_cache: dict[int, tuple[datetime, datetime, timedelta]],
     ) -> list[ChargebackRow]:
+        # Extract plugin-specific dimension metadata from the billing line.
+        # env_id is present on CCloudBillingLineItem; absent on core BillingLineItem.
+        # Must be before the try block so the except handler can reference it safely.
+        dimension_metadata: dict[str, Any] = {}
+        env_id = getattr(line, "env_id", None)
+        if env_id is not None:
+            dimension_metadata["env_id"] = env_id
+
         try:
             b_start, b_end, b_duration = line_window_cache[id(line)]
-            # Extract plugin-specific dimension metadata from the billing line.
-            # env_id is present on CCloudBillingLineItem; absent on core BillingLineItem.
-            dimension_metadata: dict[str, Any] = {}
-            env_id = getattr(line, "env_id", None)
-            if env_id is not None:
-                dimension_metadata["env_id"] = env_id
 
             handler = self._bundle.product_type_to_handler.get(line.product_type)
             if handler is None:
@@ -630,7 +632,7 @@ class CalculatePhase:
                 exc,
             )
             row = self._allocate_to_unallocated(
-                line, "ALLOCATION_FAILED", f"Failed after {new_attempts} attempts: {exc}"
+                line, "ALLOCATION_FAILED", f"Failed after {new_attempts} attempts: {exc}", metadata=dimension_metadata
             )
             return [row]
 
@@ -640,7 +642,9 @@ class CalculatePhase:
         except KeyError:
             return handler.get_allocator(product_type)
 
-    def _allocate_to_unallocated(self, line: BillingLineItem, reason: str, detail: str | None = None) -> ChargebackRow:
+    def _allocate_to_unallocated(
+        self, line: BillingLineItem, reason: str, detail: str | None = None, metadata: dict[str, Any] | None = None
+    ) -> ChargebackRow:
         return ChargebackRow(
             ecosystem=line.ecosystem,
             tenant_id=line.tenant_id,
@@ -653,6 +657,7 @@ class CalculatePhase:
             amount=line.total_cost,
             allocation_method=reason,
             allocation_detail=detail,
+            metadata=metadata or {},
         )
 
 

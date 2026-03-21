@@ -918,6 +918,7 @@ class SQLModelChargebackRepository:
             cost_type=row.cost_type,
             allocation_method=row.allocation_method,
             allocation_detail=row.allocation_detail,
+            env_id=row.env_id,
         )
 
     def get_dimensions_batch(self, dimension_ids: list[int]) -> dict[int, ChargebackDimensionInfo]:
@@ -942,6 +943,7 @@ class SQLModelChargebackRepository:
                         cost_type=row.cost_type,
                         allocation_method=row.allocation_method,
                         allocation_detail=row.allocation_detail,
+                        env_id=row.env_id,
                     )
         return result
 

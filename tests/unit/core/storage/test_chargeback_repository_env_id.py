@@ -12,6 +12,7 @@ from core.models.chargeback import ChargebackRow, CostType
 from core.storage.backends.sqlmodel.engine import _engine_lock, _engines
 from core.storage.backends.sqlmodel.module import CoreStorageModule
 from core.storage.backends.sqlmodel.repositories import SQLModelChargebackRepository
+from core.storage.backends.sqlmodel.tables import ChargebackDimensionTable
 from core.storage.backends.sqlmodel.unit_of_work import SQLModelBackend
 
 _NOW = datetime(2026, 2, 15, 0, tzinfo=UTC)
@@ -217,3 +218,89 @@ class TestEnvIdColumnExistsOnDimensionTable:
         uq = next((c for c in constraints if c["name"] == "uq_chargeback_dimensions"), None)
         assert uq is not None, "uq_chargeback_dimensions constraint not found"
         assert "env_id" in uq["column_names"]
+
+
+class TestGetDimensionEnvId:
+    """Gap 3: get_dimension() and get_dimensions_batch() must expose env_id via ChargebackDimensionInfo."""
+
+    def test_get_dimension_returns_env_id(self, tmp_path: Any) -> None:
+        """Item 5: repo.get_dimension(id) on a row with env_id='env-123' → result.env_id == 'env-123'."""
+        conn = f"sqlite:///{tmp_path / 'test.db'}"
+        backend = SQLModelBackend(conn, CoreStorageModule(), use_migrations=False)
+        backend.create_tables()
+
+        engine = create_engine(conn)
+        with Session(engine) as session:
+            dim = ChargebackDimensionTable(
+                ecosystem="confluent_cloud",
+                tenant_id="t-1",
+                resource_id="cluster-1",
+                product_category="kafka",
+                product_type="kafka_num_ckus",
+                identity_id="user-1",
+                cost_type="usage",
+                allocation_method="direct",
+                allocation_detail=None,
+                env_id="env-123",
+            )
+            session.add(dim)
+            session.flush()
+            dimension_id = dim.dimension_id
+
+            repo = SQLModelChargebackRepository(session)
+            result = repo.get_dimension(dimension_id)
+
+        engine.dispose()
+        backend.dispose()
+
+        assert result is not None
+        assert result.env_id == "env-123"
+
+    def test_get_dimensions_batch_returns_env_id_for_all_rows(self, tmp_path: Any) -> None:
+        """Item 6: get_dimensions_batch([id1, id2]) returns correct env_id for each row."""
+        conn = f"sqlite:///{tmp_path / 'test.db'}"
+        backend = SQLModelBackend(conn, CoreStorageModule(), use_migrations=False)
+        backend.create_tables()
+
+        engine = create_engine(conn)
+        with Session(engine) as session:
+            dim_a = ChargebackDimensionTable(
+                ecosystem="confluent_cloud",
+                tenant_id="t-1",
+                resource_id="cluster-a",
+                product_category="kafka",
+                product_type="kafka_num_ckus",
+                identity_id="user-a",
+                cost_type="usage",
+                allocation_method="direct",
+                allocation_detail=None,
+                env_id="env-aaa",
+            )
+            dim_b = ChargebackDimensionTable(
+                ecosystem="confluent_cloud",
+                tenant_id="t-1",
+                resource_id="cluster-b",
+                product_category="kafka",
+                product_type="kafka_num_ckus",
+                identity_id="user-b",
+                cost_type="shared",
+                allocation_method="even",
+                allocation_detail=None,
+                env_id="env-bbb",
+            )
+            session.add(dim_a)
+            session.add(dim_b)
+            session.flush()
+            id_a = dim_a.dimension_id
+            id_b = dim_b.dimension_id
+
+            repo = SQLModelChargebackRepository(session)
+            result = repo.get_dimensions_batch([id_a, id_b])
+
+        engine.dispose()
+        backend.dispose()
+
+        assert id_a in result
+        assert id_b in result
+        assert result[id_a].env_id == "env-aaa"
+        assert result[id_b].env_id == "env-bbb"
