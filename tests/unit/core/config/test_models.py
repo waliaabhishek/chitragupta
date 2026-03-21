@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import pytest
-from pydantic import ValidationError
+from pydantic import SecretStr, ValidationError
 
 from core.config.models import (
     ApiConfig,
@@ -107,11 +107,19 @@ class TestStorageConfig:
     def test_defaults(self) -> None:
         cfg = StorageConfig()
         assert cfg.backend == "sqlmodel"
-        assert "sqlite" in cfg.connection_string
+        assert isinstance(cfg.connection_string, SecretStr)
+        assert "sqlite" in cfg.connection_string.get_secret_value()
 
     def test_all_fields(self) -> None:
         cfg = StorageConfig(backend="postgres", connection_string="postgresql://localhost/db")
         assert cfg.backend == "postgres"
+        assert cfg.connection_string.get_secret_value() == "postgresql://localhost/db"
+
+    def test_connection_string_masked_in_serialization(self) -> None:
+        cfg = StorageConfig(connection_string="postgresql://u:secret@h/db")
+        dumped = cfg.model_dump_json()
+        assert "secret" not in dumped
+        assert "**********" in dumped
 
 
 class TestTenantConfig:
@@ -217,7 +225,7 @@ class TestAppSettings:
         assert cfg.tenants["t1"].tenant_id == "id1"
 
     def test_duplicate_connection_string_rejected(self) -> None:
-        with pytest.raises(ValidationError, match="share storage connection_string"):
+        with pytest.raises(ValidationError, match="share the same storage connection_string"):
             AppSettings(
                 tenants={
                     "t1": TenantConfig(
@@ -232,6 +240,24 @@ class TestAppSettings:
                     ),
                 }
             )
+
+    def test_duplicate_connection_string_error_does_not_leak_value(self) -> None:
+        with pytest.raises(ValidationError, match="share the same storage connection_string") as exc_info:
+            AppSettings(
+                tenants={
+                    "t1": TenantConfig(
+                        ecosystem="eco",
+                        tenant_id="a",
+                        storage=StorageConfig(connection_string="postgresql://u:secret@h/db"),
+                    ),
+                    "t2": TenantConfig(
+                        ecosystem="eco",
+                        tenant_id="b",
+                        storage=StorageConfig(connection_string="postgresql://u:secret@h/db"),
+                    ),
+                }
+            )
+        assert "secret" not in str(exc_info.value)
 
     def test_different_connection_strings_accepted(self) -> None:
         cfg = AppSettings(

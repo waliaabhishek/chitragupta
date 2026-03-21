@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import threading
+from urllib.parse import urlparse
 
 from sqlalchemy import Engine, event
 from sqlmodel import create_engine
@@ -35,7 +36,9 @@ def _create_cached_engine(
     if cache_key not in _engines:
         with _engine_lock:
             if cache_key not in _engines:
-                logger.info("Creating new engine for: %s...", connection_string[:30])
+                parsed = urlparse(connection_string)
+                safe_url = f"{parsed.scheme}://{parsed.hostname or '?'}"
+                logger.info("Creating new engine for: %s...", safe_url)
                 new_engine = create_engine(connection_string, pool_pre_ping=True, **engine_kwargs)
 
                 if connection_string.startswith("sqlite"):

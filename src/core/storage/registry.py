@@ -40,4 +40,8 @@ def create_storage_backend(
         type(module).__name__,
         use_migrations,
     )
-    return SQLModelBackend(config.connection_string, module, use_migrations=use_migrations)
+    return SQLModelBackend(
+        config.connection_string.get_secret_value(),
+        module,
+        use_migrations=use_migrations,
+    )

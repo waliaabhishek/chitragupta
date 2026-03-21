@@ -635,10 +635,19 @@ class TestShowConfigFlag:
     ) -> None:
         import json
 
-        from core.config.models import AppSettings
+        from core.config.models import AppSettings, PluginSettingsBase, StorageConfig, TenantConfig
         from main import main
 
-        mock_load.return_value = AppSettings()
+        mock_load.return_value = AppSettings(
+            tenants={
+                "prod": TenantConfig(
+                    ecosystem="eco",
+                    tenant_id="t1",
+                    storage=StorageConfig(connection_string="sqlite:///prod.db"),
+                    plugin_settings=PluginSettingsBase(api_key="should-be-excluded"),
+                )
+            }
+        )
 
         with pytest.raises(SystemExit) as exc_info:
             main(["--config-file", "x.yaml", "--show-config"])
@@ -647,6 +656,64 @@ class TestShowConfigFlag:
         # stdout must be valid JSON
         data = json.loads(captured.out)
         assert isinstance(data, dict)
+        # plugin_settings must be excluded from all tenant entries
+        for tenant_data in data.get("tenants", {}).values():
+            assert "plugin_settings" not in tenant_data
+
+    @patch("main.load_config")
+    def test_show_config_masks_connection_string(
+        self,
+        mock_load: MagicMock,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from core.config.models import AppSettings, StorageConfig, TenantConfig
+        from main import main
+
+        mock_load.return_value = AppSettings(
+            tenants={
+                "prod": TenantConfig(
+                    ecosystem="eco",
+                    tenant_id="t1",
+                    storage=StorageConfig(connection_string="postgresql://u:secret@h/db"),
+                )
+            }
+        )
+
+        with pytest.raises(SystemExit) as exc_info:
+            main(["--config-file", "x.yaml", "--show-config"])
+        assert exc_info.value.code == 0
+        captured = capsys.readouterr()
+        assert "secret" not in captured.out
+        assert "**********" in captured.out
+
+    @patch("main.load_config")
+    def test_show_config_excludes_plugin_settings(
+        self,
+        mock_load: MagicMock,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        import json
+
+        from core.config.models import AppSettings, PluginSettingsBase, TenantConfig
+        from main import main
+
+        mock_load.return_value = AppSettings(
+            tenants={
+                "prod": TenantConfig(
+                    ecosystem="eco",
+                    tenant_id="t1",
+                    plugin_settings=PluginSettingsBase(ccloud_api_secret="super-secret"),
+                )
+            }
+        )
+
+        with pytest.raises(SystemExit) as exc_info:
+            main(["--config-file", "x.yaml", "--show-config"])
+        assert exc_info.value.code == 0
+        captured = capsys.readouterr()
+        data = json.loads(captured.out)
+        for tenant_data in data.get("tenants", {}).values():
+            assert "plugin_settings" not in tenant_data
 
     def test_show_config_masks_secret_str_fields(self) -> None:
         """Pydantic v2 serialises SecretStr as '**********' in model_dump_json."""

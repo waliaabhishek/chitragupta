@@ -691,7 +691,7 @@ class TestTd021TenantRuntimeCaching:
         def make_backend(config: Any, **kwargs: Any) -> MagicMock:
             b = MagicMock()
             # Use connection string as key (unique per tenant via _make_tenant unique hex)
-            backends[config.connection_string] = b
+            backends[config.connection_string.get_secret_value()] = b
             return b
 
         mock_storage.side_effect = make_backend
@@ -1090,13 +1090,13 @@ class TestGap021RunTenantBootstrapLatch:
 
         # Map connection string → per-backend call tracking
         conn_backends: dict[str, list[MagicMock]] = {
-            t1_cfg.storage.connection_string: [],
-            t2_cfg.storage.connection_string: [],
+            t1_cfg.storage.connection_string.get_secret_value(): [],
+            t2_cfg.storage.connection_string.get_secret_value(): [],
         }
 
         def make_backend(config: Any, **kwargs: Any) -> MagicMock:
             b = MagicMock()
-            key = config.connection_string
+            key = config.connection_string.get_secret_value()
             conn_backends.setdefault(key, []).append(b)
             return b
 
@@ -1125,8 +1125,8 @@ class TestGap021RunTenantBootstrapLatch:
         # Flag must be latched — bug: this assertion fails
         assert runner._bootstrapped is True
 
-        t1_conn = t1_cfg.storage.connection_string
-        t2_conn = t2_cfg.storage.connection_string
+        t1_conn = t1_cfg.storage.connection_string.get_secret_value()
+        t2_conn = t2_cfg.storage.connection_string.get_secret_value()
 
         t1_create_tables_after_first = sum(b.create_tables.call_count for b in conn_backends[t1_conn])
         t2_create_tables_after_first = sum(b.create_tables.call_count for b in conn_backends[t2_conn])

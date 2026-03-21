@@ -239,7 +239,12 @@ def main(argv: list[str] | None = None) -> None:
         sys.exit(0)
 
     if args.show_config:
-        print(settings.model_dump_json(indent=2))
+        print(
+            settings.model_dump_json(
+                indent=2,
+                exclude={"tenants": {"__all__": {"plugin_settings"}}},
+            )
+        )
         sys.exit(0)
 
     setup_logging(settings)

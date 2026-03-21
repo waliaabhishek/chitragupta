@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import logging
+from unittest.mock import MagicMock, patch
+
 import pytest
 
 # get_or_create_read_only_engine does not exist yet — ImportError causes red state for all tests
@@ -24,6 +27,18 @@ def clean_engine_cache() -> object:
         for e in _engines.values():
             e.dispose()
         _engines.clear()
+
+
+class TestEngineLogMasking:
+    def test_engine_log_masks_credentials(self, caplog: pytest.LogCaptureFixture) -> None:
+        with (
+            patch("core.storage.backends.sqlmodel.engine.create_engine", return_value=MagicMock()),
+            caplog.at_level(logging.INFO, logger="core.storage.backends.sqlmodel.engine"),
+        ):
+            get_or_create_engine("postgresql://admin:S3CR3T@prod-db/chargeback")  # pragma: allowlist secret
+        log_text = "\n".join(r.message for r in caplog.records)
+        assert "S3CR3T" not in log_text
+        assert "prod-db" in log_text
 
 
 class TestReadOnlyEngineCache:

@@ -4,7 +4,7 @@ import logging
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +54,7 @@ class ApiConfig(BaseModel):
 
 class StorageConfig(BaseModel):
     backend: str = "sqlmodel"
-    connection_string: str = "sqlite:///data/chargeback.db"
+    connection_string: SecretStr = Field(default=SecretStr("sqlite:///data/chargeback.db"))
 
 
 class EmitterSpec(BaseModel):
@@ -166,13 +166,13 @@ class AppSettings(BaseModel):
 
     @model_validator(mode="after")
     def validate_unique_connection_strings(self) -> AppSettings:
-        seen: dict[str, str] = {}  # connection_string → tenant_name
+        seen: dict[str, str] = {}  # raw_conn -> tenant_name
         for name, config in self.tenants.items():
-            conn = config.storage.connection_string
+            conn = config.storage.connection_string.get_secret_value()
             if conn in seen:
                 raise ValueError(
-                    f"tenants {seen[conn]!r} and {name!r} share storage "
-                    f"connection_string {conn!r} — each tenant must use a "
+                    f"tenants {seen[conn]!r} and {name!r} share the same "
+                    f"storage connection_string — each tenant must use a "
                     f"separate database until full tenant isolation is implemented"
                 )
             seen[conn] = name
