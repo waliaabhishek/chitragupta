@@ -264,10 +264,10 @@ class TestGatherDayErrorHandling:
 
 
 class TestBillingLineItemEcosystem:
-    def test_billing_line_ecosystem_equals_ecosystem_name_not_registry_key(
+    def test_billing_line_ecosystem_equals_registry_key(
         self, mock_metrics_source: MagicMock, day_start: datetime, day_end: datetime
     ) -> None:
-        """Test case 20: BillingLineItem.ecosystem == ecosystem_name (not "generic_metrics_only")."""
+        """Verification 6: BillingLineItem.ecosystem == "generic_metrics_only" (hardcoded, not config value)."""
         from plugins.generic_metrics_only.cost_input import GenericConstructedCostInput
 
         config = make_config(
@@ -287,8 +287,8 @@ class TestBillingLineItemEcosystem:
         items = list(cost_input.gather("tenant-1", day_start, day_end, uow))
 
         assert len(items) == 1
-        assert items[0].ecosystem == "self_managed_postgres"
-        assert items[0].ecosystem != "generic_metrics_only"
+        assert items[0].ecosystem == "generic_metrics_only"
+        assert items[0].ecosystem != "self_managed_postgres"
 
     def test_billing_line_resource_id_equals_cluster_id(
         self, mock_metrics_source: MagicMock, day_start: datetime, day_end: datetime

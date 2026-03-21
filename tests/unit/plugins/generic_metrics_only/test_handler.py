@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
 import pytest
 
 from core.models import CoreIdentity, MetricRow
+
+if TYPE_CHECKING:
+    from plugins.generic_metrics_only.config import GenericMetricsOnlyConfig
 
 
 def make_metric_row(key: str, value: float, labels: dict | None = None) -> MetricRow:
@@ -20,7 +24,7 @@ def make_metric_row(key: str, value: float, labels: dict | None = None) -> Metri
 
 
 @pytest.fixture
-def pg_config():
+def pg_config() -> GenericMetricsOnlyConfig:
     from plugins.generic_metrics_only.config import GenericMetricsOnlyConfig
 
     return GenericMetricsOnlyConfig.model_validate(
@@ -60,7 +64,7 @@ def pg_config():
 
 
 @pytest.fixture
-def static_config():
+def static_config() -> GenericMetricsOnlyConfig:
     from plugins.generic_metrics_only.config import GenericMetricsOnlyConfig
 
     return GenericMetricsOnlyConfig.model_validate(
@@ -93,8 +97,37 @@ def static_config():
 
 
 @pytest.fixture
-def mock_metrics():
+def mock_metrics() -> MagicMock:
     return MagicMock()
+
+
+class TestHandlerEcosystem:
+    def test_handler_ecosystem_is_hardcoded_generic_metrics_only(self, pg_config, mock_metrics) -> None:
+        """Verification 7: handler._ecosystem == "generic_metrics_only" (hardcoded, not from config)."""
+        from plugins.generic_metrics_only.handler import GenericMetricsOnlyHandler
+
+        handler = GenericMetricsOnlyHandler(config=pg_config, metrics_source=mock_metrics)
+        assert handler._ecosystem == "generic_metrics_only"
+
+    def test_identity_from_gather_static_has_ecosystem_generic_metrics_only(self, static_config, mock_metrics) -> None:
+        """Verification 8: CoreIdentity objects from _gather_static have ecosystem="generic_metrics_only"."""
+        from plugins.generic_metrics_only.handler import GenericMetricsOnlyHandler
+
+        handler = GenericMetricsOnlyHandler(config=static_config, metrics_source=mock_metrics)
+        mock_uow = MagicMock()
+
+        result = handler.resolve_identities(
+            tenant_id="tenant-1",
+            resource_id="pg-prod-1",
+            billing_timestamp=datetime(2026, 2, 1, tzinfo=UTC),
+            billing_duration=timedelta(days=1),
+            metrics_data=None,
+            uow=mock_uow,
+        )
+
+        identities = list(result.resource_active)
+        assert len(identities) > 0
+        assert all(i.ecosystem == "generic_metrics_only" for i in identities)
 
 
 class TestHandlerHandlesProductTypes:
@@ -738,3 +771,128 @@ class TestTask080ChainModelMigration:
         for pt in handler.handles_product_types:
             allocator = handler.get_allocator(pt)
             assert isinstance(allocator, ChainModel), f"{pt} allocator is not a ChainModel"
+
+
+class TestHandlerGatherResources:
+    def test_gather_resources_yields_cluster_from_shared_context(self, pg_config, mock_metrics) -> None:
+        """handler.gather_resources() with GenericSharedContext yields the cluster resource."""
+        from core.models import CoreResource
+        from plugins.generic_metrics_only.handler import GenericMetricsOnlyHandler
+        from plugins.generic_metrics_only.shared_context import GenericSharedContext
+
+        handler = GenericMetricsOnlyHandler(config=pg_config, metrics_source=mock_metrics)
+        mock_uow = MagicMock()
+        cluster = CoreResource(
+            ecosystem="generic_metrics_only",
+            tenant_id="tenant-1",
+            resource_id="pg-prod-1",
+            resource_type="cluster",
+            display_name="pg-prod-1",
+            parent_id=None,
+            created_at=None,
+            deleted_at=None,
+            last_seen_at=datetime(2026, 2, 1, tzinfo=UTC),
+            metadata={},
+        )
+        shared_ctx = GenericSharedContext(cluster_resource=cluster)
+
+        resources = list(handler.gather_resources("tenant-1", mock_uow, shared_ctx=shared_ctx))
+
+        assert len(resources) == 1
+        assert resources[0].resource_id == "pg-prod-1"
+
+    def test_gather_resources_no_shared_context_yields_nothing(self, pg_config, mock_metrics) -> None:
+        from plugins.generic_metrics_only.handler import GenericMetricsOnlyHandler
+
+        handler = GenericMetricsOnlyHandler(config=pg_config, metrics_source=mock_metrics)
+        mock_uow = MagicMock()
+
+        resources = list(handler.gather_resources("tenant-1", mock_uow, shared_ctx=None))
+        assert resources == []
+
+
+class TestHandlerGatherIdentities:
+    def test_gather_identities_prometheus_source_queries_metrics(self, pg_config, mock_metrics) -> None:
+        """gather_identities() with prometheus source calls metrics source and yields identities."""
+        from plugins.generic_metrics_only.handler import GenericMetricsOnlyHandler
+
+        mock_metrics.query.return_value = {
+            "discovery": [
+                MetricRow(
+                    timestamp=datetime(2026, 2, 1, tzinfo=UTC),
+                    metric_key="discovery",
+                    value=1.0,
+                    labels={"datname": "mydb"},
+                )
+            ]
+        }
+
+        handler = GenericMetricsOnlyHandler(config=pg_config, metrics_source=mock_metrics)
+        mock_uow = MagicMock()
+
+        identities = list(handler.gather_identities("tenant-1", mock_uow))
+
+        assert len(identities) == 1
+        assert identities[0].identity_id == "mydb"
+        assert identities[0].ecosystem == "generic_metrics_only"
+
+    def test_gather_identities_static_source_yields_static_identities(self, static_config, mock_metrics) -> None:
+        """gather_identities() with static source yields configured static identities."""
+        from plugins.generic_metrics_only.handler import GenericMetricsOnlyHandler
+
+        handler = GenericMetricsOnlyHandler(config=static_config, metrics_source=mock_metrics)
+        mock_uow = MagicMock()
+
+        identities = list(handler.gather_identities("tenant-1", mock_uow))
+
+        assert len(identities) == 1
+        assert identities[0].identity_id == "team-data"
+        assert identities[0].ecosystem == "generic_metrics_only"
+
+    def test_gather_identities_both_source_yields_from_both(self, mock_metrics) -> None:
+        """gather_identities() with 'both' source yields prometheus + static identities."""
+        from plugins.generic_metrics_only.config import GenericMetricsOnlyConfig
+        from plugins.generic_metrics_only.handler import GenericMetricsOnlyHandler
+
+        config = GenericMetricsOnlyConfig.model_validate(
+            {
+                "cluster_id": "pg-prod-1",
+                "metrics": {"url": "http://prom:9090"},
+                "identity_source": {
+                    "source": "both",
+                    "label": "datname",
+                    "discovery_query": "group by (datname) (pg_stat_database_blks_hit)",
+                    "static_identities": [
+                        {"identity_id": "static-user", "identity_type": "team"},
+                    ],
+                },
+                "cost_types": [
+                    {
+                        "name": "PG_COMPUTE",
+                        "product_category": "postgres",
+                        "rate": "2.50",
+                        "cost_quantity": {"type": "fixed", "count": 2},
+                        "allocation_strategy": "even_split",
+                    }
+                ],
+            }
+        )
+        mock_metrics.query.return_value = {
+            "discovery": [
+                MetricRow(
+                    timestamp=datetime(2026, 2, 1, tzinfo=UTC),
+                    metric_key="discovery",
+                    value=1.0,
+                    labels={"datname": "prom-user"},
+                )
+            ]
+        }
+
+        handler = GenericMetricsOnlyHandler(config=config, metrics_source=mock_metrics)
+        mock_uow = MagicMock()
+
+        identities = list(handler.gather_identities("tenant-1", mock_uow))
+
+        identity_ids = {i.identity_id for i in identities}
+        assert "prom-user" in identity_ids
+        assert "static-user" in identity_ids

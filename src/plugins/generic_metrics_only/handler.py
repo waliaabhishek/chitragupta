@@ -102,7 +102,7 @@ class GenericMetricsOnlyHandler:
     ) -> None:
         self._config = config
         self._metrics_source = metrics_source
-        self._ecosystem = config.ecosystem_name
+        self._ecosystem = "generic_metrics_only"
         self._handles_product_types: tuple[str, ...] = tuple(ct.name for ct in config.cost_types)
         # Build discovery query once (reused in _metrics_map and _gather_from_prometheus)
         cfg = config.identity_source

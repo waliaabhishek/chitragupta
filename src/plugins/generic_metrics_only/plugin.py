@@ -28,11 +28,7 @@ class GenericMetricsOnlyPlugin:
 
     @property
     def ecosystem(self) -> str:
-        # Returns ecosystem_name from config so billing data is labeled correctly.
-        # Returns sentinel only before initialize() -- should never appear in data.
-        if self._config is None:
-            return "generic_metrics_only"
-        return self._config.ecosystem_name
+        return "generic_metrics_only"
 
     def initialize(self, config: dict[str, Any]) -> None:
         logger.info("Initializing GenericMetricsOnlyPlugin")
@@ -44,7 +40,7 @@ class GenericMetricsOnlyPlugin:
         )
         logger.info(
             "GenericMetricsOnlyPlugin initialized ecosystem=%s cluster=%s",
-            self._config.ecosystem_name,
+            "generic_metrics_only",
             self._config.cluster_id,
         )
 
@@ -70,7 +66,7 @@ class GenericMetricsOnlyPlugin:
         if self._config is None:
             raise RuntimeError("Plugin not initialized.")
         cluster = CoreResource(
-            ecosystem=self._config.ecosystem_name,
+            ecosystem="generic_metrics_only",
             tenant_id=tenant_id,
             resource_id=self._config.cluster_id,
             resource_type="cluster",

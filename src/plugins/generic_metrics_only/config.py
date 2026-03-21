@@ -89,11 +89,9 @@ class GenericIdentitySourceConfig(BaseModel):
 class GenericMetricsOnlyConfig(PluginSettingsBase):
     """YAML config for GenericMetricsOnlyPlugin.
 
-    ecosystem_name is used as the ecosystem label in all billing data.
-    The PluginRegistry key is always "generic_metrics_only".
+    The registry key and ecosystem label are both "generic_metrics_only".
     """
 
-    ecosystem_name: str  # e.g. "self_managed_postgres" -- used in billing lines
     cluster_id: str  # resource_id for the cluster resource
     display_name: str | None = None
     metrics: MetricsConnectionConfig

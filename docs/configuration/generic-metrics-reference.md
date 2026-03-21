@@ -26,7 +26,6 @@ tenants:
     storage:
       connection_string: "sqlite:///data/postgres-prod.db"
     plugin_settings:
-      ecosystem_name: self_managed_postgres
       cluster_id: pg-prod-cluster
       display_name: "Production PostgreSQL"
       metrics:
@@ -77,7 +76,6 @@ tenants:
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `ecosystem_name` | string | required | Used as ecosystem label in billing output |
 | `cluster_id` | string | required | Resource identifier |
 | `display_name` | string | optional | Human-readable name for the cluster |
 | `metrics.url` | string | required | Prometheus URL |

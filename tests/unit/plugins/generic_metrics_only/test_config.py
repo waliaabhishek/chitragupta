@@ -194,3 +194,29 @@ class TestCostQuantityDiscriminator:
         base_settings["cost_types"] = []
         with pytest.raises(ValidationError):
             GenericMetricsOnlyConfig.model_validate(base_settings)
+
+
+class TestEcosystemNameRemoval:
+    def test_config_without_ecosystem_name_succeeds(
+        self, base_metrics: dict, base_identity_source: dict, base_cost_types: list
+    ) -> None:
+        """Verification 1: config without ecosystem_name validates successfully."""
+        from plugins.generic_metrics_only.config import GenericMetricsOnlyConfig
+
+        settings = {
+            "cluster_id": "pg-prod-1",
+            "metrics": base_metrics,
+            "identity_source": base_identity_source,
+            "cost_types": base_cost_types,
+        }
+        config = GenericMetricsOnlyConfig.from_plugin_settings(settings)
+        assert config.cluster_id == "pg-prod-1"
+
+    def test_config_with_ecosystem_name_is_backward_compatible(self, base_settings: dict) -> None:
+        """Verification 2: config with ecosystem_name passes silently — no ValidationError raised."""
+        from plugins.generic_metrics_only.config import GenericMetricsOnlyConfig
+
+        # base_settings includes ecosystem_name: "self_managed_postgres"
+        # With extra="allow" inherited from PluginSettingsBase, the field is accepted silently
+        config = GenericMetricsOnlyConfig.from_plugin_settings(base_settings)
+        assert config.cluster_id == "pg-prod-1"

@@ -19,6 +19,7 @@ if TYPE_CHECKING:
         GenericMetricsOnlyConfig,
     )
 logger = logging.getLogger(__name__)
+ECOSYSTEM = "generic_metrics_only"
 _BYTES_PER_GIB = Decimal("1073741824")
 
 
@@ -120,7 +121,7 @@ class GenericConstructedCostInput(CostInput):
             quantity = Decimal(str(total_bytes)) / _BYTES_PER_GIB
 
         yield CoreBillingLineItem(
-            ecosystem=self._config.ecosystem_name,
+            ecosystem=ECOSYSTEM,
             tenant_id=tenant_id,
             timestamp=timestamp,
             resource_id=self._config.cluster_id,
