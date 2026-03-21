@@ -1,24 +1,22 @@
 from __future__ import annotations
 
 import asyncio
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
 from fastapi.testclient import TestClient  # noqa: TC002
 
+if TYPE_CHECKING:
+    from core.storage.backends.sqlmodel.unit_of_work import SQLModelBackend
+
 
 class TestTriggerPipeline:
-    def test_trigger_pipeline_starts(self, app_with_backend: TestClient, in_memory_backend) -> None:
-        response = app_with_backend.post("/api/v1/tenants/test-tenant/pipeline/run")
+    def test_trigger_pipeline_starts(self, app_with_mock_runner: TestClient) -> None:
+        response = app_with_mock_runner.post("/api/v1/tenants/test-tenant/pipeline/run")
         assert response.status_code == 202
         data = response.json()
         assert data["status"] == "started"
         assert data["tenant_name"] == "test-tenant"
-        # DB record is created synchronously before background task launches
-        with in_memory_backend.create_unit_of_work() as uow:
-            latest = uow.pipeline_runs.get_latest_run("test-tenant")
-        assert latest is not None
-        assert latest.tenant_name == "test-tenant"
-        assert latest.status in ("running", "failed")
 
     def test_trigger_pipeline_nonexistent_tenant(self, app_with_backend: TestClient) -> None:
         response = app_with_backend.post("/api/v1/tenants/no-such-tenant/pipeline/run")
@@ -50,17 +48,25 @@ class TestPipelineStatus:
         assert data["last_run"] is None
         assert data["last_result"] is None
 
-    def test_status_after_run(self, app_with_backend: TestClient) -> None:
-        app_with_backend.post("/api/v1/tenants/test-tenant/pipeline/run")
+    def test_status_after_run(self, app_with_backend: TestClient, in_memory_backend: SQLModelBackend) -> None:
+        from datetime import UTC, datetime
+
+        with in_memory_backend.create_unit_of_work() as uow:
+            run = uow.pipeline_runs.create_run("test-tenant", datetime(2026, 3, 1, 10, 0, tzinfo=UTC))
+            run.status = "running"
+            uow.pipeline_runs.update_run(run)
+            uow.commit()
+
         response = app_with_backend.get("/api/v1/tenants/test-tenant/pipeline/status")
         assert response.status_code == 200
         data = response.json()
         assert data["tenant_name"] == "test-tenant"
-        # DB record is created synchronously, so last_run is always set
         assert data["last_run"] is not None
         assert isinstance(data["is_running"], bool)
 
-    def test_status_after_completed_run_in_db(self, app_with_backend: TestClient, in_memory_backend) -> None:
+    def test_status_after_completed_run_in_db(
+        self, app_with_backend: TestClient, in_memory_backend: SQLModelBackend
+    ) -> None:
         """Status reflects DB-persisted completed run data."""
         from datetime import UTC, datetime
 

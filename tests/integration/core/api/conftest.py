@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import TYPE_CHECKING
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -88,6 +88,24 @@ def app_with_backend(settings_with_tenant: AppSettings, in_memory_backend: SQLMo
     app = create_app(settings_with_tenant)
     with patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"), TestClient(app) as client:
         # After lifespan runs, inject our test backend
+        app.state.backends["test-tenant"] = in_memory_backend
+        yield client
+
+
+@pytest.fixture
+def mock_workflow_runner() -> MagicMock:
+    runner = MagicMock()
+    runner.is_tenant_running.return_value = False
+    return runner
+
+
+@pytest.fixture
+def app_with_mock_runner(
+    settings_with_tenant: AppSettings, in_memory_backend: SQLModelBackend, mock_workflow_runner: MagicMock
+) -> Iterator[TestClient]:
+    """App with a mock WorkflowRunner — allows trigger endpoint to accept requests."""
+    app = create_app(settings_with_tenant, workflow_runner=mock_workflow_runner)
+    with patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"), TestClient(app) as client:
         app.state.backends["test-tenant"] = in_memory_backend
         yield client
 
