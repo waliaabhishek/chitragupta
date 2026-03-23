@@ -5,6 +5,55 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] - 2026-03-23
+
+### Added
+- Feat: Treemap panel for principal costs, better line items panel
+
+- Replace gauge panel with treemap for Cost breakdown by Principal (continuous color gradient, single consolidated query, no row limit)
+- Rename Data Availability → Chargeback Line Items (Daily), legend count → line_items
+- Add filled area with opacity gradient for better trend visibility
+- Add marcusolsson-treemap-panel plugin to all docker-compose files ([83d3ecc](https://github.com/waliaabhishek/chitragupt/commit/83d3ecc13b0d2c4b5c24aaf4d73bcf1a2e998fd7))
+
+
+### Fixed
+- Fix: Cost Over Time — pivoted barchart with dates on X-axis
+
+Timeseries drawStyle=bars produced thin illegible bars. Switch back
+to barchart with pivoted query (CASE WHEN per product_category) so
+each category is a named column. Dates on X-axis, stacked bars show
+daily cost breakdown with readable legend names. ([39cf2f9](https://github.com/waliaabhishek/chitragupt/commit/39cf2f96f1c1e922a943c01f31f4609dab744383))
+- Fix: Cost Over Time panel — switch to stacked bar timeseries
+
+barchart panel was putting product_category on X-axis instead of
+dates. Switch to timeseries panel with drawStyle=bars and stacking
+to show daily cost bars stacked by product category. ([1d97a3b](https://github.com/waliaabhishek/chitragupt/commit/1d97a3bc6455f4ebfa36584fbcd3094a15388b14))
+- Fix: Billing environment panel — use env_id instead of r.parent_id
+
+Cost Split per Environment via Billing was joining through resources
+table parent_id, showing lkc-* clusters and "No Environment". Now
+uses env_id directly from ccloud_billing ('' AS env_id for base
+billing table), matching the chargeback panel fix. ([6cd83a7](https://github.com/waliaabhishek/chitragupt/commit/6cd83a78af8f0bf3b3881d94007a7b1f8cbf2723))
+- Fix: Resource pie chart — consolidate by display_name, use d.env_id for env filter
+
+GROUP BY display_name instead of resource_id so same-named resources
+(e.g. Stream Governance across environments) merge into one slice.
+Also switched environment filter from r.parent_id to d.env_id. ([39a5872](https://github.com/waliaabhishek/chitragupt/commit/39a5872e9e74e66c2dc67902b0f09861e2f98337))
+- Fix: Environment pie chart — use d.env_id instead of r.parent_id
+
+parent_id traversal was incorrect — connectors have parent_id=lkc-*
+(cluster), not env-*, causing clusters to appear as environments.
+Use the denormalized env_id column added in migration 009 for this purpose.
+Empty env_id now labeled "Org-level" instead of "No Environment". ([8bb567e](https://github.com/waliaabhishek/chitragupt/commit/8bb567e03d525d9e710d237279f30483881756a6))
+- Fix: Correct treemap plugin ID, dynamic cost-type stat panel
+
+- Fix treemap type from "treemap" to "marcusolsson-treemap-panel" (was breaking)
+- Remove invalid treemap options (showValue, custom.hideFrom)
+- Replace hardcoded Usage/Shared cost panels with single dynamic "Cost by Type" panel
+  that auto-discovers cost types via GROUP BY
+- Fix calcs on stat panel (unused when values: true) ([6cd9d6b](https://github.com/waliaabhishek/chitragupt/commit/6cd9d6be720059f86ec0e74d6bb5f86a6165a924))
+
+
 ## [0.5.0] - 2026-03-23
 
 ### Changed
