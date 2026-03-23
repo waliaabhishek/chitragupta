@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.2] - 2026-03-23
+
+### Fixed
+- Fix: CCloudBillingRepository.upsert() — idempotent replace instead of accumulate
+
+upsert() incorrectly summed total_cost and quantity on re-ingestion,
+inflating costs Nx per pipeline restart. Replaced accumulation branch
+with unconditional session.merge() and added billing revision detection
+warning log, matching the base BillingRepository pattern. ([6b6a7bd](https://github.com/waliaabhishek/chitragupt/commit/6b6a7bdfc795a35d6a626cbc1eac4a6e07b77e19))
+
+
 ## [0.5.1] - 2026-03-23
 
 ### Added
@@ -81,12 +92,6 @@ Details dashboard (column fixes):
 
 
 ### Fixed
-- Fix: task-150 — CCloudBillingRepository.upsert() accumulated costs on pipeline restart
-
-upsert() incorrectly summed total_cost and quantity when re-ingesting existing
-billing rows, inflating costs by Nx (where N = pipeline run count). Replaced
-accumulation logic with idempotent session.merge() and added billing revision
-detection warning log, matching the base BillingRepository pattern.
 - Fix: task-147 — Fix plugin loader to actually use plugins_path for external plugin discovery
 
 discover_plugins() hardcoded f"plugins.{entry.name}" for imports, making external
