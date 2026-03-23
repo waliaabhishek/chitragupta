@@ -959,13 +959,6 @@
             "mode": "palette-classic"
           },
           "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "bars",
             "fillOpacity": 80,
             "gradientMode": "none",
             "hideFrom": {
@@ -973,15 +966,7 @@
               "tooltip": false,
               "viz": false
             },
-            "insertNulls": false,
-            "lineInterpolation": "linear",
             "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "never",
-            "spanNulls": false,
             "stacking": {
               "group": "A",
               "mode": "normal"
@@ -1000,16 +985,23 @@
       },
       "id": 10,
       "options": {
+        "barRadius": 0,
+        "barWidth": 0.9,
+        "fullHighlight": false,
+        "groupWidth": 0.7,
         "legend": {
-          "calcs": [],
           "displayMode": "list",
           "placement": "bottom",
           "showLegend": true
         },
+        "orientation": "auto",
+        "stacking": "normal",
         "tooltip": {
           "mode": "multi",
           "sort": "desc"
-        }
+        },
+        "xTickLabelRotation": 0,
+        "xTickLabelSpacing": 0
       },
       "targets": [
         {
@@ -1017,15 +1009,15 @@
             "type": "frser-sqlite-datasource",
             "uid": "chargeback-sqlite"
           },
-          "queryText": "SELECT\n  CAST(strftime('%s', f.timestamp) AS INTEGER) AS time,\n  d.product_category,\n  SUM(CAST(f.amount AS REAL)) AS value\nFROM chargeback_facts f\nJOIN chargeback_dimensions d ON d.dimension_id = f.dimension_id\nWHERE d.ecosystem = '${ecosystem}'\n  AND d.tenant_id IN (${tenant_id:sqlstring})\n  AND CAST(strftime('%s', f.timestamp) AS INTEGER)\n      BETWEEN $__from/1000 AND $__to/1000\nGROUP BY time, d.product_category\nORDER BY time",
-          "queryType": "timeseries",
-          "rawQueryText": "SELECT\n  CAST(strftime('%s', f.timestamp) AS INTEGER) AS time,\n  d.product_category,\n  SUM(CAST(f.amount AS REAL)) AS value\nFROM chargeback_facts f\nJOIN chargeback_dimensions d ON d.dimension_id = f.dimension_id\nWHERE d.ecosystem = '${ecosystem}'\n  AND d.tenant_id IN (${tenant_id:sqlstring})\n  AND CAST(strftime('%s', f.timestamp) AS INTEGER)\n      BETWEEN $__from/1000 AND $__to/1000\nGROUP BY time, d.product_category\nORDER BY time",
+          "queryText": "SELECT\n  date(f.timestamp) AS day,\n  SUM(CASE WHEN d.product_category = 'KAFKA' THEN CAST(f.amount AS REAL) ELSE 0 END) AS Kafka,\n  SUM(CASE WHEN d.product_category = 'CONNECT' THEN CAST(f.amount AS REAL) ELSE 0 END) AS Connect,\n  SUM(CASE WHEN d.product_category = 'KSQL' THEN CAST(f.amount AS REAL) ELSE 0 END) AS ksqlDB,\n  SUM(CASE WHEN d.product_category = 'FLINK' THEN CAST(f.amount AS REAL) ELSE 0 END) AS Flink,\n  SUM(CASE WHEN d.product_category = 'STREAM_GOVERNANCE' THEN CAST(f.amount AS REAL) ELSE 0 END) AS Governance,\n  SUM(CASE WHEN d.product_category = 'CLUSTER_LINKING' THEN CAST(f.amount AS REAL) ELSE 0 END) AS \"Cluster Linking\",\n  SUM(CASE WHEN d.product_category = 'AUDIT_LOG' THEN CAST(f.amount AS REAL) ELSE 0 END) AS \"Audit Log\",\n  SUM(CASE WHEN d.product_category NOT IN ('KAFKA','CONNECT','KSQL','FLINK','STREAM_GOVERNANCE','CLUSTER_LINKING','AUDIT_LOG') THEN CAST(f.amount AS REAL) ELSE 0 END) AS Other\nFROM chargeback_facts f\nJOIN chargeback_dimensions d ON d.dimension_id = f.dimension_id\nWHERE d.ecosystem = '${ecosystem}'\n  AND d.tenant_id IN (${tenant_id:sqlstring})\n  AND f.timestamp BETWEEN datetime($__from/1000, 'unixepoch')\n                      AND datetime($__to/1000, 'unixepoch')\nGROUP BY day\nORDER BY day",
+          "queryType": "table",
+          "rawQueryText": "SELECT\n  date(f.timestamp) AS day,\n  SUM(CASE WHEN d.product_category = 'KAFKA' THEN CAST(f.amount AS REAL) ELSE 0 END) AS Kafka,\n  SUM(CASE WHEN d.product_category = 'CONNECT' THEN CAST(f.amount AS REAL) ELSE 0 END) AS Connect,\n  SUM(CASE WHEN d.product_category = 'KSQL' THEN CAST(f.amount AS REAL) ELSE 0 END) AS ksqlDB,\n  SUM(CASE WHEN d.product_category = 'FLINK' THEN CAST(f.amount AS REAL) ELSE 0 END) AS Flink,\n  SUM(CASE WHEN d.product_category = 'STREAM_GOVERNANCE' THEN CAST(f.amount AS REAL) ELSE 0 END) AS Governance,\n  SUM(CASE WHEN d.product_category = 'CLUSTER_LINKING' THEN CAST(f.amount AS REAL) ELSE 0 END) AS \"Cluster Linking\",\n  SUM(CASE WHEN d.product_category = 'AUDIT_LOG' THEN CAST(f.amount AS REAL) ELSE 0 END) AS \"Audit Log\",\n  SUM(CASE WHEN d.product_category NOT IN ('KAFKA','CONNECT','KSQL','FLINK','STREAM_GOVERNANCE','CLUSTER_LINKING','AUDIT_LOG') THEN CAST(f.amount AS REAL) ELSE 0 END) AS Other\nFROM chargeback_facts f\nJOIN chargeback_dimensions d ON d.dimension_id = f.dimension_id\nWHERE d.ecosystem = '${ecosystem}'\n  AND d.tenant_id IN (${tenant_id:sqlstring})\n  AND f.timestamp BETWEEN datetime($__from/1000, 'unixepoch')\n                      AND datetime($__to/1000, 'unixepoch')\nGROUP BY day\nORDER BY day",
           "refId": "A",
           "timeColumns": ["time", "ts"]
         }
       ],
       "title": "Cost Over Time",
-      "type": "timeseries"
+      "type": "barchart"
     }
   ],
   "preload": false,
