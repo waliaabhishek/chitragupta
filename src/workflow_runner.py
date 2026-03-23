@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
+from core.emitters.runner import EmitterRunner
 from core.engine.orchestrator import ChargebackOrchestrator, GatherFailureThresholdError, PipelineRunResult
 
 if TYPE_CHECKING:
@@ -412,6 +413,20 @@ class WorkflowRunner:
                 result = runtime.orchestrator.run()  # GatherFailureThresholdError propagates up
                 runtime.last_run_at = datetime.now(UTC)
                 tracker.finalize(pipeline_run, result)
+
+                # Post-pipeline hook: emit after successful pipeline commit
+                if config.plugin_settings.emitters:
+                    emitter_runner = EmitterRunner(
+                        ecosystem=config.ecosystem,
+                        storage_backend=runtime.storage,
+                        emitter_specs=config.plugin_settings.emitters,
+                        chargeback_granularity=config.plugin_settings.chargeback_granularity,
+                    )
+                    try:
+                        emitter_runner.run(config.tenant_id)
+                    except Exception:
+                        logger.exception("EmitterRunner failed for tenant=%s — pipeline result unaffected", name)
+
                 return result
             except Exception:
                 tracker.fail(pipeline_run)

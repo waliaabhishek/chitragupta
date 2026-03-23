@@ -72,8 +72,16 @@ class EmitterSpec(BaseModel):
     """
 
     type: str
+    name: str = ""  # unique state key (defaults to type if empty)
     aggregation: Literal["hourly", "daily", "monthly"] | None = None
     params: dict[str, Any] = Field(default_factory=dict)
+    lookback_days: int | None = None  # None = all history, int = bounded backfill
+
+    @model_validator(mode="after")
+    def _default_name(self) -> EmitterSpec:
+        if not self.name:
+            self.name = self.type
+        return self
 
 
 _MIN_GRANULARITY_HOURS = 1  # sub-hour cadences not supported

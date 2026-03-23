@@ -499,14 +499,49 @@ class TestExampleConfigExists:
 
 
 # ---------------------------------------------------------------------------
-# AC #16 — _load_emitters wiring test
+# AC #16 — EmitterRunner storage_backend injection wiring test
 # ---------------------------------------------------------------------------
 
 
 class TestLoadEmittersWiring:
+    def setup_method(self) -> None:
+        from core.emitters import registry
+
+        registry._REGISTRY.clear()
+
+    def teardown_method(self) -> None:
+        from core.emitters import registry
+
+        registry._REGISTRY.clear()
+
+    def _make_mock_storage(self) -> Any:
+        """Minimal mock storage that satisfies EmitterRunner._run_spec UoW calls."""
+        from datetime import date
+
+        test_date = date(2025, 1, 1)
+
+        emission_repo = MagicMock()
+        emission_repo.get_emitted_dates.return_value = set()
+        emission_repo.get_failed_dates.return_value = set()
+
+        chargeback_repo = MagicMock()
+        chargeback_repo.get_distinct_dates.return_value = [test_date]
+        chargeback_repo.find_by_date.return_value = []  # no rows → emitter not called, but factory is instantiated
+
+        uow = MagicMock()
+        uow.__enter__ = MagicMock(return_value=uow)
+        uow.__exit__ = MagicMock(return_value=False)
+        uow.emissions = emission_repo
+        uow.chargebacks = chargeback_repo
+
+        storage = MagicMock()
+        storage.create_unit_of_work.return_value = uow
+        return storage
+
     def test_load_emitters_passes_storage_backend_to_factories_needing_it(self) -> None:
+        from core.config.models import EmitterSpec
         from core.emitters.registry import register
-        from core.engine.orchestrator import _load_emitters
+        from core.emitters.runner import EmitterRunner
 
         received_kwargs: dict[str, Any] = {}
 
@@ -519,18 +554,23 @@ class TestLoadEmittersWiring:
         mock_prometheus_factory.needs_storage_backend = True  # type: ignore[attr-defined]
         register("_test_prometheus_factory", mock_prometheus_factory)
 
-        from core.config.models import EmitterSpec
-
-        sb, _ = _mock_storage_backend()
+        storage = self._make_mock_storage()
         spec = EmitterSpec(type="_test_prometheus_factory", params={"port": 9091})
-        _load_emitters([spec], "daily", storage_backend=sb)
+        runner = EmitterRunner(
+            ecosystem="test-eco",
+            storage_backend=storage,
+            emitter_specs=[spec],
+            chargeback_granularity="daily",
+        )
+        runner.run("tenant-1")
 
         assert "storage_backend" in received_kwargs
-        assert received_kwargs["storage_backend"] is sb
+        assert received_kwargs["storage_backend"] is storage
 
     def test_load_emitters_does_not_pass_storage_backend_to_csv_factory(self) -> None:
+        from core.config.models import EmitterSpec
         from core.emitters.registry import register
-        from core.engine.orchestrator import _load_emitters
+        from core.emitters.runner import EmitterRunner
 
         received_kwargs: dict[str, Any] = {}
 
@@ -542,11 +582,15 @@ class TestLoadEmittersWiring:
         # no needs_storage_backend attribute
         register("_test_csv_factory", mock_csv_factory)
 
-        from core.config.models import EmitterSpec
-
-        sb, _ = _mock_storage_backend()
+        storage = self._make_mock_storage()
         spec = EmitterSpec(type="_test_csv_factory", params={"output_dir": "/tmp"})
-        _load_emitters([spec], "daily", storage_backend=sb)
+        runner = EmitterRunner(
+            ecosystem="test-eco",
+            storage_backend=storage,
+            emitter_specs=[spec],
+            chargeback_granularity="daily",
+        )
+        runner.run("tenant-1")
 
         assert "storage_backend" not in received_kwargs
 

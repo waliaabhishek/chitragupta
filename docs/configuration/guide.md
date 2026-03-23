@@ -475,6 +475,47 @@ emitters:
     granularity than `chargeback_granularity` produces — if your granularity is
     `daily`, requesting `hourly` aggregation has no effect.
 
+### Emitter identity and emission state
+
+Each emitter has a `name` field that uniquely identifies it for emission state
+tracking. The engine records per-tenant, per-emitter, per-date outcomes
+(`emitted`, `failed`, `skipped`) so that already-emitted dates are not re-sent
+on subsequent runs, and failed dates are retried automatically.
+
+**`name`** — Unique identifier for this emitter within the tenant. Used as the
+key when persisting emission state. Defaults to `type` if omitted. If you
+configure two emitters of the same type (e.g., two CSV emitters writing to
+different directories), give each a distinct name:
+
+```yaml
+emitters:
+  - type: csv
+    name: csv-finance        # explicit name — required when type is not unique
+    aggregation: daily
+    params:
+      output_dir: ./output/finance
+  - type: csv
+    name: csv-archive
+    aggregation: monthly
+    params:
+      output_dir: ./output/archive
+```
+
+**`lookback_days`** — Limits emission to dates within the most recent N days.
+Dates older than `lookback_days` ago are skipped even if they were never
+emitted. Set to `null` (or omit) to emit all dates with pending chargeback rows.
+
+```yaml
+emitters:
+  - type: prometheus
+    aggregation: daily
+    lookback_days: 30    # only emit the last 30 days; ignore older history
+```
+
+This is useful when your emitter destination has a retention window — for
+example, a Prometheus remote-write endpoint that rejects samples older than
+30 days.
+
 ---
 
 ## Pipeline tuning

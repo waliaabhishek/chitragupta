@@ -9,7 +9,7 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from datetime import date as date_type
 from decimal import Decimal
-from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from core.engine.allocation import AllocationContext, AllocatorRegistry
 from core.engine.helpers import compute_active_fraction
@@ -20,12 +20,12 @@ from core.models.pipeline import PipelineState
 from core.plugin.registry import EcosystemBundle
 
 if TYPE_CHECKING:
-    from core.config.models import EmitterSpec, PluginSettingsBase, TenantConfig
+    from core.config.models import PluginSettingsBase, TenantConfig
     from core.metrics.protocol import MetricsSource
     from core.models.billing import BillingLineItem
     from core.models.metrics import MetricQuery, MetricRow
     from core.models.resource import Resource
-    from core.plugin.protocols import CostAllocator, EcosystemPlugin, Emitter, ResolveContext, ServiceHandler
+    from core.plugin.protocols import CostAllocator, EcosystemPlugin, ResolveContext, ServiceHandler
     from core.storage.interface import StorageBackend, UnitOfWork
 
     class _EntityRepo(Protocol):
@@ -661,167 +661,6 @@ class CalculatePhase:
         )
 
 
-_GRANULARITY_ORDER: dict[str, int] = {"hourly": 0, "daily": 1, "monthly": 2}
-
-
-@dataclass
-class _EmitterEntry:
-    """Pairs an instantiated emitter with its configured aggregation level."""
-
-    emitter: Emitter
-    aggregation: Literal["hourly", "daily", "monthly"] | None  # None = pass rows as-is
-
-
-@dataclass
-class EmitResult:
-    """Result from a single EmitPhase.run() call.
-
-    ``dates_attempted`` counts phase invocations (0 if skipped, 1 if emitters were
-    called), NOT successful deliveries. Check ``errors`` to determine whether all
-    emitters succeeded.
-    """
-
-    dates_attempted: int
-    errors: list[str]
-
-
-class EmitPhase:
-    """Calls all configured emitters for one tenant/date after calculation commits.
-
-    Handles per-emitter aggregation: each entry may request a coarser granularity
-    than the underlying chargeback data. Monthly emitters query the full month on
-    every call and overwrite the output — idempotent.
-    """
-
-    def __init__(
-        self,
-        ecosystem: str,
-        tenant_id: str,
-        storage_backend: StorageBackend,
-        emitter_entries: list[_EmitterEntry],
-        chargeback_granularity: Literal["hourly", "daily", "monthly"],
-    ) -> None:
-        self._ecosystem = ecosystem
-        self._tenant_id = tenant_id
-        self._storage_backend = storage_backend
-        self._emitter_entries = emitter_entries
-        self._chargeback_granularity = chargeback_granularity
-
-    def run(self, tracking_date: date_type) -> EmitResult:
-        """Emit rows for tracking_date to all emitters. Never raises — errors are captured."""
-        if not self._emitter_entries:
-            return EmitResult(dates_attempted=0, errors=[])
-
-        errors: list[str] = []
-        any_emitter_called = False
-        for entry in self._emitter_entries:
-            try:
-                rows, emit_date = self._fetch_rows(tracking_date, entry.aggregation)
-                if not rows:
-                    continue
-                if entry.aggregation and entry.aggregation != self._chargeback_granularity:
-                    rows = _aggregate_rows(rows, entry.aggregation)
-                entry.emitter(self._tenant_id, emit_date, rows)
-                any_emitter_called = True
-            except Exception as exc:
-                logger.exception(
-                    "Emitter %r failed for tenant=%s date=%s: %s",
-                    entry.emitter,
-                    self._tenant_id,
-                    tracking_date,
-                    exc,
-                )
-                errors.append(f"Emitter {entry.emitter!r} failed for date {tracking_date}: {exc}")
-                any_emitter_called = True
-
-        return EmitResult(dates_attempted=1 if any_emitter_called else 0, errors=errors)
-
-    def _fetch_rows(self, tracking_date: date_type, aggregation: str | None) -> tuple[list[ChargebackRow], date_type]:
-        """Query rows and return (rows, emit_date).
-
-        For monthly aggregation: queries full month 1st–tracking_date,
-        returns month-start as emit_date (used as file partition key).
-        For all others: queries the single tracking_date.
-        """
-        with self._storage_backend.create_unit_of_work() as uow:
-            if aggregation == "monthly":
-                month_start = tracking_date.replace(day=1)
-                start_dt = datetime(month_start.year, month_start.month, 1, tzinfo=UTC)
-                end_dt = datetime(tracking_date.year, tracking_date.month, tracking_date.day, tzinfo=UTC) + timedelta(
-                    days=1
-                )
-                rows = uow.chargebacks.find_by_range(self._ecosystem, self._tenant_id, start_dt, end_dt)
-                return rows, month_start
-            else:
-                rows = uow.chargebacks.find_by_date(self._ecosystem, self._tenant_id, tracking_date)
-                return rows, tracking_date
-
-
-@dataclass
-class _Bucket:
-    """Running total and first-seen template row for a grouping key."""
-
-    total: Decimal
-    template: ChargebackRow
-
-
-def _aggregate_rows(
-    rows: Sequence[ChargebackRow],
-    target_granularity: str,
-) -> list[ChargebackRow]:
-    """Group rows by key fields and sum amounts for the target granularity.
-
-    Aggregated timestamp is the period start (UTC):
-    - ``"daily"``   → date at 00:00:00 UTC
-    - ``"monthly"`` → 1st of month at 00:00:00 UTC
-
-    ``allocation_detail`` is dropped (set to ``None``) in aggregated rows —
-    per-row detail is meaningless after summing.
-    """
-    buckets: dict[tuple[Any, ...], _Bucket] = {}
-
-    for row in rows:
-        if target_granularity == "daily":
-            period_start = datetime(row.timestamp.year, row.timestamp.month, row.timestamp.day, tzinfo=UTC)
-        else:  # monthly
-            period_start = datetime(row.timestamp.year, row.timestamp.month, 1, tzinfo=UTC)
-
-        key = (
-            row.ecosystem,
-            row.tenant_id,
-            period_start,
-            row.resource_id,
-            row.product_category,
-            row.product_type,
-            row.identity_id,
-            row.cost_type,
-        )
-        if key in buckets:
-            buckets[key].total += row.amount
-        else:
-            buckets[key] = _Bucket(total=row.amount, template=row)
-
-    result: list[ChargebackRow] = []
-    for key, bucket in buckets.items():
-        ecosystem, tenant_id, timestamp, resource_id, product_category, product_type, identity_id, cost_type = key
-        result.append(
-            ChargebackRow(
-                ecosystem=ecosystem,
-                tenant_id=tenant_id,
-                timestamp=timestamp,
-                resource_id=resource_id,
-                product_category=product_category,
-                product_type=product_type,
-                identity_id=identity_id,
-                cost_type=cost_type,
-                amount=bucket.total,
-                allocation_method=bucket.template.allocation_method,
-                allocation_detail=None,  # dropped — meaningless after summing
-            )
-        )
-    return result
-
-
 class ChargebackOrchestrator:
     """Thin coordinator: runs gather -> calculate pipeline for one tenant."""
 
@@ -852,9 +691,6 @@ class ChargebackOrchestrator:
             metrics_step,
             extra_granularity_durations,
         ) = _load_overrides(tenant_config.plugin_settings)
-        settings = tenant_config.plugin_settings
-        emitter_entries = _load_emitters(settings.emitters, settings.chargeback_granularity, storage_backend)
-
         self._gather_phase = GatherPhase(
             ecosystem=self._ecosystem,
             tenant_id=self._tenant_id,
@@ -878,13 +714,6 @@ class ChargebackOrchestrator:
             metrics_step=metrics_step,
             extra_granularity_durations=extra_granularity_durations,
             metrics_prefetch_workers=tenant_config.metrics_prefetch_workers,
-        )
-        self._emit_phase = EmitPhase(
-            ecosystem=self._ecosystem,
-            tenant_id=self._tenant_id,
-            storage_backend=storage_backend,
-            emitter_entries=emitter_entries,
-            chargeback_granularity=settings.chargeback_granularity,
         )
         self._consecutive_gather_failures = 0
         self._gather_failure_threshold = tenant_config.gather_failure_threshold
@@ -1003,10 +832,6 @@ class ChargebackOrchestrator:
                     tracking_date,
                     elapsed,
                 )
-                # Emit after commit — best-effort, failures logged but not fatal
-                self._report_progress("emitting", tracking_date)
-                emit_result = self._emit_phase.run(tracking_date)
-                errors.extend(emit_result.errors)
             except Exception as exc:
                 logger.exception(
                     "Calculate failed for %s date %s: %s",
@@ -1026,50 +851,6 @@ class ChargebackOrchestrator:
             dates_pending_calculation=len(pending_states),
             errors=errors,
         )
-
-
-def _load_emitters(
-    emitter_specs: list[EmitterSpec],
-    chargeback_granularity: str,
-    storage_backend: StorageBackend,
-) -> list[_EmitterEntry]:
-    """Instantiate emitter entries from YAML specs.
-
-    Each spec's ``type`` is a registry name (e.g. ``"csv"``). The registry
-    looks up the factory, calls it with ``**spec.params``, and returns an
-    ``Emitter`` instance.
-
-    Aggregation is validated against ``chargeback_granularity`` at load time:
-    requested aggregation must be coarser than or equal to chargeback granularity.
-
-    Raises:
-        ValueError: Unknown emitter type, or aggregation finer than chargeback granularity.
-    """
-    from core.emitters.registry import get as registry_get
-    from core.emitters.registry import get_factory
-
-    entries: list[_EmitterEntry] = []
-    for spec in emitter_specs:
-        factory = get_factory(spec.type)
-        extra: dict[str, Any] = {}
-        if factory is not None and getattr(factory, "needs_storage_backend", False):
-            extra["storage_backend"] = storage_backend
-
-        emitter = registry_get(spec.type, spec.params, extra=extra)  # raises ValueError for unknown type
-
-        if spec.aggregation is not None:
-            req_level = _GRANULARITY_ORDER.get(spec.aggregation, -1)
-            cb_level = _GRANULARITY_ORDER.get(chargeback_granularity, 0)
-            if req_level < cb_level:
-                raise ValueError(
-                    f"Emitter {spec.type!r} requests aggregation {spec.aggregation!r} "
-                    f"which is finer than chargeback_granularity {chargeback_granularity!r}. "
-                    f"Aggregation must be coarser or equal (hourly ≤ daily ≤ monthly)."
-                )
-
-        entries.append(_EmitterEntry(emitter=emitter, aggregation=spec.aggregation))
-
-    return entries
 
 
 def _load_overrides(

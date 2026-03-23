@@ -7,12 +7,14 @@ from sqlmodel import Session
 
 from core.storage.backends.sqlmodel.engine import get_or_create_engine, get_or_create_read_only_engine
 from core.storage.backends.sqlmodel.repositories import (
+    SQLModelEmissionRepository,
     SQLModelPipelineRunRepository,
     SQLModelPipelineStateRepository,
     SQLModelTagRepository,
 )
 
 if TYPE_CHECKING:
+    from core.emitters.repository import EmissionRepository
     from core.plugin.protocols import StorageModule
     from core.storage.interface import (
         BillingRepository,
@@ -44,6 +46,7 @@ class SQLModelUnitOfWork:
         self.pipeline_state: PipelineStateRepository = None  # type: ignore[assignment]
         self.pipeline_runs: PipelineRunRepository = None  # type: ignore[assignment]
         self.tags: TagRepository = None  # type: ignore[assignment]
+        self.emissions: EmissionRepository = None  # type: ignore[assignment]
 
     def __enter__(self) -> Self:
         self._session = Session(self._engine)
@@ -55,6 +58,7 @@ class SQLModelUnitOfWork:
         self.pipeline_state = SQLModelPipelineStateRepository(self._session)
         self.pipeline_runs = SQLModelPipelineRunRepository(self._session)
         self.tags = SQLModelTagRepository(self._session)
+        self.emissions = SQLModelEmissionRepository(self._session)
         return self
 
     def __exit__(

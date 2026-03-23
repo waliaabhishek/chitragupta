@@ -67,6 +67,48 @@ class TestEmitterSpecInvalidAggregation:
             EmitterSpec(type="csv", aggregation="")  # type: ignore[arg-type]
 
 
+class TestEmitterSpecNameDefault:
+    """Case 11: EmitterSpec.name defaults to type when not provided."""
+
+    def test_name_defaults_to_type(self) -> None:
+        from core.config.models import EmitterSpec
+
+        spec = EmitterSpec(type="csv", params={"output_dir": "/tmp"})
+        assert spec.name == "csv"
+
+    def test_name_explicit_overrides_default(self) -> None:
+        from core.config.models import EmitterSpec
+
+        spec = EmitterSpec(type="csv", name="my-csv-emitter")
+        assert spec.name == "my-csv-emitter"
+
+    def test_name_empty_string_defaults_to_type(self) -> None:
+        from core.config.models import EmitterSpec
+
+        spec = EmitterSpec(type="prometheus", name="")
+        assert spec.name == "prometheus"
+
+    def test_name_default_for_webhook_type(self) -> None:
+        from core.config.models import EmitterSpec
+
+        spec = EmitterSpec(type="webhook")
+        assert spec.name == "webhook"
+
+
+class TestEmitterSpecLookbackDays:
+    def test_lookback_days_default_is_none(self) -> None:
+        from core.config.models import EmitterSpec
+
+        spec = EmitterSpec(type="csv")
+        assert spec.lookback_days is None
+
+    def test_lookback_days_set(self) -> None:
+        from core.config.models import EmitterSpec
+
+        spec = EmitterSpec(type="csv", lookback_days=30)
+        assert spec.lookback_days == 30
+
+
 class TestPluginSettingsBaseEmittersField:
     def test_emitters_default_is_empty_list(self) -> None:
         from core.config.models import PluginSettingsBase

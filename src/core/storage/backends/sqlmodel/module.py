@@ -47,6 +47,7 @@ class CoreStorageModule:
             ChargebackDimensionTable,
             ChargebackFactTable,
             CustomTagTable,
+            EmissionRecordTable,
             PipelineRunTable,
             PipelineStateTable,
         )
@@ -60,5 +61,6 @@ class CoreStorageModule:
             PipelineStateTable.__table__,  # type: ignore[attr-defined]  # SQLModel tables have __table__ at runtime via SQLAlchemy metaclass
             PipelineRunTable.__table__,  # type: ignore[attr-defined]  # SQLModel tables have __table__ at runtime via SQLAlchemy metaclass
             CustomTagTable.__table__,  # type: ignore[attr-defined]  # SQLModel tables have __table__ at runtime via SQLAlchemy metaclass
+            EmissionRecordTable.__table__,  # type: ignore[attr-defined]  # SQLModel tables have __table__ at runtime via SQLAlchemy metaclass
         ]
         SQLModel.metadata.create_all(engine, tables=core_tables)

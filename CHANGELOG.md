@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Decouple emitters from pipeline loop** (Task-148): The pipeline loop now performs gather → calculate → commit only. Emitters run post-pipeline via `EmitterRunner`, which is invoked by `WorkflowRunner` after each pipeline cycle. This allows emitters to be re-run independently without re-triggering data collection.
+- **Emission state tracking**: Per-tenant, per-emitter, per-date outcome records (`emitted`, `failed`, `skipped`) are persisted to storage. `EmitterRunner` uses these to skip already-emitted dates and to re-emit only failed ones within the lookback window.
+- **`--emit-once` CLI flag**: Runs `EmitterRunner` for all configured tenants without triggering a pipeline run, then exits. Useful for replaying emitters after a destination outage.
+- **New `EmitterSpec` fields**: `name` (unique identifier for emission state tracking; defaults to `type`) and `lookback_days` (limits emission to the most recent N days; `null` = all history).
+
 ### Fixed
 - Remove configurable `ecosystem_name` from `generic_metrics_only` plugin — hardcode ecosystem to `"generic_metrics_only"` matching CCloud/SMK pattern. Fixes silent data loss where orchestrator could not find billing lines due to ecosystem key mismatch.
 

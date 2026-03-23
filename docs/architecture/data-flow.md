@@ -25,7 +25,11 @@ flowchart TD
 
     subgraph output["Phase 3: Output"]
         DB[("Storage<br/>SQLite")]
-        E["Emitters<br/>(CSV, etc.)"]
+    end
+
+    subgraph emit["Phase 4: Emit (post-pipeline)"]
+        ER["EmitterRunner"]
+        E["Emitters<br/>(CSV, Prometheus, etc.)"]
     end
 
     BILLING --> G1
@@ -40,7 +44,8 @@ flowchart TD
     M --> |MetricRow| R
     R --> |IdentityResolution| A
     A --> |ChargebackRow| DB
-    DB --> E
+    DB --> ER
+    ER --> E
 ```
 
 ## Pipeline steps per date
@@ -75,7 +80,13 @@ flowchart TD
 
 8. **Commit** — `ChargebackRow` records written to storage.
 
-9. **Emit** — emitters called with committed rows (aggregated per spec).
+The pipeline loop ends at step 8. Emitting is a separate phase.
+
+9. **Emit (post-pipeline)** — `EmitterRunner` runs after each pipeline cycle completes.
+   It queries storage for pending dates (not yet emitted, or previously failed, within
+   each emitter's `lookback_days` window) and dispatches to each configured emitter.
+   Outcome records (`emitted`, `failed`, `skipped`) are persisted per tenant/emitter/date,
+   so already-emitted dates are not re-sent on the next cycle.
 
 ## Storage schema
 
@@ -89,6 +100,7 @@ flowchart TD
 | `pipeline_state` | Per-date progress flags: `billing_gathered`, `resources_gathered`, `chargeback_calculated` |
 | `pipeline_runs` | Audit trail: run start/end, status, rows written, errors |
 | `custom_tags` | User-defined key/value tags attached to chargeback dimensions |
+| `emission_records` | Per-tenant/emitter/date emission outcome tracking (emitted, failed) with attempt count |
 
 Each row is scoped to `(ecosystem, tenant_id)`. No cross-tenant data access.
 

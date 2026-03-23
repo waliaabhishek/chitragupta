@@ -1016,3 +1016,89 @@ class TestValidatePluginConfigs:
         mock_discover.return_value = [("confluent_cloud", ConfluentCloudPlugin)]
         registry = _build_registry(AppSettings())
         assert "confluent_cloud" in registry.list_ecosystems()
+
+
+# ---------- Case 12: --emit-once standalone ----------
+
+
+class TestEmitOnce:
+    """Case 12: --emit-once runs EmitterRunner for all tenants, no pipeline triggered."""
+
+    @patch("main.EmitterRunner")
+    @patch("main.load_config")
+    def test_emit_once_runs_emitter_runner_for_all_tenants(
+        self,
+        mock_load: MagicMock,
+        mock_runner_cls: MagicMock,
+    ) -> None:
+        from core.config.models import AppSettings, StorageConfig, TenantConfig
+
+        settings = AppSettings(
+            tenants={
+                "tenant-a": TenantConfig(
+                    ecosystem="test-eco",
+                    tenant_id="t-a",
+                    lookback_days=30,
+                    storage=StorageConfig(connection_string="sqlite:///tmp/ta.db"),
+                    plugin_settings={"emitters": [{"type": "csv", "params": {"output_dir": "/tmp"}}]},
+                ),
+                "tenant-b": TenantConfig(
+                    ecosystem="test-eco",
+                    tenant_id="t-b",
+                    lookback_days=30,
+                    storage=StorageConfig(connection_string="sqlite:///tmp/tb.db"),
+                    plugin_settings={"emitters": [{"type": "csv", "params": {"output_dir": "/tmp"}}]},
+                ),
+            }
+        )
+        mock_load.return_value = settings
+
+        mock_runner_instance = MagicMock()
+        mock_runner_cls.return_value = mock_runner_instance
+
+        from main import main
+
+        with patch("main._build_storage") as mock_storage:
+            mock_storage.return_value = MagicMock()
+            main(["--config-file", "dummy.yaml", "--emit-once"])
+
+        # EmitterRunner instantiated once per tenant
+        assert mock_runner_cls.call_count == 2
+        # run() called once per tenant
+        assert mock_runner_instance.run.call_count == 2
+
+    @patch("main.WorkflowRunner")
+    @patch("main.load_config")
+    def test_emit_once_does_not_trigger_pipeline(
+        self,
+        mock_load: MagicMock,
+        mock_workflow_runner_cls: MagicMock,
+    ) -> None:
+        from core.config.models import AppSettings
+
+        mock_load.return_value = AppSettings()
+        mock_wf = MagicMock()
+        mock_workflow_runner_cls.return_value = mock_wf
+
+        from main import main
+
+        with patch("main.EmitterRunner") as mock_er_cls, patch("main._build_storage") as mock_storage:
+            mock_storage.return_value = MagicMock()
+            mock_er_cls.return_value = MagicMock()
+            main(["--config-file", "dummy.yaml", "--emit-once"])
+
+        # WorkflowRunner.run_once() must NOT be called
+        mock_wf.run_once.assert_not_called()
+        mock_wf.run_loop.assert_not_called()
+
+    def test_emit_once_flag_parsed_correctly(self) -> None:
+        from main import parse_args
+
+        args = parse_args(["--config-file", "c.yaml", "--emit-once"])
+        assert args.emit_once is True
+
+    def test_emit_once_not_set_by_default(self) -> None:
+        from main import parse_args
+
+        args = parse_args(["--config-file", "c.yaml"])
+        assert args.emit_once is False

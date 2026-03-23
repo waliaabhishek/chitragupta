@@ -15,6 +15,7 @@ from sqlmodel import Session, col, select
 from core.models.chargeback import AggregationRow, AllocationDetail, AllocationIssueRow, CostType
 
 if TYPE_CHECKING:
+    from core.emitters.models import EmissionRecord
     from core.models.billing import BillingLineItem, CoreBillingLineItem
     from core.models.chargeback import ChargebackDimensionInfo, ChargebackRow, CustomTag
     from core.models.identity import Identity
@@ -28,6 +29,7 @@ from core.storage.backends.sqlmodel.mappers import (
     chargeback_to_dimension,
     chargeback_to_domain,
     chargeback_to_fact,
+    emission_record_to_table,
     identity_to_domain,
     identity_to_table,
     pipeline_run_to_domain,
@@ -43,6 +45,7 @@ from core.storage.backends.sqlmodel.tables import (
     ChargebackDimensionTable,
     ChargebackFactTable,
     CustomTagTable,
+    EmissionRecordTable,
     PipelineRunTable,
     PipelineStateTable,
 )
@@ -643,6 +646,94 @@ class SQLModelChargebackRepository:
         rows = self._session.execute(stmt).scalars().all()
         # func.date() returns str in SQLite (e.g. "2026-01-15"); coerce to date
         return [date.fromisoformat(r) if isinstance(r, str) else r for r in rows]
+
+    def find_aggregated_for_emit(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        start: date,
+        end: date,
+        granularity: str,
+    ) -> list[ChargebackRow]:
+        """SQL GROUP BY aggregation for emit. Returns ChargebackRow with floored timestamp, dimension_id=None."""
+        from core.models.chargeback import ChargebackRow, CostType
+
+        # strftime bucket expression: daily → "%Y-%m-%d", monthly → "%Y-%m"
+        bucket_fmt = "%Y-%m" if granularity == "monthly" else "%Y-%m-%d"
+
+        start_dt = datetime(start.year, start.month, start.day, tzinfo=UTC)
+        end_dt = datetime(end.year, end.month, end.day, tzinfo=UTC) + timedelta(days=1)
+
+        bucket_expr = func.strftime(bucket_fmt, ChargebackFactTable.timestamp).label("bucket")
+
+        stmt = (
+            select(  # type: ignore[call-overload]  # SQLModel select() overload stubs don't cover 10+ columns
+                ChargebackDimensionTable.ecosystem,
+                ChargebackDimensionTable.tenant_id,
+                bucket_expr,
+                ChargebackDimensionTable.resource_id,
+                ChargebackDimensionTable.product_category,
+                ChargebackDimensionTable.product_type,
+                ChargebackDimensionTable.identity_id,
+                ChargebackDimensionTable.cost_type,
+                func.max(ChargebackDimensionTable.allocation_method).label("allocation_method"),
+                func.sum(cast(col(ChargebackFactTable.amount), String)).label("total_amount"),
+            )
+            .join(
+                ChargebackFactTable,
+                col(ChargebackDimensionTable.dimension_id) == col(ChargebackFactTable.dimension_id),
+            )
+            .where(
+                col(ChargebackDimensionTable.ecosystem) == ecosystem,
+                col(ChargebackDimensionTable.tenant_id) == tenant_id,
+                col(ChargebackFactTable.timestamp) >= start_dt,
+                col(ChargebackFactTable.timestamp) < end_dt,
+            )
+            .group_by(
+                ChargebackDimensionTable.ecosystem,
+                ChargebackDimensionTable.tenant_id,
+                "bucket",
+                ChargebackDimensionTable.resource_id,
+                ChargebackDimensionTable.product_category,
+                ChargebackDimensionTable.product_type,
+                ChargebackDimensionTable.identity_id,
+                ChargebackDimensionTable.cost_type,
+            )
+        )
+
+        rows = self._session.execute(stmt).all()
+        result: list[ChargebackRow] = []
+        for r in rows:
+            bucket_str = r.bucket
+            # Parse bucket → floor timestamp
+            if granularity == "monthly":
+                ts = datetime(int(bucket_str[:4]), int(bucket_str[5:7]), 1, tzinfo=UTC)
+            else:
+                ts = datetime(
+                    int(bucket_str[:4]),
+                    int(bucket_str[5:7]),
+                    int(bucket_str[8:10]),
+                    tzinfo=UTC,
+                )
+            result.append(
+                ChargebackRow(
+                    ecosystem=r.ecosystem,
+                    tenant_id=r.tenant_id,
+                    timestamp=ts,
+                    resource_id=r.resource_id,
+                    product_category=r.product_category,
+                    product_type=r.product_type,
+                    identity_id=r.identity_id,
+                    cost_type=CostType(r.cost_type),
+                    amount=Decimal(str(r.total_amount)),
+                    allocation_method=r.allocation_method,
+                    allocation_detail=None,
+                    dimension_id=None,
+                    tags=[],
+                    metadata={},
+                )
+            )
+        return result
 
     def find_allocation_issues(
         self,
@@ -1355,3 +1446,48 @@ class SQLModelTagRepository:
         if row:
             self._session.delete(row)
             self._session.flush()
+
+
+class SQLModelEmissionRepository:
+    """SQLModel implementation of EmissionRepository."""
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def upsert(self, record: EmissionRecord) -> None:
+        existing = self._session.exec(
+            select(EmissionRecordTable).where(
+                EmissionRecordTable.ecosystem == record.ecosystem,
+                EmissionRecordTable.tenant_id == record.tenant_id,
+                EmissionRecordTable.emitter_name == record.emitter_name,
+                EmissionRecordTable.date == record.date,
+            )
+        ).first()
+        if existing is not None:
+            existing.status = record.status
+            existing.attempt_count += 1
+            self._session.add(existing)
+        else:
+            self._session.add(emission_record_to_table(record))
+
+    def get_emitted_dates(self, ecosystem: str, tenant_id: str, emitter_name: str) -> set[date]:
+        rows = self._session.exec(
+            select(col(EmissionRecordTable.date)).where(
+                EmissionRecordTable.ecosystem == ecosystem,
+                EmissionRecordTable.tenant_id == tenant_id,
+                EmissionRecordTable.emitter_name == emitter_name,
+                EmissionRecordTable.status == "emitted",
+            )
+        ).all()
+        return set(rows)
+
+    def get_failed_dates(self, ecosystem: str, tenant_id: str, emitter_name: str) -> set[date]:
+        rows = self._session.exec(
+            select(col(EmissionRecordTable.date)).where(
+                EmissionRecordTable.ecosystem == ecosystem,
+                EmissionRecordTable.tenant_id == tenant_id,
+                EmissionRecordTable.emitter_name == emitter_name,
+                EmissionRecordTable.status == "failed",
+            )
+        ).all()
+        return set(rows)

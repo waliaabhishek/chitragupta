@@ -8,6 +8,9 @@ from sqlmodel import Field, SQLModel
 
 logger = logging.getLogger(__name__)
 
+# Alias to avoid name clash in EmissionRecordTable where the field is also named 'date'
+_DateType = date
+
 
 class ChargebackDimensionTable(SQLModel, table=True):
     __tablename__ = "chargeback_dimensions"
@@ -92,3 +95,26 @@ class CustomTagTable(SQLModel, table=True):
         default_factory=lambda: datetime.now(UTC),
         sa_column=Column(DateTime(timezone=True)),
     )
+
+
+class EmissionRecordTable(SQLModel, table=True):
+    """ORM table for per-tenant/emitter/date emission state."""
+
+    __tablename__ = "emission_records"
+    __table_args__ = (
+        UniqueConstraint(
+            "ecosystem",
+            "tenant_id",
+            "emitter_name",
+            "date",
+            name="uq_emission_records",
+        ),
+    )
+
+    id: int | None = Field(default=None, primary_key=True)
+    ecosystem: str = Field(index=True)
+    tenant_id: str = Field(index=True)
+    emitter_name: str = Field(index=True)
+    date: _DateType = Field(sa_column=Column(Date(), index=True))
+    status: str  # "emitted" | "failed"
+    attempt_count: int = Field(default=1)

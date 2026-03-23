@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any, Literal, cast, overload
 
+from core.emitters.models import EmissionRecord
 from core.models.billing import CoreBillingLineItem
 from core.models.chargeback import ChargebackRow, CostType, CustomTag
 from core.models.identity import CoreIdentity
@@ -16,6 +17,7 @@ from core.storage.backends.sqlmodel.tables import (
     ChargebackDimensionTable,
     ChargebackFactTable,
     CustomTagTable,
+    EmissionRecordTable,
     PipelineRunTable,
     PipelineStateTable,
 )
@@ -309,4 +311,26 @@ def tag_to_domain(t: CustomTagTable) -> CustomTag:
         display_name=t.display_name,
         created_by=t.created_by,
         created_at=ensure_utc(t.created_at),
+    )
+
+
+def emission_record_to_table(record: EmissionRecord) -> EmissionRecordTable:
+    return EmissionRecordTable(
+        ecosystem=record.ecosystem,
+        tenant_id=record.tenant_id,
+        emitter_name=record.emitter_name,
+        date=record.date,
+        status=record.status,
+        attempt_count=record.attempt_count,
+    )
+
+
+def emission_record_to_domain(row: EmissionRecordTable) -> EmissionRecord:
+    return EmissionRecord(
+        ecosystem=row.ecosystem,
+        tenant_id=row.tenant_id,
+        emitter_name=row.emitter_name,
+        date=row.date,
+        status=row.status,
+        attempt_count=row.attempt_count,
     )

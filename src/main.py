@@ -11,8 +11,10 @@ from typing import TYPE_CHECKING
 from core.api import get_version
 from core.config.loader import load_config
 from core.emitters.registry import register as register_emitter
+from core.emitters.runner import EmitterRunner
 from core.plugin.loader import discover_plugins
 from core.plugin.registry import PluginRegistry
+from core.storage.registry import create_storage_backend
 from emitters.csv_emitter import make_csv_emitter
 from emitters.prometheus_emitter import make_prometheus_emitter
 from workflow_runner import WorkflowRunner
@@ -25,7 +27,8 @@ register_emitter("csv", make_csv_emitter)
 register_emitter("prometheus", make_prometheus_emitter)
 
 if TYPE_CHECKING:
-    from core.config.models import AppSettings
+    from core.config.models import AppSettings, StorageConfig
+    from core.storage.interface import StorageBackend
 _DEFAULT_PLUGINS_PATH = Path(__file__).parent / "plugins"
 
 
@@ -66,6 +69,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Run pipeline once and exit (no loop)",
     )
     parser.add_argument(
+        "--emit-once",
+        action="store_true",
+        default=False,
+        help="Re-emit all pending chargebacks from DB and exit (no pipeline run)",
+    )
+    parser.add_argument(
         "--mode",
         choices=["worker", "api", "both"],
         default="worker",
@@ -80,6 +89,11 @@ def setup_logging(settings: AppSettings) -> None:
     logging.basicConfig(level=log_cfg.level, format=log_cfg.format)
     for module, level in log_cfg.per_module_levels.items():
         logging.getLogger(module).setLevel(level)
+
+
+def _build_storage(storage_config: StorageConfig) -> StorageBackend:
+    """Create a storage backend from a StorageConfig. Extracted for testability."""
+    return create_storage_backend(storage_config)
 
 
 def _build_registry(settings: AppSettings) -> PluginRegistry:
@@ -248,6 +262,19 @@ def main(argv: list[str] | None = None) -> None:
         sys.exit(0)
 
     setup_logging(settings)
+
+    if args.emit_once:
+        for _tenant_name, tenant_config in settings.tenants.items():
+            storage = _build_storage(tenant_config.storage)
+            storage.create_tables()
+            emitter_runner = EmitterRunner(
+                ecosystem=tenant_config.ecosystem,
+                storage_backend=storage,
+                emitter_specs=tenant_config.plugin_settings.emitters,
+                chargeback_granularity=tenant_config.plugin_settings.chargeback_granularity,
+            )
+            emitter_runner.run(tenant_config.tenant_id)
+        return
 
     mode = args.mode
 

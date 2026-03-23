@@ -6,6 +6,9 @@ from datetime import date, datetime
 from typing import TYPE_CHECKING, Protocol, Self, runtime_checkable
 
 if TYPE_CHECKING:
+    from typing import Literal
+
+    from core.emitters.repository import EmissionRepository
     from core.models.billing import BillingLineItem
     from core.models.chargeback import (
         AggregationRow,
@@ -307,6 +310,17 @@ class ChargebackRepository(Protocol):
         """Return sorted list of distinct dates that have chargeback facts for the tenant."""
         ...
 
+    def find_aggregated_for_emit(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        start: date,
+        end: date,
+        granularity: Literal["daily", "monthly"],
+    ) -> list[ChargebackRow]:
+        """SQL GROUP BY aggregation for emit. Returns ChargebackRow with floored timestamp, dimension_id=None."""
+        ...
+
     def find_allocation_issues(
         self,
         ecosystem: str,
@@ -444,6 +458,7 @@ class ReadOnlyUnitOfWork(Protocol):
     pipeline_state: PipelineStateRepository
     pipeline_runs: PipelineRunRepository
     tags: TagRepository
+    emissions: EmissionRepository  # NEW
 
     def __enter__(self) -> Self: ...
     def __exit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: object) -> None: ...
