@@ -5,19 +5,110 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.5.0] - 2026-03-23
 
 ### Changed
-- **Decouple emitters from pipeline loop** (Task-148): The pipeline loop now performs gather → calculate → commit only. Emitters run post-pipeline via `EmitterRunner`, which is invoked by `WorkflowRunner` after each pipeline cycle. This allows emitters to be re-run independently without re-triggering data collection.
-- **Emission state tracking**: Per-tenant, per-emitter, per-date outcome records (`emitted`, `failed`, `skipped`) are persisted to storage. `EmitterRunner` uses these to skip already-emitted dates and to re-emit only failed ones within the lookback window.
-- **`--emit-once` CLI flag**: Runs `EmitterRunner` for all configured tenants without triggering a pipeline run, then exits. Useful for replaying emitters after a destination outage.
-- **New `EmitterSpec` fields**: `name` (unique identifier for emission state tracking; defaults to `type`) and `lookback_days` (limits emission to the most recent N days; `null` = all history).
+- Fix Grafana billing panels: query both billing and ccloud_billing tables
+
+CCloud billing data lives in ccloud_billing (migrated by ddebea2fe0a8),
+not the core billing table. The three billing stat panels were querying
+an empty table. Use UNION ALL to cover both tables so the dashboard
+works for any ecosystem. ([d768a78](https://github.com/waliaabhishek/chitragupt/commit/d768a78d7c08154f5de8ade5c08c87026cf8b040))
+- Fix Grafana dashboards: broken pie charts, missing panels, wrong column names
+
+Overview dashboard (full rewrite):
+- Fix pie charts showing 100% single-color by adding reduceOptions.values
+- Add unit:currencyUSD, displayLabels:name, legend placement, sort:desc
+- Reorganize to 4 pie charts: Environment, Resource, Product Category, Product Type
+- Replace identity pie chart with gauge panel (arc viz, top 30 principals)
+- Add collapsible billing detail rows (per-environment, per-resource, per-product-type)
+- Add Object Roster row with resource/identity count stats
+- Add "Cost breakdown summary" row separator
+
+Details dashboard (column fixes):
+- billing panel: b.total -> b.total_cost (correct column name)
+- resources panel: r.updated_at -> r.last_seen_at (column doesn't exist)
+- identities panel: i.updated_at -> i.last_seen_at (column doesn't exist) ([4337fa5](https://github.com/waliaabhishek/chitragupt/commit/4337fa514b32ed057ba1882ce3d34776618ef045))
+
 
 ### Fixed
-- Remove configurable `ecosystem_name` from `generic_metrics_only` plugin — hardcode ecosystem to `"generic_metrics_only"` matching CCloud/SMK pattern. Fixes silent data loss where orchestrator could not find billing lines due to ecosystem key mismatch.
+- Fix: task-147 — Fix plugin loader to actually use plugins_path for external plugin discovery
 
-### Documentation
-- Remove `ecosystem_name` from generic metrics configuration reference (no longer a config option)
+discover_plugins() hardcoded f"plugins.{entry.name}" for imports, making external
+plugin directories (via plugins_path config) scan correctly but fail on import.
+Extract _import_plugin_module() helper that routes built-in plugins through
+importlib.import_module (when parent is on sys.path) and external plugins through
+spec_from_file_location (file-based import, no sys.path mutation). Missing
+__init__.py now raises ImportError with actionable message. ([c5fd57d](https://github.com/waliaabhishek/chitragupt/commit/c5fd57d63b3a78f1f16df95b12e9618149ea335e))
+- Fix: task-148 — Decouple emitters from pipeline loop, make them independent DB readers
+
+Remove EmitPhase, _EmitterEntry, EmitResult, _load_emitters, _aggregate_rows,
+_Bucket, and _GRANULARITY_ORDER from orchestrator. Pipeline loop is now
+gather → calculate → commit only.
+
+Add EmitterRunner as independent post-pipeline component that reads chargebacks
+from DB, drives configured emitters via PerDateDriver/LifecycleDriver, and
+persists per-tenant/emitter/date emission state (EmissionRecord table).
+
+Add --emit-once CLI flag for standalone re-emission without pipeline run.
+Add EmitterSpec.name and lookback_days config fields. Add Alembic migration 010.
+Wire EmitterRunner in WorkflowRunner._run_tenant as post-pipeline hook. ([841963c](https://github.com/waliaabhishek/chitragupt/commit/841963c9f33bdde9b6404568682ab76be2e34b87))
+- Fix: task-146 — Remove ecosystem_name from generic_metrics_only plugin, hardcode ecosystem like CCloud/SMK
+
+The generic_metrics_only plugin exposed a configurable ecosystem_name field
+used as the data partition key in billing lines. This broke the orchestrator
+contract: ecosystem should be the hardcoded plugin selector, not user-configured.
+The mismatch caused find_by_date() to return zero rows — silent data loss.
+
+Removed ecosystem_name from GenericMetricsOnlyConfig and hardcoded
+"generic_metrics_only" in all 5 emission sites (plugin property, build_shared_context,
+CoreBillingLineItem, handler identity construction, log message). Added ECOSYSTEM
+module constant in cost_input.py matching peer plugin pattern. Updated docs and
+changelog. 95% test coverage with full data flow integration test. ([1b32756](https://github.com/waliaabhishek/chitragupt/commit/1b32756f80c0e9b4de33f1bd4d1c93fc9d5e3563))
+- Fix: task-145 — Reject pipeline trigger in API-only mode, prevent double PipelineRun records
+
+In API-only mode (workflow_runner=None), trigger_pipeline now returns 400
+immediately without creating a PipelineRun record. In both mode, the
+endpoint no longer creates its own PipelineRun — lifecycle is fully owned
+by WorkflowRunner._run_tenant() via PipelineRunTracker, eliminating
+duplicate records. _run_pipeline simplified to thin async wrapper with
+logging only. ([e819e59](https://github.com/waliaabhishek/chitragupt/commit/e819e59bef87ecbb729bb71166f31f528a3b8cf1))
+- Fix: task-144 — Convert StorageConfig.connection_string to SecretStr and mask secrets in --show-config
+
+Prevent two secret leak paths: (1) connection_string with embedded DB passwords
+now uses Pydantic SecretStr, masked as ********** in all serialization; (2) --show-config
+excludes plugin_settings to prevent raw API key dumps. Engine log output stripped of
+credentials via urlparse masking. ([b70a9e5](https://github.com/waliaabhishek/chitragupt/commit/b70a9e5c1608091642ea3e2be4b44b644ac89ff1))
+- Fix: task-142 — Fix env_id in API response schema and allocation issue reporting
+
+Add env_id field to ChargebackDimensionResponse and AllocationIssueResponse
+API schemas, pass env_id through _build_dimension_response and
+list_allocation_issues route, and include env_id in find_allocation_issues
+GROUP BY to prevent cross-environment aggregation conflation. ([9c4f11e](https://github.com/waliaabhishek/chitragupt/commit/9c4f11ec1c70040944d0db1aad60da1a31ff13e0))
+- Fix: task-141 — Fix env_id propagation gaps in 3 code paths
+
+Three env_id propagation gaps discovered post task-140:
+
+- _allocate_to_unallocated() now accepts metadata param and passes
+  dimension_metadata so UNALLOCATED rows carry env_id
+- chargeback_to_domain() reconstitutes env_id from dimension table
+  into ChargebackRow.metadata on read-back
+- ChargebackDimensionInfo gains env_id field, populated at both
+  get_dimension() and get_dimensions_batch() construction sites ([2ec86b2](https://github.com/waliaabhishek/chitragupt/commit/2ec86b26b39ec05720256b02fa8b79d9207267bd))
+- Fix: task-140 — Add env_id to chargeback dimensions via plugin-extensible chargeback repository
+
+env_id from CCloud billing API was dropped during chargeback calculation,
+causing environment_id aggregation to fail for 94% of resources (broken
+resource table join). Now stored directly on chargeback_dimensions via
+plugin-extensible ChargebackRepository pattern.
+
+- StorageModule protocol gains create_chargeback_repository()
+- UnitOfWork delegates chargebacks repo to plugin StorageModule
+- AllocationContext.dimension_metadata propagates env_id from billing line
+- CCloudChargebackRepository writes env_id to dimension table
+- aggregate() uses native env_id column (resource join removed)
+- Migration 009 adds env_id column and backfills from ccloud_billing ([006e8b5](https://github.com/waliaabhishek/chitragupt/commit/006e8b5d92c9d1e3cc2825b51a76d76be5b42831))
+
 
 ## [0.4.2] - 2026-03-21
 
@@ -45,10 +136,6 @@ compose up. Python/uv is documented as an alternative at the bottom.
 
 
 ### Fixed
-- **Pipeline trigger endpoint**: Reject with 400 in API-only mode (no WorkflowRunner configured); prevent double `PipelineRun` records in both mode by delegating full lifecycle to `WorkflowRunner` via `PipelineRunTracker`.
-- **env_id in API response schemas**: Added `env_id` field to `ChargebackDimensionResponse` and `AllocationIssueResponse`; allocation issue GROUP BY now includes `env_id` to prevent cross-environment aggregation conflation.
-- **env_id propagation gaps**: Fixed 3 code paths where env_id was silently dropped — UNALLOCATED fallback rows now carry env_id, chargebacks read back from DB reconstitute env_id in metadata, and ChargebackDimensionInfo now includes env_id field.
-- **Chargeback environment_id aggregation**: `environment_id` group_by now returns correct results. Previously relied on a resource table join that failed for 94% of historical billing resources. env_id is now stored directly on chargeback dimensions via plugin-extensible chargeback repository. Includes migration 009 to backfill existing data from ccloud_billing table.
 - Fix: Add latest tag to chitragupt-ui Docker image on release ([2af79bd](https://github.com/waliaabhishek/chitragupt/commit/2af79bd4126e4299d8d6db7c62b84bca23c49205))
 - Fix: Update changelog test to allow git-cliff in docs workflow
 
