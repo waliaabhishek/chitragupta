@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 from datetime import UTC, datetime
 from decimal import Decimal
 
@@ -92,7 +93,7 @@ class TestCCloudBillingEnvIdCollision:
             f"Expected 2 billing rows (one per env_id), got {len(rows)}. "
             "env_id is missing from the billing table PK — rows overwrite each other."
         )
-        env_ids = {r.env_id for r in rows}  # type: ignore[attr-defined]
+        env_ids = {r.env_id for r in rows}  # type: ignore[attr-defined]  # CCloudBillingLineItem has env_id but BillingLineItem protocol doesn't
         assert env_ids == {"env-aaa", "env-bbb"}
 
     def test_same_env_same_resource_upserts(self, ccloud_backend) -> None:
@@ -108,6 +109,12 @@ class TestCCloudBillingEnvIdCollision:
             rows = uow.billing.find_by_date("confluent_cloud", "org-001", _NOW.date())
 
         assert len(rows) == 1
+        assert rows[0].total_cost == Decimal("1.00"), (
+            f"total_cost doubled to {rows[0].total_cost} — accumulation bug still present"
+        )
+        assert rows[0].quantity == Decimal("10"), (
+            f"quantity doubled to {rows[0].quantity} — accumulation bug still present"
+        )
 
     def test_different_resources_same_env_both_persist(self, ccloud_backend) -> None:
         """Different resource_ids in the same env both persist independently."""
@@ -165,7 +172,7 @@ class TestCCloudBillingRepositoryOperations:
     def test_delete_before_removes_old_rows(self, ccloud_backend) -> None:
         """delete_before() removes rows older than the cutoff datetime."""
         old_line = _make_ccloud_line(env_id="env-aaa")
-        old_line = CCloudBillingLineItem(**{**old_line.__dict__, "timestamp": datetime(2024, 1, 1, tzinfo=UTC)})
+        old_line = dataclasses.replace(old_line, timestamp=datetime(2024, 1, 1, tzinfo=UTC))
         new_line = _make_ccloud_line(env_id="env-aaa")
 
         with ccloud_backend.create_unit_of_work() as uow:
@@ -187,9 +194,7 @@ class TestCCloudBillingRepositoryOperations:
     def test_find_by_filters_returns_matching_rows(self, ccloud_backend) -> None:
         """find_by_filters() returns (items, total) filtered by product_type."""
         line_kafka = _make_ccloud_line(env_id="env-aaa")
-        line_sr = CCloudBillingLineItem(
-            **{**line_kafka.__dict__, "env_id": "env-bbb", "product_type": "schema_registry"}
-        )
+        line_sr = dataclasses.replace(line_kafka, env_id="env-bbb", product_type="schema_registry")
 
         with ccloud_backend.create_unit_of_work() as uow:
             uow.billing.upsert(line_kafka)
@@ -255,6 +260,73 @@ class TestCCloudBillingRepositoryOperations:
             uow.commit()
 
         assert count == 1
+
+
+class TestCCloudBillingUpsertIdempotency:
+    """Tests for idempotent upsert and billing revision detection."""
+
+    def test_upsert_same_cost_no_warning(self, ccloud_backend, caplog) -> None:
+        """Upserting identical line twice must NOT log a warning (same cost = no revision)."""
+        import logging
+
+        line = _make_ccloud_line(env_id="env-aaa")
+
+        with caplog.at_level(logging.WARNING, logger="plugins.confluent_cloud.storage.repositories"):
+            with ccloud_backend.create_unit_of_work() as uow:
+                uow.billing.upsert(line)
+                uow.commit()
+
+            with ccloud_backend.create_unit_of_work() as uow:
+                uow.billing.upsert(line)
+                uow.commit()
+
+        warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warning_records) == 0, (
+            f"Expected no warnings for same-cost re-upsert, got: {[r.message for r in warning_records]}"
+        )
+
+    def test_upsert_cost_revision_logs_warning(self, ccloud_backend, caplog) -> None:
+        """Upserting same PK with different cost logs one 'Billing revision detected' warning."""
+        import logging
+
+        line_original = _make_ccloud_line(env_id="env-aaa")
+        line_revised = dataclasses.replace(line_original, total_cost=Decimal("2.00"))
+
+        with caplog.at_level(logging.WARNING, logger="plugins.confluent_cloud.storage.repositories"):
+            with ccloud_backend.create_unit_of_work() as uow:
+                uow.billing.upsert(line_original)
+                uow.commit()
+
+            with ccloud_backend.create_unit_of_work() as uow:
+                uow.billing.upsert(line_revised)
+                uow.commit()
+
+        warning_records = [r for r in caplog.records if "Billing revision detected" in r.message]
+        assert len(warning_records) == 1, f"Expected 1 'Billing revision detected' warning, got {len(warning_records)}"
+
+        with ccloud_backend.create_unit_of_work() as uow:
+            rows = uow.billing.find_by_date("confluent_cloud", "org-001", _NOW.date())
+
+        assert len(rows) == 1
+        assert rows[0].total_cost == Decimal("2.00"), f"Expected updated cost Decimal('2.00'), got {rows[0].total_cost}"
+
+    def test_upsert_idempotent_across_sessions(self, ccloud_backend) -> None:
+        """Upserting same line in 3 separate UoW sessions must not accumulate cost."""
+        line = _make_ccloud_line(env_id="env-aaa")
+
+        for _ in range(3):
+            with ccloud_backend.create_unit_of_work() as uow:
+                uow.billing.upsert(line)
+                uow.commit()
+
+        with ccloud_backend.create_unit_of_work() as uow:
+            rows = uow.billing.find_by_date("confluent_cloud", "org-001", _NOW.date())
+
+        assert len(rows) == 1
+        assert rows[0].total_cost == Decimal("1.00"), (
+            f"Expected Decimal('1.00') after 3 pipeline runs, got {rows[0].total_cost} — "
+            "cost is accumulating across sessions (3x inflation bug)"
+        )
 
 
 class TestCCloudStorageModuleProtocol:

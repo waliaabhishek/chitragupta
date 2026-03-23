@@ -112,15 +112,16 @@ class CCloudBillingRepository:
         table_obj = _line_to_table(ccloud_line)
 
         existing = self._session.get(CCloudBillingTable, _billing_pk(ccloud_line))
-        if existing is not None:
-            # Accumulate: API can return partial costs for same PK, sum them
-            existing.quantity = str(Decimal(existing.quantity) + Decimal(table_obj.quantity))
-            existing.total_cost = str(Decimal(existing.total_cost) + Decimal(table_obj.total_cost))
-            self._session.add(existing)
-            self._session.flush()
-            return _table_to_line(existing)
+        if existing is not None and existing.total_cost != table_obj.total_cost:
+            logger.warning(
+                "Billing revision detected: %s/%s/%s cost changed %s → %s",
+                table_obj.resource_id,
+                table_obj.product_type,
+                table_obj.timestamp.date(),
+                existing.total_cost,
+                table_obj.total_cost,
+            )
 
-        # New row - insert as-is
         merged = self._session.merge(table_obj)
         self._session.flush()
         return _table_to_line(merged)
