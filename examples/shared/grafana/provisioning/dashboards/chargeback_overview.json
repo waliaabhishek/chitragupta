@@ -175,25 +175,16 @@
       "fieldConfig": {
         "defaults": {
           "color": {
-            "mode": "thresholds"
+            "mode": "palette-classic-by-name"
           },
           "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "blue",
-                "value": null
-              }
-            ]
-          },
           "unit": "currencyUSD"
         },
         "overrides": []
       },
       "gridPos": {
         "h": 4,
-        "w": 8,
+        "w": 16,
         "x": 8,
         "y": 5
       },
@@ -204,9 +195,9 @@
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
-          "calcs": ["lastNotNull"],
+          "calcs": [],
           "fields": "",
-          "values": false
+          "values": true
         },
         "textMode": "auto"
       },
@@ -216,73 +207,14 @@
             "type": "frser-sqlite-datasource",
             "uid": "chargeback-sqlite"
           },
-          "queryText": "SELECT SUM(CAST(f.amount AS REAL)) AS \"Usage Cost\"\nFROM chargeback_facts f\nJOIN chargeback_dimensions d ON d.dimension_id = f.dimension_id\nWHERE d.ecosystem = '${ecosystem}'\n  AND d.tenant_id IN (${tenant_id:sqlstring})\n  AND d.cost_type = 'USAGE'\n  AND f.timestamp BETWEEN datetime($__from/1000, 'unixepoch')\n                      AND datetime($__to/1000, 'unixepoch')",
+          "queryText": "SELECT\n  UPPER(SUBSTR(d.cost_type, 1, 1)) || LOWER(SUBSTR(d.cost_type, 2)) || ' Cost' AS cost_type,\n  SUM(CAST(f.amount AS REAL)) AS value\nFROM chargeback_facts f\nJOIN chargeback_dimensions d ON d.dimension_id = f.dimension_id\nWHERE d.ecosystem = '${ecosystem}'\n  AND d.tenant_id IN (${tenant_id:sqlstring})\n  AND f.timestamp BETWEEN datetime($__from/1000, 'unixepoch')\n                      AND datetime($__to/1000, 'unixepoch')\nGROUP BY d.cost_type\nORDER BY value DESC",
           "queryType": "table",
-          "rawQueryText": "SELECT SUM(CAST(f.amount AS REAL)) AS \"Usage Cost\"\nFROM chargeback_facts f\nJOIN chargeback_dimensions d ON d.dimension_id = f.dimension_id\nWHERE d.ecosystem = '${ecosystem}'\n  AND d.tenant_id IN (${tenant_id:sqlstring})\n  AND d.cost_type = 'USAGE'\n  AND f.timestamp BETWEEN datetime($__from/1000, 'unixepoch')\n                      AND datetime($__to/1000, 'unixepoch')",
+          "rawQueryText": "SELECT\n  UPPER(SUBSTR(d.cost_type, 1, 1)) || LOWER(SUBSTR(d.cost_type, 2)) || ' Cost' AS cost_type,\n  SUM(CAST(f.amount AS REAL)) AS value\nFROM chargeback_facts f\nJOIN chargeback_dimensions d ON d.dimension_id = f.dimension_id\nWHERE d.ecosystem = '${ecosystem}'\n  AND d.tenant_id IN (${tenant_id:sqlstring})\n  AND f.timestamp BETWEEN datetime($__from/1000, 'unixepoch')\n                      AND datetime($__to/1000, 'unixepoch')\nGROUP BY d.cost_type\nORDER BY value DESC",
           "refId": "A",
           "timeColumns": ["time", "ts"]
         }
       ],
-      "title": "Usage Cost",
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "frser-sqlite-datasource",
-        "uid": "chargeback-sqlite"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "orange",
-                "value": null
-              }
-            ]
-          },
-          "unit": "currencyUSD"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 8,
-        "x": 16,
-        "y": 5
-      },
-      "id": 4,
-      "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "center",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": ["lastNotNull"],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "auto"
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "frser-sqlite-datasource",
-            "uid": "chargeback-sqlite"
-          },
-          "queryText": "SELECT SUM(CAST(f.amount AS REAL)) AS \"Shared Cost\"\nFROM chargeback_facts f\nJOIN chargeback_dimensions d ON d.dimension_id = f.dimension_id\nWHERE d.ecosystem = '${ecosystem}'\n  AND d.tenant_id IN (${tenant_id:sqlstring})\n  AND d.cost_type = 'SHARED'\n  AND f.timestamp BETWEEN datetime($__from/1000, 'unixepoch')\n                      AND datetime($__to/1000, 'unixepoch')",
-          "queryType": "table",
-          "rawQueryText": "SELECT SUM(CAST(f.amount AS REAL)) AS \"Shared Cost\"\nFROM chargeback_facts f\nJOIN chargeback_dimensions d ON d.dimension_id = f.dimension_id\nWHERE d.ecosystem = '${ecosystem}'\n  AND d.tenant_id IN (${tenant_id:sqlstring})\n  AND d.cost_type = 'SHARED'\n  AND f.timestamp BETWEEN datetime($__from/1000, 'unixepoch')\n                      AND datetime($__to/1000, 'unixepoch')",
-          "refId": "A",
-          "timeColumns": ["time", "ts"]
-        }
-      ],
-      "title": "Shared Cost",
+      "title": "Cost by Type",
       "type": "stat"
     },
     {
@@ -576,13 +508,6 @@
           "color": {
             "mode": "continuous-GrYlRd"
           },
-          "custom": {
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            }
-          },
           "mappings": [],
           "unit": "currencyUSD"
         },
@@ -596,9 +521,7 @@
       },
       "id": 9,
       "options": {
-        "tiling": "treemapSquarify",
-        "showValue": "auto",
-        "text": {}
+        "tiling": "treemapSquarify"
       },
       "targets": [
         {
@@ -614,7 +537,7 @@
         }
       ],
       "title": "Cost breakdown by Principal",
-      "type": "treemap"
+      "type": "marcusolsson-treemap-panel"
     },
     {
       "collapsed": false,
