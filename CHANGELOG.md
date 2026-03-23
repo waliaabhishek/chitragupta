@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.3] - 2026-03-23
+
+### Changed
+- Style: Move Cost Over Time panel above Cost breakdown summary section ([ffff570](https://github.com/waliaabhishek/chitragupt/commit/ffff5701c6edaf85f8c8d975010c65986004e422))
+
+
+### Fixed
+- Fix: Scope billing pipeline_state filter to billing panels only
+
+Previous commit applied filter too broadly — chargeback panels broke
+because replace_all matched their timestamp pattern too. Reverted and
+re-applied targeting only billing UNION ALL queries via b.tenant_id. ([d950f5c](https://github.com/waliaabhishek/chitragupt/commit/d950f5cbc08bba0719d7345f5c553b0314ec58c4))
+- Fix: Billing panels show only dates with chargeback data
+
+Filter all billing queries against pipeline_state.chargeback_calculated
+so billing totals don't exceed chargeback totals when processing is
+still catching up. Prevents misleading cost gaps in dashboards. ([e9042d3](https://github.com/waliaabhishek/chitragupt/commit/e9042d36a324b773158ddd3a172255c6fbc7bdcc))
+- Fix: Cost per Resource panel — use resource_id instead of display_name
+
+display_name is not unique and was mixing IDs with names due to COALESCE
+fallback. Use resource_id directly and drop unnecessary LEFT JOIN. ([cbff0e9](https://github.com/waliaabhishek/chitragupt/commit/cbff0e9ff2f9f94a70a7709cbdbbe07c91eac9f6))
+
+
 ## [0.5.2] - 2026-03-23
 
 ### Fixed
