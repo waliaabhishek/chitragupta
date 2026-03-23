@@ -959,6 +959,13 @@
             "mode": "palette-classic"
           },
           "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "bars",
             "fillOpacity": 80,
             "gradientMode": "none",
             "hideFrom": {
@@ -966,13 +973,22 @@
               "tooltip": false,
               "viz": false
             },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
             "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
             "stacking": {
               "group": "A",
               "mode": "normal"
             }
           },
-          "mappings": []
+          "mappings": [],
+          "unit": "currencyUSD"
         },
         "overrides": []
       },
@@ -984,23 +1000,16 @@
       },
       "id": 10,
       "options": {
-        "barRadius": 0,
-        "barWidth": 0.97,
-        "fullHighlight": false,
-        "groupWidth": 0.7,
         "legend": {
+          "calcs": [],
           "displayMode": "list",
           "placement": "bottom",
           "showLegend": true
         },
-        "orientation": "auto",
-        "stacking": "normal",
         "tooltip": {
           "mode": "multi",
           "sort": "desc"
-        },
-        "xTickLabelRotation": 0,
-        "xTickLabelSpacing": 150
+        }
       },
       "targets": [
         {
@@ -1016,7 +1025,7 @@
         }
       ],
       "title": "Cost Over Time",
-      "type": "barchart"
+      "type": "timeseries"
     }
   ],
   "preload": false,
