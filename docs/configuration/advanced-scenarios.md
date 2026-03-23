@@ -115,8 +115,15 @@ metrics:
 plugins_path: /opt/custom_plugins
 ```
 
-Path is resolved relative to CWD if relative. Must contain directories with
-`__init__.py` exporting a class implementing `EcosystemPlugin`.
+Path is resolved relative to CWD if relative, used as-is if absolute.
+Each subdirectory is treated as a plugin package. Requirements:
+
+- Each plugin subdirectory must contain `__init__.py`
+- `__init__.py` must expose `register()` returning `(ecosystem_name: str, factory: Callable)`
+- No `sys.path` modification needed — file-based import is used automatically for external paths
+
+If a plugin fails to load, a warning with full traceback is logged (including the reason,
+e.g. missing `__init__.py`) and the engine continues loading remaining plugins.
 
 ## Emitter aggregation
 

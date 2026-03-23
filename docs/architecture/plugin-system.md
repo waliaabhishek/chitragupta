@@ -21,9 +21,15 @@ Runtime-checkable protocols:
 File: `src/core/plugin/loader.py`
 
 Plugins are discovered by scanning the plugins directory for packages exporting
-a class implementing `EcosystemPlugin`. The built-in plugins are in `src/plugins/`.
+a `register()` function. The built-in plugins are in `src/plugins/`.
 
 Custom plugins can be placed at `plugins_path` (configured in `AppSettings`).
+Two import strategies are used transparently:
+
+- **Package import** (`importlib.import_module`): used when the plugins directory's
+  parent is on `sys.path`. This is the path taken for built-in `src/plugins/`.
+- **File-based import** (`importlib.util.spec_from_file_location`): used for external
+  directories not on `sys.path`. Each plugin package must contain `__init__.py`.
 
 ## Plugin initialization
 
