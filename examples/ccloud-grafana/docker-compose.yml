@@ -28,7 +28,8 @@ services:
       # Admin password — override via GF_ADMIN_PASSWORD in .env, defaults to "password".
       GF_SECURITY_ADMIN_PASSWORD: ${GF_ADMIN_PASSWORD:-password}
       # The frser-sqlite-datasource plugin is required to read SQLite files.
-      GF_INSTALL_PLUGINS: frser-sqlite-datasource
+      # The marcusolsson-treemap-panel plugin is used by the Cost breakdown by Principal panel.
+      GF_INSTALL_PLUGINS: frser-sqlite-datasource,marcusolsson-treemap-panel
     volumes:
       # Pre-provisioned dashboards and datasource — shared across all examples.
       - ../shared/grafana/provisioning:/etc/grafana/provisioning:ro

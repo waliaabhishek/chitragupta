@@ -39,8 +39,8 @@
             "axisPlacement": "auto",
             "barAlignment": 0,
             "drawStyle": "line",
-            "fillOpacity": 10,
-            "gradientMode": "none",
+            "fillOpacity": 25,
+            "gradientMode": "opacity",
             "hideFrom": {
               "legend": false,
               "tooltip": false,
@@ -98,14 +98,14 @@
             "type": "frser-sqlite-datasource",
             "uid": "chargeback-sqlite"
           },
-          "queryText": "SELECT\n  CAST(strftime('%s', date(f.timestamp)) AS INTEGER) AS time,\n  COUNT(*) AS count\nFROM chargeback_facts f\nJOIN chargeback_dimensions d ON d.dimension_id = f.dimension_id\nWHERE d.ecosystem = '${ecosystem}'\n  AND d.tenant_id IN (${tenant_id:sqlstring})\n  AND CAST(strftime('%s', f.timestamp) AS INTEGER)\n      BETWEEN $__from/1000 AND $__to/1000\nGROUP BY date(f.timestamp)\nORDER BY time",
+          "queryText": "SELECT\n  CAST(strftime('%s', date(f.timestamp)) AS INTEGER) AS time,\n  COUNT(*) AS line_items\nFROM chargeback_facts f\nJOIN chargeback_dimensions d ON d.dimension_id = f.dimension_id\nWHERE d.ecosystem = '${ecosystem}'\n  AND d.tenant_id IN (${tenant_id:sqlstring})\n  AND CAST(strftime('%s', f.timestamp) AS INTEGER)\n      BETWEEN $__from/1000 AND $__to/1000\nGROUP BY date(f.timestamp)\nORDER BY time",
           "queryType": "timeseries",
-          "rawQueryText": "SELECT\n  CAST(strftime('%s', date(f.timestamp)) AS INTEGER) AS time,\n  COUNT(*) AS count\nFROM chargeback_facts f\nJOIN chargeback_dimensions d ON d.dimension_id = f.dimension_id\nWHERE d.ecosystem = '${ecosystem}'\n  AND d.tenant_id IN (${tenant_id:sqlstring})\n  AND CAST(strftime('%s', f.timestamp) AS INTEGER)\n      BETWEEN $__from/1000 AND $__to/1000\nGROUP BY date(f.timestamp)\nORDER BY time",
+          "rawQueryText": "SELECT\n  CAST(strftime('%s', date(f.timestamp)) AS INTEGER) AS time,\n  COUNT(*) AS line_items\nFROM chargeback_facts f\nJOIN chargeback_dimensions d ON d.dimension_id = f.dimension_id\nWHERE d.ecosystem = '${ecosystem}'\n  AND d.tenant_id IN (${tenant_id:sqlstring})\n  AND CAST(strftime('%s', f.timestamp) AS INTEGER)\n      BETWEEN $__from/1000 AND $__to/1000\nGROUP BY date(f.timestamp)\nORDER BY time",
           "refId": "A",
           "timeColumns": ["time", "ts"]
         }
       ],
-      "title": "Data Availability",
+      "title": "Chargeback Line Items (Daily)",
       "type": "timeseries"
     },
     {
@@ -574,18 +574,16 @@
       "fieldConfig": {
         "defaults": {
           "color": {
-            "mode": "thresholds"
+            "mode": "continuous-GrYlRd"
+          },
+          "custom": {
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            }
           },
           "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": 0
-              }
-            ]
-          },
           "unit": "currencyUSD"
         },
         "overrides": []
@@ -598,17 +596,8 @@
       },
       "id": 9,
       "options": {
-        "minVizHeight": 75,
-        "minVizWidth": 75,
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": ["sum"],
-          "fields": "",
-          "values": true
-        },
-        "showThresholdLabels": false,
-        "showThresholdMarkers": false,
-        "sizing": "auto",
+        "tiling": "treemapSquarify",
+        "showValue": "auto",
         "text": {}
       },
       "targets": [
@@ -617,26 +606,15 @@
             "type": "frser-sqlite-datasource",
             "uid": "chargeback-sqlite"
           },
-          "queryText": "SELECT SUM(CAST(f.amount AS REAL)) AS \"Total Chargeback\"\nFROM chargeback_facts f\nJOIN chargeback_dimensions d ON d.dimension_id = f.dimension_id\nWHERE d.ecosystem = '${ecosystem}'\n  AND d.tenant_id IN (${tenant_id:sqlstring})\n  AND f.timestamp BETWEEN datetime($__from/1000, 'unixepoch')\n                      AND datetime($__to/1000, 'unixepoch')",
+          "queryText": "SELECT\n  COALESCE(i.display_name, d.identity_id) AS \"Principal\",\n  SUM(CAST(f.amount AS REAL)) AS \"Cost\"\nFROM chargeback_facts f\nJOIN chargeback_dimensions d ON d.dimension_id = f.dimension_id\nLEFT JOIN identities i ON i.ecosystem = d.ecosystem\n  AND i.tenant_id = d.tenant_id\n  AND i.identity_id = d.identity_id\nWHERE d.ecosystem = '${ecosystem}'\n  AND d.tenant_id IN (${tenant_id:sqlstring})\n  AND f.timestamp BETWEEN datetime($__from/1000, 'unixepoch')\n                      AND datetime($__to/1000, 'unixepoch')\nGROUP BY d.identity_id\nORDER BY \"Cost\" DESC",
           "queryType": "table",
-          "rawQueryText": "SELECT SUM(CAST(f.amount AS REAL)) AS \"Total Chargeback\"\nFROM chargeback_facts f\nJOIN chargeback_dimensions d ON d.dimension_id = f.dimension_id\nWHERE d.ecosystem = '${ecosystem}'\n  AND d.tenant_id IN (${tenant_id:sqlstring})\n  AND f.timestamp BETWEEN datetime($__from/1000, 'unixepoch')\n                      AND datetime($__to/1000, 'unixepoch')",
+          "rawQueryText": "SELECT\n  COALESCE(i.display_name, d.identity_id) AS \"Principal\",\n  SUM(CAST(f.amount AS REAL)) AS \"Cost\"\nFROM chargeback_facts f\nJOIN chargeback_dimensions d ON d.dimension_id = f.dimension_id\nLEFT JOIN identities i ON i.ecosystem = d.ecosystem\n  AND i.tenant_id = d.tenant_id\n  AND i.identity_id = d.identity_id\nWHERE d.ecosystem = '${ecosystem}'\n  AND d.tenant_id IN (${tenant_id:sqlstring})\n  AND f.timestamp BETWEEN datetime($__from/1000, 'unixepoch')\n                      AND datetime($__to/1000, 'unixepoch')\nGROUP BY d.identity_id\nORDER BY \"Cost\" DESC",
           "refId": "A",
-          "timeColumns": ["time", "ts"]
-        },
-        {
-          "datasource": {
-            "type": "frser-sqlite-datasource",
-            "uid": "chargeback-sqlite"
-          },
-          "queryText": "SELECT\n  COALESCE(i.display_name, d.identity_id) AS \"Principal ID\",\n  SUM(CAST(f.amount AS REAL)) AS value\nFROM chargeback_facts f\nJOIN chargeback_dimensions d ON d.dimension_id = f.dimension_id\nLEFT JOIN identities i ON i.ecosystem = d.ecosystem\n  AND i.tenant_id = d.tenant_id\n  AND i.identity_id = d.identity_id\nWHERE d.ecosystem = '${ecosystem}'\n  AND d.tenant_id IN (${tenant_id:sqlstring})\n  AND f.timestamp BETWEEN datetime($__from/1000, 'unixepoch')\n                      AND datetime($__to/1000, 'unixepoch')\nGROUP BY d.identity_id\nORDER BY value DESC\nLIMIT 30",
-          "queryType": "table",
-          "rawQueryText": "SELECT\n  COALESCE(i.display_name, d.identity_id) AS \"Principal ID\",\n  SUM(CAST(f.amount AS REAL)) AS value\nFROM chargeback_facts f\nJOIN chargeback_dimensions d ON d.dimension_id = f.dimension_id\nLEFT JOIN identities i ON i.ecosystem = d.ecosystem\n  AND i.tenant_id = d.tenant_id\n  AND i.identity_id = d.identity_id\nWHERE d.ecosystem = '${ecosystem}'\n  AND d.tenant_id IN (${tenant_id:sqlstring})\n  AND f.timestamp BETWEEN datetime($__from/1000, 'unixepoch')\n                      AND datetime($__to/1000, 'unixepoch')\nGROUP BY d.identity_id\nORDER BY value DESC\nLIMIT 30",
-          "refId": "B",
           "timeColumns": ["time", "ts"]
         }
       ],
       "title": "Cost breakdown by Principal",
-      "type": "gauge"
+      "type": "treemap"
     },
     {
       "collapsed": false,
