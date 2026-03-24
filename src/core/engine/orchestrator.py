@@ -499,12 +499,11 @@ class CalculatePhase:
 
     def _build_resource_cache(
         self, uow: UnitOfWork, billing_windows: set[tuple[datetime, datetime]]
-    ) -> dict[str, Resource]:
-        cache: dict[str, Resource] = {}
+    ) -> dict[tuple[datetime, datetime], dict[str, Resource]]:
+        cache: dict[tuple[datetime, datetime], dict[str, Resource]] = {}
         for b_start, b_end in billing_windows:
             resources, _ = uow.resources.find_by_period(self._ecosystem, self._tenant_id, b_start, b_end, count=False)
-            for r in resources:
-                cache.setdefault(r.resource_id, r)
+            cache[(b_start, b_end)] = {r.resource_id: r for r in resources}
         return cache
 
     def _collect_billing_line_rows(
@@ -514,7 +513,7 @@ class CalculatePhase:
         prefetched_metrics: dict[tuple[str, datetime, datetime], dict[str, list[MetricRow]]],
         failed_metric_keys: frozenset[tuple[str, datetime, datetime]],
         tenant_period_cache: dict[tuple[datetime, datetime], IdentitySet],
-        resource_cache: dict[str, Resource],
+        resource_cache: dict[tuple[datetime, datetime], dict[str, Resource]],
         line_window_cache: dict[int, tuple[datetime, datetime, timedelta]],
     ) -> list[ChargebackRow]:
         # Extract plugin-specific dimension metadata from the billing line.
@@ -554,7 +553,8 @@ class CalculatePhase:
 
             metrics_data = prefetched_metrics.get((line.resource_id, b_start, b_end))
             metrics_fetch_failed = (line.resource_id, b_start, b_end) in failed_metric_keys
-            resource = resource_cache.get(line.resource_id)
+            window_resources = resource_cache.get((b_start, b_end), {})
+            resource = window_resources.get(line.resource_id)
             active_fraction = Decimal(1) if resource is None else compute_active_fraction(resource, b_start, b_end)
             split_amount = line.total_cost * active_fraction
 
@@ -565,7 +565,7 @@ class CalculatePhase:
             else:
                 resolve_context: ResolveContext = {
                     "cached_identities": tenant_period_cache.get((b_start, b_end), IdentitySet()),
-                    "cached_resources": resource_cache,
+                    "cached_resources": window_resources,
                 }
                 identity_resolution = handler.resolve_identities(
                     self._tenant_id,
@@ -753,7 +753,7 @@ class ChargebackOrchestrator:
         prefetched_metrics: dict[tuple[str, datetime, datetime], dict[str, list[MetricRow]]],
         tenant_period_cache: dict[tuple[datetime, datetime], IdentitySet],
         allocation_retry_limit: int,
-        resource_cache: dict[str, Resource],
+        resource_cache: dict[tuple[datetime, datetime], dict[str, Resource]],
     ) -> int:
         """Backward-compatible wrapper — allocation_retry_limit is ignored (RetryManager owns it)."""
         line_window_cache = self._calculate_phase._compute_line_window_cache([line])

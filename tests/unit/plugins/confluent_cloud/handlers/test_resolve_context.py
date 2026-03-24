@@ -319,10 +319,9 @@ def test_orchestrator_passes_context_to_handler() -> None:
         resource_id="cluster-1",
         resource_type="kafka_cluster",
     )
-    resource_cache = {"cluster-1": resource}
-
     b_start = now
     b_end = now + timedelta(hours=24)
+    resource_cache = {(b_start, b_end): {"cluster-1": resource}}
     tenant_period_cache = {(b_start, b_end): IdentitySet()}
 
     mock_uow = MagicMock()
@@ -339,7 +338,7 @@ def test_orchestrator_passes_context_to_handler() -> None:
     assert context is not None, "resolve_identities must receive context kwarg"
     assert "cached_identities" in context
     assert "cached_resources" in context
-    assert context["cached_resources"] is resource_cache
+    assert context["cached_resources"] == {"cluster-1": resource}
 
 
 # ---------------------------------------------------------------------------

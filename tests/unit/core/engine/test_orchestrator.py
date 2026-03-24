@@ -1994,7 +1994,9 @@ class TestResourceLookupCache:
         # Intentionally NOT upserting a resource — simulates resource deleted before billing period
 
         b_start, b_end, _b_duration = billing_window(line)
-        resource_cache: dict[str, Resource] = {}  # empty — cache miss for deleted resource
+        resource_cache: dict[
+            tuple[datetime, datetime], dict[str, Resource]
+        ] = {}  # empty — cache miss for deleted resource
 
         tp_set = IdentitySet()
         tp_set.add(identity)
@@ -2087,6 +2089,94 @@ class TestResourceLookupCache:
             f"Expected {expected_windows} calls to find_by_period "
             f"(one per unique window), got {uow.resources.find_by_period.call_count}"
         )
+
+    def test_resource_lookup_cache_correct_resource_per_window(self) -> None:
+        """Window-scoped resource cache must supply the correct Resource per billing window.
+
+        With two billing lines for the same resource_id in two distinct windows and a
+        nested resource_cache keyed by (b_start, b_end), compute_active_fraction must be
+        called with the Resource that belongs to each line's window — not the first-seen one.
+
+        This test is RED until _collect_billing_line_rows is updated to look up
+        resource_cache[(b_start, b_end)][resource_id] instead of resource_cache[resource_id].
+        """
+        resource_id = "res-multi-window"
+
+        w1_ts = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
+        w2_ts = datetime(2026, 1, 2, 12, 0, 0, tzinfo=UTC)
+
+        line_w1 = _make_billing_line(resource_id=resource_id, timestamp=w1_ts)
+        line_w2 = _make_billing_line(resource_id=resource_id, timestamp=w2_ts)
+
+        w1_start, w1_end, _ = billing_window(line_w1)
+        w2_start, w2_end, _ = billing_window(line_w2)
+
+        resource_w1 = _make_resource(resource_id)  # active, deleted_at=None
+        resource_w2 = CoreResource(
+            ecosystem=ECOSYSTEM,
+            tenant_id=TENANT_ID,
+            resource_id=resource_id,
+            resource_type="kafka_cluster",
+            created_at=w1_ts - timedelta(days=30),
+            deleted_at=datetime(2026, 1, 2, 6, 0, 0, tzinfo=UTC),
+        )
+
+        # Nested resource cache — window-scoped, same resource_id in both windows
+        resource_cache: dict[tuple[datetime, datetime], dict[str, Resource]] = {
+            (w1_start, w1_end): {resource_id: resource_w1},
+            (w2_start, w2_end): {resource_id: resource_w2},
+        }
+
+        identity = _make_identity("user-1")
+        uow = MockUnitOfWork()
+        uow.identities.upsert(identity)
+
+        tp_set = IdentitySet()
+        tp_set.add(identity)
+        tenant_period_cache: dict[tuple[datetime, datetime], IdentitySet] = {
+            (w1_start, w1_end): tp_set,
+            (w2_start, w2_end): tp_set,
+        }
+        prefetched_metrics: dict[tuple[str, datetime, datetime], dict[str, list[Any]]] = {}
+
+        handler = MockServiceHandler(
+            product_types=["KAFKA_CKU"],
+            resources=[resource_w1, resource_w2],
+            identities=[identity],
+        )
+        storage = MockStorageBackend(uow)
+        orch, _ = _create_orchestrator(handler=handler, storage=storage)
+
+        with patch("core.engine.orchestrator.compute_active_fraction") as mock_caf:
+            mock_caf.return_value = Decimal("0.5")
+
+            orch._process_billing_line(
+                line_w1,
+                uow,
+                prefetched_metrics,
+                tenant_period_cache,
+                orch._tenant_config.allocation_retry_limit,
+                resource_cache=resource_cache,
+            )
+            orch._process_billing_line(
+                line_w2,
+                uow,
+                prefetched_metrics,
+                tenant_period_cache,
+                orch._tenant_config.allocation_retry_limit,
+                resource_cache=resource_cache,
+            )
+
+        assert mock_caf.call_count == 2, (
+            f"Expected compute_active_fraction called twice (once per window), got {mock_caf.call_count}"
+        )
+        calls = mock_caf.call_args_list
+        assert calls[0].args[0] is resource_w1, f"Window 1: expected resource_w1, got {calls[0].args[0]}"
+        assert calls[0].args[1] == w1_start
+        assert calls[0].args[2] == w1_end
+        assert calls[1].args[0] is resource_w2, f"Window 2: expected resource_w2, got {calls[1].args[0]}"
+        assert calls[1].args[1] == w2_start
+        assert calls[1].args[2] == w2_end
 
 
 class TestLoadOverridesMetricsStep:
@@ -2298,6 +2388,9 @@ class TestComputeBillingWindowsOnce:
         result = orch._calculate_phase._build_resource_cache(uow, windows)
 
         assert isinstance(result, dict)
+        assert (b_start, b_end) in result
+        assert isinstance(result[(b_start, b_end)], dict)
+        assert "r-1" in result[(b_start, b_end)]
 
     def test_build_tenant_period_cache_output_parity(self) -> None:
         """_build_tenant_period_cache produces same output whether given windows set or computed from lines."""
@@ -2341,8 +2434,9 @@ class TestComputeBillingWindowsOnce:
 
         result = orch._calculate_phase._build_resource_cache(uow, windows)
 
-        assert "lkc-parity" in result
-        assert result["lkc-parity"].resource_id == "lkc-parity"
+        assert (b_start, b_end) in result
+        assert "lkc-parity" in result[(b_start, b_end)]
+        assert result[(b_start, b_end)]["lkc-parity"].resource_id == "lkc-parity"
 
     def test_build_tenant_period_cache_excludes_system_identities(self) -> None:
         """_build_tenant_period_cache still excludes system identities when given a windows set."""
@@ -2483,8 +2577,10 @@ class TestComputeBillingWindowsOnce:
 
         result = orch._calculate_phase._build_resource_cache(uow, windows)
 
-        assert "r-a" in result
-        assert "r-b" in result
+        assert (w1_start, w1_end) in result
+        assert (w2_start, w2_end) in result
+        assert "r-a" in result[(w1_start, w1_end)]
+        assert "r-b" in result[(w2_start, w2_end)]
 
     def test_build_tenant_period_cache_multiple_windows(self) -> None:
         """_build_tenant_period_cache iterates all windows in the set, not just the first."""

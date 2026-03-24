@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Fix: `IdentityResolver` protocol now includes `context: ResolveContext | None = None` parameter, matching `ServiceHandler.resolve_identities` signature. Custom identity resolvers with the `context` parameter are no longer incorrectly rejected by signature validation.
+- Fix: Resource cache in orchestrator now keys by billing window, eliminating `setdefault()` collision when the same resource spans multiple windows. Active-fraction calculations use the correct per-window resource lifecycle state.
 
 ## [2.0.0.rc1] - 2026-03-24
 
