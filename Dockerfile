@@ -47,6 +47,9 @@ ENV VIRTUAL_ENV=/app/.venv \
 COPY --from=builder --chown=appuser:appuser /app/.venv /app/.venv
 COPY --from=builder --chown=appuser:appuser /app/src /app/src
 
+# Pre-create data dir so Docker named-volume copy-up inherits appuser ownership
+RUN mkdir -p /app/data && chown appuser:appuser /app/data
+
 USER appuser
 
 ENTRYPOINT ["python", "-m", "main"]
