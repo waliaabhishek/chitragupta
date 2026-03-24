@@ -1399,8 +1399,12 @@ tables and ResourceWarning from GC'd in-memory SQLite connections. (<a href="htt
 </ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
-<li>Fix: TASK-124 — Eliminate resource cache multi-window collision in orchestrator</li>
+<li>Fix: Pre-create /app/data dir in Dockerfile for named-volume compatibility</li>
 </ul>
+<p>Docker named volumes mount as root:root when the target directory doesn't
+exist in the image. appuser (uid 1000) cannot write, causing Alembic
+migrations to fail with "unable to open database file" on fresh volumes. (<a href="https://github.com/waliaabhishek/chitragupta/commit/538abdbba1f75473431ca0abcdc237ee0c4582e0">538abdb</a>)
+- Fix: TASK-124 — Eliminate resource cache multi-window collision in orchestrator</p>
 <p>_build_resource_cache now keys by (b_start, b_end) billing window tuple,
 matching the existing _build_tenant_period_cache pattern. This eliminates
 the setdefault() collision where non-deterministic set iteration could
