@@ -1249,6 +1249,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#fixed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fixed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#security" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1322,6 +1333,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#fixed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fixed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#security" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1375,6 +1397,13 @@ tables and ResourceWarning from GC'd in-memory SQLite connections. (<a href="htt
 <li>Added container_name to all services to avoid -1 suffix in logs</li>
 <li>Release notes now include Docker pull commands and .env pin instructions (<a href="https://github.com/waliaabhishek/chitragupta/commit/e20ae4340a8d221db2495f2f3abb84fd77f44618">e20ae43</a>)</li>
 </ul>
+<h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Fix: TASK-122 — Add missing context parameter to IdentityResolver protocol</li>
+</ul>
+<p>IdentityResolver.<strong>call</strong> had 6 params while ServiceHandler.resolve_identities
+had 7 (including context: ResolveContext | None). This caused _validate_signature
+to reject valid 7-param custom identity resolvers with a false TypeError. (<a href="https://github.com/waliaabhishek/chitragupta/commit/7511bbe0d00856d7cbfbfffb3a13c32f4c421fa4">7511bbe</a>)</p>
 <h3 id="security">Security<a class="headerlink" href="#security" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Security: Bump flatted 3.4.1 → 3.4.2 to fix CVE-2026-33228</li>
