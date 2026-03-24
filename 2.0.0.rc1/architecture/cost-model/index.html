@@ -1,0 +1,2211 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Multi-ecosystem chargeback engine — allocate infrastructure costs to tenants and teams">
+      
+      
+      
+      
+        <link rel="prev" href="../data-flow/">
+      
+      
+        <link rel="next" href="../identity-resolution/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.5">
+    
+    
+      
+        <title>How Costs Work - Chitragupta</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+  
+  
+  
+  
+  <style>:root{--md-annotation-icon:url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%3E%3Cpath%20d%3D%22M17%2013h-4v4h-2v-4H7v-2h4V7h2v4h4m-5-9A10%2010%200%200%200%202%2012a10%2010%200%200%200%2010%2010%2010%2010%200%200%200%2010-10A10%2010%200%200%200%2012%202%22/%3E%3C/svg%3E');}</style>
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="deep-purple" data-md-color-accent="purple">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#how-costs-work" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="Chitragupta" class="md-header__button md-logo" aria-label="Chitragupta" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Chitragupta
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              How Costs Work
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="deep-purple" data-md-color-accent="purple"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="purple"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/waliaabhishek/chitragupta" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    chitragupta
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="Chitragupta" class="md-nav__button md-logo" aria-label="Chitragupta" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Chitragupta
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/waliaabhishek/chitragupta" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    chitragupta
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../getting-started/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_2" id="__nav_2_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/prerequisites/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Prerequisites
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/first-run/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    First Run
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../configuration/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration Reference
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Configuration Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../configuration/guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../configuration/ccloud-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Confluent Cloud
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../configuration/self-managed-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Self-Managed Kafka
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../configuration/generic-metrics-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Generic Metrics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../configuration/advanced-scenarios/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Advanced Scenarios
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plugin-system/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Plugin System
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../data-flow/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data Flow
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    How Costs Work
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    How Costs Work
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#two-billing-paradigms" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Two billing paradigms
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Two billing paradigms">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#api-billed-confluent-cloud" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        API-billed (Confluent Cloud)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#constructed-self-managed-kafka-generic-metrics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Constructed (Self-Managed Kafka, Generic Metrics)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#constructed-cost-math" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Constructed cost math
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Constructed cost math">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#compute-costs-fixed-quantity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Compute costs (fixed quantity)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#storage-costs-gauge-metric-averaged" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Storage costs (gauge metric, averaged)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#network-costs-counter-metric-summed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Network costs (counter metric, summed)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#generic-metrics-the-three-quantity-types" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Generic metrics: the three quantity types
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cost-allocation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cost allocation
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Cost allocation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#even-split" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Even split
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#usage-ratio" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Usage ratio
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-allocation-chain-costtype-tagging" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The allocation chain (CostType tagging)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="The allocation chain (CostType tagging)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#tiered-fallback-chainmodel" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tiered fallback (ChainModel)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#composite-allocation-cku-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Composite allocation (CKU model)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-unallocated-identity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The UNALLOCATED identity
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#active-fraction-adjustment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Active fraction adjustment
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#precision-guarantees" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Precision guarantees
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../identity-resolution/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Identity Resolution
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../operations/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Operations
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Operations
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operations/deployment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deployment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operations/monitoring/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Monitoring
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operations/troubleshooting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Troubleshooting
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operations/data-retention/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data Retention
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operations/upgrading/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Upgrading
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../changelog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changelog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#two-billing-paradigms" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Two billing paradigms
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Two billing paradigms">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#api-billed-confluent-cloud" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        API-billed (Confluent Cloud)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#constructed-self-managed-kafka-generic-metrics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Constructed (Self-Managed Kafka, Generic Metrics)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#constructed-cost-math" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Constructed cost math
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Constructed cost math">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#compute-costs-fixed-quantity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Compute costs (fixed quantity)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#storage-costs-gauge-metric-averaged" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Storage costs (gauge metric, averaged)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#network-costs-counter-metric-summed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Network costs (counter metric, summed)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#generic-metrics-the-three-quantity-types" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Generic metrics: the three quantity types
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cost-allocation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cost allocation
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Cost allocation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#even-split" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Even split
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#usage-ratio" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Usage ratio
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-allocation-chain-costtype-tagging" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The allocation chain (CostType tagging)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="The allocation chain (CostType tagging)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#tiered-fallback-chainmodel" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tiered fallback (ChainModel)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#composite-allocation-cku-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Composite allocation (CKU model)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-unallocated-identity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The UNALLOCATED identity
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#active-fraction-adjustment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Active fraction adjustment
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#precision-guarantees" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Precision guarantees
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="how-costs-work">How Costs Work<a class="headerlink" href="#how-costs-work" title="Permanent link">&para;</a></h1>
+<p>This page explains the complete cost lifecycle: how raw billing data enters the
+system, how costs are computed, how they're allocated across identities, and how
+rounding is handled. Every formula shown here maps directly to code in the engine.</p>
+<h2 id="two-billing-paradigms">Two billing paradigms<a class="headerlink" href="#two-billing-paradigms" title="Permanent link">&para;</a></h2>
+<p>The engine supports two fundamentally different ways of obtaining cost data.</p>
+<h3 id="api-billed-confluent-cloud">API-billed (Confluent Cloud)<a class="headerlink" href="#api-billed-confluent-cloud" title="Permanent link">&para;</a></h3>
+<p>The vendor has already computed the bill. Each billing line item arrives with
+<code>quantity</code>, <code>unit_price</code>, and <code>total_cost</code> pre-calculated. The engine's job
+is purely to <em>allocate</em> that cost across identities — it never modifies the
+total.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>Vendor Billing API
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>    → BillingLineItem(product_type=&quot;KAFKA_NUM_CKU&quot;, total_cost=$100.00)
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>    → Engine allocates $100.00 across identities
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>    → Sum of all ChargebackRows = $100.00 (guaranteed)
+</code></pre></div>
+<h3 id="constructed-self-managed-kafka-generic-metrics">Constructed (Self-Managed Kafka, Generic Metrics)<a class="headerlink" href="#constructed-self-managed-kafka-generic-metrics" title="Permanent link">&para;</a></h3>
+<p>There is no billing API. The engine <em>constructs</em> billing lines by:</p>
+<ol>
+<li>Querying Prometheus for usage metrics</li>
+<li>Computing quantities from those metrics</li>
+<li>Multiplying by rates you define in YAML</li>
+</ol>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>Prometheus + YAML rates
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>    → Engine computes: quantity × rate = total_cost
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>    → BillingLineItem(product_type=&quot;SELF_KAFKA_COMPUTE&quot;, total_cost=$36.00)
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>    → Engine allocates $36.00 across identities
+</code></pre></div>
+<hr />
+<h2 id="constructed-cost-math">Constructed cost math<a class="headerlink" href="#constructed-cost-math" title="Permanent link">&para;</a></h2>
+<h3 id="compute-costs-fixed-quantity">Compute costs (fixed quantity)<a class="headerlink" href="#compute-costs-fixed-quantity" title="Permanent link">&para;</a></h3>
+<p>Compute is a fixed cost based on the number of brokers (or instances). There is
+no Prometheus query — the quantity comes from your config.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>daily_cost = broker_count × 24 hours × compute_hourly_rate
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Input</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>broker_count</code></td>
+<td>3</td>
+</tr>
+<tr>
+<td><code>compute_hourly_rate</code></td>
+<td>$0.50</td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>daily_cost = 3 × 24 × $0.50 = $36.00
+</code></pre></div>
+<p>One <code>BillingLineItem</code> per day with <code>product_type = SELF_KAFKA_COMPUTE</code>.</p>
+<h3 id="storage-costs-gauge-metric-averaged">Storage costs (gauge metric, averaged)<a class="headerlink" href="#storage-costs-gauge-metric-averaged" title="Permanent link">&para;</a></h3>
+<p>Storage is measured as a point-in-time value (a Prometheus gauge). The engine
+queries <code>kafka_log_log_size</code> across the day, averages all samples, converts
+bytes to GiB, and charges per GiB-hour.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>avg_bytes = mean(all prometheus samples for the day)
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>avg_gib   = avg_bytes ÷ 1,073,741,824
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>daily_cost = avg_gib × 24 hours × storage_per_gib_hourly
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Input</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Prometheus samples (3 in this example)</td>
+<td>107,374,182,400 bytes (100 GiB), 112,742,891,520 bytes (105 GiB), 107,374,182,400 bytes (100 GiB)</td>
+</tr>
+<tr>
+<td><code>storage_per_gib_hourly</code></td>
+<td>$0.0001</td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>avg_bytes  = (107,374,182,400 + 112,742,891,520 + 107,374,182,400) ÷ 3
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>           = 109,163,752,107 bytes
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>avg_gib    = 109,163,752,107 ÷ 1,073,741,824 = 101.67 GiB
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>daily_cost = 101.67 × 24 × $0.0001 = $0.2440
+</code></pre></div>
+<div class="admonition note">
+<p class="admonition-title">Why average, not sum?</p>
+<p>Storage is not cumulative. A disk holding 100 GiB at hour 0 and 100 GiB at
+hour 1 does not mean you used 200 GiB — you used 100 GiB for 2 hours.
+Averaging across samples gives the representative GiB held over the day.</p>
+</div>
+<h3 id="network-costs-counter-metric-summed">Network costs (counter metric, summed)<a class="headerlink" href="#network-costs-counter-metric-summed" title="Permanent link">&para;</a></h3>
+<p>Network bytes are cumulative counters. The engine queries
+<code>kafka_server_brokertopicmetrics_bytesin_total</code> (and <code>bytesout</code>) using
+<code>increase()</code> over 1-hour windows, then sums all the hourly deltas to get the
+total bytes transferred in a day.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>total_bytes = sum(all hourly increase values for the day)
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>total_gib   = total_bytes ÷ 1,073,741,824
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>daily_cost  = total_gib × network_per_gib
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Input</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Hourly increases (24 values)</td>
+<td>Sum = 53,687,091,200 bytes</td>
+</tr>
+<tr>
+<td><code>network_ingress_per_gib</code></td>
+<td>$0.01</td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>total_gib  = 53,687,091,200 ÷ 1,073,741,824 = 50.0 GiB
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>daily_cost = 50.0 × $0.01 = $0.50
+</code></pre></div>
+<div class="admonition note">
+<p class="admonition-title">Why sum, not average?</p>
+<p>Network bytes are a running total. <code>increase()</code> gives bytes transferred in
+each hour. Summing gives total daily transfer. This is the actual volume
+that crossed the network.</p>
+</div>
+<h3 id="generic-metrics-the-three-quantity-types">Generic metrics: the three quantity types<a class="headerlink" href="#generic-metrics-the-three-quantity-types" title="Permanent link">&para;</a></h3>
+<p>The generic plugin generalizes the above patterns:</p>
+<table>
+<thead>
+<tr>
+<th>Quantity type</th>
+<th>Math</th>
+<th>Rate unit</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>fixed</code></td>
+<td><code>count × 24 × rate</code></td>
+<td>$/instance/hour</td>
+</tr>
+<tr>
+<td><code>storage_gib</code></td>
+<td><code>avg(query) ÷ 2^30 × 24 × rate</code></td>
+<td>$/GiB/hour</td>
+</tr>
+<tr>
+<td><code>network_gib</code></td>
+<td><code>sum(increase(query)) ÷ 2^30 × rate</code></td>
+<td>$/GiB</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="cost-allocation">Cost allocation<a class="headerlink" href="#cost-allocation" title="Permanent link">&para;</a></h2>
+<p>Once a billing line exists (either from the vendor API or constructed), the
+engine allocates it across identities. This section explains the strategies
+and the fallback chain.</p>
+<h3 id="even-split">Even split<a class="headerlink" href="#even-split" title="Permanent link">&para;</a></h3>
+<p>Divides the cost equally among a set of identities. Used for shared
+infrastructure costs where no per-identity usage metric exists.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>per_identity = total_cost ÷ identity_count
+</code></pre></div>
+<p><strong>Rounding:</strong> All amounts are quantized to 4 decimal places ($0.0001). After
+dividing, the engine distributes any rounding remainder one unit at a time
+across the leading identities to guarantee the sum equals the total.</p>
+<p><strong>Example:</strong> $10.00 across 3 identities</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>base = $10.0000 ÷ 3 = $3.3333 (quantized to 4 decimals)
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>sum  = $3.3333 × 3 = $9.9999
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>diff = $10.0000 - $9.9999 = $0.0001
+<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a>
+<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a>Final:
+<a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a>  identity-a: $3.3334  (+$0.0001 remainder)
+<a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a>  identity-b: $3.3333
+<a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a>  identity-c: $3.3333
+<a id="__codelineno-9-9" name="__codelineno-9-9" href="#__codelineno-9-9"></a>  total:      $10.0000 ✓
+</code></pre></div>
+<h3 id="usage-ratio">Usage ratio<a class="headerlink" href="#usage-ratio" title="Permanent link">&para;</a></h3>
+<p>Divides the cost proportionally to a usage metric (e.g., bytes produced).
+Used for network costs and other usage-driven costs.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>ratio_i    = usage_i ÷ total_usage
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>amount_i   = total_cost × ratio_i
+</code></pre></div>
+<p><strong>Rounding:</strong> Same approach — quantize each amount, then distribute remainder.</p>
+<p><strong>Example:</strong> $100.00 split by bytes</p>
+<table>
+<thead>
+<tr>
+<th>Identity</th>
+<th>Bytes</th>
+<th>Ratio</th>
+<th>Raw amount</th>
+<th>After rounding</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>team-a</td>
+<td>500 GiB</td>
+<td>0.500</td>
+<td>$50.0000</td>
+<td>$50.0000</td>
+</tr>
+<tr>
+<td>team-b</td>
+<td>300 GiB</td>
+<td>0.300</td>
+<td>$30.0000</td>
+<td>$30.0000</td>
+</tr>
+<tr>
+<td>team-c</td>
+<td>200 GiB</td>
+<td>0.200</td>
+<td>$20.0000</td>
+<td>$20.0000</td>
+</tr>
+<tr>
+<td><strong>Total</strong></td>
+<td><strong>1000 GiB</strong></td>
+<td><strong>1.000</strong></td>
+<td><strong>$100.0000</strong></td>
+<td><strong>$100.0000</strong></td>
+</tr>
+</tbody>
+</table>
+<p>When ratios don't divide evenly:</p>
+<table>
+<thead>
+<tr>
+<th>Identity</th>
+<th>Bytes</th>
+<th>Ratio</th>
+<th>Raw amount</th>
+<th>Quantized</th>
+<th>Adjusted</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>team-a</td>
+<td>333</td>
+<td>0.3333...</td>
+<td>$33.3333...</td>
+<td>$33.3333</td>
+<td>$33.3334</td>
+</tr>
+<tr>
+<td>team-b</td>
+<td>333</td>
+<td>0.3333...</td>
+<td>$33.3333...</td>
+<td>$33.3333</td>
+<td>$33.3333</td>
+</tr>
+<tr>
+<td>team-c</td>
+<td>334</td>
+<td>0.3340...</td>
+<td>$33.4000...</td>
+<td>$33.3334</td>
+<td>$33.3333</td>
+</tr>
+<tr>
+<td><strong>Total</strong></td>
+<td><strong>1000</strong></td>
+<td></td>
+<td><strong>$100.0000</strong></td>
+<td><strong>$99.9999</strong></td>
+<td><strong>$100.0000</strong></td>
+</tr>
+</tbody>
+</table>
+<p>The $0.0001 remainder goes to the first identity. The sum always equals the
+input.</p>
+<hr />
+<h2 id="the-allocation-chain-costtype-tagging">The allocation chain (CostType tagging)<a class="headerlink" href="#the-allocation-chain-costtype-tagging" title="Permanent link">&para;</a></h2>
+<p>Every chargeback row carries a <code>cost_type</code> field: either <code>USAGE</code> or <code>SHARED</code>.
+This isn't just a label — it indicates <em>why</em> the cost was allocated that way.</p>
+<ul>
+<li><strong>USAGE</strong> — Allocated based on actual measured consumption (bytes, CFUs, queries)</li>
+<li><strong>SHARED</strong> — Allocated because no per-identity usage metric was available, so the
+  cost was spread evenly as a shared infrastructure charge</li>
+</ul>
+<h3 id="tiered-fallback-chainmodel">Tiered fallback (ChainModel)<a class="headerlink" href="#tiered-fallback-chainmodel" title="Permanent link">&para;</a></h3>
+<p>Most allocators use a tiered fallback chain. The engine tries each tier in order
+and uses the first one that succeeds (has data to work with).</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>Tier 0: Usage ratio (metrics available?)
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>    ↓ no metrics
+<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>Tier 1: Even split across active identities (identities known?)
+<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a>    ↓ no active identities
+<a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a>Tier 2: Even split across all tenant identities for the period
+<a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a>    ↓ no identities at all
+<a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a>Tier 3: Terminal — allocate to the resource ID itself
+</code></pre></div>
+<p>Each chargeback row records which tier was used in the <code>allocation_detail</code> field.
+Common values:</p>
+<table>
+<thead>
+<tr>
+<th>Detail</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>USAGE_RATIO_ALLOCATION</code></td>
+<td>Tier 0 succeeded — proportional allocation by metrics</td>
+</tr>
+<tr>
+<td><code>NO_METRICS_LOCATED</code></td>
+<td>Tier 0 failed — no metrics available, fell back to even split</td>
+</tr>
+<tr>
+<td><code>NO_ACTIVE_IDENTITIES_LOCATED</code></td>
+<td>Tier 1 failed — no active identities, used period-wide set</td>
+</tr>
+<tr>
+<td><code>NO_IDENTITIES_LOCATED</code></td>
+<td>All tiers failed — allocated to resource or UNALLOCATED</td>
+</tr>
+<tr>
+<td><code>NO_USAGE_FOR_ACTIVE_IDENTITIES</code></td>
+<td>Metrics exist but all values are zero</td>
+</tr>
+</tbody>
+</table>
+<h3 id="composite-allocation-cku-model">Composite allocation (CKU model)<a class="headerlink" href="#composite-allocation-cku-model" title="Permanent link">&para;</a></h3>
+<p>Some costs use a hybrid model that splits the cost into portions before allocating.
+The Kafka CKU model is the primary example:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>Total CKU cost: $100.00
+<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>    ├── 70% ($70.00) → Usage ratio chain (bytes in + bytes out)
+<a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a>    │   ├── Tier 0: proportional by bytes → USAGE rows
+<a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a>    │   ├── Tier 1: even split (active) → SHARED rows
+<a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a>    │   └── ...
+<a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a>    └── 30% ($30.00) → Shared chain (even split)
+<a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a>        ├── Tier 0: even split (active) → SHARED rows
+<a id="__codelineno-12-8" name="__codelineno-12-8" href="#__codelineno-12-8"></a>        └── ...
+</code></pre></div>
+<p>The ratios are configurable via <code>allocator_params.kafka_cku_usage_ratio</code> and
+<code>kafka_cku_shared_ratio</code>. Each portion runs its own fallback chain independently.</p>
+<p><strong>Example output</strong> (3 identities, $100 CKU cost, 70/30 split):</p>
+<table>
+<thead>
+<tr>
+<th>Identity</th>
+<th>Usage portion (70%)</th>
+<th>Shared portion (30%)</th>
+<th>Total</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>team-a (50% of bytes)</td>
+<td>$35.00 (USAGE)</td>
+<td>$10.00 (SHARED)</td>
+<td>$45.00</td>
+</tr>
+<tr>
+<td>team-b (30% of bytes)</td>
+<td>$21.00 (USAGE)</td>
+<td>$10.00 (SHARED)</td>
+<td>$31.00</td>
+</tr>
+<tr>
+<td>team-c (20% of bytes)</td>
+<td>$14.00 (USAGE)</td>
+<td>$10.00 (SHARED)</td>
+<td>$24.00</td>
+</tr>
+<tr>
+<td><strong>Total</strong></td>
+<td><strong>$70.00</strong></td>
+<td><strong>$30.00</strong></td>
+<td><strong>$100.00</strong></td>
+</tr>
+</tbody>
+</table>
+<p>Each row's <code>metadata</code> includes <code>composition_index</code> (0 = usage portion, 1 = shared
+portion) and <code>composition_ratio</code> (0.70 or 0.30) for auditability.</p>
+<hr />
+<h2 id="the-unallocated-identity">The UNALLOCATED identity<a class="headerlink" href="#the-unallocated-identity" title="Permanent link">&para;</a></h2>
+<p>When the engine cannot attribute a cost to any known identity, it allocates to
+a synthetic identity called <code>UNALLOCATED</code> with <code>identity_type = "system"</code>.</p>
+<p>This happens when:</p>
+<ul>
+<li><strong>No identities exist</strong> for a resource in any scope (resource_active, metrics_derived, tenant_period)</li>
+<li><strong>Allocation fails after retries</strong> — the allocation retry limit was exceeded</li>
+<li><strong>Org-wide costs</strong> — costs like <code>AUDIT_LOG_READ</code> and <code>SUPPORT</code> that apply to the
+  entire organization, not a specific resource</li>
+</ul>
+<p>UNALLOCATED is automatically excluded from tenant-period identity sets, so it
+never receives costs via even-split. It only receives costs through the terminal
+tier of a chain or through explicit org-wide allocation.</p>
+<div class="admonition note">
+<p class="admonition-title">UNALLOCATED is not an error</p>
+<p>For org-wide costs, allocating to UNALLOCATED is the correct behavior. For
+resource-specific costs, it indicates missing identity data — check your
+identity source configuration and the <code>allocation_detail</code> field on the
+chargeback rows.</p>
+</div>
+<hr />
+<h2 id="active-fraction-adjustment">Active fraction adjustment<a class="headerlink" href="#active-fraction-adjustment" title="Permanent link">&para;</a></h2>
+<p>Before allocation, costs are adjusted for resource lifecycle. If a resource was
+only active for part of the billing window (e.g., it was created mid-day or
+deleted mid-day), the engine computes an <code>active_fraction</code> and adjusts the
+cost proportionally.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>active_fraction = active_hours ÷ billing_window_hours
+<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>split_amount    = total_cost × active_fraction
+</code></pre></div>
+<p>A resource created at noon on a daily billing window has <code>active_fraction = 0.5</code>,
+so only half the daily cost is allocated. The remaining half stays with the
+billing line (it was incurred but not attributable to this resource for the
+full window).</p>
+<hr />
+<h2 id="precision-guarantees">Precision guarantees<a class="headerlink" href="#precision-guarantees" title="Permanent link">&para;</a></h2>
+<p>All cost arithmetic uses Python <code>Decimal</code> with 4-decimal precision (<code>$0.0001</code>).
+Floating-point is never used for money.</p>
+<p><strong>Guarantees:</strong></p>
+<ol>
+<li>
+<p><strong>Sum-to-total</strong> — The sum of all ChargebackRows for a billing line always
+   equals the input <code>split_amount</code> (which is <code>total_cost × active_fraction</code>).
+   Rounding remainders are distributed deterministically.</p>
+</li>
+<li>
+<p><strong>Deterministic</strong> — Given the same inputs (billing lines, identities, metrics),
+   allocation produces identical output. The remainder distribution is
+   order-dependent (first identity gets the extra cent), and identity lists are
+   sorted before allocation.</p>
+</li>
+<li>
+<p><strong>Auditable</strong> — Every row includes <code>allocation_method</code> (even_split, usage_ratio,
+   terminal), <code>allocation_detail</code> (which tier fired), and <code>metadata</code> (chain_tier,
+   composition_index, composition_ratio, usage ratio per identity).</p>
+</li>
+</ol>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.sections", "navigation.top", "navigation.indexes", "navigation.expand", "search.suggest", "search.highlight", "content.code.copy"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+        <script src="../../javascripts/external-links.js"></script>
+      
+    
+  </body>
+</html>
