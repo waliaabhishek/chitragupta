@@ -1,7 +1,8 @@
 services:
   chitragupta:
     # The chargeback engine — pulled from GHCR.
-    image: ghcr.io/waliaabhishek/chitragupta:latest
+    container_name: chitragupta
+    image: ghcr.io/waliaabhishek/chitragupta:${CHITRAGUPTA_VERSION:-latest}
     volumes:
       # Mount config read-only so the container cannot modify it.
       - ./config.yaml:/app/config/config.yaml:ro
@@ -26,6 +27,7 @@ services:
 
   grafana:
     # Grafana reads the SQLite database directly from the shared volume.
+    container_name: chitragupta-grafana
     image: grafana/grafana:12.4.0
     ports:
       # Grafana UI — access at http://localhost:3000
@@ -51,7 +53,8 @@ services:
 
   chitragupta-ui:
     # The React frontend served by nginx — pulled from GHCR.
-    image: ghcr.io/waliaabhishek/chitragupta-ui:latest
+    container_name: chitragupta-ui
+    image: ghcr.io/waliaabhishek/chitragupta-ui:${CHITRAGUPTA_VERSION:-latest}
     ports:
       # Frontend UI — access at http://localhost:8081
       - "8081:80"

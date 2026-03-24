@@ -113,7 +113,7 @@ jobs:
       - name: Generate release notes
         run: |
           uv run git-cliff --config cliff.toml --latest --strip header --output release-notes.md
-          printf '\n## Compatibility\n\n- **Grafana**: 12.4.0\n- **Required plugin**: `frser-sqlite-datasource`\n' >> release-notes.md
+          printf '\n## Docker Images\n\n```bash\ndocker pull ghcr.io/${{ github.repository_owner }}/chitragupta:${{ github.ref_name }}\ndocker pull ghcr.io/${{ github.repository_owner }}/chitragupta-ui:${{ github.ref_name }}\n```\n\nPin in your `.env`:\n```\nCHITRAGUPTA_VERSION=${{ github.ref_name }}\n```\n\n## Compatibility\n\n- **Grafana**: 12.4.0\n- **Required plugin**: `frser-sqlite-datasource`\n' >> release-notes.md
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
