@@ -1945,8 +1945,14 @@ matters. 49 tests, 100% coverage. (<a href="https://github.com/waliaabhishek/chi
 Excludes backlog/, .claude/, ccloud-chargeback-helper-reference/, CLAUDE.md from git. (<a href="https://github.com/waliaabhishek/chitragupta/commit/1d145b79dd7eb5a27d165b8bec3d40072d6eb56a">1d145b7</a>)</p>
 <h3 id="documentation">Documentation<a class="headerlink" href="#documentation" title="Permanent link">&para;</a></h3>
 <ul>
-<li>Docs: Make Docker Compose the primary quickstart path</li>
+<li>Docs: Wipe CHANGELOG.md for v2 clean slate</li>
 </ul>
+<p>Old changelog contained ~282 commit URLs pointing to the pre-rename
+repo name. Since v2 is a ground-up rewrite, a clean starting point
+is more appropriate than rewriting history. cliff.toml already
+generates correct URLs for new entries.</p>
+<p>Closes TASK-152. (<a href="https://github.com/waliaabhishek/chitragupta/commit/e6526d45e003daae06195c3d6f9ed2ad3e29d52f">e6526d4</a>)
+- Docs: Make Docker Compose the primary quickstart path</p>
 <p>Rewrite quickstart to lead with Docker Compose instead of Python/uv. The full
 walkthrough now goes: create CCloud service account → get API key → docker
 compose up. Python/uv is documented as an alternative at the bottom.</p>
