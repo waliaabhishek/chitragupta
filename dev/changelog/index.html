@@ -1364,12 +1364,13 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased">[Unreleased]<a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
-<li>
-<p>Docker: Add version pinning via CHITRAGUPTA_VERSION and explicit container names</p>
-</li>
-<li>
-<p>Example compose files now use ${CHITRAGUPTA_VERSION:-latest} for image tags</p>
-</li>
+<li>Tests: Suppress 20 harmless pytest warnings via filterwarnings</li>
+</ul>
+<p>Filter SAWarning from Alembic batch-mode PK mismatch on SQLite temp
+tables and ResourceWarning from GC'd in-memory SQLite connections. (<a href="https://github.com/waliaabhishek/chitragupta/commit/de4a0b062f23a4b92856c58141dc46fba9229880">de4a0b0</a>)
+- Docker: Add version pinning via CHITRAGUPTA_VERSION and explicit container names</p>
+<ul>
+<li>Example compose files now use ${CHITRAGUPTA_VERSION:-latest} for image tags</li>
 <li>Added CHITRAGUPTA_VERSION=latest to all .env.example files</li>
 <li>Added container_name to all services to avoid -1 suffix in logs</li>
 <li>Release notes now include Docker pull commands and .env pin instructions (<a href="https://github.com/waliaabhishek/chitragupta/commit/e20ae4340a8d221db2495f2f3abb84fd77f44618">e20ae43</a>)</li>
