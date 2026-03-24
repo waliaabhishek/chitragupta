@@ -1,4 +1,4 @@
-# Chitragupta
+# Chitragupta (formerly ccloud-chargeback-helper)
 
 [![CI](https://github.com/waliaabhishek/chitragupta/actions/workflows/ci.yml/badge.svg)](https://github.com/waliaabhishek/chitragupta/actions/workflows/ci.yml)
 [![codecov](https://img.shields.io/codecov/c/github/waliaabhishek/chitragupta)](https://codecov.io/gh/waliaabhishek/chitragupta)
@@ -13,13 +13,31 @@ Multi-ecosystem infrastructure cost chargeback engine. Allocates costs to teams 
 The goal is to support multiple ecosystems and custom cost allocation strategies. 
 This was originally built for Confluent Cloud but has been extended to support other ecosystems. 
 
-## Features
+> [!IMPORTANT] 
+> The v2 version is a complete rewrite from ground up for a full plugin architecture, multi-tenancy, FastAPI, proper storage layer with mitigations, emitter framework, docs site. 
+> Essentially an entirely new system with a lot more features and a much better performance profile. 
+> The goal is to keep adding more features and improvements as I go along and as more requests come in.
 
-- Pulls billing data from vendor APIs or YAML cost models
-- Discovers resources and identities via Prometheus or admin APIs
-- Allocates costs using configurable strategies (even split, usage ratio)
-- REST API for querying chargeback data and triggering pipeline runs
-- CSV emitter built-in; custom emitters via the `Emitter` protocol
+## New Features
+
+- About 2.5 times faster performance for chargeback calculations and persistence compared to V1.
+- Full documentation website for ease of use.
+- Pulls billing data from APIs or YAML cost models
+- Discovers resources and identities using plugin specific implementations. 
+- Allocation strategies are now pluggable and can be customized for each SKU type.
+- Evolving REST API for querying chargeback data and triggering pipeline runs.
+- New UI (still in progress) that does need Grafana or external viewers.
+- Multi emitter support for different output formats and more coming as needed/requested in the future.
+- Nascent support for Self Managed Kafka styled cost models.
+
+## Breaking Changes from V1
+
+- Config YAML format has changed substantially to support multiple ecosystems and custom cost allocation strategies.
+- Plugin based architecture for adding new ecosystems, cost allocation strategies, emitters and more.
+- Code now has internal persistence layer using SQLite(default) instead of in-memory cache.
+- Prometheus metrics have been removed in favor of a database-backed retention.
+- Grafana directly queries the database instead of Prometheus. No prometheus instance or script to write are needed anymore, yay!
+
 
 ## Supported Ecosystems
 
@@ -65,13 +83,7 @@ Each tenant maps to one ecosystem plugin. The orchestrator runs a per-tenant, pe
 
 ## Documentation
 
-Full documentation is in [`docs/`](docs/):
-
-- [Getting Started](docs/getting-started/index.md) — prerequisites, quickstart, first run
-- [Architecture](docs/architecture/index.md) — plugin system, data flow, identity resolution
-- [API Reference](docs/api-reference.md) — all REST endpoints, parameters, and response schemas
-- [Configuration Reference](docs/configuration/index.md) — all settings and ecosystem options
-- [Operations](docs/operations/index.md) — deployment, monitoring, troubleshooting
+Full documentation is linked in the website.
 
 ## Development
 
@@ -91,4 +103,3 @@ uv run mypy src
 
 - Python 3.14+
 - [uv](https://docs.astral.sh/uv/) package manager
-
