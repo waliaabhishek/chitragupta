@@ -7,21 +7,22 @@ import types
 import pytest
 
 from core.engine.orchestrator import _load_identity_resolver
+from core.plugin.protocols import IdentityResolver, ServiceHandler
 
 
-def _make_six_param_resolver():
-    """Return a plain function with exactly 6 positional params (matching resolve_identities)."""
+def _make_seven_param_resolver():
+    """Return a plain function with exactly 7 positional params (matching resolve_identities)."""
 
-    def resolver(tenant_id, resource_id, billing_timestamp, billing_duration, metrics_data, uow):
+    def resolver(tenant_id, resource_id, billing_timestamp, billing_duration, metrics_data, uow, context=None):
         pass
 
     return resolver
 
 
 class TestLoadIdentityResolverValidPath:
-    def test_valid_callable_six_params_loads_successfully(self) -> None:
-        """Valid callable with 6 positional params loads and is stored-able in _identity_overrides."""
-        fn = _make_six_param_resolver()
+    def test_valid_callable_seven_params_loads_successfully(self) -> None:
+        """Valid callable with 7 positional params loads and is stored-able in _identity_overrides."""
+        fn = _make_seven_param_resolver()
         mod = types.ModuleType("_test_ir_valid_mod")
         mod.valid_resolver = fn  # type: ignore[attr-defined]
         sys.modules["_test_ir_valid_mod"] = mod
@@ -60,27 +61,29 @@ class TestLoadIdentityResolverErrors:
         finally:
             del sys.modules["_test_ir_five_params_mod"]
 
-    def test_wrong_param_count_seven_raises_signature_mismatch(self) -> None:
-        """Callable with 7 positional params raises TypeError with 'Signature mismatch'."""
-        mod = types.ModuleType("_test_ir_seven_params_mod")
+    def test_wrong_param_count_six_raises_signature_mismatch(self) -> None:
+        """Callable with 6 positional params raises TypeError with 'Signature mismatch'."""
+        mod = types.ModuleType("_test_ir_six_params_mod")
 
-        def seven_params(a, b, c, d, e, f, g):
+        def six_params(a, b, c, d, e, f):
             pass
 
-        mod.seven_params = seven_params  # type: ignore[attr-defined]
-        sys.modules["_test_ir_seven_params_mod"] = mod
+        mod.six_params = six_params  # type: ignore[attr-defined]
+        sys.modules["_test_ir_six_params_mod"] = mod
         try:
             with pytest.raises(TypeError, match="Signature mismatch"):
-                _load_identity_resolver("_test_ir_seven_params_mod:seven_params")
+                _load_identity_resolver("_test_ir_six_params_mod:six_params")
         finally:
-            del sys.modules["_test_ir_seven_params_mod"]
+            del sys.modules["_test_ir_six_params_mod"]
 
     def test_uninstantiated_class_raises_type_error_is_a_class(self) -> None:
         """Uninstantiated class raises TypeError with 'is a class' message."""
         mod = types.ModuleType("_test_ir_bare_class_mod")
 
         class SomeResolver:
-            def __call__(self, tenant_id, resource_id, billing_timestamp, billing_duration, metrics_data, uow):
+            def __call__(
+                self, tenant_id, resource_id, billing_timestamp, billing_duration, metrics_data, uow, context=None
+            ):
                 pass
 
         mod.SomeResolver = SomeResolver  # type: ignore[attr-defined]
@@ -101,6 +104,25 @@ class TestLoadIdentityResolverErrors:
                 _load_identity_resolver("_test_ir_noncallable_mod:not_a_function")
         finally:
             del sys.modules["_test_ir_noncallable_mod"]
+
+
+class TestLoadIdentityResolverProtocol:
+    def test_isinstance_identity_resolver_true_for_seven_param_callable(self) -> None:
+        """isinstance check returns True for a 7-param callable (runtime_checkable protocol)."""
+        fn = _make_seven_param_resolver()
+        assert isinstance(fn, IdentityResolver)
+
+    def test_protocol_params_match_service_handler(self) -> None:
+        """IdentityResolver.__call__ and ServiceHandler.resolve_identities share the same non-self params."""
+        resolver_params = [
+            name for name, _ in inspect.signature(IdentityResolver.__call__).parameters.items() if name != "self"
+        ]
+        handler_params = [
+            name
+            for name, _ in inspect.signature(ServiceHandler.resolve_identities).parameters.items()
+            if name != "self"
+        ]
+        assert resolver_params == handler_params
 
 
 class TestLoadIdentityResolverStructural:

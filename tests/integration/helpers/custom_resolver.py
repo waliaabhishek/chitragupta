@@ -18,6 +18,7 @@ def my_resolver(
     billing_duration: timedelta,
     metrics_data: dict[str, list[MetricRow]] | None,
     uow: Any,
+    context: Any | None = None,
 ) -> IdentityResolution:
     """Custom resolver that returns a fixed 'custom-resolved' identity."""
     ra = IdentitySet()

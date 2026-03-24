@@ -68,6 +68,9 @@ class IdentityResolver(Protocol):
     Matches the parameter signature of ``ServiceHandler.resolve_identities``
     but without ``self`` — the loaded object must be a plain function or
     callable instance, not an uninstantiated class.
+
+    The ``context`` parameter is optional and carries pre-fetched identity/resource
+    caches. Include it (defaulting to ``None``) to match the full protocol signature.
     """
 
     def __call__(
@@ -78,6 +81,7 @@ class IdentityResolver(Protocol):
         billing_duration: timedelta,
         metrics_data: dict[str, list[MetricRow]] | None,
         uow: UnitOfWork,
+        context: ResolveContext | None = None,
     ) -> IdentityResolution: ...
 
 
