@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- Rename: All `chitragupt` references renamed to `chitragupta` across entire codebase (38 files, ~130+ occurrences) — package name, CLI entrypoint, Prometheus metric names, Docker image names, env vars, plugin prefix, and all documentation
+
+### Removed
+- Remove `ccloud-chargeback-helper-reference/` from `.gitignore` and `.dockerignore` — dev-time artifact no longer needed post-v2
+
+### Breaking Changes
+- **Python package**: `pip install chitragupt` → `pip install chitragupta`
+- **CLI binary**: `chitragupt` command → `chitragupta`
+- **Prometheus metrics**: `chitragupt_chargeback_amount`, `chitragupt_billing_amount`, `chitragupt_resource_active`, `chitragupt_identity_active` → `chitragupta_*` equivalents — all dashboards and alerts on old metric names will break
+- **Docker images**: `chitragupt` / `chitragupt-ui` → `chitragupta` / `chitragupta-ui` — deployments pulling old GHCR tags will break
+- **Collector env vars**: `CHITRAGUPT_METRICS_URL`, `CHITRAGUPT_HEALTH_URL`, `CHITRAGUPT_METRICS_FORMAT` → `CHITRAGUPTA_*` equivalents
+- **Plugin prefix**: third-party plugins named `chitragupt_plugin_*` must be renamed to `chitragupta_plugin_*`
+
+
 ## [0.5.3] - 2026-03-23
 
 ### Changed

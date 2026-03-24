@@ -35,7 +35,7 @@ class TestCreateApp:
     def test_app_has_title_and_version(self) -> None:
         settings = _make_settings()
         app = create_app(settings)
-        assert app.title == "Chitragupt API"
+        assert app.title == "Chitragupta API"
         assert app.version == get_version()
 
     def test_app_has_all_routers_registered(self) -> None:

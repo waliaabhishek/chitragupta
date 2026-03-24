@@ -147,8 +147,8 @@ docker-logs:
 	cd examples/ccloud-full && docker compose logs -f
 
 docker-push:
-	docker buildx build --platform $(PLATFORMS) -t $(REGISTRY)/chitragupt:latest --push .
-	docker buildx build --platform $(PLATFORMS) -t $(REGISTRY)/chitragupt-ui:latest --push frontend/
+	docker buildx build --platform $(PLATFORMS) -t $(REGISTRY)/chitragupta:latest --push .
+	docker buildx build --platform $(PLATFORMS) -t $(REGISTRY)/chitragupta-ui:latest --push frontend/
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Cleanup

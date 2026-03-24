@@ -20,7 +20,7 @@ class TestGetVersion:
 
         from core.api import get_version
 
-        with patch("core.api._pkg_version", side_effect=PackageNotFoundError("chitragupt")):
+        with patch("core.api._pkg_version", side_effect=PackageNotFoundError("chitragupta")):
             result = get_version()
         assert result == "0.0.0-dev"
 

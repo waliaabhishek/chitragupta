@@ -104,11 +104,11 @@ storage:
 ```
 
 !!! warning "When SQLite won't work"
-    If you run the worker and API server as separate processes (`chitragupt worker`
-    and `chitragupt api` in different containers), they both need to write to the
+    If you run the worker and API server as separate processes (`chitragupta worker`
+    and `chitragupta api` in different containers), they both need to write to the
     same database. SQLite doesn't handle concurrent writers well. Use PostgreSQL.
 
-    If everything runs in a single process (`chitragupt worker --with-api`), SQLite
+    If everything runs in a single process (`chitragupta worker --with-api`), SQLite
     is fine.
 
 ---

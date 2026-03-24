@@ -12,12 +12,12 @@
 
 ```ini
 [Unit]
-Description=Chitragupt Worker
+Description=Chitragupta Worker
 After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=/opt/chitragupt
+WorkingDirectory=/opt/chitragupta
 ExecStart=uv run python src/main.py \
     --config-file /etc/chargeback/config.yaml \
     --mode worker
@@ -56,8 +56,8 @@ See the [Quickstart](../getting-started/quickstart.md) for a step-by-step walkth
 Build and run directly if you don't need Grafana or the UI:
 
 ```bash
-docker build -t chitragupt .
-docker run -v ./config:/app/config:ro -v ./data:/app/data chitragupt \
+docker build -t chitragupta .
+docker run -v ./config:/app/config:ro -v ./data:/app/data chitragupta \
   --config-file /app/config/config.yaml --mode both
 ```
 
@@ -66,7 +66,7 @@ docker run -v ./config:/app/config:ro -v ./data:/app/data chitragupt \
 Pass secrets via environment — never hardcode in YAML:
 
 ```bash
-docker run -e CCLOUD_API_KEY=... -e CCLOUD_API_SECRET=... chitragupt
+docker run -e CCLOUD_API_KEY=... -e CCLOUD_API_SECRET=... chitragupta
 ```
 
 ## API server
@@ -154,15 +154,15 @@ The script scrapes `/metrics` in OpenMetrics format and writes TSDB blocks via `
 
 | Variable | Description |
 |---|---|
-| `CHITRAGUPT_METRICS_URL` | URL of the `/metrics` endpoint, e.g. `http://localhost:9090/metrics` |
-| `CHITRAGUPT_HEALTH_URL` | URL of the `/health` endpoint, e.g. `http://localhost:8080/health` |
+| `CHITRAGUPTA_METRICS_URL` | URL of the `/metrics` endpoint, e.g. `http://localhost:9090/metrics` |
+| `CHITRAGUPTA_HEALTH_URL` | URL of the `/health` endpoint, e.g. `http://localhost:8080/health` |
 | `TSDB_OUT_DIR` | Output directory for TSDB blocks (default: `/data/prometheus`) |
 
 **Optional environment variables:**
 
 | Variable | Default | Description |
 |---|---|---|
-| `CHITRAGUPT_METRICS_FORMAT` | `openmetrics` | Must be `openmetrics`. Setting `text` causes immediate exit — Prometheus text format uses millisecond timestamps that `promtool` misinterprets. |
+| `CHITRAGUPTA_METRICS_FORMAT` | `openmetrics` | Must be `openmetrics`. Setting `text` causes immediate exit — Prometheus text format uses millisecond timestamps that `promtool` misinterprets. |
 
 **Polling modes:**
 
@@ -171,7 +171,7 @@ The script scrapes `/metrics` in OpenMetrics format and writes TSDB blocks via `
 | Catch-up (fast) | 1 second | Most recent metric timestamp is older than 5 days |
 | Current (slow) | 600 seconds | Most recent metric timestamp is recent |
 
-The script waits for the health endpoint to return HTTP 200 before scraping. Run it as a sidecar alongside the Chitragupt worker.
+The script waits for the health endpoint to return HTTP 200 before scraping. Run it as a sidecar alongside the Chitragupta worker.
 
 ## Upgrading
 

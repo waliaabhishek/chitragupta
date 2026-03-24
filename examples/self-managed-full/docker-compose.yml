@@ -1,12 +1,12 @@
 services:
-  chitragupt:
+  chitragupta:
     # The chargeback engine — pulled from GHCR.
-    image: ghcr.io/waliaabhishek/chitragupt:latest
+    image: ghcr.io/waliaabhishek/chitragupta:latest
     volumes:
       # Mount config read-only so the container cannot modify it.
       - ./config.yaml:/app/config/config.yaml:ro
       # Named volume shared with Grafana so it can read the SQLite database directly.
-      - chitragupt-data:/app/data:rw
+      - chitragupta-data:/app/data:rw
     env_file:
       # Populated from .env.example — copy to .env and fill in your credentials.
       - .env
@@ -40,28 +40,28 @@ services:
     volumes:
       # Pre-provisioned dashboards and datasource — shared across all examples.
       - ../shared/grafana/provisioning:/etc/grafana/provisioning:ro
-      # Read-only access to the chargeback database written by chitragupt.
+      # Read-only access to the chargeback database written by chitragupta.
       # Path inside container must match the datasource.yml path: /var/lib/grafana/data/chargeback/chargeback.db
-      - chitragupt-data:/var/lib/grafana/data/chargeback:ro
+      - chitragupta-data:/var/lib/grafana/data/chargeback:ro
     restart: unless-stopped
     depends_on:
-      chitragupt:
-        # Wait for chitragupt's healthcheck to pass before starting Grafana.
+      chitragupta:
+        # Wait for chitragupta's healthcheck to pass before starting Grafana.
         condition: service_healthy
 
-  chitragupt-ui:
+  chitragupta-ui:
     # The React frontend served by nginx — pulled from GHCR.
-    image: ghcr.io/waliaabhishek/chitragupt-ui:latest
+    image: ghcr.io/waliaabhishek/chitragupta-ui:latest
     ports:
       # Frontend UI — access at http://localhost:8081
       - "8081:80"
     restart: unless-stopped
     depends_on:
-      chitragupt:
-        # Wait for chitragupt's healthcheck to pass — UI proxies API calls to it.
+      chitragupta:
+        # Wait for chitragupta's healthcheck to pass — UI proxies API calls to it.
         condition: service_healthy
 
 volumes:
-  # Named volume shared between chitragupt (writes) and grafana (reads).
+  # Named volume shared between chitragupta (writes) and grafana (reads).
   # Docker manages the lifecycle — data persists across container restarts.
-  chitragupt-data:
+  chitragupta-data:

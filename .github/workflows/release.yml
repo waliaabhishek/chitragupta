@@ -40,8 +40,8 @@ jobs:
           build-args: |
             APP_VERSION=${{ github.ref_name }}
           tags: |
-            ghcr.io/${{ github.repository_owner }}/chitragupt:${{ github.ref_name }}
-            ghcr.io/${{ github.repository_owner }}/chitragupt:latest
+            ghcr.io/${{ github.repository_owner }}/chitragupta:${{ github.ref_name }}
+            ghcr.io/${{ github.repository_owner }}/chitragupta:latest
 
   docker-frontend:
     needs: test
@@ -69,8 +69,8 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           tags: |
-            ghcr.io/${{ github.repository_owner }}/chitragupt-ui:${{ github.ref_name }}
-            ghcr.io/${{ github.repository_owner }}/chitragupt-ui:latest
+            ghcr.io/${{ github.repository_owner }}/chitragupta-ui:${{ github.ref_name }}
+            ghcr.io/${{ github.repository_owner }}/chitragupta-ui:latest
 
   release:
     needs: [docker-backend, docker-frontend]

@@ -1,12 +1,12 @@
 services:
-  chitragupt:
+  chitragupta:
     # The chargeback engine — pulled from GHCR.
-    image: ghcr.io/waliaabhishek/chitragupt:latest
+    image: ghcr.io/waliaabhishek/chitragupta:latest
     volumes:
       # Mount config read-only so the container cannot modify it.
       - ./config.yaml:/app/config/config.yaml:ro
       # Named volume shared with Grafana so it can read the SQLite database directly.
-      - chitragupt-data:/app/data:rw
+      - chitragupta-data:/app/data:rw
     env_file:
       # Populated from .env.example — copy to .env and fill in your credentials.
       - .env
@@ -18,7 +18,7 @@ services:
 
   grafana:
     # Grafana reads the SQLite database directly from the shared volume.
-    # No HTTP dependency on chitragupt — it will show data once the first pipeline run completes.
+    # No HTTP dependency on chitragupta — it will show data once the first pipeline run completes.
     image: grafana/grafana:12.4.0
     ports:
       # Grafana UI — access at http://localhost:3000
@@ -33,14 +33,14 @@ services:
     volumes:
       # Pre-provisioned dashboards and datasource — shared across all examples.
       - ../shared/grafana/provisioning:/etc/grafana/provisioning:ro
-      # Read-only access to the chargeback database written by chitragupt.
+      # Read-only access to the chargeback database written by chitragupta.
       # Path inside container must match the datasource.yml path: /var/lib/grafana/data/chargeback/chargeback.db
-      - chitragupt-data:/var/lib/grafana/data/chargeback:ro
+      - chitragupta-data:/var/lib/grafana/data/chargeback:ro
     restart: unless-stopped
     # No depends_on: Grafana reads SQLite directly and will show data once the DB is populated.
     # restart: unless-stopped handles reconnection automatically.
 
 volumes:
-  # Named volume shared between chitragupt (writes) and grafana (reads).
+  # Named volume shared between chitragupta (writes) and grafana (reads).
   # Docker manages the lifecycle — data persists across container restarts.
-  chitragupt-data:
+  chitragupta-data:

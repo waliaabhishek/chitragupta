@@ -1,6 +1,6 @@
 # ccloud-grafana example
 
-Runs the Chitragupt chargeback engine in **worker mode** alongside Grafana. No REST API, no frontend — just the pipeline writing to SQLite and Grafana reading from it.
+Runs the Chitragupta chargeback engine in **worker mode** alongside Grafana. No REST API, no frontend — just the pipeline writing to SQLite and Grafana reading from it.
 
 **Use this when:** You want cost dashboards with minimal infrastructure. No API consumers needed.
 
@@ -8,7 +8,7 @@ Runs the Chitragupt chargeback engine in **worker mode** alongside Grafana. No R
 
 | Service | Port | Description |
 |---------|------|-------------|
-| chitragupt | — | Pipeline worker (no HTTP server) |
+| chitragupta | — | Pipeline worker (no HTTP server) |
 | grafana | 3000 | Pre-provisioned cost dashboards |
 
 ## Prerequisites
@@ -53,12 +53,12 @@ Uncomment the `flink:` block in `config.yaml` and set the Flink credentials in `
 ## Troubleshooting
 
 **Dashboards show "No data"**
-- The pipeline must complete at least one run first. Check: `docker compose logs chitragupt`
+- The pipeline must complete at least one run first. Check: `docker compose logs chitragupta`
 - Verify the Grafana time range covers dates with billing data (use "Last 90 days")
 - Test the datasource: Connections > Data Sources > Chargeback SQLite > Test
 
 **Engine exits immediately**
-- Check credentials: `docker compose logs chitragupt`
+- Check credentials: `docker compose logs chitragupta`
 - Common cause: invalid API key or missing BillingAdmin role
 
 **Grafana won't start**

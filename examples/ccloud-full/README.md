@@ -8,9 +8,9 @@ Full stack for Confluent Cloud: chargeback engine (pipeline + REST API), Grafana
 
 | Service | Port | Description |
 |---------|------|-------------|
-| chitragupt | 8080 | REST API + pipeline worker |
+| chitragupta | 8080 | REST API + pipeline worker |
 | grafana | 3000 | Pre-provisioned cost dashboards |
-| chitragupt-ui | 8081 | Interactive frontend UI |
+| chitragupta-ui | 8081 | Interactive frontend UI |
 
 ## Prerequisites
 
@@ -61,8 +61,8 @@ Add additional entries under `tenants:` in `config.yaml`. Each tenant can have i
 ## Troubleshooting
 
 **Grafana or UI won't start**
-- Both wait for the chitragupt healthcheck — if chitragupt fails to start, they won't come up
-- Check: `docker compose logs chitragupt`
+- Both wait for the chitragupta healthcheck — if chitragupta fails to start, they won't come up
+- Check: `docker compose logs chitragupta`
 
 **Dashboards show "No data"**
 - The pipeline must complete at least one run first
@@ -70,7 +70,7 @@ Add additional entries under `tenants:` in `config.yaml`. Each tenant can have i
 - Test the datasource: Connections > Data Sources > Chargeback SQLite > Test
 
 **Engine exits immediately**
-- Check credentials: `docker compose logs chitragupt`
+- Check credentials: `docker compose logs chitragupta`
 - Common cause: invalid API key or missing BillingAdmin role
 
 **Port conflicts**

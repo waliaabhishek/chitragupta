@@ -1,7 +1,7 @@
-# Chitragupt
+# Chitragupta
 
-[![CI](https://github.com/waliaabhishek/chitragupt/actions/workflows/ci.yml/badge.svg)](https://github.com/waliaabhishek/chitragupt/actions/workflows/ci.yml)
-[![codecov](https://img.shields.io/codecov/c/github/waliaabhishek/chitragupt)](https://codecov.io/gh/waliaabhishek/chitragupt)
+[![CI](https://github.com/waliaabhishek/chitragupta/actions/workflows/ci.yml/badge.svg)](https://github.com/waliaabhishek/chitragupta/actions/workflows/ci.yml)
+[![codecov](https://img.shields.io/codecov/c/github/waliaabhishek/chitragupta)](https://codecov.io/gh/waliaabhishek/chitragupta)
 [![Python 3.14+](https://img.shields.io/badge/python-3.14%2B-blue)](https://www.python.org/downloads/)
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 [![mypy](https://img.shields.io/badge/type--checked-mypy-blue)](https://mypy-lang.org/)
@@ -32,8 +32,8 @@ This was originally built for Confluent Cloud but has been extended to support o
 ## Quick Start
 
 ```bash
-git clone https://github.com/waliaabhishek/chitragupt.git
-cd chitragupt/examples/ccloud-full
+git clone https://github.com/waliaabhishek/chitragupta.git
+cd chitragupta/examples/ccloud-full
 
 # Fill in your CCloud API credentials
 cp .env.example .env

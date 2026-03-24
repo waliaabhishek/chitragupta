@@ -1,5 +1,5 @@
 # =============================================================================
-# Chitragupt — Self-Managed Kafka Full Stack Example
+# Chitragupta — Self-Managed Kafka Full Stack Example
 #
 # Runs the pipeline + REST API + Grafana dashboards + frontend UI for
 # on-prem / self-managed Kafka. The engine reads Prometheus metrics (Kafka JMX
@@ -100,7 +100,7 @@ tenants:
       # backend: sqlmodel uses SQLAlchemy + SQLite (or Postgres if you change the connection string).
       backend: sqlmodel
       # connection_string: path to the SQLite file inside the container.
-      # /app/data/ is mounted from the chitragupt-data named volume.
+      # /app/data/ is mounted from the chitragupta-data named volume.
       # Each tenant must use a separate database file.
       # PostgreSQL alternative: "postgresql+psycopg2://user:pass@host:5432/kafka_dc1"
       connection_string: "sqlite:////app/data/chargeback.db"
@@ -108,7 +108,7 @@ tenants:
     plugin_settings:
       # ── Cluster identity ───────────────────────────────────────────────────
       # cluster_id: identifier used internally to reference this cluster's resources.
-      # Does not need to match the Kafka cluster.id property — it's for Chitragupt's DB only.
+      # Does not need to match the Kafka cluster.id property — it's for Chitragupta's DB only.
       cluster_id: kafka-dc1
 
       # broker_count: number of brokers in this cluster.

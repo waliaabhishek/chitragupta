@@ -20,7 +20,7 @@ body = """
 ### {{ group | upper_first }}
 {% for commit in commits %}\
 - {{ commit.message | upper_first | trim }} \
-([{{ commit.id | truncate(length=7, end="") }}](https://github.com/waliaabhishek/chitragupt/commit/{{ commit.id }}))\
+([{{ commit.id | truncate(length=7, end="") }}](https://github.com/waliaabhishek/chitragupta/commit/{{ commit.id }}))\
 {% if commit.breaking %} **BREAKING**{% endif %}
 {% endfor %}
 {% endfor %}\n

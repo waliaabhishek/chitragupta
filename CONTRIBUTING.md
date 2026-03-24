@@ -1,4 +1,4 @@
-# Contributing to Chitragupt
+# Contributing to Chitragupta
 
 ## Commit Message Convention
 

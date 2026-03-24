@@ -89,5 +89,5 @@ def test_git_cliff_integration() -> None:
         for header in ("Fixed", "Changed", "Documentation", "Added", "Features", "Security", "Deprecated", "Removed")
     )
     if has_section_headers:
-        assert "https://github.com/waliaabhishek/chitragupt/commit/" in output, "Commit links are not full GitHub URLs"
+        assert "https://github.com/waliaabhishek/chitragupta/commit/" in output, "Commit links are not full GitHub URLs"
     assert "Update CHANGELOG" not in output, "Meta CHANGELOG update commit appeared in output — skip parser not working"

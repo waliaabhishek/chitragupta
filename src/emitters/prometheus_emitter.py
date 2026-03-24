@@ -82,7 +82,7 @@ class PrometheusEmitter:
         with PrometheusEmitter._col_lock:
             if PrometheusEmitter._chargeback_col is None:
                 PrometheusEmitter._chargeback_col = _TimestampedGaugeCollector(
-                    "chitragupt_chargeback_amount",
+                    "chitragupta_chargeback_amount",
                     "Chargeback cost amount per identity/resource/product combination",
                     [
                         "tenant_id",
@@ -95,17 +95,17 @@ class PrometheusEmitter:
                     ],
                 )
                 PrometheusEmitter._billing_col = _TimestampedGaugeCollector(
-                    "chitragupt_billing_amount",
+                    "chitragupta_billing_amount",
                     "Billing total cost per resource/product combination",
                     ["tenant_id", "ecosystem", "resource_id", "product_type", "product_category"],
                 )
                 PrometheusEmitter._resource_col = _TimestampedGaugeCollector(
-                    "chitragupt_resource_active",
+                    "chitragupta_resource_active",
                     "Active resources at billing date (1 = active)",
                     ["tenant_id", "ecosystem", "resource_id", "resource_type"],
                 )
                 PrometheusEmitter._identity_col = _TimestampedGaugeCollector(
-                    "chitragupt_identity_active",
+                    "chitragupta_identity_active",
                     "Active identities at billing date (1 = active)",
                     ["tenant_id", "ecosystem", "identity_id", "identity_type"],
                 )

@@ -33,7 +33,7 @@ _DEFAULT_PLUGINS_PATH = Path(__file__).parent / "plugins"
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Chitragupt")
+    parser = argparse.ArgumentParser(description="Chitragupta")
     parser.add_argument(
         "--version",
         action="version",

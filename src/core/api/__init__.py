@@ -7,7 +7,7 @@ from importlib.metadata import version as _pkg_version
 def get_version() -> str:
     """Return the installed package version, or '0.0.0-dev' when running from source."""
     try:
-        return _pkg_version("chitragupt")
+        return _pkg_version("chitragupta")
     except PackageNotFoundError:
         return "0.0.0-dev"
 

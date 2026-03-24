@@ -34,7 +34,7 @@ uv run alembic -c src/core/storage/migrations/alembic.ini history
 For Docker deployments, run inside the container:
 
 ```bash
-docker exec chitragupt python -m alembic -c src/core/storage/migrations/alembic.ini current
+docker exec chitragupta python -m alembic -c src/core/storage/migrations/alembic.ini current
 ```
 
 ## Upgrade procedure
@@ -54,22 +54,22 @@ docker compose build       # if building locally
 docker compose up -d
 
 # Verify
-docker compose logs -f chitragupt | head -50
+docker compose logs -f chitragupta | head -50
 curl http://localhost:8080/health
 ```
 
 ### Docker (standalone)
 
 ```bash
-docker stop chitragupt
-docker rm chitragupt
-docker pull your-registry/chitragupt:new-version
-docker run -d --name chitragupt \
+docker stop chitragupta
+docker rm chitragupta
+docker pull your-registry/chitragupta:new-version
+docker run -d --name chitragupta \
   -v ./config:/app/config:ro \
   -v ./data:/app/data:rw \
   -e CCLOUD_API_KEY=... \
   -e CCLOUD_API_SECRET=... \
-  your-registry/chitragupt:new-version \
+  your-registry/chitragupta:new-version \
   --config-file /app/config/config.yaml --mode both
 ```
 
@@ -77,20 +77,20 @@ docker run -d --name chitragupt \
 
 ```bash
 # Stop the service
-sudo systemctl stop chitragupt
+sudo systemctl stop chitragupta
 
 # Update the code
-cd /opt/chitragupt
+cd /opt/chitragupta
 git pull origin main   # or checkout a specific tag
 
 # Update dependencies
 uv sync
 
 # Start — migrations run automatically
-sudo systemctl start chitragupt
+sudo systemctl start chitragupta
 
 # Verify
-sudo journalctl -u chitragupt -f | head -50
+sudo journalctl -u chitragupta -f | head -50
 curl http://localhost:8080/health
 ```
 
@@ -149,4 +149,4 @@ Keep a copy of your `config.yaml` alongside your database backup so you can reve
 
 ## Breaking changes policy
 
-Breaking changes (configuration format, API contracts, database schema) will be documented in the [CHANGELOG](https://github.com/waliaabhishek/chitragupt/blob/main/CHANGELOG.md). Releases that contain breaking changes will be called out explicitly in release notes.
+Breaking changes (configuration format, API contracts, database schema) will be documented in the [CHANGELOG](https://github.com/waliaabhishek/chitragupta/blob/main/CHANGELOG.md). Releases that contain breaking changes will be called out explicitly in release notes.

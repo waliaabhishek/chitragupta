@@ -50,7 +50,7 @@ def _import_plugin_module(entry: Path, plugins_path: Path, *, on_sys_path: bool 
 
     # Namespaced module name avoids collisions with built-ins or other
     # external plugins that share the same directory name.
-    module_name = f"chitragupt_plugin_{entry.name}"
+    module_name = f"chitragupta_plugin_{entry.name}"
     spec = importlib.util.spec_from_file_location(
         module_name,
         init_file,

@@ -464,7 +464,7 @@ class TestEcosystemAgnosticMetricNames:
         assert len(families) == 1
         family = families[0]
         assert isinstance(family, GaugeMetricFamily)
-        assert family.name == "chitragupt_chargeback_amount"
+        assert family.name == "chitragupta_chargeback_amount"
 
 
 # ---------------------------------------------------------------------------
@@ -614,7 +614,7 @@ class TestCollectOutputShape:
         assert len(families) == 1
         family = families[0]
         assert isinstance(family, GaugeMetricFamily)
-        assert family.name == "chitragupt_chargeback_amount"
+        assert family.name == "chitragupta_chargeback_amount"
 
 
 # ---------------------------------------------------------------------------

@@ -3,7 +3,7 @@ requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [project]
-name = "chitragupt"
+name = "chitragupta"
 dynamic = ["version"]
 description = "Multi-ecosystem chargeback engine"
 requires-python = ">=3.14"
@@ -38,7 +38,7 @@ docs = [
 ]
 
 [project.scripts]
-chitragupt = "main:main"
+chitragupta = "main:main"
 
 [tool.hatch.version]
 source = "vcs"

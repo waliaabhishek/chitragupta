@@ -50,7 +50,7 @@ def create_app(settings: AppSettings, workflow_runner: WorkflowRunner | None = N
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        logger.info("Chitragupt API starting up version=%s", API_VERSION)
+        logger.info("Chitragupta API starting up version=%s", API_VERSION)
         app.state.settings = settings
         app.state.backends = {}
         app.state.workflow_runner = workflow_runner
@@ -60,16 +60,16 @@ def create_app(settings: AppSettings, workflow_runner: WorkflowRunner | None = N
 
             await asyncio.to_thread(cleanup_orphaned_runs_for_all_tenants, settings, swallow_errors=True)
         yield
-        logger.info("Chitragupt API shutting down — disposing backends")
+        logger.info("Chitragupta API shutting down — disposing backends")
         for backend in app.state.backends.values():
             backend.dispose()
         if workflow_runner is not None:
             logger.debug("Draining workflow runner")
             await asyncio.to_thread(workflow_runner.drain, 30)
-        logger.info("Chitragupt API shutdown complete")
+        logger.info("Chitragupta API shutdown complete")
 
     app = FastAPI(
-        title="Chitragupt API",
+        title="Chitragupta API",
         version=API_VERSION,
         lifespan=lifespan,
     )

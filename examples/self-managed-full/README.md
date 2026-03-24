@@ -8,9 +8,9 @@ Full stack for self-managed Kafka: chargeback engine (pipeline + REST API), Graf
 
 | Service | Port | Description |
 |---------|------|-------------|
-| chitragupt | 8080 | REST API + pipeline worker |
+| chitragupta | 8080 | REST API + pipeline worker |
 | grafana | 3000 | Pre-provisioned cost dashboards |
-| chitragupt-ui | 8081 | Interactive frontend UI |
+| chitragupta-ui | 8081 | Interactive frontend UI |
 
 ## Prerequisites
 
@@ -94,11 +94,11 @@ Ensure your JMX exporter configuration exposes these metrics with `topic` and `p
 ## Troubleshooting
 
 **Grafana or UI won't start**
-- Both wait for the chitragupt healthcheck — check: `docker compose logs chitragupt`
+- Both wait for the chitragupta healthcheck — check: `docker compose logs chitragupta`
 
 **Dashboards show "No data"**
 - The pipeline must complete at least one run first
-- Check Prometheus is reachable: `docker compose exec chitragupt python -c "import urllib.request; print(urllib.request.urlopen('$PROMETHEUS_URL/-/healthy').status)"`
+- Check Prometheus is reachable: `docker compose exec chitragupta python -c "import urllib.request; print(urllib.request.urlopen('$PROMETHEUS_URL/-/healthy').status)"`
 - Verify the Grafana time range covers dates with data
 
 **No principals discovered**
@@ -107,7 +107,7 @@ Ensure your JMX exporter configuration exposes these metrics with `topic` and `p
 
 **Cost model looks wrong**
 - Adjust `compute_hourly_rate`, `storage_per_gib_hourly`, etc. in `config.yaml`
-- Restart the stack: `docker compose restart chitragupt`
+- Restart the stack: `docker compose restart chitragupta`
 
 **Port conflicts**
 - Change host ports in `docker-compose.yml` under `ports:`

@@ -21,7 +21,6 @@ __pycache__
 # Project files not needed in image
 tests/
 backlog/
-ccloud-chargeback-helper-reference/
 examples/
 docs/
 *.md

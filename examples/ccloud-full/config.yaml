@@ -1,5 +1,5 @@
 # =============================================================================
-# Chitragupt — CCloud Full Stack Example
+# Chitragupta — CCloud Full Stack Example
 #
 # Runs the pipeline + REST API + Grafana dashboards + frontend UI.
 # See examples/ccloud-grafana/config.yaml for the lightweight worker-only version.
@@ -99,7 +99,7 @@ tenants:
       # backend: sqlmodel uses SQLAlchemy + SQLite (or Postgres if you change the connection string).
       backend: sqlmodel
       # connection_string: path to the SQLite file inside the container.
-      # /app/data/ is mounted from the chitragupt-data named volume.
+      # /app/data/ is mounted from the chitragupta-data named volume.
       # Each tenant must use a separate database file.
       # PostgreSQL alternative: "postgresql+psycopg2://user:pass@host:5432/ccloud_prod"
       connection_string: "sqlite:////app/data/chargeback.db"

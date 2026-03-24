@@ -1,4 +1,4 @@
-# Chitragupt
+# Chitragupta
 
 Multi-ecosystem infrastructure cost chargeback engine. Allocates costs to teams and
 service accounts across Confluent Cloud, self-managed Kafka, and any Prometheus-instrumented system.

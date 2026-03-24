@@ -160,6 +160,6 @@ class TestDiscoverPlugins:
         with caplog.at_level(logging.WARNING):
             results = discover_plugins(plugins_path)
 
-        assert "chitragupt_plugin_failplugin" not in sys.modules
+        assert "chitragupta_plugin_failplugin" not in sys.modules
         assert results == []
         assert "Failed to import" in caplog.text

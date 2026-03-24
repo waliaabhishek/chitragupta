@@ -1,6 +1,6 @@
 # Quickstart — Confluent Cloud
 
-Get Chitragupt running against your Confluent Cloud organization in under 10 minutes.
+Get Chitragupta running against your Confluent Cloud organization in under 10 minutes.
 
 ## Prerequisites
 
@@ -53,8 +53,8 @@ Save the **API Key** and **API Secret** from the output.
 Clone the repo and go to the full-stack CCloud example:
 
 ```bash
-git clone https://github.com/waliaabhishek/chitragupt.git
-cd chitragupt/examples/ccloud-full
+git clone https://github.com/waliaabhishek/chitragupta.git
+cd chitragupta/examples/ccloud-full
 ```
 
 Create your `.env` file from the template and fill in the credentials from steps 1–3:
@@ -81,9 +81,9 @@ This builds and starts three services:
 
 | Service | URL | What it does |
 |---------|-----|--------------|
-| **chitragupt** | `http://localhost:8080` | REST API + periodic pipeline worker |
+| **chitragupta** | `http://localhost:8080` | REST API + periodic pipeline worker |
 | **grafana** | `http://localhost:3000` | Pre-built chargeback dashboards |
-| **chitragupt-ui** | `http://localhost:8081` | Interactive frontend UI |
+| **chitragupta-ui** | `http://localhost:8081` | Interactive frontend UI |
 
 First build takes 1–2 minutes (cached after that). The backend healthcheck runs before Grafana and the UI start, so they may take ~30 seconds to become available.
 
@@ -111,7 +111,7 @@ Open [http://localhost:8081](http://localhost:8081) for interactive cost explora
 ## 6. Check logs
 
 ```bash
-docker compose logs chitragupt -f
+docker compose logs chitragupta -f
 ```
 
 You should see the pipeline running — discovering resources, fetching billing data, allocating costs.
@@ -142,7 +142,7 @@ docker compose down -v
 
 **Backend exits immediately**
 
-- Check logs: `docker compose logs chitragupt`
+- Check logs: `docker compose logs chitragupta`
 - Common cause: missing or invalid credentials in `.env`
 - Test with a single run: change `--mode both` to `--run-once` in `docker-compose.yml`
 
@@ -164,8 +164,8 @@ If you prefer running directly with Python instead of Docker:
 ```bash
 # Install
 pip install uv
-git clone https://github.com/waliaabhishek/chitragupt.git
-cd chitragupt
+git clone https://github.com/waliaabhishek/chitragupta.git
+cd chitragupta
 uv sync
 
 # Configure

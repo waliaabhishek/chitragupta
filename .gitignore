@@ -4,7 +4,6 @@
 # Do not use git add -f, do not remove these entries.
 backlog/
 .claude/
-ccloud-chargeback-helper-reference/
 memory/
 
 CLAUDE.md
