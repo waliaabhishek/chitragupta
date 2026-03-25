@@ -2709,7 +2709,7 @@
 <h2 id="inventory">Inventory<a class="headerlink" href="#inventory" title="Permanent link">&para;</a></h2>
 <h3 id="get-apiv1tenantstenant_nameinventorysummary"><code>GET /api/v1/tenants/{tenant_name}/inventory/summary</code><a class="headerlink" href="#get-apiv1tenantstenant_nameinventorysummary" title="Permanent link">&para;</a></h3>
 <p>Counts of resources and identities grouped by type.</p>
-<p><strong>Response:</strong> <code>{"resource_counts": {"cluster": 3, "topic": 42}, "identity_counts": {"service_account": 12, "user": 5}}</code></p>
+<p><strong>Response:</strong> <code>{"resource_counts": {"cluster": {"total": 3, "active": 3, "deleted": 0}}, "identity_counts": {"service_account": {"total": 12, "active": 10, "deleted": 2}}}</code></p>
 <hr />
 <h2 id="tags">Tags<a class="headerlink" href="#tags" title="Permanent link">&para;</a></h2>
 <h3 id="get-apiv1tenantstenant_namechargebacksdimension_idtags"><code>GET /api/v1/tenants/{tenant_name}/chargebacks/{dimension_id}/tags</code><a class="headerlink" href="#get-apiv1tenantstenant_namechargebacksdimension_idtags" title="Permanent link">&para;</a></h3>

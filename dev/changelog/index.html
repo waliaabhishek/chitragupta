@@ -1248,39 +1248,6 @@
   
 </li>
         
-          <li class="md-nav__item">
-  <a href="#changed" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Changed
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#fixed" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Fixed
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#security" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Security
-      
-    </span>
-  </a>
-  
-</li>
-        
       </ul>
     </nav>
   
@@ -1343,39 +1310,6 @@
   
 </li>
         
-          <li class="md-nav__item">
-  <a href="#changed" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Changed
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#fixed" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Fixed
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#security" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Security
-      
-    </span>
-  </a>
-  
-</li>
-        
       </ul>
     </nav>
   
@@ -1408,86 +1342,14 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased">[Unreleased]<a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
-<li>Feat: TASK-155 — Add TanStack Query v5 for client-side data caching</li>
+<li>Feat: TASK-156 — Add active/deleted status breakdown to Inventory UI</li>
 </ul>
-<p>Convert all five data-fetching hooks (useAggregation, useDataAvailability,
-useInventorySummary, useAllocationIssues, useFilterOptions) from
-useState+useEffect+fetch to useQuery with shared QueryClient cache.
-Page navigation now returns cached data instantly without re-fetching.</p>
-<ul>
-<li>QueryClientProvider between AntApp and TenantProvider (staleTime 5min,
-  gcTime 10min, refetchOnWindowFocus false, retry 1)</li>
-<li>ReactQueryDevtools in dev mode</li>
-<li>All hook return types preserved — zero consumer changes</li>
-<li>All 258 tests pass with QueryClientProvider test wrapper (<a href="https://github.com/waliaabhishek/chitragupta/commit/82c74d40acf8319035fae2c4a54252248096815c">82c74d4</a>)</li>
-<li>Feat: TASK-154 — Implement Billing List Page with shared utility extraction</li>
-</ul>
-<p>Replace the "Coming soon" placeholder at /billing with a functional billing
-data viewer: AG Grid infinite scroll, date/product/resource filters with URL
-sync and localStorage persistence, reset and refresh controls.</p>
-<p>Extract shared utilities (dateFilterStorage, gridFormatters, filterHelpers)
-from chargebacks code to eliminate duplication across both features. (<a href="https://github.com/waliaabhishek/chitragupta/commit/1cf96e67083837ecb8747445b05a933d229d0766">1cf96e6</a>)</p>
-<h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
-<ul>
-<li>Tests: Suppress 20 harmless pytest warnings via filterwarnings</li>
-</ul>
-<p>Filter SAWarning from Alembic batch-mode PK mismatch on SQLite temp
-tables and ResourceWarning from GC'd in-memory SQLite connections. (<a href="https://github.com/waliaabhishek/chitragupta/commit/de4a0b062f23a4b92856c58141dc46fba9229880">de4a0b0</a>)
-- Docker: Add version pinning via CHITRAGUPTA_VERSION and explicit container names</p>
-<ul>
-<li>Example compose files now use ${CHITRAGUPTA_VERSION:-latest} for image tags</li>
-<li>Added CHITRAGUPTA_VERSION=latest to all .env.example files</li>
-<li>Added container_name to all services to avoid -1 suffix in logs</li>
-<li>Release notes now include Docker pull commands and .env pin instructions (<a href="https://github.com/waliaabhishek/chitragupta/commit/e20ae4340a8d221db2495f2f3abb84fd77f44618">e20ae43</a>)</li>
-</ul>
-<h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
-<ul>
-<li>
-<p>Fix: Resolve pre-existing lint errors across frontend and backend</p>
-</li>
-<li>
-<p>FilterPanel.test.tsx: remove unused <code>_</code> params in format callbacks</p>
-</li>
-<li>chargebacks/list.tsx: move eslint-disable to correct line</li>
-<li>test_cost_input.py: fix import sorting (I001) and add strict=True to zip (B905) (<a href="https://github.com/waliaabhishek/chitragupta/commit/cea15b858f65b6d74631307499b1fc844537ce9b">cea15b8</a>)</li>
-<li>Fix: Register AG Grid modules to fix empty Chargebacks page</li>
-</ul>
-<p>AG Grid v35 requires explicit module registration. Without it, the
-infinite row model silently fails (error #272) and no API calls are
-made, leaving the Chargebacks grid permanently empty.</p>
-<p>Also add **/data/ to .gitignore. (<a href="https://github.com/waliaabhishek/chitragupta/commit/c6df56f5e74cfa8eb68f6e9543179e3d5184f020">c6df56f</a>)
-- Fix: TASK-153 — Aggregate tiered billing rows in CCloud gather()</p>
-<p>Confluent Cloud billing API returns multiple rows per resource/date/product
-when tiered pricing applies (different price points for the same line item).
-These rows share the same 7-field billing PK, causing the second tier to
-silently overwrite the first via session.merge(), losing cost data.</p>
-<p>Adds tier aggregation in _fetch_window() before yielding: rows sharing the
-same billing key are merged into a single CCloudBillingLineItem with summed
-costs. Per-tier breakdown preserved in metadata["tiers"] for auditability.
-Single-row keys pass through unchanged. Plugin-scoped fix — no schema
-migration, no core engine changes. (<a href="https://github.com/waliaabhishek/chitragupta/commit/6a991691e8c360f3613bb02f4682854afa340cd3">6a99169</a>)
-- Fix: Pre-create /app/data dir in Dockerfile for named-volume compatibility</p>
-<p>Docker named volumes mount as root:root when the target directory doesn't
-exist in the image. appuser (uid 1000) cannot write, causing Alembic
-migrations to fail with "unable to open database file" on fresh volumes. (<a href="https://github.com/waliaabhishek/chitragupta/commit/538abdbba1f75473431ca0abcdc237ee0c4582e0">538abdb</a>)
-- Fix: TASK-124 — Eliminate resource cache multi-window collision in orchestrator</p>
-<p>_build_resource_cache now keys by (b_start, b_end) billing window tuple,
-matching the existing _build_tenant_period_cache pattern. This eliminates
-the setdefault() collision where non-deterministic set iteration could
-shadow a resource from one window with the same resource_id from another.
-_collect_billing_line_rows uses window-scoped sub-dict for both
-active_fraction lookup and ResolveContext, preserving the dict[str, Resource]
-contract for downstream handlers. (<a href="https://github.com/waliaabhishek/chitragupta/commit/a03d63e83c30c9028effed38f6ced11333ff9216">a03d63e</a>)
-- Fix: TASK-122 — Add missing context parameter to IdentityResolver protocol</p>
-<p>IdentityResolver.<strong>call</strong> had 6 params while ServiceHandler.resolve_identities
-had 7 (including context: ResolveContext | None). This caused _validate_signature
-to reject valid 7-param custom identity resolvers with a false TypeError. (<a href="https://github.com/waliaabhishek/chitragupta/commit/7511bbe0d00856d7cbfbfffb3a13c32f4c421fa4">7511bbe</a>)</p>
-<h3 id="security">Security<a class="headerlink" href="#security" title="Permanent link">&para;</a></h3>
-<ul>
-<li>Security: Bump flatted 3.4.1 → 3.4.2 to fix CVE-2026-33228</li>
-</ul>
-<p>Resolves Dependabot alert #5 — high-severity prototype pollution
-via parse() in flatted. Dev dependency only (eslint → flat-cache). (<a href="https://github.com/waliaabhishek/chitragupta/commit/cdfacb1e36a923be660ee1eece4a69d9ff9a77c9">cdfacb1</a>)</p>
+<p>Full-stack change: inventory summary now returns per-type active/deleted
+counts. ResourceRepository groups by status column; IdentityRepository
+derives status from deleted_at via SQL CASE. New TypeStatusCounts frozen
+dataclass in core.models.counts. Frontend displays total prominently with
+"Active: N / Deleted: N" secondary text. All existing tests updated;
+new tests for mixed-status resources and identity deleted_at derivation. (<a href="https://github.com/waliaabhishek/chitragupta/commit/cc1def8e912806a52baf7c48f705527cc85be945">cc1def8</a>)</p>
 
 
 
