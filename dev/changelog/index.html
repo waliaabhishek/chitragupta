@@ -1399,8 +1399,23 @@ tables and ResourceWarning from GC'd in-memory SQLite connections. (<a href="htt
 </ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
-<li>Fix: Pre-create /app/data dir in Dockerfile for named-volume compatibility</li>
+<li>Fix: Register AG Grid modules to fix empty Chargebacks page</li>
 </ul>
+<p>AG Grid v35 requires explicit module registration. Without it, the
+infinite row model silently fails (error #272) and no API calls are
+made, leaving the Chargebacks grid permanently empty.</p>
+<p>Also add **/data/ to .gitignore. (<a href="https://github.com/waliaabhishek/chitragupta/commit/c6df56f5e74cfa8eb68f6e9543179e3d5184f020">c6df56f</a>)
+- Fix: TASK-153 — Aggregate tiered billing rows in CCloud gather()</p>
+<p>Confluent Cloud billing API returns multiple rows per resource/date/product
+when tiered pricing applies (different price points for the same line item).
+These rows share the same 7-field billing PK, causing the second tier to
+silently overwrite the first via session.merge(), losing cost data.</p>
+<p>Adds tier aggregation in _fetch_window() before yielding: rows sharing the
+same billing key are merged into a single CCloudBillingLineItem with summed
+costs. Per-tier breakdown preserved in metadata["tiers"] for auditability.
+Single-row keys pass through unchanged. Plugin-scoped fix — no schema
+migration, no core engine changes. (<a href="https://github.com/waliaabhishek/chitragupta/commit/6a991691e8c360f3613bb02f4682854afa340cd3">6a99169</a>)
+- Fix: Pre-create /app/data dir in Dockerfile for named-volume compatibility</p>
 <p>Docker named volumes mount as root:root when the target directory doesn't
 exist in the image. appuser (uid 1000) cannot write, causing Alembic
 migrations to fail with "unable to open database file" on fresh volumes. (<a href="https://github.com/waliaabhishek/chitragupta/commit/538abdbba1f75473431ca0abcdc237ee0c4582e0">538abdb</a>)
