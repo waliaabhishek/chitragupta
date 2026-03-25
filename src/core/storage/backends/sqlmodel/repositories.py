@@ -1099,7 +1099,7 @@ class SQLModelChargebackRepository:
         product_type: str | None = None,
         resource_id: str | None = None,
         cost_type: str | None = None,
-        limit: int = 10000,
+        limit: int | None = None,
     ) -> list[AggregationRow]:
         # Build dimension group columns
         group_cols = []

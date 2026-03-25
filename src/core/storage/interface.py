@@ -305,7 +305,7 @@ class ChargebackRepository(Protocol):
         product_type: str | None = None,
         resource_id: str | None = None,
         cost_type: str | None = None,
-        limit: int = 10000,
+        limit: int | None = None,
     ) -> list[AggregationRow]:
         """Server-side aggregation with GROUP BY. Returns pre-aggregated buckets."""
         ...

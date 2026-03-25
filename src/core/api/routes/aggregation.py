@@ -85,7 +85,6 @@ async def aggregate_chargebacks(
         product_type=product_type,
         resource_id=resource_id,
         cost_type=cost_type,
-        limit=10000,
     )
     buckets = [
         AggregationBucket(
