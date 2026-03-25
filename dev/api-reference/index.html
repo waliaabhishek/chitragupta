@@ -2448,6 +2448,12 @@
 <td>Filter end</td>
 </tr>
 <tr>
+<td><code>timezone</code></td>
+<td>string</td>
+<td>no</td>
+<td>IANA timezone for date boundaries (e.g. <code>America/Denver</code>). Defaults to UTC.</td>
+</tr>
+<tr>
 <td><code>product_type</code></td>
 <td>string</td>
 <td>no</td>
@@ -2487,6 +2493,12 @@
 <td>date</td>
 <td>no</td>
 <td>Filter end</td>
+</tr>
+<tr>
+<td><code>timezone</code></td>
+<td>string</td>
+<td>no</td>
+<td>IANA timezone for date boundaries (e.g. <code>America/Denver</code>). Defaults to UTC.</td>
 </tr>
 <tr>
 <td><code>identity_id</code></td>
@@ -2590,6 +2602,12 @@
 <td>date</td>
 <td>no</td>
 <td>Filter end</td>
+</tr>
+<tr>
+<td><code>timezone</code></td>
+<td>string</td>
+<td>no</td>
+<td>IANA timezone for date boundaries (e.g. <code>America/Denver</code>). Defaults to UTC.</td>
 </tr>
 <tr>
 <td><code>identity_id</code></td>
@@ -2757,7 +2775,7 @@
 <p>When <code>override_existing</code> is true, existing tags with the same key are updated instead of skipped.</p>
 <h3 id="post-apiv1tenantstenant_nametagsbulk-by-filter"><code>POST /api/v1/tenants/{tenant_name}/tags/bulk-by-filter</code><a class="headerlink" href="#post-apiv1tenantstenant_nametagsbulk-by-filter" title="Permanent link">&para;</a></h3>
 <p>Bulk tag by chargeback filters (resolves matching dimension IDs server-side).</p>
-<p><strong>Body:</strong> Same as bulk + filter fields: <code>start_date</code>, <code>end_date</code>, <code>identity_id</code>, <code>product_type</code>, <code>resource_id</code>, <code>cost_type</code>.</p>
+<p><strong>Body:</strong> Same as bulk + filter fields: <code>start_date</code>, <code>end_date</code>, <code>timezone</code>, <code>identity_id</code>, <code>product_type</code>, <code>resource_id</code>, <code>cost_type</code>.</p>
 <hr />
 <h2 id="pipeline">Pipeline<a class="headerlink" href="#pipeline" title="Permanent link">&para;</a></h2>
 <h3 id="post-apiv1tenantstenant_namepipelinerun"><code>POST /api/v1/tenants/{tenant_name}/pipeline/run</code><a class="headerlink" href="#post-apiv1tenantstenant_namepipelinerun" title="Permanent link">&para;</a></h3>
@@ -2789,11 +2807,12 @@
 <a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span><span class="nt">&quot;columns&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;timestamp&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;resource_id&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;product_type&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;identity_id&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;amount&quot;</span><span class="p">],</span>
 <a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span><span class="nt">&quot;start_date&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;2026-01-01&quot;</span><span class="p">,</span>
 <a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">  </span><span class="nt">&quot;end_date&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;2026-01-31&quot;</span><span class="p">,</span>
-<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">  </span><span class="nt">&quot;filters&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="w">    </span><span class="nt">&quot;identity_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;sa-12345&quot;</span><span class="p">,</span>
-<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="w">    </span><span class="nt">&quot;product_type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;KAFKA_NUM_CKU&quot;</span>
-<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="w">  </span><span class="p">}</span>
-<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="p">}</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">  </span><span class="nt">&quot;timezone&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;America/Denver&quot;</span><span class="p">,</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="w">  </span><span class="nt">&quot;filters&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="w">    </span><span class="nt">&quot;identity_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;sa-12345&quot;</span><span class="p">,</span>
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="w">    </span><span class="nt">&quot;product_type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;KAFKA_NUM_CKU&quot;</span>
+<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="w">  </span><span class="p">}</span>
+<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="p">}</span>
 </code></pre></div>
 <table>
 <thead>
@@ -2822,6 +2841,12 @@
 <td>date</td>
 <td>no</td>
 <td>Filter end</td>
+</tr>
+<tr>
+<td><code>timezone</code></td>
+<td>string</td>
+<td>no</td>
+<td>IANA timezone for date boundaries (e.g. <code>America/Denver</code>). Defaults to UTC.</td>
 </tr>
 <tr>
 <td><code>filters</code></td>
