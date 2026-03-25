@@ -83,8 +83,14 @@ vi.mock("antd", () => ({
 }));
 
 const MOCK_DATA: InventorySummaryResponse = {
-  resource_counts: { kafka_cluster: 5, connector: 3 },
-  identity_counts: { service_account: 12, user: 3 },
+  resource_counts: {
+    kafka_cluster: { total: 5, active: 4, deleted: 1 },
+    connector: { total: 3, active: 3, deleted: 0 },
+  },
+  identity_counts: {
+    service_account: { total: 12, active: 10, deleted: 2 },
+    user: { total: 3, active: 3, deleted: 0 },
+  },
 };
 
 describe("InventoryCounters", () => {
@@ -103,10 +109,21 @@ describe("InventoryCounters", () => {
     expect(values).toContain("12");
   });
 
+  it("renders active/deleted secondary text", () => {
+    render(<InventoryCounters data={MOCK_DATA} isLoading={false} error={null} />);
+
+    expect(screen.getByText("Active: 4 / Deleted: 1")).toBeDefined();
+  });
+
   it("converts snake_case keys to Title Case labels", () => {
     const data: InventorySummaryResponse = {
-      resource_counts: { kafka_cluster: 1, identity_pool: 2 },
-      identity_counts: { service_account: 5 },
+      resource_counts: {
+        kafka_cluster: { total: 1, active: 1, deleted: 0 },
+        identity_pool: { total: 2, active: 2, deleted: 0 },
+      },
+      identity_counts: {
+        service_account: { total: 5, active: 5, deleted: 0 },
+      },
     };
     render(<InventoryCounters data={data} isLoading={false} error={null} />);
 
@@ -164,6 +181,9 @@ describe("InventoryCounters", () => {
     const values = screen.getAllByTestId("statistic-value").map((el) => el.textContent);
     expect(values.every((v) => v === "—")).toBe(true);
     expect(values.length).toBeGreaterThan(0);
+
+    // secondary active/deleted text must NOT be present when error
+    expect(screen.queryByText(/Active: \d+ \/ Deleted: \d+/)).toBeNull();
   });
 
   it("renders em dash text placeholder (not Empty) when error occurs on first load (data=null)", () => {

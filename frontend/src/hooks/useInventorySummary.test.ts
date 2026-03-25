@@ -25,8 +25,14 @@ const BASE_PARAMS = {
 };
 
 const MOCK_SUMMARY = {
-  resource_counts: { kafka_cluster: 5, connector: 3 },
-  identity_counts: { service_account: 12, user: 3 },
+  resource_counts: {
+    kafka_cluster: { total: 5, active: 4, deleted: 1 },
+    connector: { total: 3, active: 3, deleted: 0 },
+  },
+  identity_counts: {
+    service_account: { total: 12, active: 10, deleted: 2 },
+    user: { total: 3, active: 3, deleted: 0 },
+  },
 };
 
 describe("useInventorySummary", () => {
@@ -47,8 +53,14 @@ describe("useInventorySummary", () => {
     const { result } = renderHook(() => useInventorySummary(BASE_PARAMS), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
-    expect(result.current.data?.resource_counts).toEqual({ kafka_cluster: 5, connector: 3 });
-    expect(result.current.data?.identity_counts).toEqual({ service_account: 12, user: 3 });
+    expect(result.current.data?.resource_counts).toEqual({
+      kafka_cluster: { total: 5, active: 4, deleted: 1 },
+      connector: { total: 3, active: 3, deleted: 0 },
+    });
+    expect(result.current.data?.identity_counts).toEqual({
+      service_account: { total: 12, active: 10, deleted: 2 },
+      user: { total: 3, active: 3, deleted: 0 },
+    });
     expect(result.current.error).toBeNull();
   });
 

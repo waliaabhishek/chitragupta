@@ -138,8 +138,14 @@ export const handlers = [
 
   http.get(`${BASE}/tenants/:tenant/inventory/summary`, () => {
     const response: InventorySummaryResponse = {
-      resource_counts: { kafka_cluster: 5, connector: 3 },
-      identity_counts: { service_account: 12, user: 3 },
+      resource_counts: {
+        kafka_cluster: { total: 5, active: 4, deleted: 1 },
+        connector: { total: 3, active: 3, deleted: 0 },
+      },
+      identity_counts: {
+        service_account: { total: 12, active: 10, deleted: 2 },
+        user: { total: 3, active: 3, deleted: 0 },
+      },
     };
     return HttpResponse.json(response);
   }),

@@ -240,9 +240,15 @@ export interface AggregationResponse {
 
 // --- Inventory ---
 
+export interface TypeStatusCounts {
+  total: number;
+  active: number;
+  deleted: number;
+}
+
 export interface InventorySummaryResponse {
-  resource_counts: Record<string, number>;
-  identity_counts: Record<string, number>;
+  resource_counts: Record<string, TypeStatusCounts>;
+  identity_counts: Record<string, TypeStatusCounts>;
 }
 
 // --- Chargeback Dimension ---

@@ -7,6 +7,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from core.models.counts import TypeStatusCounts  # noqa: TC001
+
 logger = logging.getLogger(__name__)
 
 # --- Pagination ---
@@ -355,8 +357,8 @@ class ChargebackDimensionUpdateRequest(BaseModel):
 class InventorySummaryResponse(BaseModel):
     """Counts of resources and identities grouped by type for a tenant."""
 
-    resource_counts: dict[str, int]
-    identity_counts: dict[str, int]
+    resource_counts: dict[str, TypeStatusCounts]
+    identity_counts: dict[str, TypeStatusCounts]
 
 
 # --- Health ---

@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 from sqlmodel import Session, SQLModel, create_engine
 
+from core.models.counts import TypeStatusCounts
 from core.models.identity import CoreIdentity, Identity
 from core.models.resource import CoreResource, Resource, ResourceStatus
 from core.storage.backends.sqlmodel.repositories import (
@@ -46,7 +47,7 @@ class TestResourceCountByType:
 
         result = repo.count_by_type("eco", "t1")
 
-        assert result == {"kafka_cluster": 3}
+        assert result == {"kafka_cluster": TypeStatusCounts(total=3, active=3, deleted=0)}
 
     def test_count_by_type_empty(self, session: Session) -> None:
         repo = SQLModelResourceRepository(session)
@@ -67,7 +68,11 @@ class TestResourceCountByType:
 
         result = repo.count_by_type("eco", "t1")
 
-        assert result == {"environment": 1, "connector": 2, "kafka_cluster": 3}
+        assert result == {
+            "environment": TypeStatusCounts(total=1, active=1, deleted=0),
+            "connector": TypeStatusCounts(total=2, active=2, deleted=0),
+            "kafka_cluster": TypeStatusCounts(total=3, active=3, deleted=0),
+        }
 
     def test_count_by_type_tenant_isolation(self, session: Session) -> None:
         repo = SQLModelResourceRepository(session)
@@ -82,8 +87,28 @@ class TestResourceCountByType:
         result_a = repo.count_by_type("eco", "t1")
         result_b = repo.count_by_type("eco", "t2")
 
-        assert result_a == {"kafka_cluster": 2}
-        assert result_b == {"kafka_cluster": 5}
+        assert result_a == {"kafka_cluster": TypeStatusCounts(total=2, active=2, deleted=0)}
+        assert result_b == {"kafka_cluster": TypeStatusCounts(total=5, active=5, deleted=0)}
+
+    def test_count_by_type_mixed_status(self, session: Session) -> None:
+        repo = SQLModelResourceRepository(session)
+        for i in range(3):
+            repo.upsert(
+                self._make_resource(
+                    resource_id=f"active-{i}", resource_type="kafka_cluster", status=ResourceStatus.ACTIVE
+                )
+            )
+        for i in range(2):
+            repo.upsert(
+                self._make_resource(
+                    resource_id=f"deleted-{i}", resource_type="kafka_cluster", status=ResourceStatus.DELETED
+                )
+            )
+        session.commit()
+
+        result = repo.count_by_type("eco", "t1")
+
+        assert result == {"kafka_cluster": TypeStatusCounts(total=5, active=3, deleted=2)}
 
 
 class TestIdentityCountByType:
@@ -107,7 +132,7 @@ class TestIdentityCountByType:
 
         result = repo.count_by_type("eco", "t1")
 
-        assert result == {"service_account": 2}
+        assert result == {"service_account": TypeStatusCounts(total=2, active=2, deleted=0)}
 
     def test_count_by_type_empty(self, session: Session) -> None:
         repo = SQLModelIdentityRepository(session)
@@ -125,7 +150,10 @@ class TestIdentityCountByType:
 
         result = repo.count_by_type("eco", "t1")
 
-        assert result == {"service_account": 2, "user": 1}
+        assert result == {
+            "service_account": TypeStatusCounts(total=2, active=2, deleted=0),
+            "user": TypeStatusCounts(total=1, active=1, deleted=0),
+        }
 
     def test_count_by_type_tenant_isolation(self, session: Session) -> None:
         repo = SQLModelIdentityRepository(session)
@@ -137,5 +165,5 @@ class TestIdentityCountByType:
         result_a = repo.count_by_type("eco", "t1")
         result_b = repo.count_by_type("eco", "t2")
 
-        assert result_a == {"service_account": 1}
-        assert result_b == {"service_account": 2}
+        assert result_a == {"service_account": TypeStatusCounts(total=1, active=1, deleted=0)}
+        assert result_b == {"service_account": TypeStatusCounts(total=2, active=2, deleted=0)}

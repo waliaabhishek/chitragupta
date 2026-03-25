@@ -1,10 +1,10 @@
 import type React from "react";
 import { Card, Col, Collapse, Empty, Row, Skeleton, Statistic, Typography } from "antd";
 import { useMemo } from "react";
-import type { InventorySummaryResponse } from "../../types/api";
+import type { InventorySummaryResponse, TypeStatusCounts } from "../../types/api";
 
 const SKELETON_INDICES = [0, 1, 2];
-const EMPTY_COUNTS: Record<string, number> = {};
+const EMPTY_COUNTS: Record<string, TypeStatusCounts> = {};
 
 interface InventoryCountersProps {
   data: InventorySummaryResponse | null;
@@ -19,7 +19,7 @@ function toTitleCase(key: string): string {
 
 interface CounterRowProps {
   label: string;
-  counts: Record<string, number>;
+  counts: Record<string, TypeStatusCounts>;
   isLoading: boolean;
   error: string | null;
 }
@@ -61,7 +61,15 @@ function CounterRow({ label, counts, isLoading, error }: CounterRowProps): React
             : entries.map(([key, value]) => (
               <Col xs={12} sm={8} md={6} key={key}>
                 <Card size="small">
-                  <Statistic title={toTitleCase(key)} value={error ? "—" : value} />
+                  <Statistic
+                    title={toTitleCase(key)}
+                    value={error ? "—" : value.total}
+                  />
+                  {!error && (
+                    <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+                      {`Active: ${value.active} / Deleted: ${value.deleted}`}
+                    </Typography.Text>
+                  )}
                 </Card>
               </Col>
             ))}

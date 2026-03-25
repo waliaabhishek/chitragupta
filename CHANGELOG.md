@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Feat: Inventory summary (`GET /tenants/{tenant}/inventory/summary`) now returns per-type active/deleted breakdown — `resource_counts` and `identity_counts` values are `{total, active, deleted}` objects instead of flat integers. Frontend inventory counters display totals with "Active: N / Deleted: N" secondary text.
 - Feat(frontend): TanStack Query v5 client-side data caching — all five data-fetching hooks (`useAggregation`, `useDataAvailability`, `useInventorySummary`, `useAllocationIssues`, `useFilterOptions`) now use `useQuery` with shared `QueryClient` cache. Navigating between pages returns cached data instantly without re-fetching. Default staleTime 5 min, gcTime 10 min, refetchOnWindowFocus disabled. Zero consumer component changes required.
 - Feat(frontend): Billing List Page — replaces "Coming soon" placeholder at `/billing` with functional billing data viewer. AG Grid infinite scroll against `GET /tenants/{tenant_name}/billing`, date range / product type / resource filters with URL sync and localStorage persistence, reset and refresh controls. Shared utility extraction: `dateFilterStorage`, `gridFormatters`, `filterHelpers` now serve both billing and chargebacks features.
 

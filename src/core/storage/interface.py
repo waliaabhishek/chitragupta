@@ -17,6 +17,7 @@ if TYPE_CHECKING:
         ChargebackRow,
         CustomTag,
     )
+    from core.models.counts import TypeStatusCounts
     from core.models.identity import Identity
     from core.models.pipeline import PipelineRun, PipelineState
     from core.models.resource import Resource
@@ -99,11 +100,12 @@ class ResourceRepository(Protocol):
 
     def delete_before(self, ecosystem: str, tenant_id: str, before: datetime) -> int: ...
 
-    def count_by_type(self, ecosystem: str, tenant_id: str) -> dict[str, int]:
-        """Return COUNT(*) GROUP BY resource_type for the given tenant.
+    def count_by_type(self, ecosystem: str, tenant_id: str) -> dict[str, TypeStatusCounts]:
+        """Return counts GROUP BY (resource_type, status) for the given tenant.
 
-        Returns a dict mapping resource_type string to count. Returns empty
-        dict when no resources exist for this tenant.
+        Returns a dict mapping resource_type string to TypeStatusCounts with
+        total, active, and deleted fields. Returns empty dict when no resources
+        exist for this tenant.
         """
         ...
 
@@ -170,11 +172,13 @@ class IdentityRepository(Protocol):
 
     def delete_before(self, ecosystem: str, tenant_id: str, before: datetime) -> int: ...
 
-    def count_by_type(self, ecosystem: str, tenant_id: str) -> dict[str, int]:
-        """Return COUNT(*) GROUP BY identity_type for the given tenant.
+    def count_by_type(self, ecosystem: str, tenant_id: str) -> dict[str, TypeStatusCounts]:
+        """Return counts GROUP BY (identity_type, derived_status) for the given tenant.
 
-        Returns a dict mapping identity_type string to count. Returns empty
-        dict when no identities exist for this tenant.
+        Status is derived from deleted_at: NULL=active, non-NULL=deleted.
+        Returns a dict mapping identity_type string to TypeStatusCounts with
+        total, active, and deleted fields. Returns empty dict when no identities
+        exist for this tenant.
         """
         ...
 

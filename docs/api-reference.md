@@ -234,7 +234,7 @@ List discovered identities. Paginated. Same temporal query modes as resources.
 
 Counts of resources and identities grouped by type.
 
-**Response:** `{"resource_counts": {"cluster": 3, "topic": 42}, "identity_counts": {"service_account": 12, "user": 5}}`
+**Response:** `{"resource_counts": {"cluster": {"total": 3, "active": 3, "deleted": 0}}, "identity_counts": {"service_account": {"total": 12, "active": 10, "deleted": 2}}}`
 
 ---
 

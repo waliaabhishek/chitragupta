@@ -174,8 +174,14 @@ describe("InventoryCounters wiring integration", () => {
     server.use(
       http.get("/api/v1/tenants/acme/inventory/summary", () =>
         HttpResponse.json({
-          resource_counts: { kafka_cluster: 5, connector: 3 },
-          identity_counts: { service_account: 12, user: 3 },
+          resource_counts: {
+            kafka_cluster: { total: 5, active: 4, deleted: 1 },
+            connector: { total: 3, active: 3, deleted: 0 },
+          },
+          identity_counts: {
+            service_account: { total: 12, active: 10, deleted: 2 },
+            user: { total: 3, active: 3, deleted: 0 },
+          },
         }),
       ),
     );
@@ -200,8 +206,8 @@ describe("InventoryCounters wiring integration", () => {
     const values = screen
       .getAllByTestId("statistic-value")
       .map((el) => el.textContent);
-    expect(values).toContain("5");
-    expect(values).toContain("3");
-    expect(values).toContain("12");
+    expect(values).toContain("5");   // kafka_cluster total
+    expect(values).toContain("3");   // connector total
+    expect(values).toContain("12");  // service_account total
   });
 });

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
@@ -13,6 +13,7 @@ from sqlalchemy.types import String
 from sqlmodel import Session, col, select
 
 from core.models.chargeback import AggregationRow, AllocationDetail, AllocationIssueRow, CostType
+from core.models.counts import TypeStatusCounts
 
 if TYPE_CHECKING:
     from core.emitters.models import EmissionRecord
@@ -248,19 +249,32 @@ class SQLModelResourceRepository:
         result = self._session.execute(stmt)
         return result.rowcount  # type: ignore[attr-defined, no-any-return]  # CursorResult always has rowcount
 
-    def count_by_type(self, ecosystem: str, tenant_id: str) -> dict[str, int]:
+    def count_by_type(self, ecosystem: str, tenant_id: str) -> dict[str, TypeStatusCounts]:
         stmt = (
-            select(ResourceTable.resource_type, func.count())
+            select(ResourceTable.resource_type, ResourceTable.status, func.count())
             .where(
                 col(ResourceTable.ecosystem) == ecosystem,
                 col(ResourceTable.tenant_id) == tenant_id,
             )
-            .group_by(ResourceTable.resource_type)
+            .group_by(ResourceTable.resource_type, ResourceTable.status)
         )
-        return dict(self._session.exec(stmt).all())
+        return _rows_to_type_status_counts(self._session.exec(stmt).all())
 
 
 # --- IdentityRepository ---
+
+
+def _rows_to_type_status_counts(rows: Sequence[tuple[str, str, int]]) -> dict[str, TypeStatusCounts]:
+    result: dict[str, dict[str, int]] = {}
+    for type_key, status, count in rows:
+        result.setdefault(type_key, {"active": 0, "deleted": 0})
+        result[type_key][status] = count
+    return {
+        t: TypeStatusCounts(
+            total=counts["active"] + counts["deleted"], active=counts["active"], deleted=counts["deleted"]
+        )
+        for t, counts in result.items()
+    }
 
 
 class SQLModelIdentityRepository:
@@ -396,16 +410,20 @@ class SQLModelIdentityRepository:
         result = self._session.execute(stmt)
         return result.rowcount  # type: ignore[attr-defined, no-any-return]  # CursorResult always has rowcount
 
-    def count_by_type(self, ecosystem: str, tenant_id: str) -> dict[str, int]:
+    def count_by_type(self, ecosystem: str, tenant_id: str) -> dict[str, TypeStatusCounts]:
+        derived_status = case(
+            (col(IdentityTable.deleted_at).is_(None), "active"),
+            else_="deleted",
+        ).label("derived_status")
         stmt = (
-            select(IdentityTable.identity_type, func.count())
+            select(IdentityTable.identity_type, derived_status, func.count())
             .where(
                 col(IdentityTable.ecosystem) == ecosystem,
                 col(IdentityTable.tenant_id) == tenant_id,
             )
-            .group_by(IdentityTable.identity_type)
+            .group_by(IdentityTable.identity_type, derived_status)
         )
-        return dict(self._session.exec(stmt).all())
+        return _rows_to_type_status_counts(self._session.exec(stmt).all())
 
 
 # --- BillingRepository ---
