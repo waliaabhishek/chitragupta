@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { API_URL } from "../config";
 import type {
   AggregationResponse,
@@ -25,103 +25,68 @@ export function useFilterOptions(
   startDate: string | null,
   endDate: string | null,
 ): UseFilterOptionsResult {
-  const [identityOptions, setIdentityOptions] = useState<SelectOption[]>([]);
-  const [resourceOptions, setResourceOptions] = useState<SelectOption[]>([]);
-  const [productTypeOptions, setProductTypeOptions] = useState<SelectOption[]>([]);
-  const [identitiesLoading, setIdentitiesLoading] = useState(false);
-  const [productTypesLoading, setProductTypesLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const identityResourceQuery = useQuery({
+    queryKey: ["filterOptions", "identityResource", tenantName],
+    queryFn: async ({ signal }) => {
+      const identityUrl = `${API_URL}/tenants/${tenantName}/identities?page_size=1000`;
+      const resourceUrl = `${API_URL}/tenants/${tenantName}/resources?page_size=1000`;
 
-  // Effect 1: identity + resource options — only re-fetch when tenant changes
-  useEffect(() => {
-    if (!tenantName) return;
-    const controller = new AbortController();
-    setIdentitiesLoading(true);
+      const [identities, resources] = await Promise.all([
+        fetch(identityUrl, { signal }).then((r) => {
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          return r.json() as Promise<PaginatedResponse<IdentityResponse>>;
+        }),
+        fetch(resourceUrl, { signal }).then((r) => {
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          return r.json() as Promise<PaginatedResponse<ResourceResponse>>;
+        }),
+      ]);
 
-    const identityUrl = `${API_URL}/tenants/${tenantName}/identities?page_size=1000`;
-    const resourceUrl = `${API_URL}/tenants/${tenantName}/resources?page_size=1000`;
+      return {
+        identityOptions: identities.items.map((i) => ({
+          label: i.display_name ? `${i.display_name} (${i.identity_id})` : i.identity_id,
+          value: i.identity_id,
+        })),
+        resourceOptions: resources.items.map((r) => ({
+          label: r.display_name ? `${r.display_name} (${r.resource_id})` : r.resource_id,
+          value: r.resource_id,
+        })),
+      };
+    },
+    enabled: !!tenantName,
+  });
 
-    Promise.all([
-      fetch(identityUrl, { signal: controller.signal }).then((r) => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        return r.json() as Promise<PaginatedResponse<IdentityResponse>>;
-      }),
-      fetch(resourceUrl, { signal: controller.signal }).then((r) => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        return r.json() as Promise<PaginatedResponse<ResourceResponse>>;
-      }),
-    ])
-      .then(([identities, resources]) => {
-        setIdentityOptions(
-          identities.items.map((i) => ({
-            label: i.display_name ? `${i.display_name} (${i.identity_id})` : i.identity_id,
-            value: i.identity_id,
-          })),
-        );
-        setResourceOptions(
-          resources.items.map((r) => ({
-            label: r.display_name ? `${r.display_name} (${r.resource_id})` : r.resource_id,
-            value: r.resource_id,
-          })),
-        );
-        setIdentitiesLoading(false);
-      })
-      .catch((err: unknown) => {
-        if (err instanceof Error && err.name === "AbortError") return;
-        setError(err instanceof Error ? err.message : "Failed to fetch options");
-        setIdentitiesLoading(false);
-      });
+  const productTypeQuery = useQuery({
+    queryKey: ["filterOptions", "productType", tenantName, startDate, endDate],
+    queryFn: async ({ signal }) => {
+      const qs = new URLSearchParams({ group_by: "product_type", time_bucket: "day" });
+      if (startDate) qs.set("start_date", startDate);
+      if (endDate) qs.set("end_date", endDate);
+      const productTypeUrl = `${API_URL}/tenants/${tenantName}/chargebacks/aggregate?${qs.toString()}`;
 
-    return () => {
-      controller.abort();
-    };
-  }, [tenantName]);
+      const response = await fetch(productTypeUrl, { signal });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const aggregation = (await response.json()) as AggregationResponse;
 
-  // Effect 2: product type options — re-fetch when tenant or date range changes
-  useEffect(() => {
-    if (!tenantName) return;
-    const controller = new AbortController();
-    setProductTypesLoading(true);
-
-    const qs = new URLSearchParams({ group_by: "product_type", time_bucket: "day" });
-    if (startDate) qs.set("start_date", startDate);
-    if (endDate) qs.set("end_date", endDate);
-    const productTypeUrl = `${API_URL}/tenants/${tenantName}/chargebacks/aggregate?${qs.toString()}`;
-
-    fetch(productTypeUrl, { signal: controller.signal })
-      .then((r) => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        return r.json() as Promise<AggregationResponse>;
-      })
-      .then((aggregation) => {
-        const seen = new Set<string>();
-        const ptOptions: SelectOption[] = [];
-        for (const bucket of aggregation.buckets) {
-          const pt = bucket.dimensions["product_type"];
-          if (pt && !seen.has(pt)) {
-            seen.add(pt);
-            ptOptions.push({ label: pt, value: pt });
-          }
+      const seen = new Set<string>();
+      const ptOptions: SelectOption[] = [];
+      for (const bucket of aggregation.buckets) {
+        const pt = bucket.dimensions["product_type"];
+        if (pt && !seen.has(pt)) {
+          seen.add(pt);
+          ptOptions.push({ label: pt, value: pt });
         }
-        setProductTypeOptions(ptOptions);
-        setProductTypesLoading(false);
-      })
-      .catch((err: unknown) => {
-        if (err instanceof Error && err.name === "AbortError") return;
-        setError(err instanceof Error ? err.message : "Failed to fetch options");
-        setProductTypesLoading(false);
-      });
-
-    return () => {
-      controller.abort();
-    };
-  }, [tenantName, startDate, endDate]);
+      }
+      return ptOptions;
+    },
+    enabled: !!tenantName,
+  });
 
   return {
-    identityOptions,
-    resourceOptions,
-    productTypeOptions,
-    isLoading: identitiesLoading || productTypesLoading,
-    error,
+    identityOptions: identityResourceQuery.data?.identityOptions ?? [],
+    resourceOptions: identityResourceQuery.data?.resourceOptions ?? [],
+    productTypeOptions: productTypeQuery.data ?? [],
+    isLoading: identityResourceQuery.isLoading || productTypeQuery.isLoading,
+    error: identityResourceQuery.error?.message ?? productTypeQuery.error?.message ?? null,
   };
 }

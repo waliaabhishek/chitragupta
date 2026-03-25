@@ -1,8 +1,24 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { http, HttpResponse } from "msw";
+import { createElement } from "react";
+import type { ReactNode } from "react";
 import { describe, expect, it } from "vitest";
 import { server } from "../test/mocks/server";
 import { useInventorySummary } from "./useInventorySummary";
+
+function createTestQueryClient() {
+  return new QueryClient({
+    defaultOptions: { queries: { retry: false, gcTime: 0 } },
+  });
+}
+
+function createWrapper() {
+  const queryClient = createTestQueryClient();
+  return function Wrapper({ children }: { children: ReactNode }) {
+    return createElement(QueryClientProvider, { client: queryClient }, children);
+  };
+}
 
 const BASE_PARAMS = {
   tenantName: "acme",
@@ -15,7 +31,7 @@ const MOCK_SUMMARY = {
 
 describe("useInventorySummary", () => {
   it("starts in loading state", () => {
-    const { result } = renderHook(() => useInventorySummary(BASE_PARAMS));
+    const { result } = renderHook(() => useInventorySummary(BASE_PARAMS), { wrapper: createWrapper() });
     expect(result.current.isLoading).toBe(true);
     expect(result.current.data).toBeNull();
     expect(result.current.error).toBeNull();
@@ -28,7 +44,7 @@ describe("useInventorySummary", () => {
       ),
     );
 
-    const { result } = renderHook(() => useInventorySummary(BASE_PARAMS));
+    const { result } = renderHook(() => useInventorySummary(BASE_PARAMS), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
     expect(result.current.data?.resource_counts).toEqual({ kafka_cluster: 5, connector: 3 });
@@ -43,7 +59,7 @@ describe("useInventorySummary", () => {
       ),
     );
 
-    const { result } = renderHook(() => useInventorySummary(BASE_PARAMS));
+    const { result } = renderHook(() => useInventorySummary(BASE_PARAMS), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
     expect(result.current.data?.resource_counts).toEqual({});
@@ -58,17 +74,12 @@ describe("useInventorySummary", () => {
       ),
     );
 
-    const { result } = renderHook(() => useInventorySummary(BASE_PARAMS));
+    const { result } = renderHook(() => useInventorySummary(BASE_PARAMS), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
     expect(result.current.error).not.toBeNull();
     expect(result.current.error).toContain("HTTP 500");
     expect(result.current.data).toBeNull();
-  });
-
-  it("returns a refetch function (callable without error)", () => {
-    const { result } = renderHook(() => useInventorySummary(BASE_PARAMS));
-    expect(typeof result.current.refetch).toBe("function");
   });
 
   it("refetch triggers a new fetch", async () => {
@@ -80,7 +91,7 @@ describe("useInventorySummary", () => {
       }),
     );
 
-    const { result } = renderHook(() => useInventorySummary(BASE_PARAMS));
+    const { result } = renderHook(() => useInventorySummary(BASE_PARAMS), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
     const countAfterFirst = callCount;
@@ -101,8 +112,9 @@ describe("useInventorySummary", () => {
       ),
     );
 
-    const { result, rerender } = renderHook(() =>
-      useInventorySummary({ tenantName }),
+    const { result, rerender } = renderHook(
+      () => useInventorySummary({ tenantName }),
+      { wrapper: createWrapper() },
     );
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 

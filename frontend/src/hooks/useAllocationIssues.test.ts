@@ -1,9 +1,25 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { http, HttpResponse } from "msw";
+import { createElement } from "react";
+import type { ReactNode } from "react";
 import { describe, expect, it } from "vitest";
 import { server } from "../test/mocks/server";
 import { useAllocationIssues } from "./useAllocationIssues";
 import type { ChargebackFilters } from "../types/filters";
+
+function createTestQueryClient() {
+  return new QueryClient({
+    defaultOptions: { queries: { retry: false, gcTime: 0 } },
+  });
+}
+
+function createWrapper() {
+  const queryClient = createTestQueryClient();
+  return function Wrapper({ children }: { children: ReactNode }) {
+    return createElement(QueryClientProvider, { client: queryClient }, children);
+  };
+}
 
 const EMPTY_FILTERS: ChargebackFilters = {
   start_date: null,
@@ -43,7 +59,7 @@ const MOCK_RESPONSE = {
 
 describe("useAllocationIssues", () => {
   it("starts in loading state", () => {
-    const { result } = renderHook(() => useAllocationIssues(BASE_PARAMS));
+    const { result } = renderHook(() => useAllocationIssues(BASE_PARAMS), { wrapper: createWrapper() });
     expect(result.current.isLoading).toBe(true);
     expect(result.current.data).toBeNull();
     expect(result.current.error).toBeNull();
@@ -56,7 +72,7 @@ describe("useAllocationIssues", () => {
       ),
     );
 
-    const { result } = renderHook(() => useAllocationIssues(BASE_PARAMS));
+    const { result } = renderHook(() => useAllocationIssues(BASE_PARAMS), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
     expect(result.current.data).not.toBeNull();
@@ -74,7 +90,7 @@ describe("useAllocationIssues", () => {
       ),
     );
 
-    const { result } = renderHook(() => useAllocationIssues(BASE_PARAMS));
+    const { result } = renderHook(() => useAllocationIssues(BASE_PARAMS), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
     expect(result.current.data?.items).toEqual([]);
@@ -89,17 +105,12 @@ describe("useAllocationIssues", () => {
       ),
     );
 
-    const { result } = renderHook(() => useAllocationIssues(BASE_PARAMS));
+    const { result } = renderHook(() => useAllocationIssues(BASE_PARAMS), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
     expect(result.current.error).not.toBeNull();
     expect(result.current.error).toContain("HTTP 500");
     expect(result.current.data).toBeNull();
-  });
-
-  it("exposes a refetch function", () => {
-    const { result } = renderHook(() => useAllocationIssues(BASE_PARAMS));
-    expect(typeof result.current.refetch).toBe("function");
   });
 
   it("refetch triggers a new fetch", async () => {
@@ -111,7 +122,7 @@ describe("useAllocationIssues", () => {
       }),
     );
 
-    const { result } = renderHook(() => useAllocationIssues(BASE_PARAMS));
+    const { result } = renderHook(() => useAllocationIssues(BASE_PARAMS), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
     const countAfterFirst = callCount;
@@ -142,13 +153,15 @@ describe("useAllocationIssues", () => {
       cost_type: null,
     };
 
-    const { result } = renderHook(() =>
-      useAllocationIssues({
-        tenantName: "acme",
-        filters: stableFilters,
-        page: 1,
-        pageSize: 100,
-      }),
+    const { result } = renderHook(
+      () =>
+        useAllocationIssues({
+          tenantName: "acme",
+          filters: stableFilters,
+          page: 1,
+          pageSize: 100,
+        }),
+      { wrapper: createWrapper() },
     );
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
@@ -168,8 +181,9 @@ describe("useAllocationIssues", () => {
       ),
     );
 
-    const { result, rerender } = renderHook(() =>
-      useAllocationIssues({ tenantName, filters: EMPTY_FILTERS, page: 1, pageSize: 100 }),
+    const { result, rerender } = renderHook(
+      () => useAllocationIssues({ tenantName, filters: EMPTY_FILTERS, page: 1, pageSize: 100 }),
+      { wrapper: createWrapper() },
     );
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 

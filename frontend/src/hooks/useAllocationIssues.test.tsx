@@ -1,9 +1,28 @@
 // GAP-100 TDD red phase — verification item 6
 // Test MUST fail until useAllocationIssues uses primitive filter fields in useEffect deps.
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook, waitFor } from "@testing-library/react";
+import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useAllocationIssues } from "./useAllocationIssues";
 import type { ChargebackFilters } from "../types/filters";
+
+function createTestQueryClient() {
+  return new QueryClient({
+    defaultOptions: { queries: { retry: false, gcTime: 0 } },
+  });
+}
+
+function createWrapper() {
+  const queryClient = createTestQueryClient();
+  return function Wrapper({ children }: { children: ReactNode }) {
+    return (
+      <QueryClientProvider client={queryClient}>
+        {children}
+      </QueryClientProvider>
+    );
+  };
+}
 
 // MSW server is already set up globally via src/test/setup.ts.
 
@@ -35,7 +54,7 @@ describe("useAllocationIssues — effect stability (GAP-100)", () => {
     const { rerender, result } = renderHook(
       ({ filters }: { filters: ChargebackFilters }) =>
         useAllocationIssues({ tenantName: "acme", filters, page: 1, pageSize: 25 }),
-      { initialProps: { filters: filtersV1 } },
+      { wrapper: createWrapper(), initialProps: { filters: filtersV1 } },
     );
 
     // Wait for initial fetch to complete.

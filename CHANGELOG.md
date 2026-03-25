@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Feat(frontend): TanStack Query v5 client-side data caching — all five data-fetching hooks (`useAggregation`, `useDataAvailability`, `useInventorySummary`, `useAllocationIssues`, `useFilterOptions`) now use `useQuery` with shared `QueryClient` cache. Navigating between pages returns cached data instantly without re-fetching. Default staleTime 5 min, gcTime 10 min, refetchOnWindowFocus disabled. Zero consumer component changes required.
 - Feat(frontend): Billing List Page — replaces "Coming soon" placeholder at `/billing` with functional billing data viewer. AG Grid infinite scroll against `GET /tenants/{tenant_name}/billing`, date range / product type / resource filters with URL sync and localStorage persistence, reset and refresh controls. Shared utility extraction: `dateFilterStorage`, `gridFormatters`, `filterHelpers` now serve both billing and chargebacks features.
 
 ## [2.0.0.rc1] - 2026-03-24

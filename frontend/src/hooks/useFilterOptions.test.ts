@@ -1,5 +1,8 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderHook, waitFor } from "@testing-library/react";
 import { http, HttpResponse } from "msw";
+import { createElement } from "react";
+import type { ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { server } from "../test/mocks/server";
 import type {
@@ -9,6 +12,19 @@ import type {
   ResourceResponse,
 } from "../types/api";
 import { useFilterOptions } from "./useFilterOptions";
+
+function createTestQueryClient() {
+  return new QueryClient({
+    defaultOptions: { queries: { retry: false, gcTime: 0 } },
+  });
+}
+
+function createWrapper() {
+  const queryClient = createTestQueryClient();
+  return function Wrapper({ children }: { children: ReactNode }) {
+    return createElement(QueryClientProvider, { client: queryClient }, children);
+  };
+}
 
 const identityFixture: PaginatedResponse<IdentityResponse> = {
   items: [
@@ -104,6 +120,15 @@ const aggregateFixture: AggregationResponse = {
 };
 
 describe("useFilterOptions", () => {
+  it("starts in loading state", () => {
+    const { result } = renderHook(() => useFilterOptions("acme", null, null), { wrapper: createWrapper() });
+    expect(result.current.isLoading).toBe(true);
+    expect(result.current.identityOptions).toEqual([]);
+    expect(result.current.resourceOptions).toEqual([]);
+    expect(result.current.productTypeOptions).toEqual([]);
+    expect(result.current.error).toBeNull();
+  });
+
   it("useFilterOptions_fetches_all_3_endpoints_and_maps_options_correctly", async () => {
     server.use(
       http.get("/api/v1/tenants/acme/identities", () =>
@@ -117,7 +142,7 @@ describe("useFilterOptions", () => {
       ),
     );
 
-    const { result } = renderHook(() => useFilterOptions("acme", null, null));
+    const { result } = renderHook(() => useFilterOptions("acme", null, null), { wrapper: createWrapper() });
 
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
@@ -172,7 +197,7 @@ describe("useFilterOptions", () => {
       ),
     );
 
-    const { result } = renderHook(() => useFilterOptions("acme", null, null));
+    const { result } = renderHook(() => useFilterOptions("acme", null, null), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
     expect(result.current.productTypeOptions).toHaveLength(2);
@@ -187,7 +212,7 @@ describe("useFilterOptions", () => {
       http.get("/api/v1/tenants/acme/identities", () => HttpResponse.error()),
     );
 
-    const { result } = renderHook(() => useFilterOptions("acme", null, null));
+    const { result } = renderHook(() => useFilterOptions("acme", null, null), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
     expect(result.current.identityOptions).toEqual([]);
@@ -198,7 +223,7 @@ describe("useFilterOptions", () => {
   it("useFilterOptions_does_not_call_fetch_when_tenantName_is_empty_string", () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch");
 
-    const { result } = renderHook(() => useFilterOptions("", null, null));
+    const { result } = renderHook(() => useFilterOptions("", null, null), { wrapper: createWrapper() });
 
     expect(result.current.isLoading).toBe(false);
     expect(result.current.identityOptions).toEqual([]);
@@ -226,7 +251,7 @@ describe("useFilterOptions", () => {
     const { rerender } = renderHook(
       ({ startDate }: { startDate: string | null }) =>
         useFilterOptions("acme", startDate, null),
-      { initialProps: { startDate: null as string | null } },
+      { wrapper: createWrapper(), initialProps: { startDate: null as string | null } },
     );
 
     await waitFor(() => expect(callCount).toBeGreaterThanOrEqual(1));
@@ -255,7 +280,7 @@ describe("useFilterOptions", () => {
     const { rerender } = renderHook(
       ({ endDate }: { endDate: string | null }) =>
         useFilterOptions("acme", null, endDate),
-      { initialProps: { endDate: null as string | null } },
+      { wrapper: createWrapper(), initialProps: { endDate: null as string | null } },
     );
 
     await waitFor(() => expect(callCount).toBeGreaterThanOrEqual(1));
@@ -272,7 +297,7 @@ describe("useFilterOptions", () => {
       ),
     );
 
-    const { result } = renderHook(() => useFilterOptions("acme", null, null));
+    const { result } = renderHook(() => useFilterOptions("acme", null, null), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
     expect(result.current.error).not.toBeNull();
@@ -287,7 +312,7 @@ describe("useFilterOptions", () => {
       ),
     );
 
-    const { result } = renderHook(() => useFilterOptions("acme", null, null));
+    const { result } = renderHook(() => useFilterOptions("acme", null, null), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
     expect(result.current.error).not.toBeNull();
@@ -304,7 +329,7 @@ describe("useFilterOptions", () => {
       ),
     );
 
-    const { result } = renderHook(() => useFilterOptions("acme", null, null));
+    const { result } = renderHook(() => useFilterOptions("acme", null, null), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
     expect(result.current.error).not.toBeNull();
@@ -327,7 +352,7 @@ describe("useFilterOptions", () => {
       }),
     );
 
-    const { unmount } = renderHook(() => useFilterOptions("acme", null, null));
+    const { unmount } = renderHook(() => useFilterOptions("acme", null, null), { wrapper: createWrapper() });
 
     // Unmount before the delayed identity fetch resolves
     unmount();

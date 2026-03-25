@@ -6,6 +6,7 @@ import type React from "react";
  * Deliberately does NOT mock useInventorySummary or InventoryCounters so the
  * full data flow is exercised: fetch → hook state → component render.
  */
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { MemoryRouter } from "react-router";
@@ -156,10 +157,15 @@ vi.mock("antd", () => ({
 }));
 
 function wrapper({ children }: { children: ReactNode }): React.JSX.Element {
+  const testQueryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false, gcTime: 0 } },
+  });
   return (
-    <MemoryRouter>
-      {children}
-    </MemoryRouter>
+    <QueryClientProvider client={testQueryClient}>
+      <MemoryRouter>
+        {children}
+      </MemoryRouter>
+    </QueryClientProvider>
   );
 }
 
