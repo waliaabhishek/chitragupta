@@ -1408,6 +1408,18 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased">[Unreleased]<a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
+<li>Feat: TASK-155 — Add TanStack Query v5 for client-side data caching</li>
+</ul>
+<p>Convert all five data-fetching hooks (useAggregation, useDataAvailability,
+useInventorySummary, useAllocationIssues, useFilterOptions) from
+useState+useEffect+fetch to useQuery with shared QueryClient cache.
+Page navigation now returns cached data instantly without re-fetching.</p>
+<ul>
+<li>QueryClientProvider between AntApp and TenantProvider (staleTime 5min,
+  gcTime 10min, refetchOnWindowFocus false, retry 1)</li>
+<li>ReactQueryDevtools in dev mode</li>
+<li>All hook return types preserved — zero consumer changes</li>
+<li>All 258 tests pass with QueryClientProvider test wrapper (<a href="https://github.com/waliaabhishek/chitragupta/commit/82c74d40acf8319035fae2c4a54252248096815c">82c74d4</a>)</li>
 <li>Feat: TASK-154 — Implement Billing List Page with shared utility extraction</li>
 </ul>
 <p>Replace the "Coming soon" placeholder at /billing with a functional billing
@@ -1430,6 +1442,14 @@ tables and ResourceWarning from GC'd in-memory SQLite connections. (<a href="htt
 </ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
+<li>
+<p>Fix: Resolve pre-existing lint errors across frontend and backend</p>
+</li>
+<li>
+<p>FilterPanel.test.tsx: remove unused <code>_</code> params in format callbacks</p>
+</li>
+<li>chargebacks/list.tsx: move eslint-disable to correct line</li>
+<li>test_cost_input.py: fix import sorting (I001) and add strict=True to zip (B905) (<a href="https://github.com/waliaabhishek/chitragupta/commit/cea15b858f65b6d74631307499b1fc844537ce9b">cea15b8</a>)</li>
 <li>Fix: Register AG Grid modules to fix empty Chargebacks page</li>
 </ul>
 <p>AG Grid v35 requires explicit module registration. Without it, the
