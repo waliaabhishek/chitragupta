@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from collections import defaultdict
 from collections.abc import Iterable, Iterator
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
@@ -13,7 +14,7 @@ if TYPE_CHECKING:
     from plugins.confluent_cloud.connections import CCloudConnection
 
 from core.plugin.protocols import CostInput
-from plugins.confluent_cloud.models.billing import CCloudBillingLineItem
+from plugins.confluent_cloud.models.billing import CCloudBillingLineItem, billing_natural_key
 
 logger = logging.getLogger(__name__)
 BILLING_API_PATH = "/billing/v1/costs"
@@ -60,7 +61,7 @@ def _map_billing_item(
     ecosystem: str,
     tenant_id: str,
     row_index: int = 0,
-) -> BillingLineItem:
+) -> CCloudBillingLineItem:
     """Map a CCloud billing API response item to CCloudBillingLineItem."""
     resource = item.get("resource", {})
 
@@ -94,7 +95,7 @@ def _map_billing_item(
 
 def _map_malformed_item(
     item: dict[str, Any], ecosystem: str, tenant_id: str, idx: int, exc: Exception
-) -> BillingLineItem:
+) -> CCloudBillingLineItem:
     """Create a billing line from a malformed API row with best-effort field extraction."""
     resource = item.get("resource", {})
     env_id = resource.get("environment", {}).get("id") or ""
@@ -113,6 +114,44 @@ def _map_malformed_item(
         granularity="daily",
         currency="USD",
         metadata={"malformed": True, "parse_error": str(exc)},
+    )
+
+
+def _aggregate_tiers(items: list[CCloudBillingLineItem]) -> CCloudBillingLineItem:
+    """Merge billing rows that share the same 7-field key but differ by pricing tier.
+
+    Single-row groups pass through unchanged (preserving original unit_price).
+    Multi-row groups sum total_cost and quantity, zero out unit_price (meaningless
+    after aggregation), and stash per-tier breakdown in metadata["tiers"].
+    """
+    if len(items) == 1:
+        return items[0]
+
+    first = items[0]
+    total_cost = sum((item.total_cost for item in items), Decimal("0"))
+    total_qty = sum((item.quantity for item in items), Decimal("0"))
+
+    tiers = [
+        {"price": str(item.unit_price), "quantity": str(item.quantity), "cost": str(item.total_cost)} for item in items
+    ]
+
+    merged_metadata = dict(first.metadata)
+    merged_metadata["tiers"] = tiers
+
+    return CCloudBillingLineItem(
+        ecosystem=first.ecosystem,
+        tenant_id=first.tenant_id,
+        timestamp=first.timestamp,
+        env_id=first.env_id,
+        resource_id=first.resource_id,
+        product_category=first.product_category,
+        product_type=first.product_type,
+        quantity=total_qty,
+        unit_price=Decimal("0"),
+        total_cost=total_cost,
+        currency=first.currency,
+        granularity=first.granularity,
+        metadata=merged_metadata,
     )
 
 
@@ -154,17 +193,28 @@ class CCloudBillingCostInput(CostInput):
         start: datetime,
         end: datetime,
     ) -> Iterable[BillingLineItem]:
-        """Fetch billing items for a single date window."""
+        """Fetch billing items for a single date window.
+
+        Collects all rows per window, then aggregates rows that share the same
+        7-field billing key (tiered pricing produces multiple rows per key).
+        Buffer is bounded by BILLING_PAGE_SIZE (~2000 rows).
+        """
         params = {
             "start_date": start.strftime("%Y-%m-%d"),
             "end_date": end.strftime("%Y-%m-%d"),
             "page_size": BILLING_PAGE_SIZE,
         }
 
+        groups: defaultdict[tuple[str, str, datetime, str, str, str, str], list[CCloudBillingLineItem]] = defaultdict(
+            list
+        )
         for idx, raw_item in enumerate(self._connection.get(BILLING_API_PATH, params=params)):
             try:
-                yield _map_billing_item(raw_item, ECOSYSTEM, tenant_id, row_index=idx)
+                item = _map_billing_item(raw_item, ECOSYSTEM, tenant_id, row_index=idx)
             except (KeyError, ValueError) as exc:
-                # Preserve malformed row instead of dropping
                 logger.debug("Preserving malformed billing item %d as sentinel row: %s", idx, exc)
-                yield _map_malformed_item(raw_item, ECOSYSTEM, tenant_id, idx, exc)
+                item = _map_malformed_item(raw_item, ECOSYSTEM, tenant_id, idx, exc)
+            groups[billing_natural_key(item)].append(item)
+
+        for group in groups.values():
+            yield _aggregate_tiers(group)

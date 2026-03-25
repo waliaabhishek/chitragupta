@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Fix: `IdentityResolver` protocol now includes `context: ResolveContext | None = None` parameter, matching `ServiceHandler.resolve_identities` signature. Custom identity resolvers with the `context` parameter are no longer incorrectly rejected by signature validation.
 - Fix: Resource cache in orchestrator now keys by billing window, eliminating `setdefault()` collision when the same resource spans multiple windows. Active-fraction calculations use the correct per-window resource lifecycle state.
+- Fix(ccloud): Tiered pricing rows (same resource/date/product at different price points) were silently overwritten during ingestion due to PK collision at upsert. `_fetch_window()` now aggregates rows sharing the same 7-field billing key before yielding, preserving correct total costs. Tier breakdown is stored in `metadata["tiers"]`.
 
 ## [2.0.0.rc1] - 2026-03-24
 

@@ -617,3 +617,334 @@ class TestMalformedBillingHandling:
         assert len(malformed_items) == 1
         assert malformed_items[0].metadata["malformed"] is True
         assert "parse_error" in malformed_items[0].metadata
+
+
+class TestTierAggregation:
+    """Tests for TASK-153: tiered billing row aggregation in _fetch_window()."""
+
+    @respx.mock
+    def test_aggregate_tiers_sums_cost_and_quantity(self) -> None:
+        """Two API rows with same 7-field key but different prices → one aggregated item."""
+        from plugins.confluent_cloud.config import CCloudPluginConfig
+        from plugins.confluent_cloud.connections import CCloudConnection
+        from plugins.confluent_cloud.cost_input import CCloudBillingCostInput
+        from plugins.confluent_cloud.models.billing import billing_natural_key  # noqa: F401 — must exist
+
+        respx.get("https://api.confluent.cloud/billing/v1/costs").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "data": [
+                        {
+                            "start_date": "2026-03-01",
+                            "resource": {"id": "lsrc-test", "environment": {"id": "env-1"}},
+                            "product": "STREAM_GOVERNANCE",
+                            "line_type": "NUM_RULES",
+                            "quantity": 240,
+                            "price": 0.023,
+                            "amount": 5.52,
+                        },
+                        {
+                            "start_date": "2026-03-01",
+                            "resource": {"id": "lsrc-test", "environment": {"id": "env-1"}},
+                            "product": "STREAM_GOVERNANCE",
+                            "line_type": "NUM_RULES",
+                            "quantity": 72,
+                            "price": 0.0345,
+                            "amount": 2.484,
+                        },
+                    ],
+                    "metadata": {},
+                },
+            )
+        )
+
+        conn = CCloudConnection(api_key="k", api_secret=SecretStr("s"), request_interval_seconds=0)
+        config = CCloudPluginConfig.from_plugin_settings({"ccloud_api": {"key": "k", "secret": "s"}})
+        cost_input = CCloudBillingCostInput(conn, config)
+
+        items = list(
+            cost_input.gather(
+                "org-123",
+                datetime(2026, 3, 1, tzinfo=UTC),
+                datetime(2026, 3, 2, tzinfo=UTC),
+                uow=None,
+            )
+        )
+
+        assert len(items) == 1
+        assert items[0].total_cost == Decimal("8.004")
+        assert items[0].quantity == Decimal("312")
+        assert items[0].unit_price == Decimal("0")
+
+    @respx.mock
+    def test_different_keys_not_aggregated(self) -> None:
+        """Two rows with different resource_ids → two separate items yielded."""
+        from plugins.confluent_cloud.config import CCloudPluginConfig
+        from plugins.confluent_cloud.connections import CCloudConnection
+        from plugins.confluent_cloud.cost_input import CCloudBillingCostInput, _aggregate_tiers  # noqa: F401 — must exist
+
+        respx.get("https://api.confluent.cloud/billing/v1/costs").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "data": [
+                        {
+                            "start_date": "2026-03-01",
+                            "resource": {"id": "lsrc-aaa", "environment": {"id": "env-1"}},
+                            "product": "STREAM_GOVERNANCE",
+                            "line_type": "NUM_RULES",
+                            "quantity": 240,
+                            "price": 0.023,
+                            "amount": 5.52,
+                        },
+                        {
+                            "start_date": "2026-03-01",
+                            "resource": {"id": "lsrc-bbb", "environment": {"id": "env-1"}},
+                            "product": "STREAM_GOVERNANCE",
+                            "line_type": "NUM_RULES",
+                            "quantity": 72,
+                            "price": 0.023,
+                            "amount": 1.656,
+                        },
+                    ],
+                    "metadata": {},
+                },
+            )
+        )
+
+        conn = CCloudConnection(api_key="k", api_secret=SecretStr("s"), request_interval_seconds=0)
+        config = CCloudPluginConfig.from_plugin_settings({"ccloud_api": {"key": "k", "secret": "s"}})
+        cost_input = CCloudBillingCostInput(conn, config)
+
+        items = list(
+            cost_input.gather(
+                "org-123",
+                datetime(2026, 3, 1, tzinfo=UTC),
+                datetime(2026, 3, 2, tzinfo=UTC),
+                uow=None,
+            )
+        )
+
+        assert len(items) == 2
+        resource_ids = {item.resource_id for item in items}
+        assert "lsrc-aaa" in resource_ids
+        assert "lsrc-bbb" in resource_ids
+
+    @respx.mock
+    def test_single_row_passthrough(self) -> None:
+        """Single row for a key passes through unchanged — unit_price preserved, no tiers in metadata."""
+        from plugins.confluent_cloud.config import CCloudPluginConfig
+        from plugins.confluent_cloud.connections import CCloudConnection
+        from plugins.confluent_cloud.cost_input import CCloudBillingCostInput, _aggregate_tiers  # noqa: F401 — must exist
+
+        respx.get("https://api.confluent.cloud/billing/v1/costs").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "data": [
+                        {
+                            "start_date": "2026-03-01",
+                            "resource": {"id": "lsrc-solo", "environment": {"id": "env-1"}},
+                            "product": "STREAM_GOVERNANCE",
+                            "line_type": "NUM_RULES",
+                            "quantity": 100,
+                            "price": 0.023,
+                            "amount": 2.3,
+                        },
+                    ],
+                    "metadata": {},
+                },
+            )
+        )
+
+        conn = CCloudConnection(api_key="k", api_secret=SecretStr("s"), request_interval_seconds=0)
+        config = CCloudPluginConfig.from_plugin_settings({"ccloud_api": {"key": "k", "secret": "s"}})
+        cost_input = CCloudBillingCostInput(conn, config)
+
+        items = list(
+            cost_input.gather(
+                "org-123",
+                datetime(2026, 3, 1, tzinfo=UTC),
+                datetime(2026, 3, 2, tzinfo=UTC),
+                uow=None,
+            )
+        )
+
+        assert len(items) == 1
+        assert items[0].unit_price == Decimal("0.023")
+        assert "tiers" not in items[0].metadata
+
+    @respx.mock
+    def test_malformed_rows_not_aggregated_with_valid(self) -> None:
+        """Malformed row (missing start_date → resource_id='malformed_billing_1') not merged with valid row."""
+        from plugins.confluent_cloud.config import CCloudPluginConfig
+        from plugins.confluent_cloud.connections import CCloudConnection
+        from plugins.confluent_cloud.cost_input import CCloudBillingCostInput, _aggregate_tiers  # noqa: F401 — must exist
+
+        respx.get("https://api.confluent.cloud/billing/v1/costs").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "data": [
+                        {
+                            "start_date": "2026-03-01",
+                            "resource": {"id": "lsrc-test", "environment": {"id": "env-1"}},
+                            "product": "STREAM_GOVERNANCE",
+                            "line_type": "NUM_RULES",
+                            "quantity": 240,
+                            "price": 0.023,
+                            "amount": 5.52,
+                        },
+                        {
+                            # Missing start_date → malformed at idx=1 → resource_id="malformed_billing_1"
+                            "resource": {"id": "lsrc-test", "environment": {"id": "env-1"}},
+                            "product": "STREAM_GOVERNANCE",
+                            "line_type": "NUM_RULES",
+                            "quantity": 72,
+                            "price": 0.0345,
+                            "amount": 2.484,
+                        },
+                    ],
+                    "metadata": {},
+                },
+            )
+        )
+
+        conn = CCloudConnection(api_key="k", api_secret=SecretStr("s"), request_interval_seconds=0)
+        config = CCloudPluginConfig.from_plugin_settings({"ccloud_api": {"key": "k", "secret": "s"}})
+        cost_input = CCloudBillingCostInput(conn, config)
+
+        items = list(
+            cost_input.gather(
+                "org-123",
+                datetime(2026, 3, 1, tzinfo=UTC),
+                datetime(2026, 3, 2, tzinfo=UTC),
+                uow=None,
+            )
+        )
+
+        assert len(items) == 2
+        resource_ids = {item.resource_id for item in items}
+        assert "lsrc-test" in resource_ids
+        assert "malformed_billing_1" in resource_ids
+
+    @respx.mock
+    def test_aggregated_metadata_contains_tier_breakdown(self) -> None:
+        """Two tiers aggregated → metadata['tiers'] is list of 2 dicts with price/quantity/cost as strings."""
+        from plugins.confluent_cloud.config import CCloudPluginConfig
+        from plugins.confluent_cloud.connections import CCloudConnection
+        from plugins.confluent_cloud.cost_input import CCloudBillingCostInput
+        from plugins.confluent_cloud.models.billing import billing_natural_key  # noqa: F401 — must exist
+
+        respx.get("https://api.confluent.cloud/billing/v1/costs").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "data": [
+                        {
+                            "start_date": "2026-03-01",
+                            "resource": {"id": "lsrc-test", "environment": {"id": "env-1"}},
+                            "product": "STREAM_GOVERNANCE",
+                            "line_type": "NUM_RULES",
+                            "quantity": 240,
+                            "price": 0.023,
+                            "amount": 5.52,
+                        },
+                        {
+                            "start_date": "2026-03-01",
+                            "resource": {"id": "lsrc-test", "environment": {"id": "env-1"}},
+                            "product": "STREAM_GOVERNANCE",
+                            "line_type": "NUM_RULES",
+                            "quantity": 72,
+                            "price": 0.0345,
+                            "amount": 2.484,
+                        },
+                    ],
+                    "metadata": {},
+                },
+            )
+        )
+
+        conn = CCloudConnection(api_key="k", api_secret=SecretStr("s"), request_interval_seconds=0)
+        config = CCloudPluginConfig.from_plugin_settings({"ccloud_api": {"key": "k", "secret": "s"}})
+        cost_input = CCloudBillingCostInput(conn, config)
+
+        items = list(
+            cost_input.gather(
+                "org-123",
+                datetime(2026, 3, 1, tzinfo=UTC),
+                datetime(2026, 3, 2, tzinfo=UTC),
+                uow=None,
+            )
+        )
+
+        assert len(items) == 1
+        tiers = items[0].metadata["tiers"]
+        assert isinstance(tiers, list)
+        assert len(tiers) == 2
+        for tier in tiers:
+            assert "price" in tier
+            assert "quantity" in tier
+            assert "cost" in tier
+            assert isinstance(tier["price"], str)
+            assert isinstance(tier["quantity"], str)
+            assert isinstance(tier["cost"], str)
+
+    @respx.mock
+    def test_gather_idempotency(self) -> None:
+        """Same mock API response called twice → identical output both times."""
+        from plugins.confluent_cloud.config import CCloudPluginConfig
+        from plugins.confluent_cloud.connections import CCloudConnection
+        from plugins.confluent_cloud.cost_input import CCloudBillingCostInput, _aggregate_tiers  # noqa: F401 — must exist
+
+        billing_data = {
+            "data": [
+                {
+                    "start_date": "2026-03-01",
+                    "resource": {"id": "lsrc-test", "environment": {"id": "env-1"}},
+                    "product": "STREAM_GOVERNANCE",
+                    "line_type": "NUM_RULES",
+                    "quantity": 240,
+                    "price": 0.023,
+                    "amount": 5.52,
+                },
+                {
+                    "start_date": "2026-03-01",
+                    "resource": {"id": "lsrc-test", "environment": {"id": "env-1"}},
+                    "product": "STREAM_GOVERNANCE",
+                    "line_type": "NUM_RULES",
+                    "quantity": 72,
+                    "price": 0.0345,
+                    "amount": 2.484,
+                },
+            ],
+            "metadata": {},
+        }
+
+        route = respx.get("https://api.confluent.cloud/billing/v1/costs")
+        route.side_effect = [
+            httpx.Response(200, json=billing_data),
+            httpx.Response(200, json=billing_data),
+        ]
+
+        conn = CCloudConnection(api_key="k", api_secret=SecretStr("s"), request_interval_seconds=0)
+        config = CCloudPluginConfig.from_plugin_settings({"ccloud_api": {"key": "k", "secret": "s"}})
+        cost_input = CCloudBillingCostInput(conn, config)
+
+        gather_kwargs: dict = {
+            "tenant_id": "org-123",
+            "start": datetime(2026, 3, 1, tzinfo=UTC),
+            "end": datetime(2026, 3, 2, tzinfo=UTC),
+            "uow": None,
+        }
+
+        items_first = list(cost_input.gather(**gather_kwargs))
+        items_second = list(cost_input.gather(**gather_kwargs))
+
+        assert len(items_first) == len(items_second)
+        for a, b in zip(items_first, items_second):
+            assert a.total_cost == b.total_cost
+            assert a.quantity == b.quantity
+            assert a.unit_price == b.unit_price
+            assert a.resource_id == b.resource_id

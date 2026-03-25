@@ -31,3 +31,23 @@ class CCloudBillingLineItem:
     currency: str = "USD"
     granularity: str = "daily"
     metadata: dict[str, Any] = field(default_factory=dict)
+
+
+def billing_natural_key(
+    item: CCloudBillingLineItem,
+) -> tuple[str, str, datetime, str, str, str, str]:
+    """Return the 7-field natural key that uniquely identifies a billing line item.
+
+    Used by ``cost_input._fetch_window()`` for tier grouping.
+    ``repositories._billing_pk()`` encodes the same fields independently;
+    a follow-up task can unify them.
+    """
+    return (
+        item.ecosystem,
+        item.tenant_id,
+        item.timestamp,
+        item.env_id,
+        item.resource_id,
+        item.product_type,
+        item.product_category,
+    )
