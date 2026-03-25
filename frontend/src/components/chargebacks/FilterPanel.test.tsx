@@ -116,8 +116,8 @@ vi.mock("antd", async () => {
             data-testid="date-range-set"
             onClick={() =>
               onChange?.([
-                { format: (_: string) => "2026-02-01" },
-                { format: (_: string) => "2026-02-28" },
+                { format: () => "2026-02-01" },
+                { format: () => "2026-02-28" },
               ])
             }
           >

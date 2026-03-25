@@ -682,7 +682,10 @@ class TestTierAggregation:
         """Two rows with different resource_ids → two separate items yielded."""
         from plugins.confluent_cloud.config import CCloudPluginConfig
         from plugins.confluent_cloud.connections import CCloudConnection
-        from plugins.confluent_cloud.cost_input import CCloudBillingCostInput, _aggregate_tiers  # noqa: F401 — must exist
+        from plugins.confluent_cloud.cost_input import (  # noqa: F401 — must exist
+            CCloudBillingCostInput,
+            _aggregate_tiers,
+        )
 
         respx.get("https://api.confluent.cloud/billing/v1/costs").mock(
             return_value=httpx.Response(
@@ -736,7 +739,10 @@ class TestTierAggregation:
         """Single row for a key passes through unchanged — unit_price preserved, no tiers in metadata."""
         from plugins.confluent_cloud.config import CCloudPluginConfig
         from plugins.confluent_cloud.connections import CCloudConnection
-        from plugins.confluent_cloud.cost_input import CCloudBillingCostInput, _aggregate_tiers  # noqa: F401 — must exist
+        from plugins.confluent_cloud.cost_input import (  # noqa: F401 — must exist
+            CCloudBillingCostInput,
+            _aggregate_tiers,
+        )
 
         respx.get("https://api.confluent.cloud/billing/v1/costs").mock(
             return_value=httpx.Response(
@@ -780,7 +786,10 @@ class TestTierAggregation:
         """Malformed row (missing start_date → resource_id='malformed_billing_1') not merged with valid row."""
         from plugins.confluent_cloud.config import CCloudPluginConfig
         from plugins.confluent_cloud.connections import CCloudConnection
-        from plugins.confluent_cloud.cost_input import CCloudBillingCostInput, _aggregate_tiers  # noqa: F401 — must exist
+        from plugins.confluent_cloud.cost_input import (  # noqa: F401 — must exist
+            CCloudBillingCostInput,
+            _aggregate_tiers,
+        )
 
         respx.get("https://api.confluent.cloud/billing/v1/costs").mock(
             return_value=httpx.Response(
@@ -896,7 +905,10 @@ class TestTierAggregation:
         """Same mock API response called twice → identical output both times."""
         from plugins.confluent_cloud.config import CCloudPluginConfig
         from plugins.confluent_cloud.connections import CCloudConnection
-        from plugins.confluent_cloud.cost_input import CCloudBillingCostInput, _aggregate_tiers  # noqa: F401 — must exist
+        from plugins.confluent_cloud.cost_input import (  # noqa: F401 — must exist
+            CCloudBillingCostInput,
+            _aggregate_tiers,
+        )
 
         billing_data = {
             "data": [
@@ -943,7 +955,7 @@ class TestTierAggregation:
         items_second = list(cost_input.gather(**gather_kwargs))
 
         assert len(items_first) == len(items_second)
-        for a, b in zip(items_first, items_second):
+        for a, b in zip(items_first, items_second, strict=True):
             assert a.total_cost == b.total_cost
             assert a.quantity == b.quantity
             assert a.unit_price == b.unit_price

@@ -25,8 +25,7 @@ export function ChargebackListPage(): React.JSX.Element {
   const [bulkModalOpen, setBulkModalOpen] = useState(false);
   const gridRef = useRef<AgGridReact>(null);
 
-  // Read `selected` param from URL to open drawer on mount
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+  // Read `selected` param from URL to open drawer on mount — run once
   useEffect(() => {
     const selected = searchParams.get("selected");
     if (selected !== null) {
@@ -35,7 +34,8 @@ export function ChargebackListPage(): React.JSX.Element {
         setSelectedDimensionId(id);
       }
     }
-  }, []); // Run once on mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleTagsChanged = useCallback(() => {
     gridRef.current?.api?.refreshInfiniteCache();
