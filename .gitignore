@@ -5,6 +5,7 @@
 backlog/
 .claude/
 memory/
+**/data/
 
 CLAUDE.md
 
