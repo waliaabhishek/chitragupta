@@ -3,8 +3,9 @@ from __future__ import annotations
 import logging
 from collections.abc import Iterator
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta, tzinfo
 from typing import TYPE_CHECKING, Annotated, cast
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import Depends, HTTPException, Path, Request
 
@@ -26,6 +27,7 @@ def utc_today() -> date:
 def resolve_date_range(
     start_date: date | None,
     end_date: date | None,
+    timezone: str | None = None,
 ) -> tuple[datetime, datetime]:
     """Resolve optional date params to UTC datetime bounds with a 30-day default window.
 
@@ -33,15 +35,21 @@ def resolve_date_range(
     UTC-aware datetimes. end_dt is exclusive (midnight of the day after end_date)
     so that records timestamped anywhere on end_date are included.
 
+    When timezone is provided, midnight boundaries are computed in that timezone
+    before converting to UTC. This ensures a user selecting Dec 31 in America/Denver
+    gets end_dt=2026-01-01T07:00:00 UTC rather than 2026-01-01T00:00:00 UTC.
+
     Args:
         start_date: Inclusive start date, or None to default to today - 30 days.
         end_date: Inclusive end date, or None to default to today.
+        timezone: IANA timezone string (e.g. "America/Denver"), or None for UTC.
 
     Returns:
         (start_dt, end_dt) as UTC-aware datetimes.
 
     Raises:
         HTTPException 400: If effective start_date > end_date.
+        HTTPException 400: If timezone is an unrecognised IANA string.
     """
     today = utc_today()
     effective_end = end_date or today
@@ -50,8 +58,17 @@ def resolve_date_range(
     if effective_start > effective_end:
         raise HTTPException(400, detail="start_date must be <= end_date")
 
-    start_dt = datetime(effective_start.year, effective_start.month, effective_start.day, tzinfo=UTC)
-    end_dt = datetime(effective_end.year, effective_end.month, effective_end.day, tzinfo=UTC) + timedelta(days=1)
+    tz: tzinfo = UTC
+    if timezone:
+        try:
+            tz = ZoneInfo(timezone)
+        except ZoneInfoNotFoundError:
+            raise HTTPException(400, detail=f"Unknown timezone: {timezone!r}") from None
+
+    start_dt = datetime(effective_start.year, effective_start.month, effective_start.day, tzinfo=tz).astimezone(UTC)
+    end_dt = (
+        datetime(effective_end.year, effective_end.month, effective_end.day, tzinfo=tz) + timedelta(days=1)
+    ).astimezone(UTC)
     return start_dt, end_dt
 
 

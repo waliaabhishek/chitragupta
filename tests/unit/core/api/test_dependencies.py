@@ -351,3 +351,34 @@ class TestResolveDateRange:
         start_dt, end_dt = resolve_date_range(date(2026, 1, 1), date(2026, 1, 1))
         assert start_dt == datetime(2026, 1, 1, tzinfo=UTC)
         assert end_dt == datetime(2026, 1, 2, tzinfo=UTC)
+
+    def test_utc_default_unchanged(self) -> None:
+        start_dt, end_dt = resolve_date_range(date(2026, 1, 1), date(2026, 1, 31), timezone="UTC")
+        assert start_dt == datetime(2026, 1, 1, tzinfo=UTC)
+        assert end_dt == datetime(2026, 2, 1, tzinfo=UTC)
+
+    def test_denver_end_date_boundary(self) -> None:
+        _start_dt, end_dt = resolve_date_range(date(2025, 12, 1), date(2025, 12, 31), timezone="America/Denver")
+        assert end_dt == datetime(2026, 1, 1, 7, 0, 0, tzinfo=UTC)
+
+    def test_denver_start_date_boundary(self) -> None:
+        start_dt, _end_dt = resolve_date_range(date(2025, 12, 1), date(2025, 12, 31), timezone="America/Denver")
+        assert start_dt == datetime(2025, 12, 1, 7, 0, 0, tzinfo=UTC)
+
+    def test_invalid_timezone_raises_400(self) -> None:
+        with (
+            patch("core.api.dependencies.utc_today", return_value=self._FAKE_TODAY),
+            pytest.raises(HTTPException) as exc_info,
+        ):
+            resolve_date_range(None, None, timezone="Not/ATimezone")
+        assert exc_info.value.status_code == 400
+        assert "Not/ATimezone" in exc_info.value.detail
+
+    def test_empty_string_timezone_treated_as_utc(self) -> None:
+        _start_dt, end_dt = resolve_date_range(date(2026, 1, 1), date(2026, 1, 1), timezone="")
+        assert end_dt == datetime(2026, 1, 2, tzinfo=UTC)
+
+    def test_dst_spring_forward_denver(self) -> None:
+        start_dt, end_dt = resolve_date_range(date(2026, 3, 8), date(2026, 3, 8), timezone="America/Denver")
+        assert start_dt == datetime(2026, 3, 8, 7, 0, 0, tzinfo=UTC)
+        assert end_dt == datetime(2026, 3, 9, 6, 0, 0, tzinfo=UTC)
