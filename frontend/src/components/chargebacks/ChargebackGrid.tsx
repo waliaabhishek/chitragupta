@@ -7,6 +7,7 @@ import { Tag } from "antd";
 import { type MutableRefObject, type Ref, useMemo, useCallback, useEffect, useRef, useImperativeHandle } from "react";
 import { API_URL } from "../../config";
 import type { ChargebackResponse, PaginatedResponse } from "../../types/api";
+import { dateFormatter, currencyFormatter } from "../../utils/gridFormatters";
 
 interface ChargebackGridProps {
   tenantName: string;
@@ -15,16 +16,6 @@ interface ChargebackGridProps {
   onSelectionChange?: (ids: number[]) => void;
   onSelectAll?: (total: number) => void;
   ref?: Ref<AgGridReact>;
-}
-
-function dateFormatter(params: { value: string }): string {
-  if (!params.value) return "";
-  return new Date(params.value).toLocaleDateString();
-}
-
-function currencyFormatter(params: { value: string }): string {
-  if (params.value == null) return "";
-  return `$${Number(params.value).toFixed(2)}`;
 }
 
 function TagsCellRenderer(props: { value: string[] }): React.JSX.Element {

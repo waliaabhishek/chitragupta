@@ -6,3 +6,10 @@ export interface ChargebackFilters {
   resource_id: string | null;
   cost_type: string | null;
 }
+
+export interface BillingFilters {
+  start_date: string | null; // YYYY-MM-DD
+  end_date: string | null;
+  product_type: string | null;
+  resource_id: string | null;
+}

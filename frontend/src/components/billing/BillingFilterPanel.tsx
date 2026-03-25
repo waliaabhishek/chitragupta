@@ -1,37 +1,65 @@
 import type React from "react";
-import { Button, DatePicker, Form, Select } from "antd";
+import { useEffect, useState } from "react";
+import { Button, DatePicker, Form, Input, Select } from "antd";
 import dayjs from "dayjs";
-import { useFilterOptions } from "../../hooks/useFilterOptions";
-import type { ChargebackFilters } from "../../types/filters";
+import { API_URL } from "../../config";
+import type { PaginatedResponse, ResourceResponse } from "../../types/api";
+import type { BillingFilters } from "../../types/filters";
+import type { SelectOption } from "../../hooks/useFilterOptions";
 import { filterByLabel } from "../../utils/filterHelpers";
 
-const COST_TYPE_OPTIONS = [
-  { label: "Usage", value: "usage" },
-  { label: "Shared", value: "shared" },
-];
-
-interface FilterPanelProps {
-  filters: ChargebackFilters;
-  onChange: (key: keyof ChargebackFilters, value: string | null) => void;
-  onBatchChange?: (updates: Partial<ChargebackFilters>) => void;
+interface BillingFilterPanelProps {
+  filters: BillingFilters;
+  onChange: (key: keyof BillingFilters, value: string | null) => void;
+  onBatchChange?: (updates: Partial<BillingFilters>) => void;
   onReset: () => void;
   onRefresh?: () => void;
   tenantName: string;
 }
 
-export function FilterPanel({
+export function BillingFilterPanel({
   filters,
   onChange,
   onBatchChange,
   onReset,
   onRefresh,
   tenantName,
-}: FilterPanelProps): React.JSX.Element {
+}: BillingFilterPanelProps): React.JSX.Element {
+  const [resourceOptions, setResourceOptions] = useState<SelectOption[]>([]);
+  const [resourcesLoading, setResourcesLoading] = useState(false);
+
+  useEffect(() => {
+    if (!tenantName) return;
+    const controller = new AbortController();
+    setResourcesLoading(true);
+
+    const resourceUrl = `${API_URL}/tenants/${tenantName}/resources?page_size=1000`;
+    fetch(resourceUrl, { signal: controller.signal })
+      .then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json() as Promise<PaginatedResponse<ResourceResponse>>;
+      })
+      .then((resources) => {
+        setResourceOptions(
+          resources.items.map((r) => ({
+            label: r.display_name ? `${r.display_name} (${r.resource_id})` : r.resource_id,
+            value: r.resource_id,
+          })),
+        );
+        setResourcesLoading(false);
+      })
+      .catch((err: unknown) => {
+        if (err instanceof Error && err.name === "AbortError") return;
+        setResourcesLoading(false);
+      });
+
+    return () => {
+      controller.abort();
+    };
+  }, [tenantName]);
+
   const startValue = filters.start_date ? dayjs(filters.start_date) : null;
   const endValue = filters.end_date ? dayjs(filters.end_date) : null;
-
-  const { identityOptions, resourceOptions, productTypeOptions, isLoading } =
-    useFilterOptions(tenantName, filters.start_date, filters.end_date);
 
   return (
     <Form layout="inline" style={{ padding: "8px 0", flexWrap: "wrap" }}>
@@ -52,30 +80,12 @@ export function FilterPanel({
         />
       </Form.Item>
 
-      <Form.Item label="Identity">
-        <Select
-          placeholder="Any identity"
-          value={filters.identity_id ?? undefined}
-          onChange={(val: string | undefined) => onChange("identity_id", val ?? null)}
-          options={identityOptions}
-          showSearch
-          allowClear
-          loading={isLoading}
-          filterOption={filterByLabel}
-          style={{ width: 220 }}
-        />
-      </Form.Item>
-
       <Form.Item label="Product Type">
-        <Select
+        <Input
           placeholder="Any product type"
-          value={filters.product_type ?? undefined}
-          onChange={(val: string | undefined) => onChange("product_type", val ?? null)}
-          options={productTypeOptions}
-          showSearch
+          value={filters.product_type ?? ""}
+          onChange={(e) => onChange("product_type", e.target.value || null)}
           allowClear
-          loading={isLoading}
-          filterOption={filterByLabel}
           style={{ width: 180 }}
         />
       </Form.Item>
@@ -88,27 +98,15 @@ export function FilterPanel({
           options={resourceOptions}
           showSearch
           allowClear
-          loading={isLoading}
+          loading={resourcesLoading}
           filterOption={filterByLabel}
           style={{ width: 220 }}
-        />
-      </Form.Item>
-
-      <Form.Item label="Cost Type">
-        <Select
-          placeholder="Any"
-          value={filters.cost_type ?? undefined}
-          onChange={(val: string | undefined) => onChange("cost_type", val ?? null)}
-          options={COST_TYPE_OPTIONS}
-          allowClear
-          style={{ width: 120 }}
         />
       </Form.Item>
 
       <Form.Item>
         <Button onClick={onReset}>Reset</Button>
       </Form.Item>
-
       {onRefresh !== undefined && (
         <Form.Item>
           <Button type="primary" onClick={onRefresh}>

@@ -3,7 +3,8 @@ import { describe, expect, it, vi } from "vitest";
 import type { UseFilterOptionsResult } from "../../hooks/useFilterOptions";
 import { useFilterOptions } from "../../hooks/useFilterOptions";
 import type { ChargebackFilters } from "../../types/filters";
-import { filterByLabel, FilterPanel } from "./FilterPanel";
+import { filterByLabel } from "../../utils/filterHelpers";
+import { FilterPanel } from "./FilterPanel";
 
 // Mock the useFilterOptions hook so FilterPanel doesn't make real HTTP calls.
 vi.mock("../../hooks/useFilterOptions", () => ({
