@@ -93,6 +93,7 @@ List raw billing line items. Paginated.
 |---|---|---|---|
 | `start_date` | date | no | Filter start |
 | `end_date` | date | no | Filter end |
+| `timezone` | string | no | IANA timezone for date boundaries (e.g. `America/Denver`). Defaults to UTC. |
 | `product_type` | string | no | Filter by product type |
 | `resource_id` | string | no | Filter by resource |
 
@@ -110,6 +111,7 @@ List allocated chargeback rows. Paginated.
 |---|---|---|---|
 | `start_date` | date | no | Filter start |
 | `end_date` | date | no | Filter end |
+| `timezone` | string | no | IANA timezone for date boundaries (e.g. `America/Denver`). Defaults to UTC. |
 | `identity_id` | string | no | Filter by identity |
 | `product_type` | string | no | Filter by product type |
 | `resource_id` | string | no | Filter by resource |
@@ -161,6 +163,7 @@ Multi-dimensional aggregation with time bucketing. Returns up to 10,000 buckets.
 | `time_bucket` | string | `day` | `hour`, `day`, `week`, or `month` |
 | `start_date` | date | no | Filter start |
 | `end_date` | date | no | Filter end |
+| `timezone` | string | no | IANA timezone for date boundaries (e.g. `America/Denver`). Defaults to UTC. |
 | `identity_id` | string | no | Filter by identity |
 | `product_type` | string | no | Filter by product type |
 | `resource_id` | string | no | Filter by resource |
@@ -296,7 +299,7 @@ When `override_existing` is true, existing tags with the same key are updated in
 
 Bulk tag by chargeback filters (resolves matching dimension IDs server-side).
 
-**Body:** Same as bulk + filter fields: `start_date`, `end_date`, `identity_id`, `product_type`, `resource_id`, `cost_type`.
+**Body:** Same as bulk + filter fields: `start_date`, `end_date`, `timezone`, `identity_id`, `product_type`, `resource_id`, `cost_type`.
 
 ---
 
@@ -346,6 +349,7 @@ Stream chargeback data as CSV. Returns `text/csv` with `Content-Disposition: att
   "columns": ["timestamp", "resource_id", "product_type", "identity_id", "amount"],
   "start_date": "2026-01-01",
   "end_date": "2026-01-31",
+  "timezone": "America/Denver",
   "filters": {
     "identity_id": "sa-12345",
     "product_type": "KAFKA_NUM_CKU"
@@ -358,6 +362,7 @@ Stream chargeback data as CSV. Returns `text/csv` with `Content-Disposition: att
 | `columns` | list[string] | 9 default columns | Columns to include |
 | `start_date` | date | no | Filter start |
 | `end_date` | date | no | Filter end |
+| `timezone` | string | no | IANA timezone for date boundaries (e.g. `America/Denver`). Defaults to UTC. |
 | `filters` | dict | no | Key-value filters (`identity_id`, `product_type`, `resource_id`, `cost_type`) |
 
 **All available columns:** `ecosystem`, `tenant_id`, `timestamp`, `resource_id`, `product_category`, `product_type`, `identity_id`, `cost_type`, `amount`, `allocation_method`, `allocation_detail`, `tags`, `metadata`.

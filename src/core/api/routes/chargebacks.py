@@ -31,6 +31,9 @@ async def list_chargebacks(
     uow: Annotated[ReadOnlyUnitOfWork, Depends(get_unit_of_work)],
     start_date: Annotated[date | None, Query()] = None,
     end_date: Annotated[date | None, Query()] = None,
+    timezone: Annotated[
+        str | None, Query(description="IANA timezone for date boundaries (e.g. America/Denver)")
+    ] = None,
     identity_id: Annotated[str | None, Query()] = None,
     product_type: Annotated[str | None, Query()] = None,
     resource_id: Annotated[str | None, Query()] = None,
@@ -44,7 +47,7 @@ async def list_chargebacks(
         page,
         page_size,
     )
-    start_dt, end_dt = resolve_date_range(start_date, end_date)
+    start_dt, end_dt = resolve_date_range(start_date, end_date, timezone=timezone)
 
     offset = (page - 1) * page_size
     items, total = uow.chargebacks.find_by_filters(
@@ -151,6 +154,9 @@ async def list_allocation_issues(
     uow: Annotated[ReadOnlyUnitOfWork, Depends(get_unit_of_work)],
     start_date: Annotated[date | None, Query()] = None,
     end_date: Annotated[date | None, Query()] = None,
+    timezone: Annotated[
+        str | None, Query(description="IANA timezone for date boundaries (e.g. America/Denver)")
+    ] = None,
     identity_id: Annotated[str | None, Query()] = None,
     product_type: Annotated[str | None, Query()] = None,
     resource_id: Annotated[str | None, Query()] = None,
@@ -162,7 +168,7 @@ async def list_allocation_issues(
         tenant_config.tenant_id,
         page,
     )
-    start_dt, end_dt = resolve_date_range(start_date, end_date)
+    start_dt, end_dt = resolve_date_range(start_date, end_date, timezone=timezone)
     offset = (page - 1) * page_size
     items, total = uow.chargebacks.find_allocation_issues(
         ecosystem=tenant_config.ecosystem,

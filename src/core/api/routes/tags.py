@@ -257,7 +257,7 @@ async def bulk_add_tags_by_filter(
     uow: Annotated[UnitOfWork, Depends(get_write_unit_of_work)],
     body: BulkTagByFilterRequest,
 ) -> BulkTagResponse:
-    start_dt, end_dt = resolve_date_range(body.start_date, body.end_date)
+    start_dt, end_dt = resolve_date_range(body.start_date, body.end_date, timezone=body.timezone)
     dimension_ids = uow.chargebacks.find_dimension_ids_by_filters(
         ecosystem=tenant_config.ecosystem,
         tenant_id=tenant_config.tenant_id,

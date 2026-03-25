@@ -109,7 +109,7 @@ async def export_chargebacks(
     uow: Annotated[ReadOnlyUnitOfWork, Depends(get_unit_of_work)],
     body: ExportRequest,
 ) -> StreamingResponse:
-    start_dt, end_dt = resolve_date_range(body.start_date, body.end_date)
+    start_dt, end_dt = resolve_date_range(body.start_date, body.end_date, timezone=body.timezone)
     logger.info(
         "Export started tenant=%s start=%s end=%s",
         tenant_config.tenant_id,

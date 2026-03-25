@@ -23,6 +23,9 @@ async def list_billing(
     uow: Annotated[ReadOnlyUnitOfWork, Depends(get_unit_of_work)],
     start_date: Annotated[date | None, Query()] = None,
     end_date: Annotated[date | None, Query()] = None,
+    timezone: Annotated[
+        str | None, Query(description="IANA timezone for date boundaries (e.g. America/Denver)")
+    ] = None,
     product_type: Annotated[str | None, Query()] = None,
     resource_id: Annotated[str | None, Query()] = None,
     page: Annotated[int, Query(ge=1)] = 1,
@@ -34,7 +37,7 @@ async def list_billing(
         page,
         page_size,
     )
-    start_dt, end_dt = resolve_date_range(start_date, end_date)
+    start_dt, end_dt = resolve_date_range(start_date, end_date, timezone=timezone)
 
     offset = (page - 1) * page_size
     items, total = uow.billing.find_by_filters(

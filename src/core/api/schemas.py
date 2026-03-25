@@ -213,6 +213,7 @@ class BulkTagByFilterRequest(BaseModel):
 
     start_date: date | None = None
     end_date: date | None = None
+    timezone: str | None = None
     identity_id: str | None = None
     product_type: str | None = None
     resource_id: str | None = None
@@ -317,6 +318,7 @@ class ExportRequest(BaseModel):
 
     start_date: date | None = None
     end_date: date | None = None
+    timezone: str | None = None
     columns: list[str] | None = None
     filters: dict[str, str] | None = None
 
