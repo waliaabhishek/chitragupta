@@ -1248,6 +1248,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#fixed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fixed
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -1310,6 +1321,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#fixed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fixed
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -1350,6 +1372,13 @@ derives status from deleted_at via SQL CASE. New TypeStatusCounts frozen
 dataclass in core.models.counts. Frontend displays total prominently with
 "Active: N / Deleted: N" secondary text. All existing tests updated;
 new tests for mixed-status resources and identity deleted_at derivation. (<a href="https://github.com/waliaabhishek/chitragupta/commit/cc1def8e912806a52baf7c48f705527cc85be945">cc1def8</a>)</p>
+<h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Fix: Remove 10k row limit on aggregate endpoint that silently truncated totals</li>
+</ul>
+<p>The hardcoded limit=10000 on the aggregate SQL query caused the dashboard
+to show $8k instead of $16.6k when identity_id × daily buckets exceeded
+10k rows. Grafana was correct because it queries SQLite directly. (<a href="https://github.com/waliaabhishek/chitragupta/commit/3353312207e4222bd9c391a675a081338bef8328">3353312</a>)</p>
 
 
 
