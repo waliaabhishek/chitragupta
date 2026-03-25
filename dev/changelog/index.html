@@ -1374,8 +1374,14 @@ dataclass in core.models.counts. Frontend displays total prominently with
 new tests for mixed-status resources and identity deleted_at derivation. (<a href="https://github.com/waliaabhishek/chitragupta/commit/cc1def8e912806a52baf7c48f705527cc85be945">cc1def8</a>)</p>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
-<li>Fix: Remove 10k row limit on aggregate endpoint that silently truncated totals</li>
+<li>Fix: TASK-157 — Add timezone parameter to resolve_date_range</li>
 </ul>
+<p>resolve_date_range now accepts an optional IANA timezone string so date
+boundaries are computed in the user's local timezone before converting
+to UTC. Fixes data discrepancy where non-UTC users missed records near
+midnight boundaries (e.g. America/Denver end_date=Dec 31 now correctly
+produces end_dt=2026-01-01T07:00:00 UTC instead of 00:00:00 UTC). (<a href="https://github.com/waliaabhishek/chitragupta/commit/35800b0bd1f17e11b4480b3ab3502495842d5709">35800b0</a>)
+- Fix: Remove 10k row limit on aggregate endpoint that silently truncated totals</p>
 <p>The hardcoded limit=10000 on the aggregate SQL query caused the dashboard
 to show $8k instead of $16.6k when identity_id × daily buckets exceeded
 10k rows. Grafana was correct because it queries SQLite directly. (<a href="https://github.com/waliaabhishek/chitragupta/commit/3353312207e4222bd9c391a675a081338bef8328">3353312</a>)</p>
