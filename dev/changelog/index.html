@@ -1238,6 +1238,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Added
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#changed" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1322,6 +1333,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Added
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#changed" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1384,6 +1406,15 @@
 <p>The format is based on <a href="https://keepachangelog.com/en/1.0.0/">Keep a Changelog</a>,
 and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semantic Versioning</a>.</p>
 <h2 id="unreleased">[Unreleased]<a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
+<h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Feat: TASK-154 — Implement Billing List Page with shared utility extraction</li>
+</ul>
+<p>Replace the "Coming soon" placeholder at /billing with a functional billing
+data viewer: AG Grid infinite scroll, date/product/resource filters with URL
+sync and localStorage persistence, reset and refresh controls.</p>
+<p>Extract shared utilities (dateFilterStorage, gridFormatters, filterHelpers)
+from chargebacks code to eliminate duplication across both features. (<a href="https://github.com/waliaabhishek/chitragupta/commit/1cf96e67083837ecb8747445b05a933d229d0766">1cf96e6</a>)</p>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Tests: Suppress 20 harmless pytest warnings via filterwarnings</li>
