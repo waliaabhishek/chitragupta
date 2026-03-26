@@ -45,6 +45,7 @@ function DashboardContent({ tenant, filters, timeBucket }: DashboardContentProps
     productType: filters.product_type,
     resourceId: filters.resource_id,
     costType: filters.cost_type,
+    timezone: filters.timezone,
   }), [tenant.tenant_name, timeBucket, filters]);
 
   const trendData = useAggregation({ ...sharedParams, groupBy: ["identity_id"] });

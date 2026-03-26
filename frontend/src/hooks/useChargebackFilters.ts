@@ -7,6 +7,9 @@ import {
   loadDatesFromStorage,
   saveDatesToStorage,
   clearDatesFromStorage,
+  loadTimezoneFromStorage,
+  saveTimezoneToStorage,
+  clearTimezoneFromStorage,
 } from "../utils/dateFilterStorage";
 
 const FILTER_KEYS: (keyof ChargebackFilters)[] = [
@@ -16,10 +19,12 @@ const FILTER_KEYS: (keyof ChargebackFilters)[] = [
   "product_type",
   "resource_id",
   "cost_type",
+  "timezone",
 ];
 
 const DATE_STORAGE_KEY = "chargeback_date_range";
 const DATE_FIELDS: (keyof ChargebackFilters)[] = ["start_date", "end_date"];
+const BROWSER_TIMEZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
 interface UseChargebackFiltersReturn {
   filters: ChargebackFilters;
@@ -37,12 +42,15 @@ export function useChargebackFilters(): UseChargebackFiltersReturn {
   // re-render anyway). Avoids redundant JSON.parse on every render.
   // eslint-disable-next-line react-hooks/exhaustive-deps -- searchParams triggers re-read of localStorage when URL changes
   const storedDates = useMemo(() => loadDatesFromStorage(DATE_STORAGE_KEY), [searchParams]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- searchParams triggers re-read of localStorage when URL changes
+  const storedTimezone = useMemo(() => loadTimezoneFromStorage(), [searchParams]);
   const spStartDate = searchParams.get("start_date");
   const spEndDate = searchParams.get("end_date");
   const spIdentityId = searchParams.get("identity_id");
   const spProductType = searchParams.get("product_type");
   const spResourceId = searchParams.get("resource_id");
   const spCostType = searchParams.get("cost_type");
+  const spTimezone = searchParams.get("timezone");
 
   const filters: ChargebackFilters = useMemo(
     () => ({
@@ -52,8 +60,10 @@ export function useChargebackFilters(): UseChargebackFiltersReturn {
       product_type: spProductType,
       resource_id: spResourceId,
       cost_type: spCostType,
+      timezone: spTimezone ?? storedTimezone ?? BROWSER_TIMEZONE,
     }),
-    [spStartDate, spEndDate, spIdentityId, spProductType, spResourceId, spCostType, storedDates.start_date, storedDates.end_date],
+    [spStartDate, spEndDate, spIdentityId, spProductType, spResourceId, spCostType,
+     spTimezone, storedDates.start_date, storedDates.end_date, storedTimezone],
   );
 
   const setFilter = useCallback(
@@ -76,6 +86,13 @@ export function useChargebackFilters(): UseChargebackFiltersReturn {
         const stored = value === null || value === "" ? null : value;
         const updated = { ...current, [key]: stored };
         saveDatesToStorage(DATE_STORAGE_KEY, updated.start_date, updated.end_date);
+      }
+      if (key === "timezone") {
+        if (value === null || value === "") {
+          clearTimezoneFromStorage();
+        } else {
+          saveTimezoneToStorage(value);
+        }
       }
     },
     [setSearchParams],
@@ -109,6 +126,14 @@ export function useChargebackFilters(): UseChargebackFiltersReturn {
         };
         saveDatesToStorage(DATE_STORAGE_KEY, updated.start_date, updated.end_date);
       }
+      if ("timezone" in updates) {
+        const tz = updates.timezone;
+        if (tz === null || tz === undefined || tz === "") {
+          clearTimezoneFromStorage();
+        } else {
+          saveTimezoneToStorage(tz);
+        }
+      }
     },
     [setSearchParams],
   );
@@ -125,6 +150,7 @@ export function useChargebackFilters(): UseChargebackFiltersReturn {
       { replace: true },
     );
     clearDatesFromStorage(DATE_STORAGE_KEY);
+    clearTimezoneFromStorage();
   }, [setSearchParams]);
 
   // Stable memoized object — only recomputed when filter values change

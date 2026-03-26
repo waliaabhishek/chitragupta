@@ -298,6 +298,7 @@ describe("CostDashboardPage", () => {
         product_type: null,
         resource_id: null,
         cost_type: null,
+        timezone: null,
       },
       setFilter: vi.fn(),
       setFilters: vi.fn(),
@@ -319,6 +320,50 @@ describe("CostDashboardPage", () => {
     expect(calls.length).toBeGreaterThan(0);
     expect(calls[0][0].startDate).toBe("2026-01-01");
     expect(calls[0][0].endDate).toBe("2026-01-31");
+  });
+
+  it("forwards timezone filter to useAggregation", async () => {
+    const { useTenant } = await import("../../providers/TenantContext");
+    vi.mocked(useTenant).mockReturnValue({
+      currentTenant: mockTenant,
+      tenants: [mockTenant],
+      setCurrentTenant: vi.fn(),
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+      isReadOnly: false,
+    });
+
+    const { useChargebackFilters } = await import("../../hooks/useChargebackFilters");
+    vi.mocked(useChargebackFilters).mockReturnValue({
+      filters: {
+        start_date: "2026-01-01",
+        end_date: "2026-01-31",
+        identity_id: null,
+        product_type: null,
+        resource_id: null,
+        cost_type: null,
+        timezone: "America/Chicago",
+      },
+      setFilter: vi.fn(),
+      setFilters: vi.fn(),
+      resetFilters: vi.fn(),
+      toQueryParams: vi.fn(() => ({})),
+      queryParams: {},
+    });
+
+    const { useAggregation } = await import("../../hooks/useAggregation");
+    const mockUseAggregation = vi.mocked(useAggregation);
+
+    render(<CostDashboardPage />, { wrapper });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("filter-panel")).toBeInTheDocument();
+    });
+
+    const calls = mockUseAggregation.mock.calls;
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls[0][0].timezone).toBe("America/Chicago");
   });
 
   it("changes time bucket when selector is clicked", async () => {

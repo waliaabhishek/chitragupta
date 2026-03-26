@@ -12,6 +12,7 @@ export interface UseAggregationParams {
   productType?: string | null;
   resourceId?: string | null;
   costType?: string | null;
+  timezone?: string | null;
 }
 
 export interface UseAggregationResult {
@@ -32,12 +33,13 @@ export function useAggregation(params: UseAggregationParams): UseAggregationResu
     productType,
     resourceId,
     costType,
+    timezone,
   } = params;
 
   const groupByKey = groupBy.join(",");
 
   const query = useQuery({
-    queryKey: ["aggregation", tenantName, groupByKey, timeBucket, startDate, endDate, identityId ?? null, productType ?? null, resourceId ?? null, costType ?? null],
+    queryKey: ["aggregation", tenantName, groupByKey, timeBucket, startDate, endDate, identityId ?? null, productType ?? null, resourceId ?? null, costType ?? null, timezone ?? null],
     queryFn: async ({ signal }) => {
       const qs = new URLSearchParams();
       for (const g of groupByKey.split(",").filter(Boolean)) {
@@ -50,6 +52,7 @@ export function useAggregation(params: UseAggregationParams): UseAggregationResu
       if (productType) qs.set("product_type", productType);
       if (resourceId) qs.set("resource_id", resourceId);
       if (costType) qs.set("cost_type", costType);
+      if (timezone) qs.set("timezone", timezone);
 
       const url = `${API_URL}/tenants/${tenantName}/chargebacks/aggregate?${qs.toString()}`;
       const response = await fetch(url, { signal });

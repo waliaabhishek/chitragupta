@@ -38,3 +38,29 @@ export function clearDatesFromStorage(key: string): void {
     // silent
   }
 }
+
+const TIMEZONE_STORAGE_KEY = "user_timezone";
+
+export function loadTimezoneFromStorage(): string | null {
+  try {
+    return localStorage.getItem(TIMEZONE_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function saveTimezoneToStorage(timezone: string): void {
+  try {
+    localStorage.setItem(TIMEZONE_STORAGE_KEY, timezone);
+  } catch {
+    // silent
+  }
+}
+
+export function clearTimezoneFromStorage(): void {
+  try {
+    localStorage.removeItem(TIMEZONE_STORAGE_KEY);
+  } catch {
+    // silent
+  }
+}

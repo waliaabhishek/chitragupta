@@ -56,4 +56,26 @@ describe("ExportButton", () => {
 
     errorSpy.mockRestore();
   });
+
+  it("includes timezone in POST body when filters have timezone", async () => {
+    let capturedBody: Record<string, unknown> = {};
+    server.use(
+      http.post("/api/v1/tenants/acme/export", async ({ request }) => {
+        capturedBody = (await request.json()) as Record<string, unknown>;
+        return new HttpResponse("date,amount\n", { headers: { "Content-Type": "text/csv" } });
+      }),
+    );
+
+    render(
+      <ExportButton
+        tenantName="acme"
+        filters={{ start_date: "2026-01-01", end_date: "2026-01-31", timezone: "America/Chicago" }}
+      />,
+    );
+    fireEvent.click(screen.getByText("Export CSV"));
+
+    await waitFor(() => {
+      expect(capturedBody.timezone).toBe("America/Chicago");
+    });
+  });
 });

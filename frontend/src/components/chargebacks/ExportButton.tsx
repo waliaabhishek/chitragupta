@@ -20,6 +20,7 @@ export function ExportButton({ tenantName, filters, disabled }: ExportButtonProp
       const body: Record<string, unknown> = {};
       if (filters.start_date) body.start_date = filters.start_date;
       if (filters.end_date) body.end_date = filters.end_date;
+      if (filters.timezone) body.timezone = filters.timezone;
 
       const filterKeys = ["identity_id", "product_type", "resource_id", "cost_type"] as const;
       const activeFilters: Record<string, string> = {};

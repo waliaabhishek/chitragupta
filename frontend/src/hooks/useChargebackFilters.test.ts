@@ -193,3 +193,81 @@ describe("useChargebackFilters", () => {
     expect(localStorage.getItem("chargeback_date_range")).toBeNull();
   });
 });
+
+describe("useChargebackFilters — timezone", () => {
+  it("defaults timezone to browser locale when no URL param and no localStorage", () => {
+    const browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const { result } = renderHook(() => useChargebackFilters(), {
+      wrapper: makeWrapper(),
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect((result.current.filters as any).timezone).toBe(browserTz);
+  });
+
+  it("reads timezone from URL search params", () => {
+    const { result } = renderHook(() => useChargebackFilters(), {
+      wrapper: makeWrapper("?timezone=America%2FChicago"),
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect((result.current.filters as any).timezone).toBe("America/Chicago");
+  });
+
+  it("restores timezone from localStorage when URL has no timezone param", () => {
+    localStorage.setItem("user_timezone", "America/Chicago");
+    const { result } = renderHook(() => useChargebackFilters(), {
+      wrapper: makeWrapper(),
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect((result.current.filters as any).timezone).toBe("America/Chicago");
+  });
+
+  it("URL timezone param takes precedence over localStorage", () => {
+    localStorage.setItem("user_timezone", "America/Chicago");
+    const { result } = renderHook(() => useChargebackFilters(), {
+      wrapper: makeWrapper("?timezone=Europe%2FLondon"),
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect((result.current.filters as any).timezone).toBe("Europe/London");
+  });
+
+  it("setFilter with timezone saves to localStorage under user_timezone", () => {
+    const { result } = renderHook(() => useChargebackFilters(), {
+      wrapper: makeWrapper(),
+    });
+    act(() => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (result.current.setFilter as any)("timezone", "America/Chicago");
+    });
+    expect(localStorage.getItem("user_timezone")).toBe("America/Chicago");
+  });
+
+  it("resetFilters removes user_timezone from localStorage", () => {
+    localStorage.setItem("user_timezone", "America/Chicago");
+    const { result } = renderHook(() => useChargebackFilters(), {
+      wrapper: makeWrapper("?timezone=America%2FChicago"),
+    });
+    act(() => {
+      result.current.resetFilters();
+    });
+    expect(localStorage.getItem("user_timezone")).toBeNull();
+  });
+
+  it("queryParams includes timezone when set via URL", () => {
+    const { result } = renderHook(() => useChargebackFilters(), {
+      wrapper: makeWrapper("?timezone=America%2FDenver"),
+    });
+    const params = result.current.toQueryParams();
+    expect(params["timezone"]).toBe("America/Denver");
+  });
+
+  it("setFilters with timezone saves to localStorage", () => {
+    const { result } = renderHook(() => useChargebackFilters(), {
+      wrapper: makeWrapper(),
+    });
+    act(() => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (result.current.setFilters as any)({ timezone: "Asia/Tokyo" });
+    });
+    expect(localStorage.getItem("user_timezone")).toBe("Asia/Tokyo");
+  });
+});

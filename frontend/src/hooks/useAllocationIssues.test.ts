@@ -28,6 +28,7 @@ const EMPTY_FILTERS: ChargebackFilters = {
   product_type: null,
   resource_id: null,
   cost_type: null,
+  timezone: null,
 };
 
 const BASE_PARAMS = {
@@ -151,6 +152,7 @@ describe("useAllocationIssues", () => {
       product_type: "kafka",
       resource_id: "lkc-abc123",
       cost_type: null,
+      timezone: null,
     };
 
     const { result } = renderHook(
@@ -190,5 +192,26 @@ describe("useAllocationIssues", () => {
     tenantName = "globex";
     rerender();
     await waitFor(() => expect(result.current.data?.total).toBe(0));
+  });
+
+  it("includes timezone in request URL when filters have timezone set", async () => {
+    let capturedUrl = "";
+    server.use(
+      http.get("/api/v1/tenants/acme/chargebacks/allocation-issues", ({ request }) => {
+        capturedUrl = request.url;
+        return HttpResponse.json(MOCK_RESPONSE);
+      }),
+    );
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const filtersWithTimezone: ChargebackFilters = { ...EMPTY_FILTERS, timezone: "America/Chicago" } as any;
+
+    const { result } = renderHook(
+      () => useAllocationIssues({ tenantName: "acme", filters: filtersWithTimezone, page: 1, pageSize: 100 }),
+      { wrapper: createWrapper() },
+    );
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    expect(capturedUrl).toContain("timezone=America%2FChicago");
   });
 });

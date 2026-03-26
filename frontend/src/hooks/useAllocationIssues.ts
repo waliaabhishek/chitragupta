@@ -19,10 +19,10 @@ export interface UseAllocationIssuesResult {
 
 export function useAllocationIssues(params: UseAllocationIssuesParams): UseAllocationIssuesResult {
   const { tenantName, filters, page, pageSize } = params;
-  const { start_date, end_date, identity_id, product_type, resource_id } = filters;
+  const { start_date, end_date, identity_id, product_type, resource_id, timezone } = filters;
 
   const query = useQuery({
-    queryKey: ["allocationIssues", tenantName, start_date, end_date, identity_id, product_type, resource_id, page, pageSize],
+    queryKey: ["allocationIssues", tenantName, start_date, end_date, identity_id, product_type, resource_id, timezone, page, pageSize],
     queryFn: async ({ signal }) => {
       const qs = new URLSearchParams();
       qs.set("page", String(page));
@@ -32,6 +32,7 @@ export function useAllocationIssues(params: UseAllocationIssuesParams): UseAlloc
       if (identity_id) qs.set("identity_id", identity_id);
       if (product_type) qs.set("product_type", product_type);
       if (resource_id) qs.set("resource_id", resource_id);
+      if (timezone) qs.set("timezone", timezone);
 
       const url = `${API_URL}/tenants/${tenantName}/chargebacks/allocation-issues?${qs.toString()}`;
       const response = await fetch(url, { signal });

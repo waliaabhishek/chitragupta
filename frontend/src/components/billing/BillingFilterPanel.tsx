@@ -7,6 +7,7 @@ import type { PaginatedResponse, ResourceResponse } from "../../types/api";
 import type { BillingFilters } from "../../types/filters";
 import type { SelectOption } from "../../hooks/useFilterOptions";
 import { filterByLabel } from "../../utils/filterHelpers";
+import { TIMEZONE_OPTIONS } from "../../utils/timezoneOptions";
 
 interface BillingFilterPanelProps {
   filters: BillingFilters;
@@ -99,6 +100,17 @@ export function BillingFilterPanel({
           showSearch
           allowClear
           loading={resourcesLoading}
+          filterOption={filterByLabel}
+          style={{ width: 220 }}
+        />
+      </Form.Item>
+
+      <Form.Item label="Timezone">
+        <Select
+          value={filters.timezone ?? undefined}
+          onChange={(val: string | undefined) => onChange("timezone", val ?? null)}
+          options={TIMEZONE_OPTIONS}
+          showSearch
           filterOption={filterByLabel}
           style={{ width: 220 }}
         />

@@ -5,6 +5,7 @@ export interface ChargebackFilters {
   product_type: string | null;
   resource_id: string | null;
   cost_type: string | null;
+  timezone: string | null;
 }
 
 export interface BillingFilters {
@@ -12,4 +13,5 @@ export interface BillingFilters {
   end_date: string | null;
   product_type: string | null;
   resource_id: string | null;
+  timezone: string | null;
 }

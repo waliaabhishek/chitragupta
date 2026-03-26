@@ -137,4 +137,44 @@ describe("useAggregation", () => {
 
     await waitFor(() => expect(result.current.data).not.toBeNull());
   });
+
+  it("appends timezone to request URL when provided", async () => {
+    let capturedUrl = "";
+    server.use(
+      http.get("/api/v1/tenants/acme/chargebacks/aggregate", ({ request }) => {
+        capturedUrl = request.url;
+        return HttpResponse.json({ buckets: [], total_amount: "0", total_rows: 0 });
+      }),
+    );
+
+    const { result } = renderHook(
+      () => useAggregation({ ...BASE_PARAMS, timezone: "America/Chicago" }),
+      { wrapper: createWrapper() },
+    );
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    expect(capturedUrl).toContain("timezone=America%2FChicago");
+  });
+
+  it("re-fetches when timezone param changes", async () => {
+    let callCount = 0;
+    server.use(
+      http.get("/api/v1/tenants/acme/chargebacks/aggregate", () => {
+        callCount++;
+        return HttpResponse.json({ buckets: [], total_amount: "0", total_rows: 0 });
+      }),
+    );
+
+    let timezone: string | null = "America/Denver";
+    const { result, rerender } = renderHook(
+      () => useAggregation({ ...BASE_PARAMS, timezone }),
+      { wrapper: createWrapper() },
+    );
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    const countAfterFirst = callCount;
+
+    timezone = "America/Chicago";
+    rerender();
+    await waitFor(() => expect(callCount).toBeGreaterThan(countAfterFirst));
+  });
 });

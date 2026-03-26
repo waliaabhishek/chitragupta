@@ -65,6 +65,7 @@ const MOCK_FILTERS: ChargebackFilters = {
   product_type: null,
   resource_id: null,
   cost_type: null,
+  timezone: null,
 };
 
 const MOCK_ITEMS: AllocationIssueItem[] = [

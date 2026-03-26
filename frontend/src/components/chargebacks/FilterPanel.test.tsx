@@ -183,6 +183,7 @@ const defaultFilters: ChargebackFilters = {
   product_type: null,
   resource_id: null,
   cost_type: null,
+  timezone: "UTC",
 };
 
 const fixtureIdentityOptions = [
@@ -347,9 +348,9 @@ describe("FilterPanel", () => {
       />,
     );
 
-    // Cost type is the fourth combobox (index 3): identity, product_type, resource, cost_type
+    // Cost type is the fourth combobox (index 3): identity, product_type, resource, cost_type, timezone
     const allSelects = screen.getAllByRole("combobox");
-    expect(allSelects).toHaveLength(4);
+    expect(allSelects).toHaveLength(5);
     fireEvent.change(allSelects[3], { target: { value: "usage" } });
 
     expect(onChange).toHaveBeenCalledWith("cost_type", "usage");
@@ -371,7 +372,7 @@ describe("FilterPanel", () => {
     );
 
     const allSelects = screen.getAllByRole("combobox");
-    expect(allSelects).toHaveLength(4);
+    expect(allSelects).toHaveLength(5);
     fireEvent.change(allSelects[3], { target: { value: "" } });
 
     expect(onChange).toHaveBeenCalledWith("cost_type", null);
@@ -472,8 +473,27 @@ describe("FilterPanel", () => {
         tenantName="t1"
       />,
     );
-    // Four selects still present; no crash from null date values
-    expect(screen.getAllByRole("combobox")).toHaveLength(4);
+    // Five selects still present; no crash from null date values
+    expect(screen.getAllByRole("combobox")).toHaveLength(5);
+  });
+
+  it("calls onChange when timezone select changes", () => {
+    const onChange = vi.fn();
+    render(
+      <FilterPanel
+        filters={defaultFilters}
+        onChange={onChange}
+        onReset={vi.fn()}
+        tenantName="t1"
+      />,
+    );
+
+    // Timezone is the fifth combobox (index 4): identity, product_type, resource, cost_type, timezone
+    const allSelects = screen.getAllByRole("combobox");
+    expect(allSelects).toHaveLength(5);
+    fireEvent.change(allSelects[4], { target: { value: "America/Chicago" } });
+
+    expect(onChange).toHaveBeenCalledWith("timezone", "America/Chicago");
   });
 
   it("FilterPanel_calls_onChange_product_type_null_on_Select_clear", () => {

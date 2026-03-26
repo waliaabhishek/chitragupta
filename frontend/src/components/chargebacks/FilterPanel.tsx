@@ -4,6 +4,7 @@ import dayjs from "dayjs";
 import { useFilterOptions } from "../../hooks/useFilterOptions";
 import type { ChargebackFilters } from "../../types/filters";
 import { filterByLabel } from "../../utils/filterHelpers";
+import { TIMEZONE_OPTIONS } from "../../utils/timezoneOptions";
 
 const COST_TYPE_OPTIONS = [
   { label: "Usage", value: "usage" },
@@ -102,6 +103,17 @@ export function FilterPanel({
           options={COST_TYPE_OPTIONS}
           allowClear
           style={{ width: 120 }}
+        />
+      </Form.Item>
+
+      <Form.Item label="Timezone">
+        <Select
+          value={filters.timezone ?? undefined}
+          onChange={(val: string | undefined) => onChange("timezone", val ?? null)}
+          options={TIMEZONE_OPTIONS}
+          showSearch
+          filterOption={filterByLabel}
+          style={{ width: 220 }}
         />
       </Form.Item>
 
