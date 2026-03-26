@@ -1375,8 +1375,15 @@ dataclass in core.models.counts. Frontend displays total prominently with
 new tests for mixed-status resources and identity deleted_at derivation. (<a href="https://github.com/waliaabhishek/chitragupta/commit/cc1def8e912806a52baf7c48f705527cc85be945">cc1def8</a>)</p>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
-<li>Fix: TASK-158 — Add timezone query param to all date-filtered API endpoints</li>
+<li>Fix: TASK-159 — Add timezone picker to filter panels and wire to API</li>
 </ul>
+<p>Frontend timezone Select added to Chargebacks, Billing, and Dashboard
+filter panels. Defaults to browser timezone, persists to localStorage
+(user_timezone), syncs via URL search param. All date-filtered API
+calls (grid, aggregate, allocation issues, CSV export) now include the
+timezone parameter, resolving the data discrepancy where UI totals
+diverged from Grafana for non-UTC users. (<a href="https://github.com/waliaabhishek/chitragupta/commit/dee6e39deaa2578cf9c6362937259293f9d8529a">dee6e39</a>)
+- Fix: TASK-158 — Add timezone query param to all date-filtered API endpoints</p>
 <p>Wire the timezone parameter (added to resolve_date_range in TASK-157) through
 all 6 call sites: billing, chargebacks (list + allocation-issues), aggregation,
 export, and tags bulk-by-filter. GET endpoints accept timezone as a query param;
