@@ -65,7 +65,7 @@ EXPECTED_TABLES = {
     "chargeback_dimensions",
     "chargeback_facts",
     "pipeline_state",
-    "custom_tags",
+    "tags",
 }
 
 

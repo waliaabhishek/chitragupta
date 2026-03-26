@@ -11,7 +11,7 @@ from core.storage.backends.sqlmodel.unit_of_work import SQLModelBackend  # noqa:
 
 def _seed_chargeback(backend: SQLModelBackend, *, with_custom_tag: bool = False) -> None:
     with backend.create_unit_of_work() as uow:
-        row = uow.chargebacks.upsert(
+        uow.chargebacks.upsert(
             ChargebackRow(
                 ecosystem="test-eco",
                 tenant_id="test-tenant",
@@ -24,12 +24,12 @@ def _seed_chargeback(backend: SQLModelBackend, *, with_custom_tag: bool = False)
                 amount=Decimal("10.00"),
                 allocation_method="direct",
                 allocation_detail=None,
-                tags=[],
+                tags={},
                 metadata={},
             )
         )
-        if with_custom_tag and row.dimension_id is not None:
-            uow.tags.add_tag(row.dimension_id, "env", "prod", "test")
+        if with_custom_tag:
+            uow.tags.add_tag("test-tenant", "resource", "resource-1", "env", "prod", "test")
         uow.commit()
 
 

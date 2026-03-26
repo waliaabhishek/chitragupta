@@ -62,7 +62,7 @@ def _chargeback_row(timestamp: datetime, resource_id: str) -> ChargebackRow:
         amount=Decimal("10.00"),
         allocation_method="direct",
         allocation_detail=None,
-        tags=[],
+        tags={},
         metadata={},
     )
 

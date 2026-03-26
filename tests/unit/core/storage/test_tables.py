@@ -11,7 +11,7 @@ from core.storage.backends.sqlmodel.base_tables import BillingTable, IdentityTab
 from core.storage.backends.sqlmodel.tables import (
     ChargebackDimensionTable,
     ChargebackFactTable,
-    CustomTagTable,
+    EntityTagTable,
     PipelineStateTable,
 )
 
@@ -34,7 +34,7 @@ class TestTableCreation:
         assert "chargeback_dimensions" in table_names
         assert "chargeback_facts" in table_names
         assert "pipeline_state" in table_names
-        assert "custom_tags" in table_names
+        assert "tags" in table_names
 
     def test_resource_table_columns(self, engine: Engine):
         inspector = inspect(engine)
@@ -106,10 +106,11 @@ class TestTableCreation:
         pk = inspector.get_pk_constraint("pipeline_state")
         assert set(pk["constrained_columns"]) == {"ecosystem", "tenant_id", "tracking_date"}
 
-    def test_custom_tag_foreign_key(self, engine: Engine):
+    def test_tags_table_unique_constraint(self, engine: Engine):
         inspector = inspect(engine)
-        fks = inspector.get_foreign_keys("custom_tags")
-        assert any(fk["referred_table"] == "chargeback_dimensions" for fk in fks)
+        uqs = inspector.get_unique_constraints("tags")
+        uq_names = [u["name"] for u in uqs]
+        assert "uq_tags_entity_key" in uq_names
 
 
 class TestTableInsert:
@@ -200,20 +201,12 @@ class TestTableInsert:
             assert result is not None
             assert result.amount == "100.50"
 
-    def test_insert_custom_tag(self, engine: Engine):
+    def test_insert_entity_tag(self, engine: Engine):
         with Session(engine) as session:
-            dim = ChargebackDimensionTable(
-                ecosystem="ccloud",
+            tag = EntityTagTable(
                 tenant_id="t1",
-                product_category="compute",
-                product_type="kafka",
-                identity_id="u1",
-                cost_type="usage",
-            )
-            session.add(dim)
-            session.flush()
-            tag = CustomTagTable(
-                dimension_id=dim.dimension_id,  # type: ignore[arg-type]
+                entity_type="resource",
+                entity_id="r1",
                 tag_key="team",
                 tag_value="platform",
                 created_by="admin",

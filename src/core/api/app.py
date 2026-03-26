@@ -45,8 +45,14 @@ class RequestTimeoutMiddleware(BaseHTTPMiddleware):
 logger = logging.getLogger(__name__)
 
 
-def create_app(settings: AppSettings, workflow_runner: WorkflowRunner | None = None, mode: str = "api") -> FastAPI:
+def create_app(
+    settings: AppSettings | None = None, workflow_runner: WorkflowRunner | None = None, mode: str = "api"
+) -> FastAPI:
     """Factory function for creating the FastAPI application."""
+    if settings is None:
+        from core.config.models import AppSettings as _AppSettings
+
+        settings = _AppSettings()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:

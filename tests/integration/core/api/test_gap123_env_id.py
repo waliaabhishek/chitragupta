@@ -69,10 +69,10 @@ class TestGetDimensionEnvId:
         assert response.status_code == 200
         assert response.json()["env_id"] == "env-test"
 
-    def test_patch_dimension_returns_env_id(
+    def test_get_dimension_env_id_after_entity_tag_add(
         self, app_with_backend: TestClient, in_memory_backend: SQLModelBackend
     ) -> None:
-        """PATCH /chargebacks/{dim_id} response includes env_id unchanged after tag edit."""
+        """GET /chargebacks/{dim_id} still includes env_id after entity tags are added to the resource."""
         with in_memory_backend.create_unit_of_work() as uow:
             dim_id = _insert_dimension_with_env(
                 uow._session,  # type: ignore[attr-defined]
@@ -81,9 +81,8 @@ class TestGetDimensionEnvId:
             )
             uow.commit()
 
-        response = app_with_backend.patch(
+        response = app_with_backend.get(
             f"/api/v1/tenants/test-tenant/chargebacks/{dim_id}",
-            json={"add_tags": [{"tag_key": "owner", "display_name": "team-a", "created_by": "admin"}]},
         )
         assert response.status_code == 200
         assert response.json()["env_id"] == "env-test"

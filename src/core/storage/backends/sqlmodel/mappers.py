@@ -8,7 +8,8 @@ from typing import Any, Literal, cast, overload
 
 from core.emitters.models import EmissionRecord
 from core.models.billing import CoreBillingLineItem
-from core.models.chargeback import ChargebackRow, CostType, CustomTag
+from core.models.chargeback import ChargebackRow, CostType
+from core.models.entity_tag import EntityTag
 from core.models.identity import CoreIdentity
 from core.models.pipeline import PipelineRun, PipelineState
 from core.models.resource import CoreResource, ResourceStatus
@@ -16,8 +17,8 @@ from core.storage.backends.sqlmodel.base_tables import BillingTable, IdentityTab
 from core.storage.backends.sqlmodel.tables import (
     ChargebackDimensionTable,
     ChargebackFactTable,
-    CustomTagTable,
     EmissionRecordTable,
+    EntityTagTable,
     PipelineRunTable,
     PipelineStateTable,
 )
@@ -221,7 +222,7 @@ def chargeback_to_domain(dim: ChargebackDimensionTable, fact: ChargebackFactTabl
         amount=Decimal(fact.amount),
         allocation_method=dim.allocation_method,
         allocation_detail=dim.allocation_detail,
-        tags=json.loads(fact.tags_json),
+        tags={},
         metadata={"env_id": dim.env_id} if dim.env_id else {},
         dimension_id=dim.dimension_id,
     )
@@ -287,28 +288,17 @@ def pipeline_run_to_domain(t: PipelineRunTable) -> PipelineRun:
     )
 
 
-# --- CustomTag ---
+# --- EntityTag ---
 
 
-def tag_to_table(tag: CustomTag) -> CustomTagTable:
-    return CustomTagTable(
-        tag_id=tag.tag_id,
-        dimension_id=tag.dimension_id,
-        tag_key=tag.tag_key,
-        tag_value=tag.tag_value,
-        display_name=tag.display_name,
-        created_by=tag.created_by,
-        created_at=tag.created_at or datetime.now(UTC),
-    )
-
-
-def tag_to_domain(t: CustomTagTable) -> CustomTag:
-    return CustomTag(
+def entity_tag_to_domain(t: EntityTagTable) -> EntityTag:
+    return EntityTag(
         tag_id=t.tag_id,
-        dimension_id=t.dimension_id,
+        tenant_id=t.tenant_id,
+        entity_type=t.entity_type,
+        entity_id=t.entity_id,
         tag_key=t.tag_key,
         tag_value=t.tag_value,
-        display_name=t.display_name,
         created_by=t.created_by,
         created_at=ensure_utc(t.created_at),
     )

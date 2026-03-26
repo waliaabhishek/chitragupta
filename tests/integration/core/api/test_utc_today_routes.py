@@ -53,7 +53,7 @@ def _make_chargeback(ts: datetime) -> ChargebackRow:
         amount=Decimal("10.00"),
         allocation_method="direct",
         allocation_detail=None,
-        tags=[],
+        tags={},
         metadata={},
     )
 

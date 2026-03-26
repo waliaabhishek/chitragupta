@@ -52,8 +52,8 @@ class TestCreateApp:
         assert "/api/v1/tenants/{tenant_name}/identities" in routes
         # Chunk 3.2 routes
         assert "/api/v1/tenants/{tenant_name}/chargebacks/{dimension_id}" in routes
-        assert "/api/v1/tenants/{tenant_name}/chargebacks/{dimension_id}/tags" in routes
-        assert "/api/v1/tenants/{tenant_name}/tags/{tag_id}" in routes
+        assert "/api/v1/tenants/{tenant_name}/entities/{entity_type}/{entity_id}/tags" in routes
+        assert "/api/v1/tenants/{tenant_name}/tags" in routes
         assert "/api/v1/tenants/{tenant_name}/pipeline/run" in routes
         assert "/api/v1/tenants/{tenant_name}/pipeline/status" in routes
         assert "/api/v1/tenants/{tenant_name}/chargebacks/aggregate" in routes

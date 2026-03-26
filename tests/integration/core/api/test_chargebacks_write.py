@@ -1,111 +1,83 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from decimal import Decimal
 
 from fastapi.testclient import TestClient  # noqa: TC002
 
-from core.models.chargeback import ChargebackRow, CostType
+from core.models.resource import CoreResource, ResourceStatus
 from core.storage.backends.sqlmodel.unit_of_work import SQLModelBackend  # noqa: TC001
 
 
-def _seed_dimension(backend: SQLModelBackend) -> int:
-    """Insert a chargeback row and return its dimension_id."""
+def _seed_resource(backend: SQLModelBackend, resource_id: str = "resource-1") -> None:
     with backend.create_unit_of_work() as uow:
-        uow.chargebacks.upsert(
-            ChargebackRow(
+        uow.resources.upsert(
+            CoreResource(
                 ecosystem="test-eco",
                 tenant_id="test-tenant",
-                timestamp=datetime(2026, 2, 15, tzinfo=UTC),
-                resource_id="resource-1",
-                product_category="compute",
-                product_type="kafka",
-                identity_id="user-1",
-                cost_type=CostType.USAGE,
-                amount=Decimal("10.00"),
-                allocation_method="direct",
-                allocation_detail=None,
-                tags=[],
+                resource_id=resource_id,
+                resource_type="kafka_cluster",
+                status=ResourceStatus.ACTIVE,
+                created_at=datetime(2026, 1, 1, tzinfo=UTC),
                 metadata={},
             )
         )
         uow.commit()
 
-    with backend.create_unit_of_work() as uow:
-        dim = uow.chargebacks.get_dimension(1)
-        assert dim is not None
-        return dim.dimension_id
 
+class TestEntityTagWrite:
+    def test_create_two_entity_tags(self, app_with_backend: TestClient, in_memory_backend: SQLModelBackend) -> None:
+        _seed_resource(in_memory_backend)
+        resp1 = app_with_backend.post(
+            "/api/v1/tenants/test-tenant/entities/resource/resource-1/tags",
+            json={"tag_key": "env", "tag_value": "prod", "created_by": "admin"},
+        )
+        resp2 = app_with_backend.post(
+            "/api/v1/tenants/test-tenant/entities/resource/resource-1/tags",
+            json={"tag_key": "team", "tag_value": "platform", "created_by": "admin"},
+        )
+        assert resp1.status_code == 201
+        assert resp2.status_code == 201
+        list_resp = app_with_backend.get("/api/v1/tenants/test-tenant/entities/resource/resource-1/tags")
+        assert len(list_resp.json()) == 2
 
-class TestPatchDimension:
-    def test_patch_dimension_add_tags(self, app_with_backend: TestClient, in_memory_backend: SQLModelBackend) -> None:
-        dim_id = _seed_dimension(in_memory_backend)
-        response = app_with_backend.patch(
-            f"/api/v1/tenants/test-tenant/chargebacks/{dim_id}",
-            json={
-                "add_tags": [
-                    {"tag_key": "env", "display_name": "prod", "created_by": "admin"},
-                    {"tag_key": "team", "display_name": "platform", "created_by": "admin"},
-                ]
-            },
+    def test_update_entity_tag_value(self, app_with_backend: TestClient, in_memory_backend: SQLModelBackend) -> None:
+        _seed_resource(in_memory_backend)
+        app_with_backend.post(
+            "/api/v1/tenants/test-tenant/entities/resource/resource-1/tags",
+            json={"tag_key": "old", "tag_value": "value", "created_by": "admin"},
         )
-        assert response.status_code == 200
-        data = response.json()
-        assert len(data["tags"]) == 2
-        assert data["dimension_id"] == dim_id
+        update_resp = app_with_backend.put(
+            "/api/v1/tenants/test-tenant/entities/resource/resource-1/tags/old",
+            json={"tag_value": "new-value"},
+        )
+        assert update_resp.status_code == 200
+        assert update_resp.json()["tag_value"] == "new-value"
 
-    def test_patch_dimension_replace_tags(
-        self, app_with_backend: TestClient, in_memory_backend: SQLModelBackend
-    ) -> None:
-        dim_id = _seed_dimension(in_memory_backend)
-        # Add initial tag
-        app_with_backend.patch(
-            f"/api/v1/tenants/test-tenant/chargebacks/{dim_id}",
-            json={"add_tags": [{"tag_key": "old", "display_name": "value", "created_by": "admin"}]},
+    def test_delete_entity_tag(self, app_with_backend: TestClient, in_memory_backend: SQLModelBackend) -> None:
+        _seed_resource(in_memory_backend)
+        app_with_backend.post(
+            "/api/v1/tenants/test-tenant/entities/resource/resource-1/tags",
+            json={"tag_key": "env", "tag_value": "prod", "created_by": "admin"},
         )
-        # Replace all tags
-        response = app_with_backend.patch(
-            f"/api/v1/tenants/test-tenant/chargebacks/{dim_id}",
-            json={"tags": [{"tag_key": "new", "display_name": "value", "created_by": "admin"}]},
+        app_with_backend.post(
+            "/api/v1/tenants/test-tenant/entities/resource/resource-1/tags",
+            json={"tag_key": "team", "tag_value": "platform", "created_by": "admin"},
         )
-        assert response.status_code == 200
-        data = response.json()
-        assert len(data["tags"]) == 1
-        assert data["tags"][0]["tag_key"] == "new"
+        del_resp = app_with_backend.delete("/api/v1/tenants/test-tenant/entities/resource/resource-1/tags/env")
+        assert del_resp.status_code == 204
+        list_resp = app_with_backend.get("/api/v1/tenants/test-tenant/entities/resource/resource-1/tags")
+        assert len(list_resp.json()) == 1
 
-    def test_patch_dimension_remove_tags(
-        self, app_with_backend: TestClient, in_memory_backend: SQLModelBackend
-    ) -> None:
-        dim_id = _seed_dimension(in_memory_backend)
-        # Add tags
-        resp = app_with_backend.patch(
-            f"/api/v1/tenants/test-tenant/chargebacks/{dim_id}",
-            json={
-                "add_tags": [
-                    {"tag_key": "env", "display_name": "prod", "created_by": "admin"},
-                    {"tag_key": "team", "display_name": "platform", "created_by": "admin"},
-                ]
-            },
-        )
-        tag_ids = [t["tag_id"] for t in resp.json()["tags"]]
-        # Remove first tag
-        response = app_with_backend.patch(
-            f"/api/v1/tenants/test-tenant/chargebacks/{dim_id}",
-            json={"remove_tag_ids": [tag_ids[0]]},
-        )
-        assert response.status_code == 200
-        assert len(response.json()["tags"]) == 1
-
-    def test_patch_dimension_not_found(self, app_with_backend: TestClient) -> None:
-        response = app_with_backend.patch(
-            "/api/v1/tenants/test-tenant/chargebacks/99999",
-            json={"add_tags": [{"tag_key": "env", "display_name": "prod", "created_by": "admin"}]},
+    def test_create_tag_on_nonexistent_resource_returns_404(self, app_with_backend: TestClient) -> None:
+        response = app_with_backend.post(
+            "/api/v1/tenants/test-tenant/entities/resource/no-such/tags",
+            json={"tag_key": "env", "tag_value": "prod", "created_by": "admin"},
         )
         assert response.status_code == 404
 
-    def test_patch_dimension_wrong_tenant(self, app_with_backend: TestClient) -> None:
-        response = app_with_backend.patch(
-            "/api/v1/tenants/no-such-tenant/chargebacks/1",
-            json={"add_tags": [{"tag_key": "env", "display_name": "prod", "created_by": "admin"}]},
+    def test_create_tag_wrong_tenant_returns_404(self, app_with_backend: TestClient) -> None:
+        response = app_with_backend.post(
+            "/api/v1/tenants/no-such-tenant/entities/resource/resource-1/tags",
+            json={"tag_key": "env", "tag_value": "prod", "created_by": "admin"},
         )
         assert response.status_code == 404

@@ -71,22 +71,9 @@ class ChargebackRow:
     amount: Decimal = Decimal(0)
     allocation_method: str | None = None
     allocation_detail: str | None = None
-    tags: list[str] = field(default_factory=list)
+    tags: dict[str, str] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
     dimension_id: int | None = None
-
-
-@dataclass
-class CustomTag:
-    """A user-defined tag attached to a chargeback dimension."""
-
-    tag_id: int | None
-    dimension_id: int
-    tag_key: str
-    tag_value: str
-    display_name: str
-    created_by: str
-    created_at: datetime | None = None
 
 
 @dataclass

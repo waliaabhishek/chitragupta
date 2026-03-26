@@ -81,15 +81,27 @@ class PipelineRunTable(SQLModel, table=True):
     error_message: str | None = None
 
 
-class CustomTagTable(SQLModel, table=True):
-    __tablename__ = "custom_tags"
-    __table_args__ = (UniqueConstraint("dimension_id", "tag_key", name="uq_custom_tag_dimension_key"),)
+class EntityTagTable(SQLModel, table=True):
+    __tablename__ = "tags"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "entity_type",
+            "entity_id",
+            "tag_key",
+            name="uq_tags_entity_key",
+        ),
+        Index("ix_tags_entity", "tenant_id", "entity_type", "entity_id"),
+        Index("ix_tags_tenant_key", "tenant_id", "tag_key"),
+        Index("ix_tags_tenant_key_value", "tenant_id", "tag_key", "tag_value"),
+    )
 
     tag_id: int | None = Field(default=None, primary_key=True)
-    dimension_id: int = Field(foreign_key="chargeback_dimensions.dimension_id", index=True)
+    tenant_id: str = ""
+    entity_type: str = ""  # "resource" | "identity"
+    entity_id: str = ""
     tag_key: str = ""
     tag_value: str = ""
-    display_name: str = ""
     created_by: str = ""
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),

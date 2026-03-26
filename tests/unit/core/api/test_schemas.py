@@ -12,7 +12,6 @@ from core.api.schemas import (
     PaginatedResponse,
     PipelineStateResponse,
     ResourceResponse,
-    TagResponse,
     TenantListResponse,
     TenantStatusDetailResponse,
     TenantStatusSummary,
@@ -155,24 +154,15 @@ class TestChargebackResponse:
             amount=Decimal("50.00"),
             allocation_method="direct",
             allocation_detail=None,
-            tags=["tag1"],
+            tags={"tag1": "val1"},
             metadata={},
         )
         assert c.cost_type == "usage"
-        assert c.tags == ["tag1"]
+        assert c.tags == {"tag1": "val1"}
 
 
 class TestChargebackDimensionResponse:
     def test_all_fields(self) -> None:
-        tag = TagResponse(
-            tag_id=1,
-            dimension_id=42,
-            tag_key="env",
-            tag_value="prod",
-            display_name="Production",
-            created_by="ui",
-            created_at=None,
-        )
         d = ChargebackDimensionResponse(
             dimension_id=42,
             ecosystem="ccloud",
@@ -185,12 +175,12 @@ class TestChargebackDimensionResponse:
             cost_type="usage",
             allocation_method="ratio",
             allocation_detail=None,
-            tags=[tag],
+            tags={"env": "prod"},
         )
         assert d.dimension_id == 42
         assert d.product_type == "KAFKA_NUM_BYTES"
         assert len(d.tags) == 1
-        assert d.tags[0].tag_key == "env"
+        assert d.tags["env"] == "prod"
 
     def test_empty_tags(self) -> None:
         d = ChargebackDimensionResponse(
@@ -205,9 +195,9 @@ class TestChargebackDimensionResponse:
             cost_type="usage",
             allocation_method=None,
             allocation_detail=None,
-            tags=[],
+            tags={},
         )
-        assert d.tags == []
+        assert d.tags == {}
         assert d.resource_id is None
         assert d.allocation_method is None
 

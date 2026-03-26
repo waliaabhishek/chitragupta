@@ -116,26 +116,18 @@ List allocated chargeback rows. Paginated.
 | `product_type` | string | no | Filter by product type |
 | `resource_id` | string | no | Filter by resource |
 | `cost_type` | string | no | Filter by cost type |
+| `tag_key` | string | no | Filter by tag key |
+| `tag_value` | string | no | Filter by tag value (requires tag_key) |
 
 **Response fields per item:** `dimension_id`, `ecosystem`, `tenant_id`, `timestamp`, `resource_id`, `product_category`, `product_type`, `identity_id`, `cost_type`, `amount`, `allocation_method`, `allocation_detail`, `tags`, `metadata`.
 
+`tags` is a `dict[str, str]` mapping tag keys to tag values (e.g. `{"team": "platform", "env": "prod"}`). Tags are resolved at query time from the linked resource or identity.
+
 ### `GET /api/v1/tenants/{tenant_name}/chargebacks/{dimension_id}`
 
-Get a single chargeback dimension with its tags.
+Get a single chargeback dimension.
 
-**Response:** Dimension fields + `tags` array (each with `tag_id`, `tag_key`, `tag_value`, `display_name`, `created_by`, `created_at`).
-
-### `PATCH /api/v1/tenants/{tenant_name}/chargebacks/{dimension_id}`
-
-Update tags on a chargeback dimension. Three operations available (can combine):
-
-| Body field | Type | Effect |
-|---|---|---|
-| `tags` | list | Replace all existing tags with these |
-| `add_tags` | list | Add these tags (keeps existing) |
-| `remove_tag_ids` | list[int] | Remove specific tags by ID |
-
-Each tag in `tags` / `add_tags` requires: `tag_key`, `display_name`, `created_by`.
+**Response:** Dimension fields (tags not resolved at this level — use `/chargebacks` list endpoint for tag-enriched rows).
 
 ### `GET /api/v1/tenants/{tenant_name}/chargebacks/dates`
 
@@ -243,47 +235,76 @@ Counts of resources and identities grouped by type.
 
 ## Tags
 
-### `GET /api/v1/tenants/{tenant_name}/chargebacks/{dimension_id}/tags`
+Tags attach to entities (resources or identities) and propagate to chargeback rows at query time. `entity_type` must be `"resource"` or `"identity"`.
 
-List tags for a specific chargeback dimension.
+### `GET /api/v1/tenants/{tenant_name}/entities/{entity_type}/{entity_id}/tags`
 
-### `POST /api/v1/tenants/{tenant_name}/chargebacks/{dimension_id}/tags`
+List all tags on an entity.
 
-Create a tag on a dimension. Returns 201.
+**Response:** Array of tag objects with fields `tag_id`, `tenant_id`, `entity_type`, `entity_id`, `tag_key`, `tag_value`, `created_by`, `created_at`.
 
-**Body:** `{"tag_key": "team", "display_name": "Platform Team", "created_by": "admin"}`
+### `POST /api/v1/tenants/{tenant_name}/entities/{entity_type}/{entity_id}/tags`
 
-`tag_value` is auto-generated as a UUID by the backend.
+Create a tag on an entity. Returns 201. Returns 409 if a tag with the same key already exists on this entity.
+
+**Body:** `{"tag_key": "team", "tag_value": "platform", "created_by": "admin"}`
+
+### `PUT /api/v1/tenants/{tenant_name}/entities/{entity_type}/{entity_id}/tags/{tag_key}`
+
+Update a tag's value.
+
+**Body:** `{"tag_value": "new-value"}`
+
+### `DELETE /api/v1/tenants/{tenant_name}/entities/{entity_type}/{entity_id}/tags/{tag_key}`
+
+Delete a tag by key. Returns 204.
 
 ### `GET /api/v1/tenants/{tenant_name}/tags`
 
-List all tags for a tenant with denormalized dimension context. Paginated.
+List all tags for a tenant. Paginated.
 
 | Parameter | Type | Description |
 |---|---|---|
-| `search` | string | Filter tags by key or display name |
+| `entity_type` | string | Filter by entity type (`"resource"` or `"identity"`) |
+| `tag_key` | string | Filter by tag key |
+| `page` | int | Page number (default 1) |
+| `page_size` | int | Page size 1–1000 (default 100) |
 
-**Response fields per item:** Tag fields + `identity_id`, `product_type`, `resource_id` from the parent dimension.
-
-### `PATCH /api/v1/tenants/{tenant_name}/tags/{tag_id}`
-
-Update a tag's display name.
-
-**Body:** `{"display_name": "New Name"}`
-
-### `DELETE /api/v1/tenants/{tenant_name}/tags/{tag_id}`
-
-Delete a tag. Returns 204.
+**Response:** `{"items": [...], "total": N, "page": 1, "page_size": 100, "pages": N}`
 
 ### `POST /api/v1/tenants/{tenant_name}/tags/bulk`
 
-Bulk tag by explicit dimension IDs.
+Bulk create/update tags on explicit entity IDs.
 
 **Body:**
 
 ```json
 {
-  "dimension_ids": [1, 2, 3],
+  "items": [
+    {"entity_type": "resource", "entity_id": "cluster-1", "tag_key": "team", "tag_value": "platform"},
+    {"entity_type": "identity", "entity_id": "sa-abc", "tag_key": "team", "tag_value": "data"}
+  ],
+  "created_by": "admin",
+  "override_existing": false
+}
+```
+
+**Response:** `{"created_count": 2, "updated_count": 0, "skipped_count": 0}`
+
+When `override_existing` is true, existing tags with the same key are updated instead of skipped.
+
+### `POST /api/v1/tenants/{tenant_name}/tags/bulk-by-filter`
+
+Bulk tag all unique resources/identities found in chargebacks matching the given filters. Resolves entities server-side.
+
+**Body:**
+
+```json
+{
+  "start_date": "2026-01-01",
+  "end_date": "2026-01-31",
+  "timezone": "America/Denver",
+  "identity_id": "sa-abc",
   "tag_key": "team",
   "display_name": "Platform",
   "created_by": "admin",
@@ -291,15 +312,9 @@ Bulk tag by explicit dimension IDs.
 }
 ```
 
-**Response:** `{"created_count": 2, "updated_count": 0, "skipped_count": 1, "errors": []}`
+`display_name` is stored as the tag value. `identity_id` narrows which chargebacks are scanned.
 
-When `override_existing` is true, existing tags with the same key are updated instead of skipped.
-
-### `POST /api/v1/tenants/{tenant_name}/tags/bulk-by-filter`
-
-Bulk tag by chargeback filters (resolves matching dimension IDs server-side).
-
-**Body:** Same as bulk + filter fields: `start_date`, `end_date`, `timezone`, `identity_id`, `product_type`, `resource_id`, `cost_type`.
+**Response:** `{"created_count": 2, "updated_count": 0, "skipped_count": 0}`
 
 ---
 
@@ -366,5 +381,7 @@ Stream chargeback data as CSV. Returns `text/csv` with `Content-Disposition: att
 | `filters` | dict | no | Key-value filters (`identity_id`, `product_type`, `resource_id`, `cost_type`) |
 
 **All available columns:** `ecosystem`, `tenant_id`, `timestamp`, `resource_id`, `product_category`, `product_type`, `identity_id`, `cost_type`, `amount`, `allocation_method`, `allocation_detail`, `tags`, `metadata`.
+
+The `tags` column is serialized as `key=value;key=value` pairs (e.g. `team=platform;env=prod`).
 
 **Default columns:** `timestamp`, `resource_id`, `product_category`, `product_type`, `identity_id`, `cost_type`, `amount`, `allocation_method`, `tags`.

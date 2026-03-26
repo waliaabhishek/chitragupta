@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from core.models.billing import BillingLineItem, CoreBillingLineItem
-from core.models.chargeback import ChargebackRow, CostType, CustomTag
+from core.models.chargeback import ChargebackRow, CostType
+from core.models.entity_tag import EntityTag
 from core.models.identity import (
     OWNER_IDENTITY_TYPES,
     SENTINEL_IDENTITY_TYPES,
@@ -22,7 +23,7 @@ __all__ = [
     "CoreResource",
     "ChargebackRow",
     "CostType",
-    "CustomTag",
+    "EntityTag",
     "FlinkContextDict",
     "Identity",
     "IdentityResolution",

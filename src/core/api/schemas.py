@@ -145,92 +145,73 @@ class ChargebackResponse(BaseModel):
     amount: Decimal
     allocation_method: str | None
     allocation_detail: str | None
-    tags: list[str]
+    tags: dict[str, str]
     metadata: dict[str, Any]
 
     model_config = ConfigDict(from_attributes=True)
 
 
-# --- Tag ---
+# --- Entity Tag ---
 
 
-class TagResponse(BaseModel):
-    """Response for a single custom tag."""
-
+class EntityTagResponse(BaseModel):
     tag_id: int
-    dimension_id: int
+    tenant_id: str
+    entity_type: str
+    entity_id: str
     tag_key: str
     tag_value: str
-    display_name: str
     created_by: str
     created_at: datetime | None
 
     model_config = ConfigDict(from_attributes=True)
 
 
-class TagWithDimensionResponse(BaseModel):
-    """Extended tag response with denormalized dimension context for display."""
-
-    tag_id: int
-    dimension_id: int
-    tag_key: str
-    tag_value: str
-    display_name: str
-    created_by: str
-    created_at: datetime | None
-    # Denormalized dimension context
-    identity_id: str
-    product_type: str
-    resource_id: str | None
-
-
-class TagCreateRequest(BaseModel):
-    """Request to create a custom tag. Backend auto-generates tag_value = uuid4()."""
-
+class EntityTagCreateRequest(BaseModel):
     tag_key: str = Field(min_length=1, max_length=100)
-    display_name: str = Field(min_length=1, max_length=500)
+    tag_value: str = Field(min_length=1, max_length=500)
     created_by: str = Field(min_length=1, max_length=100)
 
 
-class TagUpdateRequest(BaseModel):
-    """Request to update a tag's display name."""
-
-    display_name: str = Field(min_length=1, max_length=500)
+class EntityTagUpdateRequest(BaseModel):
+    tag_value: str = Field(min_length=1, max_length=500)
 
 
-class BulkTagRequest(BaseModel):
-    """Request to bulk-add tags by dimension IDs."""
-
-    dimension_ids: list[int] = Field(min_length=1, max_length=1000)
+class BulkTagItem(BaseModel):
+    entity_type: str
+    entity_id: str
     tag_key: str = Field(min_length=1, max_length=100)
-    display_name: str = Field(min_length=1, max_length=500)
-    created_by: str = Field(min_length=1, max_length=100)
+    tag_value: str = Field(min_length=1, max_length=500)
+
+
+class BulkEntityTagRequest(BaseModel):
+    items: list[BulkTagItem] = Field(min_length=1, max_length=10_000)
     override_existing: bool = False
+    created_by: str = Field(min_length=1, max_length=100)
+
+
+class BulkEntityTagResponse(BaseModel):
+    created_count: int
+    updated_count: int
+    skipped_count: int
 
 
 class BulkTagByFilterRequest(BaseModel):
-    """Request to bulk-add tags by chargeback filters."""
-
     start_date: date | None = None
     end_date: date | None = None
     timezone: str | None = None
     identity_id: str | None = None
-    product_type: str | None = None
-    resource_id: str | None = None
-    cost_type: str | None = None
     tag_key: str = Field(min_length=1, max_length=100)
     display_name: str = Field(min_length=1, max_length=500)
     created_by: str = Field(min_length=1, max_length=100)
     override_existing: bool = False
 
 
-class BulkTagResponse(BaseModel):
-    """Result of a bulk tag operation."""
-
+class BulkTagByFilterResponse(BaseModel):
     created_count: int
     updated_count: int
     skipped_count: int
-    errors: list[str]
+    errors: list[str] = Field(default_factory=list)
 
 
 # --- Pipeline ---
@@ -340,17 +321,9 @@ class ChargebackDimensionResponse(BaseModel):
     cost_type: str
     allocation_method: str | None
     allocation_detail: str | None
-    tags: list[TagResponse]
+    tags: dict[str, str]
 
     model_config = ConfigDict(from_attributes=True)
-
-
-class ChargebackDimensionUpdateRequest(BaseModel):
-    """Request to update tags/annotations on a chargeback dimension."""
-
-    tags: list[TagCreateRequest] | None = None
-    add_tags: list[TagCreateRequest] | None = None
-    remove_tag_ids: list[int] | None = None
 
 
 # --- Inventory ---

@@ -1,11 +1,7 @@
 from __future__ import annotations
 
-import math
 from collections.abc import Generator
-from datetime import UTC, datetime
-from decimal import Decimal
 from typing import TYPE_CHECKING
-from unittest.mock import MagicMock
 
 import pytest
 from sqlmodel import Session, SQLModel, create_engine
@@ -13,11 +9,7 @@ from sqlmodel import Session, SQLModel, create_engine
 if TYPE_CHECKING:
     from sqlalchemy import Engine
 
-# _BULK_CHUNK_SIZE does not exist yet — importing it will raise ImportError (red state)
-from core.api.routes.tags import _BULK_CHUNK_SIZE, _run_bulk_tag
-from core.config.models import TenantConfig
-from core.models.chargeback import ChargebackDimensionInfo, ChargebackRow, CostType
-from core.storage.backends.sqlmodel.repositories import SQLModelChargebackRepository, SQLModelTagRepository
+from core.storage.backends.sqlmodel.repositories import SQLModelEntityTagRepository
 
 # ---------------------------------------------------------------------------
 # DB fixtures for integration tests
@@ -38,178 +30,99 @@ def session(engine: Engine) -> Generator[Session]:
         yield s
 
 
-def _make_tenant_config(ecosystem: str = "eco", tenant_id: str = "t1") -> TenantConfig:
-    return TenantConfig(ecosystem=ecosystem, tenant_id=tenant_id)
-
-
-def _make_dim(
-    session: Session,
-    *,
-    identity_id: str,
-    product_type: str = "kafka",
-) -> int:
-    """Insert one dimension+fact, return dimension_id."""
-    row = ChargebackRow(
-        ecosystem="eco",
-        tenant_id="t1",
-        timestamp=datetime(2026, 2, 15, tzinfo=UTC),
-        resource_id="r1",
-        product_category="compute",
-        product_type=product_type,
-        identity_id=identity_id,
-        cost_type=CostType.USAGE,
-        amount=Decimal("1.00"),
-    )
-    repo = SQLModelChargebackRepository(session)
-    result = repo.upsert(row)
-    session.commit()
-    assert result.dimension_id is not None
-    return result.dimension_id
-
-
-class _FakeUoW:
-    """Minimal UoW wrapper for testing _run_bulk_tag with real repositories."""
-
-    def __init__(self, session: Session) -> None:
-        self.chargebacks = SQLModelChargebackRepository(session)
-        self.tags = SQLModelTagRepository(session)
-        self._session = session
-
-    def commit(self) -> None:
-        self._session.commit()
-
-
 # ---------------------------------------------------------------------------
-# Issue #2: Mock-based — verify batch call counts (not N+1)
+# bulk_add_tags: correctness
 # ---------------------------------------------------------------------------
 
 
-class TestRunBulkTagQueryCount:
-    def test_run_bulk_tag_query_count(self) -> None:
-        """With 1000 dimension IDs, get_dimensions_batch and
-        find_tags_by_dimensions_and_key must each be called ceil(1000/CHUNK)=2
-        times, not 1000 times (N+1).
-        """
-        n = 1000
-        expected_chunks = math.ceil(n / _BULK_CHUNK_SIZE)
-        dimension_ids = list(range(1, n + 1))
+class TestBulkAddTagsCorrectness:
+    def test_bulk_create_three_items(self, session: Session) -> None:
+        """Bulk add 3 distinct tags → created=3, updated=0, skipped=0."""
+        repo = SQLModelEntityTagRepository(session)
+        items = [
+            {"entity_type": "resource", "entity_id": "r1", "tag_key": "env", "tag_value": "prod"},
+            {"entity_type": "resource", "entity_id": "r2", "tag_key": "env", "tag_value": "prod"},
+            {"entity_type": "resource", "entity_id": "r3", "tag_key": "env", "tag_value": "prod"},
+        ]
+        created, updated, skipped = repo.bulk_add_tags("t1", items, override_existing=False, created_by="admin")
+        session.commit()
+        assert created == 3
+        assert updated == 0
+        assert skipped == 0
 
-        # Build mock dim info for every ID
-        def _make_dim_info(dim_id: int) -> ChargebackDimensionInfo:
-            return ChargebackDimensionInfo(
-                dimension_id=dim_id,
-                ecosystem="eco",
-                tenant_id="t1",
-                resource_id="r1",
-                product_category="compute",
-                product_type="kafka",
-                identity_id=f"user-{dim_id}",
-                cost_type="usage",
-                allocation_method=None,
-                allocation_detail=None,
-            )
+    def test_bulk_same_call_twice_skips_all(self, session: Session) -> None:
+        """Bulk add same tags twice → second call skips all 3."""
+        repo = SQLModelEntityTagRepository(session)
+        items = [
+            {"entity_type": "resource", "entity_id": "r1", "tag_key": "env", "tag_value": "prod"},
+            {"entity_type": "resource", "entity_id": "r2", "tag_key": "env", "tag_value": "prod"},
+            {"entity_type": "resource", "entity_id": "r3", "tag_key": "env", "tag_value": "prod"},
+        ]
+        repo.bulk_add_tags("t1", items, override_existing=False, created_by="admin")
+        session.commit()
+        created, updated, skipped = repo.bulk_add_tags("t1", items, override_existing=False, created_by="admin")
+        session.commit()
+        assert created == 0
+        assert updated == 0
+        assert skipped == 3
 
-        # Mock UoW with batch methods
-        mock_uow = MagicMock()
-        mock_uow.__enter__ = MagicMock(return_value=mock_uow)
-        mock_uow.__exit__ = MagicMock(return_value=False)
-
-        # get_dimensions_batch returns a full mapping for any batch
-        def _get_dims_batch(ids: list[int]) -> dict[int, ChargebackDimensionInfo]:
-            return {i: _make_dim_info(i) for i in ids}
-
-        mock_uow.chargebacks.get_dimensions_batch.side_effect = _get_dims_batch
-
-        # find_tags_by_dimensions_and_key returns empty dict (no existing tags)
-        mock_uow.tags.find_tags_by_dimensions_and_key.return_value = {}
-        mock_uow.tags.add_tag.return_value = MagicMock()
-        mock_uow.commit.return_value = None
-
-        tenant_config = _make_tenant_config()
-
-        _run_bulk_tag(
-            uow=mock_uow,
-            tenant_config=tenant_config,
-            dimension_ids=dimension_ids,
-            tag_key="env",
-            display_name="Production",
-            created_by="admin",
-            override_existing=False,
-        )
-
-        # Each batch method should be called exactly expected_chunks times
-        assert mock_uow.chargebacks.get_dimensions_batch.call_count == expected_chunks
-        assert mock_uow.tags.find_tags_by_dimensions_and_key.call_count == expected_chunks
-
-        # add_tag should be called once per dimension (no existing tags)
-        assert mock_uow.tags.add_tag.call_count == n
-
-
-# ---------------------------------------------------------------------------
-# Integration tests: _run_bulk_tag correctness
-# ---------------------------------------------------------------------------
-
-
-class TestRunBulkTagCorrectness:
-    def test_run_bulk_tag_correctness(self, session: Session) -> None:
-        """10 dims, 3 have existing tags → created=7, updated=3, skipped=0, errors=[]."""
-        uow = _FakeUoW(session)
-        tag_repo = SQLModelTagRepository(session)
-
-        dim_ids: list[int] = []
-        for i in range(10):
-            dim_id = _make_dim(session, identity_id=f"user-{i}")
-            dim_ids.append(dim_id)
-
-        # Add existing tags to the first 3 dimensions
-        for i in range(3):
-            tag_repo.add_tag(dim_ids[i], "env", f"Old-{i}", "admin")
+    def test_bulk_override_existing_updates_all(self, session: Session) -> None:
+        """Bulk add with override_existing=True → updated=3."""
+        repo = SQLModelEntityTagRepository(session)
+        items_create = [
+            {"entity_type": "resource", "entity_id": "r1", "tag_key": "env", "tag_value": "prod"},
+            {"entity_type": "resource", "entity_id": "r2", "tag_key": "env", "tag_value": "prod"},
+            {"entity_type": "resource", "entity_id": "r3", "tag_key": "env", "tag_value": "prod"},
+        ]
+        repo.bulk_add_tags("t1", items_create, override_existing=False, created_by="admin")
         session.commit()
 
-        tenant_config = _make_tenant_config()
+        items_update = [
+            {"entity_type": "resource", "entity_id": "r1", "tag_key": "env", "tag_value": "staging"},
+            {"entity_type": "resource", "entity_id": "r2", "tag_key": "env", "tag_value": "staging"},
+            {"entity_type": "resource", "entity_id": "r3", "tag_key": "env", "tag_value": "staging"},
+        ]
+        created, updated, skipped = repo.bulk_add_tags("t1", items_update, override_existing=True, created_by="admin")
+        session.commit()
+        assert created == 0
+        assert updated == 3
+        assert skipped == 0
 
-        result = _run_bulk_tag(
-            uow=uow,
-            tenant_config=tenant_config,
-            dimension_ids=dim_ids,
-            tag_key="env",
-            display_name="Production",
-            created_by="admin",
-            override_existing=True,
-        )
+    def test_bulk_mixed_create_and_skip(self, session: Session) -> None:
+        """3 existing + 2 new → created=2, skipped=3, updated=0."""
+        repo = SQLModelEntityTagRepository(session)
+        existing = [
+            {"entity_type": "resource", "entity_id": f"r{i}", "tag_key": "env", "tag_value": "prod"} for i in range(3)
+        ]
+        repo.bulk_add_tags("t1", existing, override_existing=False, created_by="admin")
+        session.commit()
 
-        assert result.created_count == 7
-        assert result.updated_count == 3
-        assert result.skipped_count == 0
-        assert result.errors == []
+        all_items = [
+            {"entity_type": "resource", "entity_id": f"r{i}", "tag_key": "env", "tag_value": "prod"} for i in range(5)
+        ]
+        created, updated, skipped = repo.bulk_add_tags("t1", all_items, override_existing=False, created_by="admin")
+        session.commit()
+        assert created == 2
+        assert updated == 0
+        assert skipped == 3
 
-    def test_run_bulk_tag_invalid_dimensions(self, session: Session) -> None:
-        """Invalid dimension IDs are added to errors; valid ones are processed."""
-        uow = _FakeUoW(session)
 
-        # Create 5 valid dimensions
-        dim_ids: list[int] = []
-        for i in range(5):
-            dim_id = _make_dim(session, identity_id=f"user-{i}")
-            dim_ids.append(dim_id)
+# ---------------------------------------------------------------------------
+# bulk_add_tags: chunking — 600 > _CHUNK_SIZE=500
+# ---------------------------------------------------------------------------
 
-        # Add 2 invalid dimension IDs
-        invalid_ids = [99998, 99999]
-        all_ids = dim_ids + invalid_ids
 
-        tenant_config = _make_tenant_config()
-
-        result = _run_bulk_tag(
-            uow=uow,
-            tenant_config=tenant_config,
-            dimension_ids=all_ids,
-            tag_key="env",
-            display_name="Production",
-            created_by="admin",
-            override_existing=False,
-        )
-
-        assert result.created_count == 5
-        assert result.skipped_count == 0
-        assert set(result.errors) == {str(99998), str(99999)}
-        assert len(result.errors) == 2
+class TestBulkAddTagsChunking:
+    def test_bulk_add_600_items_no_sql_error(self, session: Session) -> None:
+        """600 distinct entity_ids cross the chunk boundary; no OperationalError raised."""
+        repo = SQLModelEntityTagRepository(session)
+        items = [
+            {"entity_type": "resource", "entity_id": f"r{i}", "tag_key": "env", "tag_value": f"val-{i}"}
+            for i in range(600)
+        ]
+        # Must not raise OperationalError (SQLite param limit)
+        created, updated, skipped = repo.bulk_add_tags("t1", items, override_existing=False, created_by="admin")
+        session.commit()
+        assert created == 600
+        assert updated == 0
+        assert skipped == 0

@@ -12,7 +12,11 @@ if TYPE_CHECKING:
     from sqlalchemy import Engine
 
 from core.models.chargeback import ChargebackRow, CostType
-from core.storage.backends.sqlmodel.repositories import SQLModelChargebackRepository, SQLModelTagRepository
+from core.storage.backends.sqlmodel.repositories import (
+    SQLModelChargebackRepository,
+    SQLModelEntityTagRepository,
+    _overlay_tags,
+)
 
 
 @pytest.fixture
@@ -204,13 +208,12 @@ class TestDeleteBeforeSubquery:
 
 class TestOverlayTagsChunking:
     def test_overlay_tags_chunking(self, session: Session) -> None:
-        """600 rows with distinct dimension_ids cross the chunk boundary; no SQL error."""
+        """600 rows with distinct identity_ids cross the chunk boundary; no SQL error."""
         cb_repo = SQLModelChargebackRepository(session)
-        tag_repo = SQLModelTagRepository(session)
+        tag_repo = SQLModelEntityTagRepository(session)
 
-        dim_ids: list[int] = []
         for i in range(600):
-            result = cb_repo.upsert(
+            cb_repo.upsert(
                 ChargebackRow(
                     ecosystem="eco",
                     tenant_id="t1",
@@ -223,14 +226,11 @@ class TestOverlayTagsChunking:
                     amount=Decimal("1.00"),
                 )
             )
-            session.commit()
-            assert result.dimension_id is not None
-            dim_ids.append(result.dimension_id)
-            # Add a tag to each dimension
-            tag_repo.add_tag(result.dimension_id, "env", f"env-{i}", "admin")
+            # Add a tag to each identity
+            tag_repo.add_tag("t1", "identity", f"user-{i}", "env", f"val-{i}", "admin")
         session.commit()
 
-        # Build ChargebackRow objects with dimension_id set
+        # Build ChargebackRow objects for overlay
         rows = [
             ChargebackRow(
                 ecosystem="eco",
@@ -242,13 +242,12 @@ class TestOverlayTagsChunking:
                 identity_id=f"user-{i}",
                 cost_type=CostType.USAGE,
                 amount=Decimal("1.00"),
-                dimension_id=dim_ids[i],
             )
             for i in range(600)
         ]
 
         # Must not raise OperationalError (SQLite param limit)
-        cb_repo._overlay_tags(rows)
+        _overlay_tags(rows, tag_repo)
 
         # All rows should have tags overlaid
         rows_with_tags = [r for r in rows if r.tags]
@@ -297,46 +296,30 @@ class TestGetDimensionsBatchChunking:
 # ---------------------------------------------------------------------------
 
 
-class TestFindTagsByDimensionsAndKey:
-    def test_find_tags_by_dimensions_and_key_batch(self, session: Session) -> None:
-        """Returns dict of {dimension_id: CustomTag} for dims that have matching key."""
-        cb_repo = SQLModelChargebackRepository(session)
-        tag_repo = SQLModelTagRepository(session)
+class TestFindTagsForEntities:
+    def test_find_tags_for_entities_batch(self, session: Session) -> None:
+        """Returns dict of {entity_id: [EntityTag]} for entities that have matching tags."""
+        tag_repo = SQLModelEntityTagRepository(session)
 
-        # Create 3 dimensions
-        dim_ids: list[int] = []
-        for i in range(3):
-            result = cb_repo.upsert(
-                ChargebackRow(
-                    ecosystem="eco",
-                    tenant_id="t1",
-                    timestamp=datetime(2026, 2, 15, tzinfo=UTC),
-                    resource_id="r1",
-                    product_category="compute",
-                    product_type="kafka",
-                    identity_id=f"user-{i}",
-                    cost_type=CostType.USAGE,
-                    amount=Decimal("1.00"),
-                )
-            )
-            session.commit()
-            assert result.dimension_id is not None
-            dim_ids.append(result.dimension_id)
-
-        # Add "env" tag to dims 0 and 1
-        tag_repo.add_tag(dim_ids[0], "env", "Production", "admin")
-        tag_repo.add_tag(dim_ids[1], "env", "Staging", "admin")
-        # Add different key to dim 2
-        tag_repo.add_tag(dim_ids[2], "team", "Platform", "admin")
+        # Add "env" tag to entities 0 and 1
+        tag_repo.add_tag("t1", "resource", "r0", "env", "Production", "admin")
+        tag_repo.add_tag("t1", "resource", "r1", "env", "Staging", "admin")
+        # Add different key to entity 2
+        tag_repo.add_tag("t1", "resource", "r2", "team", "Platform", "admin")
         session.commit()
 
-        # Call the new batch method
-        result = tag_repo.find_tags_by_dimensions_and_key(dim_ids, "env")
+        # Call the batch method
+        result = tag_repo.find_tags_for_entities("t1", "resource", ["r0", "r1", "r2"])
 
-        # Only dims 0 and 1 should be present
-        assert len(result) == 2
-        assert dim_ids[0] in result
-        assert dim_ids[1] in result
-        assert dim_ids[2] not in result
-        assert result[dim_ids[0]].tag_key == "env"
-        assert result[dim_ids[1]].tag_key == "env"
+        # All entities have tags
+        assert "r0" in result
+        assert "r1" in result
+        assert "r2" in result
+        assert any(t.tag_key == "env" for t in result["r0"])
+        assert any(t.tag_key == "env" for t in result["r1"])
+        assert any(t.tag_key == "team" for t in result["r2"])
+
+    def test_find_tags_for_entities_unknown_entity_returns_empty(self, session: Session) -> None:
+        tag_repo = SQLModelEntityTagRepository(session)
+        result = tag_repo.find_tags_for_entities("t1", "resource", ["nonexistent"])
+        assert result == {}

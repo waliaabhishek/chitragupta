@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 
 from core.models.billing import BillingLineItem, CoreBillingLineItem
-from core.models.chargeback import ChargebackRow, CostType, CustomTag
+from core.models.chargeback import ChargebackRow, CostType
 from core.models.identity import CoreIdentity, Identity
 from core.models.pipeline import PipelineState
 from core.models.resource import CoreResource, Resource, ResourceStatus
@@ -19,18 +19,18 @@ from core.storage.backends.sqlmodel.mappers import (
     chargeback_to_fact,
     ensure_utc,
     ensure_utc_strict,
+    entity_tag_to_domain,
     identity_to_domain,
     identity_to_table,
     pipeline_state_to_domain,
     pipeline_state_to_table,
     resource_to_domain,
     resource_to_table,
-    tag_to_domain,
-    tag_to_table,
 )
 from core.storage.backends.sqlmodel.tables import (
     ChargebackDimensionTable,
     ChargebackFactTable,
+    EntityTagTable,
 )
 
 
@@ -198,7 +198,7 @@ class TestChargebackMapper:
             amount=Decimal("50.25"),
             allocation_method="direct",
             allocation_detail=None,
-            tags=["team:platform", "env:prod"],
+            tags={"team": "platform", "env": "prod"},
             metadata={"debug": "info"},
         )
         defaults.update(overrides)
@@ -216,7 +216,7 @@ class TestChargebackMapper:
         fact = chargeback_to_fact(row, dimension_id=42)
         assert fact.dimension_id == 42
         assert fact.amount == "50.25"
-        assert '"team:platform"' in fact.tags_json
+        assert '"team"' in fact.tags_json
 
     def test_to_domain(self):
         dim = ChargebackDimensionTable(
@@ -235,11 +235,11 @@ class TestChargebackMapper:
             timestamp=datetime(2026, 1, 1, tzinfo=UTC),
             dimension_id=1,
             amount="50.25",
-            tags_json='["team:platform"]',
+            tags_json="{}",
         )
         domain = chargeback_to_domain(dim, fact)
         assert domain.amount == Decimal("50.25")
-        assert domain.tags == ["team:platform"]
+        assert domain.tags == {}
         assert domain.metadata == {}  # metadata is transient
         assert domain.cost_type == CostType.USAGE
 
@@ -272,39 +272,43 @@ class TestPipelineStateMapper:
         assert domain.tracking_date == date(2026, 1, 1)
 
 
-class TestCustomTagMapper:
-    def test_round_trip(self):
-        tag = CustomTag(
+class TestEntityTagMapper:
+    def test_entity_tag_to_domain(self):
+        table = EntityTagTable(
             tag_id=1,
-            dimension_id=42,
+            tenant_id="t1",
+            entity_type="resource",
+            entity_id="r1",
             tag_key="team",
             tag_value="platform",
-            display_name="Platform Team",
             created_by="admin",
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        table = tag_to_table(tag)
-        assert table.tag_key == "team"
-        assert table.display_name == "Platform Team"
-        domain = tag_to_domain(table)
+        domain = entity_tag_to_domain(table)
         assert domain.tag_id == 1
+        assert domain.tenant_id == "t1"
+        assert domain.entity_type == "resource"
+        assert domain.entity_id == "r1"
         assert domain.tag_key == "team"
-        assert domain.display_name == "Platform Team"
+        assert domain.tag_value == "platform"
+        assert domain.created_by == "admin"
         assert domain.created_at is not None
         assert domain.created_at.tzinfo is UTC
 
-    def test_none_created_at_gets_default(self):
-        tag = CustomTag(
-            tag_id=None,
-            dimension_id=42,
-            tag_key="k",
-            tag_value="v",
-            display_name="Value",
+    def test_entity_tag_to_domain_naive_created_at(self):
+        table = EntityTagTable(
+            tag_id=2,
+            tenant_id="t1",
+            entity_type="identity",
+            entity_id="u1",
+            tag_key="env",
+            tag_value="prod",
             created_by="admin",
-            created_at=None,
+            created_at=datetime(2026, 1, 1),  # naive from DB
         )
-        table = tag_to_table(tag)
-        assert table.created_at is not None
+        domain = entity_tag_to_domain(table)
+        assert domain.created_at is not None
+        assert domain.created_at.tzinfo is UTC
 
 
 # --- GAP-014 regression tests ---

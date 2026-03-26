@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Iterator
 from datetime import date, datetime
-from typing import TYPE_CHECKING, Protocol, Self, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, Self, runtime_checkable
 
 if TYPE_CHECKING:
     from typing import Literal
@@ -15,9 +15,9 @@ if TYPE_CHECKING:
         AllocationIssueRow,
         ChargebackDimensionInfo,
         ChargebackRow,
-        CustomTag,
     )
     from core.models.counts import TypeStatusCounts
+    from core.models.entity_tag import EntityTag
     from core.models.identity import Identity
     from core.models.pipeline import PipelineRun, PipelineState
     from core.models.resource import Resource
@@ -252,8 +252,14 @@ class ChargebackRepository(Protocol):
         cost_type: str | None = None,
         limit: int = 1000,
         offset: int = 0,
+        tag_key: str | None = None,
+        tag_value: str | None = None,
+        tags_repo: EntityTagRepository | None = None,
     ) -> tuple[list[ChargebackRow], int]:
-        """Returns (items, total_count). Filters and pagination at SQL level."""
+        """Returns (items, total_count). Filters and pagination at SQL level.
+        If tags_repo is provided, row.tags is populated from entity tags (2 batch queries).
+        tag_key/tag_value filter rows to those whose resource or identity has the matching tag.
+        """
         ...
 
     def iter_by_filters(
@@ -267,8 +273,13 @@ class ChargebackRepository(Protocol):
         resource_id: str | None = None,
         cost_type: str | None = None,
         batch_size: int = 5000,
+        tag_key: str | None = None,
+        tag_value: str | None = None,
+        tags_repo: EntityTagRepository | None = None,
     ) -> Iterator[ChargebackRow]:
-        """Yield rows matching filters in batches. No limit cap; bounded memory."""
+        """Yield rows matching filters in batches. No limit cap; bounded memory.
+        If tags_repo is provided, row.tags is populated per batch (2 queries per batch).
+        """
         ...
 
     def get_dimension(self, dimension_id: int) -> ChargebackDimensionInfo | None:
@@ -384,48 +395,59 @@ class PipelineStateRepository(Protocol):
 
 
 @runtime_checkable
-class TagRepository(Protocol):
-    """Repository for custom tags on chargeback dimensions."""
+class EntityTagRepository(Protocol):
+    """Repository for entity-level tags (resources and identities)."""
 
-    def add_tag(self, dimension_id: int, tag_key: str, display_name: str, created_by: str) -> CustomTag:
-        """Create tag. Backend auto-generates tag_value = uuid4()."""
-        ...
-
-    def get_tag(self, tag_id: int) -> CustomTag | None: ...
-
-    def get_tags(self, dimension_id: int) -> list[CustomTag]: ...
-
-    def find_tags_for_tenant(
+    def add_tag(
         self,
-        ecosystem: str,
         tenant_id: str,
-        limit: int = 100,
-        offset: int = 0,
-        search: str | None = None,
-    ) -> tuple[list[CustomTag], int]:
-        """Find all tags for dimensions belonging to a tenant. Returns (items, total).
-
-        search: case-insensitive LIKE on tag_key, tag_value, or display_name.
-        """
+        entity_type: str,
+        entity_id: str,
+        tag_key: str,
+        tag_value: str,
+        created_by: str,
+    ) -> EntityTag:
+        """Create a tag. Raises IntegrityError on duplicate (tenant_id, entity_type, entity_id, tag_key)."""
         ...
 
-    def update_display_name(self, tag_id: int, display_name: str) -> CustomTag:
-        """Update display_name only. tag_value remains immutable."""
-        ...
+    def get_tags(self, tenant_id: str, entity_type: str, entity_id: str) -> list[EntityTag]: ...
 
-    def find_by_dimension_and_key(self, dimension_id: int, tag_key: str) -> CustomTag | None:
-        """Find existing tag by dimension and key. Used for upsert/override logic."""
-        ...
-
-    def find_tags_by_dimensions_and_key(self, dimension_ids: list[int], tag_key: str) -> dict[int, CustomTag]:
-        """Batch fetch existing tags for multiple dimensions with a specific key.
-
-        Returns a dict keyed by dimension_id. dimension_ids with no matching tag are absent.
-        Chunks large lists to avoid SQLite parameter limits.
-        """
+    def update_tag(self, tag_id: int, tag_value: str) -> EntityTag:
+        """Update tag_value for an existing tag."""
         ...
 
     def delete_tag(self, tag_id: int) -> None: ...
+
+    def find_tags_for_tenant(
+        self,
+        tenant_id: str,
+        limit: int = 100,
+        offset: int = 0,
+        entity_type: str | None = None,
+        tag_key: str | None = None,
+    ) -> tuple[list[EntityTag], int]:
+        """Paginated listing. Optional filters: entity_type, tag_key (case-insensitive LIKE)."""
+        ...
+
+    def find_tags_for_entities(
+        self,
+        tenant_id: str,
+        entity_type: str,
+        entity_ids: list[str],
+    ) -> dict[str, list[EntityTag]]:
+        """Batch-fetch tags for multiple entity_ids. Returns dict keyed by entity_id.
+        entity_ids absent from the result had no tags. Chunks to avoid SQLite param limits."""
+        ...
+
+    def bulk_add_tags(
+        self,
+        tenant_id: str,
+        items: list[dict[str, Any]],
+        override_existing: bool,
+        created_by: str,
+    ) -> tuple[int, int, int]:
+        """Create/update tags in bulk. Returns (created_count, updated_count, skipped_count)."""
+        ...
 
 
 @runtime_checkable
@@ -461,7 +483,7 @@ class ReadOnlyUnitOfWork(Protocol):
     chargebacks: ChargebackRepository
     pipeline_state: PipelineStateRepository
     pipeline_runs: PipelineRunRepository
-    tags: TagRepository
+    tags: EntityTagRepository
     emissions: EmissionRepository  # NEW
 
     def __enter__(self) -> Self: ...

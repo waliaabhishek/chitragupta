@@ -84,13 +84,14 @@ def _stream_csv(
         product_type=filter_kwargs.get("product_type"),
         resource_id=filter_kwargs.get("resource_id"),
         cost_type=filter_kwargs.get("cost_type"),
+        tags_repo=uow.tags,
     ):
         values = []
         for col_name in columns:
             if col_name == "cost_type":
                 values.append(row.cost_type.value if hasattr(row.cost_type, "value") else str(row.cost_type))
             elif col_name == "tags":
-                values.append(";".join(row.tags))
+                values.append(";".join(f"{k}={v}" for k, v in row.tags.items()))
             elif col_name == "metadata":
                 values.append(str(row.metadata))
             else:

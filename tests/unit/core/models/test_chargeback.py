@@ -83,7 +83,7 @@ class TestChargebackRow:
         assert row.amount == Decimal("0")
         assert row.allocation_method is None
         assert row.allocation_detail is None
-        assert row.tags == []
+        assert row.tags == {}
         assert row.metadata == {}
 
     def test_tags_mutation(self) -> None:
@@ -97,8 +97,8 @@ class TestChargebackRow:
             identity_id="u-1",
             cost_type=CostType.USAGE,
         )
-        row.tags.append("new-tag")
-        assert "new-tag" in row.tags
+        row.tags["new-key"] = "new-val"
+        assert "new-key" in row.tags
 
     def test_asdict_round_trip(self) -> None:
         row = ChargebackRow(

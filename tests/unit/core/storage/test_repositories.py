@@ -18,11 +18,11 @@ from core.models.resource import CoreResource, Resource, ResourceStatus
 from core.storage.backends.sqlmodel.repositories import (
     SQLModelBillingRepository,
     SQLModelChargebackRepository,
+    SQLModelEntityTagRepository,
     SQLModelIdentityRepository,
     SQLModelPipelineRunRepository,
     SQLModelPipelineStateRepository,
     SQLModelResourceRepository,
-    SQLModelTagRepository,
 )
 
 
@@ -1234,126 +1234,57 @@ class TestChargebackFindByFilters:
 
 class TestTagRepository:
     def test_add_and_get_tags(self, session: Session) -> None:
-        # Need a dimension first
-        from core.storage.backends.sqlmodel.tables import ChargebackDimensionTable
-
-        dim = ChargebackDimensionTable(
-            ecosystem="eco",
-            tenant_id="t1",
-            product_category="compute",
-            product_type="kafka",
-            identity_id="u1",
-            cost_type="usage",
-        )
-        session.add(dim)
-        session.flush()
-
-        repo = SQLModelTagRepository(session)
-        tag = repo.add_tag(dim.dimension_id, "team", "platform", "admin")  # type: ignore[arg-type]
+        repo = SQLModelEntityTagRepository(session)
+        tag = repo.add_tag("t1", "resource", "r1", "team", "platform", "admin")
         session.commit()
         assert tag.tag_id is not None
         assert tag.tag_key == "team"
+        assert tag.tag_value == "platform"
 
-        tags = repo.get_tags(dim.dimension_id)  # type: ignore[arg-type]
+        tags = repo.get_tags("t1", "resource", "r1")
         assert len(tags) == 1
 
     def test_delete_tag(self, session: Session) -> None:
-        from core.storage.backends.sqlmodel.tables import ChargebackDimensionTable
-
-        dim = ChargebackDimensionTable(
-            ecosystem="eco",
-            tenant_id="t1",
-            product_category="compute",
-            product_type="kafka",
-            identity_id="u1",
-            cost_type="usage",
-        )
-        session.add(dim)
-        session.flush()
-
-        repo = SQLModelTagRepository(session)
-        tag = repo.add_tag(dim.dimension_id, "team", "platform", "admin")  # type: ignore[arg-type]
+        repo = SQLModelEntityTagRepository(session)
+        tag = repo.add_tag("t1", "resource", "r1", "team", "platform", "admin")
         session.commit()
-        repo.delete_tag(tag.tag_id)  # type: ignore[arg-type]
+        assert tag.tag_id is not None
+        repo.delete_tag(tag.tag_id)
         session.commit()
-        tags = repo.get_tags(dim.dimension_id)  # type: ignore[arg-type]
+        tags = repo.get_tags("t1", "resource", "r1")
         assert len(tags) == 0
 
-    def test_multiple_tags_per_dimension(self, session: Session) -> None:
-        from core.storage.backends.sqlmodel.tables import ChargebackDimensionTable
-
-        dim = ChargebackDimensionTable(
-            ecosystem="eco",
-            tenant_id="t1",
-            product_category="compute",
-            product_type="kafka",
-            identity_id="u1",
-            cost_type="usage",
-        )
-        session.add(dim)
-        session.flush()
-
-        repo = SQLModelTagRepository(session)
-        repo.add_tag(dim.dimension_id, "team", "platform", "admin")  # type: ignore[arg-type]
-        repo.add_tag(dim.dimension_id, "env", "prod", "admin")  # type: ignore[arg-type]
+    def test_multiple_tags_per_entity(self, session: Session) -> None:
+        repo = SQLModelEntityTagRepository(session)
+        repo.add_tag("t1", "resource", "r1", "team", "platform", "admin")
+        repo.add_tag("t1", "resource", "r1", "env", "prod", "admin")
         session.commit()
-        tags = repo.get_tags(dim.dimension_id)  # type: ignore[arg-type]
+        tags = repo.get_tags("t1", "resource", "r1")
         assert len(tags) == 2
 
-    def test_get_tag_found(self, session: Session) -> None:
-        from core.storage.backends.sqlmodel.tables import ChargebackDimensionTable
-
-        dim = ChargebackDimensionTable(
-            ecosystem="eco",
-            tenant_id="t1",
-            product_category="compute",
-            product_type="kafka",
-            identity_id="u1",
-            cost_type="usage",
-        )
-        session.add(dim)
-        session.flush()
-
-        repo = SQLModelTagRepository(session)
-        tag = repo.add_tag(dim.dimension_id, "env", "prod", "admin")  # type: ignore[arg-type]
+    def test_update_tag(self, session: Session) -> None:
+        repo = SQLModelEntityTagRepository(session)
+        tag = repo.add_tag("t1", "resource", "r1", "env", "prod", "admin")
         session.commit()
-        got = repo.get_tag(tag.tag_id)  # type: ignore[arg-type]
-        assert got is not None
-        assert got.tag_key == "env"
-        assert got.display_name == "prod"
-        # tag_value is auto-generated UUID
-        assert len(got.tag_value) == 36
-
-    def test_get_tag_not_found(self, session: Session) -> None:
-        repo = SQLModelTagRepository(session)
-        assert repo.get_tag(99999) is None
+        assert tag.tag_id is not None
+        updated = repo.update_tag(tag.tag_id, "staging")
+        session.commit()
+        assert updated.tag_value == "staging"
+        assert updated.tag_key == "env"
 
     def test_find_tags_for_tenant(self, session: Session) -> None:
-        from core.storage.backends.sqlmodel.tables import ChargebackDimensionTable
-
-        dim = ChargebackDimensionTable(
-            ecosystem="eco",
-            tenant_id="t1",
-            product_category="compute",
-            product_type="kafka",
-            identity_id="u1",
-            cost_type="usage",
-        )
-        session.add(dim)
-        session.flush()
-
-        repo = SQLModelTagRepository(session)
-        repo.add_tag(dim.dimension_id, "team", "platform", "admin")  # type: ignore[arg-type]
-        repo.add_tag(dim.dimension_id, "env", "prod", "admin")  # type: ignore[arg-type]
+        repo = SQLModelEntityTagRepository(session)
+        repo.add_tag("t1", "resource", "r1", "team", "platform", "admin")
+        repo.add_tag("t1", "resource", "r1", "env", "prod", "admin")
         session.commit()
 
-        items, total = repo.find_tags_for_tenant("eco", "t1")
+        items, total = repo.find_tags_for_tenant(tenant_id="t1")
         assert total == 2
         assert len(items) == 2
 
     def test_find_tags_for_tenant_empty(self, session: Session) -> None:
-        repo = SQLModelTagRepository(session)
-        items, total = repo.find_tags_for_tenant("eco", "no-tenant")
+        repo = SQLModelEntityTagRepository(session)
+        items, total = repo.find_tags_for_tenant(tenant_id="no-tenant")
         assert total == 0
         assert items == []
 

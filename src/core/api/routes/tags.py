@@ -2,135 +2,180 @@ from __future__ import annotations
 
 import logging
 import math
-from typing import TYPE_CHECKING, Annotated
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
+from sqlalchemy.exc import IntegrityError
 
 from core.api.dependencies import get_tenant_config, get_unit_of_work, get_write_unit_of_work, resolve_date_range
 from core.api.schemas import (
+    BulkEntityTagRequest,
+    BulkEntityTagResponse,
     BulkTagByFilterRequest,
-    BulkTagRequest,
-    BulkTagResponse,
+    BulkTagByFilterResponse,
+    EntityTagCreateRequest,
+    EntityTagResponse,
+    EntityTagUpdateRequest,
     PaginatedResponse,
-    TagCreateRequest,
-    TagResponse,
-    TagUpdateRequest,
-    TagWithDimensionResponse,
 )
-from core.config.models import TenantConfig  # noqa: TC001  # FastAPI evaluates annotations at runtime
+from core.config.models import TenantConfig  # noqa: TC001
 from core.storage.interface import ReadOnlyUnitOfWork, UnitOfWork  # noqa: TC001
 
-if TYPE_CHECKING:
-    from core.models.chargeback import CustomTag
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["tags"])
 
+_ALLOWED_ENTITY_TYPES = frozenset({"resource", "identity"})
 
-def _validate_dimension_ownership(
+
+def _validate_entity_type(entity_type: str) -> None:
+    if entity_type not in _ALLOWED_ENTITY_TYPES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"entity_type must be one of {sorted(_ALLOWED_ENTITY_TYPES)}",
+        )
+
+
+def _validate_entity_ownership(
     uow: ReadOnlyUnitOfWork,
-    dimension_id: int,
+    entity_type: str,
+    entity_id: str,
     tenant_config: TenantConfig,
 ) -> None:
-    """Validate that a dimension belongs to the given tenant. Raises 404 if not."""
-    dim = uow.chargebacks.get_dimension(dimension_id)
-    if dim is None or dim.ecosystem != tenant_config.ecosystem or dim.tenant_id != tenant_config.tenant_id:
-        raise HTTPException(status_code=404, detail=f"Dimension {dimension_id} not found")
-
-
-def _tag_response(tag: CustomTag) -> TagResponse:
-    """Convert domain CustomTag to API response. tag_id is always set after persistence."""
-    assert tag.tag_id is not None, "tag_id must be set after persistence"
-    return TagResponse(
-        tag_id=tag.tag_id,
-        dimension_id=tag.dimension_id,
-        tag_key=tag.tag_key,
-        tag_value=tag.tag_value,
-        display_name=tag.display_name,
-        created_by=tag.created_by,
-        created_at=tag.created_at,
-    )
+    """Verify entity_id belongs to tenant. Raises 404 if not found."""
+    if entity_type == "resource":
+        if uow.resources.get(tenant_config.ecosystem, tenant_config.tenant_id, entity_id) is None:
+            raise HTTPException(status_code=404, detail=f"Resource {entity_id} not found")
+    else:  # "identity"
+        if uow.identities.get(tenant_config.ecosystem, tenant_config.tenant_id, entity_id) is None:
+            raise HTTPException(status_code=404, detail=f"Identity {entity_id} not found")
 
 
 @router.get(
-    "/tenants/{tenant_name}/chargebacks/{dimension_id}/tags",
-    response_model=list[TagResponse],
+    "/tenants/{tenant_name}/entities/{entity_type}/{entity_id}/tags",
+    response_model=list[EntityTagResponse],
 )
-async def list_tags(
+async def list_entity_tags(
     tenant_config: Annotated[TenantConfig, Depends(get_tenant_config)],
     uow: Annotated[ReadOnlyUnitOfWork, Depends(get_unit_of_work)],
-    dimension_id: Annotated[int, Path(description="Chargeback dimension ID")],
-) -> list[TagResponse]:
-    logger.debug("GET /chargebacks/%s/tags tenant=%s", dimension_id, tenant_config.tenant_id)
-    _validate_dimension_ownership(uow, dimension_id, tenant_config)
-    tags = uow.tags.get_tags(dimension_id)
-    return [_tag_response(t) for t in tags]
+    entity_type: Annotated[str, Path()],
+    entity_id: Annotated[str, Path()],
+) -> list[EntityTagResponse]:
+    _validate_entity_type(entity_type)
+    tags = uow.tags.get_tags(tenant_config.tenant_id, entity_type, entity_id)
+    return [EntityTagResponse.model_validate(t.__dict__) for t in tags]
 
 
 @router.post(
-    "/tenants/{tenant_name}/chargebacks/{dimension_id}/tags",
-    response_model=TagResponse,
+    "/tenants/{tenant_name}/entities/{entity_type}/{entity_id}/tags",
+    response_model=EntityTagResponse,
     status_code=201,
 )
-async def create_tag(
+async def create_entity_tag(
     tenant_config: Annotated[TenantConfig, Depends(get_tenant_config)],
     uow: Annotated[UnitOfWork, Depends(get_write_unit_of_work)],
-    dimension_id: Annotated[int, Path(description="Chargeback dimension ID")],
-    body: TagCreateRequest,
-) -> TagResponse:
-    _validate_dimension_ownership(uow, dimension_id, tenant_config)
-    tag = uow.tags.add_tag(
-        dimension_id=dimension_id,
-        tag_key=body.tag_key,
-        display_name=body.display_name,
-        created_by=body.created_by,
-    )
+    entity_type: Annotated[str, Path()],
+    entity_id: Annotated[str, Path()],
+    body: EntityTagCreateRequest,
+) -> EntityTagResponse:
+    _validate_entity_type(entity_type)
+    _validate_entity_ownership(uow, entity_type, entity_id, tenant_config)
+    try:
+        tag = uow.tags.add_tag(
+            tenant_id=tenant_config.tenant_id,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            tag_key=body.tag_key,
+            tag_value=body.tag_value,
+            created_by=body.created_by,
+        )
+        uow.commit()
+    except IntegrityError:
+        raise HTTPException(
+            status_code=409, detail=f"Tag key '{body.tag_key}' already exists on {entity_type} {entity_id}"
+        ) from None
+    return EntityTagResponse.model_validate(tag.__dict__)
+
+
+@router.put(
+    "/tenants/{tenant_name}/entities/{entity_type}/{entity_id}/tags/{tag_key}",
+    response_model=EntityTagResponse,
+)
+async def update_entity_tag(
+    tenant_config: Annotated[TenantConfig, Depends(get_tenant_config)],
+    uow: Annotated[UnitOfWork, Depends(get_write_unit_of_work)],
+    entity_type: Annotated[str, Path()],
+    entity_id: Annotated[str, Path()],
+    tag_key: Annotated[str, Path()],
+    body: EntityTagUpdateRequest,
+) -> EntityTagResponse:
+    _validate_entity_type(entity_type)
+    _validate_entity_ownership(uow, entity_type, entity_id, tenant_config)
+    tags = uow.tags.get_tags(tenant_config.tenant_id, entity_type, entity_id)
+    match = next((t for t in tags if t.tag_key == tag_key), None)
+    if match is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Tag key '{tag_key}' not found on {entity_type} {entity_id}",
+        )
+    if match.tag_id is None:
+        raise RuntimeError(f"tag_id is None for persisted tag with key '{tag_key}'")
+    updated = uow.tags.update_tag(match.tag_id, body.tag_value)
     uow.commit()
-    return _tag_response(tag)
+    return EntityTagResponse.model_validate(updated.__dict__)
+
+
+@router.delete(
+    "/tenants/{tenant_name}/entities/{entity_type}/{entity_id}/tags/{tag_key}",
+    status_code=204,
+)
+async def delete_entity_tag(
+    tenant_config: Annotated[TenantConfig, Depends(get_tenant_config)],
+    uow: Annotated[UnitOfWork, Depends(get_write_unit_of_work)],
+    entity_type: Annotated[str, Path()],
+    entity_id: Annotated[str, Path()],
+    tag_key: Annotated[str, Path()],
+) -> None:
+    _validate_entity_type(entity_type)
+    _validate_entity_ownership(uow, entity_type, entity_id, tenant_config)
+    tags = uow.tags.get_tags(tenant_config.tenant_id, entity_type, entity_id)
+    match = next((t for t in tags if t.tag_key == tag_key), None)
+    if match is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Tag key '{tag_key}' not found on {entity_type} {entity_id}",
+        )
+    if match.tag_id is None:
+        raise RuntimeError(f"tag_id is None for persisted tag with key '{tag_key}'")
+    uow.tags.delete_tag(match.tag_id)
+    uow.commit()
 
 
 @router.get(
     "/tenants/{tenant_name}/tags",
-    response_model=PaginatedResponse[TagWithDimensionResponse],
+    response_model=PaginatedResponse[EntityTagResponse],
 )
 async def list_tags_for_tenant(
     tenant_config: Annotated[TenantConfig, Depends(get_tenant_config)],
     uow: Annotated[ReadOnlyUnitOfWork, Depends(get_unit_of_work)],
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=1000)] = 100,
-    search: Annotated[str | None, Query()] = None,
-) -> PaginatedResponse[TagWithDimensionResponse]:
+    entity_type: Annotated[str | None, Query()] = None,
+    tag_key: Annotated[str | None, Query()] = None,
+) -> PaginatedResponse[EntityTagResponse]:
+    if entity_type is not None:
+        _validate_entity_type(entity_type)
     offset = (page - 1) * page_size
     tags, total = uow.tags.find_tags_for_tenant(
-        ecosystem=tenant_config.ecosystem,
         tenant_id=tenant_config.tenant_id,
         limit=page_size,
         offset=offset,
-        search=search or None,
+        entity_type=entity_type,
+        tag_key=tag_key,
     )
-    # Batch fetch dimensions for denormalized context
-    dimension_ids = list({t.dimension_id for t in tags})
-    dims = uow.chargebacks.get_dimensions_batch(dimension_ids)
     pages = math.ceil(total / page_size) if total > 0 else 0
-    items = []
-    for tag in tags:
-        dim = dims.get(tag.dimension_id)
-        items.append(
-            TagWithDimensionResponse(
-                tag_id=tag.tag_id,  # type: ignore[arg-type]  # always set after persistence
-                dimension_id=tag.dimension_id,
-                tag_key=tag.tag_key,
-                tag_value=tag.tag_value,
-                display_name=tag.display_name,
-                created_by=tag.created_by,
-                created_at=tag.created_at,
-                identity_id=dim.identity_id if dim else "",
-                product_type=dim.product_type if dim else "",
-                resource_id=dim.resource_id if dim else None,
-            )
-        )
-    return PaginatedResponse[TagWithDimensionResponse](
-        items=items,
+    return PaginatedResponse[EntityTagResponse](
+        items=[EntityTagResponse.model_validate(t.__dict__) for t in tags],
         total=total,
         page=page,
         page_size=page_size,
@@ -138,142 +183,71 @@ async def list_tags_for_tenant(
     )
 
 
-@router.patch(
-    "/tenants/{tenant_name}/tags/{tag_id}",
-    response_model=TagResponse,
-)
-async def update_tag(
-    tenant_config: Annotated[TenantConfig, Depends(get_tenant_config)],
-    uow: Annotated[UnitOfWork, Depends(get_write_unit_of_work)],
-    tag_id: Annotated[int, Path(description="Tag ID to update")],
-    body: TagUpdateRequest,
-) -> TagResponse:
-    tag = uow.tags.get_tag(tag_id)
-    if tag is None:
-        raise HTTPException(status_code=404, detail=f"Tag {tag_id} not found")
-    _validate_dimension_ownership(uow, tag.dimension_id, tenant_config)
-    updated = uow.tags.update_display_name(tag_id, body.display_name)
-    uow.commit()
-    return _tag_response(updated)
-
-
-@router.delete(
-    "/tenants/{tenant_name}/tags/{tag_id}",
-    status_code=204,
-)
-async def delete_tag(
-    tenant_config: Annotated[TenantConfig, Depends(get_tenant_config)],
-    uow: Annotated[UnitOfWork, Depends(get_write_unit_of_work)],
-    tag_id: Annotated[int, Path(description="Tag ID to delete")],
-) -> None:
-    tag = uow.tags.get_tag(tag_id)
-    if tag is None:
-        raise HTTPException(status_code=404, detail=f"Tag {tag_id} not found")
-    # Validate tenant ownership via dimension
-    _validate_dimension_ownership(uow, tag.dimension_id, tenant_config)
-    uow.tags.delete_tag(tag_id)
-    uow.commit()
-
-
-# Matches _CHUNK_SIZE in repositories.py — both bound by SQLite 32K param limit
-_BULK_CHUNK_SIZE = 500
-
-
-def _run_bulk_tag(
-    uow: UnitOfWork,
-    tenant_config: TenantConfig,
-    dimension_ids: list[int],
-    tag_key: str,
-    display_name: str,
-    created_by: str,
-    override_existing: bool,
-) -> BulkTagResponse:
-    """Core logic for bulk tagging. Batch-fetches to avoid N+1 queries."""
-    created_count = 0
-    updated_count = 0
-    skipped_count = 0
-    errors: list[str] = []
-
-    for i in range(0, len(dimension_ids), _BULK_CHUNK_SIZE):
-        chunk = dimension_ids[i : i + _BULK_CHUNK_SIZE]
-
-        # 1 query for all dimensions in chunk
-        dims_map = uow.chargebacks.get_dimensions_batch(chunk)
-        # 1 query for all existing tags in chunk
-        existing_tags = uow.tags.find_tags_by_dimensions_and_key(chunk, tag_key)
-
-        for dim_id in chunk:
-            dim = dims_map.get(dim_id)
-            if dim is None or dim.ecosystem != tenant_config.ecosystem or dim.tenant_id != tenant_config.tenant_id:
-                errors.append(str(dim_id))
-                continue
-
-            existing = existing_tags.get(dim_id)
-            if existing is not None:
-                if override_existing:
-                    uow.tags.update_display_name(existing.tag_id, display_name)  # type: ignore[arg-type]  # always set after DB fetch
-                    updated_count += 1
-                else:
-                    skipped_count += 1
-            else:
-                uow.tags.add_tag(dim_id, tag_key, display_name, created_by)
-                created_count += 1
-
-    uow.commit()
-    return BulkTagResponse(
-        created_count=created_count,
-        updated_count=updated_count,
-        skipped_count=skipped_count,
-        errors=errors,
-    )
-
-
 @router.post(
     "/tenants/{tenant_name}/tags/bulk",
-    response_model=BulkTagResponse,
+    response_model=BulkEntityTagResponse,
 )
-async def bulk_add_tags(
+async def bulk_add_entity_tags(
     tenant_config: Annotated[TenantConfig, Depends(get_tenant_config)],
     uow: Annotated[UnitOfWork, Depends(get_write_unit_of_work)],
-    body: BulkTagRequest,
-) -> BulkTagResponse:
-    return _run_bulk_tag(
-        uow=uow,
-        tenant_config=tenant_config,
-        dimension_ids=body.dimension_ids,
-        tag_key=body.tag_key,
-        display_name=body.display_name,
-        created_by=body.created_by,
+    body: BulkEntityTagRequest,
+) -> BulkEntityTagResponse:
+    for item in body.items:
+        if item.entity_type not in _ALLOWED_ENTITY_TYPES:
+            raise HTTPException(status_code=422, detail=f"Invalid entity_type '{item.entity_type}'")
+    items_dicts = [i.model_dump() for i in body.items]
+    created, updated, skipped = uow.tags.bulk_add_tags(
+        tenant_id=tenant_config.tenant_id,
+        items=items_dicts,
         override_existing=body.override_existing,
+        created_by=body.created_by,
     )
+    uow.commit()
+    return BulkEntityTagResponse(created_count=created, updated_count=updated, skipped_count=skipped)
 
 
 @router.post(
     "/tenants/{tenant_name}/tags/bulk-by-filter",
-    response_model=BulkTagResponse,
+    response_model=BulkTagByFilterResponse,
 )
-async def bulk_add_tags_by_filter(
+async def bulk_add_entity_tags_by_filter(
     tenant_config: Annotated[TenantConfig, Depends(get_tenant_config)],
     uow: Annotated[UnitOfWork, Depends(get_write_unit_of_work)],
     body: BulkTagByFilterRequest,
-) -> BulkTagResponse:
+) -> BulkTagByFilterResponse:
     start_dt, end_dt = resolve_date_range(body.start_date, body.end_date, timezone=body.timezone)
-    dimension_ids = uow.chargebacks.find_dimension_ids_by_filters(
+
+    seen: set[tuple[str, str]] = set()
+    items: list[dict[str, str]] = []
+    for row in uow.chargebacks.iter_by_filters(
         ecosystem=tenant_config.ecosystem,
         tenant_id=tenant_config.tenant_id,
         start=start_dt,
         end=end_dt,
         identity_id=body.identity_id,
-        product_type=body.product_type,
-        resource_id=body.resource_id,
-        cost_type=body.cost_type,
-    )
-    return _run_bulk_tag(
-        uow=uow,
-        tenant_config=tenant_config,
-        dimension_ids=dimension_ids,
-        tag_key=body.tag_key,
-        display_name=body.display_name,
-        created_by=body.created_by,
+    ):
+        entity_type = "resource" if row.resource_id is not None else "identity"
+        entity_id = row.resource_id if row.resource_id is not None else row.identity_id
+        key = (entity_type, entity_id)
+        if key not in seen:
+            seen.add(key)
+            items.append(
+                {
+                    "entity_type": entity_type,
+                    "entity_id": entity_id,
+                    "tag_key": body.tag_key,
+                    "tag_value": body.display_name,
+                }
+            )
+
+    if not items:
+        return BulkTagByFilterResponse(created_count=0, updated_count=0, skipped_count=0)
+
+    created, updated, skipped = uow.tags.bulk_add_tags(
+        tenant_id=tenant_config.tenant_id,
+        items=items,
         override_existing=body.override_existing,
+        created_by=body.created_by,
     )
+    uow.commit()
+    return BulkTagByFilterResponse(created_count=created, updated_count=updated, skipped_count=skipped)

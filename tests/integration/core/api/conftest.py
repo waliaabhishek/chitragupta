@@ -175,7 +175,7 @@ def sample_chargeback() -> ChargebackRow:
         amount=Decimal("10.00"),
         allocation_method="direct",
         allocation_detail=None,
-        tags=[],
+        tags={},
         metadata={},
     )
 

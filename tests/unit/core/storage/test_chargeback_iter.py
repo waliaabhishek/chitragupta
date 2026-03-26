@@ -9,7 +9,7 @@ import pytest
 from sqlmodel import Session, SQLModel, create_engine
 
 from core.models.chargeback import ChargebackRow, CostType
-from core.storage.backends.sqlmodel.repositories import SQLModelChargebackRepository, SQLModelTagRepository
+from core.storage.backends.sqlmodel.repositories import SQLModelChargebackRepository, SQLModelEntityTagRepository
 from core.storage.interface import ChargebackRepository
 
 
@@ -35,7 +35,7 @@ def _make_chargeback(**overrides: Any) -> ChargebackRow:
         amount=Decimal("10.00"),
         allocation_method="direct",
         allocation_detail=None,
-        tags=[],
+        tags={},
         metadata={},
     )
     defaults.update(overrides)
@@ -74,20 +74,20 @@ class TestIterByFilters:
         rows = list(repo.iter_by_filters("eco", "t1", identity_id="nonexistent-user"))
         assert rows == []
 
-    def test_iter_by_filters_with_custom_tags_overlay(self, session: Session) -> None:
-        """Rows with custom tags have display_name values populated in tags field."""
+    def test_iter_by_filters_with_entity_tags_overlay(self, session: Session) -> None:
+        """Rows with entity tags have tag dict populated when tags_repo is provided."""
         repo = SQLModelChargebackRepository(session)
-        tag_repo = SQLModelTagRepository(session)
+        tag_repo = SQLModelEntityTagRepository(session)
 
-        row = repo.upsert(_make_chargeback())
+        row = repo.upsert(_make_chargeback(resource_id="r1", identity_id="user-1"))
         session.flush()
         assert row.dimension_id is not None
-        tag_repo.add_tag(row.dimension_id, "env", "production", "test")
+        tag_repo.add_tag("t1", "resource", "r1", "env", "production", "test")
         session.commit()
 
-        rows = list(repo.iter_by_filters("eco", "t1"))
+        rows = list(repo.iter_by_filters("eco", "t1", tags_repo=tag_repo))
         assert len(rows) == 1
-        assert "production" in rows[0].tags
+        assert rows[0].tags.get("env") == "production"
 
     def test_iter_by_filters_date_range_excludes_out_of_range_rows(self, session: Session) -> None:
         """iter_by_filters with start/end only returns rows within the half-open interval."""
@@ -108,28 +108,28 @@ class TestIterByFilters:
         assert rows[0].identity_id == "user-day-10"
 
     def test_iter_by_filters_multiple_batches_all_tags_correct(self, session: Session) -> None:
-        """Custom tags are overlaid correctly even when rows span multiple batches."""
+        """Entity tags are overlaid correctly even when rows span multiple batches."""
         repo = SQLModelChargebackRepository(session)
-        tag_repo = SQLModelTagRepository(session)
+        tag_repo = SQLModelEntityTagRepository(session)
 
-        # Insert 15 rows; 5 will have tags. Use batch_size=6 to cross batch boundaries.
-        tagged_ids: list[int] = []
+        # Insert 15 rows; tag every 3rd identity. Use batch_size=6 to cross batch boundaries.
+        tagged_identities: list[str] = []
         for i in range(15):
-            row = repo.upsert(_make_chargeback(identity_id=f"user-{i}"))
-            session.flush()
-            if i % 3 == 0 and row.dimension_id is not None:
-                tag_repo.add_tag(row.dimension_id, "tier", f"tier-{i}", "test")
-                tagged_ids.append(row.dimension_id)
+            identity_id = f"user-{i}"
+            repo.upsert(_make_chargeback(identity_id=identity_id))
+            if i % 3 == 0:
+                tag_repo.add_tag("t1", "identity", identity_id, "tier", f"tier-{i}", "test")
+                tagged_identities.append(identity_id)
         session.commit()
 
-        rows = list(repo.iter_by_filters("eco", "t1", batch_size=6))
+        rows = list(repo.iter_by_filters("eco", "t1", tags_repo=tag_repo, batch_size=6))
         assert len(rows) == 15
 
         tagged_rows = [r for r in rows if r.tags]
         assert len(tagged_rows) == 5
         for r in tagged_rows:
             assert len(r.tags) == 1
-            assert r.tags[0].startswith("tier-")
+            assert list(r.tags.values())[0].startswith("tier-")
 
 
 class TestProtocolCompliance:

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import uuid
 from collections.abc import Iterator, Sequence
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
@@ -18,10 +17,12 @@ from core.models.counts import TypeStatusCounts
 if TYPE_CHECKING:
     from core.emitters.models import EmissionRecord
     from core.models.billing import BillingLineItem, CoreBillingLineItem
-    from core.models.chargeback import ChargebackDimensionInfo, ChargebackRow, CustomTag
+    from core.models.chargeback import ChargebackDimensionInfo, ChargebackRow
+    from core.models.entity_tag import EntityTag
     from core.models.identity import Identity
     from core.models.pipeline import PipelineRun, PipelineState
     from core.models.resource import Resource
+    from core.storage.interface import EntityTagRepository
 
 from core.storage.backends.sqlmodel.base_tables import BillingTable, IdentityTable, ResourceTable
 from core.storage.backends.sqlmodel.mappers import (
@@ -31,6 +32,7 @@ from core.storage.backends.sqlmodel.mappers import (
     chargeback_to_domain,
     chargeback_to_fact,
     emission_record_to_table,
+    entity_tag_to_domain,
     identity_to_domain,
     identity_to_table,
     pipeline_run_to_domain,
@@ -39,14 +41,12 @@ from core.storage.backends.sqlmodel.mappers import (
     pipeline_state_to_table,
     resource_to_domain,
     resource_to_table,
-    tag_to_domain,
-    tag_to_table,
 )
 from core.storage.backends.sqlmodel.tables import (
     ChargebackDimensionTable,
     ChargebackFactTable,
-    CustomTagTable,
     EmissionRecordTable,
+    EntityTagTable,
     PipelineRunTable,
     PipelineStateTable,
 )
@@ -56,6 +56,27 @@ logger = logging.getLogger(__name__)
 # Maximum values per .in_() clause. SQLite hard limit is 32,767; 500 is a safe margin.
 # See also: _BULK_CHUNK_SIZE in tags.py — same rationale, separate constant for API layer.
 _CHUNK_SIZE = 500
+
+
+def _overlay_tags(
+    rows: list[ChargebackRow],
+    tags_repo: EntityTagRepository,
+) -> None:
+    """Batch-fetch entity tags and merge into row.tags. Resource tags override identity tags."""
+    if not rows:
+        return
+    tenant_id = rows[0].tenant_id
+    resource_ids = list({row.resource_id for row in rows if row.resource_id is not None})
+    identity_ids = list({row.identity_id for row in rows if row.identity_id})
+
+    resource_tags_map = tags_repo.find_tags_for_entities(tenant_id, "resource", resource_ids)
+    identity_tags_map = tags_repo.find_tags_for_entities(tenant_id, "identity", identity_ids)
+
+    for row in rows:
+        merged: dict[str, str] = {t.tag_key: t.tag_value for t in identity_tags_map.get(row.identity_id, [])}
+        if row.resource_id is not None:
+            merged.update({t.tag_key: t.tag_value for t in resource_tags_map.get(row.resource_id, [])})
+        row.tags = merged
 
 
 def _date_to_range(d: date) -> tuple[datetime, datetime]:
@@ -747,7 +768,7 @@ class SQLModelChargebackRepository:
                     allocation_method=r.allocation_method,
                     allocation_detail=None,
                     dimension_id=None,
-                    tags=[],
+                    tags={},
                     metadata={},
                 )
             )
@@ -882,6 +903,8 @@ class SQLModelChargebackRepository:
         product_type: str | None,
         resource_id: str | None,
         cost_type: str | None,
+        tag_key: str | None = None,
+        tag_value: str | None = None,
     ) -> tuple[list[Any], Any]:
         """Return (where_clauses, join_clause) for chargeback dimension+fact queries."""
         where: list[Any] = [
@@ -900,26 +923,33 @@ class SQLModelChargebackRepository:
             where.append(col(ChargebackDimensionTable.resource_id) == resource_id)
         if cost_type is not None:
             where.append(col(ChargebackDimensionTable.cost_type) == cost_type)
+        if tag_key is not None:
+            tag_where: list[Any] = [
+                col(EntityTagTable.tenant_id) == tenant_id,
+                col(EntityTagTable.tag_key) == tag_key,
+            ]
+            if tag_value is not None:
+                tag_where.append(col(EntityTagTable.tag_value) == tag_value)
+            # Scope each subquery to its entity_type to prevent cross-type false positives
+            # (e.g. a resource_id that happens to equal some identity's entity_id)
+            resource_sub = (
+                select(EntityTagTable.entity_id)
+                .where(*tag_where, col(EntityTagTable.entity_type) == "resource")
+                .scalar_subquery()
+            )
+            identity_sub = (
+                select(EntityTagTable.entity_id)
+                .where(*tag_where, col(EntityTagTable.entity_type) == "identity")
+                .scalar_subquery()
+            )
+            where.append(
+                or_(
+                    col(ChargebackDimensionTable.resource_id).in_(resource_sub),
+                    col(ChargebackDimensionTable.identity_id).in_(identity_sub),
+                )
+            )
         join_clause = col(ChargebackDimensionTable.dimension_id) == col(ChargebackFactTable.dimension_id)
         return where, join_clause
-
-    def _overlay_tags(self, rows: list[ChargebackRow]) -> None:
-        """Fetch custom tags for rows and mutate row.tags in-place."""
-        dim_ids = list({row.dimension_id for row in rows if row.dimension_id is not None})
-        if not dim_ids:
-            return
-        tag_rows: list[CustomTagTable] = []
-        for i in range(0, len(dim_ids), _CHUNK_SIZE):
-            chunk = dim_ids[i : i + _CHUNK_SIZE]
-            tag_rows.extend(
-                self._session.exec(select(CustomTagTable).where(col(CustomTagTable.dimension_id).in_(chunk))).all()
-            )
-        tags_by_dim: dict[int, list[str]] = {}
-        for t in tag_rows:
-            tags_by_dim.setdefault(t.dimension_id, []).append(t.display_name)
-        for row in rows:
-            if row.dimension_id is not None:
-                row.tags = tags_by_dim.get(row.dimension_id, [])
 
     def find_by_filters(
         self,
@@ -933,9 +963,21 @@ class SQLModelChargebackRepository:
         cost_type: str | None = None,
         limit: int = 1000,
         offset: int = 0,
+        tag_key: str | None = None,
+        tag_value: str | None = None,
+        tags_repo: EntityTagRepository | None = None,
     ) -> tuple[list[ChargebackRow], int]:
         where, join_clause = self._build_chargeback_where(
-            ecosystem, tenant_id, start, end, identity_id, product_type, resource_id, cost_type
+            ecosystem,
+            tenant_id,
+            start,
+            end,
+            identity_id,
+            product_type,
+            resource_id,
+            cost_type,
+            tag_key=tag_key,
+            tag_value=tag_value,
         )
 
         count_stmt = (
@@ -955,7 +997,8 @@ class SQLModelChargebackRepository:
         )
         results = self._session.execute(stmt).all()
         items = [chargeback_to_domain(dim, fact) for dim, fact in results]
-        self._overlay_tags(items)
+        if tags_repo is not None:
+            _overlay_tags(items, tags_repo)
         return items, total
 
     def iter_by_filters(
@@ -969,10 +1012,22 @@ class SQLModelChargebackRepository:
         resource_id: str | None = None,
         cost_type: str | None = None,
         batch_size: int = 5000,
+        tag_key: str | None = None,
+        tag_value: str | None = None,
+        tags_repo: EntityTagRepository | None = None,
     ) -> Iterator[ChargebackRow]:
         """Yield ChargebackRow objects in batches. Memory bounded to batch_size rows."""
         where, join_clause = self._build_chargeback_where(
-            ecosystem, tenant_id, start, end, identity_id, product_type, resource_id, cost_type
+            ecosystem,
+            tenant_id,
+            start,
+            end,
+            identity_id,
+            product_type,
+            resource_id,
+            cost_type,
+            tag_key=tag_key,
+            tag_value=tag_value,
         )
         stmt = (
             select(ChargebackDimensionTable, ChargebackFactTable)
@@ -982,7 +1037,8 @@ class SQLModelChargebackRepository:
         )
         for partition in self._session.execute(stmt).partitions(batch_size):
             batch = [chargeback_to_domain(dim, fact) for dim, fact in partition]
-            self._overlay_tags(batch)
+            if tags_repo is not None:
+                _overlay_tags(batch, tags_repo)
             yield from batch
 
     def delete_before(self, ecosystem: str, tenant_id: str, before: datetime) -> int:
@@ -1358,112 +1414,141 @@ class SQLModelPipelineRunRepository:
         return pipeline_run_to_domain(row) if row else None
 
 
-# --- TagRepository ---
+# --- EntityTagRepository ---
 
 
-class SQLModelTagRepository:
+class SQLModelEntityTagRepository:
     def __init__(self, session: Session) -> None:
         self._session = session
 
-    def add_tag(self, dimension_id: int, tag_key: str, display_name: str, created_by: str) -> CustomTag:
-        """Create tag. Backend auto-generates tag_value = uuid4()."""
-        from core.models.chargeback import CustomTag as CustomTagDomain
-
-        domain_tag = CustomTagDomain(
-            tag_id=None,
-            dimension_id=dimension_id,
+    def add_tag(
+        self,
+        tenant_id: str,
+        entity_type: str,
+        entity_id: str,
+        tag_key: str,
+        tag_value: str,
+        created_by: str,
+    ) -> EntityTag:
+        row = EntityTagTable(
+            tenant_id=tenant_id,
+            entity_type=entity_type,
+            entity_id=entity_id,
             tag_key=tag_key,
-            tag_value=str(uuid.uuid4()),
-            display_name=display_name,
+            tag_value=tag_value,
             created_by=created_by,
         )
-        row = tag_to_table(domain_tag)
         self._session.add(row)
-        self._session.flush()
-        return tag_to_domain(row)
+        self._session.flush()  # raises IntegrityError on duplicate composite key
+        return entity_tag_to_domain(row)
 
-    def get_tag(self, tag_id: int) -> CustomTag | None:
-        row = self._session.get(CustomTagTable, tag_id)
-        return tag_to_domain(row) if row else None
-
-    def get_tags(self, dimension_id: int) -> list[CustomTag]:
-        stmt = select(CustomTagTable).where(col(CustomTagTable.dimension_id) == dimension_id)
-        return [tag_to_domain(r) for r in self._session.exec(stmt).all()]
-
-    def find_tags_for_tenant(
-        self,
-        ecosystem: str,
-        tenant_id: str,
-        limit: int = 100,
-        offset: int = 0,
-        search: str | None = None,
-    ) -> tuple[list[CustomTag], int]:
-        join_clause = col(CustomTagTable.dimension_id) == col(ChargebackDimensionTable.dimension_id)
-        where: list[Any] = [
-            col(ChargebackDimensionTable.ecosystem) == ecosystem,
-            col(ChargebackDimensionTable.tenant_id) == tenant_id,
-        ]
-        if search:
-            pattern = f"%{search}%"
-            where.append(
-                or_(
-                    col(CustomTagTable.tag_key).ilike(pattern),
-                    col(CustomTagTable.tag_value).ilike(pattern),
-                    col(CustomTagTable.display_name).ilike(pattern),
-                )
-            )
-
-        count_stmt = (
-            select(func.count()).select_from(CustomTagTable).join(ChargebackDimensionTable, join_clause).where(*where)
+    def get_tags(self, tenant_id: str, entity_type: str, entity_id: str) -> list[EntityTag]:
+        stmt = select(EntityTagTable).where(
+            col(EntityTagTable.tenant_id) == tenant_id,
+            col(EntityTagTable.entity_type) == entity_type,
+            col(EntityTagTable.entity_id) == entity_id,
         )
-        total: int = self._session.exec(count_stmt).one()
+        return [entity_tag_to_domain(r) for r in self._session.exec(stmt).all()]
 
-        stmt = (
-            select(CustomTagTable).join(ChargebackDimensionTable, join_clause).where(*where).offset(offset).limit(limit)
-        )
-        items = [tag_to_domain(r) for r in self._session.exec(stmt).all()]
-        return items, total
-
-    def update_display_name(self, tag_id: int, display_name: str) -> CustomTag:
-        """Update display_name only. tag_value remains immutable."""
-        row = self._session.get(CustomTagTable, tag_id)
+    def update_tag(self, tag_id: int, tag_value: str) -> EntityTag:
+        row = self._session.get(EntityTagTable, tag_id)
         if row is None:
-            msg = f"Tag {tag_id} not found"
-            raise KeyError(msg)
-        row.display_name = display_name
+            raise KeyError(f"Tag {tag_id} not found")
+        row.tag_value = tag_value
         self._session.add(row)
         self._session.flush()
-        return tag_to_domain(row)
-
-    def find_by_dimension_and_key(self, dimension_id: int, tag_key: str) -> CustomTag | None:
-        """Find existing tag by dimension and key."""
-        stmt = select(CustomTagTable).where(
-            col(CustomTagTable.dimension_id) == dimension_id,
-            col(CustomTagTable.tag_key) == tag_key,
-        )
-        row = self._session.exec(stmt).first()
-        return tag_to_domain(row) if row else None
-
-    def find_tags_by_dimensions_and_key(self, dimension_ids: list[int], tag_key: str) -> dict[int, CustomTag]:
-        """Batch fetch existing tags. Chunks to stay under SQLite parameter limits."""
-        if not dimension_ids:
-            return {}
-        result: dict[int, CustomTag] = {}
-        for i in range(0, len(dimension_ids), _CHUNK_SIZE):
-            chunk = dimension_ids[i : i + _CHUNK_SIZE]
-            stmt = select(CustomTagTable).where(
-                col(CustomTagTable.dimension_id).in_(chunk),
-                col(CustomTagTable.tag_key) == tag_key,
-            )
-            for row in self._session.exec(stmt).all():
-                result[row.dimension_id] = tag_to_domain(row)
-        return result
+        return entity_tag_to_domain(row)
 
     def delete_tag(self, tag_id: int) -> None:
-        row = self._session.get(CustomTagTable, tag_id)
+        row = self._session.get(EntityTagTable, tag_id)
         if row:
             self._session.delete(row)
             self._session.flush()
+
+    def find_tags_for_tenant(
+        self,
+        tenant_id: str,
+        limit: int = 100,
+        offset: int = 0,
+        entity_type: str | None = None,
+        tag_key: str | None = None,
+    ) -> tuple[list[EntityTag], int]:
+        where: list[Any] = [col(EntityTagTable.tenant_id) == tenant_id]
+        if entity_type is not None:
+            where.append(col(EntityTagTable.entity_type) == entity_type)
+        if tag_key is not None:
+            where.append(col(EntityTagTable.tag_key).ilike(f"%{tag_key}%"))
+
+        count_stmt = select(func.count()).select_from(EntityTagTable).where(*where)
+        total: int = self._session.exec(count_stmt).one()
+
+        stmt = select(EntityTagTable).where(*where).offset(offset).limit(limit)
+        items = [entity_tag_to_domain(r) for r in self._session.exec(stmt).all()]
+        return items, total
+
+    def find_tags_for_entities(
+        self,
+        tenant_id: str,
+        entity_type: str,
+        entity_ids: list[str],
+    ) -> dict[str, list[EntityTag]]:
+        if not entity_ids:
+            return {}
+        result: dict[str, list[EntityTag]] = {}
+        for i in range(0, len(entity_ids), _CHUNK_SIZE):
+            chunk = entity_ids[i : i + _CHUNK_SIZE]
+            stmt = select(EntityTagTable).where(
+                col(EntityTagTable.tenant_id) == tenant_id,
+                col(EntityTagTable.entity_type) == entity_type,
+                col(EntityTagTable.entity_id).in_(chunk),
+            )
+            for row in self._session.exec(stmt).all():
+                result.setdefault(row.entity_id, []).append(entity_tag_to_domain(row))
+        return result
+
+    def bulk_add_tags(
+        self,
+        tenant_id: str,
+        items: list[dict[str, Any]],
+        override_existing: bool,
+        created_by: str,
+    ) -> tuple[int, int, int]:
+        # Known limitation: N individual SELECT queries (up to 10,000). Acceptable for initial
+        # implementation; a chunked INSERT ON CONFLICT UPSERT can replace this if bulk performance
+        # becomes a concern.
+        created = updated = skipped = 0
+        for item in items:
+            entity_type = item["entity_type"]
+            entity_id = item["entity_id"]
+            tag_key = item["tag_key"]
+            tag_value = item["tag_value"]
+            stmt = select(EntityTagTable).where(
+                col(EntityTagTable.tenant_id) == tenant_id,
+                col(EntityTagTable.entity_type) == entity_type,
+                col(EntityTagTable.entity_id) == entity_id,
+                col(EntityTagTable.tag_key) == tag_key,
+            )
+            existing = self._session.exec(stmt).first()
+            if existing is not None:
+                if override_existing:
+                    existing.tag_value = tag_value
+                    self._session.add(existing)
+                    updated += 1
+                else:
+                    skipped += 1
+            else:
+                row = EntityTagTable(
+                    tenant_id=tenant_id,
+                    entity_type=entity_type,
+                    entity_id=entity_id,
+                    tag_key=tag_key,
+                    tag_value=tag_value,
+                    created_by=created_by,
+                )
+                self._session.add(row)
+                created += 1
+        self._session.flush()
+        return created, updated, skipped
 
 
 class SQLModelEmissionRepository:

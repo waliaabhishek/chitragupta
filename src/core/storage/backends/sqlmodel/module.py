@@ -46,8 +46,8 @@ class CoreStorageModule:
         from core.storage.backends.sqlmodel.tables import (
             ChargebackDimensionTable,
             ChargebackFactTable,
-            CustomTagTable,
             EmissionRecordTable,
+            EntityTagTable,
             PipelineRunTable,
             PipelineStateTable,
         )
@@ -60,7 +60,7 @@ class CoreStorageModule:
             ChargebackFactTable.__table__,  # type: ignore[attr-defined]  # SQLModel tables have __table__ at runtime via SQLAlchemy metaclass
             PipelineStateTable.__table__,  # type: ignore[attr-defined]  # SQLModel tables have __table__ at runtime via SQLAlchemy metaclass
             PipelineRunTable.__table__,  # type: ignore[attr-defined]  # SQLModel tables have __table__ at runtime via SQLAlchemy metaclass
-            CustomTagTable.__table__,  # type: ignore[attr-defined]  # SQLModel tables have __table__ at runtime via SQLAlchemy metaclass
+            EntityTagTable.__table__,  # type: ignore[attr-defined]  # SQLModel tables have __table__ at runtime via SQLAlchemy metaclass
             EmissionRecordTable.__table__,  # type: ignore[attr-defined]  # SQLModel tables have __table__ at runtime via SQLAlchemy metaclass
         ]
         SQLModel.metadata.create_all(engine, tables=core_tables)

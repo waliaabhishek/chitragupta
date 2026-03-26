@@ -9,7 +9,7 @@ from sqlalchemy import Engine, inspect
 from sqlmodel import Session, SQLModel, create_engine
 
 from core.models.chargeback import ChargebackRow, CostType
-from core.storage.backends.sqlmodel.repositories import SQLModelChargebackRepository, SQLModelTagRepository
+from core.storage.backends.sqlmodel.repositories import SQLModelChargebackRepository, SQLModelEntityTagRepository
 
 
 @pytest.fixture
@@ -46,163 +46,125 @@ def _make_dim(session: Session, ecosystem: str = "eco", tenant: str = "t1") -> i
     return result.dimension_id
 
 
-class TestTagRepositoryAddTag:
-    def test_add_tag_auto_generates_value(self, session: Session) -> None:
-        dim_id = _make_dim(session)
-        repo = SQLModelTagRepository(session)
-        tag = repo.add_tag(dim_id, "env", "Production", "admin")
+class TestEntityTagRepositoryAddTag:
+    def test_add_tag_stores_provided_value(self, session: Session) -> None:
+        repo = SQLModelEntityTagRepository(session)
+        tag = repo.add_tag("t1", "resource", "r1", "env", "Production", "admin")
         session.commit()
 
         assert tag.tag_id is not None
         assert tag.tag_key == "env"
-        assert tag.display_name == "Production"
-        assert len(tag.tag_value) == 36  # UUID format
+        assert tag.tag_value == "Production"
+        assert tag.entity_type == "resource"
+        assert tag.entity_id == "r1"
 
-    def test_add_tag_different_keys_same_dimension(self, session: Session) -> None:
-        dim_id = _make_dim(session)
-        repo = SQLModelTagRepository(session)
-        repo.add_tag(dim_id, "env", "Production", "admin")
-        repo.add_tag(dim_id, "team", "Platform", "admin")
+    def test_add_tag_different_keys_same_entity(self, session: Session) -> None:
+        repo = SQLModelEntityTagRepository(session)
+        repo.add_tag("t1", "resource", "r1", "env", "prod", "admin")
+        repo.add_tag("t1", "resource", "r1", "team", "platform", "admin")
         session.commit()
 
-        tags = repo.get_tags(dim_id)
+        tags = repo.get_tags("t1", "resource", "r1")
         assert len(tags) == 2
 
 
-class TestTagRepositoryFindWithSearch:
-    def test_find_tags_with_search_by_key(self, session: Session) -> None:
-        dim_id = _make_dim(session)
-        repo = SQLModelTagRepository(session)
-        repo.add_tag(dim_id, "env", "Production", "admin")
-        repo.add_tag(dim_id, "team", "Platform", "admin")
+class TestEntityTagRepositoryFindWithFilter:
+    def test_find_tags_with_tag_key_filter(self, session: Session) -> None:
+        repo = SQLModelEntityTagRepository(session)
+        repo.add_tag("t1", "resource", "r1", "env", "prod", "admin")
+        repo.add_tag("t1", "resource", "r1", "team", "platform", "admin")
         session.commit()
 
-        items, total = repo.find_tags_for_tenant("eco", "t1", search="env")
+        items, total = repo.find_tags_for_tenant("t1", tag_key="env")
         assert total == 1
         assert items[0].tag_key == "env"
 
-    def test_find_tags_with_search_by_display_name(self, session: Session) -> None:
-        dim_id = _make_dim(session)
-        repo = SQLModelTagRepository(session)
-        repo.add_tag(dim_id, "env", "Production Environment", "admin")
-        repo.add_tag(dim_id, "team", "Platform Team", "admin")
+    def test_find_tags_with_entity_type_filter(self, session: Session) -> None:
+        repo = SQLModelEntityTagRepository(session)
+        repo.add_tag("t1", "resource", "r1", "env", "prod", "admin")
+        repo.add_tag("t1", "identity", "u1", "team", "platform", "admin")
         session.commit()
 
-        items, total = repo.find_tags_for_tenant("eco", "t1", search="platform")
+        items, total = repo.find_tags_for_tenant("t1", entity_type="resource")
         assert total == 1
-        assert items[0].display_name == "Platform Team"
+        assert items[0].entity_type == "resource"
 
-    def test_find_tags_with_search_by_value(self, session: Session) -> None:
-        dim_id = _make_dim(session)
-        repo = SQLModelTagRepository(session)
-        tag = repo.add_tag(dim_id, "env", "Production", "admin")
-        # Search by partial tag_value (UUID prefix is unpredictable — search by known prefix)
+    def test_find_tags_no_filter_returns_all(self, session: Session) -> None:
+        repo = SQLModelEntityTagRepository(session)
+        repo.add_tag("t1", "resource", "r1", "env", "prod", "admin")
+        repo.add_tag("t1", "resource", "r1", "team", "platform", "admin")
         session.commit()
 
-        items, total = repo.find_tags_for_tenant("eco", "t1", search=tag.tag_value[:8])
-        assert total == 1
-
-    def test_find_tags_no_search_returns_all(self, session: Session) -> None:
-        dim_id = _make_dim(session)
-        repo = SQLModelTagRepository(session)
-        repo.add_tag(dim_id, "env", "Production", "admin")
-        repo.add_tag(dim_id, "team", "Platform", "admin")
-        session.commit()
-
-        items, total = repo.find_tags_for_tenant("eco", "t1")
+        items, total = repo.find_tags_for_tenant("t1")
         assert total == 2
 
 
-class TestTagRepositoryUpdateDisplayName:
-    def test_update_display_name(self, session: Session) -> None:
-        dim_id = _make_dim(session)
-        repo = SQLModelTagRepository(session)
-        tag = repo.add_tag(dim_id, "env", "Old Name", "admin")
+class TestEntityTagRepositoryUpdate:
+    def test_update_tag_value(self, session: Session) -> None:
+        repo = SQLModelEntityTagRepository(session)
+        tag = repo.add_tag("t1", "resource", "r1", "env", "prod", "admin")
         session.commit()
 
-        original_value = tag.tag_value
-        updated = repo.update_display_name(tag.tag_id, "New Name")  # type: ignore[arg-type]
+        assert tag.tag_id is not None
+        updated = repo.update_tag(tag.tag_id, "staging")
         session.commit()
 
-        assert updated.display_name == "New Name"
-        assert updated.tag_value == original_value  # immutable
+        assert updated.tag_value == "staging"
+        assert updated.tag_key == "env"
 
-    def test_update_display_name_not_found(self, session: Session) -> None:
-        repo = SQLModelTagRepository(session)
+    def test_update_tag_not_found_raises(self, session: Session) -> None:
+        repo = SQLModelEntityTagRepository(session)
         with pytest.raises(KeyError):
-            repo.update_display_name(99999, "New Name")
+            repo.update_tag(99999, "new-value")
 
 
-class TestTagRepositoryFindByDimensionAndKey:
-    def test_find_by_dimension_and_key_found(self, session: Session) -> None:
-        dim_id = _make_dim(session)
-        repo = SQLModelTagRepository(session)
-        repo.add_tag(dim_id, "env", "Production", "admin")
+class TestEntityTagRepositoryFindByEntity:
+    def test_find_by_entity_found(self, session: Session) -> None:
+        repo = SQLModelEntityTagRepository(session)
+        repo.add_tag("t1", "resource", "r1", "env", "prod", "admin")
         session.commit()
 
-        found = repo.find_by_dimension_and_key(dim_id, "env")
-        assert found is not None
-        assert found.tag_key == "env"
+        tags = repo.get_tags("t1", "resource", "r1")
+        assert len(tags) == 1
+        assert tags[0].tag_key == "env"
 
-    def test_find_by_dimension_and_key_not_found(self, session: Session) -> None:
-        dim_id = _make_dim(session)
-        repo = SQLModelTagRepository(session)
+    def test_find_by_entity_not_found(self, session: Session) -> None:
+        repo = SQLModelEntityTagRepository(session)
         session.commit()
 
-        found = repo.find_by_dimension_and_key(dim_id, "nonexistent")
-        assert found is None
+        tags = repo.get_tags("t1", "resource", "nonexistent")
+        assert tags == []
 
 
-class TestTagUniqueConstraint:
+class TestEntityTagUniqueConstraint:
     def test_unique_constraint_enforced(self, session: Session) -> None:
         from sqlalchemy.exc import IntegrityError
 
-        dim_id = _make_dim(session)
-        repo = SQLModelTagRepository(session)
-        repo.add_tag(dim_id, "env", "Production", "admin")
+        repo = SQLModelEntityTagRepository(session)
+        repo.add_tag("t1", "resource", "r1", "env", "prod", "admin")
         session.commit()
 
-        # Try to add same key to same dimension — flush raises on duplicate
         with pytest.raises(IntegrityError):
-            repo.add_tag(dim_id, "env", "Staging", "admin")
+            repo.add_tag("t1", "resource", "r1", "env", "staging", "admin")
 
-    def test_same_key_different_dimensions_allowed(self, session: Session) -> None:
-        dim_id1 = _make_dim(session, ecosystem="eco", tenant="t1")
-        # Create a second dimension with different identity
-        row2 = ChargebackRow(
-            ecosystem="eco",
-            tenant_id="t1",
-            timestamp=datetime(2026, 2, 15, tzinfo=UTC),
-            resource_id="r1",
-            product_category="compute",
-            product_type="flink",
-            identity_id="user-2",
-            cost_type=CostType.USAGE,
-            amount=Decimal("5.00"),
-        )
-        cb_repo = SQLModelChargebackRepository(session)
-        result2 = cb_repo.upsert(row2)
-        session.commit()
-        dim_id2 = result2.dimension_id
-        assert dim_id1 != dim_id2
-
-        repo = SQLModelTagRepository(session)
-        repo.add_tag(dim_id1, "env", "Production", "admin")
-        repo.add_tag(dim_id2, "env", "Staging", "admin")
+    def test_same_key_different_entities_allowed(self, session: Session) -> None:
+        repo = SQLModelEntityTagRepository(session)
+        repo.add_tag("t1", "resource", "r1", "env", "prod", "admin")
+        repo.add_tag("t1", "resource", "r2", "env", "staging", "admin")
         session.commit()  # Should not raise
 
 
-class TestTagTableColumn:
-    def test_display_name_column_exists(self, engine: Engine) -> None:
+class TestTagsTableSchema:
+    def test_tags_table_exists(self, engine: Engine) -> None:
         inspector = inspect(engine)
-        cols = {c["name"] for c in inspector.get_columns("custom_tags")}
-        assert "display_name" in cols
+        table_names = inspector.get_table_names()
+        assert "tags" in table_names
 
-    def test_unique_constraint_on_dimension_key(self, engine: Engine) -> None:
+    def test_unique_constraint_on_entity_key(self, engine: Engine) -> None:
         inspector = inspect(engine)
-        uqs = inspector.get_unique_constraints("custom_tags")
+        uqs = inspector.get_unique_constraints("tags")
         uq_names = [u["name"] for u in uqs]
-        assert "uq_custom_tag_dimension_key" in uq_names
+        assert "uq_tags_entity_key" in uq_names
 
 
 class TestChargebackRepositoryGetDimensionsBatch:

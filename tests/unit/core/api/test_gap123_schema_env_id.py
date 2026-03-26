@@ -2,20 +2,11 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from core.api.schemas import AllocationIssueResponse, ChargebackDimensionResponse, TagResponse
+from core.api.schemas import AllocationIssueResponse, ChargebackDimensionResponse
 
 
 class TestChargebackDimensionResponseEnvId:
     def test_schema_field_env_id_present(self) -> None:
-        tag = TagResponse(
-            tag_id=1,
-            dimension_id=42,
-            tag_key="k",
-            tag_value="v",
-            display_name="V",
-            created_by="ui",
-            created_at=None,
-        )
         response = ChargebackDimensionResponse(
             dimension_id=42,
             ecosystem="ccloud",
@@ -28,7 +19,7 @@ class TestChargebackDimensionResponseEnvId:
             cost_type="usage",
             allocation_method="ratio",
             allocation_detail=None,
-            tags=[tag],
+            tags={},
         )
         assert response.env_id == "env-abc"
 

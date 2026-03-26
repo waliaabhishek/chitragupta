@@ -8,9 +8,9 @@ from sqlmodel import Session
 from core.storage.backends.sqlmodel.engine import get_or_create_engine, get_or_create_read_only_engine
 from core.storage.backends.sqlmodel.repositories import (
     SQLModelEmissionRepository,
+    SQLModelEntityTagRepository,
     SQLModelPipelineRunRepository,
     SQLModelPipelineStateRepository,
-    SQLModelTagRepository,
 )
 
 if TYPE_CHECKING:
@@ -19,11 +19,11 @@ if TYPE_CHECKING:
     from core.storage.interface import (
         BillingRepository,
         ChargebackRepository,
+        EntityTagRepository,
         IdentityRepository,
         PipelineRunRepository,
         PipelineStateRepository,
         ResourceRepository,
-        TagRepository,
     )
 
 logger = logging.getLogger(__name__)
@@ -45,7 +45,7 @@ class SQLModelUnitOfWork:
         self.chargebacks: ChargebackRepository = None  # type: ignore[assignment]
         self.pipeline_state: PipelineStateRepository = None  # type: ignore[assignment]
         self.pipeline_runs: PipelineRunRepository = None  # type: ignore[assignment]
-        self.tags: TagRepository = None  # type: ignore[assignment]
+        self.tags: EntityTagRepository = None  # type: ignore[assignment]
         self.emissions: EmissionRepository = None  # type: ignore[assignment]
 
     def __enter__(self) -> Self:
@@ -57,7 +57,7 @@ class SQLModelUnitOfWork:
         self.chargebacks = self._storage_module.create_chargeback_repository(self._session)  # plugin-extensible
         self.pipeline_state = SQLModelPipelineStateRepository(self._session)
         self.pipeline_runs = SQLModelPipelineRunRepository(self._session)
-        self.tags = SQLModelTagRepository(self._session)
+        self.tags = SQLModelEntityTagRepository(self._session)
         self.emissions = SQLModelEmissionRepository(self._session)
         return self
 
