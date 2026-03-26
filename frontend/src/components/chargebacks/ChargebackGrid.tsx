@@ -1,7 +1,7 @@
 import type React from "react";
 import "ag-grid-community/styles/ag-grid.css";
 import "ag-grid-community/styles/ag-theme-alpine.css";
-import type { ColDef, IDatasource, IGetRowsParams, SelectionChangedEvent } from "ag-grid-community";
+import type { ColDef, IDatasource, IGetRowsParams } from "ag-grid-community";
 import { AgGridReact } from "ag-grid-react";
 import { Tag } from "antd";
 import { type MutableRefObject, type Ref, useMemo, useCallback, useEffect, useRef, useImperativeHandle } from "react";
@@ -12,23 +12,21 @@ import { dateFormatter, currencyFormatter } from "../../utils/gridFormatters";
 interface ChargebackGridProps {
   tenantName: string;
   filters: Record<string, string>;
-  onRowClick: (dimensionId: number) => void;
-  onSelectionChange?: (ids: number[]) => void;
-  onSelectAll?: (total: number) => void;
+  onRowClick: (row: ChargebackResponse) => void;
   ref?: Ref<AgGridReact>;
 }
 
-function TagsCellRenderer(props: { value: string[] }): React.JSX.Element {
-  const tags = props.value ?? [];
+function TagsCellRenderer(props: { value: Record<string, string> }): React.JSX.Element {
+  const entries = Object.entries(props.value ?? {});
   const maxVisible = 2;
-  const visible = tags.slice(0, maxVisible);
-  const overflow = tags.length - maxVisible;
+  const visible = entries.slice(0, maxVisible);
+  const overflow = entries.length - maxVisible;
 
   return (
     <span>
-      {visible.map((tag, i) => (
-        <Tag key={i} style={{ margin: "0 2px" }}>
-          {tag}
+      {visible.map(([k, v]) => (
+        <Tag key={k} style={{ margin: "0 2px" }}>
+          {k}: {v}
         </Tag>
       ))}
       {overflow > 0 && <Tag>+{overflow}</Tag>}
@@ -37,10 +35,6 @@ function TagsCellRenderer(props: { value: string[] }): React.JSX.Element {
 }
 
 const columnDefs: ColDef[] = [
-  {
-    width: 50,
-    pinned: "left",
-  },
   {
     field: "timestamp",
     headerName: "Date",
@@ -99,7 +93,7 @@ function createDatasource(
 }
 
 export function ChargebackGrid({
-  tenantName, filters, onRowClick, onSelectionChange, onSelectAll, ref,
+  tenantName, filters, onRowClick, ref,
 }: ChargebackGridProps): React.JSX.Element {
   const internalRef = useRef<AgGridReact>(null);
   const abortControllerRef = useRef(new AbortController());
@@ -126,63 +120,11 @@ export function ChargebackGrid({
     internalRef.current?.api?.purgeInfiniteCache();
   }, [datasource]);
 
-  const handleSelectionChanged = useCallback(
-    (event: SelectionChangedEvent) => {
-      if (!onSelectionChange) return;
-      const selectedRows = event.api.getSelectedRows() as ChargebackResponse[];
-      const ids = selectedRows
-        .filter((r) => r.dimension_id != null)
-        .map((r) => r.dimension_id as number);
-      onSelectionChange(ids);
-    },
-    [onSelectionChange],
-  );
-
-  const handleHeaderCheckboxChange = useCallback(
-    async (event: SelectionChangedEvent) => {
-      // Check if all visible rows are selected (header checkbox)
-      if (!onSelectAll) return;
-      const selectedCount = event.api.getSelectedRows().length;
-      if (selectedCount === 0) return;
-
-      // Fetch total count matching current filters
-      const url = new URL(
-        `${window.location.origin}${API_URL}/tenants/${tenantName}/chargebacks`,
-      );
-      url.searchParams.set("page", "1");
-      url.searchParams.set("page_size", "1");
-      for (const [k, v] of Object.entries(filters)) {
-        url.searchParams.set(k, v);
-      }
-      try {
-        const resp = await fetch(url.toString());
-        if (resp.ok) {
-          const data = (await resp.json()) as { total: number };
-          if (data.total > selectedCount) {
-            onSelectAll(data.total);
-          }
-        }
-      } catch (err) {
-        // Total count fetch is best-effort; log but don't disrupt selection.
-        console.error("Failed to fetch total count for select-all:", err);
-      }
-    },
-    [tenantName, filters, onSelectAll],
-  );
-
-  const handleCombinedSelection = useCallback(
-    (e: SelectionChangedEvent) => {
-      void handleHeaderCheckboxChange(e);
-      handleSelectionChanged(e);
-    },
-    [handleHeaderCheckboxChange, handleSelectionChanged],
-  );
-
   const handleRowClicked = useCallback(
     (e: { data: unknown }) => {
       const row = e.data as ChargebackResponse | undefined;
       if (row?.dimension_id != null) {
-        onRowClick(row.dimension_id);
+        onRowClick(row);
       }
     },
     [onRowClick],
@@ -197,8 +139,6 @@ export function ChargebackGrid({
         datasource={datasource}
         cacheBlockSize={100}
         maxBlocksInCache={10}
-        rowSelection={{ mode: "multiRow" }}
-        onSelectionChanged={handleCombinedSelection}
         onRowClicked={handleRowClicked}
       />
     </div>

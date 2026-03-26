@@ -109,7 +109,7 @@ export interface ChargebackResponse {
   amount: string;
   allocation_method: string | null;
   allocation_detail: string | null;
-  tags: string[];
+  tags: Record<string, string>;
   metadata: Record<string, unknown>;
 }
 
@@ -133,67 +133,27 @@ export interface AllocationIssueResponse {
   total_cost: string;
 }
 
-// --- Tag ---
+// --- Entity Tag ---
 
-export interface TagResponse {
+export interface EntityTagResponse {
   tag_id: number;
-  dimension_id: number;
+  tenant_id: string;
+  entity_type: string;
+  entity_id: string;
   tag_key: string;
   tag_value: string;
-  display_name: string;
   created_by: string;
   created_at: string | null;
 }
 
-export interface TagWithDimensionResponse {
-  tag_id: number;
-  dimension_id: number;
+export interface EntityTagCreateRequest {
   tag_key: string;
   tag_value: string;
-  display_name: string;
-  created_by: string;
-  created_at: string | null;
-  identity_id: string;
-  product_type: string;
-  resource_id: string | null;
-}
-
-export interface TagCreateRequest {
-  tag_key: string;
-  display_name: string;
   created_by: string;
 }
 
-export interface TagUpdateRequest {
-  display_name: string;
-}
-
-export interface BulkTagRequest {
-  dimension_ids: number[];
-  tag_key: string;
-  display_name: string;
-  created_by: string;
-  override_existing?: boolean;
-}
-
-export interface BulkTagByFilterRequest {
-  start_date?: string | null;
-  end_date?: string | null;
-  identity_id?: string | null;
-  product_type?: string | null;
-  resource_id?: string | null;
-  cost_type?: string | null;
-  tag_key: string;
-  display_name: string;
-  created_by: string;
-  override_existing?: boolean;
-}
-
-export interface BulkTagResponse {
-  created_count: number;
-  updated_count: number;
-  skipped_count: number;
-  errors: string[];
+export interface EntityTagUpdateRequest {
+  tag_value: string;
 }
 
 // --- Pipeline ---
@@ -264,13 +224,7 @@ export interface ChargebackDimensionResponse {
   cost_type: string;
   allocation_method: string | null;
   allocation_detail: string | null;
-  tags: TagResponse[];
-}
-
-export interface ChargebackDimensionUpdateRequest {
-  tags?: TagCreateRequest[];
-  add_tags?: TagCreateRequest[];
-  remove_tag_ids?: number[];
+  tags: Record<string, string>;
 }
 
 // --- Health ---

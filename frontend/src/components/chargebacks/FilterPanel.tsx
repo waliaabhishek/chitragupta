@@ -1,5 +1,5 @@
 import type React from "react";
-import { Button, DatePicker, Form, Select } from "antd";
+import { Button, DatePicker, Form, Input, Select } from "antd";
 import dayjs from "dayjs";
 import { useFilterOptions } from "../../hooks/useFilterOptions";
 import type { ChargebackFilters } from "../../types/filters";
@@ -114,6 +114,24 @@ export function FilterPanel({
           showSearch
           filterOption={filterByLabel}
           style={{ width: 220 }}
+        />
+      </Form.Item>
+
+      <Form.Item label="Tag Key">
+        <Input
+          placeholder="e.g. cost_center"
+          value={filters.tag_key ?? ""}
+          onChange={(e) => onChange("tag_key", e.target.value || null)}
+          style={{ width: 160 }}
+        />
+      </Form.Item>
+
+      <Form.Item label="Tag Value">
+        <Input
+          placeholder="e.g. engineering"
+          value={filters.tag_value ?? ""}
+          onChange={(e) => onChange("tag_value", e.target.value || null)}
+          style={{ width: 160 }}
         />
       </Form.Item>
 

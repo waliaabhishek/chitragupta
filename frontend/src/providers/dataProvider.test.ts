@@ -84,6 +84,14 @@ describe("dataProvider.create", () => {
 
 describe("dataProvider.update", () => {
   it("PATCHes tenant-scoped URL and returns updated resource", async () => {
+    const { server } = await import("../test/mocks/server");
+    const { http, HttpResponse } = await import("msw");
+    server.use(
+      http.patch("/api/v1/tenants/:tenant/chargebacks/:id", async ({ request }) => {
+        const body = await request.json();
+        return HttpResponse.json(body);
+      }),
+    );
     const variables = { amount: "20.00" };
     const result = await dataProvider.update({
       resource: "chargebacks",

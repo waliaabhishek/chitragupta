@@ -6,9 +6,17 @@ import type { AllocationIssueItem } from "../AllocationIssuesTable";
 import type { ChargebackFilters } from "../../../types/filters";
 
 // Capture column definitions and dataSource passed to Table
-let capturedColumns: Array<{ title?: string; dataIndex?: string; defaultSortOrder?: string }> = [];
+type MockColumn = {
+  title?: string;
+  dataIndex?: string;
+  defaultSortOrder?: string;
+  render?: (v: unknown, r: AllocationIssueItem) => ReactNode;
+  sorter?: (a: AllocationIssueItem, b: AllocationIssueItem) => number;
+  rowKey?: (r: AllocationIssueItem) => string;
+};
+let capturedColumns: MockColumn[] = [];
 let capturedDataSource: AllocationIssueItem[] = [];
-let capturedPagination: { total?: number; pageSize?: number } | undefined;
+let capturedPagination: { total?: number; pageSize?: number; onChange?: (p: number) => void; showTotal?: (t: number) => string } | undefined;
 
 vi.mock("../../../hooks/useAllocationIssues", () => ({
   useAllocationIssues: vi.fn(),
@@ -20,14 +28,16 @@ vi.mock("antd", () => ({
     dataSource,
     locale,
     pagination,
+    rowKey,
   }: {
-    columns?: Array<{ title?: string; dataIndex?: string; defaultSortOrder?: string }>;
+    columns?: MockColumn[];
     dataSource?: AllocationIssueItem[];
     locale?: { emptyText?: ReactNode };
-    pagination?: { total?: number; pageSize?: number };
+    pagination?: { total?: number; pageSize?: number; onChange?: (p: number) => void; showTotal?: (t: number) => string };
+    rowKey?: (r: AllocationIssueItem) => string;
   }) => {
     capturedColumns = columns ?? [];
-    void locale; // consumed by antd Table but not asserted in tests
+    void locale;
     capturedDataSource = dataSource ?? [];
     capturedPagination = pagination ?? undefined;
     return (
@@ -36,6 +46,17 @@ vi.mock("antd", () => ({
           <div key={col.dataIndex ?? col.title} data-testid="column-header">
             {col.title}
           </div>
+        ))}
+        {dataSource?.map((row, i) => (
+          <tr key={rowKey ? rowKey(row) : i} data-testid="table-row">
+            {columns?.map((col) => (
+              <td key={col.dataIndex ?? col.title} data-col={col.dataIndex}>
+                {col.render
+                  ? col.render(col.dataIndex ? row[col.dataIndex as keyof AllocationIssueItem] : undefined, row)
+                  : col.dataIndex ? String(row[col.dataIndex as keyof AllocationIssueItem] ?? "") : null}
+              </td>
+            ))}
+          </tr>
         ))}
         {dataSource?.length === 0 && locale?.emptyText ? (
           <div data-testid="empty-state">{locale.emptyText}</div>
@@ -179,5 +200,51 @@ describe("AllocationIssuesTable", () => {
     render(<AllocationIssuesTable tenantName="test-tenant" filters={MOCK_FILTERS} />);
 
     expect(screen.getByText(/Failed to load allocation issues: Network failure/)).toBeDefined();
+  });
+
+  it("Resource column renders dash placeholder when resource_id is null", () => {
+    mockHook({
+      data: {
+        items: [
+          {
+            ecosystem: "ccloud",
+            resource_id: null,
+            product_type: "kafka",
+            identity_id: "sa-001",
+            allocation_detail: "no_identities_located",
+            row_count: 1,
+            usage_cost: "10.00",
+            shared_cost: "0.00",
+            total_cost: "10.00",
+          },
+        ],
+        total: 1,
+        page: 1,
+        page_size: 50,
+        pages: 1,
+      },
+    });
+    render(<AllocationIssuesTable tenantName="test-tenant" filters={MOCK_FILTERS} />);
+    // The Resource column render should output the dash placeholder for null resource_id
+    expect(screen.getByText("—")).toBeTruthy();
+  });
+
+  it("pagination onChange and showTotal callbacks are invocable", () => {
+    mockHook();
+    render(<AllocationIssuesTable tenantName="test-tenant" filters={MOCK_FILTERS} />);
+    // Verify callbacks exist and work without throwing
+    expect(capturedPagination?.onChange).toBeTypeOf("function");
+    expect(capturedPagination?.showTotal).toBeTypeOf("function");
+    expect(() => capturedPagination?.onChange?.(2)).not.toThrow();
+    expect(capturedPagination?.showTotal?.(5)).toBe("5 issues");
+  });
+
+  it("sorter function on Total Cost column is callable", () => {
+    mockHook();
+    render(<AllocationIssuesTable tenantName="test-tenant" filters={MOCK_FILTERS} />);
+    const totalCostCol = capturedColumns.find((c) => c.dataIndex === "total_cost");
+    expect(totalCostCol?.sorter).toBeTypeOf("function");
+    const result = totalCostCol?.sorter?.(MOCK_ITEMS[0], MOCK_ITEMS[1]);
+    expect(typeof result).toBe("number");
   });
 });

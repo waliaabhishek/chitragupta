@@ -127,7 +127,9 @@ describe("ChargebackGrid", () => {
       />,
     );
     screen.getByTestId("ag-grid").click();
-    expect(onRowClick).toHaveBeenCalledWith(42);
+    expect(onRowClick).toHaveBeenCalledWith(
+      expect.objectContaining({ dimension_id: 42 }),
+    );
   });
 
   it("renders tags cell with max 2 visible and overflow count", () => {
@@ -228,92 +230,6 @@ describe("ChargebackGrid", () => {
     });
   });
 
-  it("calls onSelectionChange when selection changes", async () => {
-    let capturedOnSelectionChanged: ((e: unknown) => void) | undefined;
-
-    renderOverride = ({ onSelectionChanged }: AgGridProps) => {
-      capturedOnSelectionChanged = onSelectionChanged;
-      return <div data-testid="ag-grid" />;
-    };
-
-    const onSelectionChange = vi.fn();
-
-    render(
-      <ChargebackGrid
-        tenantName="acme"
-        filters={{}}
-        onRowClick={vi.fn()}
-        onSelectionChange={onSelectionChange}
-      />,
-    );
-
-    expect(capturedOnSelectionChanged).toBeDefined();
-
-    // Simulate selection change event
-    const mockEvent = {
-      api: {
-        getSelectedRows: () => [
-          { dimension_id: 1, identity_id: "user1" },
-          { dimension_id: 2, identity_id: "user2" },
-        ],
-      },
-    };
-
-    await capturedOnSelectionChanged!(mockEvent);
-
-    expect(onSelectionChange).toHaveBeenCalledWith([1, 2]);
-  });
-
-  it("calls onSelectAll when header checkbox triggers selection", async () => {
-    let capturedOnSelectionChanged: ((e: unknown) => void) | undefined;
-
-    renderOverride = ({ onSelectionChanged }: AgGridProps) => {
-      capturedOnSelectionChanged = onSelectionChanged;
-      return <div data-testid="ag-grid" />;
-    };
-
-    server.use(
-      http.get("/api/v1/tenants/acme/chargebacks", () => {
-        return HttpResponse.json({
-          items: [],
-          total: 500,
-          page: 1,
-          page_size: 1,
-          pages: 500,
-        });
-      }),
-    );
-
-    const onSelectAll = vi.fn();
-
-    render(
-      <ChargebackGrid
-        tenantName="acme"
-        filters={{}}
-        onRowClick={vi.fn()}
-        onSelectAll={onSelectAll}
-      />,
-    );
-
-    expect(capturedOnSelectionChanged).toBeDefined();
-
-    // Simulate header checkbox selection (some rows selected)
-    const mockEvent = {
-      api: {
-        getSelectedRows: () => [
-          { dimension_id: 1 },
-          { dimension_id: 2 },
-          { dimension_id: 3 },
-        ],
-      },
-    };
-
-    await capturedOnSelectionChanged!(mockEvent);
-
-    await vi.waitFor(() => {
-      expect(onSelectAll).toHaveBeenCalledWith(500);
-    });
-  });
 
   it("calls purgeInfiniteCache on the grid when filters change", () => {
     const { rerender } = render(
@@ -334,21 +250,6 @@ describe("ChargebackGrid", () => {
     expect(mockPurgeInfiniteCache).toHaveBeenCalledTimes(1);
   });
 
-  it("passes v35 object-based rowSelection prop", () => {
-    let capturedProps: AgGridProps | undefined;
-
-    renderOverride = (props: AgGridProps) => {
-      capturedProps = props;
-      return <div data-testid="ag-grid" />;
-    };
-
-    render(
-      <ChargebackGrid tenantName="acme" filters={{}} onRowClick={vi.fn()} />,
-    );
-
-    expect(capturedProps?.rowSelection).toEqual({ mode: "multiRow" });
-  });
-
   it("does not pass deprecated suppressRowClickSelection prop", () => {
     let capturedProps: AgGridProps | undefined;
 
@@ -364,39 +265,108 @@ describe("ChargebackGrid", () => {
     expect(capturedProps?.suppressRowClickSelection).toBeUndefined();
   });
 
-  it("filters null dimension_ids from selection", async () => {
-    let capturedOnSelectionChanged: ((e: unknown) => void) | undefined;
+  it("TagsCellRenderer_renders_dict_with_key_value_chips_and_overflow", () => {
+    // TASK-160.02: tags column now receives Record<string, string> instead of string[].
+    // This test will FAIL until TagsCellRenderer is updated to handle dict input.
+    let capturedColDefs: ColDef[] | undefined;
 
-    renderOverride = ({ onSelectionChanged }: AgGridProps) => {
-      capturedOnSelectionChanged = onSelectionChanged;
+    renderOverride = ({ columnDefs }: AgGridProps) => {
+      capturedColDefs = columnDefs;
       return <div data-testid="ag-grid" />;
     };
 
-    const onSelectionChange = vi.fn();
+    render(
+      <ChargebackGrid tenantName="acme" filters={{}} onRowClick={vi.fn()} />,
+    );
+
+    expect(capturedColDefs).toBeDefined();
+    const tagsCol = capturedColDefs?.find((c) => c.field === "tags");
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const TagsCellRenderer = tagsCol?.cellRenderer as any;
+    expect(TagsCellRenderer).toBeDefined();
+
+    // Render with dict value: 3 entries, max 2 visible, +1 overflow
+    const { container } = render(
+      <div data-testid="tags-cell-dict">
+        <TagsCellRenderer value={{ env: "prod", team: "platform", a: "b" }} />
+      </div>,
+    );
+
+    const tagsCell = container.querySelector("[data-testid='tags-cell-dict']")!;
+    expect(tagsCell.textContent).toContain("env: prod");
+    expect(tagsCell.textContent).toContain("team: platform");
+    expect(tagsCell.textContent).toContain("+1");
+  });
+
+  it("datasource applies filters as query params when getRows is called", async () => {
+    let capturedDatasource: { getRows: (p: { startRow: number; successCallback: (rows: unknown[], total: number) => void; failCallback: () => void }) => void } | undefined;
+    let capturedUrl = "";
+
+    renderOverride = ({ datasource }: AgGridProps) => {
+      capturedDatasource = datasource as typeof capturedDatasource;
+      return <div data-testid="ag-grid" />;
+    };
+
+    server.use(
+      http.get("/api/v1/tenants/acme/chargebacks", ({ request }) => {
+        capturedUrl = request.url;
+        return HttpResponse.json({
+          items: [],
+          total: 0,
+          page: 1,
+          page_size: 100,
+          pages: 0,
+        });
+      }),
+    );
 
     render(
       <ChargebackGrid
         tenantName="acme"
-        filters={{}}
+        filters={{ start_date: "2026-01-01", identity_id: "user-1" }}
         onRowClick={vi.fn()}
-        onSelectionChange={onSelectionChange}
       />,
     );
 
-    // Mix of valid and null dimension_ids
-    const mockEvent = {
-      api: {
-        getSelectedRows: () => [
-          { dimension_id: 1, identity_id: "user1" },
-          { dimension_id: null, identity_id: "user2" },
-          { dimension_id: 3, identity_id: "user3" },
-        ],
-      },
+    capturedDatasource!.getRows({
+      startRow: 0,
+      successCallback: vi.fn(),
+      failCallback: vi.fn(),
+    });
+
+    await vi.waitFor(() => {
+      expect(capturedUrl).toContain("start_date=2026-01-01");
+      expect(capturedUrl).toContain("identity_id=user-1");
+    });
+  });
+
+  it("TagsCellRenderer_renders_empty_dict_without_chips", () => {
+    // TASK-160.02: empty dict should render no tag chips.
+    let capturedColDefs: ColDef[] | undefined;
+
+    renderOverride = ({ columnDefs }: AgGridProps) => {
+      capturedColDefs = columnDefs;
+      return <div data-testid="ag-grid" />;
     };
 
-    await capturedOnSelectionChanged!(mockEvent);
+    render(
+      <ChargebackGrid tenantName="acme" filters={{}} onRowClick={vi.fn()} />,
+    );
 
-    // Should only include valid dimension_ids
-    expect(onSelectionChange).toHaveBeenCalledWith([1, 3]);
+    const tagsCol = capturedColDefs?.find((c) => c.field === "tags");
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const TagsCellRenderer = tagsCol?.cellRenderer as any;
+
+    const { container } = render(
+      <div data-testid="tags-cell-empty">
+        <TagsCellRenderer value={{}} />
+      </div>,
+    );
+
+    const tagsCell = container.querySelector("[data-testid='tags-cell-empty']")!;
+    // No tag chips rendered for empty dict
+    expect(tagsCell.textContent).toBe("");
   });
+
 });
+

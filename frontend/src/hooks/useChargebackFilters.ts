@@ -20,6 +20,8 @@ const FILTER_KEYS: (keyof ChargebackFilters)[] = [
   "resource_id",
   "cost_type",
   "timezone",
+  "tag_key",
+  "tag_value",
 ];
 
 const DATE_STORAGE_KEY = "chargeback_date_range";
@@ -51,6 +53,8 @@ export function useChargebackFilters(): UseChargebackFiltersReturn {
   const spResourceId = searchParams.get("resource_id");
   const spCostType = searchParams.get("cost_type");
   const spTimezone = searchParams.get("timezone");
+  const spTagKey = searchParams.get("tag_key");
+  const spTagValue = searchParams.get("tag_value");
 
   const filters: ChargebackFilters = useMemo(
     () => ({
@@ -61,9 +65,12 @@ export function useChargebackFilters(): UseChargebackFiltersReturn {
       resource_id: spResourceId,
       cost_type: spCostType,
       timezone: spTimezone ?? storedTimezone ?? BROWSER_TIMEZONE,
+      tag_key: spTagKey,
+      tag_value: spTagValue,
     }),
     [spStartDate, spEndDate, spIdentityId, spProductType, spResourceId, spCostType,
-     spTimezone, storedDates.start_date, storedDates.end_date, storedTimezone],
+     spTimezone, storedDates.start_date, storedDates.end_date, storedTimezone,
+     spTagKey, spTagValue],
   );
 
   const setFilter = useCallback(
@@ -165,7 +172,7 @@ export function useChargebackFilters(): UseChargebackFiltersReturn {
     return result;
   }, [filters]);
 
-  // Keep toQueryParams for event handler usage (handleSelectAll) — returns stable queryParams
+  // Keep toQueryParams for event handler usage — returns stable queryParams
   const toQueryParams = useCallback(
     (): Record<string, string> => queryParams,
     [queryParams],

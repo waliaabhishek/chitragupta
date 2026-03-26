@@ -4,28 +4,38 @@ import type { ReactNode } from "react";
 import { MemoryRouter } from "react-router";
 import { describe, expect, it, vi } from "vitest";
 import { ChargebackListPage } from "./list";
+import type { ChargebackResponse } from "../../types/api";
 
 // Mock heavy sub-components
 vi.mock("../../components/chargebacks/ChargebackGrid", () => ({
   ChargebackGrid: ({
-    onSelectionChange,
-    onSelectAll,
+    onRowClick,
   }: {
-    onSelectionChange?: (ids: number[]) => void;
-    onSelectAll?: (total: number) => void;
+    onRowClick?: (row: ChargebackResponse) => void;
   }) => (
     <div data-testid="chargeback-grid">
       <button
-        data-testid="trigger-selection"
-        onClick={() => onSelectionChange?.([1, 2, 3])}
+        data-testid="trigger-row-click"
+        onClick={() =>
+          onRowClick?.({
+            dimension_id: 1,
+            ecosystem: "ccloud",
+            tenant_id: "t-001",
+            timestamp: "2024-01-10T00:00:00Z",
+            resource_id: "r-001",
+            product_category: "KAFKA",
+            product_type: "KAFKA_NUM_BYTES",
+            identity_id: "user@example.com",
+            cost_type: "USAGE",
+            amount: "10.00",
+            allocation_method: null,
+            allocation_detail: null,
+            tags: { env: "prod" },
+            metadata: {},
+          })
+        }
       >
-        Trigger Selection
-      </button>
-      <button
-        data-testid="trigger-select-all"
-        onClick={() => onSelectAll?.(99)}
-      >
-        Trigger Select All
+        Trigger Row Click
       </button>
     </div>
   ),
@@ -47,62 +57,31 @@ vi.mock("../../components/chargebacks/FilterPanel", () => ({
 vi.mock("./ChargebackDetailDrawer", () => ({
   ChargebackDetailDrawer: vi.fn(
     ({
-      onTagsChanged,
       onClose,
+      dimensionId,
+      inheritedTags,
     }: {
-      onTagsChanged: () => void;
       onClose: () => void;
       dimensionId: number | null;
-    }) => (
-      <div data-testid="drawer">
-        <button data-testid="trigger-tags-changed" onClick={onTagsChanged}>
-          Tags Changed
-        </button>
-        <button data-testid="trigger-close" onClick={onClose}>
-          Close
-        </button>
-      </div>
-    ),
+      inheritedTags: Record<string, string>;
+    }) =>
+      dimensionId !== null ? (
+        <div data-testid="drawer" data-dimension-id={dimensionId}>
+          <button data-testid="trigger-close" onClick={onClose}>
+            Close
+          </button>
+          {Object.keys(inheritedTags ?? {}).length > 0 && (
+            <span data-testid="drawer-inherited-tags">
+              {Object.entries(inheritedTags).map(([k, v]) => `${k}: ${v}`).join(", ")}
+            </span>
+          )}
+        </div>
+      ) : null,
   ),
 }));
 
 vi.mock("../../components/chargebacks/ExportButton", () => ({
   ExportButton: () => <button data-testid="export-button">Export CSV</button>,
-}));
-
-vi.mock("../../components/chargebacks/BulkTagModal", () => ({
-  BulkTagModal: ({
-    onClose,
-    onSuccess,
-  }: {
-    onClose: () => void;
-    onSuccess: () => void;
-  }) => (
-    <div data-testid="bulk-modal">
-      <button data-testid="bulk-close" onClick={onClose}>Close</button>
-      <button data-testid="bulk-success" onClick={onSuccess}>Success</button>
-    </div>
-  ),
-}));
-
-vi.mock("./SelectionToolbar", () => ({
-  SelectionToolbar: ({
-    selectedCount,
-    onClear,
-    onAddTags,
-  }: {
-    selectedCount: number;
-    isSelectAllMode: boolean;
-    totalCount: number;
-    onClear: () => void;
-    onAddTags: () => void;
-  }) => (
-    <div data-testid="selection-toolbar">
-      <span data-testid="selected-count">{selectedCount}</span>
-      <button onClick={onClear}>Clear</button>
-      <button onClick={onAddTags}>Add Tags</button>
-    </div>
-  ),
 }));
 
 // Mock antd
@@ -131,7 +110,6 @@ const mockTenant = {
 };
 
 vi.mock("../../providers/TenantContext", () => ({
-  // GAP-100 Category B: appStatus/readiness removed — they move to useReadiness().
   useTenant: vi.fn(() => ({
     currentTenant: null,
     tenants: [],
@@ -194,7 +172,7 @@ describe("ChargebackListPage", () => {
     expect(screen.getByTestId("export-button")).toBeTruthy();
   });
 
-  it("shows SelectionToolbar and opens BulkModal when rows selected", async () => {
+  it("ChargebackListPage_no_bulk_state_SelectionToolbar_and_BulkTagModal_absent", async () => {
     const { useTenant } = await import("../../providers/TenantContext");
     vi.mocked(useTenant).mockReturnValue({
       currentTenant: mockTenant,
@@ -208,103 +186,8 @@ describe("ChargebackListPage", () => {
 
     render(<ChargebackListPage />, { wrapper });
 
-    // No toolbar initially
     expect(screen.queryByTestId("selection-toolbar")).toBeNull();
-
-    // Trigger selection
-    fireEvent.click(screen.getByTestId("trigger-selection"));
-    expect(screen.getByTestId("selection-toolbar")).toBeTruthy();
-    expect(screen.getByTestId("selected-count").textContent).toBe("3");
-
-    // Open bulk modal
-    fireEvent.click(screen.getByText("Add Tags"));
-    expect(screen.getByTestId("bulk-modal")).toBeTruthy();
-
-    // Close modal
-    fireEvent.click(screen.getByTestId("bulk-close"));
     expect(screen.queryByTestId("bulk-modal")).toBeNull();
-  });
-
-  it("clears selection when SelectionToolbar Clear clicked", async () => {
-    const { useTenant } = await import("../../providers/TenantContext");
-    vi.mocked(useTenant).mockReturnValue({
-      currentTenant: mockTenant,
-      tenants: [mockTenant],
-      setCurrentTenant: vi.fn(),
-      isLoading: false,
-      error: null,
-      refetch: vi.fn(),
-      isReadOnly: false,
-    });
-
-    render(<ChargebackListPage />, { wrapper });
-
-    fireEvent.click(screen.getByTestId("trigger-selection"));
-    expect(screen.getByTestId("selection-toolbar")).toBeTruthy();
-
-    fireEvent.click(screen.getByText("Clear"));
-    expect(screen.queryByTestId("selection-toolbar")).toBeNull();
-  });
-
-  it("switches to select-all mode when header checkbox triggers onSelectAll", async () => {
-    const { useTenant } = await import("../../providers/TenantContext");
-    vi.mocked(useTenant).mockReturnValue({
-      currentTenant: mockTenant,
-      tenants: [mockTenant],
-      setCurrentTenant: vi.fn(),
-      isLoading: false,
-      error: null,
-      refetch: vi.fn(),
-      isReadOnly: false,
-    });
-
-    render(<ChargebackListPage />, { wrapper });
-
-    fireEvent.click(screen.getByTestId("trigger-select-all"));
-    // SelectionToolbar should appear (total=99, selectedCount=99 in select-all mode)
-    expect(screen.getByTestId("selection-toolbar")).toBeTruthy();
-  });
-
-  it("bulk success clears selection", async () => {
-    const { useTenant } = await import("../../providers/TenantContext");
-    vi.mocked(useTenant).mockReturnValue({
-      currentTenant: mockTenant,
-      tenants: [mockTenant],
-      setCurrentTenant: vi.fn(),
-      isLoading: false,
-      error: null,
-      refetch: vi.fn(),
-      isReadOnly: false,
-    });
-
-    render(<ChargebackListPage />, { wrapper });
-
-    fireEvent.click(screen.getByTestId("trigger-selection"));
-    fireEvent.click(screen.getByText("Add Tags"));
-    expect(screen.getByTestId("bulk-modal")).toBeTruthy();
-
-    fireEvent.click(screen.getByTestId("bulk-success"));
-    // Modal closes and toolbar disappears
-    expect(screen.queryByTestId("bulk-modal")).toBeNull();
-    expect(screen.queryByTestId("selection-toolbar")).toBeNull();
-  });
-
-  it("handleTagsChanged does not throw when gridRef is null", async () => {
-    const { useTenant } = await import("../../providers/TenantContext");
-    vi.mocked(useTenant).mockReturnValue({
-      currentTenant: mockTenant,
-      tenants: [mockTenant],
-      setCurrentTenant: vi.fn(),
-      isLoading: false,
-      error: null,
-      refetch: vi.fn(),
-      isReadOnly: false,
-    });
-
-    render(<ChargebackListPage />, { wrapper });
-
-    // Trigger handleTagsChanged via drawer callback — gridRef.current is null so no-op
-    expect(() => fireEvent.click(screen.getByTestId("trigger-tags-changed"))).not.toThrow();
   });
 
   it("passes onRefresh to FilterPanel and calling it does not throw when grid not ready", async () => {
@@ -321,10 +204,92 @@ describe("ChargebackListPage", () => {
 
     render(<ChargebackListPage />, { wrapper });
 
-    // FilterPanel receives onRefresh — the Refresh Data button should render
     expect(screen.getByTestId("filter-refresh")).toBeInTheDocument();
-
-    // gridRef.current is null in test; calling onRefresh must not throw
     expect(() => fireEvent.click(screen.getByTestId("filter-refresh"))).not.toThrow();
+  });
+
+  it("row click passes full row tags as inheritedTags to drawer", async () => {
+    const { useTenant } = await import("../../providers/TenantContext");
+    vi.mocked(useTenant).mockReturnValue({
+      currentTenant: mockTenant,
+      tenants: [mockTenant],
+      setCurrentTenant: vi.fn(),
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+      isReadOnly: false,
+    });
+
+    render(<ChargebackListPage />, { wrapper });
+
+    fireEvent.click(screen.getByTestId("trigger-row-click"));
+
+    // Drawer appears with correct dimension_id
+    expect(screen.getByTestId("drawer").getAttribute("data-dimension-id")).toBe("1");
+    // Inherited tags from the row are passed through
+    expect(screen.getByTestId("drawer-inherited-tags").textContent).toContain("env: prod");
+  });
+
+  it("closing the drawer resets selection", async () => {
+    const { useTenant } = await import("../../providers/TenantContext");
+    vi.mocked(useTenant).mockReturnValue({
+      currentTenant: mockTenant,
+      tenants: [mockTenant],
+      setCurrentTenant: vi.fn(),
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+      isReadOnly: false,
+    });
+
+    render(<ChargebackListPage />, { wrapper });
+
+    fireEvent.click(screen.getByTestId("trigger-row-click"));
+    expect(screen.getByTestId("drawer")).toBeTruthy();
+
+    fireEvent.click(screen.getByTestId("trigger-close"));
+    expect(screen.queryByTestId("drawer")).toBeNull();
+  });
+
+  it("?selected= with non-numeric value does not open drawer", async () => {
+    const { useTenant } = await import("../../providers/TenantContext");
+    vi.mocked(useTenant).mockReturnValue({
+      currentTenant: mockTenant,
+      tenants: [mockTenant],
+      setCurrentTenant: vi.fn(),
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+      isReadOnly: false,
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/?selected=not-a-number"]}>
+        <ChargebackListPage />
+      </MemoryRouter>,
+    );
+
+    expect(screen.queryByTestId("drawer")).toBeNull();
+  });
+
+  it("?selected= URL param opens drawer with that dimensionId", async () => {
+    const { useTenant } = await import("../../providers/TenantContext");
+    vi.mocked(useTenant).mockReturnValue({
+      currentTenant: mockTenant,
+      tenants: [mockTenant],
+      setCurrentTenant: vi.fn(),
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+      isReadOnly: false,
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/?selected=42"]}>
+        <ChargebackListPage />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByTestId("drawer").getAttribute("data-dimension-id")).toBe("42");
   });
 });

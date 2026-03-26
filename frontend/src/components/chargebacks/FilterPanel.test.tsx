@@ -152,7 +152,6 @@ vi.mock("antd", async () => {
     ),
     Input: ({
       placeholder,
-      value,
       onChange,
       style,
     }: {
@@ -164,7 +163,6 @@ vi.mock("antd", async () => {
     }) => (
       <input
         placeholder={placeholder}
-        value={value}
         onChange={onChange}
         style={style}
       />
@@ -579,6 +577,48 @@ describe("FilterPanel", () => {
 
     fireEvent.click(screen.getByText("Refresh Data"));
     expect(onRefresh).toHaveBeenCalledOnce();
+  });
+
+  it("FilterPanel_tag_key_input_calls_onChange_with_value_and_null", () => {
+    // TASK-160.02: Tag Key and Tag Value are Input fields in FilterPanel.
+    // These tests FAIL until FilterPanel adds tag_key/tag_value Input fields.
+    const onChange = vi.fn();
+    render(
+      <FilterPanel
+        filters={defaultFilters}
+        onChange={onChange}
+        onReset={vi.fn()}
+        tenantName="t1"
+      />,
+    );
+
+    const tagKeyInput = screen.getByPlaceholderText("e.g. cost_center");
+    fireEvent.change(tagKeyInput, { target: { value: "env" } });
+    expect(onChange).toHaveBeenCalledWith("tag_key", "env");
+
+    // Clearing the input should call onChange with null
+    fireEvent.change(tagKeyInput, { target: { value: "" } });
+    expect(onChange).toHaveBeenCalledWith("tag_key", null);
+  });
+
+  it("FilterPanel_tag_value_input_calls_onChange_with_value_and_null", () => {
+    // TASK-160.02: Tag Value Input calls onChange("tag_value", ...).
+    const onChange = vi.fn();
+    render(
+      <FilterPanel
+        filters={defaultFilters}
+        onChange={onChange}
+        onReset={vi.fn()}
+        tenantName="t1"
+      />,
+    );
+
+    const tagValueInput = screen.getByPlaceholderText("e.g. engineering");
+    fireEvent.change(tagValueInput, { target: { value: "prod" } });
+    expect(onChange).toHaveBeenCalledWith("tag_value", "prod");
+
+    fireEvent.change(tagValueInput, { target: { value: "" } });
+    expect(onChange).toHaveBeenCalledWith("tag_value", null);
   });
 
   describe("filterByLabel", () => {

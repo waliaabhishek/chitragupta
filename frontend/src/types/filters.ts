@@ -6,6 +6,8 @@ export interface ChargebackFilters {
   resource_id: string | null;
   cost_type: string | null;
   timezone: string | null;
+  tag_key: string | null;
+  tag_value: string | null;
 }
 
 export interface BillingFilters {

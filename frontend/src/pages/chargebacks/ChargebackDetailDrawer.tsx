@@ -1,15 +1,14 @@
 import type React from "react";
-import { Descriptions, Divider, Drawer, Spin, notification } from "antd";
+import { Descriptions, Divider, Drawer, Space, Spin, Tag, Typography } from "antd";
 import { useEffect, useState } from "react";
-import { TagEditor } from "../../components/chargebacks/TagEditor";
 import { API_URL } from "../../config";
 import { useTenant } from "../../providers/TenantContext";
 import type { ChargebackDimensionResponse } from "../../types/api";
 
 interface ChargebackDetailDrawerProps {
   dimensionId: number | null;
+  inheritedTags: Record<string, string>;
   onClose: () => void;
-  onTagsChanged: () => void;
 }
 
 async function fetchDimension(
@@ -25,35 +24,12 @@ async function fetchDimension(
   return (await resp.json()) as ChargebackDimensionResponse;
 }
 
-async function patchDimension(
-  tenantName: string,
-  dimensionId: number,
-  body: {
-    add_tags?: { tag_key: string; display_name: string; created_by: string }[];
-    tags?: { tag_key: string; display_name: string; created_by: string }[];
-    remove_tag_ids?: number[];
-  },
-): Promise<void> {
-  const resp = await fetch(
-    `${API_URL}/tenants/${tenantName}/chargebacks/${dimensionId}`,
-    {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    },
-  );
-  if (!resp.ok) {
-    const detail = await resp.text();
-    throw new Error(detail);
-  }
-}
-
 export function ChargebackDetailDrawer({
   dimensionId,
+  inheritedTags,
   onClose,
-  onTagsChanged,
 }: ChargebackDetailDrawerProps): React.JSX.Element | null {
-  const { currentTenant, isReadOnly } = useTenant();
+  const { currentTenant } = useTenant();
   const [dimension, setDimension] =
     useState<ChargebackDimensionResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -87,63 +63,16 @@ export function ChargebackDetailDrawer({
     };
   }, [dimensionId, currentTenant]);
 
-  const handleAddTag = async (key: string, displayName: string): Promise<void> => {
-    if (!currentTenant || dimensionId === null) return;
-    try {
-      await patchDimension(currentTenant.tenant_name, dimensionId, {
-        add_tags: [{ tag_key: key, display_name: displayName, created_by: "ui" }],
-      });
-      onTagsChanged();
-      const updated = await fetchDimension(
-        currentTenant.tenant_name,
-        dimensionId,
-      );
-      if (updated !== null) setDimension(updated);
-    } catch (err) {
-      notification.error({
-        message: "Failed to add tag",
-        description: err instanceof Error ? err.message : "Unknown error",
-      });
-    }
-  };
-
-  const handleRemoveTag = async (tagId: number): Promise<void> => {
-    if (!currentTenant || dimensionId === null) return;
-    try {
-      await patchDimension(currentTenant.tenant_name, dimensionId, {
-        remove_tag_ids: [tagId],
-      });
-      onTagsChanged();
-      const updated = await fetchDimension(
-        currentTenant.tenant_name,
-        dimensionId,
-      );
-      if (updated !== null) setDimension(updated);
-    } catch (err) {
-      notification.error({
-        message: "Failed to remove tag",
-        description: err instanceof Error ? err.message : "Unknown error",
-      });
-    }
-  };
-
   if (dimensionId === null) return null;
 
   return (
-    <Drawer
-      open
-      onClose={onClose}
-      title="Chargeback Details"
-      width={480}
-    >
+    <Drawer open onClose={onClose} title="Chargeback Details" width={480}>
       {loading && (
         <div style={{ textAlign: "center", padding: 40 }}>
           <Spin />
         </div>
       )}
-      {!loading && notFound && (
-        <p>Dimension not found.</p>
-      )}
+      {!loading && notFound && <p>Dimension not found.</p>}
       {!loading && dimension && (
         <>
           <Descriptions column={1} size="small" bordered>
@@ -167,12 +96,19 @@ export function ChargebackDetailDrawer({
             </Descriptions.Item>
           </Descriptions>
           <Divider />
-          <TagEditor
-            tags={dimension.tags}
-            onAdd={handleAddTag}
-            onRemove={handleRemoveTag}
-            readOnly={isReadOnly}
-          />
+          <Typography.Title level={5}>Inherited Tags</Typography.Title>
+          {(() => {
+            const tagEntries = Object.entries(inheritedTags);
+            return tagEntries.length === 0 ? (
+              <Typography.Text type="secondary">No tags</Typography.Text>
+            ) : (
+              <Space wrap>
+                {tagEntries.map(([k, v]) => (
+                  <Tag key={k}>{k}: {v}</Tag>
+                ))}
+              </Space>
+            );
+          })()}
         </>
       )}
     </Drawer>

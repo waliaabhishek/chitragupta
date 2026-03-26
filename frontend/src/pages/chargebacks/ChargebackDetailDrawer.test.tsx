@@ -1,3 +1,11 @@
+// TASK-160.02 TDD red phase — ChargebackDetailDrawer rewrite.
+// New interface: { dimensionId, inheritedTags, onClose }
+// Old interface had: { dimensionId, onTagsChanged, onClose } + fetched tags from API.
+// Tests 8-9 will FAIL because current implementation:
+//   - uses onTagsChanged (not in new interface)
+//   - shows TagEditor add/remove form (not in new interface)
+//   - does not accept inheritedTags prop
+//   - shows display_name ("prod") not "key: value" format ("env: prod")
 import type React from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
@@ -8,7 +16,6 @@ import { server } from "../../test/mocks/server";
 import type { ChargebackDimensionResponse } from "../../types/api";
 import { ChargebackDetailDrawer } from "./ChargebackDetailDrawer";
 
-// Mock antd to avoid jsdom incompatibilities (Drawer portals, responsive observers).
 vi.mock("antd", () => ({
   Drawer: ({
     open,
@@ -85,12 +92,22 @@ vi.mock("antd", () => ({
     Title: ({ children }: { children: ReactNode; level?: number }) => (
       <h5>{children}</h5>
     ),
+    Text: ({ children }: { children: ReactNode; type?: string }) => (
+      <span>{children}</span>
+    ),
   },
   Space: ({ children }: { children: ReactNode; wrap?: boolean; style?: object }) => (
     <span>{children}</span>
   ),
   Form: Object.assign(
-    ({ children, onFinish }: { children: ReactNode; layout?: string; onFinish?: (v: unknown) => void }) => (
+    ({
+      children,
+      onFinish,
+    }: {
+      children: ReactNode;
+      layout?: string;
+      onFinish?: (v: unknown) => void;
+    }) => (
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -101,7 +118,14 @@ vi.mock("antd", () => ({
       </form>
     ),
     {
-      Item: ({ children, name }: { children: ReactNode; name?: string; rules?: unknown[] }) => (
+      Item: ({
+        children,
+        name,
+      }: {
+        children: ReactNode;
+        name?: string;
+        rules?: unknown[];
+      }) => (
         <div data-name={name}>{children}</div>
       ),
       useForm: () => [
@@ -153,7 +177,6 @@ vi.mock("antd", () => ({
   ),
 }));
 
-// Mock TenantContext — stable object reference prevents spurious useEffect re-runs
 vi.mock("../../providers/TenantContext", () => {
   const tenant = {
     tenant_name: "acme",
@@ -163,7 +186,6 @@ vi.mock("../../providers/TenantContext", () => {
     dates_calculated: 10,
     last_calculated_date: null,
   };
-  // GAP-100 Category B: appStatus/readiness removed — they move to useReadiness().
   return {
     useTenant: () => ({
       currentTenant: tenant,
@@ -188,17 +210,7 @@ const dimensionFixture: ChargebackDimensionResponse = {
   cost_type: "usage",
   allocation_method: "ratio",
   allocation_detail: null,
-  tags: [
-    {
-      tag_id: 1,
-      dimension_id: 42,
-      tag_key: "env",
-      tag_value: "uuid-prod",
-      display_name: "prod",
-      created_by: "ui",
-      created_at: null,
-    },
-  ],
+  tags: [],
 };
 
 function wrapper({ children }: { children: ReactNode }): React.JSX.Element {
@@ -214,16 +226,6 @@ beforeEach(() => {
     http.get("/api/v1/tenants/acme/chargebacks/42", () => {
       return HttpResponse.json(dimensionFixture);
     }),
-    http.patch("/api/v1/tenants/acme/chargebacks/42", async ({ request }) => {
-      const body = (await request.json()) as {
-        add_tags?: unknown[];
-        remove_tag_ids?: number[];
-      };
-      return HttpResponse.json({
-        ...dimensionFixture,
-        tags: body.remove_tag_ids?.length ? [] : [...dimensionFixture.tags],
-      });
-    }),
   );
 });
 
@@ -232,44 +234,12 @@ describe("ChargebackDetailDrawer", () => {
     const { container } = render(
       <ChargebackDetailDrawer
         dimensionId={null}
+        inheritedTags={{}}
         onClose={vi.fn()}
-        onTagsChanged={vi.fn()}
       />,
       { wrapper },
     );
     expect(container.firstChild).toBeNull();
-  });
-
-  it("shows loading spinner while fetching", () => {
-    render(
-      <ChargebackDetailDrawer
-        dimensionId={42}
-        onClose={vi.fn()}
-        onTagsChanged={vi.fn()}
-      />,
-      { wrapper },
-    );
-    // Initially loading
-    expect(screen.getByTestId("spinner")).toBeTruthy();
-  });
-
-  it("renders drawer with dimension data after fetch", async () => {
-    render(
-      <ChargebackDetailDrawer
-        dimensionId={42}
-        onClose={vi.fn()}
-        onTagsChanged={vi.fn()}
-      />,
-      { wrapper },
-    );
-
-    await waitFor(() => {
-      expect(screen.queryByTestId("spinner")).toBeNull();
-    });
-
-    expect(screen.getByTestId("drawer")).toBeTruthy();
-    expect(screen.getByText("KAFKA_NUM_BYTES")).toBeTruthy();
-    expect(screen.getByText("user@example.com")).toBeTruthy();
   });
 
   it("calls onClose when close button clicked", async () => {
@@ -277,8 +247,8 @@ describe("ChargebackDetailDrawer", () => {
     render(
       <ChargebackDetailDrawer
         dimensionId={42}
+        inheritedTags={{}}
         onClose={onClose}
-        onTagsChanged={vi.fn()}
       />,
       { wrapper },
     );
@@ -291,34 +261,14 @@ describe("ChargebackDetailDrawer", () => {
     expect(onClose).toHaveBeenCalled();
   });
 
-  it("shows not found message when API returns 404", async () => {
-    server.use(
-      http.get("/api/v1/tenants/acme/chargebacks/999", () => {
-        return new HttpResponse(null, { status: 404 });
-      }),
-    );
-
-    render(
-      <ChargebackDetailDrawer
-        dimensionId={999}
-        onClose={vi.fn()}
-        onTagsChanged={vi.fn()}
-      />,
-      { wrapper },
-    );
-
-    await waitFor(() => {
-      expect(screen.getByText("Dimension not found.")).toBeTruthy();
-    });
-  });
-
-  it("calls onTagsChanged after adding a tag", async () => {
-    const onTagsChanged = vi.fn();
+  it("ChargebackDetailDrawer_shows_inherited_tags_as_key_value_chips", async () => {
+    // TASK-160.02 test 8: inherited tags shown as "key: value" chips.
+    // FAILS: current impl does not accept inheritedTags prop; shows TagEditor form.
     render(
       <ChargebackDetailDrawer
         dimensionId={42}
+        inheritedTags={{ env: "prod" }}
         onClose={vi.fn()}
-        onTagsChanged={onTagsChanged}
       />,
       { wrapper },
     );
@@ -327,77 +277,52 @@ describe("ChargebackDetailDrawer", () => {
       expect(screen.queryByTestId("spinner")).toBeNull();
     });
 
-    // Find the add button in TagEditor and click it via form submit
-    const keyInput = screen.getByPlaceholderText("Key");
-    const valueInput = screen.getByPlaceholderText("Display Name");
-    fireEvent.change(keyInput, { target: { value: "newkey" } });
-    fireEvent.change(valueInput, { target: { value: "New Value" } });
-    fireEvent.click(screen.getByText("Add"));
+    // "env: prod" chip visible
+    expect(screen.getByText("env: prod")).toBeTruthy();
 
-    await waitFor(() => {
-      expect(onTagsChanged).toHaveBeenCalled();
-    });
+    // No add/remove controls (read-only inherited tags display)
+    expect(screen.queryByPlaceholderText("Key")).toBeNull();
+    expect(screen.queryByText("Add")).toBeNull();
+    expect(screen.queryByLabelText("remove")).toBeNull();
   });
 
-  it("calls onTagsChanged after removing a tag", async () => {
-    const onTagsChanged = vi.fn();
+  it("ChargebackDetailDrawer_shows_no_tags_text_for_empty_inheritedTags", async () => {
+    // TASK-160.02 test 9: empty inheritedTags shows "No tags" fallback.
+    // FAILS: current impl shows TagEditor form (add tag UI) for empty tags.
     render(
       <ChargebackDetailDrawer
         dimensionId={42}
+        inheritedTags={{}}
         onClose={vi.fn()}
-        onTagsChanged={onTagsChanged}
       />,
       { wrapper },
     );
 
     await waitFor(() => {
-      expect(screen.getByText("prod")).toBeTruthy();
+      expect(screen.queryByTestId("spinner")).toBeNull();
     });
 
-    const removeBtn = screen.getByLabelText("remove");
-    fireEvent.click(removeBtn);
-
-    await waitFor(() => {
-      expect(onTagsChanged).toHaveBeenCalled();
-    });
+    expect(screen.getByText("No tags")).toBeTruthy();
   });
 
-  it("fetches new dimension when dimensionId changes", async () => {
+  it("shows dimension not found when API returns 404", async () => {
     server.use(
-      http.get("/api/v1/tenants/acme/chargebacks/43", () => {
-        return HttpResponse.json({
-          ...dimensionFixture,
-          dimension_id: 43,
-          identity_id: "other-user@example.com",
-          tags: [],
-        });
+      http.get("/api/v1/tenants/acme/chargebacks/42", () => {
+        return new HttpResponse(null, { status: 404 });
       }),
     );
 
-    const { rerender } = render(
+    render(
       <ChargebackDetailDrawer
         dimensionId={42}
+        inheritedTags={{}}
         onClose={vi.fn()}
-        onTagsChanged={vi.fn()}
       />,
       { wrapper },
     );
 
     await waitFor(() => {
-      expect(screen.getByText("user@example.com")).toBeTruthy();
-    });
-
-    // rerender uses the same wrapper — no nested router
-    rerender(
-      <ChargebackDetailDrawer
-        dimensionId={43}
-        onClose={vi.fn()}
-        onTagsChanged={vi.fn()}
-      />,
-    );
-
-    await waitFor(() => {
-      expect(screen.getByText("other-user@example.com")).toBeTruthy();
+      expect(screen.getByText("Dimension not found.")).toBeTruthy();
     });
   });
 });

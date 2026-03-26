@@ -1,11 +1,11 @@
 import { http, HttpResponse } from "msw";
 import type {
   AggregationResponse,
-  BulkTagResponse,
+  EntityTagCreateRequest,
+  EntityTagResponse,
   InventorySummaryResponse,
   PaginatedResponse,
   ReadinessResponse,
-  TagWithDimensionResponse,
   TenantListResponse,
 } from "../../types/api";
 
@@ -46,7 +46,7 @@ export const chargebackFixtures: PaginatedResponse<unknown> = {
       amount: "12.50",
       allocation_method: "ratio",
       allocation_detail: null,
-      tags: [],
+      tags: {},
       metadata: {},
     },
   ],
@@ -185,20 +185,23 @@ export const handlers = [
 
   http.get(`${BASE}/tenants/:tenant/chargebacks/:id`, ({ params }) => {
     return HttpResponse.json({
+      dimension_id: Number(params.id),
       ecosystem: "ccloud",
       tenant_id: "t-001",
-      id: params.id,
+      resource_id: "r-001",
+      product_category: "KAFKA",
+      product_type: "KAFKA_NUM_BYTES",
+      identity_id: "user@example.com",
+      cost_type: "USAGE",
+      allocation_method: "ratio",
+      allocation_detail: null,
+      tags: {},
     });
   }),
 
   http.post(`${BASE}/tenants/:tenant/chargebacks`, async ({ request }) => {
     const body = await request.json();
     return HttpResponse.json(body, { status: 201 });
-  }),
-
-  http.patch(`${BASE}/tenants/:tenant/chargebacks/:id`, async ({ request }) => {
-    const body = await request.json();
-    return HttpResponse.json(body);
   }),
 
   http.delete(`${BASE}/tenants/:tenant/chargebacks/:id`, () => {
@@ -210,21 +213,19 @@ export const handlers = [
     const url = new URL(request.url);
     const page = Number(url.searchParams.get("page") ?? "1");
     const pageSize = Number(url.searchParams.get("page_size") ?? "100");
-    const tags: TagWithDimensionResponse[] = [
+    const tags: EntityTagResponse[] = [
       {
         tag_id: 1,
-        dimension_id: 10,
+        tenant_id: "t-001",
+        entity_type: "resource",
+        entity_id: "r-001",
         tag_key: "env",
-        tag_value: "uuid-1",
-        display_name: "Production",
+        tag_value: "production",
         created_by: "ui",
         created_at: null,
-        identity_id: "user@example.com",
-        product_type: "KAFKA_NUM_BYTES",
-        resource_id: null,
       },
     ];
-    const response: PaginatedResponse<TagWithDimensionResponse> = {
+    const response: PaginatedResponse<EntityTagResponse> = {
       items: tags,
       total: 1,
       page,
@@ -234,45 +235,55 @@ export const handlers = [
     return HttpResponse.json(response);
   }),
 
-  http.patch(`${BASE}/tenants/:tenant/tags/:id`, async ({ request }) => {
-    const body = (await request.json()) as { display_name: string };
-    const tag: TagWithDimensionResponse = {
+  // Entity tag CRUD handlers
+  http.get(`${BASE}/tenants/:tenant/entities/:entityType/:entityId/tags`, ({ params }) => {
+    const tags: EntityTagResponse[] = [
+      {
+        tag_id: 1,
+        tenant_id: "t-001",
+        entity_type: params.entityType as string,
+        entity_id: params.entityId as string,
+        tag_key: "env",
+        tag_value: "production",
+        created_by: "ui",
+        created_at: null,
+      },
+    ];
+    return HttpResponse.json(tags);
+  }),
+
+  http.post(`${BASE}/tenants/:tenant/entities/:entityType/:entityId/tags`, async ({ request, params }) => {
+    const body = (await request.json()) as EntityTagCreateRequest;
+    const tag: EntityTagResponse = {
+      tag_id: Date.now(),
+      tenant_id: "t-001",
+      entity_type: params.entityType as string,
+      entity_id: params.entityId as string,
+      tag_key: body.tag_key,
+      tag_value: body.tag_value,
+      created_by: body.created_by,
+      created_at: null,
+    };
+    return HttpResponse.json(tag, { status: 201 });
+  }),
+
+  http.put(`${BASE}/tenants/:tenant/entities/:entityType/:entityId/tags/:tagKey`, async ({ request, params }) => {
+    const body = await request.json() as { tag_value: string };
+    const tag: EntityTagResponse = {
       tag_id: 1,
-      dimension_id: 10,
-      tag_key: "env",
-      tag_value: "uuid-1",
-      display_name: body.display_name,
+      tenant_id: "t-001",
+      entity_type: params.entityType as string,
+      entity_id: params.entityId as string,
+      tag_key: params.tagKey as string,
+      tag_value: body.tag_value,
       created_by: "ui",
       created_at: null,
-      identity_id: "user@example.com",
-      product_type: "KAFKA_NUM_BYTES",
-      resource_id: null,
     };
     return HttpResponse.json(tag);
   }),
 
-  http.delete(`${BASE}/tenants/:tenant/tags/:id`, () => {
+  http.delete(`${BASE}/tenants/:tenant/entities/:entityType/:entityId/tags/:tagKey`, () => {
     return new HttpResponse(null, { status: 204 });
-  }),
-
-  http.post(`${BASE}/tenants/:tenant/tags/bulk`, async () => {
-    const result: BulkTagResponse = {
-      created_count: 3,
-      updated_count: 0,
-      skipped_count: 0,
-      errors: [],
-    };
-    return HttpResponse.json(result);
-  }),
-
-  http.post(`${BASE}/tenants/:tenant/tags/bulk-by-filter`, async () => {
-    const result: BulkTagResponse = {
-      created_count: 5,
-      updated_count: 0,
-      skipped_count: 0,
-      errors: [],
-    };
-    return HttpResponse.json(result);
   }),
 
   // Export endpoint — returns CSV blob
