@@ -1423,8 +1423,18 @@ targets from root Makefile and added a simple Makefile in examples/dev/
 with up, down, logs, and clean targets. (<a href="https://github.com/waliaabhishek/chitragupta/commit/7e57bbf7d8f79ecdf5a031b59a4c979c75a81a83">7e57bbf</a>)</p>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
-<li>Fix: Resolve TypeScript errors in frontend tests and add tsc pre-commit hook</li>
+<li>Fix: TASK-162 — AG Grid theme with alpine base CSS, Ant Design visual parity, and test rewrites</li>
 </ul>
+<p>Add ag-theme-alpine.css as base theme import so ag-theme-chitragupta CSS
+variable overrides actually apply. Enhanced theme CSS with structural
+overrides for Ant Design Table parity: horizontal-only borders, no grid
+border, font-weight 500 headers, 48px row height, no cell focus outline,
+no zebra striping. Centralized all AG Grid CSS imports in main.tsx and
+removed per-component imports. Rewrote identity/resource/tag list page
+tests to mock new AG Grid components instead of Ant Design Table. Added
+TagsGrid.test.tsx for edit/delete/error/readonly behavior coverage.</p>
+<p>42 test files, 316 tests passing. tsc + vite build clean. (<a href="https://github.com/waliaabhishek/chitragupta/commit/36480ad9b4927cc45824d88d2a6cce2ed3f5bf0d">36480ad</a>)
+- Fix: Resolve TypeScript errors in frontend tests and add tsc pre-commit hook</p>
 <p>Test files were missing tag_key/tag_value fields on ChargebackFilters,
 EntityTagEditor tests used wrong types, and the Docker build failed on
 tsc. Added a pre-commit hook to run frontend typecheck on .ts/.tsx changes. (<a href="https://github.com/waliaabhishek/chitragupta/commit/5de1193b34b9b52bb65bf3fe11716a21169bbc78">5de1193</a>)
