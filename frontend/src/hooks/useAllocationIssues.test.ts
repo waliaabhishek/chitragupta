@@ -29,6 +29,8 @@ const EMPTY_FILTERS: ChargebackFilters = {
   resource_id: null,
   cost_type: null,
   timezone: null,
+  tag_key: null,
+  tag_value: null,
 };
 
 const BASE_PARAMS = {
@@ -153,6 +155,8 @@ describe("useAllocationIssues", () => {
       resource_id: "lkc-abc123",
       cost_type: null,
       timezone: null,
+      tag_key: null,
+      tag_value: null,
     };
 
     const { result } = renderHook(

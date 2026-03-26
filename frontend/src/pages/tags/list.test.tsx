@@ -49,7 +49,7 @@ vi.mock("antd", () => ({
     onClick,
     type: btnType,
     danger,
-    size,
+    size: _size,
     loading,
     htmlType,
     style,

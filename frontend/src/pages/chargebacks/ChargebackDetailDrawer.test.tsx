@@ -210,7 +210,7 @@ const dimensionFixture: ChargebackDimensionResponse = {
   cost_type: "usage",
   allocation_method: "ratio",
   allocation_detail: null,
-  tags: [],
+  tags: {},
 };
 
 function wrapper({ children }: { children: ReactNode }): React.JSX.Element {

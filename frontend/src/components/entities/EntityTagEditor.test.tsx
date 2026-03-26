@@ -156,8 +156,10 @@ vi.mock("../../providers/TenantContext", () => ({
 }));
 
 const entityTagFixture: EntityTagResponse = {
-  entity_type: "dimension",
-  entity_id: 42,
+  tag_id: 1,
+  tenant_id: "acme",
+  entity_type: "resource",
+  entity_id: "42",
   tag_key: "env",
   tag_value: "prod",
   created_by: "ui",
@@ -166,19 +168,19 @@ const entityTagFixture: EntityTagResponse = {
 
 beforeEach(() => {
   server.use(
-    http.get("/api/v1/tenants/acme/entities/dimension/42/tags", () => {
+    http.get("/api/v1/tenants/acme/entities/resource/42/tags", () => {
       return HttpResponse.json([entityTagFixture]);
     }),
-    http.post("/api/v1/tenants/acme/entities/dimension/42/tags", async ({ request }) => {
+    http.post("/api/v1/tenants/acme/entities/resource/42/tags", async ({ request }) => {
       const body = (await request.json()) as EntityTagCreateRequest;
       return HttpResponse.json({
         ...body,
-        entity_type: "dimension",
-        entity_id: 42,
+        entity_type: "resource",
+        entity_id: "42",
         created_at: null,
       }, { status: 201 });
     }),
-    http.delete("/api/v1/tenants/acme/entities/dimension/42/tags/:key", () => {
+    http.delete("/api/v1/tenants/acme/entities/resource/42/tags/:key", () => {
       return new HttpResponse(null, { status: 204 });
     }),
   );
@@ -187,7 +189,7 @@ beforeEach(() => {
 describe("EntityTagEditor", () => {
   it("EntityTagEditor_renders_existing_tags", async () => {
     render(
-      <EntityTagEditor tenantName="acme" entityType="dimension" entityId="42" />,
+      <EntityTagEditor tenantName="acme" entityType="resource" entityId="42" />,
     );
 
     await waitFor(() => {
@@ -199,11 +201,11 @@ describe("EntityTagEditor", () => {
     let capturedBody: EntityTagCreateRequest | undefined;
 
     server.use(
-      http.post("/api/v1/tenants/acme/entities/dimension/42/tags", async ({ request }) => {
+      http.post("/api/v1/tenants/acme/entities/resource/42/tags", async ({ request }) => {
         capturedBody = (await request.json()) as EntityTagCreateRequest;
         return HttpResponse.json({
-          entity_type: "dimension",
-          entity_id: 42,
+          entity_type: "resource",
+          entity_id: "42",
           tag_key: capturedBody.tag_key,
           tag_value: capturedBody.tag_value,
           created_by: capturedBody.created_by,
@@ -213,7 +215,7 @@ describe("EntityTagEditor", () => {
     );
 
     render(
-      <EntityTagEditor tenantName="acme" entityType="dimension" entityId="42" />,
+      <EntityTagEditor tenantName="acme" entityType="resource" entityId="42" />,
     );
 
     await waitFor(() => {
@@ -237,18 +239,18 @@ describe("EntityTagEditor", () => {
     let refetchCount = 0;
 
     server.use(
-      http.get("/api/v1/tenants/acme/entities/dimension/42/tags", () => {
+      http.get("/api/v1/tenants/acme/entities/resource/42/tags", () => {
         refetchCount += 1;
         return HttpResponse.json(refetchCount === 1 ? [entityTagFixture] : []);
       }),
-      http.delete("/api/v1/tenants/acme/entities/dimension/42/tags/:key", ({ params }) => {
+      http.delete("/api/v1/tenants/acme/entities/resource/42/tags/:key", ({ params }) => {
         deletedKey = params.key as string;
         return new HttpResponse(null, { status: 204 });
       }),
     );
 
     render(
-      <EntityTagEditor tenantName="acme" entityType="dimension" entityId="42" />,
+      <EntityTagEditor tenantName="acme" entityType="resource" entityId="42" />,
     );
 
     await waitFor(() => {
@@ -267,13 +269,13 @@ describe("EntityTagEditor", () => {
     const { notification } = await import("antd");
 
     server.use(
-      http.get("/api/v1/tenants/acme/entities/dimension/42/tags", () => {
+      http.get("/api/v1/tenants/acme/entities/resource/42/tags", () => {
         return new HttpResponse(null, { status: 500 });
       }),
     );
 
     render(
-      <EntityTagEditor tenantName="acme" entityType="dimension" entityId="42" />,
+      <EntityTagEditor tenantName="acme" entityType="resource" entityId="42" />,
     );
 
     await waitFor(() => {
@@ -287,13 +289,13 @@ describe("EntityTagEditor", () => {
     const { notification } = await import("antd");
 
     server.use(
-      http.post("/api/v1/tenants/acme/entities/dimension/42/tags", () => {
+      http.post("/api/v1/tenants/acme/entities/resource/42/tags", () => {
         return new HttpResponse("Bad Request", { status: 400 });
       }),
     );
 
     render(
-      <EntityTagEditor tenantName="acme" entityType="dimension" entityId="42" />,
+      <EntityTagEditor tenantName="acme" entityType="resource" entityId="42" />,
     );
 
     await waitFor(() => {
@@ -315,13 +317,13 @@ describe("EntityTagEditor", () => {
     const { notification } = await import("antd");
 
     server.use(
-      http.delete("/api/v1/tenants/acme/entities/dimension/42/tags/:tagKey", () => {
+      http.delete("/api/v1/tenants/acme/entities/resource/42/tags/:tagKey", () => {
         return new HttpResponse(null, { status: 500 });
       }),
     );
 
     render(
-      <EntityTagEditor tenantName="acme" entityType="dimension" entityId="42" />,
+      <EntityTagEditor tenantName="acme" entityType="resource" entityId="42" />,
     );
 
     await waitFor(() => {
@@ -350,7 +352,7 @@ describe("EntityTagEditor", () => {
     });
 
     render(
-      <EntityTagEditor tenantName="acme" entityType="dimension" entityId="42" />,
+      <EntityTagEditor tenantName="acme" entityType="resource" entityId="42" />,
     );
 
     await waitFor(() => {

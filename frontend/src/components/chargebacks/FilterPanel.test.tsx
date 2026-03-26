@@ -182,6 +182,8 @@ const defaultFilters: ChargebackFilters = {
   resource_id: null,
   cost_type: null,
   timezone: "UTC",
+  tag_key: null,
+  tag_value: null,
 };
 
 const fixtureIdentityOptions = [
