@@ -1415,8 +1415,12 @@ targets from root Makefile and added a simple Makefile in examples/dev/
 with up, down, logs, and clean targets. (<a href="https://github.com/waliaabhishek/chitragupta/commit/7e57bbf7d8f79ecdf5a031b59a4c979c75a81a83">7e57bbf</a>)</p>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
-<li>Fix: TASK-159 — Add timezone picker to filter panels and wire to API</li>
+<li>Fix: Bump requests 2.32.5→2.33.0 and picomatch 4.0.3→4.0.4 for Dependabot alerts</li>
 </ul>
+<p>Resolves 2 moderate GitHub Dependabot vulnerabilities:
+- requests: insecure temp file reuse in extract_zipped_paths()
+- picomatch: method injection in POSIX character classes (<a href="https://github.com/waliaabhishek/chitragupta/commit/416db5eba6b9b4bcc8bd04b6153d3cf3c9e45acf">416db5e</a>)
+- Fix: TASK-159 — Add timezone picker to filter panels and wire to API</p>
 <p>Frontend timezone Select added to Chargebacks, Billing, and Dashboard
 filter panels. Defaults to browser timezone, persists to localStorage
 (user_timezone), syncs via URL search param. All date-filtered API
