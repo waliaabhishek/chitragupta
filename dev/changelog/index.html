@@ -1415,8 +1415,12 @@ targets from root Makefile and added a simple Makefile in examples/dev/
 with up, down, logs, and clean targets. (<a href="https://github.com/waliaabhishek/chitragupta/commit/7e57bbf7d8f79ecdf5a031b59a4c979c75a81a83">7e57bbf</a>)</p>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
-<li>Fix: Bump requests 2.32.5→2.33.0 and picomatch 4.0.3→4.0.4 for Dependabot alerts</li>
+<li>Fix: Resolve TypeScript errors in frontend tests and add tsc pre-commit hook</li>
 </ul>
+<p>Test files were missing tag_key/tag_value fields on ChargebackFilters,
+EntityTagEditor tests used wrong types, and the Docker build failed on
+tsc. Added a pre-commit hook to run frontend typecheck on .ts/.tsx changes. (<a href="https://github.com/waliaabhishek/chitragupta/commit/5de1193b34b9b52bb65bf3fe11716a21169bbc78">5de1193</a>)
+- Fix: Bump requests 2.32.5→2.33.0 and picomatch 4.0.3→4.0.4 for Dependabot alerts</p>
 <p>Resolves 2 moderate GitHub Dependabot vulnerabilities:
 - requests: insecure temp file reuse in extract_zipped_paths()
 - picomatch: method injection in POSIX character classes (<a href="https://github.com/waliaabhishek/chitragupta/commit/416db5eba6b9b4bcc8bd04b6153d3cf3c9e45acf">416db5e</a>)
