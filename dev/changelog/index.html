@@ -1386,10 +1386,20 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased">[Unreleased]<a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
-<li>Feat: Add help target to dev stack Makefile (<a href="https://github.com/waliaabhishek/chitragupta/commit/7c5f215162d860c24b8261c40d50d73489290a92">7c5f215</a>)</li>
-<li>Feat: Development environment for Docker based app (<a href="https://github.com/waliaabhishek/chitragupta/commit/197b4189795bfbd7395b1c43a35ea3f7044b9eca">197b418</a>)</li>
-<li>Feat: TASK-156 — Add active/deleted status breakdown to Inventory UI</li>
+<li>Feat: TASK-160.02 — Frontend entity tag editor, inherited tag display, and tag-based filtering</li>
 </ul>
+<p>Replace dimension-level tag UI with entity-level tag system: new EntityTagEditor
+component for resources/identities, read-only inherited tags on chargeback views,
+tag key/value filter inputs, and removal of old TagEditor/BulkTagModal/SelectionToolbar. (<a href="https://github.com/waliaabhishek/chitragupta/commit/f1dfdda5c8d8473d354d77bb99bcec1d0a536101">f1dfdda</a>)
+- Feat: TASK-160.01 — Entity-level tag system replacing dimension-level tags</p>
+<p>Tags now attach to core entities (resources, identities) instead of
+ephemeral chargeback dimensions. Chargebacks inherit tags at query time
+via resource_id/identity_id joins with resource tags overriding identity
+tags on key collision. Old custom_tags table dropped, new tags table
+created. ChargebackResponse.tags changed from list[str] to dict[str,str]. (<a href="https://github.com/waliaabhishek/chitragupta/commit/02112416a87f25260481b4af38f744e533503f65">0211241</a>)
+- Feat: Add help target to dev stack Makefile (<a href="https://github.com/waliaabhishek/chitragupta/commit/7c5f215162d860c24b8261c40d50d73489290a92">7c5f215</a>)
+- Feat: Development environment for Docker based app (<a href="https://github.com/waliaabhishek/chitragupta/commit/197b4189795bfbd7395b1c43a35ea3f7044b9eca">197b418</a>)
+- Feat: TASK-156 — Add active/deleted status breakdown to Inventory UI</p>
 <p>Full-stack change: inventory summary now returns per-type active/deleted
 counts. ResourceRepository groups by status column; IdentityRepository
 derives status from deleted_at via SQL CASE. New TypeStatusCounts frozen
