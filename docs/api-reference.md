@@ -194,12 +194,19 @@ Multi-dimensional aggregation with time bucketing. Returns up to 10,000 buckets.
 
 List discovered resources. Paginated. Supports three temporal query modes:
 
-| Parameter | Type | Description |
-|---|---|---|
-| `resource_type` | string | Filter by type |
-| `status` | string | Filter by status |
-| `active_at` | datetime | Resources active at this point in time |
-| `period_start` + `period_end` | datetime | Resources active during this period |
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `resource_type` | string | — | Filter by type |
+| `status` | string | — | Filter by status (`active` or `deleted`) |
+| `active_at` | datetime | — | Resources active at this point in time |
+| `period_start` + `period_end` | datetime | — | Resources active during this period |
+| `search` | string | — | Case-insensitive substring match on `resource_id` and `display_name` |
+| `sort_by` | string | — | Column to sort by: `resource_id`, `display_name`, `resource_type`, `status`. Falls back to `resource_id` if invalid. |
+| `sort_order` | string | `asc` | Sort direction: `asc` or `desc`. Applied when no temporal params are set. |
+| `tag_key` | string | — | Filter to resources that have this tag key |
+| `tag_value` | string | — | Narrow `tag_key` filter to this value (requires `tag_key`) |
+
+`search`, `sort_by`, `sort_order`, `tag_key`, and `tag_value` apply only when no temporal params (`active_at`, `period_start`/`period_end`) are set.
 
 If no temporal params: returns all resources. Cannot combine `active_at` with `period_start`/`period_end`.
 
@@ -213,11 +220,18 @@ If no temporal params: returns all resources. Cannot combine `active_at` with `p
 
 List discovered identities. Paginated. Same temporal query modes as resources.
 
-| Parameter | Type | Description |
-|---|---|---|
-| `identity_type` | string | Filter by type |
-| `active_at` | datetime | Identities active at this point |
-| `period_start` + `period_end` | datetime | Identities active during period |
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `identity_type` | string | — | Filter by type |
+| `active_at` | datetime | — | Identities active at this point |
+| `period_start` + `period_end` | datetime | — | Identities active during period |
+| `search` | string | — | Case-insensitive substring match on `identity_id` and `display_name` |
+| `sort_by` | string | — | Column to sort by: `identity_id`, `display_name`, `identity_type`. Falls back to `identity_id` if invalid. |
+| `sort_order` | string | `asc` | Sort direction: `asc` or `desc`. Applied when no temporal params are set. |
+| `tag_key` | string | — | Filter to identities that have this tag key |
+| `tag_value` | string | — | Narrow `tag_key` filter to this value (requires `tag_key`) |
+
+`search`, `sort_by`, `sort_order`, `tag_key`, and `tag_value` apply only when no temporal params are set.
 
 **Response fields per item:** `ecosystem`, `tenant_id`, `identity_id`, `identity_type`, `display_name`, `created_at`, `deleted_at`, `last_seen_at`, `metadata`.
 

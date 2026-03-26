@@ -92,6 +92,12 @@ class ResourceRepository(Protocol):
         offset: int,
         resource_type: str | None = None,
         status: str | None = None,
+        search: str | None = None,
+        sort_by: str | None = None,
+        sort_order: str = "asc",
+        tag_key: str | None = None,
+        tag_value: str | None = None,
+        tags_repo: EntityTagRepository | None = None,
     ) -> tuple[list[Resource], int]:
         """Returns (items, total_count) for pagination. Database-level LIMIT/OFFSET."""
         ...
@@ -164,6 +170,12 @@ class IdentityRepository(Protocol):
         limit: int,
         offset: int,
         identity_type: str | None = None,
+        search: str | None = None,
+        sort_by: str | None = None,
+        sort_order: str = "asc",
+        tag_key: str | None = None,
+        tag_value: str | None = None,
+        tags_repo: EntityTagRepository | None = None,
     ) -> tuple[list[Identity], int]:
         """Returns (items, total_count) for pagination. Database-level LIMIT/OFFSET."""
         ...

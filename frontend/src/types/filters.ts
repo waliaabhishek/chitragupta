@@ -17,3 +17,23 @@ export interface BillingFilters {
   resource_id: string | null;
   timezone: string | null;
 }
+
+export interface IdentityFilters {
+  search: string | null;
+  identity_type: string | null;
+  tag_key: string | null;
+  tag_value: string | null;
+}
+
+export interface ResourceFilters {
+  search: string | null;
+  resource_type: string | null;
+  status: string | null;
+  tag_key: string | null;
+  tag_value: string | null;
+}
+
+export interface TagFilters {
+  tag_key: string | null;
+  entity_type: string | null;
+}

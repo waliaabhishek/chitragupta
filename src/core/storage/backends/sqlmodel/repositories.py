@@ -57,6 +57,21 @@ logger = logging.getLogger(__name__)
 # See also: _BULK_CHUNK_SIZE in tags.py — same rationale, separate constant for API layer.
 _CHUNK_SIZE = 500
 
+# Allowlists for sort_by parameter — prevents arbitrary column injection.
+# Fallback to primary-key column when sort_by is absent or invalid.
+_IDENTITY_SORT_COLS: dict[str, Any] = {
+    "identity_id": IdentityTable.identity_id,
+    "display_name": IdentityTable.display_name,
+    "identity_type": IdentityTable.identity_type,
+}
+
+_RESOURCE_SORT_COLS: dict[str, Any] = {
+    "resource_id": ResourceTable.resource_id,
+    "display_name": ResourceTable.display_name,
+    "resource_type": ResourceTable.resource_type,
+    "status": ResourceTable.status,
+}
+
 
 def _overlay_tags(
     rows: list[ChargebackRow],
@@ -237,17 +252,45 @@ class SQLModelResourceRepository:
         offset: int,
         resource_type: str | None = None,
         status: str | None = None,
+        search: str | None = None,
+        sort_by: str | None = None,
+        sort_order: str = "asc",
+        tag_key: str | None = None,
+        tag_value: str | None = None,
+        tags_repo: EntityTagRepository | None = None,
     ) -> tuple[list[Resource], int]:
+        # tags_repo gates tag filtering per Protocol contract — callers must provide it
+        # when tag_key is set. The actual subquery uses self._session directly.
         where = [col(ResourceTable.ecosystem) == ecosystem, col(ResourceTable.tenant_id) == tenant_id]
         if resource_type is not None:
             where.append(col(ResourceTable.resource_type) == resource_type)
         if status is not None:
             where.append(col(ResourceTable.status) == status)
+        if search is not None:
+            pattern = f"%{search}%"
+            where.append(
+                or_(
+                    col(ResourceTable.resource_id).ilike(pattern),
+                    col(ResourceTable.display_name).ilike(pattern),
+                )
+            )
+        if tag_key is not None and tags_repo is not None:
+            tag_where: list[Any] = [
+                col(EntityTagTable.tenant_id) == tenant_id,
+                col(EntityTagTable.tag_key) == tag_key,
+                col(EntityTagTable.entity_type) == "resource",
+            ]
+            if tag_value is not None:
+                tag_where.append(col(EntityTagTable.tag_value) == tag_value)
+            tag_sub = select(EntityTagTable.entity_id).where(*tag_where).scalar_subquery()
+            where.append(col(ResourceTable.resource_id).in_(tag_sub))
 
         count_stmt = select(func.count()).select_from(ResourceTable).where(*where)
         total: int = self._session.exec(count_stmt).one()
 
-        stmt = select(ResourceTable).where(*where).offset(offset).limit(limit)
+        sort_col = _RESOURCE_SORT_COLS.get(sort_by or "", ResourceTable.resource_id)
+        order_expr = col(sort_col).desc() if sort_order == "desc" else col(sort_col).asc()
+        stmt = select(ResourceTable).where(*where).order_by(order_expr).offset(offset).limit(limit)
         items = [resource_to_domain(r) for r in self._session.exec(stmt).all()]
         return items, total  # type: ignore[return-value]  # SQLModel returns table types, protocol expects domain types
 
@@ -401,15 +444,43 @@ class SQLModelIdentityRepository:
         limit: int,
         offset: int,
         identity_type: str | None = None,
+        search: str | None = None,
+        sort_by: str | None = None,
+        sort_order: str = "asc",
+        tag_key: str | None = None,
+        tag_value: str | None = None,
+        tags_repo: EntityTagRepository | None = None,
     ) -> tuple[list[Identity], int]:
+        # tags_repo gates tag filtering per Protocol contract — callers must provide it
+        # when tag_key is set. The actual subquery uses self._session directly.
         where = [col(IdentityTable.ecosystem) == ecosystem, col(IdentityTable.tenant_id) == tenant_id]
         if identity_type is not None:
             where.append(col(IdentityTable.identity_type) == identity_type)
+        if search is not None:
+            pattern = f"%{search}%"
+            where.append(
+                or_(
+                    col(IdentityTable.identity_id).ilike(pattern),
+                    col(IdentityTable.display_name).ilike(pattern),
+                )
+            )
+        if tag_key is not None and tags_repo is not None:
+            tag_where: list[Any] = [
+                col(EntityTagTable.tenant_id) == tenant_id,
+                col(EntityTagTable.tag_key) == tag_key,
+                col(EntityTagTable.entity_type) == "identity",
+            ]
+            if tag_value is not None:
+                tag_where.append(col(EntityTagTable.tag_value) == tag_value)
+            tag_sub = select(EntityTagTable.entity_id).where(*tag_where).scalar_subquery()
+            where.append(col(IdentityTable.identity_id).in_(tag_sub))
 
         count_stmt = select(func.count()).select_from(IdentityTable).where(*where)
         total: int = self._session.exec(count_stmt).one()
 
-        stmt = select(IdentityTable).where(*where).offset(offset).limit(limit)
+        sort_col = _IDENTITY_SORT_COLS.get(sort_by or "", IdentityTable.identity_id)
+        order_expr = col(sort_col).desc() if sort_order == "desc" else col(sort_col).asc()
+        stmt = select(IdentityTable).where(*where).order_by(order_expr).offset(offset).limit(limit)
         items = [identity_to_domain(r) for r in self._session.exec(stmt).all()]
         return items, total  # type: ignore[return-value]  # SQLModel returns table types, protocol expects domain types
 

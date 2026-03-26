@@ -28,6 +28,11 @@ async def list_resources(
     period_end: Annotated[datetime | None, Query()] = None,
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=1000)] = 100,
+    search: Annotated[str | None, Query(description="ILIKE on resource_id and display_name")] = None,
+    sort_by: Annotated[str | None, Query(description="resource_id | display_name | resource_type | status")] = None,
+    sort_order: Annotated[str, Query(description="asc or desc")] = "asc",
+    tag_key: Annotated[str | None, Query(description="Filter by entity tag key")] = None,
+    tag_value: Annotated[str | None, Query(description="Filter by entity tag value (requires tag_key)")] = None,
 ) -> PaginatedResponse[ResourceResponse]:
     logger.debug("GET /resources tenant=%s page=%d page_size=%d", tenant_config.tenant_id, page, page_size)
     tp = validate_temporal_params(active_at, period_start, period_end)
@@ -59,7 +64,18 @@ async def list_resources(
         )
     else:
         items, total = uow.resources.find_paginated(
-            eco, tid, limit=page_size, offset=offset, resource_type=resource_type, status=status
+            eco,
+            tid,
+            limit=page_size,
+            offset=offset,
+            resource_type=resource_type,
+            status=status,
+            search=search,
+            sort_by=sort_by,
+            sort_order=sort_order,
+            tag_key=tag_key,
+            tag_value=tag_value,
+            tags_repo=uow.tags if tag_key is not None else None,
         )
     pages = math.ceil(total / page_size) if total > 0 else 0
     logger.info("Listed resources tenant=%s returned=%d total=%d", tenant_config.tenant_id, len(items), total)

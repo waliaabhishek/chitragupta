@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { theme as antTheme } from "antd";
 
 type ThemeMode = "dark" | "light";
@@ -19,6 +19,11 @@ interface UseThemeReturn {
 
 export function useTheme(): UseThemeReturn {
   const [mode, setMode] = useState<ThemeMode>(getInitialTheme);
+
+  // Keep document.body in sync so AG Grid CSS vars respond to theme changes
+  useEffect(() => {
+    document.body.setAttribute("data-theme", mode);
+  }, [mode]);
 
   const toggleTheme = useCallback(() => {
     setMode((prev) => {

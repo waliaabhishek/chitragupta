@@ -1,6 +1,5 @@
 import type React from "react";
 import "ag-grid-community/styles/ag-grid.css";
-import "ag-grid-community/styles/ag-theme-alpine.css";
 import type { ColDef, IDatasource, IGetRowsParams } from "ag-grid-community";
 import { AgGridReact } from "ag-grid-react";
 import { type MutableRefObject, type Ref, useMemo, useEffect, useRef, useImperativeHandle } from "react";
@@ -83,7 +82,7 @@ export function BillingGrid({ tenantName, filters, ref }: BillingGridProps): Rea
   }, [datasource]);
 
   return (
-    <div className="ag-theme-alpine" style={{ flex: 1, minHeight: 400 }}>
+    <div className="ag-theme-chitragupta" style={{ flex: 1, minHeight: 400 }}>
       <AgGridReact
         ref={internalRef}
         columnDefs={columnDefs}
