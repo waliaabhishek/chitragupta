@@ -1386,8 +1386,16 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased">[Unreleased]<a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
-<li>Feat: TASK-160.02 — Frontend entity tag editor, inherited tag display, and tag-based filtering</li>
+<li>Feat: TASK-161 — Unified AG Grid table system with Ant Design theme sync and server-side filtering</li>
 </ul>
+<p>Standardize all table views on AG Grid with custom ag-theme-chitragupta theme
+matching Ant Design's visual style. Theme syncs with dark/light mode toggle via
+data-theme attribute on document.body. Migrate Identities, Resources, and Tags
+pages from Ant Table to AG Grid with infinite scroll, filter bars, and URL param
+persistence. Extend identity and resource list API endpoints with search (ILIKE),
+sort_by, sort_order, tag_key, and tag_value query params. Keep AllocationIssuesTable
+as Ant Table (bounded volume, dashboard context). (<a href="https://github.com/waliaabhishek/chitragupta/commit/7ed0fc00c6a9db3a72ed05deef6f8fc53a830c3a">7ed0fc0</a>)
+- Feat: TASK-160.02 — Frontend entity tag editor, inherited tag display, and tag-based filtering</p>
 <p>Replace dimension-level tag UI with entity-level tag system: new EntityTagEditor
 component for resources/identities, read-only inherited tags on chargeback views,
 tag key/value filter inputs, and removal of old TagEditor/BulkTagModal/SelectionToolbar. (<a href="https://github.com/waliaabhishek/chitragupta/commit/f1dfdda5c8d8473d354d77bb99bcec1d0a536101">f1dfdda</a>)

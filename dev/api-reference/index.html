@@ -2626,6 +2626,7 @@
 <tr>
 <th>Parameter</th>
 <th>Type</th>
+<th>Default</th>
 <th>Description</th>
 </tr>
 </thead>
@@ -2633,25 +2634,60 @@
 <tr>
 <td><code>resource_type</code></td>
 <td>string</td>
+<td>—</td>
 <td>Filter by type</td>
 </tr>
 <tr>
 <td><code>status</code></td>
 <td>string</td>
-<td>Filter by status</td>
+<td>—</td>
+<td>Filter by status (<code>active</code> or <code>deleted</code>)</td>
 </tr>
 <tr>
 <td><code>active_at</code></td>
 <td>datetime</td>
+<td>—</td>
 <td>Resources active at this point in time</td>
 </tr>
 <tr>
 <td><code>period_start</code> + <code>period_end</code></td>
 <td>datetime</td>
+<td>—</td>
 <td>Resources active during this period</td>
+</tr>
+<tr>
+<td><code>search</code></td>
+<td>string</td>
+<td>—</td>
+<td>Case-insensitive substring match on <code>resource_id</code> and <code>display_name</code></td>
+</tr>
+<tr>
+<td><code>sort_by</code></td>
+<td>string</td>
+<td>—</td>
+<td>Column to sort by: <code>resource_id</code>, <code>display_name</code>, <code>resource_type</code>, <code>status</code>. Falls back to <code>resource_id</code> if invalid.</td>
+</tr>
+<tr>
+<td><code>sort_order</code></td>
+<td>string</td>
+<td><code>asc</code></td>
+<td>Sort direction: <code>asc</code> or <code>desc</code>. Applied when no temporal params are set.</td>
+</tr>
+<tr>
+<td><code>tag_key</code></td>
+<td>string</td>
+<td>—</td>
+<td>Filter to resources that have this tag key</td>
+</tr>
+<tr>
+<td><code>tag_value</code></td>
+<td>string</td>
+<td>—</td>
+<td>Narrow <code>tag_key</code> filter to this value (requires <code>tag_key</code>)</td>
 </tr>
 </tbody>
 </table>
+<p><code>search</code>, <code>sort_by</code>, <code>sort_order</code>, <code>tag_key</code>, and <code>tag_value</code> apply only when no temporal params (<code>active_at</code>, <code>period_start</code>/<code>period_end</code>) are set.</p>
 <p>If no temporal params: returns all resources. Cannot combine <code>active_at</code> with <code>period_start</code>/<code>period_end</code>.</p>
 <p><strong>Response fields per item:</strong> <code>ecosystem</code>, <code>tenant_id</code>, <code>resource_id</code>, <code>resource_type</code>, <code>display_name</code>, <code>parent_id</code>, <code>owner_id</code>, <code>status</code>, <code>created_at</code>, <code>deleted_at</code>, <code>last_seen_at</code>, <code>metadata</code>.</p>
 <hr />
@@ -2663,6 +2699,7 @@
 <tr>
 <th>Parameter</th>
 <th>Type</th>
+<th>Default</th>
 <th>Description</th>
 </tr>
 </thead>
@@ -2670,20 +2707,54 @@
 <tr>
 <td><code>identity_type</code></td>
 <td>string</td>
+<td>—</td>
 <td>Filter by type</td>
 </tr>
 <tr>
 <td><code>active_at</code></td>
 <td>datetime</td>
+<td>—</td>
 <td>Identities active at this point</td>
 </tr>
 <tr>
 <td><code>period_start</code> + <code>period_end</code></td>
 <td>datetime</td>
+<td>—</td>
 <td>Identities active during period</td>
+</tr>
+<tr>
+<td><code>search</code></td>
+<td>string</td>
+<td>—</td>
+<td>Case-insensitive substring match on <code>identity_id</code> and <code>display_name</code></td>
+</tr>
+<tr>
+<td><code>sort_by</code></td>
+<td>string</td>
+<td>—</td>
+<td>Column to sort by: <code>identity_id</code>, <code>display_name</code>, <code>identity_type</code>. Falls back to <code>identity_id</code> if invalid.</td>
+</tr>
+<tr>
+<td><code>sort_order</code></td>
+<td>string</td>
+<td><code>asc</code></td>
+<td>Sort direction: <code>asc</code> or <code>desc</code>. Applied when no temporal params are set.</td>
+</tr>
+<tr>
+<td><code>tag_key</code></td>
+<td>string</td>
+<td>—</td>
+<td>Filter to identities that have this tag key</td>
+</tr>
+<tr>
+<td><code>tag_value</code></td>
+<td>string</td>
+<td>—</td>
+<td>Narrow <code>tag_key</code> filter to this value (requires <code>tag_key</code>)</td>
 </tr>
 </tbody>
 </table>
+<p><code>search</code>, <code>sort_by</code>, <code>sort_order</code>, <code>tag_key</code>, and <code>tag_value</code> apply only when no temporal params are set.</p>
 <p><strong>Response fields per item:</strong> <code>ecosystem</code>, <code>tenant_id</code>, <code>identity_id</code>, <code>identity_type</code>, <code>display_name</code>, <code>created_at</code>, <code>deleted_at</code>, <code>last_seen_at</code>, <code>metadata</code>.</p>
 <hr />
 <h2 id="inventory">Inventory<a class="headerlink" href="#inventory" title="Permanent link">&para;</a></h2>
