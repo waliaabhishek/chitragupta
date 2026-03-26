@@ -1,5 +1,4 @@
 import type React from "react";
-import "ag-grid-community/styles/ag-grid.css";
 import type { ColDef, IDatasource, IGetRowsParams } from "ag-grid-community";
 import { AgGridReact } from "ag-grid-react";
 import { type MutableRefObject, type Ref, useMemo, useEffect, useRef, useImperativeHandle } from "react";

@@ -1,5 +1,4 @@
 import type React from "react";
-import "ag-grid-community/styles/ag-grid.css";
 import type {
   ColDef,
   IDatasource,
