@@ -1249,6 +1249,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#changed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Changed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1322,6 +1333,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#changed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Changed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1373,6 +1395,13 @@ derives status from deleted_at via SQL CASE. New TypeStatusCounts frozen
 dataclass in core.models.counts. Frontend displays total prominently with
 "Active: N / Deleted: N" secondary text. All existing tests updated;
 new tests for mixed-status resources and identity deleted_at derivation. (<a href="https://github.com/waliaabhishek/chitragupta/commit/cc1def8e912806a52baf7c48f705527cc85be945">cc1def8</a>)</p>
+<h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Refactor: Move docker commands to examples/dev/Makefile</li>
+</ul>
+<p>Automated builds handle production images now. Removed all docker
+targets from root Makefile and added a simple Makefile in examples/dev/
+with up, down, logs, and clean targets. (<a href="https://github.com/waliaabhishek/chitragupta/commit/7e57bbf7d8f79ecdf5a031b59a4c979c75a81a83">7e57bbf</a>)</p>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Fix: TASK-159 — Add timezone picker to filter panels and wire to API</li>
