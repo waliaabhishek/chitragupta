@@ -20,9 +20,9 @@ interface UseThemeReturn {
 export function useTheme(): UseThemeReturn {
   const [mode, setMode] = useState<ThemeMode>(getInitialTheme);
 
-  // Keep document.body in sync so AG Grid CSS vars respond to theme changes
   useEffect(() => {
     document.body.setAttribute("data-theme", mode);
+    document.body.setAttribute("data-ag-theme-mode", mode);
   }, [mode]);
 
   const toggleTheme = useCallback(() => {

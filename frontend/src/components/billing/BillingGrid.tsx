@@ -4,7 +4,7 @@ import { AgGridReact } from "ag-grid-react";
 import { type MutableRefObject, type Ref, useMemo, useEffect, useRef, useImperativeHandle } from "react";
 import { API_URL } from "../../config";
 import type { BillingLineResponse, PaginatedResponse } from "../../types/api";
-import { GRID_THEME_CLASS, defaultColDef } from "../../utils/gridDefaults";
+import { gridTheme, defaultColDef } from "../../utils/gridDefaults";
 import { dateFormatter, currencyFormatter } from "../../utils/gridFormatters";
 
 interface BillingGridProps {
@@ -81,9 +81,10 @@ export function BillingGrid({ tenantName, filters, ref }: BillingGridProps): Rea
   }, [datasource]);
 
   return (
-    <div className={GRID_THEME_CLASS} style={{ flex: 1, minHeight: 400 }}>
+    <div style={{ flex: 1, minHeight: 400 }}>
       <AgGridReact
         ref={internalRef}
+        theme={gridTheme}
         columnDefs={columnDefs}
         defaultColDef={defaultColDef}
         rowModelType="infinite"

@@ -78,9 +78,6 @@ vi.mock("ag-grid-react", async () => {
   };
 });
 
-// Mock AG Grid CSS imports (not available in jsdom).
-vi.mock("ag-grid-community/styles/ag-grid.css", () => ({}));
-
 // Mock antd Tag
 vi.mock("antd", () => ({
   Tag: ({ children }: { children: React.ReactNode }) => <span>{children}</span>,
