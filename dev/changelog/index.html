@@ -1402,8 +1402,13 @@ intervals. 21 tests, zero regressions. (<a href="https://github.com/waliaabhishe
 <p>Updated performance metrics and added custom tags support. (<a href="https://github.com/waliaabhishek/chitragupta/commit/6ccfe235da3d014c3466bdb4b7ed997a03627772">6ccfe23</a>)</p>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
-<li>Fix: Auto-detect docker compose v1/v2 in dev Makefile (<a href="https://github.com/waliaabhishek/chitragupta/commit/6094965b2578738defc1386b37d290180cf933b7">6094965</a>)</li>
+<li>Fix: AG Grid theme not applying — add Alpine base class, sorting, resizing, and alternating rows</li>
 </ul>
+<p>The grid wrapper divs used className="ag-theme-chitragupta" but ag-theme-alpine.css
+only targets .ag-theme-alpine, so Alpine's visual styles never applied. Now uses both
+classes. Also adds shared defaultColDef with sortable/resizable and subtle alternating
+row backgrounds for both light and dark modes. (<a href="https://github.com/waliaabhishek/chitragupta/commit/4ecc39c00df416314423a7145ea6ac0c3383bcdb">4ecc39c</a>)
+- Fix: Auto-detect docker compose v1/v2 in dev Makefile (<a href="https://github.com/waliaabhishek/chitragupta/commit/6094965b2578738defc1386b37d290180cf933b7">6094965</a>)</p>
 
 
 
