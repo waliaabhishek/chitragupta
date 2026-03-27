@@ -1249,6 +1249,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#changed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Changed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#documentation" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1333,6 +1344,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#changed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Changed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#documentation" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1395,6 +1417,13 @@ Descriptions component, and Per-Date Processing Status table with boolean
 icon columns. Uses existing useReadiness() context for live pipeline state
 and @tanstack/react-query useQuery for API fetches with adaptive refetch
 intervals. 21 tests, zero regressions. (<a href="https://github.com/waliaabhishek/chitragupta/commit/730133c6aaaaf44c85a7702fe0b49c64d8804f9c">730133c</a>)</p>
+<h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Refactor: Standardize all tables on AG Grid, remove Ant Design Table usage</li>
+</ul>
+<p>Migrate AllocationIssuesTable to AG Grid infinite scroll with server-side
+pagination and PipelineStatus table to AG Grid client-side row model.
+Delete unused useAllocationIssues hook. Update tests for both components. (<a href="https://github.com/waliaabhishek/chitragupta/commit/f29cbce45807fa890be496cc80fb5db7ef18bc58">f29cbce</a>)</p>
 <h3 id="documentation">Documentation<a class="headerlink" href="#documentation" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Docs: Update README.md</li>
