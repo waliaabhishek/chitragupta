@@ -1238,6 +1238,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Added
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#documentation" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1311,6 +1322,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Added
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#documentation" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1362,6 +1384,17 @@
 <p>The format is based on <a href="https://keepachangelog.com/en/1.0.0/">Keep a Changelog</a>,
 and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semantic Versioning</a>.</p>
 <h2 id="unreleased">[Unreleased]<a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
+<h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Feat: TASK-163 — Pipeline Status page with workflow stepper visualization</li>
+</ul>
+<p>Replace placeholder with full pipeline status page: horizontal Ant Design
+Steps stepper showing gathering/calculating/emitting stages, Run Pipeline
+button with POST trigger and feedback alerts, Last Run Summary card with
+Descriptions component, and Per-Date Processing Status table with boolean
+icon columns. Uses existing useReadiness() context for live pipeline state
+and @tanstack/react-query useQuery for API fetches with adaptive refetch
+intervals. 21 tests, zero regressions. (<a href="https://github.com/waliaabhishek/chitragupta/commit/730133c6aaaaf44c85a7702fe0b49c64d8804f9c">730133c</a>)</p>
 <h3 id="documentation">Documentation<a class="headerlink" href="#documentation" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Docs: Update README.md</li>
