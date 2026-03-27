@@ -1402,8 +1402,17 @@ intervals. 21 tests, zero regressions. (<a href="https://github.com/waliaabhishe
 <p>Updated performance metrics and added custom tags support. (<a href="https://github.com/waliaabhishek/chitragupta/commit/6ccfe235da3d014c3466bdb4b7ed997a03627772">6ccfe23</a>)</p>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
-<li>Fix: AG Grid theme not applying — add Alpine base class, sorting, resizing, and alternating rows</li>
+<li>Fix: Migrate AG Grid from legacy CSS to v35 JS Theme API</li>
 </ul>
+<p>AG Grid v35 defaults to themeQuartz (JS-based). Without setting the theme
+prop, the grid injected Quartz styles that conflicted with our legacy CSS
+imports, causing themes to break on navigation between pages.</p>
+<p>Migrated to the proper v35 approach: themeAlpine.withParams() for light
+mode, .withParams({}, "dark") for dark mode, with data-ag-theme-mode
+attribute on body for mode switching. Removed all legacy CSS imports and
+the ag-grid-theme.css override file. Added defaultColDef with sortable
+and resizable to all grids. (<a href="https://github.com/waliaabhishek/chitragupta/commit/95a0f9445055c3e3caca44dd125c654446e32e49">95a0f94</a>)
+- Fix: AG Grid theme not applying — add Alpine base class, sorting, resizing, and alternating rows</p>
 <p>The grid wrapper divs used className="ag-theme-chitragupta" but ag-theme-alpine.css
 only targets .ag-theme-alpine, so Alpine's visual styles never applied. Now uses both
 classes. Also adds shared defaultColDef with sortable/resizable and subtle alternating
