@@ -5,25 +5,253 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
-
-### Fixed
-
-- Fix: All date-filtered API endpoints now accept an optional `timezone` query parameter (IANA string, e.g. `America/Denver`) to compute date boundaries in the user's local timezone before converting to UTC (TASK-158)
-- Fix(frontend): Timezone picker added to filter panels (Chargebacks, Billing, Dashboard). Defaults to browser timezone, persists to localStorage, syncs via URL param. All date-filtered API calls (grid, aggregate, allocation issues, CSV export) now include the `timezone` parameter, resolving data discrepancy with Grafana for non-UTC users (TASK-159)
-- Fix: Add timezone parameter to `resolve_date_range` to correct date boundary calculations for non-UTC users (TASK-157)
-- Fix: `IdentityResolver` protocol now includes `context: ResolveContext | None = None` parameter, matching `ServiceHandler.resolve_identities` signature. Custom identity resolvers with the `context` parameter are no longer incorrectly rejected by signature validation.
-- Fix: Resource cache in orchestrator now keys by billing window, eliminating `setdefault()` collision when the same resource spans multiple windows. Active-fraction calculations use the correct per-window resource lifecycle state.
-- Fix(ccloud): Tiered pricing rows (same resource/date/product at different price points) were silently overwritten during ingestion due to PK collision at upsert. `_fetch_window()` now aggregates rows sharing the same 7-field billing key before yielding, preserving correct total costs. Tier breakdown is stored in `metadata["tiers"]`.
+## [2.0.0] - 2026-03-27
 
 ### Added
+- Feat: TASK-163 — Pipeline Status page with workflow stepper visualization
 
-- Feat: Unified AG Grid table system with custom `ag-theme-chitragupta` theme that syncs to Ant Design dark/light mode via `document.body[data-theme]`. Identities, Resources, and Tags pages migrated from Ant Design `<Table>` to AG Grid with infinite scroll. Server-side search (ILIKE on ID and display name), sort (allowlisted columns, `asc`/`desc`), and tag key/value filtering added to `GET /tenants/{tenant}/identities` and `GET /tenants/{tenant}/resources`. Filter state persisted to URL query params. AllocationIssuesTable kept as Ant Table (bounded volume). (TASK-161)
-- Feat: Entity-level tag system replaces dimension-level tags. Tags now attach to resources and identities, propagate to chargebacks at query time via resource_id/identity_id joins. New entity-scoped CRUD endpoints, bulk tagging, tag-based chargeback filtering. Old `custom_tags` table dropped; `tags` table created. `ChargebackResponse.tags` changed from `list[str]` to `dict[str, str]` (TASK-160.01)
-- Feat: Inventory summary (`GET /tenants/{tenant}/inventory/summary`) now returns per-type active/deleted breakdown — `resource_counts` and `identity_counts` values are `{total, active, deleted}` objects instead of flat integers. Frontend inventory counters display totals with "Active: N / Deleted: N" secondary text.
-- Feat(frontend): TanStack Query v5 client-side data caching — all five data-fetching hooks (`useAggregation`, `useDataAvailability`, `useInventorySummary`, `useAllocationIssues`, `useFilterOptions`) now use `useQuery` with shared `QueryClient` cache. Navigating between pages returns cached data instantly without re-fetching. Default staleTime 5 min, gcTime 10 min, refetchOnWindowFocus disabled. Zero consumer component changes required.
-- Feat(frontend): Billing List Page — replaces "Coming soon" placeholder at `/billing` with functional billing data viewer. AG Grid infinite scroll against `GET /tenants/{tenant_name}/billing`, date range / product type / resource filters with URL sync and localStorage persistence, reset and refresh controls. Shared utility extraction: `dateFilterStorage`, `gridFormatters`, `filterHelpers` now serve both billing and chargebacks features.
-- Feat(frontend): Pipeline Status page replaces "Coming soon" placeholder with live pipeline visibility. Shows a three-stage workflow stepper (Gathering → Calculating → Emitting) driven by `useReadiness()` context, a "Run Pipeline" button with disabled states (pipeline running, API-only mode, read-only), a Last Run Summary card with `Descriptions` of dates gathered/calculated/chargeback rows, and a Per-Date Processing Status table with date-descending sort and bool icons. Frontend-only change; no backend modifications. (TASK-163)
+Replace placeholder with full pipeline status page: horizontal Ant Design
+Steps stepper showing gathering/calculating/emitting stages, Run Pipeline
+button with POST trigger and feedback alerts, Last Run Summary card with
+Descriptions component, and Per-Date Processing Status table with boolean
+icon columns. Uses existing useReadiness() context for live pipeline state
+and @tanstack/react-query useQuery for API fetches with adaptive refetch
+intervals. 21 tests, zero regressions. ([730133c](https://github.com/waliaabhishek/chitragupta/commit/730133c6aaaaf44c85a7702fe0b49c64d8804f9c))
+
+
+### Changed
+- Refactor: Standardize all tables on AG Grid, remove Ant Design Table usage
+
+Migrate AllocationIssuesTable to AG Grid infinite scroll with server-side
+pagination and PipelineStatus table to AG Grid client-side row model.
+Delete unused useAllocationIssues hook. Update tests for both components. ([f29cbce](https://github.com/waliaabhishek/chitragupta/commit/f29cbce45807fa890be496cc80fb5db7ef18bc58))
+
+
+### Documentation
+- Docs: Update README.md
+
+Updated performance metrics and added custom tags support. ([6ccfe23](https://github.com/waliaabhishek/chitragupta/commit/6ccfe235da3d014c3466bdb4b7ed997a03627772))
+
+
+### Fixed
+- Fix: Migrate AG Grid from legacy CSS to v35 JS Theme API
+
+AG Grid v35 defaults to themeQuartz (JS-based). Without setting the theme
+prop, the grid injected Quartz styles that conflicted with our legacy CSS
+imports, causing themes to break on navigation between pages.
+
+Migrated to the proper v35 approach: themeAlpine.withParams() for light
+mode, .withParams({}, "dark") for dark mode, with data-ag-theme-mode
+attribute on body for mode switching. Removed all legacy CSS imports and
+the ag-grid-theme.css override file. Added defaultColDef with sortable
+and resizable to all grids. ([95a0f94](https://github.com/waliaabhishek/chitragupta/commit/95a0f9445055c3e3caca44dd125c654446e32e49))
+- Fix: AG Grid theme not applying — add Alpine base class, sorting, resizing, and alternating rows
+
+The grid wrapper divs used className="ag-theme-chitragupta" but ag-theme-alpine.css
+only targets .ag-theme-alpine, so Alpine's visual styles never applied. Now uses both
+classes. Also adds shared defaultColDef with sortable/resizable and subtle alternating
+row backgrounds for both light and dark modes. ([4ecc39c](https://github.com/waliaabhishek/chitragupta/commit/4ecc39c00df416314423a7145ea6ac0c3383bcdb))
+- Fix: Auto-detect docker compose v1/v2 in dev Makefile ([6094965](https://github.com/waliaabhishek/chitragupta/commit/6094965b2578738defc1386b37d290180cf933b7))
+
+
+## [2.0.0-rc3] - 2026-03-27
+
+### Added
+- Feat: TASK-161 — Unified AG Grid table system with Ant Design theme sync and server-side filtering
+
+Standardize all table views on AG Grid with custom ag-theme-chitragupta theme
+matching Ant Design's visual style. Theme syncs with dark/light mode toggle via
+data-theme attribute on document.body. Migrate Identities, Resources, and Tags
+pages from Ant Table to AG Grid with infinite scroll, filter bars, and URL param
+persistence. Extend identity and resource list API endpoints with search (ILIKE),
+sort_by, sort_order, tag_key, and tag_value query params. Keep AllocationIssuesTable
+as Ant Table (bounded volume, dashboard context). ([7ed0fc0](https://github.com/waliaabhishek/chitragupta/commit/7ed0fc00c6a9db3a72ed05deef6f8fc53a830c3a))
+- Feat: TASK-160.02 — Frontend entity tag editor, inherited tag display, and tag-based filtering
+
+Replace dimension-level tag UI with entity-level tag system: new EntityTagEditor
+component for resources/identities, read-only inherited tags on chargeback views,
+tag key/value filter inputs, and removal of old TagEditor/BulkTagModal/SelectionToolbar. ([f1dfdda](https://github.com/waliaabhishek/chitragupta/commit/f1dfdda5c8d8473d354d77bb99bcec1d0a536101))
+- Feat: TASK-160.01 — Entity-level tag system replacing dimension-level tags
+
+Tags now attach to core entities (resources, identities) instead of
+ephemeral chargeback dimensions. Chargebacks inherit tags at query time
+via resource_id/identity_id joins with resource tags overriding identity
+tags on key collision. Old custom_tags table dropped, new tags table
+created. ChargebackResponse.tags changed from list[str] to dict[str,str]. ([0211241](https://github.com/waliaabhishek/chitragupta/commit/02112416a87f25260481b4af38f744e533503f65))
+- Feat: Add help target to dev stack Makefile ([7c5f215](https://github.com/waliaabhishek/chitragupta/commit/7c5f215162d860c24b8261c40d50d73489290a92))
+- Feat: Development environment for Docker based app ([197b418](https://github.com/waliaabhishek/chitragupta/commit/197b4189795bfbd7395b1c43a35ea3f7044b9eca))
+- Feat: TASK-156 — Add active/deleted status breakdown to Inventory UI
+
+Full-stack change: inventory summary now returns per-type active/deleted
+counts. ResourceRepository groups by status column; IdentityRepository
+derives status from deleted_at via SQL CASE. New TypeStatusCounts frozen
+dataclass in core.models.counts. Frontend displays total prominently with
+"Active: N / Deleted: N" secondary text. All existing tests updated;
+new tests for mixed-status resources and identity deleted_at derivation. ([cc1def8](https://github.com/waliaabhishek/chitragupta/commit/cc1def8e912806a52baf7c48f705527cc85be945))
+
+
+### Changed
+- Refactor: Move docker commands to examples/dev/Makefile
+
+Automated builds handle production images now. Removed all docker
+targets from root Makefile and added a simple Makefile in examples/dev/
+with up, down, logs, and clean targets. ([7e57bbf](https://github.com/waliaabhishek/chitragupta/commit/7e57bbf7d8f79ecdf5a031b59a4c979c75a81a83))
+
+
+### Fixed
+- Fix: AG Grid infinite row model stuck after aborted fetch in all grid components
+
+When a fetch was aborted via AbortController, the getRows error handler
+silently returned without calling successCallback or failCallback. This
+left AG Grid's block in a permanent "in-flight" state, preventing any
+subsequent purgeInfiniteCache from triggering new data fetches. The grid
+appeared permanently empty when typing in text-based filter inputs (tag
+key/value) since each keystroke aborted the previous request.
+
+Always call failCallback() on any fetch error so AG Grid properly resets
+the block state and allows cache purges to trigger fresh getRows calls. ([8ccff0f](https://github.com/waliaabhishek/chitragupta/commit/8ccff0f0ecc26f6cba8046b7b7f08f6c5d2f847b))
+- Fix: TASK-162 — AG Grid theme with alpine base CSS, Ant Design visual parity, and test rewrites
+
+Add ag-theme-alpine.css as base theme import so ag-theme-chitragupta CSS
+variable overrides actually apply. Enhanced theme CSS with structural
+overrides for Ant Design Table parity: horizontal-only borders, no grid
+border, font-weight 500 headers, 48px row height, no cell focus outline,
+no zebra striping. Centralized all AG Grid CSS imports in main.tsx and
+removed per-component imports. Rewrote identity/resource/tag list page
+tests to mock new AG Grid components instead of Ant Design Table. Added
+TagsGrid.test.tsx for edit/delete/error/readonly behavior coverage.
+
+42 test files, 316 tests passing. tsc + vite build clean. ([36480ad](https://github.com/waliaabhishek/chitragupta/commit/36480ad9b4927cc45824d88d2a6cce2ed3f5bf0d))
+- Fix: Resolve TypeScript errors in frontend tests and add tsc pre-commit hook
+
+Test files were missing tag_key/tag_value fields on ChargebackFilters,
+EntityTagEditor tests used wrong types, and the Docker build failed on
+tsc. Added a pre-commit hook to run frontend typecheck on .ts/.tsx changes. ([5de1193](https://github.com/waliaabhishek/chitragupta/commit/5de1193b34b9b52bb65bf3fe11716a21169bbc78))
+- Fix: Bump requests 2.32.5→2.33.0 and picomatch 4.0.3→4.0.4 for Dependabot alerts
+
+Resolves 2 moderate GitHub Dependabot vulnerabilities:
+- requests: insecure temp file reuse in extract_zipped_paths()
+- picomatch: method injection in POSIX character classes ([416db5e](https://github.com/waliaabhishek/chitragupta/commit/416db5eba6b9b4bcc8bd04b6153d3cf3c9e45acf))
+- Fix: TASK-159 — Add timezone picker to filter panels and wire to API
+
+Frontend timezone Select added to Chargebacks, Billing, and Dashboard
+filter panels. Defaults to browser timezone, persists to localStorage
+(user_timezone), syncs via URL search param. All date-filtered API
+calls (grid, aggregate, allocation issues, CSV export) now include the
+timezone parameter, resolving the data discrepancy where UI totals
+diverged from Grafana for non-UTC users. ([dee6e39](https://github.com/waliaabhishek/chitragupta/commit/dee6e39deaa2578cf9c6362937259293f9d8529a))
+- Fix: TASK-158 — Add timezone query param to all date-filtered API endpoints
+
+Wire the timezone parameter (added to resolve_date_range in TASK-157) through
+all 6 call sites: billing, chargebacks (list + allocation-issues), aggregation,
+export, and tags bulk-by-filter. GET endpoints accept timezone as a query param;
+POST endpoints accept it in the request body via ExportRequest and
+BulkTagByFilterRequest schemas. Backward compatible — omitting timezone
+preserves UTC behavior. ([050e7b5](https://github.com/waliaabhishek/chitragupta/commit/050e7b55c7652fee1cf3a847493ce40cefd7b1a7))
+- Fix: TASK-157 — Add timezone parameter to resolve_date_range
+
+resolve_date_range now accepts an optional IANA timezone string so date
+boundaries are computed in the user's local timezone before converting
+to UTC. Fixes data discrepancy where non-UTC users missed records near
+midnight boundaries (e.g. America/Denver end_date=Dec 31 now correctly
+produces end_dt=2026-01-01T07:00:00 UTC instead of 00:00:00 UTC). ([35800b0](https://github.com/waliaabhishek/chitragupta/commit/35800b0bd1f17e11b4480b3ab3502495842d5709))
+- Fix: Remove 10k row limit on aggregate endpoint that silently truncated totals
+
+The hardcoded limit=10000 on the aggregate SQL query caused the dashboard
+to show $8k instead of $16.6k when identity_id × daily buckets exceeded
+10k rows. Grafana was correct because it queries SQLite directly. ([3353312](https://github.com/waliaabhishek/chitragupta/commit/3353312207e4222bd9c391a675a081338bef8328))
+
+
+## [2.0.0-rc2] - 2026-03-25
+
+### Added
+- Feat: TASK-155 — Add TanStack Query v5 for client-side data caching
+
+Convert all five data-fetching hooks (useAggregation, useDataAvailability,
+useInventorySummary, useAllocationIssues, useFilterOptions) from
+useState+useEffect+fetch to useQuery with shared QueryClient cache.
+Page navigation now returns cached data instantly without re-fetching.
+
+- QueryClientProvider between AntApp and TenantProvider (staleTime 5min,
+  gcTime 10min, refetchOnWindowFocus false, retry 1)
+- ReactQueryDevtools in dev mode
+- All hook return types preserved — zero consumer changes
+- All 258 tests pass with QueryClientProvider test wrapper ([82c74d4](https://github.com/waliaabhishek/chitragupta/commit/82c74d40acf8319035fae2c4a54252248096815c))
+- Feat: TASK-154 — Implement Billing List Page with shared utility extraction
+
+Replace the "Coming soon" placeholder at /billing with a functional billing
+data viewer: AG Grid infinite scroll, date/product/resource filters with URL
+sync and localStorage persistence, reset and refresh controls.
+
+Extract shared utilities (dateFilterStorage, gridFormatters, filterHelpers)
+from chargebacks code to eliminate duplication across both features. ([1cf96e6](https://github.com/waliaabhishek/chitragupta/commit/1cf96e67083837ecb8747445b05a933d229d0766))
+
+
+### Changed
+- Tests: Suppress 20 harmless pytest warnings via filterwarnings
+
+Filter SAWarning from Alembic batch-mode PK mismatch on SQLite temp
+tables and ResourceWarning from GC'd in-memory SQLite connections. ([de4a0b0](https://github.com/waliaabhishek/chitragupta/commit/de4a0b062f23a4b92856c58141dc46fba9229880))
+- Docker: Add version pinning via CHITRAGUPTA_VERSION and explicit container names
+
+- Example compose files now use ${CHITRAGUPTA_VERSION:-latest} for image tags
+- Added CHITRAGUPTA_VERSION=latest to all .env.example files
+- Added container_name to all services to avoid -1 suffix in logs
+- Release notes now include Docker pull commands and .env pin instructions ([e20ae43](https://github.com/waliaabhishek/chitragupta/commit/e20ae4340a8d221db2495f2f3abb84fd77f44618))
+
+
+### Fixed
+- Fix: Resolve pre-existing lint errors across frontend and backend
+
+- FilterPanel.test.tsx: remove unused `_` params in format callbacks
+- chargebacks/list.tsx: move eslint-disable to correct line
+- test_cost_input.py: fix import sorting (I001) and add strict=True to zip (B905) ([cea15b8](https://github.com/waliaabhishek/chitragupta/commit/cea15b858f65b6d74631307499b1fc844537ce9b))
+- Fix: Register AG Grid modules to fix empty Chargebacks page
+
+AG Grid v35 requires explicit module registration. Without it, the
+infinite row model silently fails (error #272) and no API calls are
+made, leaving the Chargebacks grid permanently empty.
+
+Also add **/data/ to .gitignore. ([c6df56f](https://github.com/waliaabhishek/chitragupta/commit/c6df56f5e74cfa8eb68f6e9543179e3d5184f020))
+- Fix: TASK-153 — Aggregate tiered billing rows in CCloud gather()
+
+Confluent Cloud billing API returns multiple rows per resource/date/product
+when tiered pricing applies (different price points for the same line item).
+These rows share the same 7-field billing PK, causing the second tier to
+silently overwrite the first via session.merge(), losing cost data.
+
+Adds tier aggregation in _fetch_window() before yielding: rows sharing the
+same billing key are merged into a single CCloudBillingLineItem with summed
+costs. Per-tier breakdown preserved in metadata["tiers"] for auditability.
+Single-row keys pass through unchanged. Plugin-scoped fix — no schema
+migration, no core engine changes. ([6a99169](https://github.com/waliaabhishek/chitragupta/commit/6a991691e8c360f3613bb02f4682854afa340cd3))
+- Fix: Pre-create /app/data dir in Dockerfile for named-volume compatibility
+
+Docker named volumes mount as root:root when the target directory doesn't
+exist in the image. appuser (uid 1000) cannot write, causing Alembic
+migrations to fail with "unable to open database file" on fresh volumes. ([538abdb](https://github.com/waliaabhishek/chitragupta/commit/538abdbba1f75473431ca0abcdc237ee0c4582e0))
+- Fix: TASK-124 — Eliminate resource cache multi-window collision in orchestrator
+
+_build_resource_cache now keys by (b_start, b_end) billing window tuple,
+matching the existing _build_tenant_period_cache pattern. This eliminates
+the setdefault() collision where non-deterministic set iteration could
+shadow a resource from one window with the same resource_id from another.
+_collect_billing_line_rows uses window-scoped sub-dict for both
+active_fraction lookup and ResolveContext, preserving the dict[str, Resource]
+contract for downstream handlers. ([a03d63e](https://github.com/waliaabhishek/chitragupta/commit/a03d63e83c30c9028effed38f6ced11333ff9216))
+- Fix: TASK-122 — Add missing context parameter to IdentityResolver protocol
+
+IdentityResolver.__call__ had 6 params while ServiceHandler.resolve_identities
+had 7 (including context: ResolveContext | None). This caused _validate_signature
+to reject valid 7-param custom identity resolvers with a false TypeError. ([7511bbe](https://github.com/waliaabhishek/chitragupta/commit/7511bbe0d00856d7cbfbfffb3a13c32f4c421fa4))
+
+
+### Security
+- Security: Bump flatted 3.4.1 → 3.4.2 to fix CVE-2026-33228
+
+Resolves Dependabot alert #5 — high-severity prototype pollution
+via parse() in flatted. Dev dependency only (eslint → flat-cache). ([cdfacb1](https://github.com/waliaabhishek/chitragupta/commit/cdfacb1e36a923be660ee1eece4a69d9ff9a77c9))
+
 
 ## [2.0.0.rc1] - 2026-03-24
 
