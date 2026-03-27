@@ -56,7 +56,6 @@ vi.mock("antd", () => ({
     onClick,
     type: btnType,
     danger,
-    size: _size,
   }: {
     children: ReactNode;
     onClick?: () => void;
@@ -284,8 +283,6 @@ describe("TagsGrid", () => {
   });
 
   it("datasource fetches tags from API with queryParams", async () => {
-    let capturedDatasource: IDatasource | undefined;
-
     server.use(
       http.get("/api/v1/tenants/acme/tags", () => {
         return HttpResponse.json({
@@ -302,7 +299,7 @@ describe("TagsGrid", () => {
       <TagsGrid tenantName="acme" queryParams={{ tag_key: "env" }} isReadOnly={false} />,
     );
 
-    capturedDatasource = capturedProps.datasource;
+    const capturedDatasource = capturedProps.datasource;
     expect(capturedDatasource).toBeDefined();
 
     const successCallback = vi.fn();

@@ -1,25 +1,371 @@
 import type React from "react";
-import { Typography } from "antd";
-import { useTenant } from "../../providers/TenantContext";
+import { useState } from "react";
+import {
+  Alert,
+  Button,
+  Card,
+  Col,
+  Descriptions,
+  Row,
+  Steps,
+  Table,
+  Typography,
+} from "antd";
+import {
+  CheckCircleOutlined,
+  ClockCircleOutlined,
+  PlayCircleOutlined,
+} from "@ant-design/icons";
+import { useQuery } from "@tanstack/react-query";
+import type {
+  PipelineRunResponse,
+  PipelineStateResponse,
+  PipelineStatusResponse,
+  TenantStatusDetailResponse,
+  TenantStatusSummary,
+} from "../../types/api";
+import { useTenant, useReadiness } from "../../providers/TenantContext";
+import { API_URL } from "../../config";
 
 const { Title, Text } = Typography;
+
+// ---------------------------------------------------------------------------
+// Stage helpers
+// ---------------------------------------------------------------------------
+
+const STAGES = ["gathering", "calculating", "emitting"] as const;
+type Stage = (typeof STAGES)[number];
+
+function stageDescription(stage: Stage, currentDate: string | null): string {
+  switch (stage) {
+    case "gathering":
+      return "Gathering billing and resource data";
+    case "calculating":
+      // currentDate is only shown for "calculating" — it represents the specific
+      // chargeback date being processed, which is only meaningful in this stage.
+      return currentDate
+        ? `Calculating chargebacks for ${currentDate}`
+        : "Calculating chargebacks";
+    case "emitting":
+      return "Finalizing output";
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Stepper logic (AC-1)
+// ---------------------------------------------------------------------------
+
+interface StepperConfig {
+  status: "process" | "finish" | "wait" | "error";
+  description?: string;
+}
+
+function buildStepperItems(
+  pipelineRunning: boolean,
+  pipelineStage: string | null,
+  pipelineCurrentDate: string | null,
+  lastRunStatus: string | null,
+  lastRunAt: string | null,
+): StepperConfig[] {
+  // Never run
+  if (!lastRunStatus && !pipelineRunning) {
+    return STAGES.map(() => ({ status: "wait" }));
+  }
+
+  // Idle + success → all finish, completion timestamp on last stage
+  if (!pipelineRunning && lastRunStatus === "completed") {
+    return STAGES.map((_, i) => ({
+      status: "finish",
+      description:
+        i === STAGES.length - 1 && lastRunAt
+          ? `Completed at ${lastRunAt}`
+          : undefined,
+    }));
+  }
+
+  // Idle + failed → find the failed stage index; error on it, finish before, wait after.
+  // When pipelineStage is null or unknown after failure, default error to first stage.
+  if (!pipelineRunning && lastRunStatus === "failed") {
+    const rawIdx = pipelineStage ? STAGES.indexOf(pipelineStage as Stage) : 0;
+    const failedIdx = rawIdx === -1 ? 0 : rawIdx;
+    return STAGES.map((_, i) => {
+      if (i < failedIdx) return { status: "finish" };
+      if (i === failedIdx) return { status: "error" };
+      return { status: "wait" };
+    });
+  }
+
+  // Running → active stage is "process", previous are "finish", future are "wait"
+  if (pipelineRunning && pipelineStage) {
+    const activeIdx = STAGES.indexOf(pipelineStage as Stage);
+    if (activeIdx !== -1) {
+      return STAGES.map((s, i) => {
+        if (i < activeIdx) return { status: "finish" };
+        if (i === activeIdx) {
+          return {
+            status: "process",
+            description: stageDescription(s, pipelineCurrentDate),
+          };
+        }
+        return { status: "wait" };
+      });
+    }
+    // Unknown stage string — fall through to "running but stage unknown" branch
+  }
+
+  // Running but stage unknown (transient)
+  return STAGES.map((_, i) =>
+    i === 0 ? { status: "process" } : { status: "wait" },
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Table helpers — hoisted to module level to avoid new references each render
+// ---------------------------------------------------------------------------
+
+const renderBoolIcon = (v: boolean) =>
+  v ? (
+    <CheckCircleOutlined style={{ color: "#52c41a" }} />
+  ) : (
+    <ClockCircleOutlined style={{ color: "#d9d9d9" }} />
+  );
+
+const stateColumns = [
+  {
+    title: "Date",
+    dataIndex: "tracking_date",
+    key: "tracking_date",
+    sorter: (a: PipelineStateResponse, b: PipelineStateResponse) =>
+      a.tracking_date.localeCompare(b.tracking_date),
+    defaultSortOrder: "descend" as const,
+  },
+  {
+    title: "Billing Gathered",
+    dataIndex: "billing_gathered",
+    key: "billing_gathered",
+    render: renderBoolIcon,
+  },
+  {
+    title: "Resources Gathered",
+    dataIndex: "resources_gathered",
+    key: "resources_gathered",
+    render: renderBoolIcon,
+  },
+  {
+    title: "Chargeback Calculated",
+    dataIndex: "chargeback_calculated",
+    key: "chargeback_calculated",
+    render: renderBoolIcon,
+  },
+];
+
+// ---------------------------------------------------------------------------
+// Inner page component — all hooks unconditionally called (tenant always set)
+// ---------------------------------------------------------------------------
+
+interface StatusContentProps {
+  tenant: TenantStatusSummary;
+}
+
+function PipelineStatusContent({
+  tenant,
+}: StatusContentProps): React.JSX.Element {
+  const { isReadOnly } = useTenant();
+  const { readiness } = useReadiness();
+
+  const [runResult, setRunResult] = useState<{
+    type: "success" | "warning" | "error";
+    message: string;
+  } | null>(null);
+  const [isRunning, setIsRunning] = useState(false);
+
+  const tenantReadiness = readiness?.tenants.find(
+    (t) => t.tenant_name === tenant.tenant_name,
+  );
+  const pipelineRunning = tenantReadiness?.pipeline_running ?? false;
+  const isApiOnly = readiness?.mode === "api";
+
+  // AC-3: Last Run Summary — refetch faster while running
+  const statusQuery = useQuery<PipelineStatusResponse>({
+    queryKey: ["pipeline-status", tenant.tenant_name],
+    queryFn: async () => {
+      const res = await fetch(
+        `${API_URL}/tenants/${tenant.tenant_name}/pipeline/status`,
+      );
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json() as Promise<PipelineStatusResponse>;
+    },
+    refetchInterval: pipelineRunning ? 5000 : 30000,
+  });
+
+  // AC-4: Per-Date Processing Status — refetch faster while running
+  const statesQuery = useQuery<TenantStatusDetailResponse>({
+    queryKey: ["tenant-status", tenant.tenant_name],
+    queryFn: async () => {
+      const res = await fetch(
+        `${API_URL}/tenants/${tenant.tenant_name}/status`,
+      );
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json() as Promise<TenantStatusDetailResponse>;
+    },
+    refetchInterval: pipelineRunning ? 10000 : 60000,
+  });
+
+  // AC-1: Stepper items
+  const stepperItems = buildStepperItems(
+    pipelineRunning,
+    tenantReadiness?.pipeline_stage ?? null,
+    tenantReadiness?.pipeline_current_date ?? null,
+    tenantReadiness?.last_run_status ?? null,
+    tenantReadiness?.last_run_at ?? null,
+  ).map((cfg, i) => ({
+    title: STAGES[i].charAt(0).toUpperCase() + STAGES[i].slice(1),
+    status: cfg.status,
+    description: cfg.description,
+  }));
+
+  // AC-2: Run Pipeline handler
+  async function handleRunPipeline(): Promise<void> {
+    setIsRunning(true);
+    setRunResult(null);
+    try {
+      const res = await fetch(
+        `${API_URL}/tenants/${tenant.tenant_name}/pipeline/run`,
+        { method: "POST" },
+      );
+      const data = (await res.json()) as PipelineRunResponse;
+      if (res.ok) {
+        setRunResult({ type: "success", message: data.message });
+      } else {
+        setRunResult({
+          type: "warning",
+          message: data.message ?? "Unexpected response",
+        });
+      }
+    } catch (err) {
+      setRunResult({
+        type: "error",
+        message: err instanceof Error ? err.message : "Network error",
+      });
+    } finally {
+      setIsRunning(false);
+    }
+  }
+
+  const lastResult = statusQuery.data?.last_result ?? null;
+
+  return (
+    <Row gutter={[16, 16]}>
+      {/* Stepper — full width */}
+      <Col span={24}>
+        <Card>
+          <Steps items={stepperItems} />
+        </Card>
+      </Col>
+
+      {/* Left: Run Pipeline (AC-2) */}
+      <Col xs={24} sm={10} lg={8}>
+        <Card title="Run Pipeline">
+          <Button
+            type="primary"
+            icon={<PlayCircleOutlined />}
+            disabled={pipelineRunning || isApiOnly || isReadOnly || isRunning}
+            onClick={() => {
+              void handleRunPipeline();
+            }}
+            loading={isRunning}
+          >
+            Run Pipeline
+          </Button>
+          {runResult && (
+            <Alert
+              style={{ marginTop: 12 }}
+              type={runResult.type}
+              message={runResult.message}
+              showIcon
+            />
+          )}
+        </Card>
+      </Col>
+
+      {/* Right: Last Run Summary (AC-3) */}
+      <Col xs={24} sm={14} lg={16}>
+        <Card title="Last Run Summary" loading={statusQuery.isLoading}>
+          {statusQuery.isError && (
+            <Alert type="error" message="Failed to load pipeline status" />
+          )}
+          {!statusQuery.isLoading &&
+            !statusQuery.isError &&
+            lastResult === null && (
+              <Text type="secondary">No completed runs yet.</Text>
+            )}
+          {lastResult && (
+            <>
+              <Descriptions column={2} size="small">
+                <Descriptions.Item label="Completed At">
+                  {lastResult.completed_at}
+                </Descriptions.Item>
+                <Descriptions.Item label="Dates Gathered">
+                  {lastResult.dates_gathered}
+                </Descriptions.Item>
+                <Descriptions.Item label="Dates Calculated">
+                  {lastResult.dates_calculated}
+                </Descriptions.Item>
+                <Descriptions.Item label="Chargeback Rows Written">
+                  {lastResult.chargeback_rows_written}
+                </Descriptions.Item>
+              </Descriptions>
+              {lastResult.errors.map((e, i) => (
+                <Alert
+                  key={`${e}-${i}`}
+                  type="error"
+                  message={e}
+                  style={{ marginTop: 8 }}
+                />
+              ))}
+            </>
+          )}
+        </Card>
+      </Col>
+
+      {/* Bottom: Per-Date Processing Status (AC-4) */}
+      <Col span={24}>
+        <Card
+          title="Per-Date Processing Status"
+          loading={statesQuery.isLoading}
+        >
+          {statesQuery.isError && (
+            <Alert type="error" message="Failed to load processing status" />
+          )}
+          <Table<PipelineStateResponse>
+            dataSource={statesQuery.data?.states ?? []}
+            columns={stateColumns}
+            rowKey="tracking_date"
+            pagination={{ pageSize: 14, showSizeChanger: true }}
+            size="small"
+          />
+        </Card>
+      </Col>
+    </Row>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Top-level page — tenant guard + context hooks
+// ---------------------------------------------------------------------------
 
 export function PipelineStatusPage(): React.JSX.Element {
   const { currentTenant } = useTenant();
 
-  if (!currentTenant) {
-    return (
-      <div>
-        <Title level={3}>Pipeline Status</Title>
-        <Text type="secondary">Select a tenant to begin.</Text>
-      </div>
-    );
-  }
-
   return (
     <div>
       <Title level={3}>Pipeline Status</Title>
-      <Text type="secondary">Coming soon.</Text>
+
+      {!currentTenant ? (
+        <Text type="secondary">Select a tenant to begin.</Text>
+      ) : (
+        <PipelineStatusContent tenant={currentTenant} />
+      )}
     </div>
   );
 }

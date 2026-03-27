@@ -57,7 +57,6 @@ describe("useChargebackFilters — object reference stability (GAP-100)", () => 
   });
 
   it("queryParams reflects filter field values as string-string pairs (nulls excluded)", () => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     // queryParams must contain non-null filter values as plain strings (no nulls).
     const { result } = renderHook(() => useChargebackFilters(), { wrapper });
 

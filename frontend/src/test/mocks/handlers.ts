@@ -5,8 +5,11 @@ import type {
   EntityTagResponse,
   InventorySummaryResponse,
   PaginatedResponse,
+  PipelineRunResponse,
+  PipelineStatusResponse,
   ReadinessResponse,
   TenantListResponse,
+  TenantStatusDetailResponse,
 } from "../../types/api";
 
 const BASE = "/api/v1";
@@ -290,6 +293,54 @@ export const handlers = [
   http.post(`${BASE}/tenants/:tenant/export`, () => {
     return new HttpResponse("date,amount\n2024-01-01,12.50\n", {
       headers: { "Content-Type": "text/csv" },
+    });
+  }),
+
+  // Pipeline run
+  http.post(`${BASE}/tenants/:tenant/pipeline/run`, () => {
+    return HttpResponse.json<PipelineRunResponse>({
+      tenant_name: "acme",
+      status: "started",
+      message: "Pipeline started successfully",
+    });
+  }),
+
+  // Pipeline status
+  http.get(`${BASE}/tenants/:tenant/pipeline/status`, () => {
+    return HttpResponse.json<PipelineStatusResponse>({
+      tenant_name: "acme",
+      is_running: false,
+      last_run: "2026-03-26T10:00:00Z",
+      last_result: {
+        dates_gathered: 5,
+        dates_calculated: 5,
+        chargeback_rows_written: 120,
+        errors: [],
+        completed_at: "2026-03-26T10:05:00Z",
+      },
+    });
+  }),
+
+  // Tenant status (per-date)
+  http.get(`${BASE}/tenants/:tenant/status`, ({ params }) => {
+    return HttpResponse.json<TenantStatusDetailResponse>({
+      tenant_name: params.tenant as string,
+      tenant_id: "t-001",
+      ecosystem: "ccloud",
+      states: [
+        {
+          tracking_date: "2026-03-26",
+          billing_gathered: true,
+          resources_gathered: true,
+          chargeback_calculated: true,
+        },
+        {
+          tracking_date: "2026-03-25",
+          billing_gathered: true,
+          resources_gathered: true,
+          chargeback_calculated: false,
+        },
+      ],
     });
   }),
 ];
