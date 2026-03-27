@@ -20,7 +20,8 @@ This was originally built for Confluent Cloud but has been extended to support o
 
 ## New Features
 
-- About 2.5 times faster performance for chargeback calculations and persistence compared to V1.
+- 4x-10x faster performance for chargeback calculations and persistence compared to V1.
+- Custom Tags support to allow ease of filters and chargeback grouping/aggregation.
 - Full documentation website for ease of use.
 - Pulls billing data from APIs or YAML cost models
 - Discovers resources and identities using plugin specific implementations. 
