@@ -21,8 +21,75 @@ import type {
 // Hoisted captures
 // ---------------------------------------------------------------------------
 
-const tableCapture = vi.hoisted(() => ({
-  props: null as Record<string, unknown> | null,
+// Capture AG Grid column defs for assertion
+const gridCapture = vi.hoisted(() => ({
+  columnDefs: null as Array<{ field?: string; sort?: string; headerName?: string }> | null,
+  rowData: null as Array<Record<string, unknown>> | null,
+}));
+
+// ---------------------------------------------------------------------------
+// Mock antd
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Mock ag-grid-react
+// ---------------------------------------------------------------------------
+
+vi.mock("ag-grid-react", () => ({
+  AgGridReact: (props: {
+    columnDefs?: Array<{ field?: string; sort?: string; headerName?: string; cellRenderer?: (p: { value: unknown }) => ReactNode }>;
+    rowData?: Array<Record<string, unknown>>;
+    theme?: unknown;
+    defaultColDef?: unknown;
+    getRowId?: unknown;
+  }) => {
+    gridCapture.columnDefs = props.columnDefs ?? null;
+    gridCapture.rowData = props.rowData ?? null;
+    const { columnDefs, rowData } = props;
+    return (
+      <div data-testid="ag-grid">
+        <table>
+          <thead>
+            <tr>
+              {columnDefs?.map((col) => (
+                <th key={col.field ?? col.headerName}>{col.headerName}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rowData?.map((row, i) => (
+              <tr key={i} data-testid={`grid-row-${i}`}>
+                {columnDefs?.map((col) => (
+                  <td key={col.field ?? col.headerName}>
+                    {col.cellRenderer
+                      ? col.cellRenderer({ value: col.field ? row[col.field] : undefined })
+                      : String(col.field ? (row[col.field] ?? "") : "")}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+  },
+}));
+
+// ---------------------------------------------------------------------------
+// Mock ag-grid-community (theme)
+// ---------------------------------------------------------------------------
+
+vi.mock("ag-grid-community", () => ({
+  themeAlpine: {
+    withParams: () => ({
+      withParams: () => ({}),
+    }),
+  },
+}));
+
+vi.mock("../../utils/gridDefaults", () => ({
+  gridTheme: {},
+  defaultColDef: { sortable: true, resizable: true },
 }));
 
 // ---------------------------------------------------------------------------
@@ -53,61 +120,6 @@ vi.mock("antd", () => {
     ),
     { Item: DescriptionsItem },
   );
-
-  type TableColumn = {
-    title: string;
-    dataIndex?: string;
-    key?: string;
-    defaultSortOrder?: string;
-    render?: (v: unknown, r: Record<string, unknown>) => ReactNode;
-  };
-  type TablePagination = { pageSize?: number; showSizeChanger?: boolean };
-
-  const Table = (props: {
-    dataSource?: Record<string, unknown>[];
-    columns?: TableColumn[];
-    pagination?: TablePagination;
-    rowKey?: string;
-    size?: string;
-  }) => {
-    tableCapture.props = props as Record<string, unknown>;
-    const { dataSource, columns, pagination } = props;
-    return (
-      <div
-        data-testid="table"
-        data-pagesize={pagination?.pageSize}
-        data-sizechanger={String(pagination?.showSizeChanger)}
-      >
-        <table>
-          <thead>
-            <tr>
-              {columns?.map((col) => (
-                <th key={col.key ?? col.title}>{col.title}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {dataSource?.map((row, i) => (
-              <tr key={i} data-testid={`table-row-${i}`}>
-                {columns?.map((col) => (
-                  <td key={col.key ?? col.title} data-col={col.key ?? col.title}>
-                    {col.render
-                      ? col.render(
-                          col.dataIndex ? row[col.dataIndex] : row,
-                          row,
-                        )
-                      : String(
-                          col.dataIndex ? (row[col.dataIndex] ?? "") : "",
-                        )}
-                  </td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    );
-  };
 
   return {
     Typography: {
@@ -219,7 +231,6 @@ vi.mock("antd", () => {
       lg?: number;
     }) => <div>{children}</div>,
     Descriptions,
-    Table,
   };
 });
 
@@ -378,7 +389,8 @@ function setupDefaultQueries(
 
 beforeEach(() => {
   vi.clearAllMocks();
-  tableCapture.props = null;
+  gridCapture.columnDefs = null;
+  gridCapture.rowData = null;
   mockUseQuery.mockReturnValue({
     data: undefined,
     isLoading: false,
@@ -600,12 +612,12 @@ describe("AC-3: Last Run Summary", () => {
 // AC-4: Per-Date Processing Status table
 // ---------------------------------------------------------------------------
 
-describe("AC-4: Per-Date Processing Status table", () => {
-  it("test 14: renders table with columns Date, Billing Gathered, Resources Gathered, Chargeback Calculated", () => {
+describe("AC-4: Per-Date Processing Status grid", () => {
+  it("test 14: renders AG Grid with columns Date, Billing Gathered, Resources Gathered, Chargeback Calculated", () => {
     setupTenantContext();
     setupDefaultQueries({}, { states: [] });
     render(<PipelineStatusPage />);
-    expect(screen.getByTestId("table")).toBeInTheDocument();
+    expect(screen.getByTestId("ag-grid")).toBeInTheDocument();
     expect(screen.getByText("Date")).toBeInTheDocument();
     expect(screen.getByText("Billing Gathered")).toBeInTheDocument();
     expect(screen.getByText("Resources Gathered")).toBeInTheDocument();
@@ -639,45 +651,30 @@ describe("AC-4: Per-Date Processing Status table", () => {
     expect(screen.getAllByTestId("clock-circle-icon")).toHaveLength(3);
   });
 
-  it("test 16: tracking_date column has defaultSortOrder=descend", () => {
-    setupTenantContext();
-    setupDefaultQueries(
-      {},
-      {
-        states: [
-          {
-            tracking_date: "2026-03-24",
-            billing_gathered: true,
-            resources_gathered: true,
-            chargeback_calculated: true,
-          },
-          {
-            tracking_date: "2026-03-26",
-            billing_gathered: true,
-            resources_gathered: true,
-            chargeback_calculated: true,
-          },
-        ],
-      },
-    );
-    render(<PipelineStatusPage />);
-    expect(tableCapture.props).not.toBeNull();
-    const columns = tableCapture.props?.columns as Array<{
-      dataIndex?: string;
-      defaultSortOrder?: string;
-    }>;
-    const dateCol = columns?.find((c) => c.dataIndex === "tracking_date");
-    expect(dateCol).toBeDefined();
-    expect(dateCol?.defaultSortOrder).toBe("descend");
-  });
-
-  it("test 17: table pagination set to pageSize=14 with showSizeChanger=true", () => {
+  it("test 16: tracking_date column has sort=desc", () => {
     setupTenantContext();
     setupDefaultQueries({}, { states: [] });
     render(<PipelineStatusPage />);
-    const table = screen.getByTestId("table");
-    expect(table.getAttribute("data-pagesize")).toBe("14");
-    expect(table.getAttribute("data-sizechanger")).toBe("true");
+    expect(gridCapture.columnDefs).not.toBeNull();
+    const dateCol = gridCapture.columnDefs?.find((c) => c.field === "tracking_date");
+    expect(dateCol).toBeDefined();
+    expect(dateCol?.sort).toBe("desc");
+  });
+
+  it("test 17: grid receives rowData from statesQuery", () => {
+    setupTenantContext();
+    const states = [
+      {
+        tracking_date: "2026-03-26",
+        billing_gathered: true,
+        resources_gathered: true,
+        chargeback_calculated: true,
+      },
+    ];
+    setupDefaultQueries({}, { states });
+    render(<PipelineStatusPage />);
+    expect(gridCapture.rowData).toHaveLength(1);
+    expect(gridCapture.rowData?.[0].tracking_date).toBe("2026-03-26");
   });
 });
 

@@ -1,13 +1,12 @@
 import type React from "react";
-import { useState } from "react";
-import { Skeleton, Table, Typography } from "antd";
-import type { ColumnsType } from "antd/es/table";
-import type { AllocationIssueResponse } from "../../types/api";
+import type { ColDef, IDatasource, IGetRowsParams } from "ag-grid-community";
+import { AgGridReact } from "ag-grid-react";
+import { type MutableRefObject, useMemo, useEffect, useRef } from "react";
+import { API_URL } from "../../config";
+import type { AllocationIssueResponse, PaginatedResponse } from "../../types/api";
 import type { ChargebackFilters } from "../../types/filters";
-import { useAllocationIssues } from "../../hooks/useAllocationIssues";
-
-const { Text } = Typography;
-const PAGE_SIZE = 50;
+import { gridTheme, defaultColDef } from "../../utils/gridDefaults";
+import { currencyFormatter } from "../../utils/gridFormatters";
 
 export type AllocationIssueItem = AllocationIssueResponse;
 
@@ -16,67 +15,92 @@ interface AllocationIssuesTableProps {
   filters: ChargebackFilters;
 }
 
-const columns: ColumnsType<AllocationIssueItem> = [
-  { title: "Ecosystem", dataIndex: "ecosystem", key: "ecosystem" },
+const columnDefs: ColDef[] = [
+  { field: "ecosystem", headerName: "Ecosystem", width: 140 },
   {
-    title: "Resource",
-    dataIndex: "resource_id",
-    key: "resource_id",
-    render: (v: string | null) => v ?? <Text type="secondary">—</Text>,
+    field: "resource_id",
+    headerName: "Resource",
+    flex: 1,
+    minWidth: 160,
+    valueFormatter: (p) => p.value ?? "—",
   },
-  { title: "Product Type", dataIndex: "product_type", key: "product_type" },
-  { title: "Identity", dataIndex: "identity_id", key: "identity_id" },
-  { title: "Allocation Detail", dataIndex: "allocation_detail", key: "allocation_detail" },
-  { title: "Usage Cost", dataIndex: "usage_cost", key: "usage_cost", align: "right" },
-  { title: "Shared Cost", dataIndex: "shared_cost", key: "shared_cost", align: "right" },
-  {
-    title: "Total Cost",
-    dataIndex: "total_cost",
-    key: "total_cost",
-    align: "right",
-    defaultSortOrder: "descend",
-    sorter: (a, b) => parseFloat(a.total_cost) - parseFloat(b.total_cost),
-  },
+  { field: "product_type", headerName: "Product Type", width: 160 },
+  { field: "identity_id", headerName: "Identity", flex: 1, minWidth: 160 },
+  { field: "allocation_detail", headerName: "Allocation Detail", flex: 1, minWidth: 160 },
+  { field: "usage_cost", headerName: "Usage Cost", width: 120, type: "numericColumn", valueFormatter: currencyFormatter },
+  { field: "shared_cost", headerName: "Shared Cost", width: 120, type: "numericColumn", valueFormatter: currencyFormatter },
+  { field: "total_cost", headerName: "Total Cost", width: 120, type: "numericColumn", valueFormatter: currencyFormatter },
 ];
 
+function createDatasource(
+  tenantName: string,
+  filters: ChargebackFilters,
+  controllerRef: MutableRefObject<AbortController>,
+): IDatasource {
+  return {
+    getRows: (params: IGetRowsParams) => {
+      const page = Math.floor(params.startRow / 100) + 1;
+      const url = new URL(
+        `${window.location.origin}${API_URL}/tenants/${tenantName}/chargebacks/allocation-issues`,
+      );
+      url.searchParams.set("page", String(page));
+      url.searchParams.set("page_size", "100");
+      const { start_date, end_date, identity_id, product_type, resource_id, timezone } = filters;
+      if (start_date) url.searchParams.set("start_date", start_date);
+      if (end_date) url.searchParams.set("end_date", end_date);
+      if (identity_id) url.searchParams.set("identity_id", identity_id);
+      if (product_type) url.searchParams.set("product_type", product_type);
+      if (resource_id) url.searchParams.set("resource_id", resource_id);
+      if (timezone) url.searchParams.set("timezone", timezone);
+
+      fetch(url.toString(), { signal: controllerRef.current.signal })
+        .then((resp) => {
+          if (!resp.ok) {
+            params.failCallback();
+            return;
+          }
+          return resp.json() as Promise<PaginatedResponse<AllocationIssueResponse>>;
+        })
+        .then((data) => {
+          if (data) params.successCallback(data.items, data.total);
+        })
+        .catch(() => {
+          params.failCallback();
+        });
+    },
+  };
+}
+
 export function AllocationIssuesTable({ tenantName, filters }: AllocationIssuesTableProps): React.JSX.Element {
-  const [page, setPage] = useState(1);
+  const gridRef = useRef<AgGridReact>(null);
+  const abortControllerRef = useRef(new AbortController());
 
-  const { data, isLoading, error } = useAllocationIssues({
-    tenantName,
-    filters,
-    page,
-    pageSize: PAGE_SIZE,
-  });
+  useEffect(() => {
+    abortControllerRef.current.abort();
+    abortControllerRef.current = new AbortController();
+  }, [tenantName, filters]);
 
-  if (error) {
-    return <Text type="danger">Failed to load allocation issues: {error}</Text>;
-  }
+  const datasource = useMemo(
+    () => createDatasource(tenantName, filters, abortControllerRef),
+    [tenantName, filters],
+  );
 
-  if (isLoading) {
-    return (
-      <>
-        <Skeleton active />
-        <Skeleton active />
-        <Skeleton active />
-      </>
-    );
-  }
+  useEffect(() => {
+    gridRef.current?.api?.purgeInfiniteCache();
+  }, [datasource]);
 
   return (
-    <Table<AllocationIssueItem>
-      dataSource={data?.items ?? []}
-      columns={columns}
-      rowKey={(r) => `${r.ecosystem}|${r.resource_id ?? ""}|${r.identity_id}|${r.allocation_detail}`}
-      pagination={{
-        total: data?.total ?? 0,
-        pageSize: PAGE_SIZE,
-        current: page,
-        onChange: (p) => setPage(p),
-        showTotal: (t) => `${t} issues`,
-      }}
-      locale={{ emptyText: "No allocation issues found" }}
-      size="small"
-    />
+    <div style={{ height: 500 }}>
+      <AgGridReact
+        ref={gridRef}
+        theme={gridTheme}
+        columnDefs={columnDefs}
+        defaultColDef={defaultColDef}
+        rowModelType="infinite"
+        datasource={datasource}
+        cacheBlockSize={100}
+        maxBlocksInCache={10}
+      />
+    </div>
   );
 }

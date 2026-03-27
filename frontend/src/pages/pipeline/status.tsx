@@ -1,31 +1,23 @@
 import type React from "react";
 import { useState } from "react";
-import {
-  Alert,
-  Button,
-  Card,
-  Col,
-  Descriptions,
-  Row,
-  Steps,
-  Table,
-  Typography,
-} from "antd";
+import { Alert, Button, Card, Col, Descriptions, Row, Steps, Typography } from "antd";
 import {
   CheckCircleOutlined,
   ClockCircleOutlined,
   PlayCircleOutlined,
 } from "@ant-design/icons";
+import type { ColDef, ICellRendererParams } from "ag-grid-community";
+import { AgGridReact } from "ag-grid-react";
 import { useQuery } from "@tanstack/react-query";
 import type {
   PipelineRunResponse,
-  PipelineStateResponse,
   PipelineStatusResponse,
   TenantStatusDetailResponse,
   TenantStatusSummary,
 } from "../../types/api";
 import { useTenant, useReadiness } from "../../providers/TenantContext";
 import { API_URL } from "../../config";
+import { gridTheme, defaultColDef } from "../../utils/gridDefaults";
 
 const { Title, Text } = Typography;
 
@@ -123,39 +115,38 @@ function buildStepperItems(
 // Table helpers — hoisted to module level to avoid new references each render
 // ---------------------------------------------------------------------------
 
-const renderBoolIcon = (v: boolean) =>
-  v ? (
+function BoolIconRenderer(params: ICellRendererParams): React.JSX.Element {
+  return params.value ? (
     <CheckCircleOutlined style={{ color: "#52c41a" }} />
   ) : (
     <ClockCircleOutlined style={{ color: "#d9d9d9" }} />
   );
+}
 
-const stateColumns = [
+const stateColumnDefs: ColDef[] = [
   {
-    title: "Date",
-    dataIndex: "tracking_date",
-    key: "tracking_date",
-    sorter: (a: PipelineStateResponse, b: PipelineStateResponse) =>
-      a.tracking_date.localeCompare(b.tracking_date),
-    defaultSortOrder: "descend" as const,
+    field: "tracking_date",
+    headerName: "Date",
+    sort: "desc",
+    flex: 1,
   },
   {
-    title: "Billing Gathered",
-    dataIndex: "billing_gathered",
-    key: "billing_gathered",
-    render: renderBoolIcon,
+    field: "billing_gathered",
+    headerName: "Billing Gathered",
+    cellRenderer: BoolIconRenderer,
+    width: 160,
   },
   {
-    title: "Resources Gathered",
-    dataIndex: "resources_gathered",
-    key: "resources_gathered",
-    render: renderBoolIcon,
+    field: "resources_gathered",
+    headerName: "Resources Gathered",
+    cellRenderer: BoolIconRenderer,
+    width: 170,
   },
   {
-    title: "Chargeback Calculated",
-    dataIndex: "chargeback_calculated",
-    key: "chargeback_calculated",
-    render: renderBoolIcon,
+    field: "chargeback_calculated",
+    headerName: "Chargeback Calculated",
+    cellRenderer: BoolIconRenderer,
+    width: 190,
   },
 ];
 
@@ -337,13 +328,15 @@ function PipelineStatusContent({
           {statesQuery.isError && (
             <Alert type="error" message="Failed to load processing status" />
           )}
-          <Table<PipelineStateResponse>
-            dataSource={statesQuery.data?.states ?? []}
-            columns={stateColumns}
-            rowKey="tracking_date"
-            pagination={{ pageSize: 14, showSizeChanger: true }}
-            size="small"
-          />
+          <div style={{ height: 500 }}>
+            <AgGridReact
+              theme={gridTheme}
+              columnDefs={stateColumnDefs}
+              defaultColDef={defaultColDef}
+              rowData={statesQuery.data?.states ?? []}
+              getRowId={(params) => params.data.tracking_date}
+            />
+          </div>
         </Card>
       </Col>
     </Row>
