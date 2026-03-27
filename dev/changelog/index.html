@@ -1238,32 +1238,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#added" class="md-nav__link">
+  <a href="#documentation" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Added
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#changed" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Changed
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#fixed" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Fixed
+        Documentation
       
     </span>
   </a>
@@ -1322,32 +1300,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#added" class="md-nav__link">
+  <a href="#documentation" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Added
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#changed" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Changed
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#fixed" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Fixed
+        Documentation
       
     </span>
   </a>
@@ -1384,97 +1340,11 @@
 <p>The format is based on <a href="https://keepachangelog.com/en/1.0.0/">Keep a Changelog</a>,
 and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semantic Versioning</a>.</p>
 <h2 id="unreleased">[Unreleased]<a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
-<h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
+<h3 id="documentation">Documentation<a class="headerlink" href="#documentation" title="Permanent link">&para;</a></h3>
 <ul>
-<li>Feat: TASK-161 — Unified AG Grid table system with Ant Design theme sync and server-side filtering</li>
+<li>Docs: Update README.md</li>
 </ul>
-<p>Standardize all table views on AG Grid with custom ag-theme-chitragupta theme
-matching Ant Design's visual style. Theme syncs with dark/light mode toggle via
-data-theme attribute on document.body. Migrate Identities, Resources, and Tags
-pages from Ant Table to AG Grid with infinite scroll, filter bars, and URL param
-persistence. Extend identity and resource list API endpoints with search (ILIKE),
-sort_by, sort_order, tag_key, and tag_value query params. Keep AllocationIssuesTable
-as Ant Table (bounded volume, dashboard context). (<a href="https://github.com/waliaabhishek/chitragupta/commit/7ed0fc00c6a9db3a72ed05deef6f8fc53a830c3a">7ed0fc0</a>)
-- Feat: TASK-160.02 — Frontend entity tag editor, inherited tag display, and tag-based filtering</p>
-<p>Replace dimension-level tag UI with entity-level tag system: new EntityTagEditor
-component for resources/identities, read-only inherited tags on chargeback views,
-tag key/value filter inputs, and removal of old TagEditor/BulkTagModal/SelectionToolbar. (<a href="https://github.com/waliaabhishek/chitragupta/commit/f1dfdda5c8d8473d354d77bb99bcec1d0a536101">f1dfdda</a>)
-- Feat: TASK-160.01 — Entity-level tag system replacing dimension-level tags</p>
-<p>Tags now attach to core entities (resources, identities) instead of
-ephemeral chargeback dimensions. Chargebacks inherit tags at query time
-via resource_id/identity_id joins with resource tags overriding identity
-tags on key collision. Old custom_tags table dropped, new tags table
-created. ChargebackResponse.tags changed from list[str] to dict[str,str]. (<a href="https://github.com/waliaabhishek/chitragupta/commit/02112416a87f25260481b4af38f744e533503f65">0211241</a>)
-- Feat: Add help target to dev stack Makefile (<a href="https://github.com/waliaabhishek/chitragupta/commit/7c5f215162d860c24b8261c40d50d73489290a92">7c5f215</a>)
-- Feat: Development environment for Docker based app (<a href="https://github.com/waliaabhishek/chitragupta/commit/197b4189795bfbd7395b1c43a35ea3f7044b9eca">197b418</a>)
-- Feat: TASK-156 — Add active/deleted status breakdown to Inventory UI</p>
-<p>Full-stack change: inventory summary now returns per-type active/deleted
-counts. ResourceRepository groups by status column; IdentityRepository
-derives status from deleted_at via SQL CASE. New TypeStatusCounts frozen
-dataclass in core.models.counts. Frontend displays total prominently with
-"Active: N / Deleted: N" secondary text. All existing tests updated;
-new tests for mixed-status resources and identity deleted_at derivation. (<a href="https://github.com/waliaabhishek/chitragupta/commit/cc1def8e912806a52baf7c48f705527cc85be945">cc1def8</a>)</p>
-<h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
-<ul>
-<li>Refactor: Move docker commands to examples/dev/Makefile</li>
-</ul>
-<p>Automated builds handle production images now. Removed all docker
-targets from root Makefile and added a simple Makefile in examples/dev/
-with up, down, logs, and clean targets. (<a href="https://github.com/waliaabhishek/chitragupta/commit/7e57bbf7d8f79ecdf5a031b59a4c979c75a81a83">7e57bbf</a>)</p>
-<h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
-<ul>
-<li>Fix: AG Grid infinite row model stuck after aborted fetch in all grid components</li>
-</ul>
-<p>When a fetch was aborted via AbortController, the getRows error handler
-silently returned without calling successCallback or failCallback. This
-left AG Grid's block in a permanent "in-flight" state, preventing any
-subsequent purgeInfiniteCache from triggering new data fetches. The grid
-appeared permanently empty when typing in text-based filter inputs (tag
-key/value) since each keystroke aborted the previous request.</p>
-<p>Always call failCallback() on any fetch error so AG Grid properly resets
-the block state and allows cache purges to trigger fresh getRows calls. (<a href="https://github.com/waliaabhishek/chitragupta/commit/8ccff0f0ecc26f6cba8046b7b7f08f6c5d2f847b">8ccff0f</a>)
-- Fix: TASK-162 — AG Grid theme with alpine base CSS, Ant Design visual parity, and test rewrites</p>
-<p>Add ag-theme-alpine.css as base theme import so ag-theme-chitragupta CSS
-variable overrides actually apply. Enhanced theme CSS with structural
-overrides for Ant Design Table parity: horizontal-only borders, no grid
-border, font-weight 500 headers, 48px row height, no cell focus outline,
-no zebra striping. Centralized all AG Grid CSS imports in main.tsx and
-removed per-component imports. Rewrote identity/resource/tag list page
-tests to mock new AG Grid components instead of Ant Design Table. Added
-TagsGrid.test.tsx for edit/delete/error/readonly behavior coverage.</p>
-<p>42 test files, 316 tests passing. tsc + vite build clean. (<a href="https://github.com/waliaabhishek/chitragupta/commit/36480ad9b4927cc45824d88d2a6cce2ed3f5bf0d">36480ad</a>)
-- Fix: Resolve TypeScript errors in frontend tests and add tsc pre-commit hook</p>
-<p>Test files were missing tag_key/tag_value fields on ChargebackFilters,
-EntityTagEditor tests used wrong types, and the Docker build failed on
-tsc. Added a pre-commit hook to run frontend typecheck on .ts/.tsx changes. (<a href="https://github.com/waliaabhishek/chitragupta/commit/5de1193b34b9b52bb65bf3fe11716a21169bbc78">5de1193</a>)
-- Fix: Bump requests 2.32.5→2.33.0 and picomatch 4.0.3→4.0.4 for Dependabot alerts</p>
-<p>Resolves 2 moderate GitHub Dependabot vulnerabilities:
-- requests: insecure temp file reuse in extract_zipped_paths()
-- picomatch: method injection in POSIX character classes (<a href="https://github.com/waliaabhishek/chitragupta/commit/416db5eba6b9b4bcc8bd04b6153d3cf3c9e45acf">416db5e</a>)
-- Fix: TASK-159 — Add timezone picker to filter panels and wire to API</p>
-<p>Frontend timezone Select added to Chargebacks, Billing, and Dashboard
-filter panels. Defaults to browser timezone, persists to localStorage
-(user_timezone), syncs via URL search param. All date-filtered API
-calls (grid, aggregate, allocation issues, CSV export) now include the
-timezone parameter, resolving the data discrepancy where UI totals
-diverged from Grafana for non-UTC users. (<a href="https://github.com/waliaabhishek/chitragupta/commit/dee6e39deaa2578cf9c6362937259293f9d8529a">dee6e39</a>)
-- Fix: TASK-158 — Add timezone query param to all date-filtered API endpoints</p>
-<p>Wire the timezone parameter (added to resolve_date_range in TASK-157) through
-all 6 call sites: billing, chargebacks (list + allocation-issues), aggregation,
-export, and tags bulk-by-filter. GET endpoints accept timezone as a query param;
-POST endpoints accept it in the request body via ExportRequest and
-BulkTagByFilterRequest schemas. Backward compatible — omitting timezone
-preserves UTC behavior. (<a href="https://github.com/waliaabhishek/chitragupta/commit/050e7b55c7652fee1cf3a847493ce40cefd7b1a7">050e7b5</a>)
-- Fix: TASK-157 — Add timezone parameter to resolve_date_range</p>
-<p>resolve_date_range now accepts an optional IANA timezone string so date
-boundaries are computed in the user's local timezone before converting
-to UTC. Fixes data discrepancy where non-UTC users missed records near
-midnight boundaries (e.g. America/Denver end_date=Dec 31 now correctly
-produces end_dt=2026-01-01T07:00:00 UTC instead of 00:00:00 UTC). (<a href="https://github.com/waliaabhishek/chitragupta/commit/35800b0bd1f17e11b4480b3ab3502495842d5709">35800b0</a>)
-- Fix: Remove 10k row limit on aggregate endpoint that silently truncated totals</p>
-<p>The hardcoded limit=10000 on the aggregate SQL query caused the dashboard
-to show $8k instead of $16.6k when identity_id × daily buckets exceeded
-10k rows. Grafana was correct because it queries SQLite directly. (<a href="https://github.com/waliaabhishek/chitragupta/commit/3353312207e4222bd9c391a675a081338bef8328">3353312</a>)</p>
+<p>Updated performance metrics and added custom tags support. (<a href="https://github.com/waliaabhishek/chitragupta/commit/6ccfe235da3d014c3466bdb4b7ed997a03627772">6ccfe23</a>)</p>
 
 
 
