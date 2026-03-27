@@ -80,8 +80,7 @@ function createDatasource(
         .then((data) => {
           if (data) params.successCallback(data.items, data.total);
         })
-        .catch((err: unknown) => {
-          if (err instanceof Error && err.name === "AbortError") return;
+        .catch(() => {
           params.failCallback();
         });
     },

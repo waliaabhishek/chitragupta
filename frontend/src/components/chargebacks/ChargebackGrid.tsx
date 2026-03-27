@@ -82,8 +82,7 @@ function createDatasource(
             params.successCallback(data.items, data.total);
           }
         })
-        .catch((err: unknown) => {
-          if (err instanceof Error && err.name === "AbortError") return; // datasource replaced
+        .catch(() => {
           params.failCallback();
         });
     },
