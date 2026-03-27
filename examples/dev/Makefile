@@ -1,3 +1,5 @@
+DOCKER_COMPOSE := $(shell docker compose version >/dev/null 2>&1 && echo "docker compose" || echo "docker-compose")
+
 .PHONY: help up down logs clean
 
 .DEFAULT_GOAL := help
@@ -11,13 +13,13 @@ help:
 	@echo "  clean  - Stop all services and remove volumes + images"
 
 up:
-	docker compose up --build -d
+	$(DOCKER_COMPOSE) up --build -d
 
 down:
-	docker compose down
+	$(DOCKER_COMPOSE) down
 
 logs:
-	docker compose logs -f
+	$(DOCKER_COMPOSE) logs -f
 
 clean:
-	docker compose down --volumes --rmi local
+	$(DOCKER_COMPOSE) down --volumes --rmi local
