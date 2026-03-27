@@ -4,6 +4,7 @@ import { AgGridReact } from "ag-grid-react";
 import { type MutableRefObject, useMemo, useCallback, useEffect, useRef } from "react";
 import { API_URL } from "../../config";
 import type { PaginatedResponse, ResourceResponse } from "../../types/api";
+import { GRID_THEME_CLASS, defaultColDef } from "../../utils/gridDefaults";
 
 interface ResourceGridProps {
   tenantName: string;
@@ -77,10 +78,11 @@ export function ResourceGrid({ tenantName, queryParams, onRowClick }: ResourceGr
   );
 
   return (
-    <div className="ag-theme-chitragupta" style={{ flex: 1, minHeight: 400 }}>
+    <div className={GRID_THEME_CLASS} style={{ flex: 1, minHeight: 400 }}>
       <AgGridReact
         ref={gridRef}
         columnDefs={columnDefs}
+        defaultColDef={defaultColDef}
         rowModelType="infinite"
         datasource={datasource}
         cacheBlockSize={100}

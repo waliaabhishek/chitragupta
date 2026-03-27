@@ -5,6 +5,7 @@ import { Tag } from "antd";
 import { type MutableRefObject, type Ref, useMemo, useCallback, useEffect, useRef, useImperativeHandle } from "react";
 import { API_URL } from "../../config";
 import type { ChargebackResponse, PaginatedResponse } from "../../types/api";
+import { GRID_THEME_CLASS, defaultColDef } from "../../utils/gridDefaults";
 import { dateFormatter, currencyFormatter } from "../../utils/gridFormatters";
 
 interface ChargebackGridProps {
@@ -128,10 +129,11 @@ export function ChargebackGrid({
   );
 
   return (
-    <div className="ag-theme-chitragupta" style={{ flex: 1, minHeight: 400 }}>
+    <div className={GRID_THEME_CLASS} style={{ flex: 1, minHeight: 400 }}>
       <AgGridReact
         ref={internalRef}
         columnDefs={columnDefs}
+        defaultColDef={defaultColDef}
         rowModelType="infinite"
         datasource={datasource}
         cacheBlockSize={100}

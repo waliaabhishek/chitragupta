@@ -10,6 +10,7 @@ import { Popconfirm, Button, notification } from "antd";
 import { type MutableRefObject, useMemo, useCallback, useEffect, useRef } from "react";
 import { API_URL } from "../../config";
 import type { EntityTagResponse, PaginatedResponse } from "../../types/api";
+import { GRID_THEME_CLASS, defaultColDef } from "../../utils/gridDefaults";
 
 interface TagsGridProps {
   tenantName: string;
@@ -163,10 +164,11 @@ export function TagsGrid({ tenantName, queryParams, isReadOnly }: TagsGridProps)
   );
 
   return (
-    <div className="ag-theme-chitragupta" style={{ flex: 1, minHeight: 400 }}>
+    <div className={GRID_THEME_CLASS} style={{ flex: 1, minHeight: 400 }}>
       <AgGridReact
         ref={gridRef}
         columnDefs={columnDefs}
+        defaultColDef={defaultColDef}
         rowModelType="infinite"
         datasource={datasource}
         cacheBlockSize={100}

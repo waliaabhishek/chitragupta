@@ -2,8 +2,8 @@
 [data-theme="light"] .ag-theme-chitragupta {
   --ag-background-color: #ffffff;
   --ag-header-background-color: #fafafa;
-  --ag-odd-row-background-color: transparent;
-  --ag-row-hover-color: #fafafa;
+  --ag-odd-row-background-color: #fafafa;
+  --ag-row-hover-color: #f0f0f0;
   --ag-selected-row-background-color: #e6f4ff;
   --ag-foreground-color: rgba(0, 0, 0, 0.88);
   --ag-secondary-foreground-color: rgba(0, 0, 0, 0.45);
@@ -29,7 +29,7 @@
 [data-theme="dark"] .ag-theme-chitragupta {
   --ag-background-color: #141414;
   --ag-header-background-color: #1d1d1d;
-  --ag-odd-row-background-color: transparent;
+  --ag-odd-row-background-color: #1a1a1a;
   --ag-row-hover-color: #262626;
   --ag-selected-row-background-color: #111d2c;
   --ag-foreground-color: rgba(255, 255, 255, 0.85);
