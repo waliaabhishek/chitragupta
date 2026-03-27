@@ -1,0 +1,2700 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Multi-ecosystem chargeback engine — allocate infrastructure costs to tenants and teams">
+      
+      
+      
+      
+        <link rel="prev" href="../">
+      
+      
+        <link rel="next" href="../ccloud-reference/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.5">
+    
+    
+      
+        <title>Configuration Guide - Chitragupta</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+  
+  
+  
+  
+  <style>:root{--md-annotation-icon:url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%3E%3Cpath%20d%3D%22M17%2013h-4v4h-2v-4H7v-2h4V7h2v4h4m-5-9A10%2010%200%200%200%202%2012a10%2010%200%200%200%2010%2010%2010%2010%200%200%200%2010-10A10%2010%200%200%200%2012%202%22/%3E%3C/svg%3E');}</style>
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="deep-purple" data-md-color-accent="purple">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#configuration-guide" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="Chitragupta" class="md-header__button md-logo" aria-label="Chitragupta" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Chitragupta
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Configuration Guide
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="deep-purple" data-md-color-accent="purple"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="purple"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/waliaabhishek/chitragupta" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    chitragupta
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="Chitragupta" class="md-nav__button md-logo" aria-label="Chitragupta" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Chitragupta
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/waliaabhishek/chitragupta" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    chitragupta
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../getting-started/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_2" id="__nav_2_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/prerequisites/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Prerequisites
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/first-run/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    First Run
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration Reference
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Configuration Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration Guide
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#start-with-the-question-where-does-your-cost-data-come-from" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Start with the question: where does your cost data come from?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tenants-one-per-billing-boundary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tenants: one per billing boundary
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#choosing-a-storage-backend" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Choosing a storage backend
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#time-windows-lookback-cutoff-and-retention" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Time windows: lookback, cutoff, and retention
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#configuring-confluent-cloud" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configuring Confluent Cloud
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Configuring Confluent Cloud">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-you-need-before-you-start" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What you need before you start
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-cku-ratio-the-one-tuning-knob-you-should-care-about" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The CKU ratio: the one tuning knob you should care about
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-happens-without-metrics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What happens without metrics
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#configuring-self-managed-kafka" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configuring Self-Managed Kafka
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Configuring Self-Managed Kafka">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-cost-model-you-define-the-rates" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The cost model: you define the rates
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#how-the-engine-computes-daily-costs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How the engine computes daily costs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#choosing-a-resource-source" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Choosing a resource source
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#choosing-an-identity-source" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Choosing an identity source
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#principal-to-team-mapping" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Principal-to-team mapping
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#configuring-generic-metrics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configuring Generic Metrics
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Configuring Generic Metrics">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#defining-cost-types" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Defining cost types
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#three-ways-to-measure-quantity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Three ways to measure quantity
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#choosing-an-allocation-strategy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Choosing an allocation strategy
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#emitters-where-do-chargeback-results-go" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Emitters: where do chargeback results go?
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Emitters: where do chargeback results go?">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#csv-emitter" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CSV emitter
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#prometheus-emitter" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Prometheus emitter
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#emitter-identity-and-emission-state" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Emitter identity and emission state
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#pipeline-tuning" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Pipeline tuning
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Pipeline tuning">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#metrics_step_seconds-default-3600" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        metrics_step_seconds (default: 3600)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#metrics_prefetch_workers-default-4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        metrics_prefetch_workers (default: 4)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#max_parallel_tenants-default-4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        max_parallel_tenants (default: 4)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#min_refresh_gap_seconds-default-1800" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        min_refresh_gap_seconds (default: 1800)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#gather_failure_threshold-default-5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        gather_failure_threshold (default: 5)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#putting-it-all-together-a-complete-example" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Putting it all together: a complete example
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../ccloud-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Confluent Cloud
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../self-managed-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Self-Managed Kafka
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../generic-metrics-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Generic Metrics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../advanced-scenarios/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Advanced Scenarios
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../architecture/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/plugin-system/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Plugin System
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/data-flow/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data Flow
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/cost-model/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    How Costs Work
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/identity-resolution/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Identity Resolution
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../operations/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Operations
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Operations
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operations/deployment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deployment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operations/monitoring/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Monitoring
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operations/troubleshooting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Troubleshooting
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operations/data-retention/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data Retention
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operations/upgrading/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Upgrading
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../changelog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changelog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#start-with-the-question-where-does-your-cost-data-come-from" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Start with the question: where does your cost data come from?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tenants-one-per-billing-boundary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tenants: one per billing boundary
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#choosing-a-storage-backend" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Choosing a storage backend
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#time-windows-lookback-cutoff-and-retention" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Time windows: lookback, cutoff, and retention
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#configuring-confluent-cloud" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configuring Confluent Cloud
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Configuring Confluent Cloud">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-you-need-before-you-start" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What you need before you start
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-cku-ratio-the-one-tuning-knob-you-should-care-about" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The CKU ratio: the one tuning knob you should care about
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-happens-without-metrics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What happens without metrics
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#configuring-self-managed-kafka" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configuring Self-Managed Kafka
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Configuring Self-Managed Kafka">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-cost-model-you-define-the-rates" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The cost model: you define the rates
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#how-the-engine-computes-daily-costs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How the engine computes daily costs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#choosing-a-resource-source" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Choosing a resource source
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#choosing-an-identity-source" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Choosing an identity source
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#principal-to-team-mapping" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Principal-to-team mapping
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#configuring-generic-metrics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configuring Generic Metrics
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Configuring Generic Metrics">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#defining-cost-types" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Defining cost types
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#three-ways-to-measure-quantity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Three ways to measure quantity
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#choosing-an-allocation-strategy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Choosing an allocation strategy
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#emitters-where-do-chargeback-results-go" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Emitters: where do chargeback results go?
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Emitters: where do chargeback results go?">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#csv-emitter" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CSV emitter
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#prometheus-emitter" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Prometheus emitter
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#emitter-identity-and-emission-state" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Emitter identity and emission state
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#pipeline-tuning" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Pipeline tuning
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Pipeline tuning">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#metrics_step_seconds-default-3600" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        metrics_step_seconds (default: 3600)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#metrics_prefetch_workers-default-4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        metrics_prefetch_workers (default: 4)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#max_parallel_tenants-default-4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        max_parallel_tenants (default: 4)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#min_refresh_gap_seconds-default-1800" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        min_refresh_gap_seconds (default: 1800)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#gather_failure_threshold-default-5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        gather_failure_threshold (default: 5)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#putting-it-all-together-a-complete-example" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Putting it all together: a complete example
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="configuration-guide">Configuration Guide<a class="headerlink" href="#configuration-guide" title="Permanent link">&para;</a></h1>
+<p>This guide walks you through building a configuration from scratch. Rather than
+listing every field (that's what the <a href="../">reference pages</a> are for), it
+explains the decisions you need to make and why they matter.</p>
+<h2 id="start-with-the-question-where-does-your-cost-data-come-from">Start with the question: where does your cost data come from?<a class="headerlink" href="#start-with-the-question-where-does-your-cost-data-come-from" title="Permanent link">&para;</a></h2>
+<p>This is the single most important decision. It determines which ecosystem plugin
+you use, which in turn determines everything else — what credentials you need,
+how costs are calculated, and how identities are discovered.</p>
+<p><strong>If you use Confluent Cloud</strong> and have billing API access, use <code>confluent_cloud</code>.
+The engine fetches actual invoiced costs from the CCloud billing API. You don't
+define rates — the vendor already computed what you owe.</p>
+<p><strong>If you run your own Kafka</strong> (on-prem, EC2, Kubernetes, etc.) and have JMX
+metrics flowing to Prometheus, use <code>self_managed_kafka</code>. The engine queries
+Prometheus for usage data and applies cost rates that <em>you</em> define in YAML. You
+are constructing the bill yourself.</p>
+<p><strong>If you run something else entirely</strong> (PostgreSQL, Redis, Elasticsearch, a
+custom service) and it exposes Prometheus metrics, use <code>generic_metrics_only</code>.
+Same idea as self-managed Kafka, but fully configurable — you define the cost
+types, the queries, and the allocation strategy.</p>
+<pre class="mermaid"><code>graph TD
+    A{Where do costs come from?} --&gt;|Vendor billing API| B[confluent_cloud]
+    A --&gt;|Prometheus + your rates| C{Is it Kafka?}
+    C --&gt;|Yes| D[self_managed_kafka]
+    C --&gt;|No| E[generic_metrics_only]</code></pre>
+<div class="admonition note">
+<p class="admonition-title">The two billing paradigms</p>
+<p>Understanding this distinction is critical. With <code>confluent_cloud</code>, the vendor
+already computed <code>quantity × unit_price = total_cost</code> for you. The engine's
+job is purely to <em>allocate</em> that bill across your teams.</p>
+<p>With <code>self_managed_kafka</code> and <code>generic_metrics_only</code>, the engine <em>constructs</em>
+the bill by querying Prometheus for usage metrics and multiplying by the rates
+you configure. If your rates are wrong, your chargebacks are wrong.</p>
+</div>
+<hr />
+<h2 id="tenants-one-per-billing-boundary">Tenants: one per billing boundary<a class="headerlink" href="#tenants-one-per-billing-boundary" title="Permanent link">&para;</a></h2>
+<p>A tenant represents a single billing boundary — typically one CCloud organization,
+one Kafka cluster, or one database cluster. Each tenant:</p>
+<ul>
+<li>Has its own database (enforced: no two tenants can share a <code>connection_string</code>)</li>
+<li>Runs independently (a failure in one tenant does not affect others)</li>
+<li>Has its own plugin configuration, cost model, and emitters</li>
+</ul>
+<p><strong>When to use multiple tenants:</strong></p>
+<ul>
+<li>You have two CCloud orgs → two tenants, both using <code>confluent_cloud</code></li>
+<li>You have a CCloud org <em>and</em> an on-prem Kafka cluster → two tenants, different ecosystems</li>
+<li>You have a Kafka cluster and a PostgreSQL cluster → two tenants, different ecosystems</li>
+</ul>
+<p><strong>Don't create multiple tenants for teams within the same cluster.</strong> That's what
+identity resolution and allocation do — they split costs <em>within</em> a tenant across
+teams and users.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nt">tenants</span><span class="p">:</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="c1"># One tenant per billing boundary</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">  </span><span class="nt">ccloud-prod</span><span class="p">:</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">    </span><span class="nt">ecosystem</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">confluent_cloud</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">    </span><span class="nt">tenant_id</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ccloud-prod</span><span class="w">         </span><span class="c1"># internal partition key (not the CCloud org ID)</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="w">    </span><span class="nt">storage</span><span class="p">:</span>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="w">      </span><span class="nt">connection_string</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;sqlite:///data/ccloud-prod.db&quot;</span>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="w">    </span><span class="nt">plugin_settings</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">...</span>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="w">  </span><span class="nt">kafka-onprem</span><span class="p">:</span>
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="w">    </span><span class="nt">ecosystem</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">self_managed_kafka</span>
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="w">    </span><span class="nt">tenant_id</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">kafka-dc1</span>
+<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="w">    </span><span class="nt">storage</span><span class="p">:</span>
+<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a><span class="w">      </span><span class="nt">connection_string</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;sqlite:///data/kafka-dc1.db&quot;</span>
+<a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a><span class="w">    </span><span class="nt">plugin_settings</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">...</span>
+</code></pre></div>
+<hr />
+<h2 id="choosing-a-storage-backend">Choosing a storage backend<a class="headerlink" href="#choosing-a-storage-backend" title="Permanent link">&para;</a></h2>
+<p>Each tenant needs a database. Two options:</p>
+<p><strong>SQLite</strong> (default) — Zero setup. One file per tenant. Good for single-node
+deployments, development, and small-to-medium workloads.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">storage</span><span class="p">:</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">connection_string</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;sqlite:///data/ccloud-prod.db&quot;</span>
+</code></pre></div>
+<p><strong>PostgreSQL</strong> — Required when multiple processes need concurrent access (e.g.,
+separate worker and API server processes). Also better for large tenants with
+hundreds of resources and years of history.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nt">storage</span><span class="p">:</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="nt">connection_string</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;postgresql://user:pass@localhost:5432/chargeback_prod&quot;</span><span class="w">  </span><span class="c1"># pragma: allowlist secret</span>
+</code></pre></div>
+<div class="admonition warning">
+<p class="admonition-title">When SQLite won't work</p>
+<p>If you run the worker and API server as separate processes (<code>chitragupta worker</code>
+and <code>chitragupta api</code> in different containers), they both need to write to the
+same database. SQLite doesn't handle concurrent writers well. Use PostgreSQL.</p>
+<p>If everything runs in a single process (<code>chitragupta worker --with-api</code>), SQLite
+is fine.</p>
+</div>
+<hr />
+<h2 id="time-windows-lookback-cutoff-and-retention">Time windows: lookback, cutoff, and retention<a class="headerlink" href="#time-windows-lookback-cutoff-and-retention" title="Permanent link">&para;</a></h2>
+<p>Three settings control which dates the engine processes and how long data is kept.
+They interact with each other, so it helps to understand them together.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>←─── retention_days ───────────────────────────────────────→
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>←─── lookback_days ──────────────────────→
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>                                          ←── cutoff_days ──→
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>├──────────────────────────────────────────┼────────────────┼──→
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>oldest data                              skip zone        today
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>(deleted after                    (billing not yet
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a> retention_days)                   finalized by vendor)
+</code></pre></div>
+<p><strong><code>lookback_days</code></strong> (default: 200) — How far back to fetch billing data. On the
+first run, the engine backfills this many days. On subsequent runs, it only
+fetches new data, but will re-fetch and recalculate dates within the cutoff
+window if the billing data changed.</p>
+<p><strong><code>cutoff_days</code></strong> (default: 5) — Skip dates this close to today. Vendors
+(especially CCloud) don't finalize billing data immediately. If you process a
+date too early, you get partial costs. The cutoff gives the vendor time to
+settle. For self-managed Kafka, this is less critical since you control the
+metrics, but a small cutoff (1–2 days) still avoids processing incomplete
+Prometheus scrapes.</p>
+<p><strong><code>retention_days</code></strong> (default: 250) — Delete data older than this. Runs
+automatically after each pipeline cycle. Set this higher than <code>lookback_days</code>
+to keep historical chargebacks visible in the API after the engine stops
+re-fetching them.</p>
+<div class="admonition note">
+<p class="admonition-title">Constraint: <code>lookback_days</code> must be greater than <code>cutoff_days</code></p>
+<p>Otherwise the engine has no valid date range to process. This is enforced at
+startup.</p>
+</div>
+<p><strong>Practical guidance:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Scenario</th>
+<th>lookback</th>
+<th>cutoff</th>
+<th>retention</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>CCloud (billing lag ~3 days)</td>
+<td>200</td>
+<td>5</td>
+<td>365</td>
+</tr>
+<tr>
+<td>Self-managed Kafka</td>
+<td>90</td>
+<td>2</td>
+<td>180</td>
+</tr>
+<tr>
+<td>Testing / development</td>
+<td>30</td>
+<td>1</td>
+<td>60</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="configuring-confluent-cloud">Configuring Confluent Cloud<a class="headerlink" href="#configuring-confluent-cloud" title="Permanent link">&para;</a></h2>
+<h3 id="what-you-need-before-you-start">What you need before you start<a class="headerlink" href="#what-you-need-before-you-start" title="Permanent link">&para;</a></h3>
+<ol>
+<li><strong>CCloud API key</strong> with <code>OrganizationAdmin</code> role — the engine calls the billing
+   API and the environments/clusters APIs to discover resources and identities.</li>
+<li><strong>Metrics API key</strong> (optional but recommended) — enables usage-based allocation
+   for Kafka network costs and Flink CFUs. Without this, network costs fall back
+   to even-split across active identities.</li>
+<li><strong>Flink API credentials</strong> (optional) — only needed if you use Confluent Flink
+   and want per-statement-owner allocation.</li>
+</ol>
+<h3 id="the-cku-ratio-the-one-tuning-knob-you-should-care-about">The CKU ratio: the one tuning knob you should care about<a class="headerlink" href="#the-cku-ratio-the-one-tuning-knob-you-should-care-about" title="Permanent link">&para;</a></h3>
+<p>Kafka CKU costs (the main compute cost in CCloud) are allocated using a hybrid
+model: part usage-based, part shared. By default, 70% is allocated proportionally
+to bytes produced/consumed, and 30% is split evenly.</p>
+<p>The reasoning: a Kafka cluster has a base cost whether anyone uses it or not
+(the shared portion), but teams that produce/consume more data drive more of
+the compute load (the usage portion).</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nt">allocator_params</span><span class="p">:</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span><span class="nt">kafka_cku_usage_ratio</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.70</span><span class="w">    </span><span class="c1"># 70% by bytes in + bytes out</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">  </span><span class="nt">kafka_cku_shared_ratio</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.30</span><span class="w">   </span><span class="c1"># 30% even split</span>
+</code></pre></div>
+<p>These must sum to 1.0. Adjust based on your organization's philosophy:</p>
+<ul>
+<li><strong>More usage-driven (e.g., 0.90 / 0.10):</strong> Heavy producers/consumers pay more.
+  Fair if your cluster is right-sized and usage directly drives cost.</li>
+<li><strong>More shared (e.g., 0.50 / 0.50):</strong> Spreads the base infrastructure cost more
+  evenly. Fair if the cluster is over-provisioned and most cost is fixed overhead.</li>
+<li><strong>Fully usage-driven (1.0 / 0.0):</strong> Only works if you have reliable per-principal
+  metrics. If metrics are missing for a billing window, costs fall back to even-split
+  anyway.</li>
+</ul>
+<h3 id="what-happens-without-metrics">What happens without metrics<a class="headerlink" href="#what-happens-without-metrics" title="Permanent link">&para;</a></h3>
+<p>If you don't configure <code>metrics</code> (the Prometheus/Telemetry API connection), the
+engine can still allocate costs — but falls back to even-split for everything.
+The allocation chain works like this:</p>
+<ol>
+<li><strong>Try usage ratio</strong> (bytes per principal from metrics) → needs metrics</li>
+<li><strong>Try even split across active identities</strong> (from API key discovery) → needs identities</li>
+<li><strong>Try even split across all tenant identities</strong> (from the full billing period)</li>
+<li><strong>Allocate to the resource itself</strong> (terminal fallback)</li>
+<li><strong>Allocate to UNALLOCATED</strong> (for org-wide costs with no resource)</li>
+</ol>
+<p>Each tier fires only when the previous one has no data. The <code>allocation_detail</code>
+field on every chargeback row tells you which tier was used, so you can audit why
+a cost was allocated the way it was.</p>
+<hr />
+<h2 id="configuring-self-managed-kafka">Configuring Self-Managed Kafka<a class="headerlink" href="#configuring-self-managed-kafka" title="Permanent link">&para;</a></h2>
+<h3 id="the-cost-model-you-define-the-rates">The cost model: you define the rates<a class="headerlink" href="#the-cost-model-you-define-the-rates" title="Permanent link">&para;</a></h3>
+<p>Unlike CCloud, there's no billing API. You tell the engine what your infrastructure
+costs, and it constructs billing lines from Prometheus metrics.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="nt">cost_model</span><span class="p">:</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span><span class="nt">compute_hourly_rate</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;0.50&quot;</span><span class="w">           </span><span class="c1"># $/broker/hour</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">  </span><span class="nt">storage_per_gib_hourly</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;0.0001&quot;</span><span class="w">      </span><span class="c1"># $/GiB/hour</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">  </span><span class="nt">network_ingress_per_gib</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;0.01&quot;</span><span class="w">       </span><span class="c1"># $/GiB</span>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">  </span><span class="nt">network_egress_per_gib</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;0.05&quot;</span><span class="w">        </span><span class="c1"># $/GiB</span>
+</code></pre></div>
+<p><strong>Where do these numbers come from?</strong> Typically from your cloud provider or
+internal cost accounting:</p>
+<ul>
+<li><strong>Compute:</strong> Divide your monthly EC2/GKE bill for broker instances by
+  <code>(broker_count × hours_in_month)</code>.</li>
+<li><strong>Storage:</strong> EBS/PD cost per GiB-month, divided by hours in a month. Use
+  <code>Decimal</code> strings for precision — <code>"0.0001"</code> not <code>0.0001</code>.</li>
+<li><strong>Network:</strong> Cloud provider's network egress/ingress pricing per GiB. Ingress
+  is often free or cheaper than egress.</li>
+</ul>
+<div class="admonition note">
+<p class="admonition-title">Region overrides</p>
+<p>If your cluster spans regions with different pricing (or you want to model
+"what if we moved to eu-west-1"), use <code>region_overrides</code>. Only fields you
+specify are overridden; the rest inherit from the base cost model.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="nt">cost_model</span><span class="p">:</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="w">  </span><span class="nt">compute_hourly_rate</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;0.50&quot;</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="w">  </span><span class="l l-Scalar l-Scalar-Plain">...</span>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="w">  </span><span class="nt">region_overrides</span><span class="p">:</span>
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="w">    </span><span class="nt">eu-west-1</span><span class="p">:</span>
+<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="w">      </span><span class="nt">compute_hourly_rate</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;0.60&quot;</span><span class="w">   </span><span class="c1"># Only compute is more expensive</span>
+<a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="w">      </span><span class="c1"># storage, network rates inherited from base</span>
+</code></pre></div>
+</div>
+<h3 id="how-the-engine-computes-daily-costs">How the engine computes daily costs<a class="headerlink" href="#how-the-engine-computes-daily-costs" title="Permanent link">&para;</a></h3>
+<p>For each day in the lookback window, the engine queries Prometheus and applies
+your rates. Here is the exact math (from <code>ConstructedCostInput</code>):</p>
+<table>
+<thead>
+<tr>
+<th>Cost type</th>
+<th>Formula</th>
+<th>Example (3 brokers, 24h)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Compute</td>
+<td><code>broker_count × 24 × compute_hourly_rate</code></td>
+<td>3 × 24 × $0.50 = <strong>$36.00</strong></td>
+</tr>
+<tr>
+<td>Storage</td>
+<td><code>avg_storage_gib × 24 × storage_per_gib_hourly</code></td>
+<td>100 GiB × 24 × $0.0001 = <strong>$0.24</strong></td>
+</tr>
+<tr>
+<td>Network ingress</td>
+<td><code>total_bytes_in ÷ 1,073,741,824 × network_ingress_per_gib</code></td>
+<td>50 GiB × $0.01 = <strong>$0.50</strong></td>
+</tr>
+<tr>
+<td>Network egress</td>
+<td><code>total_bytes_out ÷ 1,073,741,824 × network_egress_per_gib</code></td>
+<td>50 GiB × $0.05 = <strong>$2.50</strong></td>
+</tr>
+</tbody>
+</table>
+<p>Storage uses the <strong>average</strong> of all Prometheus samples in the day (because storage
+is a point-in-time measurement, not a cumulative counter). Network uses the <strong>sum</strong>
+of all hourly increases (because bytes are a cumulative counter).</p>
+<p>See <a href="../../architecture/cost-model/">How Costs Work</a> for the complete mathematical
+model including allocation.</p>
+<h3 id="choosing-a-resource-source">Choosing a resource source<a class="headerlink" href="#choosing-a-resource-source" title="Permanent link">&para;</a></h3>
+<p>How does the engine discover your brokers and topics?</p>
+<table>
+<thead>
+<tr>
+<th>Source</th>
+<th>How it works</th>
+<th>Tradeoffs</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>prometheus</code> (default)</td>
+<td>Extracts broker, topic, and principal labels from <code>kafka_server_brokertopicmetrics_bytesin_total</code></td>
+<td>Zero additional credentials. Only discovers resources that have traffic. A topic with zero bytes in the discovery window won't appear.</td>
+</tr>
+<tr>
+<td><code>admin_api</code></td>
+<td>Queries the Kafka AdminClient for cluster metadata</td>
+<td>Discovers <em>all</em> topics including idle ones. Requires bootstrap server credentials. Does <strong>not</strong> discover principals (no ACL info).</td>
+</tr>
+</tbody>
+</table>
+<p><strong>When to use <code>admin_api</code>:</strong> If you need a complete inventory of topics regardless
+of traffic. Combine with <code>identity_source: prometheus</code> or <code>both</code> to still get
+principal data from metrics.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="nt">resource_source</span><span class="p">:</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="w">  </span><span class="nt">source</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">admin_api</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="w">  </span><span class="nt">bootstrap_servers</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">kafka-1:9092,kafka-2:9092,kafka-3:9092</span>
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="w">  </span><span class="nt">security_protocol</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">SASL_SSL</span>
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="w">  </span><span class="nt">sasl_mechanism</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">SCRAM-SHA-512</span>
+<a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a><span class="w">  </span><span class="nt">sasl_username</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${KAFKA_USER}</span>
+<a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a><span class="w">  </span><span class="nt">sasl_password</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${KAFKA_PASS}</span>
+</code></pre></div>
+<h3 id="choosing-an-identity-source">Choosing an identity source<a class="headerlink" href="#choosing-an-identity-source" title="Permanent link">&para;</a></h3>
+<p>How does the engine discover who is producing/consuming?</p>
+<table>
+<thead>
+<tr>
+<th>Source</th>
+<th>How it works</th>
+<th>Tradeoffs</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>prometheus</code> (default)</td>
+<td>Extracts <code>principal</code> label from JMX metrics</td>
+<td>Requires JMX exporter configured to expose principal labels. Only finds principals with recent traffic.</td>
+</tr>
+<tr>
+<td><code>static</code></td>
+<td>You list identities in YAML</td>
+<td>Works without Prometheus principal labels. You maintain the list manually.</td>
+</tr>
+<tr>
+<td><code>both</code></td>
+<td>Combines Prometheus + static</td>
+<td>Prometheus principals go to <code>metrics_derived</code> (dynamic, per-window). Static identities go to <code>resource_active</code> (always present). Good when Prometheus has partial coverage.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Which one should you use?</strong></p>
+<ul>
+<li>If your JMX exporter includes <code>principal</code> labels on <code>kafka_server_brokertopicmetrics_*</code> → use <code>prometheus</code></li>
+<li>If JMX doesn't expose principal labels (common with older exporters) → use <code>static</code></li>
+<li>If some principals appear in metrics but you also want to include service accounts
+  that rarely produce traffic → use <code>both</code></li>
+</ul>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="c1"># Static identities example</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="nt">identity_source</span><span class="p">:</span>
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="w">  </span><span class="nt">source</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">static</span>
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="w">  </span><span class="nt">static_identities</span><span class="p">:</span>
+<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">identity_id</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;User:alice&quot;</span>
+<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="w">      </span><span class="nt">identity_type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">principal</span>
+<a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a><span class="w">      </span><span class="nt">display_name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Alice</span>
+<a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a><span class="w">      </span><span class="nt">team</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">data-eng</span>
+<a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">identity_id</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;User:bob&quot;</span>
+<a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a><span class="w">      </span><span class="nt">identity_type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">service_account</span>
+<a id="__codelineno-8-11" name="__codelineno-8-11" href="#__codelineno-8-11"></a><span class="w">      </span><span class="nt">display_name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Bob (ETL service)</span>
+<a id="__codelineno-8-12" name="__codelineno-8-12" href="#__codelineno-8-12"></a><span class="w">      </span><span class="nt">team</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">platform</span>
+</code></pre></div>
+<h3 id="principal-to-team-mapping">Principal-to-team mapping<a class="headerlink" href="#principal-to-team-mapping" title="Permanent link">&para;</a></h3>
+<p>Regardless of identity source, you can map raw principal IDs to team names. This
+is purely cosmetic — it doesn't affect allocation — but makes chargeback reports
+readable.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="nt">identity_source</span><span class="p">:</span>
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="w">  </span><span class="nt">source</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">prometheus</span>
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="w">  </span><span class="nt">principal_to_team</span><span class="p">:</span>
+<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="w">    </span><span class="s">&quot;User:alice&quot;</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">team-data-eng</span>
+<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a><span class="w">    </span><span class="s">&quot;User:bob&quot;</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">team-platform</span>
+<a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a><span class="w">    </span><span class="s">&quot;User:etl-service&quot;</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">team-platform</span>
+<a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a><span class="w">  </span><span class="nt">default_team</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">UNASSIGNED</span><span class="w">    </span><span class="c1"># Principals not in the map get this</span>
+</code></pre></div>
+<hr />
+<h2 id="configuring-generic-metrics">Configuring Generic Metrics<a class="headerlink" href="#configuring-generic-metrics" title="Permanent link">&para;</a></h2>
+<p>The generic plugin is the most flexible but requires the most configuration. You
+define everything: what the cost types are, how quantities are measured, and how
+costs are allocated.</p>
+<h3 id="defining-cost-types">Defining cost types<a class="headerlink" href="#defining-cost-types" title="Permanent link">&para;</a></h3>
+<p>Each entry in <code>cost_types</code> becomes a separate billing line per day. Think of each
+one as answering: "what does this infrastructure cost, and how do I measure usage?"</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="nt">cost_types</span><span class="p">:</span>
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">PG_COMPUTE</span><span class="w">              </span><span class="c1"># Product type in billing output</span>
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="w">    </span><span class="nt">product_category</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">postgres</span><span class="w">     </span><span class="c1"># Grouping label</span>
+<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="w">    </span><span class="nt">rate</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;0.50&quot;</span><span class="w">                   </span><span class="c1"># $/unit (depends on quantity type)</span>
+<a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a><span class="w">    </span><span class="nt">cost_quantity</span><span class="p">:</span>
+<a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a><span class="w">      </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">fixed</span><span class="w">                  </span><span class="c1"># Fixed instance count</span>
+<a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a><span class="w">      </span><span class="nt">count</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">3</span><span class="w">                     </span><span class="c1"># 3 nodes</span>
+<a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a><span class="w">    </span><span class="nt">allocation_strategy</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">even_split</span>
+</code></pre></div>
+<h3 id="three-ways-to-measure-quantity">Three ways to measure quantity<a class="headerlink" href="#three-ways-to-measure-quantity" title="Permanent link">&para;</a></h3>
+<p><strong><code>fixed</code></strong> — A constant. Use for infrastructure with a known, static count:
+server instances, fixed-size clusters. The daily cost is <code>count × rate × 24</code>
+(hours in a day).</p>
+<p><strong><code>storage_gib</code></strong> — Query Prometheus for a storage metric. The engine averages
+all samples over the day, converts bytes to GiB, and multiplies by rate and
+hours. Use for databases, object stores, anything measured in "how much data
+is stored."</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="nt">cost_quantity</span><span class="p">:</span>
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="w">  </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">storage_gib</span>
+<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a><span class="w">  </span><span class="nt">query</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;avg(pg_database_size_bytes)&quot;</span><span class="w">    </span><span class="c1"># Cluster-wide, no {} placeholder</span>
+</code></pre></div>
+<p><strong><code>network_gib</code></strong> — Query Prometheus for a throughput metric. The engine sums
+all hourly increases, converts bytes to GiB, and multiplies by rate. Use for
+network transfer, I/O throughput.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="nt">cost_quantity</span><span class="p">:</span>
+<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="w">  </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">network_gib</span>
+<a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a><span class="w">  </span><span class="nt">query</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;sum(increase(pg_stat_bgwriter_buffers_alloc_total[1h]))&quot;</span>
+</code></pre></div>
+<div class="admonition note">
+<p class="admonition-title">Storage vs. network: why the math differs</p>
+<p>Storage is a gauge (current value). Averaging gives GiB-hours. Network is a
+counter (cumulative). Summing increases gives total GiB transferred. The rate
+units differ: <code>$/GiB/hour</code> for storage, <code>$/GiB</code> for network.</p>
+</div>
+<h3 id="choosing-an-allocation-strategy">Choosing an allocation strategy<a class="headerlink" href="#choosing-an-allocation-strategy" title="Permanent link">&para;</a></h3>
+<p>Once the engine computes the daily cost for a cost type, it needs to split it
+across identities. Two strategies:</p>
+<p><strong><code>even_split</code></strong> — Divide equally among all discovered identities. Use for shared
+infrastructure costs where there's no meaningful way to attribute usage
+(compute nodes, base storage).</p>
+<p><strong><code>usage_ratio</code></strong> — Divide proportionally to a usage metric. Requires an
+<code>allocation_query</code> (PromQL returning per-identity values) and <code>allocation_label</code>
+(which label identifies the identity). Use when a Prometheus metric directly
+measures per-user consumption.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="c1"># Example: network cost split by query activity per user</span>
+<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">PG_NETWORK</span>
+<a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a><span class="w">  </span><span class="nt">rate</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;0.05&quot;</span>
+<a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a><span class="w">  </span><span class="nt">cost_quantity</span><span class="p">:</span>
+<a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a><span class="w">    </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">network_gib</span>
+<a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a><span class="w">    </span><span class="nt">query</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;sum(increase(pg_stat_bgwriter_buffers_alloc_total[1h]))&quot;</span>
+<a id="__codelineno-13-7" name="__codelineno-13-7" href="#__codelineno-13-7"></a><span class="w">  </span><span class="nt">allocation_strategy</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">usage_ratio</span>
+<a id="__codelineno-13-8" name="__codelineno-13-8" href="#__codelineno-13-8"></a><span class="w">  </span><span class="nt">allocation_query</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;sum</span><span class="nv"> </span><span class="s">by</span><span class="nv"> </span><span class="s">(usename)</span><span class="nv"> </span><span class="s">(increase(pg_stat_activity_count[1h]))&quot;</span>
+<a id="__codelineno-13-9" name="__codelineno-13-9" href="#__codelineno-13-9"></a><span class="w">  </span><span class="nt">allocation_label</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">usename</span><span class="w">      </span><span class="c1"># Prometheus label → identity_id</span>
+</code></pre></div>
+<div class="admonition warning">
+<p class="admonition-title">The allocation_query must have a <code>by (label)</code> clause</p>
+<p>The query must return one series per identity. If it returns a single
+aggregated value, every identity gets the same ratio and you've effectively
+written a more expensive even-split.</p>
+</div>
+<hr />
+<h2 id="emitters-where-do-chargeback-results-go">Emitters: where do chargeback results go?<a class="headerlink" href="#emitters-where-do-chargeback-results-go" title="Permanent link">&para;</a></h2>
+<p>After costs are allocated, emitters write the results to external destinations.
+Each tenant can have multiple emitters — for example, a CSV file for finance and
+a Prometheus endpoint for dashboards.</p>
+<h3 id="csv-emitter">CSV emitter<a class="headerlink" href="#csv-emitter" title="Permanent link">&para;</a></h3>
+<p>Writes one file per billing date. Good for finance teams, spreadsheet workflows,
+and archival.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="nt">emitters</span><span class="p">:</span>
+<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">csv</span>
+<a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a><span class="w">    </span><span class="nt">aggregation</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">daily</span>
+<a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a><span class="w">    </span><span class="nt">params</span><span class="p">:</span>
+<a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a><span class="w">      </span><span class="nt">output_dir</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">./output/chargebacks</span>
+<a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a><span class="w">      </span><span class="nt">filename_template</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;{tenant_id}_{date}.csv&quot;</span><span class="w">   </span><span class="c1"># optional</span>
+</code></pre></div>
+<h3 id="prometheus-emitter">Prometheus emitter<a class="headerlink" href="#prometheus-emitter" title="Permanent link">&para;</a></h3>
+<p>Exposes chargeback data as Prometheus gauge metrics on an HTTP <code>/metrics</code> endpoint.
+The timestamps on the samples are the billing date (midnight UTC), not the current
+wall clock — this makes the data suitable for TSDB backfill.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="nt">emitters</span><span class="p">:</span>
+<a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">prometheus</span>
+<a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a><span class="w">    </span><span class="nt">aggregation</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">daily</span>
+<a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a><span class="w">    </span><span class="nt">params</span><span class="p">:</span>
+<a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a><span class="w">      </span><span class="nt">port</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">9090</span><span class="w">       </span><span class="c1"># default: 8000</span>
+</code></pre></div>
+<div class="admonition note">
+<p class="admonition-title">Aggregation controls output granularity</p>
+<p><code>aggregation: daily</code> collapses hourly chargeback rows into one row per day
+before emitting. <code>aggregation: monthly</code> collapses further. <code>null</code> (or omit)
+emits rows at their native granularity. An emitter cannot request finer
+granularity than <code>chargeback_granularity</code> produces — if your granularity is
+<code>daily</code>, requesting <code>hourly</code> aggregation has no effect.</p>
+</div>
+<h3 id="emitter-identity-and-emission-state">Emitter identity and emission state<a class="headerlink" href="#emitter-identity-and-emission-state" title="Permanent link">&para;</a></h3>
+<p>Each emitter has a <code>name</code> field that uniquely identifies it for emission state
+tracking. The engine records per-tenant, per-emitter, per-date outcomes
+(<code>emitted</code>, <code>failed</code>, <code>skipped</code>) so that already-emitted dates are not re-sent
+on subsequent runs, and failed dates are retried automatically.</p>
+<p><strong><code>name</code></strong> — Unique identifier for this emitter within the tenant. Used as the
+key when persisting emission state. Defaults to <code>type</code> if omitted. If you
+configure two emitters of the same type (e.g., two CSV emitters writing to
+different directories), give each a distinct name:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="nt">emitters</span><span class="p">:</span>
+<a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">csv</span>
+<a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a><span class="w">    </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">csv-finance</span><span class="w">        </span><span class="c1"># explicit name — required when type is not unique</span>
+<a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a><span class="w">    </span><span class="nt">aggregation</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">daily</span>
+<a id="__codelineno-16-5" name="__codelineno-16-5" href="#__codelineno-16-5"></a><span class="w">    </span><span class="nt">params</span><span class="p">:</span>
+<a id="__codelineno-16-6" name="__codelineno-16-6" href="#__codelineno-16-6"></a><span class="w">      </span><span class="nt">output_dir</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">./output/finance</span>
+<a id="__codelineno-16-7" name="__codelineno-16-7" href="#__codelineno-16-7"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">csv</span>
+<a id="__codelineno-16-8" name="__codelineno-16-8" href="#__codelineno-16-8"></a><span class="w">    </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">csv-archive</span>
+<a id="__codelineno-16-9" name="__codelineno-16-9" href="#__codelineno-16-9"></a><span class="w">    </span><span class="nt">aggregation</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">monthly</span>
+<a id="__codelineno-16-10" name="__codelineno-16-10" href="#__codelineno-16-10"></a><span class="w">    </span><span class="nt">params</span><span class="p">:</span>
+<a id="__codelineno-16-11" name="__codelineno-16-11" href="#__codelineno-16-11"></a><span class="w">      </span><span class="nt">output_dir</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">./output/archive</span>
+</code></pre></div>
+<p><strong><code>lookback_days</code></strong> — Limits emission to dates within the most recent N days.
+Dates older than <code>lookback_days</code> ago are skipped even if they were never
+emitted. Set to <code>null</code> (or omit) to emit all dates with pending chargeback rows.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="nt">emitters</span><span class="p">:</span>
+<a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">prometheus</span>
+<a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a><span class="w">    </span><span class="nt">aggregation</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">daily</span>
+<a id="__codelineno-17-4" name="__codelineno-17-4" href="#__codelineno-17-4"></a><span class="w">    </span><span class="nt">lookback_days</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">30</span><span class="w">    </span><span class="c1"># only emit the last 30 days; ignore older history</span>
+</code></pre></div>
+<p>This is useful when your emitter destination has a retention window — for
+example, a Prometheus remote-write endpoint that rejects samples older than
+30 days.</p>
+<hr />
+<h2 id="pipeline-tuning">Pipeline tuning<a class="headerlink" href="#pipeline-tuning" title="Permanent link">&para;</a></h2>
+<p>These settings control how aggressively the engine runs. The defaults are
+conservative — they work for most deployments without tuning.</p>
+<h3 id="metrics_step_seconds-default-3600"><code>metrics_step_seconds</code> (default: 3600)<a class="headerlink" href="#metrics_step_seconds-default-3600" title="Permanent link">&para;</a></h3>
+<p>Controls the Prometheus range query step interval. Lower values mean more data
+points per query, finer-grained usage attribution, but higher Prometheus load.</p>
+<table>
+<thead>
+<tr>
+<th>Value</th>
+<th>Effect</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>3600</code> (1h)</td>
+<td>One data point per hour. Good balance of precision and load.</td>
+</tr>
+<tr>
+<td><code>900</code> (15m)</td>
+<td>Four data points per hour. Better for short-lived workloads.</td>
+</tr>
+<tr>
+<td><code>300</code> (5m)</td>
+<td>Twelve data points per hour. Prometheus must retain this resolution.</td>
+</tr>
+</tbody>
+</table>
+<div class="admonition warning">
+<p class="admonition-title">Match your Prometheus retention</p>
+<p>If Prometheus downsamples to 1h resolution after 7 days, setting
+<code>metrics_step_seconds: 300</code> only helps for recent data. Older queries
+return interpolated values, not real 5-minute granularity.</p>
+</div>
+<h3 id="metrics_prefetch_workers-default-4"><code>metrics_prefetch_workers</code> (default: 4)<a class="headerlink" href="#metrics_prefetch_workers-default-4" title="Permanent link">&para;</a></h3>
+<p>Parallel threads for Prometheus queries during the calculate phase. The engine
+batches metrics queries across all billing lines for a date and runs them in
+parallel.</p>
+<p>Increase if: your Prometheus server is fast and you have many resources
+(100+ topics). Decrease if: Prometheus is under heavy load or rate-limited.</p>
+<h3 id="max_parallel_tenants-default-4"><code>max_parallel_tenants</code> (default: 4)<a class="headerlink" href="#max_parallel_tenants-default-4" title="Permanent link">&para;</a></h3>
+<p>How many tenants run concurrently within a single pipeline cycle. Each tenant
+gets its own thread. Increase if you have many small tenants. Decrease if
+tenants are large (hundreds of resources, thousands of billing lines) and you're
+hitting memory limits.</p>
+<h3 id="min_refresh_gap_seconds-default-1800"><code>min_refresh_gap_seconds</code> (default: 1800)<a class="headerlink" href="#min_refresh_gap_seconds-default-1800" title="Permanent link">&para;</a></h3>
+<p>Minimum time between pipeline runs for a tenant. If the engine runs in loop
+mode (<code>enable_periodic_refresh: true</code>), it skips a tenant if the last run was
+less than this many seconds ago. Prevents hammering external APIs when the
+loop interval is shorter than the actual pipeline duration.</p>
+<h3 id="gather_failure_threshold-default-5"><code>gather_failure_threshold</code> (default: 5)<a class="headerlink" href="#gather_failure_threshold-default-5" title="Permanent link">&para;</a></h3>
+<p>After this many consecutive gather failures, the tenant is permanently suspended
+for the lifetime of the process. Prevents infinite retry loops when credentials
+expire or an API is permanently down. Restart the process to reset the counter.</p>
+<hr />
+<h2 id="putting-it-all-together-a-complete-example">Putting it all together: a complete example<a class="headerlink" href="#putting-it-all-together-a-complete-example" title="Permanent link">&para;</a></h2>
+<p>Here's a configuration for a team running both Confluent Cloud and an on-prem
+Kafka cluster, with CSV output for finance and Prometheus metrics for dashboards.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a><span class="nt">logging</span><span class="p">:</span>
+<a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a><span class="w">  </span><span class="nt">level</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">INFO</span>
+<a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a>
+<a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a><span class="nt">features</span><span class="p">:</span>
+<a id="__codelineno-18-5" name="__codelineno-18-5" href="#__codelineno-18-5"></a><span class="w">  </span><span class="nt">enable_periodic_refresh</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<a id="__codelineno-18-6" name="__codelineno-18-6" href="#__codelineno-18-6"></a><span class="w">  </span><span class="nt">refresh_interval</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">3600</span><span class="w">                 </span><span class="c1"># run once per hour</span>
+<a id="__codelineno-18-7" name="__codelineno-18-7" href="#__codelineno-18-7"></a><span class="w">  </span><span class="nt">max_parallel_tenants</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">2</span>
+<a id="__codelineno-18-8" name="__codelineno-18-8" href="#__codelineno-18-8"></a>
+<a id="__codelineno-18-9" name="__codelineno-18-9" href="#__codelineno-18-9"></a><span class="nt">api</span><span class="p">:</span>
+<a id="__codelineno-18-10" name="__codelineno-18-10" href="#__codelineno-18-10"></a><span class="w">  </span><span class="nt">port</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">8080</span>
+<a id="__codelineno-18-11" name="__codelineno-18-11" href="#__codelineno-18-11"></a>
+<a id="__codelineno-18-12" name="__codelineno-18-12" href="#__codelineno-18-12"></a><span class="nt">tenants</span><span class="p">:</span>
+<a id="__codelineno-18-13" name="__codelineno-18-13" href="#__codelineno-18-13"></a><span class="w">  </span><span class="c1"># Confluent Cloud organization</span>
+<a id="__codelineno-18-14" name="__codelineno-18-14" href="#__codelineno-18-14"></a><span class="w">  </span><span class="nt">ccloud-prod</span><span class="p">:</span>
+<a id="__codelineno-18-15" name="__codelineno-18-15" href="#__codelineno-18-15"></a><span class="w">    </span><span class="nt">ecosystem</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">confluent_cloud</span>
+<a id="__codelineno-18-16" name="__codelineno-18-16" href="#__codelineno-18-16"></a><span class="w">    </span><span class="nt">tenant_id</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ccloud-prod</span><span class="w">         </span><span class="c1"># internal partition key (not the CCloud org ID)</span>
+<a id="__codelineno-18-17" name="__codelineno-18-17" href="#__codelineno-18-17"></a><span class="w">    </span><span class="nt">lookback_days</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">200</span>
+<a id="__codelineno-18-18" name="__codelineno-18-18" href="#__codelineno-18-18"></a><span class="w">    </span><span class="nt">cutoff_days</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">5</span>
+<a id="__codelineno-18-19" name="__codelineno-18-19" href="#__codelineno-18-19"></a><span class="w">    </span><span class="nt">retention_days</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">365</span>
+<a id="__codelineno-18-20" name="__codelineno-18-20" href="#__codelineno-18-20"></a><span class="w">    </span><span class="nt">storage</span><span class="p">:</span>
+<a id="__codelineno-18-21" name="__codelineno-18-21" href="#__codelineno-18-21"></a><span class="w">      </span><span class="nt">connection_string</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;sqlite:///data/ccloud-prod.db&quot;</span>
+<a id="__codelineno-18-22" name="__codelineno-18-22" href="#__codelineno-18-22"></a><span class="w">    </span><span class="nt">plugin_settings</span><span class="p">:</span>
+<a id="__codelineno-18-23" name="__codelineno-18-23" href="#__codelineno-18-23"></a><span class="w">      </span><span class="nt">ccloud_api</span><span class="p">:</span>
+<a id="__codelineno-18-24" name="__codelineno-18-24" href="#__codelineno-18-24"></a><span class="w">        </span><span class="nt">key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${CCLOUD_API_KEY}</span>
+<a id="__codelineno-18-25" name="__codelineno-18-25" href="#__codelineno-18-25"></a><span class="w">        </span><span class="nt">secret</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${CCLOUD_API_SECRET}</span>
+<a id="__codelineno-18-26" name="__codelineno-18-26" href="#__codelineno-18-26"></a><span class="w">      </span><span class="nt">billing_api</span><span class="p">:</span>
+<a id="__codelineno-18-27" name="__codelineno-18-27" href="#__codelineno-18-27"></a><span class="w">        </span><span class="nt">days_per_query</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">15</span>
+<a id="__codelineno-18-28" name="__codelineno-18-28" href="#__codelineno-18-28"></a><span class="w">      </span><span class="nt">metrics</span><span class="p">:</span>
+<a id="__codelineno-18-29" name="__codelineno-18-29" href="#__codelineno-18-29"></a><span class="w">        </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">prometheus</span>
+<a id="__codelineno-18-30" name="__codelineno-18-30" href="#__codelineno-18-30"></a><span class="w">        </span><span class="nt">url</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">https://api.telemetry.confluent.cloud</span>
+<a id="__codelineno-18-31" name="__codelineno-18-31" href="#__codelineno-18-31"></a><span class="w">        </span><span class="nt">auth_type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">basic</span>
+<a id="__codelineno-18-32" name="__codelineno-18-32" href="#__codelineno-18-32"></a><span class="w">        </span><span class="nt">username</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${METRICS_API_KEY}</span>
+<a id="__codelineno-18-33" name="__codelineno-18-33" href="#__codelineno-18-33"></a><span class="w">        </span><span class="nt">password</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${METRICS_API_SECRET}</span>
+<a id="__codelineno-18-34" name="__codelineno-18-34" href="#__codelineno-18-34"></a><span class="w">      </span><span class="nt">allocator_params</span><span class="p">:</span>
+<a id="__codelineno-18-35" name="__codelineno-18-35" href="#__codelineno-18-35"></a><span class="w">        </span><span class="nt">kafka_cku_usage_ratio</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.70</span>
+<a id="__codelineno-18-36" name="__codelineno-18-36" href="#__codelineno-18-36"></a><span class="w">        </span><span class="nt">kafka_cku_shared_ratio</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.30</span>
+<a id="__codelineno-18-37" name="__codelineno-18-37" href="#__codelineno-18-37"></a><span class="w">      </span><span class="nt">emitters</span><span class="p">:</span>
+<a id="__codelineno-18-38" name="__codelineno-18-38" href="#__codelineno-18-38"></a><span class="w">        </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">csv</span>
+<a id="__codelineno-18-39" name="__codelineno-18-39" href="#__codelineno-18-39"></a><span class="w">          </span><span class="nt">aggregation</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">daily</span>
+<a id="__codelineno-18-40" name="__codelineno-18-40" href="#__codelineno-18-40"></a><span class="w">          </span><span class="nt">params</span><span class="p">:</span>
+<a id="__codelineno-18-41" name="__codelineno-18-41" href="#__codelineno-18-41"></a><span class="w">            </span><span class="nt">output_dir</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">./output/ccloud</span>
+<a id="__codelineno-18-42" name="__codelineno-18-42" href="#__codelineno-18-42"></a><span class="w">        </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">prometheus</span>
+<a id="__codelineno-18-43" name="__codelineno-18-43" href="#__codelineno-18-43"></a><span class="w">          </span><span class="nt">aggregation</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">daily</span>
+<a id="__codelineno-18-44" name="__codelineno-18-44" href="#__codelineno-18-44"></a><span class="w">          </span><span class="nt">params</span><span class="p">:</span>
+<a id="__codelineno-18-45" name="__codelineno-18-45" href="#__codelineno-18-45"></a><span class="w">            </span><span class="nt">port</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">9090</span>
+<a id="__codelineno-18-46" name="__codelineno-18-46" href="#__codelineno-18-46"></a>
+<a id="__codelineno-18-47" name="__codelineno-18-47" href="#__codelineno-18-47"></a><span class="w">  </span><span class="c1"># On-prem Kafka cluster</span>
+<a id="__codelineno-18-48" name="__codelineno-18-48" href="#__codelineno-18-48"></a><span class="w">  </span><span class="nt">kafka-dc1</span><span class="p">:</span>
+<a id="__codelineno-18-49" name="__codelineno-18-49" href="#__codelineno-18-49"></a><span class="w">    </span><span class="nt">ecosystem</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">self_managed_kafka</span>
+<a id="__codelineno-18-50" name="__codelineno-18-50" href="#__codelineno-18-50"></a><span class="w">    </span><span class="nt">tenant_id</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">kafka-dc1</span>
+<a id="__codelineno-18-51" name="__codelineno-18-51" href="#__codelineno-18-51"></a><span class="w">    </span><span class="nt">lookback_days</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">90</span>
+<a id="__codelineno-18-52" name="__codelineno-18-52" href="#__codelineno-18-52"></a><span class="w">    </span><span class="nt">cutoff_days</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">2</span>
+<a id="__codelineno-18-53" name="__codelineno-18-53" href="#__codelineno-18-53"></a><span class="w">    </span><span class="nt">retention_days</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">180</span>
+<a id="__codelineno-18-54" name="__codelineno-18-54" href="#__codelineno-18-54"></a><span class="w">    </span><span class="nt">storage</span><span class="p">:</span>
+<a id="__codelineno-18-55" name="__codelineno-18-55" href="#__codelineno-18-55"></a><span class="w">      </span><span class="nt">connection_string</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;sqlite:///data/kafka-dc1.db&quot;</span>
+<a id="__codelineno-18-56" name="__codelineno-18-56" href="#__codelineno-18-56"></a><span class="w">    </span><span class="nt">plugin_settings</span><span class="p">:</span>
+<a id="__codelineno-18-57" name="__codelineno-18-57" href="#__codelineno-18-57"></a><span class="w">      </span><span class="nt">cluster_id</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">kafka-dc1-cluster</span>
+<a id="__codelineno-18-58" name="__codelineno-18-58" href="#__codelineno-18-58"></a><span class="w">      </span><span class="nt">broker_count</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">5</span>
+<a id="__codelineno-18-59" name="__codelineno-18-59" href="#__codelineno-18-59"></a><span class="w">      </span><span class="nt">cost_model</span><span class="p">:</span>
+<a id="__codelineno-18-60" name="__codelineno-18-60" href="#__codelineno-18-60"></a><span class="w">        </span><span class="nt">compute_hourly_rate</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;0.45&quot;</span>
+<a id="__codelineno-18-61" name="__codelineno-18-61" href="#__codelineno-18-61"></a><span class="w">        </span><span class="nt">storage_per_gib_hourly</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;0.00008&quot;</span>
+<a id="__codelineno-18-62" name="__codelineno-18-62" href="#__codelineno-18-62"></a><span class="w">        </span><span class="nt">network_ingress_per_gib</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;0.00&quot;</span>
+<a id="__codelineno-18-63" name="__codelineno-18-63" href="#__codelineno-18-63"></a><span class="w">        </span><span class="nt">network_egress_per_gib</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;0.09&quot;</span>
+<a id="__codelineno-18-64" name="__codelineno-18-64" href="#__codelineno-18-64"></a><span class="w">      </span><span class="nt">identity_source</span><span class="p">:</span>
+<a id="__codelineno-18-65" name="__codelineno-18-65" href="#__codelineno-18-65"></a><span class="w">        </span><span class="nt">source</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">both</span>
+<a id="__codelineno-18-66" name="__codelineno-18-66" href="#__codelineno-18-66"></a><span class="w">        </span><span class="nt">principal_to_team</span><span class="p">:</span>
+<a id="__codelineno-18-67" name="__codelineno-18-67" href="#__codelineno-18-67"></a><span class="w">          </span><span class="s">&quot;User:etl-service&quot;</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">team-platform</span>
+<a id="__codelineno-18-68" name="__codelineno-18-68" href="#__codelineno-18-68"></a><span class="w">          </span><span class="s">&quot;User:analytics&quot;</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">team-data</span>
+<a id="__codelineno-18-69" name="__codelineno-18-69" href="#__codelineno-18-69"></a><span class="w">        </span><span class="nt">default_team</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">UNASSIGNED</span>
+<a id="__codelineno-18-70" name="__codelineno-18-70" href="#__codelineno-18-70"></a><span class="w">        </span><span class="nt">static_identities</span><span class="p">:</span>
+<a id="__codelineno-18-71" name="__codelineno-18-71" href="#__codelineno-18-71"></a><span class="w">          </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">identity_id</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;User:batch-job&quot;</span>
+<a id="__codelineno-18-72" name="__codelineno-18-72" href="#__codelineno-18-72"></a><span class="w">            </span><span class="nt">identity_type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">service_account</span>
+<a id="__codelineno-18-73" name="__codelineno-18-73" href="#__codelineno-18-73"></a><span class="w">            </span><span class="nt">display_name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Nightly Batch</span>
+<a id="__codelineno-18-74" name="__codelineno-18-74" href="#__codelineno-18-74"></a><span class="w">            </span><span class="nt">team</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">team-platform</span>
+<a id="__codelineno-18-75" name="__codelineno-18-75" href="#__codelineno-18-75"></a><span class="w">      </span><span class="nt">resource_source</span><span class="p">:</span>
+<a id="__codelineno-18-76" name="__codelineno-18-76" href="#__codelineno-18-76"></a><span class="w">        </span><span class="nt">source</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">prometheus</span>
+<a id="__codelineno-18-77" name="__codelineno-18-77" href="#__codelineno-18-77"></a><span class="w">      </span><span class="nt">metrics</span><span class="p">:</span>
+<a id="__codelineno-18-78" name="__codelineno-18-78" href="#__codelineno-18-78"></a><span class="w">        </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">prometheus</span>
+<a id="__codelineno-18-79" name="__codelineno-18-79" href="#__codelineno-18-79"></a><span class="w">        </span><span class="nt">url</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">http://prometheus.internal:9090</span>
+<a id="__codelineno-18-80" name="__codelineno-18-80" href="#__codelineno-18-80"></a><span class="w">        </span><span class="nt">auth_type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">none</span>
+<a id="__codelineno-18-81" name="__codelineno-18-81" href="#__codelineno-18-81"></a><span class="w">      </span><span class="nt">emitters</span><span class="p">:</span>
+<a id="__codelineno-18-82" name="__codelineno-18-82" href="#__codelineno-18-82"></a><span class="w">        </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">csv</span>
+<a id="__codelineno-18-83" name="__codelineno-18-83" href="#__codelineno-18-83"></a><span class="w">          </span><span class="nt">aggregation</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">daily</span>
+<a id="__codelineno-18-84" name="__codelineno-18-84" href="#__codelineno-18-84"></a><span class="w">          </span><span class="nt">params</span><span class="p">:</span>
+<a id="__codelineno-18-85" name="__codelineno-18-85" href="#__codelineno-18-85"></a><span class="w">            </span><span class="nt">output_dir</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">./output/kafka-dc1</span>
+</code></pre></div>
+<p>This configuration:</p>
+<ul>
+<li>Runs the pipeline hourly, processing both tenants in parallel</li>
+<li>CCloud: fetches billing from the API, allocates CKUs 70/30, uses Telemetry API
+  metrics for per-principal network attribution</li>
+<li>On-prem: constructs billing from Prometheus metrics and your rates, discovers
+  principals from JMX labels plus a static entry for a batch job that rarely
+  appears in metrics</li>
+<li>Both tenants emit to CSV and (CCloud only) Prometheus</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.sections", "navigation.top", "navigation.indexes", "navigation.expand", "search.suggest", "search.highlight", "content.code.copy"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+        <script src="../../javascripts/external-links.js"></script>
+      
+    
+  </body>
+</html>
