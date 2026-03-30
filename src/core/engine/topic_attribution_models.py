@@ -7,6 +7,8 @@ from datetime import datetime
 from decimal import ROUND_HALF_UP, Decimal
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
+from core.engine.helpers import _CENT, _distribute_remainder
+
 if TYPE_CHECKING:
     from core.models.topic_attribution import TopicAttributionRow
 
@@ -203,8 +205,6 @@ def resolve_topic_attribution_models(
 
 # --- Private helpers ---
 
-_CENT = Decimal("0.0001")
-
 
 def _build_rows(
     ctx: TopicAttributionContext,
@@ -240,14 +240,3 @@ def _split_by_ratios(total: Decimal, ratios: list[float]) -> list[Decimal]:
     quantized = [a.quantize(_CENT, rounding=ROUND_HALF_UP) for a in raw]
     diff = (total - sum(quantized)).quantize(_CENT)
     return _distribute_remainder(quantized, diff)
-
-
-def _distribute_remainder(amounts: list[Decimal], diff: Decimal) -> list[Decimal]:
-    result = list(amounts)
-    step = _CENT if diff > 0 else -_CENT
-    i = 0
-    while diff != 0:
-        result[i % len(result)] += step
-        diff -= step
-        i += 1
-    return result

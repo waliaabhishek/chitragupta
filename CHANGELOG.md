@@ -32,6 +32,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     from core attribution models (DIP-compliant)
 
 ### Fixed
+- Fix: TASK-167 — Remove duplicated `_distribute_remainder` from `topic_attribution_models.py`
+
+  The local copy used an unbounded `while diff != 0` loop, which could hang forever on
+  sub-cent precision edge cases. Now imports the bounded version from `helpers.py`
+  (fixed in TASK-120), which raises `RuntimeError` after `len(amounts) * 2` iterations.
+
 - Fix: TASK-166 — Fix `attribution_method` nullable constraint in topic attribution schema
 
   The `attribution_method` column in `topic_attribution_dimensions` was

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import inspect
 from datetime import UTC, datetime
 from decimal import Decimal
 
+import core.engine.helpers as helpers
+import core.engine.topic_attribution_models as tam
 from core.engine.topic_attribution_models import (
     TopicAttributionContext,
     TopicChainModel,
@@ -185,6 +188,22 @@ class TestTopicChainModel:
         rows = chain.attribute(ctx)
         assert rows is not None
         assert all(r.metadata.get("chain_tier") == 0 for r in rows)
+
+
+class TestHelpersSymbolImport:
+    def test_distribute_remainder_is_helpers_version(self) -> None:
+        """After fix, tam._distribute_remainder must be the same object as helpers._distribute_remainder."""
+        assert tam._distribute_remainder is helpers._distribute_remainder
+
+    def test_cent_is_helpers_version(self) -> None:
+        """After fix, tam._CENT must be the same object as helpers._CENT."""
+        assert tam._CENT is helpers._CENT
+
+    def test_distribute_remainder_source_file_is_helpers(self) -> None:
+        """_distribute_remainder as seen from topic_attribution_models must originate in helpers.py."""
+        source_file = inspect.getsourcefile(tam._distribute_remainder)
+        assert source_file is not None
+        assert source_file.endswith("helpers.py")
 
 
 class TestTopicFilter:
