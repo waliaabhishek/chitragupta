@@ -63,6 +63,49 @@ class PipelineStateTable(SQLModel, table=True):
     billing_gathered: bool = False
     resources_gathered: bool = False
     chargeback_calculated: bool = False
+    topic_overlay_gathered: bool = False
+    topic_attribution_calculated: bool = False
+
+
+class TopicAttributionDimensionTable(SQLModel, table=True):
+    __tablename__ = "topic_attribution_dimensions"
+    __table_args__ = (
+        UniqueConstraint(
+            "ecosystem",
+            "tenant_id",
+            "env_id",
+            "cluster_resource_id",
+            "topic_name",
+            "product_category",
+            "product_type",
+            "attribution_method",
+            name="uq_topic_attribution_dimensions",
+        ),
+        Index("ix_topic_attr_dim_eco_tenant", "ecosystem", "tenant_id"),
+        Index("ix_topic_attr_dim_cluster", "ecosystem", "tenant_id", "cluster_resource_id"),
+    )
+
+    dimension_id: int | None = Field(default=None, primary_key=True)
+    ecosystem: str = Field(index=True)
+    tenant_id: str = Field(index=True)
+    env_id: str = Field(default="")
+    cluster_resource_id: str = Field(index=True)
+    topic_name: str = ""
+    product_category: str = ""
+    product_type: str = Field(default="", index=True)
+    attribution_method: str | None = None
+
+
+class TopicAttributionFactTable(SQLModel, table=True):
+    __tablename__ = "topic_attribution_facts"
+    __table_args__ = (Index("ix_topic_attr_facts_dim_ts", "dimension_id", "timestamp"),)
+
+    timestamp: datetime = Field(sa_column=Column(DateTime(timezone=True), primary_key=True))
+    dimension_id: int = Field(
+        primary_key=True,
+        foreign_key="topic_attribution_dimensions.dimension_id",
+    )
+    amount: str = ""  # Decimal stored as string — same as chargeback_facts.amount
 
 
 class PipelineRunTable(SQLModel, table=True):

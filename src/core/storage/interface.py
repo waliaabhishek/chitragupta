@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from core.models.identity import Identity
     from core.models.pipeline import PipelineRun, PipelineState
     from core.models.resource import Resource
+    from core.models.topic_attribution import TopicAttributionAggregationResult, TopicAttributionRow
 logger = logging.getLogger(__name__)
 
 
@@ -83,6 +84,19 @@ class ResourceRepository(Protocol):
         ...
 
     def find_by_type(self, ecosystem: str, tenant_id: str, resource_type: str) -> list[Resource]: ...
+
+    def find_by_parent(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        parent_id: str,
+        resource_type: str | None = None,
+    ) -> list[Resource]:
+        """Return resources with the given parent_id, optionally filtered by resource_type.
+
+        Only returns non-deleted resources (deleted_at IS NULL).
+        """
+        ...
 
     def find_paginated(
         self,
@@ -365,6 +379,74 @@ class ChargebackRepository(Protocol):
 
 
 @runtime_checkable
+class TopicAttributionRepository(Protocol):
+    """Repository for topic attribution star schema."""
+
+    def upsert_batch(self, rows: list[TopicAttributionRow]) -> int:
+        """Insert all rows. Get-or-create dimensions, then add facts. Returns count written."""
+        ...
+
+    def find_by_date(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        target_date: date,
+    ) -> list[TopicAttributionRow]: ...
+
+    def find_by_cluster(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        cluster_resource_id: str,
+        start: datetime,
+        end: datetime,
+    ) -> list[TopicAttributionRow]: ...
+
+    def find_by_filters(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        cluster_resource_id: str | None = None,
+        topic_name: str | None = None,
+        product_type: str | None = None,
+        attribution_method: str | None = None,
+        limit: int = 1000,
+        offset: int = 0,
+    ) -> tuple[list[TopicAttributionRow], int]:
+        """Returns (items, total_count). All filters applied at SQL level."""
+        ...
+
+    def aggregate(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        group_by: list[str],
+        time_bucket: str,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        cluster_resource_id: str | None = None,
+        topic_name: str | None = None,
+        product_type: str | None = None,
+    ) -> TopicAttributionAggregationResult:
+        """SQL GROUP BY aggregation. Returns domain type."""
+        ...
+
+    def get_distinct_dates(self, ecosystem: str, tenant_id: str) -> list[date]:
+        """Return sorted list of distinct dates that have topic attribution facts."""
+        ...
+
+    def delete_by_date(self, ecosystem: str, tenant_id: str, target_date: date) -> int:
+        """Delete all facts for a specific date. Returns count deleted."""
+        ...
+
+    def delete_before(self, ecosystem: str, tenant_id: str, before: datetime) -> int:
+        """Delete facts older than cutoff, prune orphaned dimensions. Returns deleted fact count."""
+        ...
+
+
+@runtime_checkable
 class PipelineStateRepository(Protocol):
     """Repository for pipeline execution state tracking."""
 
@@ -392,6 +474,21 @@ class PipelineStateRepository(Protocol):
         ...
 
     def mark_chargeback_calculated(self, ecosystem: str, tenant_id: str, tracking_date: date) -> None: ...
+
+    def mark_topic_overlay_gathered(self, ecosystem: str, tenant_id: str, tracking_date: date) -> None:
+        """Sets topic_overlay_gathered=True for the given date."""
+        ...
+
+    def mark_topic_attribution_calculated(self, ecosystem: str, tenant_id: str, tracking_date: date) -> None:
+        """Sets topic_attribution_calculated=True for the given date."""
+        ...
+
+    def find_needing_topic_attribution(self, ecosystem: str, tenant_id: str) -> list[PipelineState]:
+        """Returns states where topic_overlay_gathered=True AND topic_attribution_calculated=False.
+
+        Results ordered by tracking_date ascending.
+        """
+        ...
 
     def count_pending(self, ecosystem: str, tenant_id: str) -> int:
         """Count dates where billing+resources gathered but chargeback not calculated."""
@@ -497,6 +594,7 @@ class ReadOnlyUnitOfWork(Protocol):
     pipeline_runs: PipelineRunRepository
     tags: EntityTagRepository
     emissions: EmissionRepository  # NEW
+    topic_attributions: TopicAttributionRepository  # lazy; only active when TA enabled
 
     def __enter__(self) -> Self: ...
     def __exit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: object) -> None: ...

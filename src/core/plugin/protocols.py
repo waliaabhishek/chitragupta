@@ -149,6 +149,20 @@ class EcosystemPlugin(Protocol):
 
 
 @runtime_checkable
+class TopicDiscoveryPlugin(Protocol):
+    """Plugin capability for topic resource discovery via metrics.
+
+    Implement alongside EcosystemPlugin to enable topic attribution gather.
+    """
+
+    def gather_topic_resources(
+        self,
+        tenant_id: str,
+        cluster_ids: list[str],
+    ) -> Iterable[Resource]: ...
+
+
+@runtime_checkable
 class Emitter(Protocol):
     """Protocol for output sinks — called after chargeback calculation is committed.
 

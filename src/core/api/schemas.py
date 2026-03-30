@@ -370,3 +370,41 @@ class ReadinessResponse(BaseModel):
     version: str
     mode: str
     tenants: list[TenantReadiness]
+
+
+# --- Topic Attribution ---
+
+
+class TopicAttributionResponse(BaseModel):
+    """Single topic attribution row response."""
+
+    dimension_id: int | None
+    ecosystem: str
+    tenant_id: str
+    timestamp: datetime
+    env_id: str
+    cluster_resource_id: str
+    topic_name: str
+    product_category: str
+    product_type: str
+    attribution_method: str
+    amount: Decimal
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class TopicAttributionAggregationBucket(BaseModel):
+    dimensions: dict[str, str]
+    time_bucket: str
+    total_amount: Decimal
+    row_count: int
+
+
+class TopicAttributionAggregationResponse(BaseModel):
+    buckets: list[TopicAttributionAggregationBucket]
+    total_amount: Decimal
+    total_rows: int
+
+
+class TopicAttributionDatesResponse(BaseModel):
+    dates: list[date]

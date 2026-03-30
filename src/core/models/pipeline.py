@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Literal
 
-PIPELINE_STAGES = ("gathering", "calculating", "emitting")
+PIPELINE_STAGES = ("gathering", "calculating", "topic_overlay", "emitting")
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +20,8 @@ class PipelineState:
     billing_gathered: bool = False
     resources_gathered: bool = False
     chargeback_calculated: bool = False
+    topic_overlay_gathered: bool = False
+    topic_attribution_calculated: bool = False
 
 
 @dataclass

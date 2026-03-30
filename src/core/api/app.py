@@ -110,6 +110,7 @@ def create_app(
         resources,
         tags,
         tenants,
+        topic_attributions,
     )
 
     app.include_router(health.router)
@@ -126,5 +127,6 @@ def create_app(
     app.include_router(tags.router, prefix="/api/v1")
     app.include_router(pipeline.router, prefix="/api/v1")
     app.include_router(export.router, prefix="/api/v1")
+    app.include_router(topic_attributions.router, prefix="/api/v1")
 
     return app

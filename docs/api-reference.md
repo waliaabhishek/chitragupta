@@ -79,7 +79,7 @@ Detailed per-date pipeline state for a tenant.
 | `start_date` | date | no | Filter from this date |
 | `end_date` | date | no | Filter to this date |
 
-**Response:** List of `{tracking_date, billing_gathered, resources_gathered, chargeback_calculated}` per date.
+**Response:** List of `{tracking_date, billing_gathered, resources_gathered, chargeback_calculated, topic_overlay_gathered, topic_attribution_calculated}` per date. The `topic_overlay_gathered` and `topic_attribution_calculated` fields are `false` when topic attribution is disabled.
 
 ---
 
@@ -399,3 +399,83 @@ Stream chargeback data as CSV. Returns `text/csv` with `Content-Disposition: att
 The `tags` column is serialized as `key=value;key=value` pairs (e.g. `team=platform;env=prod`).
 
 **Default columns:** `timestamp`, `resource_id`, `product_category`, `product_type`, `identity_id`, `cost_type`, `amount`, `allocation_method`, `tags`.
+
+---
+
+## Topic Attributions
+
+Topic attribution rows are produced by the optional `topic_overlay` pipeline
+stage (Confluent Cloud only). Each row represents the cost portion attributed to
+one topic for one billing line item. Requires `topic_attribution.enabled: true`
+in plugin settings.
+
+### `GET /api/v1/tenants/{tenant_name}/topic-attributions`
+
+List topic attribution rows. Paginated.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `start_date` | date | no | Filter start |
+| `end_date` | date | no | Filter end |
+| `timezone` | string | no | IANA timezone for date boundaries. Defaults to UTC. |
+| `cluster_resource_id` | string | no | Filter by cluster (e.g. `lkc-abc123`) |
+| `topic_name` | string | no | Filter by topic name |
+| `product_type` | string | no | Filter by product type |
+| `attribution_method` | string | no | Filter by method (`bytes_ratio`, `retained_bytes_ratio`, `even_split`) |
+| `page` | int | no | Page number (default 1) |
+| `page_size` | int | no | Page size 1–1000 (default 100) |
+
+**Response fields per item:** `dimension_id`, `ecosystem`, `tenant_id`, `timestamp`, `env_id`, `cluster_resource_id`, `topic_name`, `product_category`, `product_type`, `attribution_method`, `amount`.
+
+### `GET /api/v1/tenants/{tenant_name}/topic-attributions/aggregate`
+
+Multi-dimensional aggregation of topic attribution rows.
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `group_by` | list[string] | `["topic_name"]` | Columns to group by (repeatable) |
+| `time_bucket` | string | `day` | `hour`, `day`, `week`, or `month` |
+| `start_date` | date | no | Filter start |
+| `end_date` | date | no | Filter end |
+| `timezone` | string | no | IANA timezone for date boundaries. Defaults to UTC. |
+| `cluster_resource_id` | string | no | Filter by cluster |
+| `topic_name` | string | no | Filter by topic |
+| `product_type` | string | no | Filter by product type |
+
+**Valid `group_by` columns:** `topic_name`, `cluster_resource_id`, `env_id`, `product_type`, `product_category`, `attribution_method`.
+
+**Response:**
+
+```json
+{
+  "buckets": [
+    {
+      "dimensions": {"topic_name": "orders"},
+      "time_bucket": "2026-01-01",
+      "total_amount": "42.50",
+      "row_count": 3
+    }
+  ],
+  "total_amount": "42.50",
+  "total_rows": 3
+}
+```
+
+### `GET /api/v1/tenants/{tenant_name}/topic-attributions/dates`
+
+List distinct dates for which topic attribution rows exist.
+
+**Response:** `{"dates": ["2026-01-01", "2026-01-02", ...]}`
+
+### `POST /api/v1/tenants/{tenant_name}/topic-attributions/export`
+
+Stream topic attribution data as CSV. Returns `text/csv` with
+`Content-Disposition: attachment; filename=topic_attributions.csv`.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `start_date` | date | no | Filter start |
+| `end_date` | date | no | Filter end |
+| `timezone` | string | no | IANA timezone for date boundaries. Defaults to UTC. |
+
+**CSV columns:** `ecosystem`, `tenant_id`, `timestamp`, `env_id`, `cluster_resource_id`, `topic_name`, `product_category`, `product_type`, `attribution_method`, `amount`.

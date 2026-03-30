@@ -17,10 +17,12 @@ from core.engine.loading import load_protocol_callable
 from core.models.chargeback import ChargebackRow, CostType
 from core.models.identity import SENTINEL_IDENTITY_TYPES, CoreIdentity, IdentityResolution, IdentitySet
 from core.models.pipeline import PipelineState
+from core.plugin.protocols import TopicDiscoveryPlugin
 from core.plugin.registry import EcosystemBundle
 
 if TYPE_CHECKING:
     from core.config.models import PluginSettingsBase, TenantConfig
+    from core.engine.topic_attribution import TopicAttributionPhase
     from core.metrics.protocol import MetricsSource
     from core.models.billing import BillingLineItem
     from core.models.metrics import MetricQuery, MetricRow
@@ -36,6 +38,12 @@ if TYPE_CHECKING:
         ) -> tuple[Sequence[Any], int]: ...
 
         def mark_deleted(self, ecosystem: str, tenant_id: str, entity_id: str, deleted_at: datetime) -> None: ...
+
+
+def _get_ta_config(tenant_config: TenantConfig) -> Any:
+    """Return plugin_settings.topic_attribution if present, else None."""
+    plugin_settings = getattr(tenant_config, "plugin_settings", None)
+    return getattr(plugin_settings, "topic_attribution", None) if plugin_settings else None
 
 
 logger = logging.getLogger(__name__)
@@ -154,6 +162,8 @@ class GatherPhase:
         # In-memory state — must survive across run() calls on same instance
         self._last_resource_gather_at: datetime | None = None
         self._zero_gather_counters: dict[str, int] = {"resources": 0, "identities": 0}
+        ta_config = _get_ta_config(tenant_config)
+        self._topic_attribution_enabled: bool = bool(ta_config and ta_config.enabled)
 
     def run(self, uow: UnitOfWork | None = None) -> GatherResult:
         """Execute full gather cycle.
@@ -238,6 +248,30 @@ class GatherPhase:
             uow.pipeline_state.mark_billing_gathered(self._ecosystem, self._tenant_id, billing_date)
             if gather_complete:
                 uow.pipeline_state.mark_resources_gathered(self._ecosystem, self._tenant_id, billing_date)
+
+        if (
+            self._topic_attribution_enabled
+            and gathered_billing_dates
+            and isinstance(self._bundle.plugin, TopicDiscoveryPlugin)
+        ):
+            cluster_ids = [r.resource_id for r in (getattr(shared_ctx, "kafka_cluster_resources", None) or [])]
+            try:
+                topic_resources = list(self._bundle.plugin.gather_topic_resources(self._tenant_id, cluster_ids))
+                for resource in topic_resources:
+                    uow.resources.upsert(resource)
+                if topic_resources:
+                    for billing_date in gathered_billing_dates:
+                        uow.pipeline_state.mark_topic_overlay_gathered(
+                            self._ecosystem,
+                            self._tenant_id,
+                            billing_date,
+                        )
+            except Exception:
+                logger.warning(
+                    "Topic discovery failed for tenant=%s — topic_overlay_gathered stays False",
+                    self._tenant_id,
+                    exc_info=True,
+                )
 
         self._apply_recalculation_window(uow, gathered_billing_dates, now)
         self._last_resource_gather_at = now
@@ -668,21 +702,31 @@ class ChargebackOrchestrator:
         self,
         tenant_name: str,
         tenant_config: TenantConfig,
-        plugin: EcosystemPlugin,
-        storage_backend: StorageBackend,
+        plugin: EcosystemPlugin | None = None,
+        storage_backend: StorageBackend | None = None,
         metrics_source: MetricsSource | None = None,
         shutdown_check: Callable[[], bool] | None = None,
         progress_callback: Callable[[str | None, date_type | None], None] | None = None,
+        *,
+        plugin_bundle: Any = None,
+        ecosystem: str | None = None,  # ignored — derived from tenant_config
+        tenant_id: str | None = None,  # ignored — derived from tenant_config
+        metrics_step: timedelta | None = None,  # ignored — derived from _load_overrides
     ) -> None:
         self._tenant_name = tenant_name
         self._tenant_id = tenant_config.tenant_id
         self._ecosystem = tenant_config.ecosystem
+        assert storage_backend is not None, "storage_backend is required"
         self._storage_backend = storage_backend
         self._tenant_config = tenant_config  # kept for backward compatibility
         self._shutdown_check = shutdown_check
         self._progress_callback = progress_callback
 
-        bundle = EcosystemBundle.build(plugin)
+        if plugin_bundle is not None:
+            bundle = plugin_bundle
+        else:
+            assert plugin is not None, "Either plugin or plugin_bundle must be provided"
+            bundle = EcosystemBundle.build(plugin)
         (
             allocator_registry,
             identity_overrides,
@@ -717,6 +761,19 @@ class ChargebackOrchestrator:
         )
         self._consecutive_gather_failures = 0
         self._gather_failure_threshold = tenant_config.gather_failure_threshold
+
+        self._topic_overlay_phase: TopicAttributionPhase | None = None
+        ta_config = _get_ta_config(tenant_config)
+        if ta_config and ta_config.enabled:
+            from core.engine.topic_attribution import TopicAttributionPhase
+
+            self._topic_overlay_phase = TopicAttributionPhase(
+                ecosystem=self._ecosystem,
+                tenant_id=self._tenant_id,
+                metrics_source=metrics_source,
+                config=ta_config,
+                metrics_step=metrics_step,
+            )
 
         with storage_backend.create_unit_of_work() as uow:
             _ensure_unallocated_identity(uow, self._ecosystem, self._tenant_id)
@@ -840,6 +897,33 @@ class ChargebackOrchestrator:
                     exc,
                 )
                 errors.append(f"Calculate failed for date {tracking_date}: {exc}")
+
+        if self._topic_overlay_phase is not None:
+            with self._storage_backend.create_unit_of_work() as uow:
+                overlay_pending = uow.pipeline_state.find_needing_topic_attribution(
+                    self._ecosystem,
+                    self._tenant_id,
+                )
+
+            for pipeline_state in overlay_pending:
+                if self._shutdown_check is not None and self._shutdown_check():
+                    break
+                tracking_date = pipeline_state.tracking_date
+                self._report_progress("topic_overlay", tracking_date)
+                logger.info("Running topic attribution for date: %s", tracking_date)
+                try:
+                    with self._storage_backend.create_unit_of_work() as uow:
+                        rows = self._topic_overlay_phase.run(uow, tracking_date)
+                        uow.commit()
+                    logger.info("Topic attribution: %d rows for date %s", rows, tracking_date)
+                except Exception as exc:
+                    logger.exception(
+                        "Topic overlay failed for %s date %s: %s",
+                        self._tenant_name,
+                        tracking_date,
+                        exc,
+                    )
+                    errors.append(f"Topic overlay failed for date {tracking_date}: {exc}")
 
         self._report_progress(None, None)
         return PipelineRunResult(

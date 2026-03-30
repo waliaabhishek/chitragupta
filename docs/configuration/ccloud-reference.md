@@ -45,6 +45,14 @@ tenants:
           params:
             output_dir: ./output
       chargeback_granularity: daily
+      topic_attribution:
+        enabled: true
+        exclude_topic_patterns:
+          - "__consumer_offsets"
+          - "_schemas"
+          - "_confluent-*"
+        missing_metrics_behavior: even_split
+        retention_days: 90
 ```
 
 ## TenantConfig fields
@@ -132,6 +140,59 @@ allocator_params:
     to even-split anyway — so at 1.0/0.0, you effectively get even-split when
     Telemetry API data is missing. See [How Costs Work](../architecture/cost-model.md#composite-allocation-cku-model)
     for a worked example.
+
+## Topic attribution
+
+Topic attribution is an optional overlay stage that breaks Kafka cluster costs
+down to individual topics using Prometheus metrics. It runs after chargeback
+calculation and writes results to a separate star-schema table.
+
+**Prerequisite:** Topic-level CCloud metrics (`received_bytes`, `sent_bytes`,
+`retained_bytes` per topic) must be scraped into the Prometheus instance
+configured under `plugin_settings.metrics`.
+
+```yaml
+topic_attribution:
+  enabled: true                           # off by default
+  exclude_topic_patterns:
+    - "__consumer_offsets"                # default exclusions
+    - "_schemas"
+    - "_confluent-*"
+  missing_metrics_behavior: even_split   # even_split | skip
+  retention_days: 90                     # 1–365, independent of tenant retention_days
+  cost_mapping_overrides:                # override per product type
+    KAFKA_PARTITION: even_split
+    KAFKA_BASE: disabled
+  metric_name_overrides:                 # override Prometheus metric names
+    topic_bytes_in: custom_received_bytes
+  emitters: []                           # same format as top-level emitters
+```
+
+### `topic_attribution` fields
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `enabled` | bool | `false` | Enable the topic overlay stage |
+| `exclude_topic_patterns` | list[string] | `["__consumer_offsets", "_schemas", "_confluent-*"]` | Glob patterns for topics to skip. Matched with `fnmatch`. |
+| `missing_metrics_behavior` | enum | `even_split` | What to do when metrics are all-zero or unavailable: `even_split` distributes evenly; `skip` omits the cluster from output. |
+| `retention_days` | int | `90` | Days to keep topic attribution rows (1–365). Independent of the tenant-level `retention_days`. |
+| `cost_mapping_overrides` | dict[string, string] | `{}` | Override the attribution method per CCloud product type. Valid methods: `bytes_ratio`, `retained_bytes_ratio`, `even_split`, `disabled`. |
+| `metric_name_overrides` | dict[string, string] | `{}` | Override Prometheus metric names. Valid keys: `topic_bytes_in`, `topic_bytes_out`, `topic_retained_bytes`. |
+| `emitters` | list | `[]` | Emitter specs for topic attribution output. Same format as top-level `emitters`. |
+
+### Default cost mappings
+
+| Product type | Attribution method | Metric used |
+|---|---|---|
+| `KAFKA_NETWORK_WRITE` | bytes_ratio | `topic_bytes_in` |
+| `KAFKA_NETWORK_READ` | bytes_ratio | `topic_bytes_out` |
+| `KAFKA_STORAGE` | retained_bytes_ratio | `topic_retained_bytes` |
+| `KAFKA_PARTITION` | even_split | — |
+| `KAFKA_BASE` | even_split | — |
+| `KAFKA_NUM_CKU` / `KAFKA_NUM_CKUS` | bytes_ratio | `topic_bytes_in` + `topic_bytes_out` |
+
+For bytes_ratio product types, if Prometheus returns all-zero values, the
+`missing_metrics_behavior` setting determines the fallback.
 
 ## Emitters
 

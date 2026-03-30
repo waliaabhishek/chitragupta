@@ -324,6 +324,23 @@ class SQLModelResourceRepository:
         )
         return _rows_to_type_status_counts(self._session.exec(stmt).all())
 
+    def find_by_parent(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        parent_id: str,
+        resource_type: str | None = None,
+    ) -> list[Resource]:
+        stmt = select(ResourceTable).where(
+            col(ResourceTable.ecosystem) == ecosystem,
+            col(ResourceTable.tenant_id) == tenant_id,
+            col(ResourceTable.parent_id) == parent_id,
+            col(ResourceTable.deleted_at).is_(None),
+        )
+        if resource_type is not None:
+            stmt = stmt.where(col(ResourceTable.resource_type) == resource_type)
+        return [resource_to_domain(r) for r in self._session.exec(stmt).all()]
+
 
 # --- IdentityRepository ---
 
@@ -1388,9 +1405,46 @@ class SQLModelPipelineStateRepository:
                 col(PipelineStateTable.tenant_id) == tenant_id,
                 col(PipelineStateTable.tracking_date) == tracking_date,
             )
-            .values(chargeback_calculated=False)
+            .values(chargeback_calculated=False, topic_attribution_calculated=False)
         )
         self._session.execute(stmt)
+
+    def mark_topic_overlay_gathered(self, ecosystem: str, tenant_id: str, tracking_date: date) -> None:
+        stmt = (
+            update(PipelineStateTable)
+            .where(
+                col(PipelineStateTable.ecosystem) == ecosystem,
+                col(PipelineStateTable.tenant_id) == tenant_id,
+                col(PipelineStateTable.tracking_date) == tracking_date,
+            )
+            .values(topic_overlay_gathered=True)
+        )
+        self._session.execute(stmt)
+
+    def mark_topic_attribution_calculated(self, ecosystem: str, tenant_id: str, tracking_date: date) -> None:
+        stmt = (
+            update(PipelineStateTable)
+            .where(
+                col(PipelineStateTable.ecosystem) == ecosystem,
+                col(PipelineStateTable.tenant_id) == tenant_id,
+                col(PipelineStateTable.tracking_date) == tracking_date,
+            )
+            .values(topic_attribution_calculated=True)
+        )
+        self._session.execute(stmt)
+
+    def find_needing_topic_attribution(self, ecosystem: str, tenant_id: str) -> list[PipelineState]:
+        stmt = (
+            select(PipelineStateTable)
+            .where(
+                col(PipelineStateTable.ecosystem) == ecosystem,
+                col(PipelineStateTable.tenant_id) == tenant_id,
+                col(PipelineStateTable.topic_overlay_gathered) == True,  # noqa: E712
+                col(PipelineStateTable.topic_attribution_calculated) == False,  # noqa: E712
+            )
+            .order_by(col(PipelineStateTable.tracking_date))
+        )
+        return [pipeline_state_to_domain(row) for row in self._session.exec(stmt).all()]
 
     def mark_chargeback_calculated(self, ecosystem: str, tenant_id: str, tracking_date: date) -> None:
         stmt = (
@@ -1665,3 +1719,400 @@ class SQLModelEmissionRepository:
             )
         ).all()
         return set(rows)
+
+
+# --- TopicAttributionRepository ---
+
+from core.models.topic_attribution import TopicAttributionRow  # noqa: E402
+from core.storage.backends.sqlmodel.tables import (  # noqa: E402
+    TopicAttributionDimensionTable,
+    TopicAttributionFactTable,
+)
+
+if TYPE_CHECKING:
+    from core.models.topic_attribution import TopicAttributionAggregationResult
+
+
+class TopicAttributionRepository:
+    """Repository for topic attribution star schema.
+
+    Same pattern as SQLModelChargebackRepository: dimension cache,
+    _get_or_create_dimension, upsert_batch, find_by_date, find_by_cluster,
+    find_by_filters, aggregate, get_distinct_dates, delete_before.
+    """
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+        self._dimension_cache: dict[tuple[str, ...], TopicAttributionDimensionTable] = {}
+
+    def upsert_batch(self, rows: list[TopicAttributionRow]) -> int:
+        unique_facts: dict[tuple[datetime, int], TopicAttributionFactTable] = {}
+        for row in rows:
+            dim = self._get_or_create_dimension(row)
+            fact = TopicAttributionFactTable(
+                timestamp=row.timestamp,
+                dimension_id=dim.dimension_id,
+                amount=str(row.amount),
+            )
+            unique_facts[(fact.timestamp, fact.dimension_id)] = fact
+
+        if unique_facts:
+            for fact in unique_facts.values():
+                self._session.merge(fact)
+        return len(unique_facts)
+
+    def _get_or_create_dimension(self, row: TopicAttributionRow) -> TopicAttributionDimensionTable:
+        key = (
+            row.ecosystem,
+            row.tenant_id,
+            row.env_id,
+            row.cluster_resource_id,
+            row.topic_name,
+            row.product_category,
+            row.product_type,
+            row.attribution_method,
+        )
+        cached = self._dimension_cache.get(key)
+        if cached is not None:
+            return cached
+
+        stmt = select(TopicAttributionDimensionTable).where(
+            col(TopicAttributionDimensionTable.ecosystem) == row.ecosystem,
+            col(TopicAttributionDimensionTable.tenant_id) == row.tenant_id,
+            col(TopicAttributionDimensionTable.env_id) == row.env_id,
+            col(TopicAttributionDimensionTable.cluster_resource_id) == row.cluster_resource_id,
+            col(TopicAttributionDimensionTable.topic_name) == row.topic_name,
+            col(TopicAttributionDimensionTable.product_category) == row.product_category,
+            col(TopicAttributionDimensionTable.product_type) == row.product_type,
+            col(TopicAttributionDimensionTable.attribution_method) == row.attribution_method,
+        )
+        existing = self._session.exec(stmt).first()
+        if existing:
+            self._dimension_cache[key] = existing
+            return existing
+
+        dim = TopicAttributionDimensionTable(
+            ecosystem=row.ecosystem,
+            tenant_id=row.tenant_id,
+            env_id=row.env_id,
+            cluster_resource_id=row.cluster_resource_id,
+            topic_name=row.topic_name,
+            product_category=row.product_category,
+            product_type=row.product_type,
+            attribution_method=row.attribution_method,
+        )
+        self._session.add(dim)
+        self._session.flush()
+        self._dimension_cache[key] = dim
+        return dim
+
+    def delete_by_date(self, ecosystem: str, tenant_id: str, target_date: date) -> int:
+        """Delete all facts for a specific date. Returns count deleted."""
+        start = datetime(target_date.year, target_date.month, target_date.day, tzinfo=UTC)
+        end = start + timedelta(days=1)
+
+        dim_ids_stmt = select(TopicAttributionDimensionTable.dimension_id).where(
+            col(TopicAttributionDimensionTable.ecosystem) == ecosystem,
+            col(TopicAttributionDimensionTable.tenant_id) == tenant_id,
+        )
+        dim_ids = list(self._session.execute(dim_ids_stmt).scalars().all())
+        if not dim_ids:
+            return 0
+
+        count: int = 0
+        for chunk_start in range(0, len(dim_ids), _CHUNK_SIZE):
+            chunk = dim_ids[chunk_start : chunk_start + _CHUNK_SIZE]
+            count += self._session.execute(
+                select(func.count())
+                .select_from(TopicAttributionFactTable)
+                .where(
+                    col(TopicAttributionFactTable.dimension_id).in_(chunk),
+                    col(TopicAttributionFactTable.timestamp) >= start,
+                    col(TopicAttributionFactTable.timestamp) < end,
+                )
+            ).scalar_one()
+            self._session.execute(
+                delete(TopicAttributionFactTable).where(
+                    col(TopicAttributionFactTable.dimension_id).in_(chunk),
+                    col(TopicAttributionFactTable.timestamp) >= start,
+                    col(TopicAttributionFactTable.timestamp) < end,
+                )
+            )
+        return count
+
+    def find_by_date(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        target_date: date,
+    ) -> list[TopicAttributionRow]:
+        start = datetime(target_date.year, target_date.month, target_date.day, tzinfo=UTC)
+        end = start + timedelta(days=1)
+        stmt = (
+            select(TopicAttributionDimensionTable, TopicAttributionFactTable)
+            .join(
+                TopicAttributionFactTable,
+                col(TopicAttributionFactTable.dimension_id) == col(TopicAttributionDimensionTable.dimension_id),
+            )
+            .where(
+                col(TopicAttributionDimensionTable.ecosystem) == ecosystem,
+                col(TopicAttributionDimensionTable.tenant_id) == tenant_id,
+                col(TopicAttributionFactTable.timestamp) >= start,
+                col(TopicAttributionFactTable.timestamp) < end,
+            )
+        )
+        return [_ta_to_domain(dim, fact) for dim, fact in self._session.exec(stmt).all()]
+
+    def find_by_cluster(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        cluster_resource_id: str,
+        start: datetime,
+        end: datetime,
+    ) -> list[TopicAttributionRow]:
+        stmt = (
+            select(TopicAttributionDimensionTable, TopicAttributionFactTable)
+            .join(
+                TopicAttributionFactTable,
+                col(TopicAttributionFactTable.dimension_id) == col(TopicAttributionDimensionTable.dimension_id),
+            )
+            .where(
+                col(TopicAttributionDimensionTable.ecosystem) == ecosystem,
+                col(TopicAttributionDimensionTable.tenant_id) == tenant_id,
+                col(TopicAttributionDimensionTable.cluster_resource_id) == cluster_resource_id,
+                col(TopicAttributionFactTable.timestamp) >= start,
+                col(TopicAttributionFactTable.timestamp) < end,
+            )
+        )
+        return [_ta_to_domain(dim, fact) for dim, fact in self._session.exec(stmt).all()]
+
+    def find_by_filters(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        cluster_resource_id: str | None = None,
+        topic_name: str | None = None,
+        product_type: str | None = None,
+        attribution_method: str | None = None,
+        limit: int = 1000,
+        offset: int = 0,
+    ) -> tuple[list[TopicAttributionRow], int]:
+        """Returns (items, total_count). All filters applied at SQL level."""
+        from sqlalchemy import func as sa_func
+
+        _base_where = [
+            col(TopicAttributionDimensionTable.ecosystem) == ecosystem,
+            col(TopicAttributionDimensionTable.tenant_id) == tenant_id,
+        ]
+
+        optional: list[Any] = []
+        if start is not None:
+            optional.append(col(TopicAttributionFactTable.timestamp) >= start)
+        if end is not None:
+            optional.append(col(TopicAttributionFactTable.timestamp) < end)
+        if cluster_resource_id is not None:
+            optional.append(col(TopicAttributionDimensionTable.cluster_resource_id) == cluster_resource_id)
+        if topic_name is not None:
+            optional.append(col(TopicAttributionDimensionTable.topic_name) == topic_name)
+        if product_type is not None:
+            optional.append(col(TopicAttributionDimensionTable.product_type) == product_type)
+        if attribution_method is not None:
+            optional.append(col(TopicAttributionDimensionTable.attribution_method) == attribution_method)
+
+        _join_condition_expr = col(TopicAttributionFactTable.dimension_id) == col(
+            TopicAttributionDimensionTable.dimension_id
+        )
+        count_stmt = (
+            select(sa_func.count())
+            .select_from(TopicAttributionFactTable)
+            .join(TopicAttributionDimensionTable, _join_condition_expr)
+            .where(*_base_where, *optional)
+        )
+        total: int = self._session.execute(count_stmt).scalar_one()
+
+        data_stmt = (
+            select(TopicAttributionDimensionTable, TopicAttributionFactTable)
+            .join(TopicAttributionFactTable, _join_condition_expr)
+            .where(*_base_where, *optional)
+            .offset(offset)
+            .limit(limit)
+        )
+        rows = self._session.exec(data_stmt).all()
+        return [_ta_to_domain(dim, fact) for dim, fact in rows], total
+
+    def aggregate(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        group_by: list[str],
+        time_bucket: str = "day",
+        start: datetime | None = None,
+        end: datetime | None = None,
+        cluster_resource_id: str | None = None,
+        topic_name: str | None = None,
+        product_type: str | None = None,
+    ) -> TopicAttributionAggregationResult:
+        """SQL GROUP BY aggregation. Returns domain type."""
+        from sqlalchemy import Numeric
+        from sqlalchemy import cast as sa_cast
+        from sqlalchemy import func as sa_func
+
+        from core.models.topic_attribution import (
+            TopicAttributionAggregationBucket,
+            TopicAttributionAggregationResult,
+        )
+
+        valid_group_fields = {
+            "cluster_resource_id",
+            "topic_name",
+            "product_type",
+            "product_category",
+            "attribution_method",
+            "env_id",
+        }
+        valid_group_by = [f for f in group_by if f in valid_group_fields]
+
+        dim_table = TopicAttributionDimensionTable
+        group_cols: list[Any] = []
+        group_labels: list[str] = []
+        for gb in valid_group_by:
+            col_ref = getattr(dim_table, gb)
+            group_cols.append(col(col_ref).label(f"dim_{gb}"))
+            group_labels.append(f"dim_{gb}")
+
+        bucket_formats: dict[str, str] = {
+            "hour": "%Y-%m-%dT%H:00:00",
+            "day": "%Y-%m-%d",
+            "week": "%Y-W%W",
+            "month": "%Y-%m",
+        }
+        fmt = bucket_formats.get(time_bucket, "%Y-%m-%d")
+        time_expr = sa_func.strftime(fmt, TopicAttributionFactTable.timestamp)
+        join_clause = col(TopicAttributionDimensionTable.dimension_id) == col(TopicAttributionFactTable.dimension_id)
+
+        where: list[Any] = [
+            col(TopicAttributionDimensionTable.ecosystem) == ecosystem,
+            col(TopicAttributionDimensionTable.tenant_id) == tenant_id,
+        ]
+        if start is not None:
+            where.append(col(TopicAttributionFactTable.timestamp) >= start)
+        if end is not None:
+            where.append(col(TopicAttributionFactTable.timestamp) < end)
+        if cluster_resource_id is not None:
+            where.append(col(TopicAttributionDimensionTable.cluster_resource_id) == cluster_resource_id)
+        if topic_name is not None:
+            where.append(col(TopicAttributionDimensionTable.topic_name) == topic_name)
+        if product_type is not None:
+            where.append(col(TopicAttributionDimensionTable.product_type) == product_type)
+
+        amount_sum = sa_func.sum(sa_cast(col(TopicAttributionFactTable.amount), Numeric)).label("total_amount")
+        row_count_expr = sa_func.count().label("row_count")
+        group_by_labels = [*group_labels, "time_bucket"]
+
+        from sqlalchemy import select as sa_select
+
+        stmt = (
+            sa_select(*group_cols, time_expr.label("time_bucket"), amount_sum, row_count_expr)
+            .select_from(TopicAttributionDimensionTable)
+            .join(TopicAttributionFactTable, join_clause)
+            .where(*where)
+            .group_by(*group_by_labels)
+            .order_by("time_bucket", *group_labels)
+        )
+
+        results = self._session.execute(stmt).all()
+        result_buckets = [
+            TopicAttributionAggregationBucket(
+                dimensions={gb: str(getattr(r, f"dim_{gb}", "") or "") for gb in valid_group_by},
+                time_bucket=str(r.time_bucket),
+                total_amount=Decimal(str(r.total_amount or 0)),
+                row_count=int(r.row_count),
+            )
+            for r in results
+        ]
+        total_amount = sum((b.total_amount for b in result_buckets), Decimal(0))
+        return TopicAttributionAggregationResult(
+            buckets=result_buckets,
+            total_amount=total_amount,
+            total_rows=sum(b.row_count for b in result_buckets),
+        )
+
+    def get_distinct_dates(self, ecosystem: str, tenant_id: str) -> list[date]:
+        """Return sorted list of distinct dates that have topic attribution facts."""
+        stmt = (
+            select(func.date(TopicAttributionFactTable.timestamp))
+            .join(
+                TopicAttributionDimensionTable,
+                col(TopicAttributionFactTable.dimension_id) == col(TopicAttributionDimensionTable.dimension_id),
+            )
+            .where(
+                col(TopicAttributionDimensionTable.ecosystem) == ecosystem,
+                col(TopicAttributionDimensionTable.tenant_id) == tenant_id,
+            )
+            .distinct()
+            .order_by(func.date(TopicAttributionFactTable.timestamp))
+        )
+        rows = self._session.execute(stmt).scalars().all()
+        return [date.fromisoformat(r) if isinstance(r, str) else r for r in rows]
+
+    def delete_before(self, ecosystem: str, tenant_id: str, before: datetime) -> int:
+        """Delete fact rows older than cutoff, then prune orphaned dimension rows."""
+        dim_ids_stmt = select(TopicAttributionDimensionTable.dimension_id).where(
+            col(TopicAttributionDimensionTable.ecosystem) == ecosystem,
+            col(TopicAttributionDimensionTable.tenant_id) == tenant_id,
+        )
+        dim_ids = list(self._session.execute(dim_ids_stmt).scalars().all())
+        if not dim_ids:
+            return 0
+
+        deleted_facts_count = 0
+        for chunk_start in range(0, len(dim_ids), _CHUNK_SIZE):
+            chunk = dim_ids[chunk_start : chunk_start + _CHUNK_SIZE]
+            result = self._session.execute(
+                delete(TopicAttributionFactTable).where(
+                    col(TopicAttributionFactTable.dimension_id).in_(chunk),
+                    col(TopicAttributionFactTable.timestamp) < before,
+                )
+            )
+            deleted_facts_count += result.rowcount  # type: ignore[attr-defined]
+
+        # Prune orphaned dimensions (no remaining facts)
+        remaining_stmt = (
+            select(TopicAttributionFactTable.dimension_id)
+            .where(col(TopicAttributionFactTable.dimension_id).in_(dim_ids))
+            .distinct()
+        )
+        remaining_ids = set(self._session.execute(remaining_stmt).scalars().all())
+        orphaned = [d for d in dim_ids if d not in remaining_ids]
+        if orphaned:
+            for chunk_start in range(0, len(orphaned), _CHUNK_SIZE):
+                chunk = orphaned[chunk_start : chunk_start + _CHUNK_SIZE]
+                self._session.execute(
+                    delete(TopicAttributionDimensionTable).where(
+                        col(TopicAttributionDimensionTable.dimension_id).in_(chunk)
+                    )
+                )
+
+        return deleted_facts_count
+
+
+def _ta_to_domain(
+    dim: TopicAttributionDimensionTable,
+    fact: TopicAttributionFactTable,
+) -> TopicAttributionRow:
+    return TopicAttributionRow(
+        ecosystem=dim.ecosystem,
+        tenant_id=dim.tenant_id,
+        timestamp=fact.timestamp,
+        env_id=dim.env_id,
+        cluster_resource_id=dim.cluster_resource_id,
+        topic_name=dim.topic_name,
+        product_category=dim.product_category,
+        product_type=dim.product_type,
+        attribution_method=dim.attribution_method or "",
+        amount=Decimal(fact.amount) if fact.amount else Decimal(0),
+        dimension_id=dim.dimension_id,
+    )

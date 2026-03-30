@@ -12,6 +12,7 @@ Tables affected:
 - `resources`
 - `identities`
 - `chargeback_rows`
+- `topic_attribution_facts` and `topic_attribution_dimensions` (when topic attribution is enabled)
 
 ## Configuration
 
@@ -25,6 +26,8 @@ tenants:
 |---|---|---|---|
 | `retention_days` | 250 | 1–730 | Set 0 to disable (not recommended) |
 | `lookback_days` | 200 | 1–364 | Must be < retention_days for data continuity |
+
+Topic attribution rows use a separate retention setting (`plugin_settings.topic_attribution.retention_days`, default 90, max 365) independent of the tenant-level `retention_days`.
 
 ## Recommendation
 

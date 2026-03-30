@@ -50,6 +50,8 @@ class CoreStorageModule:
             EntityTagTable,
             PipelineRunTable,
             PipelineStateTable,
+            TopicAttributionDimensionTable,
+            TopicAttributionFactTable,
         )
 
         core_tables = [
@@ -62,5 +64,7 @@ class CoreStorageModule:
             PipelineRunTable.__table__,  # type: ignore[attr-defined]  # SQLModel tables have __table__ at runtime via SQLAlchemy metaclass
             EntityTagTable.__table__,  # type: ignore[attr-defined]  # SQLModel tables have __table__ at runtime via SQLAlchemy metaclass
             EmissionRecordTable.__table__,  # type: ignore[attr-defined]  # SQLModel tables have __table__ at runtime via SQLAlchemy metaclass
+            TopicAttributionDimensionTable.__table__,  # type: ignore[attr-defined]  # SQLModel tables have __table__ at runtime via SQLAlchemy metaclass
+            TopicAttributionFactTable.__table__,  # type: ignore[attr-defined]  # SQLModel tables have __table__ at runtime via SQLAlchemy metaclass
         ]
         SQLModel.metadata.create_all(engine, tables=core_tables)

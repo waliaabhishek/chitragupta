@@ -80,9 +80,17 @@ flowchart TD
 
 8. **Commit** — `ChargebackRow` records written to storage.
 
-The pipeline loop ends at step 8. Emitting is a separate phase.
+The pipeline loop ends at step 8. Topic overlay (step 9) is a separate pass over completed dates.
 
-9. **Emit (post-pipeline)** — `EmitterRunner` runs after each pipeline cycle completes.
+9. **Topic overlay** *(CCloud only, optional)* — `TopicAttributionPhase.run(uow, date)`
+   Runs after chargeback calculation. For each Kafka billing line item, queries
+   Prometheus for per-topic byte metrics and splits the cluster cost across
+   active topics. Results are written to `topic_attribution_facts`. Enabled via
+   `plugin_settings.topic_attribution.enabled: true`. If Prometheus data is
+   unavailable, falls back to even-split across known topics (configurable via
+   `missing_metrics_behavior`).
+
+10. **Emit (post-pipeline)** — `EmitterRunner` runs after each pipeline cycle completes.
    It queries storage for pending dates (not yet emitted, or previously failed, within
    each emitter's `lookback_days` window) and dispatches to each configured emitter.
    Outcome records (`emitted`, `failed`, `skipped`) are persisted per tenant/emitter/date,
@@ -97,7 +105,9 @@ The pipeline loop ends at step 8. Emitting is a separate phase.
 | `identities` | Discovered principals/service accounts with lifecycle timestamps |
 | `chargeback_dimensions` | Unique (identity, resource, product, cost_type) combinations — the "what" |
 | `chargeback_facts` | Cost amounts linked to dimensions via `dimension_id` — the "how much" |
-| `pipeline_state` | Per-date progress flags: `billing_gathered`, `resources_gathered`, `chargeback_calculated` |
+| `pipeline_state` | Per-date progress flags: `billing_gathered`, `resources_gathered`, `chargeback_calculated`, `topic_overlay_gathered`, `topic_attribution_calculated` |
+| `topic_attribution_dimensions` | Unique (cluster, topic, product_type, attribution_method) combinations |
+| `topic_attribution_facts` | Per-topic cost amounts linked to dimensions via `dimension_id` |
 | `pipeline_runs` | Audit trail: run start/end, status, rows written, errors |
 | `custom_tags` | User-defined key/value tags attached to chargeback dimensions |
 | `emission_records` | Per-tenant/emitter/date emission outcome tracking (emitted, failed) with attempt count |

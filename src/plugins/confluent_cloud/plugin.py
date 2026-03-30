@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterable
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from core.metrics.config import create_metrics_source
@@ -17,6 +19,7 @@ from plugins.confluent_cloud.handlers.schema_registry import SchemaRegistryHandl
 
 if TYPE_CHECKING:
     from core.metrics.protocol import MetricsSource
+    from core.models.resource import Resource
     from core.plugin.protocols import CostAllocator, CostInput, ServiceHandler
     from plugins.confluent_cloud.shared_context import CCloudSharedContext
     from plugins.confluent_cloud.storage.module import CCloudStorageModule
@@ -123,6 +126,60 @@ class ConfluentCloudPlugin:
             environment_resources=tuple(env_resources),
             kafka_cluster_resources=tuple(cluster_resources),
         )
+
+    def gather_topic_resources(
+        self,
+        tenant_id: str,
+        cluster_ids: list[str],
+    ) -> Iterable[Resource]:
+        """Discover topics from Prometheus for CCloud clusters.
+
+        Queries received_bytes, sent_bytes, retained_bytes and takes the union of
+        topic names — a topic in ANY metric is considered active.
+
+        Uses a 1-hour lookback window ending at call time for discovery.
+        """
+        if not self._metrics_source or not self._config or not self._config.topic_attribution.enabled:
+            return
+
+        from core.models.resource import CoreResource
+        from plugins.confluent_cloud.overlays.topic_attribution import _DISCOVERY_QUERIES
+
+        end = datetime.now(UTC)
+        start = end - timedelta(hours=1)
+
+        for cluster_id in cluster_ids:
+            try:
+                raw = self._metrics_source.query(
+                    queries=_DISCOVERY_QUERIES,
+                    start=start,
+                    end=end,
+                    resource_id_filter=cluster_id,
+                )
+            except Exception:
+                logger.warning(
+                    "Topic discovery failed for cluster=%s — skipping",
+                    cluster_id,
+                    exc_info=True,
+                )
+                continue
+
+            topic_names: set[str] = set()
+            for rows in raw.values():
+                for row in rows:
+                    topic = row.labels.get("topic")
+                    if topic:
+                        topic_names.add(topic)
+
+            for topic_name in topic_names:
+                yield CoreResource(
+                    ecosystem=self.ecosystem,
+                    tenant_id=tenant_id,
+                    resource_type="topic",
+                    resource_id=f"{cluster_id}:topic:{topic_name}",
+                    display_name=topic_name,
+                    parent_id=cluster_id,
+                )
 
     def get_storage_module(self) -> CCloudStorageModule:
         from plugins.confluent_cloud.storage.module import CCloudStorageModule

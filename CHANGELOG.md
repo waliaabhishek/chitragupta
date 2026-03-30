@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- Feat: TASK-165 — Topic attribution overlay for Confluent Cloud
+
+  Adds a new optional pipeline stage (`topic_overlay`) that attributes Kafka
+  cluster billing costs down to individual topics using Prometheus metrics.
+  Enabled via `plugin_settings.topic_attribution.enabled: true` in CCloud
+  tenant config.
+
+  New features:
+  - `TopicAttributionPhase`: computes per-topic cost rows for each Kafka
+    billing line using a configurable chain model (bytes_ratio →
+    even_split fallback)
+  - Default cost mappings for `KAFKA_NETWORK_WRITE`, `KAFKA_NETWORK_READ`,
+    `KAFKA_STORAGE`, `KAFKA_PARTITION`, `KAFKA_BASE`, `KAFKA_NUM_CKU/CKUS`
+  - `topic_attribution` config block with `exclude_topic_patterns`,
+    `missing_metrics_behavior`, `cost_mapping_overrides`,
+    `metric_name_overrides`, `retention_days`, and `emitters`
+  - 4 new API endpoints under `/api/v1/tenants/{name}/topic-attributions`:
+    list, aggregate, dates, and CSV export
+  - Database migration 012 adds `topic_attribution_dimensions` and
+    `topic_attribution_facts` star-schema tables
+  - `TopicAttributionConfigProtocol` in `core/` keeps plugin config decoupled
+    from core attribution models (DIP-compliant)
+
+---
+
 ## [2.0.0] - 2026-03-27
 
 ### Added

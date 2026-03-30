@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import logging
 from decimal import Decimal
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field, SecretStr, model_validator
+from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
 
-from core.config.models import PluginSettingsBase
+from core.config.models import EmitterSpec, PluginSettingsBase
 from core.metrics.config import MetricsConnectionConfig  # noqa: TC001 — Pydantic evaluates field annotations at runtime
 from plugins.confluent_cloud.allocation_models import (
     _DEFAULT_CKU_SHARED_RATIO,
@@ -39,6 +39,58 @@ class CCloudFlinkRegionConfig(BaseModel):
     secret: SecretStr
 
 
+class TopicAttributionConfig(BaseModel):
+    """Configuration for topic attribution overlay."""
+
+    enabled: bool = False
+    exclude_topic_patterns: list[str] = Field(
+        default_factory=lambda: ["__consumer_offsets", "_schemas", "_confluent-*"],
+    )
+    missing_metrics_behavior: Literal["even_split", "skip"] = "even_split"
+    cost_mapping_overrides: dict[str, str] = Field(default_factory=dict)
+    metric_name_overrides: dict[str, str] = Field(default_factory=dict)
+    retention_days: int = Field(default=90, gt=0, le=365)
+    emitters: list[EmitterSpec] = Field(default_factory=list)
+
+    @field_validator("missing_metrics_behavior", mode="before")
+    @classmethod
+    def normalize_missing_metrics_behavior(cls, v: str) -> str:
+        return v.strip().lower()
+
+    @field_validator("cost_mapping_overrides", mode="before")
+    @classmethod
+    def normalize_and_validate_cost_mappings(cls, v: dict[str, str]) -> dict[str, str]:
+        valid_methods = {"bytes_ratio", "retained_bytes_ratio", "even_split", "disabled"}
+        normalized: dict[str, str] = {}
+        for product_type, method in v.items():
+            pt = product_type.strip().upper()
+            m = method.strip().lower()
+            if m not in valid_methods:
+                raise ValueError(f"cost_mapping_overrides[{pt!r}]: must be one of {valid_methods}, got {method!r}")
+            normalized[pt] = m
+        return normalized
+
+    @field_validator("metric_name_overrides", mode="before")
+    @classmethod
+    def normalize_and_validate_metric_overrides(cls, v: dict[str, str]) -> dict[str, str]:
+        valid_keys = {"topic_bytes_in", "topic_bytes_out", "topic_retained_bytes"}
+        normalized: dict[str, str] = {}
+        for key, metric_name in v.items():
+            k = key.strip().lower()
+            mn = metric_name.strip()
+            if k not in valid_keys:
+                raise ValueError(f"metric_name_overrides: unknown key {key!r}, valid keys are {valid_keys}")
+            if not mn:
+                raise ValueError(f"metric_name_overrides[{k!r}]: metric name cannot be empty")
+            normalized[k] = mn
+        return normalized
+
+    @field_validator("exclude_topic_patterns", mode="before")
+    @classmethod
+    def normalize_exclude_patterns(cls, v: list[str]) -> list[str]:
+        return [p.strip() for p in v if p.strip()]
+
+
 class CCloudPluginConfig(PluginSettingsBase):
     """Validates TenantConfig.plugin_settings for ecosystem='confluent_cloud'."""
 
@@ -46,6 +98,7 @@ class CCloudPluginConfig(PluginSettingsBase):
     billing_api: CCloudBillingConfig = Field(default_factory=CCloudBillingConfig)
     metrics: MetricsConnectionConfig | None = None
     flink: list[CCloudFlinkRegionConfig] | None = None
+    topic_attribution: TopicAttributionConfig = Field(default_factory=TopicAttributionConfig)
 
     @model_validator(mode="after")
     def validate_allocator_params(self) -> CCloudPluginConfig:

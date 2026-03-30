@@ -12,6 +12,9 @@ from core.storage.backends.sqlmodel.repositories import (
     SQLModelPipelineRunRepository,
     SQLModelPipelineStateRepository,
 )
+from core.storage.backends.sqlmodel.repositories import (
+    TopicAttributionRepository as TopicAttributionRepositoryImpl,
+)
 
 if TYPE_CHECKING:
     from core.emitters.repository import EmissionRepository
@@ -24,6 +27,7 @@ if TYPE_CHECKING:
         PipelineRunRepository,
         PipelineStateRepository,
         ResourceRepository,
+        TopicAttributionRepository,
     )
 
 logger = logging.getLogger(__name__)
@@ -47,10 +51,12 @@ class SQLModelUnitOfWork:
         self.pipeline_runs: PipelineRunRepository = None  # type: ignore[assignment]
         self.tags: EntityTagRepository = None  # type: ignore[assignment]
         self.emissions: EmissionRepository = None  # type: ignore[assignment]
+        self._topic_attributions: TopicAttributionRepositoryImpl | None = None
 
     def __enter__(self) -> Self:
         self._session = Session(self._engine)
         self._committed = False
+        self._topic_attributions = None
         self.resources = self._storage_module.create_resource_repository(self._session)
         self.identities = self._storage_module.create_identity_repository(self._session)
         self.billing = self._storage_module.create_billing_repository(self._session)
@@ -86,6 +92,18 @@ class SQLModelUnitOfWork:
         if self._session is None:
             raise RuntimeError("Cannot rollback outside of a transaction")
         self._session.rollback()
+
+    @property
+    def topic_attributions(self) -> TopicAttributionRepository:
+        if self._topic_attributions is None:
+            if self._session is None:
+                raise RuntimeError("Cannot access topic_attributions outside of a transaction")
+            self._topic_attributions = TopicAttributionRepositoryImpl(self._session)
+        return self._topic_attributions
+
+    @topic_attributions.setter
+    def topic_attributions(self, value: TopicAttributionRepository) -> None:
+        self._topic_attributions = value  # type: ignore[assignment]
 
 
 class ReadOnlySQLModelUnitOfWork(SQLModelUnitOfWork):

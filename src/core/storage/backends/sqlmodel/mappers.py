@@ -239,6 +239,8 @@ def pipeline_state_to_table(p: PipelineState) -> PipelineStateTable:
         billing_gathered=p.billing_gathered,
         resources_gathered=p.resources_gathered,
         chargeback_calculated=p.chargeback_calculated,
+        topic_overlay_gathered=p.topic_overlay_gathered,
+        topic_attribution_calculated=p.topic_attribution_calculated,
     )
 
 
@@ -250,6 +252,8 @@ def pipeline_state_to_domain(t: PipelineStateTable) -> PipelineState:
         billing_gathered=t.billing_gathered,
         resources_gathered=t.resources_gathered,
         chargeback_calculated=t.chargeback_calculated,
+        topic_overlay_gathered=t.topic_overlay_gathered,
+        topic_attribution_calculated=t.topic_attribution_calculated,
     )
 
 
