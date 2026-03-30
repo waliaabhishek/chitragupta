@@ -31,6 +31,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `TopicAttributionConfigProtocol` in `core/` keeps plugin config decoupled
     from core attribution models (DIP-compliant)
 
+### Fixed
+- Fix: TASK-166 — Fix `attribution_method` nullable constraint in topic attribution schema
+
+  The `attribution_method` column in `topic_attribution_dimensions` was
+  `nullable=True`, making the unique constraint `uq_topic_attribution_dimensions`
+  ineffective on PostgreSQL (NULL != NULL). Changed to `NOT NULL DEFAULT ''`
+  across ORM, baseline migration 012, and new migration 013. Removes the
+  defensive `or ""` guard in the repository read path.
+
 ---
 
 ## [2.0.0] - 2026-03-27

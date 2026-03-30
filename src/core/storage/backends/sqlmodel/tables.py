@@ -93,7 +93,7 @@ class TopicAttributionDimensionTable(SQLModel, table=True):
     topic_name: str = ""
     product_category: str = ""
     product_type: str = Field(default="", index=True)
-    attribution_method: str | None = None
+    attribution_method: str = ""
 
 
 class TopicAttributionFactTable(SQLModel, table=True):

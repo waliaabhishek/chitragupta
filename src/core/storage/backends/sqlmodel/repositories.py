@@ -2112,7 +2112,7 @@ def _ta_to_domain(
         topic_name=dim.topic_name,
         product_category=dim.product_category,
         product_type=dim.product_type,
-        attribution_method=dim.attribution_method or "",
+        attribution_method=dim.attribution_method,
         amount=Decimal(fact.amount) if fact.amount else Decimal(0),
         dimension_id=dim.dimension_id,
     )

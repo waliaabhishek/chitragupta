@@ -293,3 +293,73 @@ class TestTopicAttributionRepositoryDeleteBefore:
             select(TopicAttributionDimensionTable).where(TopicAttributionDimensionTable.topic_name == "mixed")
         ).all()
         assert len(dims) == 1  # dimension kept
+
+
+class TestTopicAttributionDimensionTableAttributionMethodSchema:
+    """Tests for TASK-166: attribution_method must be NOT NULL with default ''."""
+
+    def test_insert_without_attribution_method_defaults_to_empty_string(self, session: Session) -> None:
+        """Insert TopicAttributionDimensionTable without attribution_method → reads back as ''."""
+        from sqlmodel import select
+
+        from core.storage.backends.sqlmodel.tables import TopicAttributionDimensionTable
+
+        row = TopicAttributionDimensionTable(
+            ecosystem="eco",
+            tenant_id="t1",
+            env_id="env-1",
+            cluster_resource_id="lkc-abc",
+            topic_name="orders",
+            product_category="KAFKA",
+            product_type="KAFKA_NETWORK_WRITE",
+            # attribution_method intentionally omitted
+        )
+        session.add(row)
+        session.commit()
+
+        saved = session.exec(
+            select(TopicAttributionDimensionTable).where(TopicAttributionDimensionTable.topic_name == "orders")
+        ).one()
+        assert saved.attribution_method == ""
+
+    def test_duplicate_dimension_rows_with_empty_attribution_method_raises_integrity_error(
+        self, session: Session
+    ) -> None:
+        """Two rows with identical 8-column unique constraint values → second insert raises IntegrityError."""
+        from sqlalchemy.exc import IntegrityError
+
+        from core.storage.backends.sqlmodel.tables import TopicAttributionDimensionTable
+
+        def _make_dim() -> TopicAttributionDimensionTable:
+            return TopicAttributionDimensionTable(
+                ecosystem="eco",
+                tenant_id="t1",
+                env_id="env-1",
+                cluster_resource_id="lkc-abc",
+                topic_name="orders",
+                product_category="KAFKA",
+                product_type="KAFKA_NETWORK_WRITE",
+                attribution_method="",
+            )
+
+        session.add(_make_dim())
+        session.commit()
+
+        session.add(_make_dim())
+        with pytest.raises(IntegrityError):
+            session.commit()
+
+    def test_attribution_method_orm_field_is_str_with_empty_string_default(self) -> None:
+        """TopicAttributionDimensionTable.attribution_method is str with default '' — no None accepted."""
+        from core.storage.backends.sqlmodel.tables import TopicAttributionDimensionTable
+
+        field_info = TopicAttributionDimensionTable.model_fields["attribution_method"]
+        # default must be "" not None
+        assert field_info.default == ""
+        # annotation must be str (not str | None)
+        import typing
+
+        annotation = field_info.annotation
+        # Should not be Optional[str] / str | None
+        args = typing.get_args(annotation)
+        assert type(None) not in args, "attribution_method must not be Optional[str]"

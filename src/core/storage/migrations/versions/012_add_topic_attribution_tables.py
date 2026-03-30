@@ -27,7 +27,7 @@ def upgrade() -> None:
         sa.Column("topic_name", sa.String(), nullable=False, server_default=""),
         sa.Column("product_category", sa.String(), nullable=False, server_default=""),
         sa.Column("product_type", sa.String(), nullable=False, server_default=""),
-        sa.Column("attribution_method", sa.String(), nullable=True),
+        sa.Column("attribution_method", sa.String(), nullable=False, server_default=""),
         sa.UniqueConstraint(
             "ecosystem",
             "tenant_id",
