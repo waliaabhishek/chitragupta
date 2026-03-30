@@ -202,3 +202,178 @@ class TestGetTenantStatus:
         dates = [s["tracking_date"] for s in data["states"]]
         assert "2026-02-10" in dates
         assert "2026-02-15" in dates
+
+
+class TestGetTenantStatusTopicAttributionFields:
+    """PipelineStateResponse must expose topic_overlay_gathered and topic_attribution_calculated."""
+
+    def test_status_response_includes_topic_overlay_gathered_field(
+        self, app_with_backend: TestClient, in_memory_backend: SQLModelBackend
+    ) -> None:
+        with in_memory_backend.create_unit_of_work() as uow:
+            uow.pipeline_state.upsert(
+                PipelineState(
+                    ecosystem="test-eco",
+                    tenant_id="test-tenant",
+                    tracking_date=date(2026, 2, 15),
+                    billing_gathered=True,
+                    resources_gathered=True,
+                    chargeback_calculated=True,
+                    topic_overlay_gathered=False,
+                    topic_attribution_calculated=False,
+                )
+            )
+            uow.commit()
+
+        response = app_with_backend.get("/api/v1/tenants/test-tenant/status")
+        assert response.status_code == 200
+        state = response.json()["states"][0]
+
+        assert "topic_overlay_gathered" in state, (
+            "PipelineStateResponse is missing 'topic_overlay_gathered' field — "
+            "frontend pipeline status page cannot show topic overlay stage"
+        )
+
+    def test_status_response_includes_topic_attribution_calculated_field(
+        self, app_with_backend: TestClient, in_memory_backend: SQLModelBackend
+    ) -> None:
+        with in_memory_backend.create_unit_of_work() as uow:
+            uow.pipeline_state.upsert(
+                PipelineState(
+                    ecosystem="test-eco",
+                    tenant_id="test-tenant",
+                    tracking_date=date(2026, 2, 15),
+                    billing_gathered=True,
+                    resources_gathered=True,
+                    chargeback_calculated=True,
+                    topic_overlay_gathered=True,
+                    topic_attribution_calculated=False,
+                )
+            )
+            uow.commit()
+
+        response = app_with_backend.get("/api/v1/tenants/test-tenant/status")
+        assert response.status_code == 200
+        state = response.json()["states"][0]
+
+        assert "topic_attribution_calculated" in state, (
+            "PipelineStateResponse is missing 'topic_attribution_calculated' field"
+        )
+
+    def test_topic_overlay_gathered_false_before_overlay_runs(
+        self, app_with_backend: TestClient, in_memory_backend: SQLModelBackend
+    ) -> None:
+        """topic_overlay_gathered must be False when not yet gathered."""
+        with in_memory_backend.create_unit_of_work() as uow:
+            uow.pipeline_state.upsert(
+                PipelineState(
+                    ecosystem="test-eco",
+                    tenant_id="test-tenant",
+                    tracking_date=date(2026, 2, 15),
+                    billing_gathered=True,
+                    resources_gathered=True,
+                    chargeback_calculated=True,
+                    topic_overlay_gathered=False,
+                    topic_attribution_calculated=False,
+                )
+            )
+            uow.commit()
+
+        response = app_with_backend.get("/api/v1/tenants/test-tenant/status")
+        assert response.status_code == 200
+        state = response.json()["states"][0]
+
+        assert state["topic_overlay_gathered"] is False
+        assert state["topic_attribution_calculated"] is False
+
+    def test_topic_overlay_gathered_true_after_gather(
+        self, app_with_backend: TestClient, in_memory_backend: SQLModelBackend
+    ) -> None:
+        """topic_overlay_gathered must be True after overlay gather runs."""
+        with in_memory_backend.create_unit_of_work() as uow:
+            uow.pipeline_state.upsert(
+                PipelineState(
+                    ecosystem="test-eco",
+                    tenant_id="test-tenant",
+                    tracking_date=date(2026, 2, 15),
+                    billing_gathered=True,
+                    resources_gathered=True,
+                    chargeback_calculated=True,
+                    topic_overlay_gathered=True,
+                    topic_attribution_calculated=False,
+                )
+            )
+            uow.commit()
+
+        response = app_with_backend.get("/api/v1/tenants/test-tenant/status")
+        assert response.status_code == 200
+        state = response.json()["states"][0]
+
+        assert state["topic_overlay_gathered"] is True
+        assert state["topic_attribution_calculated"] is False
+
+    def test_topic_attribution_calculated_true_after_phase_runs(
+        self, app_with_backend: TestClient, in_memory_backend: SQLModelBackend
+    ) -> None:
+        """topic_attribution_calculated must be True after phase completes."""
+        with in_memory_backend.create_unit_of_work() as uow:
+            uow.pipeline_state.upsert(
+                PipelineState(
+                    ecosystem="test-eco",
+                    tenant_id="test-tenant",
+                    tracking_date=date(2026, 2, 15),
+                    billing_gathered=True,
+                    resources_gathered=True,
+                    chargeback_calculated=True,
+                    topic_overlay_gathered=True,
+                    topic_attribution_calculated=True,
+                )
+            )
+            uow.commit()
+
+        response = app_with_backend.get("/api/v1/tenants/test-tenant/status")
+        assert response.status_code == 200
+        state = response.json()["states"][0]
+
+        assert state["topic_overlay_gathered"] is True
+        assert state["topic_attribution_calculated"] is True
+
+    def test_multiple_dates_all_have_topic_fields(
+        self, app_with_backend: TestClient, in_memory_backend: SQLModelBackend
+    ) -> None:
+        """Every state entry must carry topic attribution fields, not just the first."""
+        with in_memory_backend.create_unit_of_work() as uow:
+            uow.pipeline_state.upsert(
+                PipelineState(
+                    ecosystem="test-eco",
+                    tenant_id="test-tenant",
+                    tracking_date=date(2026, 2, 14),
+                    billing_gathered=True,
+                    resources_gathered=True,
+                    chargeback_calculated=True,
+                    topic_overlay_gathered=True,
+                    topic_attribution_calculated=True,
+                )
+            )
+            uow.pipeline_state.upsert(
+                PipelineState(
+                    ecosystem="test-eco",
+                    tenant_id="test-tenant",
+                    tracking_date=date(2026, 2, 15),
+                    billing_gathered=True,
+                    resources_gathered=True,
+                    chargeback_calculated=True,
+                    topic_overlay_gathered=False,
+                    topic_attribution_calculated=False,
+                )
+            )
+            uow.commit()
+
+        response = app_with_backend.get("/api/v1/tenants/test-tenant/status")
+        assert response.status_code == 200
+        states = response.json()["states"]
+        assert len(states) == 2
+
+        for state in states:
+            assert "topic_overlay_gathered" in state
+            assert "topic_attribution_calculated" in state

@@ -53,6 +53,8 @@ class PipelineStateResponse(BaseModel):
     billing_gathered: bool
     resources_gathered: bool
     chargeback_calculated: bool
+    topic_overlay_gathered: bool = False
+    topic_attribution_calculated: bool = False
 
 
 class TenantStatusDetailResponse(BaseModel):

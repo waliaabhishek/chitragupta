@@ -12,6 +12,7 @@ from prometheus_client.core import CollectorRegistry, GaugeMetricFamily
 
 if TYPE_CHECKING:
     from core.models.chargeback import ChargebackRow
+    from core.models.topic_attribution import TopicAttributionRow
     from core.storage.interface import StorageBackend
 
 logger = logging.getLogger(__name__)
@@ -60,6 +61,7 @@ class PrometheusEmitter:
     _billing_col: _TimestampedGaugeCollector | None = None
     _resource_col: _TimestampedGaugeCollector | None = None
     _identity_col: _TimestampedGaugeCollector | None = None
+    _topic_attribution_col: _TimestampedGaugeCollector | None = None
     _col_lock: threading.Lock = threading.Lock()
 
     _server_started: bool = False
@@ -108,6 +110,20 @@ class PrometheusEmitter:
                     "chitragupta_identity_active",
                     "Active identities at billing date (1 = active)",
                     ["tenant_id", "ecosystem", "identity_id", "identity_type"],
+                )
+            if PrometheusEmitter._topic_attribution_col is None:
+                PrometheusEmitter._topic_attribution_col = _TimestampedGaugeCollector(
+                    "chitragupta_topic_attribution_amount",
+                    "Topic attribution cost amount per topic/cluster/product combination",
+                    [
+                        "tenant_id",
+                        "ecosystem",
+                        "env_id",
+                        "cluster_resource_id",
+                        "topic_name",
+                        "product_category",
+                        "product_type",
+                    ],
                 )
 
     def __call__(
@@ -172,6 +188,39 @@ class PrometheusEmitter:
                 ([tenant_id, i.ecosystem, i.identity_id, i.identity_type], 1.0, ts_float) for i in identities
             ]
             PrometheusEmitter._identity_col.set_samples_for_tenant(tenant_id, identity_samples)
+
+    def emit_topic_attributions(
+        self,
+        tenant_id: str,
+        date: date_type,
+        rows: Sequence[TopicAttributionRow],
+    ) -> None:
+        """Expose topic attribution rows as chitragupta_topic_attribution_amount gauge."""
+        if not rows:
+            return
+        if PrometheusEmitter._topic_attribution_col is None:
+            raise RuntimeError("Collectors not initialized — call _init_collectors_once first")
+
+        billing_ts = datetime(date.year, date.month, date.day, 0, 0, 0, tzinfo=UTC)
+        ts_float = billing_ts.timestamp()
+
+        samples: list[_Sample] = [
+            (
+                [
+                    tenant_id,
+                    row.ecosystem,
+                    row.env_id,
+                    row.cluster_resource_id,
+                    row.topic_name,
+                    row.product_category,
+                    row.product_type,
+                ],
+                float(row.amount),
+                ts_float,
+            )
+            for row in rows
+        ]
+        PrometheusEmitter._topic_attribution_col.set_samples_for_tenant(tenant_id, samples)
 
 
 def make_prometheus_emitter(

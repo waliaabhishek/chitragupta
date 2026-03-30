@@ -2095,3 +2095,119 @@ class TestLogResults:
         assert any("pending=3" in m for m in log_messages), (
             f"Expected 'pending=3' in _log_results output, got: {log_messages}"
         )
+
+
+class TestCleanupRetentionTopicAttribution:
+    """AC-12: _cleanup_retention() must call uow.topic_attributions.delete_before() when TA enabled."""
+
+    def _make_mock_backend_with_uow(self) -> tuple[MagicMock, MagicMock]:
+        mock_backend = MagicMock()
+        mock_uow = MagicMock()
+        mock_backend.create_unit_of_work.return_value.__enter__ = MagicMock(return_value=mock_uow)
+        mock_backend.create_unit_of_work.return_value.__exit__ = MagicMock(return_value=False)
+        mock_uow.billing.delete_before.return_value = 0
+        mock_uow.resources.delete_before.return_value = 0
+        mock_uow.identities.delete_before.return_value = 0
+        mock_uow.chargebacks.delete_before.return_value = 0
+        mock_uow.topic_attributions.delete_before.return_value = 0
+        return mock_backend, mock_uow
+
+    def _make_tenant_with_ta(self, *, ta_enabled: bool, ta_retention_days: int = 30) -> TenantConfig:
+        from plugins.confluent_cloud.config import CCloudPluginConfig, TopicAttributionConfig
+
+        plugin_settings = CCloudPluginConfig(
+            ccloud_api={"key": "k", "secret": "s"},
+            topic_attribution=TopicAttributionConfig(
+                enabled=ta_enabled,
+                retention_days=ta_retention_days,
+            ),
+        )
+        return _make_tenant(
+            ecosystem="confluent_cloud",
+            tenant_id="tid1",
+            retention_days=30,
+            plugin_settings=plugin_settings,
+        )
+
+    def test_calls_topic_attributions_delete_before_when_enabled(self) -> None:
+        mock_backend, mock_uow = self._make_mock_backend_with_uow()
+        tenant = self._make_tenant_with_ta(ta_enabled=True, ta_retention_days=60)
+        settings = _make_settings(tenants={"t1": tenant})
+        runner = WorkflowRunner(settings, MagicMock())
+        runtime = TenantRuntime(
+            tenant_name="t1",
+            plugin=MagicMock(),
+            storage=mock_backend,
+            orchestrator=MagicMock(),
+            config_hash="abc123",
+            created_at=datetime.now(UTC),
+        )
+        runner._tenant_runtimes["t1"] = runtime
+        runner._cleanup_retention()
+
+        mock_uow.topic_attributions.delete_before.assert_called_once()
+
+    def test_uses_topic_attribution_retention_days_not_tenant_retention_days(self) -> None:
+        """ta_config.retention_days (60) must be used, not config.retention_days (30)."""
+        from datetime import timedelta
+
+        mock_backend, mock_uow = self._make_mock_backend_with_uow()
+        tenant = self._make_tenant_with_ta(ta_enabled=True, ta_retention_days=60)
+        settings = _make_settings(tenants={"t1": tenant})
+        runner = WorkflowRunner(settings, MagicMock())
+        runtime = TenantRuntime(
+            tenant_name="t1",
+            plugin=MagicMock(),
+            storage=mock_backend,
+            orchestrator=MagicMock(),
+            config_hash="abc123",
+            created_at=datetime.now(UTC),
+        )
+        runner._tenant_runtimes["t1"] = runtime
+        runner._cleanup_retention()
+
+        call_args = mock_uow.topic_attributions.delete_before.call_args
+        cutoff: datetime = call_args[0][2]  # positional: ecosystem, tenant_id, cutoff
+
+        # cutoff must be approximately now() - 60 days (not 30)
+        expected_approx = datetime.now(UTC) - timedelta(days=60)
+        delta = abs((cutoff - expected_approx).total_seconds())
+        assert delta < 5, f"Expected cutoff ~60 days ago, got {cutoff} (delta={delta}s)"
+
+    def test_skips_topic_attribution_cleanup_when_disabled(self) -> None:
+        mock_backend, mock_uow = self._make_mock_backend_with_uow()
+        tenant = self._make_tenant_with_ta(ta_enabled=False)
+        settings = _make_settings(tenants={"t1": tenant})
+        runner = WorkflowRunner(settings, MagicMock())
+        runtime = TenantRuntime(
+            tenant_name="t1",
+            plugin=MagicMock(),
+            storage=mock_backend,
+            orchestrator=MagicMock(),
+            config_hash="abc123",
+            created_at=datetime.now(UTC),
+        )
+        runner._tenant_runtimes["t1"] = runtime
+        runner._cleanup_retention()
+
+        mock_uow.topic_attributions.delete_before.assert_not_called()
+
+    def test_skips_topic_attribution_cleanup_when_no_plugin_settings(self) -> None:
+        """Tenants without TopicAttributionConfig must not touch topic_attributions."""
+        mock_backend, mock_uow = self._make_mock_backend_with_uow()
+        # Use a plain tenant with no topic_attribution in plugin_settings
+        tenant = _make_tenant(tenant_id="tid1", retention_days=30)
+        settings = _make_settings(tenants={"t1": tenant})
+        runner = WorkflowRunner(settings, MagicMock())
+        runtime = TenantRuntime(
+            tenant_name="t1",
+            plugin=MagicMock(),
+            storage=mock_backend,
+            orchestrator=MagicMock(),
+            config_hash="abc123",
+            created_at=datetime.now(UTC),
+        )
+        runner._tenant_runtimes["t1"] = runtime
+        runner._cleanup_retention()
+
+        mock_uow.topic_attributions.delete_before.assert_not_called()

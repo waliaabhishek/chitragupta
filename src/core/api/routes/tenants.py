@@ -88,6 +88,8 @@ async def get_tenant_status(
                 billing_gathered=s.billing_gathered,
                 resources_gathered=s.resources_gathered,
                 chargeback_calculated=s.chargeback_calculated,
+                topic_overlay_gathered=s.topic_overlay_gathered,
+                topic_attribution_calculated=s.topic_attribution_calculated,
             )
             for s in states
         ],

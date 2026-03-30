@@ -17,7 +17,7 @@ from core.engine.orchestrator import ChargebackOrchestrator, GatherFailureThresh
 if TYPE_CHECKING:
     from datetime import date as date_type
 
-    from core.config.models import AppSettings, TenantConfig
+    from core.config.models import AppSettings, EmitterSpec, TenantConfig
     from core.models.pipeline import PipelineRun
     from core.plugin.protocols import EcosystemPlugin
     from core.plugin.registry import PluginRegistry
@@ -157,6 +157,66 @@ def cleanup_orphaned_runs_for_all_tenants(
             logger.warning("Failed to clean up orphaned runs for %s", tenant_name, exc_info=True)
         finally:
             storage.dispose()
+
+
+class TopicAttributionEmitterRunner:
+    """Reads TopicAttributionRows from DB and drives topic attribution emitters.
+
+    Mirrors EmitterRunner but reads from TopicAttributionRepository and
+    reads emitter specs from config.topic_attribution.emitters.
+    """
+
+    def __init__(
+        self,
+        ecosystem: str,
+        storage_backend: StorageBackend,
+        emitter_specs: list[EmitterSpec],
+    ) -> None:
+        self._ecosystem = ecosystem
+        self._storage_backend = storage_backend
+        self._emitter_specs = emitter_specs
+
+    def run(self, tenant_id: str) -> None:
+        """Emit all pending topic attribution dates for one tenant."""
+        with self._storage_backend.create_read_only_unit_of_work() as uow:
+            all_dates = uow.topic_attributions.get_distinct_dates(self._ecosystem, tenant_id)
+
+        for spec in self._emitter_specs:
+            self._run_spec(tenant_id, spec, all_dates)
+
+    def _run_spec(self, tenant_id: str, spec: EmitterSpec, all_dates: list[date_type]) -> None:
+        if not all_dates:
+            return
+
+        dispatch: dict[str, Callable[[EmitterSpec], Callable[..., None]]] = {
+            "csv": self._build_csv_emitter,
+            "prometheus": self._build_prometheus_emitter,
+        }
+        builder = dispatch.get(spec.type)
+        if builder is None:
+            logger.warning("TopicAttributionEmitterRunner: unknown emitter type %r — skipping", spec.type)
+            return
+
+        emitter = builder(spec)
+        for d in all_dates:
+            with self._storage_backend.create_read_only_unit_of_work() as uow:
+                rows = uow.topic_attributions.find_by_date(self._ecosystem, tenant_id, d)
+            emitter(tenant_id, d, rows)
+
+    def _build_csv_emitter(self, spec: EmitterSpec) -> Callable[..., None]:
+        from emitters.topic_attribution_csv_emitter import TopicAttributionCsvEmitter
+
+        output_dir = spec.params.get("output_dir", "/tmp/topic_attribution")
+        return TopicAttributionCsvEmitter(output_dir)
+
+    def _build_prometheus_emitter(self, spec: EmitterSpec) -> Callable[..., None]:
+        from emitters.prometheus_emitter import PrometheusEmitter
+
+        emitter_obj = PrometheusEmitter(
+            port=spec.params.get("port", 8000),
+            storage_backend=self._storage_backend,
+        )
+        return emitter_obj.emit_topic_attributions
 
 
 class WorkflowRunner:
@@ -427,6 +487,21 @@ class WorkflowRunner:
                     except Exception:
                         logger.exception("EmitterRunner failed for tenant=%s — pipeline result unaffected", name)
 
+                # Post-pipeline hook: emit topic attribution after successful pipeline commit
+                ta_config = getattr(getattr(config, "plugin_settings", None), "topic_attribution", None)
+                if ta_config and ta_config.enabled and ta_config.emitters:
+                    ta_emitter_runner = TopicAttributionEmitterRunner(
+                        ecosystem=config.ecosystem,
+                        storage_backend=runtime.storage,
+                        emitter_specs=ta_config.emitters,
+                    )
+                    try:
+                        ta_emitter_runner.run(config.tenant_id)
+                    except Exception:
+                        logger.exception(
+                            "TopicAttributionEmitterRunner failed for tenant=%s — pipeline result unaffected", name
+                        )
+
                 return result
             except Exception:
                 tracker.fail(pipeline_run)
@@ -501,9 +576,19 @@ class WorkflowRunner:
                     deleted_resources = uow.resources.delete_before(config.ecosystem, config.tenant_id, cutoff)
                     deleted_identities = uow.identities.delete_before(config.ecosystem, config.tenant_id, cutoff)
                     deleted_chargebacks = uow.chargebacks.delete_before(config.ecosystem, config.tenant_id, cutoff)
+
+                    plugin_settings = getattr(config, "plugin_settings", None)
+                    ta_config = getattr(plugin_settings, "topic_attribution", None) if plugin_settings else None
+                    deleted_ta = 0
+                    if ta_config and ta_config.enabled:
+                        ta_cutoff = datetime.now(UTC) - timedelta(days=ta_config.retention_days)
+                        deleted_ta = uow.topic_attributions.delete_before(config.ecosystem, config.tenant_id, ta_cutoff)
+
                     uow.commit()
 
-                total_deleted = deleted_billing + deleted_resources + deleted_identities + deleted_chargebacks
+                total_deleted = (
+                    deleted_billing + deleted_resources + deleted_identities + deleted_chargebacks + deleted_ta
+                )
                 if total_deleted > 0:
                     logger.info(
                         "Tenant %s: retention cleanup deleted %d records (before %s)",
