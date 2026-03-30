@@ -1238,39 +1238,6 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#added" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Added
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#changed" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Changed
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#documentation" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Documentation
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
   <a href="#fixed" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1333,39 +1300,6 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#added" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Added
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#changed" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Changed
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#documentation" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Documentation
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
   <a href="#fixed" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1406,47 +1340,13 @@
 <p>The format is based on <a href="https://keepachangelog.com/en/1.0.0/">Keep a Changelog</a>,
 and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semantic Versioning</a>.</p>
 <h2 id="unreleased">[Unreleased]<a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
-<h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
-<ul>
-<li>Feat: TASK-163 — Pipeline Status page with workflow stepper visualization</li>
-</ul>
-<p>Replace placeholder with full pipeline status page: horizontal Ant Design
-Steps stepper showing gathering/calculating/emitting stages, Run Pipeline
-button with POST trigger and feedback alerts, Last Run Summary card with
-Descriptions component, and Per-Date Processing Status table with boolean
-icon columns. Uses existing useReadiness() context for live pipeline state
-and @tanstack/react-query useQuery for API fetches with adaptive refetch
-intervals. 21 tests, zero regressions. (<a href="https://github.com/waliaabhishek/chitragupta/commit/730133c6aaaaf44c85a7702fe0b49c64d8804f9c">730133c</a>)</p>
-<h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
-<ul>
-<li>Refactor: Standardize all tables on AG Grid, remove Ant Design Table usage</li>
-</ul>
-<p>Migrate AllocationIssuesTable to AG Grid infinite scroll with server-side
-pagination and PipelineStatus table to AG Grid client-side row model.
-Delete unused useAllocationIssues hook. Update tests for both components. (<a href="https://github.com/waliaabhishek/chitragupta/commit/f29cbce45807fa890be496cc80fb5db7ef18bc58">f29cbce</a>)</p>
-<h3 id="documentation">Documentation<a class="headerlink" href="#documentation" title="Permanent link">&para;</a></h3>
-<ul>
-<li>Docs: Update README.md</li>
-</ul>
-<p>Updated performance metrics and added custom tags support. (<a href="https://github.com/waliaabhishek/chitragupta/commit/6ccfe235da3d014c3466bdb4b7ed997a03627772">6ccfe23</a>)</p>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
-<li>Fix: Migrate AG Grid from legacy CSS to v35 JS Theme API</li>
+<li>Fix: Resolve Dependabot alerts for path-to-regexp and brace-expansion</li>
 </ul>
-<p>AG Grid v35 defaults to themeQuartz (JS-based). Without setting the theme
-prop, the grid injected Quartz styles that conflicted with our legacy CSS
-imports, causing themes to break on navigation between pages.</p>
-<p>Migrated to the proper v35 approach: themeAlpine.withParams() for light
-mode, .withParams({}, "dark") for dark mode, with data-ag-theme-mode
-attribute on body for mode switching. Removed all legacy CSS imports and
-the ag-grid-theme.css override file. Added defaultColDef with sortable
-and resizable to all grids. (<a href="https://github.com/waliaabhishek/chitragupta/commit/95a0f9445055c3e3caca44dd125c654446e32e49">95a0f94</a>)
-- Fix: AG Grid theme not applying — add Alpine base class, sorting, resizing, and alternating rows</p>
-<p>The grid wrapper divs used className="ag-theme-chitragupta" but ag-theme-alpine.css
-only targets .ag-theme-alpine, so Alpine's visual styles never applied. Now uses both
-classes. Also adds shared defaultColDef with sortable/resizable and subtle alternating
-row backgrounds for both light and dark modes. (<a href="https://github.com/waliaabhishek/chitragupta/commit/4ecc39c00df416314423a7145ea6ac0c3383bcdb">4ecc39c</a>)
-- Fix: Auto-detect docker compose v1/v2 in dev Makefile (<a href="https://github.com/waliaabhishek/chitragupta/commit/6094965b2578738defc1386b37d290180cf933b7">6094965</a>)</p>
+<p>Override path-to-regexp to 8.4.0 to fix CVE-2026-4926 (High) and
+CVE-2026-4923 (Medium). Bump brace-expansion via lockfile to patched
+versions (1.1.13, 2.0.3, 5.0.5). (<a href="https://github.com/waliaabhishek/chitragupta/commit/a650b7e9725684b8f7c443af11d73abc0b8a1aff">a650b7e</a>)</p>
 
 
 
