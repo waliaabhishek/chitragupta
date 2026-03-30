@@ -1690,6 +1690,67 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#topic-attributions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Topic Attributions
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Topic Attributions">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#get-apiv1tenantstenant_nametopic-attributions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/v1/tenants/{tenant_name}/topic-attributions
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-apiv1tenantstenant_nametopic-attributionsaggregate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/v1/tenants/{tenant_name}/topic-attributions/aggregate
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-apiv1tenantstenant_nametopic-attributionsdates" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/v1/tenants/{tenant_name}/topic-attributions/dates
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#post-apiv1tenantstenant_nametopic-attributionsexport" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /api/v1/tenants/{tenant_name}/topic-attributions/export
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -2241,6 +2302,67 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#topic-attributions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Topic Attributions
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Topic Attributions">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#get-apiv1tenantstenant_nametopic-attributions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/v1/tenants/{tenant_name}/topic-attributions
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-apiv1tenantstenant_nametopic-attributionsaggregate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/v1/tenants/{tenant_name}/topic-attributions/aggregate
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-apiv1tenantstenant_nametopic-attributionsdates" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/v1/tenants/{tenant_name}/topic-attributions/dates
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#post-apiv1tenantstenant_nametopic-attributionsexport" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /api/v1/tenants/{tenant_name}/topic-attributions/export
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -2398,7 +2520,7 @@
 </tr>
 </tbody>
 </table>
-<p><strong>Response:</strong> List of <code>{tracking_date, billing_gathered, resources_gathered, chargeback_calculated}</code> per date.</p>
+<p><strong>Response:</strong> List of <code>{tracking_date, billing_gathered, resources_gathered, chargeback_calculated, topic_overlay_gathered, topic_attribution_calculated}</code> per date. The <code>topic_overlay_gathered</code> and <code>topic_attribution_calculated</code> fields are <code>false</code> when topic attribution is disabled.</p>
 <hr />
 <h2 id="billing">Billing<a class="headerlink" href="#billing" title="Permanent link">&para;</a></h2>
 <h3 id="get-apiv1tenantstenant_namebilling"><code>GET /api/v1/tenants/{tenant_name}/billing</code><a class="headerlink" href="#get-apiv1tenantstenant_namebilling" title="Permanent link">&para;</a></h3>
@@ -2922,6 +3044,195 @@
 <p><strong>All available columns:</strong> <code>ecosystem</code>, <code>tenant_id</code>, <code>timestamp</code>, <code>resource_id</code>, <code>product_category</code>, <code>product_type</code>, <code>identity_id</code>, <code>cost_type</code>, <code>amount</code>, <code>allocation_method</code>, <code>allocation_detail</code>, <code>tags</code>, <code>metadata</code>.</p>
 <p>The <code>tags</code> column is serialized as <code>key=value;key=value</code> pairs (e.g. <code>team=platform;env=prod</code>).</p>
 <p><strong>Default columns:</strong> <code>timestamp</code>, <code>resource_id</code>, <code>product_category</code>, <code>product_type</code>, <code>identity_id</code>, <code>cost_type</code>, <code>amount</code>, <code>allocation_method</code>, <code>tags</code>.</p>
+<hr />
+<h2 id="topic-attributions">Topic Attributions<a class="headerlink" href="#topic-attributions" title="Permanent link">&para;</a></h2>
+<p>Topic attribution rows are produced by the optional <code>topic_overlay</code> pipeline
+stage (Confluent Cloud only). Each row represents the cost portion attributed to
+one topic for one billing line item. Requires <code>topic_attribution.enabled: true</code>
+in plugin settings.</p>
+<h3 id="get-apiv1tenantstenant_nametopic-attributions"><code>GET /api/v1/tenants/{tenant_name}/topic-attributions</code><a class="headerlink" href="#get-apiv1tenantstenant_nametopic-attributions" title="Permanent link">&para;</a></h3>
+<p>List topic attribution rows. Paginated.</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Type</th>
+<th>Required</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>start_date</code></td>
+<td>date</td>
+<td>no</td>
+<td>Filter start</td>
+</tr>
+<tr>
+<td><code>end_date</code></td>
+<td>date</td>
+<td>no</td>
+<td>Filter end</td>
+</tr>
+<tr>
+<td><code>timezone</code></td>
+<td>string</td>
+<td>no</td>
+<td>IANA timezone for date boundaries. Defaults to UTC.</td>
+</tr>
+<tr>
+<td><code>cluster_resource_id</code></td>
+<td>string</td>
+<td>no</td>
+<td>Filter by cluster (e.g. <code>lkc-abc123</code>)</td>
+</tr>
+<tr>
+<td><code>topic_name</code></td>
+<td>string</td>
+<td>no</td>
+<td>Filter by topic name</td>
+</tr>
+<tr>
+<td><code>product_type</code></td>
+<td>string</td>
+<td>no</td>
+<td>Filter by product type</td>
+</tr>
+<tr>
+<td><code>attribution_method</code></td>
+<td>string</td>
+<td>no</td>
+<td>Filter by method (<code>bytes_ratio</code>, <code>retained_bytes_ratio</code>, <code>even_split</code>)</td>
+</tr>
+<tr>
+<td><code>page</code></td>
+<td>int</td>
+<td>no</td>
+<td>Page number (default 1)</td>
+</tr>
+<tr>
+<td><code>page_size</code></td>
+<td>int</td>
+<td>no</td>
+<td>Page size 1–1000 (default 100)</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Response fields per item:</strong> <code>dimension_id</code>, <code>ecosystem</code>, <code>tenant_id</code>, <code>timestamp</code>, <code>env_id</code>, <code>cluster_resource_id</code>, <code>topic_name</code>, <code>product_category</code>, <code>product_type</code>, <code>attribution_method</code>, <code>amount</code>.</p>
+<h3 id="get-apiv1tenantstenant_nametopic-attributionsaggregate"><code>GET /api/v1/tenants/{tenant_name}/topic-attributions/aggregate</code><a class="headerlink" href="#get-apiv1tenantstenant_nametopic-attributionsaggregate" title="Permanent link">&para;</a></h3>
+<p>Multi-dimensional aggregation of topic attribution rows.</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>group_by</code></td>
+<td>list[string]</td>
+<td><code>["topic_name"]</code></td>
+<td>Columns to group by (repeatable)</td>
+</tr>
+<tr>
+<td><code>time_bucket</code></td>
+<td>string</td>
+<td><code>day</code></td>
+<td><code>hour</code>, <code>day</code>, <code>week</code>, or <code>month</code></td>
+</tr>
+<tr>
+<td><code>start_date</code></td>
+<td>date</td>
+<td>no</td>
+<td>Filter start</td>
+</tr>
+<tr>
+<td><code>end_date</code></td>
+<td>date</td>
+<td>no</td>
+<td>Filter end</td>
+</tr>
+<tr>
+<td><code>timezone</code></td>
+<td>string</td>
+<td>no</td>
+<td>IANA timezone for date boundaries. Defaults to UTC.</td>
+</tr>
+<tr>
+<td><code>cluster_resource_id</code></td>
+<td>string</td>
+<td>no</td>
+<td>Filter by cluster</td>
+</tr>
+<tr>
+<td><code>topic_name</code></td>
+<td>string</td>
+<td>no</td>
+<td>Filter by topic</td>
+</tr>
+<tr>
+<td><code>product_type</code></td>
+<td>string</td>
+<td>no</td>
+<td>Filter by product type</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Valid <code>group_by</code> columns:</strong> <code>topic_name</code>, <code>cluster_resource_id</code>, <code>env_id</code>, <code>product_type</code>, <code>product_category</code>, <code>attribution_method</code>.</p>
+<p><strong>Response:</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="p">{</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span><span class="nt">&quot;buckets&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">    </span><span class="p">{</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">      </span><span class="nt">&quot;dimensions&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;topic_name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;orders&quot;</span><span class="p">},</span>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">      </span><span class="nt">&quot;time_bucket&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;2026-01-01&quot;</span><span class="p">,</span>
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="w">      </span><span class="nt">&quot;total_amount&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;42.50&quot;</span><span class="p">,</span>
+<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="w">      </span><span class="nt">&quot;row_count&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">3</span>
+<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a><span class="w">  </span><span class="p">],</span>
+<a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a><span class="w">  </span><span class="nt">&quot;total_amount&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;42.50&quot;</span><span class="p">,</span>
+<a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a><span class="w">  </span><span class="nt">&quot;total_rows&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">3</span>
+<a id="__codelineno-5-12" name="__codelineno-5-12" href="#__codelineno-5-12"></a><span class="p">}</span>
+</code></pre></div>
+<h3 id="get-apiv1tenantstenant_nametopic-attributionsdates"><code>GET /api/v1/tenants/{tenant_name}/topic-attributions/dates</code><a class="headerlink" href="#get-apiv1tenantstenant_nametopic-attributionsdates" title="Permanent link">&para;</a></h3>
+<p>List distinct dates for which topic attribution rows exist.</p>
+<p><strong>Response:</strong> <code>{"dates": ["2026-01-01", "2026-01-02", ...]}</code></p>
+<h3 id="post-apiv1tenantstenant_nametopic-attributionsexport"><code>POST /api/v1/tenants/{tenant_name}/topic-attributions/export</code><a class="headerlink" href="#post-apiv1tenantstenant_nametopic-attributionsexport" title="Permanent link">&para;</a></h3>
+<p>Stream topic attribution data as CSV. Returns <code>text/csv</code> with
+<code>Content-Disposition: attachment; filename=topic_attributions.csv</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Type</th>
+<th>Required</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>start_date</code></td>
+<td>date</td>
+<td>no</td>
+<td>Filter start</td>
+</tr>
+<tr>
+<td><code>end_date</code></td>
+<td>date</td>
+<td>no</td>
+<td>Filter end</td>
+</tr>
+<tr>
+<td><code>timezone</code></td>
+<td>string</td>
+<td>no</td>
+<td>IANA timezone for date boundaries. Defaults to UTC.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>CSV columns:</strong> <code>ecosystem</code>, <code>tenant_id</code>, <code>timestamp</code>, <code>env_id</code>, <code>cluster_resource_id</code>, <code>topic_name</code>, <code>product_category</code>, <code>product_type</code>, <code>attribution_method</code>, <code>amount</code>.</p>
 
 
 

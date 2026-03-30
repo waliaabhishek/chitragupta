@@ -1238,6 +1238,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Added
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1300,6 +1311,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Added
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1340,10 +1362,41 @@
 <p>The format is based on <a href="https://keepachangelog.com/en/1.0.0/">Keep a Changelog</a>,
 and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semantic Versioning</a>.</p>
 <h2 id="unreleased">[Unreleased]<a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
+<h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Feat: TASK-165 — Backend topic attribution overlay for CCloud Kafka</li>
+</ul>
+<p>Add topic attribution as an analytical overlay that distributes
+cluster-level Kafka billing costs to individual topics using
+Prometheus topic-level metrics (received_bytes, sent_bytes,
+retained_bytes). Runs as an optional post-chargeback pipeline
+stage with its own star schema, composable attribution models
+(usage ratio, even split, chain fallback), 4 API endpoints,
+and configurable retention. (<a href="https://github.com/waliaabhishek/chitragupta/commit/919cc42a68b78773389577ce74c3f43c17544869">919cc42</a>)</p>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
-<li>Fix: Resolve Dependabot alerts for path-to-regexp and brace-expansion</li>
+<li>Fix: TASK-167 — Remove duplicated _distribute_remainder from topic attribution models</li>
 </ul>
+<p>Delete local _distribute_remainder (unbounded while loop) and _CENT constant
+from topic_attribution_models.py; import the bounded version from helpers.py
+that raises RuntimeError on non-convergence (fixed in TASK-120). (<a href="https://github.com/waliaabhishek/chitragupta/commit/90de49da3278f333dbc1f8f756f3a3281fa69eff">90de49d</a>)
+- Fix: TASK-166 — Fix attribution_method nullable constraint in topic attribution schema</p>
+<p>attribution_method was nullable=True in migration 012 and str | None in the
+ORM, making uq_topic_attribution_dimensions ineffective on PostgreSQL
+(NULL != NULL). Changed to NOT NULL DEFAULT '' across ORM (tables.py),
+baseline migration 012, and new migration 013 (with SQLite table-copy /
+PostgreSQL ALTER COLUMN). Removed defensive or "" guard in repository
+read path. Adds 3 new schema tests. (<a href="https://github.com/waliaabhishek/chitragupta/commit/0bc399407ff30068c038ba9a9597284f5358c3de">0bc3994</a>)
+- Fix: TASK-165 — Add missing emitters, retention wiring, and pipeline status schema</p>
+<p>Complete the topic attribution implementation:
+- AC-10: TopicAttributionCsvEmitter, TopicAttributionEmitterRunner
+  with registry-based dispatch, PrometheusEmitter.emit_topic_attributions()
+- AC-12: Wire topic attribution retention cleanup in _cleanup_retention()
+  using separate topic_attribution.retention_days (default 90)
+- AC-7: Expose topic_overlay_gathered and topic_attribution_calculated
+  in PipelineStateResponse schema for frontend pipeline status page
+- Add E2E integration tests, emitter tests, retention tests (<a href="https://github.com/waliaabhishek/chitragupta/commit/402db30bd1a5b902b17389b44f765ab0e9c23579">402db30</a>)
+- Fix: Resolve Dependabot alerts for path-to-regexp and brace-expansion</p>
 <p>Override path-to-regexp to 8.4.0 to fix CVE-2026-4926 (High) and
 CVE-2026-4923 (Medium). Bump brace-expansion via lockfile to patched
 versions (1.1.13, 2.0.3, 5.0.5). (<a href="https://github.com/waliaabhishek/chitragupta/commit/a650b7e9725684b8f7c443af11d73abc0b8a1aff">a650b7e</a>)</p>

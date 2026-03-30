@@ -1400,7 +1400,8 @@ from all tables for each tenant.</p>
 - <code>billing_line_items</code>
 - <code>resources</code>
 - <code>identities</code>
-- <code>chargeback_rows</code></p>
+- <code>chargeback_rows</code>
+- <code>topic_attribution_facts</code> and <code>topic_attribution_dimensions</code> (when topic attribution is enabled)</p>
 <h2 id="configuration">Configuration<a class="headerlink" href="#configuration" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nt">tenants</span><span class="p">:</span>
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="nt">my-tenant</span><span class="p">:</span>
@@ -1430,6 +1431,7 @@ from all tables for each tenant.</p>
 </tr>
 </tbody>
 </table>
+<p>Topic attribution rows use a separate retention setting (<code>plugin_settings.topic_attribution.retention_days</code>, default 90, max 365) independent of the tenant-level <code>retention_days</code>.</p>
 <h2 id="recommendation">Recommendation<a class="headerlink" href="#recommendation" title="Permanent link">&para;</a></h2>
 <p>Set <code>retention_days</code> &gt; <code>lookback_days</code>. If <code>retention_days</code> &lt; <code>lookback_days</code>, the
 engine may attempt to re-fetch data that has already been deleted.</p>

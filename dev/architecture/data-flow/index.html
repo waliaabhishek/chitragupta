@@ -1477,13 +1477,24 @@
 <p><strong>Commit</strong> — <code>ChargebackRow</code> records written to storage.</p>
 </li>
 </ol>
-<p>The pipeline loop ends at step 8. Emitting is a separate phase.</p>
+<p>The pipeline loop ends at step 8. Topic overlay (step 9) is a separate pass over completed dates.</p>
 <ol>
-<li><strong>Emit (post-pipeline)</strong> — <code>EmitterRunner</code> runs after each pipeline cycle completes.
+<li>
+<p><strong>Topic overlay</strong> <em>(CCloud only, optional)</em> — <code>TopicAttributionPhase.run(uow, date)</code>
+   Runs after chargeback calculation. For each Kafka billing line item, queries
+   Prometheus for per-topic byte metrics and splits the cluster cost across
+   active topics. Results are written to <code>topic_attribution_facts</code>. Enabled via
+   <code>plugin_settings.topic_attribution.enabled: true</code>. If Prometheus data is
+   unavailable, falls back to even-split across known topics (configurable via
+   <code>missing_metrics_behavior</code>).</p>
+</li>
+<li>
+<p><strong>Emit (post-pipeline)</strong> — <code>EmitterRunner</code> runs after each pipeline cycle completes.
    It queries storage for pending dates (not yet emitted, or previously failed, within
    each emitter's <code>lookback_days</code> window) and dispatches to each configured emitter.
    Outcome records (<code>emitted</code>, <code>failed</code>, <code>skipped</code>) are persisted per tenant/emitter/date,
-   so already-emitted dates are not re-sent on the next cycle.</li>
+   so already-emitted dates are not re-sent on the next cycle.</p>
+</li>
 </ol>
 <h2 id="storage-schema">Storage schema<a class="headerlink" href="#storage-schema" title="Permanent link">&para;</a></h2>
 <table>
@@ -1516,7 +1527,15 @@
 </tr>
 <tr>
 <td><code>pipeline_state</code></td>
-<td>Per-date progress flags: <code>billing_gathered</code>, <code>resources_gathered</code>, <code>chargeback_calculated</code></td>
+<td>Per-date progress flags: <code>billing_gathered</code>, <code>resources_gathered</code>, <code>chargeback_calculated</code>, <code>topic_overlay_gathered</code>, <code>topic_attribution_calculated</code></td>
+</tr>
+<tr>
+<td><code>topic_attribution_dimensions</code></td>
+<td>Unique (cluster, topic, product_type, attribution_method) combinations</td>
+</tr>
+<tr>
+<td><code>topic_attribution_facts</code></td>
+<td>Per-topic cost amounts linked to dimensions via <code>dimension_id</code></td>
 </tr>
 <tr>
 <td><code>pipeline_runs</code></td>
