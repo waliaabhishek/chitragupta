@@ -34,6 +34,7 @@ class EmissionRecord:
     ecosystem: str
     tenant_id: str
     emitter_name: str
+    pipeline: str
     date: date
     status: str  # "emitted" | "failed"
     attempt_count: int = 1

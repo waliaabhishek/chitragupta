@@ -98,13 +98,14 @@ class TestSQLModelEmissionRepositoryUpsert:
             ecosystem=ECOSYSTEM,
             tenant_id=TENANT_ID,
             emitter_name="csv",
+            pipeline="chargeback",
             date=date(2025, 1, 1),
             status="emitted",
         )
         repo.upsert(rec)
         session.commit()
 
-        emitted = repo.get_emitted_dates(ECOSYSTEM, TENANT_ID, "csv")
+        emitted = repo.get_emitted_dates(ECOSYSTEM, TENANT_ID, "csv", "chargeback")
         assert date(2025, 1, 1) in emitted
 
     def test_upsert_updates_existing_record_status(self, session: Session) -> None:
@@ -116,6 +117,7 @@ class TestSQLModelEmissionRepositoryUpsert:
             ecosystem=ECOSYSTEM,
             tenant_id=TENANT_ID,
             emitter_name="csv",
+            pipeline="chargeback",
             date=date(2025, 1, 2),
             status="failed",
         )
@@ -127,13 +129,14 @@ class TestSQLModelEmissionRepositoryUpsert:
             ecosystem=ECOSYSTEM,
             tenant_id=TENANT_ID,
             emitter_name="csv",
+            pipeline="chargeback",
             date=date(2025, 1, 2),
             status="emitted",
         )
         repo.upsert(rec2)
         session.commit()
 
-        emitted = repo.get_emitted_dates(ECOSYSTEM, TENANT_ID, "csv")
+        emitted = repo.get_emitted_dates(ECOSYSTEM, TENANT_ID, "csv", "chargeback")
         assert date(2025, 1, 2) in emitted
 
     def test_upsert_increments_attempt_count(self, session: Session) -> None:
@@ -148,6 +151,7 @@ class TestSQLModelEmissionRepositoryUpsert:
             ecosystem=ECOSYSTEM,
             tenant_id=TENANT_ID,
             emitter_name="csv",
+            pipeline="chargeback",
             date=date(2025, 1, 3),
             status="emitted",
         )
@@ -173,11 +177,11 @@ class TestSQLModelEmissionRepositoryGetEmittedDates:
         from core.storage.backends.sqlmodel.repositories import SQLModelEmissionRepository
 
         repo = SQLModelEmissionRepository(session)
-        repo.upsert(EmissionRecord(ECOSYSTEM, TENANT_ID, "csv", date(2025, 1, 1), "emitted"))
-        repo.upsert(EmissionRecord(ECOSYSTEM, TENANT_ID, "csv", date(2025, 1, 2), "failed"))
+        repo.upsert(EmissionRecord(ECOSYSTEM, TENANT_ID, "csv", "chargeback", date(2025, 1, 1), "emitted"))
+        repo.upsert(EmissionRecord(ECOSYSTEM, TENANT_ID, "csv", "chargeback", date(2025, 1, 2), "failed"))
         session.commit()
 
-        emitted = repo.get_emitted_dates(ECOSYSTEM, TENANT_ID, "csv")
+        emitted = repo.get_emitted_dates(ECOSYSTEM, TENANT_ID, "csv", "chargeback")
         assert date(2025, 1, 1) in emitted
         assert date(2025, 1, 2) not in emitted
 
@@ -185,7 +189,7 @@ class TestSQLModelEmissionRepositoryGetEmittedDates:
         from core.storage.backends.sqlmodel.repositories import SQLModelEmissionRepository
 
         repo = SQLModelEmissionRepository(session)
-        emitted = repo.get_emitted_dates(ECOSYSTEM, TENANT_ID, "csv")
+        emitted = repo.get_emitted_dates(ECOSYSTEM, TENANT_ID, "csv", "chargeback")
         assert emitted == set()
 
     def test_get_emitted_dates_respects_emitter_name(self, session: Session) -> None:
@@ -193,12 +197,12 @@ class TestSQLModelEmissionRepositoryGetEmittedDates:
         from core.storage.backends.sqlmodel.repositories import SQLModelEmissionRepository
 
         repo = SQLModelEmissionRepository(session)
-        repo.upsert(EmissionRecord(ECOSYSTEM, TENANT_ID, "csv", date(2025, 1, 5), "emitted"))
-        repo.upsert(EmissionRecord(ECOSYSTEM, TENANT_ID, "prometheus", date(2025, 1, 5), "failed"))
+        repo.upsert(EmissionRecord(ECOSYSTEM, TENANT_ID, "csv", "chargeback", date(2025, 1, 5), "emitted"))
+        repo.upsert(EmissionRecord(ECOSYSTEM, TENANT_ID, "prometheus", "chargeback", date(2025, 1, 5), "failed"))
         session.commit()
 
-        csv_emitted = repo.get_emitted_dates(ECOSYSTEM, TENANT_ID, "csv")
-        prom_emitted = repo.get_emitted_dates(ECOSYSTEM, TENANT_ID, "prometheus")
+        csv_emitted = repo.get_emitted_dates(ECOSYSTEM, TENANT_ID, "csv", "chargeback")
+        prom_emitted = repo.get_emitted_dates(ECOSYSTEM, TENANT_ID, "prometheus", "chargeback")
         assert date(2025, 1, 5) in csv_emitted
         assert date(2025, 1, 5) not in prom_emitted
 
@@ -209,11 +213,11 @@ class TestSQLModelEmissionRepositoryGetFailedDates:
         from core.storage.backends.sqlmodel.repositories import SQLModelEmissionRepository
 
         repo = SQLModelEmissionRepository(session)
-        repo.upsert(EmissionRecord(ECOSYSTEM, TENANT_ID, "csv", date(2025, 2, 1), "failed"))
-        repo.upsert(EmissionRecord(ECOSYSTEM, TENANT_ID, "csv", date(2025, 2, 2), "emitted"))
+        repo.upsert(EmissionRecord(ECOSYSTEM, TENANT_ID, "csv", "chargeback", date(2025, 2, 1), "failed"))
+        repo.upsert(EmissionRecord(ECOSYSTEM, TENANT_ID, "csv", "chargeback", date(2025, 2, 2), "emitted"))
         session.commit()
 
-        failed = repo.get_failed_dates(ECOSYSTEM, TENANT_ID, "csv")
+        failed = repo.get_failed_dates(ECOSYSTEM, TENANT_ID, "csv", "chargeback")
         assert date(2025, 2, 1) in failed
         assert date(2025, 2, 2) not in failed
 
@@ -221,7 +225,7 @@ class TestSQLModelEmissionRepositoryGetFailedDates:
         from core.storage.backends.sqlmodel.repositories import SQLModelEmissionRepository
 
         repo = SQLModelEmissionRepository(session)
-        failed = repo.get_failed_dates(ECOSYSTEM, TENANT_ID, "csv")
+        failed = repo.get_failed_dates(ECOSYSTEM, TENANT_ID, "csv", "chargeback")
         assert failed == set()
 
 

@@ -1688,6 +1688,7 @@ class SQLModelEmissionRepository:
                 EmissionRecordTable.ecosystem == record.ecosystem,
                 EmissionRecordTable.tenant_id == record.tenant_id,
                 EmissionRecordTable.emitter_name == record.emitter_name,
+                EmissionRecordTable.pipeline == record.pipeline,
                 EmissionRecordTable.date == record.date,
             )
         ).first()
@@ -1698,23 +1699,25 @@ class SQLModelEmissionRepository:
         else:
             self._session.add(emission_record_to_table(record))
 
-    def get_emitted_dates(self, ecosystem: str, tenant_id: str, emitter_name: str) -> set[date]:
+    def get_emitted_dates(self, ecosystem: str, tenant_id: str, emitter_name: str, pipeline: str) -> set[date]:
         rows = self._session.exec(
             select(col(EmissionRecordTable.date)).where(
                 EmissionRecordTable.ecosystem == ecosystem,
                 EmissionRecordTable.tenant_id == tenant_id,
                 EmissionRecordTable.emitter_name == emitter_name,
+                EmissionRecordTable.pipeline == pipeline,
                 EmissionRecordTable.status == "emitted",
             )
         ).all()
         return set(rows)
 
-    def get_failed_dates(self, ecosystem: str, tenant_id: str, emitter_name: str) -> set[date]:
+    def get_failed_dates(self, ecosystem: str, tenant_id: str, emitter_name: str, pipeline: str) -> set[date]:
         rows = self._session.exec(
             select(col(EmissionRecordTable.date)).where(
                 EmissionRecordTable.ecosystem == ecosystem,
                 EmissionRecordTable.tenant_id == tenant_id,
                 EmissionRecordTable.emitter_name == emitter_name,
+                EmissionRecordTable.pipeline == pipeline,
                 EmissionRecordTable.status == "failed",
             )
         ).all()

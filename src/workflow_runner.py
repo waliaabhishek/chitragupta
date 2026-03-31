@@ -9,9 +9,10 @@ from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from core.emitters.runner import EmitterRunner
+from core.emitters.sources import ChargebackDateSource, ChargebackRowFetcher, RegistryEmitterBuilder
 from core.engine.orchestrator import ChargebackOrchestrator, GatherFailureThresholdError, PipelineRunResult
 
 if TYPE_CHECKING:
@@ -159,64 +160,53 @@ def cleanup_orphaned_runs_for_all_tenants(
             storage.dispose()
 
 
-class TopicAttributionEmitterRunner:
-    """Reads TopicAttributionRows from DB and drives topic attribution emitters.
+class TopicAttributionDateSource:
+    """PipelineDateSource backed by TopicAttributionRepository (read-only UoW)."""
 
-    Mirrors EmitterRunner but reads from TopicAttributionRepository and
-    reads emitter specs from config.topic_attribution.emitters.
+    def __init__(self, storage_backend: StorageBackend) -> None:
+        self._storage_backend = storage_backend
+
+    def get_distinct_dates(self, ecosystem: str, tenant_id: str) -> list[date_type]:
+        with self._storage_backend.create_read_only_unit_of_work() as uow:
+            return uow.topic_attributions.get_distinct_dates(ecosystem, tenant_id)
+
+
+class TopicAttributionRowFetcher:
+    """PipelineRowFetcher backed by TopicAttributionRepository (read-only UoW).
+
+    Implements PipelineRowFetcher only — NOT PipelineAggregatedRowFetcher.
+    No fetch_aggregated method: topic attribution has no aggregation concept.
     """
 
-    def __init__(
-        self,
-        ecosystem: str,
-        storage_backend: StorageBackend,
-        emitter_specs: list[EmitterSpec],
-    ) -> None:
-        self._ecosystem = ecosystem
+    def __init__(self, storage_backend: StorageBackend) -> None:
         self._storage_backend = storage_backend
-        self._emitter_specs = emitter_specs
 
-    def run(self, tenant_id: str) -> None:
-        """Emit all pending topic attribution dates for one tenant."""
+    def fetch_by_date(self, ecosystem: str, tenant_id: str, dt: date_type) -> list[Any]:
         with self._storage_backend.create_read_only_unit_of_work() as uow:
-            all_dates = uow.topic_attributions.get_distinct_dates(self._ecosystem, tenant_id)
+            return uow.topic_attributions.find_by_date(ecosystem, tenant_id, dt)
 
-        for spec in self._emitter_specs:
-            self._run_spec(tenant_id, spec, all_dates)
 
-    def _run_spec(self, tenant_id: str, spec: EmitterSpec, all_dates: list[date_type]) -> None:
-        if not all_dates:
-            return
+class TopicAttributionEmitterBuilder:
+    """PipelineEmitterBuilder for topic attribution — builds emitters directly, not via registry."""
 
-        dispatch: dict[str, Callable[[EmitterSpec], Callable[..., None]]] = {
-            "csv": self._build_csv_emitter,
-            "prometheus": self._build_prometheus_emitter,
-        }
-        builder = dispatch.get(spec.type)
-        if builder is None:
-            logger.warning("TopicAttributionEmitterRunner: unknown emitter type %r — skipping", spec.type)
-            return
+    def __init__(self, storage_backend: StorageBackend) -> None:
+        self._storage_backend = storage_backend
 
-        emitter = builder(spec)
-        for d in all_dates:
-            with self._storage_backend.create_read_only_unit_of_work() as uow:
-                rows = uow.topic_attributions.find_by_date(self._ecosystem, tenant_id, d)
-            emitter(tenant_id, d, rows)
+    def build(self, spec: EmitterSpec) -> Any:
+        if spec.type == "csv":
+            from emitters.topic_attribution_csv_emitter import TopicAttributionCsvEmitter
 
-    def _build_csv_emitter(self, spec: EmitterSpec) -> Callable[..., None]:
-        from emitters.topic_attribution_csv_emitter import TopicAttributionCsvEmitter
+            output_dir = spec.params.get("output_dir", "/tmp/topic_attribution")
+            return TopicAttributionCsvEmitter(output_dir)
+        if spec.type == "prometheus":
+            from emitters.prometheus_emitter import PrometheusEmitter
 
-        output_dir = spec.params.get("output_dir", "/tmp/topic_attribution")
-        return TopicAttributionCsvEmitter(output_dir)
-
-    def _build_prometheus_emitter(self, spec: EmitterSpec) -> Callable[..., None]:
-        from emitters.prometheus_emitter import PrometheusEmitter
-
-        emitter_obj = PrometheusEmitter(
-            port=spec.params.get("port", 8000),
-            storage_backend=self._storage_backend,
-        )
-        return emitter_obj.emit_topic_attributions
+            emitter_obj = PrometheusEmitter(
+                port=spec.params.get("port", 8000),
+                storage_backend=self._storage_backend,
+            )
+            return emitter_obj.emit_topic_attributions
+        raise ValueError(f"TopicAttributionEmitterBuilder: unknown emitter type {spec.type!r}")
 
 
 class WorkflowRunner:
@@ -480,6 +470,10 @@ class WorkflowRunner:
                         ecosystem=config.ecosystem,
                         storage_backend=runtime.storage,
                         emitter_specs=config.plugin_settings.emitters,
+                        date_source=ChargebackDateSource(runtime.storage),
+                        row_fetcher=ChargebackRowFetcher(runtime.storage),
+                        emitter_builder=RegistryEmitterBuilder(runtime.storage),
+                        pipeline="chargeback",
                         chargeback_granularity=config.plugin_settings.chargeback_granularity,
                     )
                     try:
@@ -490,16 +484,20 @@ class WorkflowRunner:
                 # Post-pipeline hook: emit topic attribution after successful pipeline commit
                 ta_config = getattr(getattr(config, "plugin_settings", None), "topic_attribution", None)
                 if ta_config and ta_config.enabled and ta_config.emitters:
-                    ta_emitter_runner = TopicAttributionEmitterRunner(
+                    ta_emitter_runner = EmitterRunner(
                         ecosystem=config.ecosystem,
                         storage_backend=runtime.storage,
                         emitter_specs=ta_config.emitters,
+                        date_source=TopicAttributionDateSource(runtime.storage),
+                        row_fetcher=TopicAttributionRowFetcher(runtime.storage),
+                        emitter_builder=TopicAttributionEmitterBuilder(runtime.storage),
+                        pipeline="topic_attribution",
                     )
                     try:
                         ta_emitter_runner.run(config.tenant_id)
                     except Exception:
                         logger.exception(
-                            "TopicAttributionEmitterRunner failed for tenant=%s — pipeline result unaffected", name
+                            "EmitterRunner (topic_attribution) failed for tenant=%s — pipeline result unaffected", name
                         )
 
                 return result

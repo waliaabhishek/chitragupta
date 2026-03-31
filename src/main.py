@@ -12,6 +12,7 @@ from core.api import get_version
 from core.config.loader import load_config
 from core.emitters.registry import register as register_emitter
 from core.emitters.runner import EmitterRunner
+from core.emitters.sources import ChargebackDateSource, ChargebackRowFetcher, RegistryEmitterBuilder
 from core.plugin.loader import discover_plugins
 from core.plugin.registry import PluginRegistry
 from core.storage.registry import create_storage_backend
@@ -271,6 +272,10 @@ def main(argv: list[str] | None = None) -> None:
                 ecosystem=tenant_config.ecosystem,
                 storage_backend=storage,
                 emitter_specs=tenant_config.plugin_settings.emitters,
+                date_source=ChargebackDateSource(storage),
+                row_fetcher=ChargebackRowFetcher(storage),
+                emitter_builder=RegistryEmitterBuilder(storage),
+                pipeline="chargeback",
                 chargeback_granularity=tenant_config.plugin_settings.chargeback_granularity,
             )
             emitter_runner.run(tenant_config.tenant_id)

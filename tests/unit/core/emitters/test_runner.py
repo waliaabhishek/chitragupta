@@ -47,10 +47,10 @@ class MockEmissionRepo:
         elif record.status == "failed":
             self._failed.add(record.date)
 
-    def get_emitted_dates(self, ecosystem: str, tenant_id: str, emitter_name: str) -> set[date]:
+    def get_emitted_dates(self, ecosystem: str, tenant_id: str, emitter_name: str, pipeline: str) -> set[date]:
         return self._emitted.copy()
 
-    def get_failed_dates(self, ecosystem: str, tenant_id: str, emitter_name: str) -> set[date]:
+    def get_failed_dates(self, ecosystem: str, tenant_id: str, emitter_name: str, pipeline: str) -> set[date]:
         return self._failed.copy()
 
 
@@ -118,6 +118,27 @@ def _make_spec(
     return EmitterSpec(type=name, name=name, aggregation=aggregation, lookback_days=lookback_days)
 
 
+def _make_runner(
+    storage: Any,
+    specs: list[Any],
+    granularity: str = "daily",
+) -> Any:
+    """Build an EmitterRunner wired to chargeback mocks."""
+    from core.emitters.runner import EmitterRunner
+    from core.emitters.sources import ChargebackDateSource, ChargebackRowFetcher, RegistryEmitterBuilder
+
+    return EmitterRunner(
+        ecosystem=ECOSYSTEM,
+        storage_backend=storage,
+        emitter_specs=specs,
+        date_source=ChargebackDateSource(storage),
+        row_fetcher=ChargebackRowFetcher(storage),
+        emitter_builder=RegistryEmitterBuilder(storage),
+        pipeline="chargeback",
+        chargeback_granularity=granularity,
+    )
+
+
 def _clear_registry() -> None:
     from core.emitters import registry
 
@@ -136,7 +157,6 @@ class TestEmitterRunnerPendingInference:
 
     def test_all_pending_dates_emitted(self) -> None:
         from core.emitters.registry import register
-        from core.emitters.runner import EmitterRunner
 
         dates = [date(2025, 1, 1), date(2025, 1, 2), date(2025, 1, 3)]
         call_log: list[date] = []
@@ -148,19 +168,13 @@ class TestEmitterRunnerPendingInference:
 
         emission_repo = MockEmissionRepo()
         storage = MockStorageBackendForRunner(dates, emission_repo)
-        runner = EmitterRunner(
-            ecosystem=ECOSYSTEM,
-            storage_backend=storage,
-            emitter_specs=[_make_spec()],
-            chargeback_granularity="daily",
-        )
+        runner = _make_runner(storage, [_make_spec()])
         runner.run(TENANT_ID)
 
         assert sorted(call_log) == dates
 
     def test_emission_records_written_with_emitted_status(self) -> None:
         from core.emitters.registry import register
-        from core.emitters.runner import EmitterRunner
 
         dates = [date(2025, 2, 1), date(2025, 2, 2)]
 
@@ -171,7 +185,7 @@ class TestEmitterRunnerPendingInference:
 
         emission_repo = MockEmissionRepo()
         storage = MockStorageBackendForRunner(dates, emission_repo)
-        runner = EmitterRunner(ECOSYSTEM, storage, [_make_spec()], "daily")
+        runner = _make_runner(storage, [_make_spec()])
         runner.run(TENANT_ID)
 
         assert len(emission_repo._records) == 2
@@ -179,7 +193,6 @@ class TestEmitterRunnerPendingInference:
 
     def test_three_dates_produce_three_emission_records(self) -> None:
         from core.emitters.registry import register
-        from core.emitters.runner import EmitterRunner
 
         dates = [date(2025, 3, 1), date(2025, 3, 2), date(2025, 3, 3)]
 
@@ -187,7 +200,7 @@ class TestEmitterRunnerPendingInference:
 
         emission_repo = MockEmissionRepo()
         storage = MockStorageBackendForRunner(dates, emission_repo)
-        runner = EmitterRunner(ECOSYSTEM, storage, [_make_spec()], "daily")
+        runner = _make_runner(storage, [_make_spec()])
         runner.run(TENANT_ID)
 
         assert len(emission_repo._records) == 3
@@ -205,7 +218,6 @@ class TestEmitterRunnerSkipsEmittedDates:
 
     def test_emitted_date_not_re_emitted(self) -> None:
         from core.emitters.registry import register
-        from core.emitters.runner import EmitterRunner
 
         dates = [date(2025, 1, 1), date(2025, 1, 2), date(2025, 1, 3)]
         call_log: list[date] = []
@@ -219,7 +231,7 @@ class TestEmitterRunnerSkipsEmittedDates:
         emission_repo._emitted.add(date(2025, 1, 1))  # pre-seed as already emitted
 
         storage = MockStorageBackendForRunner(dates, emission_repo)
-        runner = EmitterRunner(ECOSYSTEM, storage, [_make_spec()], "daily")
+        runner = _make_runner(storage, [_make_spec()])
         runner.run(TENANT_ID)
 
         assert date(2025, 1, 1) not in call_log
@@ -228,7 +240,6 @@ class TestEmitterRunnerSkipsEmittedDates:
 
     def test_all_emitted_produces_no_calls(self) -> None:
         from core.emitters.registry import register
-        from core.emitters.runner import EmitterRunner
 
         dates = [date(2025, 1, 1), date(2025, 1, 2)]
         call_log: list[date] = []
@@ -242,7 +253,7 @@ class TestEmitterRunnerSkipsEmittedDates:
         emission_repo._emitted.update(dates)  # all already emitted
 
         storage = MockStorageBackendForRunner(dates, emission_repo)
-        runner = EmitterRunner(ECOSYSTEM, storage, [_make_spec()], "daily")
+        runner = _make_runner(storage, [_make_spec()])
         runner.run(TENANT_ID)
 
         assert call_log == []
@@ -260,7 +271,6 @@ class TestEmitterRunnerFailedEmission:
 
     def test_failed_emitter_records_status_failed(self) -> None:
         from core.emitters.registry import register
-        from core.emitters.runner import EmitterRunner
 
         def _raising_emitter(tenant_id: str, dt: date, rows: Any) -> None:
             raise RuntimeError("disk full")
@@ -270,7 +280,7 @@ class TestEmitterRunnerFailedEmission:
         dates = [date(2025, 1, 5)]
         emission_repo = MockEmissionRepo()
         storage = MockStorageBackendForRunner(dates, emission_repo)
-        runner = EmitterRunner(ECOSYSTEM, storage, [_make_spec()], "daily")
+        runner = _make_runner(storage, [_make_spec()])
 
         runner.run(TENANT_ID)
 
@@ -280,7 +290,6 @@ class TestEmitterRunnerFailedEmission:
 
     def test_failed_emission_does_not_propagate_exception(self) -> None:
         from core.emitters.registry import register
-        from core.emitters.runner import EmitterRunner
 
         def _raising_emitter(tenant_id: str, dt: date, rows: Any) -> None:
             raise ValueError("connection refused")
@@ -289,7 +298,7 @@ class TestEmitterRunnerFailedEmission:
 
         dates = [date(2025, 1, 5)]
         storage = MockStorageBackendForRunner(dates)
-        runner = EmitterRunner(ECOSYSTEM, storage, [_make_spec()], "daily")
+        runner = _make_runner(storage, [_make_spec()])
 
         # Must not raise
         runner.run(TENANT_ID)
@@ -307,7 +316,6 @@ class TestEmitterRunnerCrashRecovery:
 
     def test_date_re_emitted_if_persist_outcomes_skipped(self) -> None:
         from core.emitters.registry import register
-        from core.emitters.runner import EmitterRunner
 
         call_log: list[date] = []
 
@@ -319,7 +327,7 @@ class TestEmitterRunnerCrashRecovery:
         dates = [date(2025, 1, 15)]
         emission_repo = MockEmissionRepo()
         storage = MockStorageBackendForRunner(dates, emission_repo)
-        runner = EmitterRunner(ECOSYSTEM, storage, [_make_spec()], "daily")
+        runner = _make_runner(storage, [_make_spec()])
 
         # First run: patch _persist_outcomes to simulate crash before persisting
         with patch.object(runner, "_persist_outcomes"):
@@ -347,7 +355,6 @@ class TestEmitterRunnerLookbackDays:
 
     def test_only_dates_within_lookback_emitted(self) -> None:
         from core.emitters.registry import register
-        from core.emitters.runner import EmitterRunner
 
         call_log: list[date] = []
 
@@ -363,7 +370,7 @@ class TestEmitterRunnerLookbackDays:
 
         storage = MockStorageBackendForRunner(dates)
         spec = _make_spec(lookback_days=30)
-        runner = EmitterRunner(ECOSYSTEM, storage, [spec], "daily")
+        runner = _make_runner(storage, [spec])
         runner.run(TENANT_ID)
 
         assert recent_date in call_log
@@ -371,7 +378,6 @@ class TestEmitterRunnerLookbackDays:
 
     def test_lookback_none_emits_all_dates(self) -> None:
         from core.emitters.registry import register
-        from core.emitters.runner import EmitterRunner
 
         call_log: list[date] = []
 
@@ -387,14 +393,13 @@ class TestEmitterRunnerLookbackDays:
 
         storage = MockStorageBackendForRunner(dates)
         spec = _make_spec(lookback_days=None)
-        runner = EmitterRunner(ECOSYSTEM, storage, [spec], "daily")
+        runner = _make_runner(storage, [spec])
         runner.run(TENANT_ID)
 
         assert set(call_log) == {old_date, recent_date}
 
     def test_boundary_date_included(self) -> None:
         from core.emitters.registry import register
-        from core.emitters.runner import EmitterRunner
 
         call_log: list[date] = []
 
@@ -410,7 +415,7 @@ class TestEmitterRunnerLookbackDays:
 
         storage = MockStorageBackendForRunner(dates)
         spec = _make_spec(lookback_days=30)
-        runner = EmitterRunner(ECOSYSTEM, storage, [spec], "daily")
+        runner = _make_runner(storage, [spec])
         runner.run(TENANT_ID)
 
         assert boundary_date in call_log
@@ -429,7 +434,6 @@ class TestEmitterRunnerMonthlyAggregation:
 
     def test_monthly_emitter_called_once_with_month_start(self) -> None:
         from core.emitters.registry import register
-        from core.emitters.runner import EmitterRunner
 
         call_args: list[tuple[date, Any]] = []
 
@@ -443,7 +447,7 @@ class TestEmitterRunnerMonthlyAggregation:
         storage = MockStorageBackendForRunner(dates, emission_repo)
 
         spec = _make_spec(aggregation="monthly")
-        runner = EmitterRunner(ECOSYSTEM, storage, [spec], "daily")
+        runner = _make_runner(storage, [spec])
         runner.run(TENANT_ID)
 
         # Emitter called exactly ONCE with the month start date (2025-01-01)
@@ -452,7 +456,6 @@ class TestEmitterRunnerMonthlyAggregation:
 
     def test_monthly_aggregation_emission_records_for_each_chargeback_date(self) -> None:
         from core.emitters.registry import register
-        from core.emitters.runner import EmitterRunner
 
         def _fake_emitter(tenant_id: str, dt: date, rows: Any) -> None:
             pass
@@ -464,7 +467,7 @@ class TestEmitterRunnerMonthlyAggregation:
         storage = MockStorageBackendForRunner(dates, emission_repo)
 
         spec = _make_spec(aggregation="monthly")
-        runner = EmitterRunner(ECOSYSTEM, storage, [spec], "daily")
+        runner = _make_runner(storage, [spec])
         runner.run(TENANT_ID)
 
         emitted_dates = {r.date for r in emission_repo._records if r.status == "emitted"}
@@ -474,7 +477,6 @@ class TestEmitterRunnerMonthlyAggregation:
 
     def test_monthly_aggregation_three_records_for_three_dates(self) -> None:
         from core.emitters.registry import register
-        from core.emitters.runner import EmitterRunner
 
         register("mock-emitter", lambda **_: lambda *a: None)
 
@@ -483,7 +485,7 @@ class TestEmitterRunnerMonthlyAggregation:
         storage = MockStorageBackendForRunner(dates, emission_repo)
 
         spec = _make_spec(aggregation="monthly")
-        runner = EmitterRunner(ECOSYSTEM, storage, [spec], "daily")
+        runner = _make_runner(storage, [spec])
         runner.run(TENANT_ID)
 
         assert len(emission_repo._records) == 3
@@ -504,6 +506,10 @@ class TestEmitterRunnerGranularityValidation:
                 ecosystem=ECOSYSTEM,
                 storage_backend=MagicMock(),
                 emitter_specs=[spec],
+                date_source=MagicMock(),
+                row_fetcher=MagicMock(),
+                emitter_builder=MagicMock(),
+                pipeline="chargeback",
                 chargeback_granularity="monthly",
             )
 
@@ -518,6 +524,10 @@ class TestEmitterRunnerGranularityValidation:
                 ecosystem=ECOSYSTEM,
                 storage_backend=MagicMock(),
                 emitter_specs=[spec],
+                date_source=MagicMock(),
+                row_fetcher=MagicMock(),
+                emitter_builder=MagicMock(),
+                pipeline="chargeback",
                 chargeback_granularity="daily",
             )
 
@@ -528,7 +538,16 @@ class TestEmitterRunnerGranularityValidation:
         spec = EmitterSpec(type="csv", name="csv", aggregation="daily")
 
         # Should not raise
-        EmitterRunner(ECOSYSTEM, MagicMock(), [spec], "daily")
+        EmitterRunner(
+            ECOSYSTEM,
+            MagicMock(),
+            [spec],
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+            "chargeback",
+            "daily",
+        )
 
     def test_coarser_aggregation_does_not_raise(self) -> None:
         from core.config.models import EmitterSpec
@@ -537,7 +556,16 @@ class TestEmitterRunnerGranularityValidation:
         spec = EmitterSpec(type="csv", name="csv", aggregation="monthly")
 
         # monthly > daily: valid
-        EmitterRunner(ECOSYSTEM, MagicMock(), [spec], "daily")
+        EmitterRunner(
+            ECOSYSTEM,
+            MagicMock(),
+            [spec],
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+            "chargeback",
+            "daily",
+        )
 
     def test_none_aggregation_does_not_raise(self) -> None:
         from core.config.models import EmitterSpec
@@ -546,7 +574,16 @@ class TestEmitterRunnerGranularityValidation:
         spec = EmitterSpec(type="csv", name="csv", aggregation=None)
 
         # None means no aggregation constraint
-        EmitterRunner(ECOSYSTEM, MagicMock(), [spec], "monthly")
+        EmitterRunner(
+            ECOSYSTEM,
+            MagicMock(),
+            [spec],
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+            "chargeback",
+            "monthly",
+        )
 
 
 # ---------- Case 13: Tenant isolation ----------
@@ -562,7 +599,6 @@ class TestEmitterRunnerTenantIsolation:
     def test_tenant_a_emitted_tenant_b_failed_independent(self) -> None:
         from core.config.models import EmitterSpec
         from core.emitters.registry import register
-        from core.emitters.runner import EmitterRunner
 
         tenant_a = "tenant-a"
         tenant_b = "tenant-b"
@@ -585,8 +621,8 @@ class TestEmitterRunnerTenantIsolation:
         spec_a = EmitterSpec(type="emitter-a", name="emitter-a")
         spec_b = EmitterSpec(type="emitter-b", name="emitter-b")
 
-        runner_a = EmitterRunner(ECOSYSTEM, storage_a, [spec_a], "daily")
-        runner_b = EmitterRunner(ECOSYSTEM, storage_b, [spec_b], "daily")
+        runner_a = _make_runner(storage_a, [spec_a])
+        runner_b = _make_runner(storage_b, [spec_b])
 
         runner_a.run(tenant_a)
         runner_b.run(tenant_b)
@@ -600,7 +636,6 @@ class TestEmitterRunnerTenantIsolation:
     def test_tenant_b_failure_does_not_affect_tenant_a_records(self) -> None:
         from core.config.models import EmitterSpec
         from core.emitters.registry import register
-        from core.emitters.runner import EmitterRunner
 
         register("ok-emitter", lambda **_: lambda *a: None)
         register("bad-emitter", lambda **_: lambda *a: (_ for _ in ()).throw(RuntimeError("fail")))
@@ -609,7 +644,7 @@ class TestEmitterRunnerTenantIsolation:
         repo_a = MockEmissionRepo()
         storage_a = MockStorageBackendForRunner(dates, repo_a)
         spec_a = EmitterSpec(type="ok-emitter", name="ok-emitter")
-        runner_a = EmitterRunner(ECOSYSTEM, storage_a, [spec_a], "daily")
+        runner_a = _make_runner(storage_a, [spec_a])
         runner_a.run("tenant-x")
 
         # Tenant A should have emitted records
@@ -863,7 +898,6 @@ class TestExpositionEmitterDispatch:
     def test_exposition_emitter_load_and_get_consumed_called(self) -> None:
         """GIT-001: ExpositionEmitter.load() and get_consumed() are called; EmissionRecord written."""
         from core.emitters.registry import register
-        from core.emitters.runner import EmitterRunner
 
         dates = [date(2025, 3, 1), date(2025, 3, 2)]
         load_calls: list[Any] = []
@@ -881,12 +915,7 @@ class TestExpositionEmitterDispatch:
 
         emission_repo = MockEmissionRepo()
         storage = MockStorageBackendForRunner(dates, emission_repo)
-        runner = EmitterRunner(
-            ecosystem=ECOSYSTEM,
-            storage_backend=storage,
-            emitter_specs=[_make_spec(name="expo-emitter")],
-            chargeback_granularity="daily",
-        )
+        runner = _make_runner(storage, [_make_spec(name="expo-emitter")])
         runner.run(TENANT_ID)
 
         assert len(load_calls) == 1
@@ -913,7 +942,6 @@ class TestLifecycleEmitterDispatchNonMonthly:
         """GIT-002: open→emit→close sequence invoked for non-monthly LifecycleEmitter."""
         from core.emitters.models import EmitOutcome, EmitResult
         from core.emitters.registry import register
-        from core.emitters.runner import EmitterRunner
 
         dates = [date(2025, 4, 1), date(2025, 4, 2)]
         open_calls: list[str] = []
@@ -936,12 +964,7 @@ class TestLifecycleEmitterDispatchNonMonthly:
 
         emission_repo = MockEmissionRepo()
         storage = MockStorageBackendForRunner(dates, emission_repo)
-        runner = EmitterRunner(
-            ecosystem=ECOSYSTEM,
-            storage_backend=storage,
-            emitter_specs=[_make_spec(name="lifecycle-emitter")],
-            chargeback_granularity="daily",
-        )
+        runner = _make_runner(storage, [_make_spec(name="lifecycle-emitter")])
         runner.run(TENANT_ID)
 
         assert open_calls == [TENANT_ID]
@@ -965,7 +988,6 @@ class TestMonthlyNoRowsSkipped:
     def test_monthly_no_rows_yields_skipped(self) -> None:
         """GIT-003: find_aggregated_for_emit returns empty → all dates in month get SKIPPED."""
         from core.emitters.registry import register
-        from core.emitters.runner import EmitterRunner
 
         dates = [date(2025, 5, 1), date(2025, 5, 15)]
         call_log: list[date] = []
@@ -978,12 +1000,7 @@ class TestMonthlyNoRowsSkipped:
         cb_repo = _MockChargebackRepoControlled(dates, aggregated_rows=[])  # no rows
         emission_repo = MockEmissionRepo()
         storage = _MockStorageControlled(cb_repo, emission_repo)
-        runner = EmitterRunner(
-            ecosystem=ECOSYSTEM,
-            storage_backend=storage,
-            emitter_specs=[_make_spec(name="monthly-emitter", aggregation="monthly")],
-            chargeback_granularity="daily",
-        )
+        runner = _make_runner(storage, [_make_spec(name="monthly-emitter", aggregation="monthly")])
         runner.run(TENANT_ID)
 
         assert call_log == [], "Emitter should not be called when no rows"
@@ -1003,7 +1020,6 @@ class TestMonthlySpecialEmitters:
     def test_monthly_exposition_emitter_load_called_with_month_rows(self) -> None:
         """GIT-004a: monthly ExpositionEmitter receives load() with month rows."""
         from core.emitters.registry import register
-        from core.emitters.runner import EmitterRunner
 
         dates = [date(2025, 6, 5), date(2025, 6, 20)]
         month_start = date(2025, 6, 1)
@@ -1025,12 +1041,7 @@ class TestMonthlySpecialEmitters:
         cb_repo = _MockChargebackRepoControlled(dates, aggregated_rows=[month_row])
         emission_repo = MockEmissionRepo()
         storage = _MockStorageControlled(cb_repo, emission_repo)
-        runner = EmitterRunner(
-            ecosystem=ECOSYSTEM,
-            storage_backend=storage,
-            emitter_specs=[_make_spec(name="monthly-expo", aggregation="monthly")],
-            chargeback_granularity="daily",
-        )
+        runner = _make_runner(storage, [_make_spec(name="monthly-expo", aggregation="monthly")])
         runner.run(TENANT_ID)
 
         assert len(load_calls) == 1
@@ -1042,7 +1053,6 @@ class TestMonthlySpecialEmitters:
         """GIT-004b: monthly LifecycleEmitter receives open→emit(month_start, rows)→close."""
         from core.emitters.models import EmitOutcome, EmitResult
         from core.emitters.registry import register
-        from core.emitters.runner import EmitterRunner
 
         dates = [date(2025, 7, 10), date(2025, 7, 25)]
         month_start = date(2025, 7, 1)
@@ -1068,12 +1078,7 @@ class TestMonthlySpecialEmitters:
         cb_repo = _MockChargebackRepoControlled(dates, aggregated_rows=[month_row])
         emission_repo = MockEmissionRepo()
         storage = _MockStorageControlled(cb_repo, emission_repo)
-        runner = EmitterRunner(
-            ecosystem=ECOSYSTEM,
-            storage_backend=storage,
-            emitter_specs=[_make_spec(name="monthly-lifecycle", aggregation="monthly")],
-            chargeback_granularity="daily",
-        )
+        runner = _make_runner(storage, [_make_spec(name="monthly-lifecycle", aggregation="monthly")])
         runner.run(TENANT_ID)
 
         assert open_calls == [TENANT_ID]
@@ -1085,7 +1090,6 @@ class TestMonthlySpecialEmitters:
     def test_monthly_lifecycle_emitter_failure(self) -> None:
         """GIT-009: monthly LifecycleEmitter raises → FAILED for all dates in month."""
         from core.emitters.registry import register
-        from core.emitters.runner import EmitterRunner
 
         dates = [date(2025, 11, 3), date(2025, 11, 17)]
         month_row = _make_cb_row(date(2025, 11, 1))
@@ -1106,12 +1110,7 @@ class TestMonthlySpecialEmitters:
         cb_repo = _MockChargebackRepoControlled(dates, aggregated_rows=[month_row])
         emission_repo = MockEmissionRepo()
         storage = _MockStorageControlled(cb_repo, emission_repo)
-        runner = EmitterRunner(
-            ecosystem=ECOSYSTEM,
-            storage_backend=storage,
-            emitter_specs=[_make_spec(name="monthly-lifecycle-fail", aggregation="monthly")],
-            chargeback_granularity="daily",
-        )
+        runner = _make_runner(storage, [_make_spec(name="monthly-lifecycle-fail", aggregation="monthly")])
         # Must not raise
         runner.run(TENANT_ID)
 
@@ -1132,7 +1131,6 @@ class TestMonthlyPlainEmitterFailure:
     def test_monthly_emitter_failure_records_failed_for_all_dates(self) -> None:
         """GIT-005: plain monthly emitter raising → FAILED for all dates in month."""
         from core.emitters.registry import register
-        from core.emitters.runner import EmitterRunner
 
         dates = [date(2025, 8, 5), date(2025, 8, 20)]
         month_row = _make_cb_row(date(2025, 8, 1))
@@ -1145,12 +1143,7 @@ class TestMonthlyPlainEmitterFailure:
         cb_repo = _MockChargebackRepoControlled(dates, aggregated_rows=[month_row])
         emission_repo = MockEmissionRepo()
         storage = _MockStorageControlled(cb_repo, emission_repo)
-        runner = EmitterRunner(
-            ecosystem=ECOSYSTEM,
-            storage_backend=storage,
-            emitter_specs=[_make_spec(name="monthly-fail", aggregation="monthly")],
-            chargeback_granularity="daily",
-        )
+        runner = _make_runner(storage, [_make_spec(name="monthly-fail", aggregation="monthly")])
         # Must not raise
         runner.run(TENANT_ID)
 
@@ -1171,7 +1164,6 @@ class TestFetchRowsNoAggregation:
     def test_fetch_rows_no_aggregation_calls_find_by_date(self) -> None:
         """GIT-006: spec.aggregation=None → find_by_date, not find_aggregated_for_emit."""
         from core.emitters.registry import register
-        from core.emitters.runner import EmitterRunner
 
         dates = [date(2025, 9, 1)]
         find_by_date_calls: list[date] = []
@@ -1196,12 +1188,7 @@ class TestFetchRowsNoAggregation:
         cb_repo = _TrackingCbRepo(dates)
         emission_repo = MockEmissionRepo()
         storage = _MockStorageControlled(cb_repo, emission_repo)
-        runner = EmitterRunner(
-            ecosystem=ECOSYSTEM,
-            storage_backend=storage,
-            emitter_specs=[_make_spec(name="plain-emitter", aggregation=None)],
-            chargeback_granularity="daily",
-        )
+        runner = _make_runner(storage, [_make_spec(name="plain-emitter", aggregation=None)])
         runner.run(TENANT_ID)
 
         assert date(2025, 9, 1) in find_by_date_calls
@@ -1262,7 +1249,6 @@ class TestFetchRowsDailyAggregation:
     def test_fetch_rows_daily_aggregation_calls_find_aggregated(self) -> None:
         """GIT-010: spec.aggregation='daily' → find_aggregated_for_emit(eco, tid, dt, dt, 'daily')."""
         from core.emitters.registry import register
-        from core.emitters.runner import EmitterRunner
 
         target_date = date(2025, 12, 5)
         find_aggregated_calls: list[tuple[Any, ...]] = []
@@ -1289,12 +1275,7 @@ class TestFetchRowsDailyAggregation:
         cb_repo = _TrackingCbRepo([target_date])
         emission_repo = MockEmissionRepo()
         storage = _MockStorageControlled(cb_repo, emission_repo)
-        runner = EmitterRunner(
-            ecosystem=ECOSYSTEM,
-            storage_backend=storage,
-            emitter_specs=[_make_spec(name="daily-agg-emitter", aggregation="daily")],
-            chargeback_granularity="daily",
-        )
+        runner = _make_runner(storage, [_make_spec(name="daily-agg-emitter", aggregation="daily")])
         runner.run(TENANT_ID)
 
         assert len(find_aggregated_calls) == 1, "find_aggregated_for_emit must be called once"

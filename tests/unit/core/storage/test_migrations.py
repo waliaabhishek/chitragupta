@@ -357,3 +357,94 @@ class TestMigration009EnvIdChargebackDimensions:
         index_sql = rows[0][0] or ""
         # env_id must NOT be in the 9-field constraint after downgrade
         assert "env_id" not in index_sql
+
+
+class TestMigration014PipelineColumn:
+    """Verification: Migration 014 adds pipeline column to emission_records."""
+
+    def _get_alembic_cfg(self, conn: str):
+        import pathlib
+
+        from alembic.config import Config
+
+        migrations_dir = pathlib.Path(__file__).resolve().parents[4] / "src" / "core" / "storage" / "migrations"
+        alembic_ini = migrations_dir / "alembic.ini"
+        cfg = Config(str(alembic_ini))
+        cfg.set_main_option("script_location", str(migrations_dir))
+        cfg.set_main_option("sqlalchemy.url", conn)
+        return cfg
+
+    def test_migration_014_upgrade_adds_pipeline_column(self, tmp_path) -> None:
+        """Migration 014 upgrade adds pipeline column to emission_records."""
+        from alembic import command
+        from sqlalchemy import create_engine
+
+        db_path = tmp_path / "test.db"
+        conn = f"sqlite:///{db_path}"
+        cfg = self._get_alembic_cfg(conn)
+
+        command.upgrade(cfg, "013")
+        command.upgrade(cfg, "014")
+
+        engine = create_engine(conn)
+        inspector = sa_inspect(engine)
+        columns = {c["name"] for c in inspector.get_columns("emission_records")}
+        engine.dispose()
+
+        assert "pipeline" in columns
+
+    def test_migration_014_existing_rows_default_to_chargeback(self, tmp_path) -> None:
+        """Migration 014 upgrade: existing emission_records rows get pipeline='chargeback'."""
+        from alembic import command
+        from sqlalchemy import create_engine, text
+
+        db_path = tmp_path / "test.db"
+        conn = f"sqlite:///{db_path}"
+        cfg = self._get_alembic_cfg(conn)
+
+        command.upgrade(cfg, "013")
+
+        engine = create_engine(conn)
+        with engine.connect() as c:
+            c.execute(
+                text("""
+                INSERT INTO emission_records
+                    (ecosystem, tenant_id, emitter_name, date, status, attempt_count)
+                VALUES
+                    ('eco', 't1', 'csv', '2025-01-01', 'emitted', 1)
+            """)
+            )
+            c.commit()
+        engine.dispose()
+
+        command.upgrade(cfg, "014")
+
+        engine = create_engine(conn)
+        with engine.connect() as c:
+            rows = c.execute(text("SELECT pipeline FROM emission_records")).fetchall()
+        engine.dispose()
+
+        assert rows, "Expected at least one row after migration"
+        assert all(r[0] == "chargeback" for r in rows), "All pre-existing rows must default to pipeline='chargeback'"
+
+    def test_migration_014_unique_constraint_includes_pipeline(self, tmp_path) -> None:
+        """Migration 014 upgrade: new unique constraint includes pipeline column."""
+        from alembic import command
+        from sqlalchemy import create_engine, text
+
+        db_path = tmp_path / "test.db"
+        conn = f"sqlite:///{db_path}"
+        cfg = self._get_alembic_cfg(conn)
+
+        command.upgrade(cfg, "014")
+
+        engine = create_engine(conn)
+        with engine.connect() as c:
+            rows = c.execute(
+                text("SELECT sql FROM sqlite_master WHERE type='table' AND name='emission_records'")
+            ).fetchall()
+        engine.dispose()
+
+        assert rows, "emission_records table not found after upgrade"
+        table_sql = rows[0][0] or ""
+        assert "pipeline" in table_sql, "Unique constraint must include pipeline column"

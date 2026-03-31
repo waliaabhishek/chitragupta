@@ -85,6 +85,7 @@ class TestEmissionRecord:
             ecosystem="eco",
             tenant_id="t1",
             emitter_name="csv",
+            pipeline="chargeback",
             date=date(2025, 1, 1),
             status="emitted",
         )
@@ -101,6 +102,7 @@ class TestEmissionRecord:
             ecosystem="eco",
             tenant_id="t1",
             emitter_name="csv",
+            pipeline="chargeback",
             date=date(2025, 1, 1),
             status="emitted",
         )
@@ -113,6 +115,7 @@ class TestEmissionRecord:
             ecosystem="eco",
             tenant_id="t1",
             emitter_name="csv",
+            pipeline="chargeback",
             date=date(2025, 1, 1),
             status="failed",
             attempt_count=3,
@@ -126,6 +129,7 @@ class TestEmissionRecord:
             ecosystem="eco",
             tenant_id="t1",
             emitter_name="csv",
+            pipeline="chargeback",
             date=date(2025, 1, 1),
             status="failed",
         )

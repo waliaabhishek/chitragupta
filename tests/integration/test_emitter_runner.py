@@ -76,10 +76,16 @@ class TestEmitterRunnerIntegration:
         register("test-emitter", lambda **_: _fake_emitter)
 
         spec = EmitterSpec(type="test-emitter", name="test-emitter")
+        from core.emitters.sources import ChargebackDateSource, ChargebackRowFetcher, RegistryEmitterBuilder
+
         runner = EmitterRunner(
             ecosystem=ECOSYSTEM,
             storage_backend=storage,
             emitter_specs=[spec],
+            date_source=ChargebackDateSource(storage),
+            row_fetcher=ChargebackRowFetcher(storage),
+            emitter_builder=RegistryEmitterBuilder(storage),
+            pipeline="chargeback",
             chargeback_granularity="daily",
         )
         runner.run(TENANT_ID)
@@ -89,7 +95,7 @@ class TestEmitterRunnerIntegration:
 
         # EmissionRecord rows written to DB
         with storage.create_unit_of_work() as uow:
-            emitted = uow.emissions.get_emitted_dates(ECOSYSTEM, TENANT_ID, "test-emitter")
+            emitted = uow.emissions.get_emitted_dates(ECOSYSTEM, TENANT_ID, "test-emitter", "chargeback")
 
         assert set(dates) == emitted
 
@@ -106,7 +112,9 @@ class TestEmitterRunnerIntegration:
 
         # Pre-seed: 2025-02-01 already emitted
         with storage.create_unit_of_work() as uow:
-            uow.emissions.upsert(EmissionRecord(ECOSYSTEM, TENANT_ID, "test-emitter", date(2025, 2, 1), "emitted"))
+            uow.emissions.upsert(
+                EmissionRecord(ECOSYSTEM, TENANT_ID, "test-emitter", "chargeback", date(2025, 2, 1), "emitted")
+            )
             uow.commit()
 
         call_log: list[date] = []
@@ -117,7 +125,18 @@ class TestEmitterRunnerIntegration:
         register("test-emitter", lambda **_: _fake_emitter)
 
         spec = EmitterSpec(type="test-emitter", name="test-emitter")
-        runner = EmitterRunner(ECOSYSTEM, storage, [spec], "daily")
+        from core.emitters.sources import ChargebackDateSource, ChargebackRowFetcher, RegistryEmitterBuilder
+
+        runner = EmitterRunner(
+            ECOSYSTEM,
+            storage,
+            [spec],
+            ChargebackDateSource(storage),
+            ChargebackRowFetcher(storage),
+            RegistryEmitterBuilder(storage),
+            "chargeback",
+            "daily",
+        )
         runner.run(TENANT_ID)
 
         # Only 2025-02-02 emitted; 2025-02-01 skipped
@@ -137,11 +156,22 @@ class TestEmitterRunnerIntegration:
         register("failing-emitter", lambda **_: _failing_emitter)
 
         spec = EmitterSpec(type="failing-emitter", name="failing-emitter")
-        runner = EmitterRunner(ECOSYSTEM, storage, [spec], "daily")
+        from core.emitters.sources import ChargebackDateSource, ChargebackRowFetcher, RegistryEmitterBuilder
+
+        runner = EmitterRunner(
+            ECOSYSTEM,
+            storage,
+            [spec],
+            ChargebackDateSource(storage),
+            ChargebackRowFetcher(storage),
+            RegistryEmitterBuilder(storage),
+            "chargeback",
+            "daily",
+        )
         runner.run(TENANT_ID)  # must not raise
 
         with storage.create_unit_of_work() as uow:
-            failed = uow.emissions.get_failed_dates(ECOSYSTEM, TENANT_ID, "failing-emitter")
+            failed = uow.emissions.get_failed_dates(ECOSYSTEM, TENANT_ID, "failing-emitter", "chargeback")
 
         assert date(2025, 3, 10) in failed
 
@@ -162,7 +192,18 @@ class TestEmitterRunnerIntegration:
         register("counting-emitter", lambda **_: _counting_emitter)
 
         spec = EmitterSpec(type="counting-emitter", name="counting-emitter")
-        runner = EmitterRunner(ECOSYSTEM, storage, [spec], "daily")
+        from core.emitters.sources import ChargebackDateSource, ChargebackRowFetcher, RegistryEmitterBuilder
+
+        runner = EmitterRunner(
+            ECOSYSTEM,
+            storage,
+            [spec],
+            ChargebackDateSource(storage),
+            ChargebackRowFetcher(storage),
+            RegistryEmitterBuilder(storage),
+            "chargeback",
+            "daily",
+        )
 
         runner.run(TENANT_ID)  # first run: emits once
         runner.run(TENANT_ID)  # second run: should be a no-op

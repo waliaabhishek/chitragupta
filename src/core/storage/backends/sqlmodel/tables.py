@@ -161,6 +161,7 @@ class EmissionRecordTable(SQLModel, table=True):
             "ecosystem",
             "tenant_id",
             "emitter_name",
+            "pipeline",
             "date",
             name="uq_emission_records",
         ),
@@ -170,6 +171,7 @@ class EmissionRecordTable(SQLModel, table=True):
     ecosystem: str = Field(index=True)
     tenant_id: str = Field(index=True)
     emitter_name: str = Field(index=True)
+    pipeline: str = Field(index=True)
     date: _DateType = Field(sa_column=Column(Date(), index=True))
     status: str  # "emitted" | "failed"
     attempt_count: int = Field(default=1)

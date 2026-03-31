@@ -7,13 +7,18 @@ from typing import TYPE_CHECKING, Any
 
 from core.emitters.drivers import LifecycleDriver, PerDateDriver
 from core.emitters.models import EmissionRecord, EmitManifest, EmitOutcome
-from core.emitters.protocols import ExpositionEmitter, LifecycleEmitter, RowProvider
-from core.emitters.registry import get as registry_get
-from core.emitters.registry import get_factory
+from core.emitters.protocols import (
+    ExpositionEmitter,
+    LifecycleEmitter,
+    PipelineAggregatedRowFetcher,
+    PipelineDateSource,
+    PipelineEmitterBuilder,
+    PipelineRowFetcher,
+    RowProvider,
+)
 
 if TYPE_CHECKING:
     from core.config.models import EmitterSpec
-    from core.models.chargeback import ChargebackRow
     from core.plugin.protocols import Emitter
     from core.storage.interface import StorageBackend
 
@@ -23,41 +28,47 @@ _GRANULARITY_ORDER: dict[str, int] = {"hourly": 0, "daily": 1, "monthly": 2}
 
 
 class EmitterRunner:
-    """Independent post-pipeline runner. Reads chargebacks from DB and drives emitters."""
+    """Independent post-pipeline runner. Reads pipeline data from DB and drives emitters."""
 
     def __init__(
         self,
         ecosystem: str,
         storage_backend: StorageBackend,
         emitter_specs: list[EmitterSpec],
-        chargeback_granularity: str,
+        date_source: PipelineDateSource,
+        row_fetcher: PipelineRowFetcher,
+        emitter_builder: PipelineEmitterBuilder,
+        pipeline: str,
+        chargeback_granularity: str | None = None,
     ) -> None:
-        # Validate aggregation granularity fail-fast — same check as old _load_emitters
-        cb_level = _GRANULARITY_ORDER.get(chargeback_granularity, 0)
-        for spec in emitter_specs:
-            if spec.aggregation is not None:
-                req_level = _GRANULARITY_ORDER.get(spec.aggregation, -1)
-                if req_level < cb_level:
-                    raise ValueError(
-                        f"Emitter {spec.type!r} requests aggregation {spec.aggregation!r} "
-                        f"which is finer than chargeback_granularity {chargeback_granularity!r}."
-                    )
+        if chargeback_granularity is not None:
+            cb_level = _GRANULARITY_ORDER.get(chargeback_granularity, 0)
+            for spec in emitter_specs:
+                if spec.aggregation is not None:
+                    req_level = _GRANULARITY_ORDER.get(spec.aggregation, -1)
+                    if req_level < cb_level:
+                        raise ValueError(
+                            f"Emitter {spec.type!r} requests aggregation {spec.aggregation!r} "
+                            f"which is finer than chargeback_granularity {chargeback_granularity!r}."
+                        )
         self._ecosystem = ecosystem
         self._storage_backend = storage_backend
         self._emitter_specs = emitter_specs
+        self._date_source = date_source
+        self._row_fetcher = row_fetcher
+        self._emitter_builder = emitter_builder
+        self._pipeline = pipeline
 
     def run(self, tenant_id: str) -> None:
         """Emit all pending dates for one tenant. Idempotent — skips already-emitted dates."""
-        with self._storage_backend.create_unit_of_work() as uow:
-            all_dates = uow.chargebacks.get_distinct_dates(self._ecosystem, tenant_id)
-
+        all_dates = self._date_source.get_distinct_dates(self._ecosystem, tenant_id)
         for spec in self._emitter_specs:
             self._run_spec(tenant_id, spec, all_dates)
 
     def _run_spec(self, tenant_id: str, spec: EmitterSpec, all_dates: list[date]) -> None:
         with self._storage_backend.create_unit_of_work() as uow:
-            emitted = uow.emissions.get_emitted_dates(self._ecosystem, tenant_id, spec.name)
-            failed = uow.emissions.get_failed_dates(self._ecosystem, tenant_id, spec.name)
+            emitted = uow.emissions.get_emitted_dates(self._ecosystem, tenant_id, spec.name, self._pipeline)
+            failed = uow.emissions.get_failed_dates(self._ecosystem, tenant_id, spec.name, self._pipeline)
 
         if spec.lookback_days is not None:
             cutoff = (datetime.now(UTC) - timedelta(days=spec.lookback_days)).date()
@@ -69,12 +80,7 @@ class EmitterRunner:
         if not pending:
             return
 
-        # Replicate needs_storage_backend injection from orchestrator.py:1053-1056
-        factory = get_factory(spec.type)
-        extra: dict[str, Any] = {}
-        if factory is not None and getattr(factory, "needs_storage_backend", False):
-            extra["storage_backend"] = self._storage_backend
-        emitter = registry_get(spec.type, spec.params, extra=extra)
+        emitter = self._emitter_builder.build(spec)
 
         if spec.aggregation == "monthly":
             outcomes = self._run_monthly(tenant_id, emitter, pending, failed)
@@ -85,7 +91,7 @@ class EmitterRunner:
                 is_reemission=bool(failed & set(pending)),
             )
 
-            def _row_provider(tid: str, dt: date) -> list[ChargebackRow]:
+            def _row_provider(tid: str, dt: date) -> list[Any]:
                 return self._fetch_rows(tid, dt, spec)
 
             if isinstance(emitter, ExpositionEmitter):
@@ -119,17 +125,17 @@ class EmitterRunner:
             next_month_start = (month_start.replace(day=28) + timedelta(days=4)).replace(day=1)
             month_end = next_month_start - timedelta(days=1)
 
-            with self._storage_backend.create_unit_of_work() as uow:
-                rows = uow.chargebacks.find_aggregated_for_emit(
-                    self._ecosystem, tenant_id, month_start, month_end, "monthly"
+            if not isinstance(self._row_fetcher, PipelineAggregatedRowFetcher):
+                raise ValueError(
+                    "Monthly aggregation requested but the configured row_fetcher does not support fetch_aggregated."
                 )
+            rows = self._row_fetcher.fetch_aggregated(self._ecosystem, tenant_id, month_start, month_end, "monthly")
 
             if not rows:
                 outcome = EmitOutcome.SKIPPED
             elif isinstance(emitter, ExpositionEmitter):
-                # Wrap month rows in a fixed provider; load() + get_consumed() determine outcome.
                 # Default-arg capture binds `rows` at definition time, avoiding late-binding closure.
-                def _month_provider(tid: str, dt: date, _rows: list[ChargebackRow] = rows) -> list[ChargebackRow]:
+                def _month_provider(tid: str, dt: date, _rows: list[Any] = rows) -> list[Any]:
                     return _rows
 
                 month_manifest = EmitManifest(
@@ -137,9 +143,8 @@ class EmitterRunner:
                     total_rows_estimate=len(rows),
                     is_reemission=bool(failed & set(dates_in_month)),
                 )
-                emitter.load(tenant_id, month_manifest, _month_provider)
-                consumed = emitter.get_consumed(tenant_id)
-                outcome = EmitOutcome.EMITTED if month_start in consumed else EmitOutcome.SKIPPED
+                monthly_outcomes = self._run_exposition(tenant_id, emitter, month_manifest, _month_provider)
+                outcome = monthly_outcomes.get(month_start, EmitOutcome.SKIPPED)
             elif isinstance(emitter, LifecycleEmitter):
                 month_manifest = EmitManifest(
                     pending_dates=[month_start],
@@ -169,12 +174,16 @@ class EmitterRunner:
 
         return outcomes
 
-    def _fetch_rows(self, tenant_id: str, dt: date, spec: EmitterSpec) -> list[ChargebackRow]:
+    def _fetch_rows(self, tenant_id: str, dt: date, spec: EmitterSpec) -> list[Any]:
         """Fetch rows for a single date. For daily aggregation, uses SQL GROUP BY."""
-        with self._storage_backend.create_unit_of_work() as uow:
-            if spec.aggregation == "daily":
-                return uow.chargebacks.find_aggregated_for_emit(self._ecosystem, tenant_id, dt, dt, "daily")
-            return uow.chargebacks.find_by_date(self._ecosystem, tenant_id, dt)
+        if spec.aggregation == "daily":
+            if not isinstance(self._row_fetcher, PipelineAggregatedRowFetcher):
+                raise ValueError(
+                    f"Emitter spec {spec.name!r} requests aggregation='daily' "
+                    "but the configured row_fetcher does not support fetch_aggregated."
+                )
+            return self._row_fetcher.fetch_aggregated(self._ecosystem, tenant_id, dt, dt, "daily")
+        return self._row_fetcher.fetch_by_date(self._ecosystem, tenant_id, dt)
 
     def _run_exposition(
         self,
@@ -201,6 +210,7 @@ class EmitterRunner:
                             ecosystem=self._ecosystem,
                             tenant_id=tenant_id,
                             emitter_name=emitter_name,
+                            pipeline=self._pipeline,
                             date=dt,
                             status=outcome.value,
                         )

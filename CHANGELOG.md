@@ -8,6 +8,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Feat: TASK-168 — Generalize `EmitterRunner` for pipeline-agnostic emission tracking
+
+  `EmitterRunner` is now pipeline-agnostic via constructor-injected protocols:
+  `PipelineDateSource`, `PipelineRowFetcher` / `PipelineAggregatedRowFetcher`,
+  and `PipelineEmitterBuilder`. The `pipeline` parameter acts as a discriminator
+  so chargeback and topic attribution emission records coexist without collision.
+
+  Changes:
+  - `EmitterRunner.__init__` now accepts `date_source`, `row_fetcher`,
+    `emitter_builder`, and `pipeline` in place of direct storage coupling
+  - `EmissionRecord` gains a `pipeline` field; `emission_records` table gains
+    a `pipeline` column (migration 014, default `"chargeback"`)
+  - `get_emitted_dates` / `get_failed_dates` are now pipeline-scoped
+  - `ChargebackDateSource`, `ChargebackRowFetcher`, and `RegistryEmitterBuilder`
+    in `core/emitters/sources.py` provide the concrete chargeback implementations
+  - Topic attribution emission now uses the same idempotency loop: skips
+    already-emitted dates, retries failed dates, and respects `lookback_days`
+  - `TopicAttributionEmitterRunner` deleted — superseded by the generalized runner
+
 - Feat: TASK-165 — Topic attribution overlay for Confluent Cloud
 
   Adds a new optional pipeline stage (`topic_overlay`) that attributes Kafka

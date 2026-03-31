@@ -3,11 +3,12 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable, Sequence
 from datetime import date
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
+    from core.config.models import EmitterSpec
     from core.emitters.models import EmitManifest, EmitResult
     from core.models.chargeback import ChargebackRow
 
@@ -32,3 +33,38 @@ class ExpositionEmitter(Protocol):
 
     def load(self, tenant_id: str, manifest: EmitManifest, rows: RowProvider) -> None: ...
     def get_consumed(self, tenant_id: str) -> set[date]: ...
+
+
+@runtime_checkable
+class PipelineDateSource(Protocol):
+    """Returns the set of candidate emission dates for a pipeline."""
+
+    def get_distinct_dates(self, ecosystem: str, tenant_id: str) -> list[date]: ...
+
+
+@runtime_checkable
+class PipelineRowFetcher(Protocol):
+    """Fetches data rows for emission by date. All pipeline row fetchers implement this."""
+
+    def fetch_by_date(self, ecosystem: str, tenant_id: str, dt: date) -> list[Any]: ...
+
+
+@runtime_checkable
+class PipelineAggregatedRowFetcher(PipelineRowFetcher, Protocol):
+    """Extends PipelineRowFetcher with aggregated range fetch. Chargeback only."""
+
+    def fetch_aggregated(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        start: date,
+        end: date,
+        granularity: Literal["daily", "monthly"],
+    ) -> list[Any]: ...
+
+
+@runtime_checkable
+class PipelineEmitterBuilder(Protocol):
+    """Constructs an emitter (any variant) from an EmitterSpec."""
+
+    def build(self, spec: EmitterSpec) -> Any: ...

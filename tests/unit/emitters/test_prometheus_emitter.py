@@ -556,10 +556,16 @@ class TestLoadEmittersWiring:
 
         storage = self._make_mock_storage()
         spec = EmitterSpec(type="_test_prometheus_factory", params={"port": 9091})
+        from core.emitters.sources import ChargebackDateSource, ChargebackRowFetcher, RegistryEmitterBuilder
+
         runner = EmitterRunner(
             ecosystem="test-eco",
             storage_backend=storage,
             emitter_specs=[spec],
+            date_source=ChargebackDateSource(storage),
+            row_fetcher=ChargebackRowFetcher(storage),
+            emitter_builder=RegistryEmitterBuilder(storage),
+            pipeline="chargeback",
             chargeback_granularity="daily",
         )
         runner.run("tenant-1")
@@ -584,10 +590,16 @@ class TestLoadEmittersWiring:
 
         storage = self._make_mock_storage()
         spec = EmitterSpec(type="_test_csv_factory", params={"output_dir": "/tmp"})
+        from core.emitters.sources import ChargebackDateSource, ChargebackRowFetcher, RegistryEmitterBuilder
+
         runner = EmitterRunner(
             ecosystem="test-eco",
             storage_backend=storage,
             emitter_specs=[spec],
+            date_source=ChargebackDateSource(storage),
+            row_fetcher=ChargebackRowFetcher(storage),
+            emitter_builder=RegistryEmitterBuilder(storage),
+            pipeline="chargeback",
             chargeback_granularity="daily",
         )
         runner.run("tenant-1")
