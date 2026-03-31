@@ -1849,6 +1849,12 @@ configured under <code>plugin_settings.metrics</code>.</p>
 <a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a><span class="w">    </span><span class="nt">topic_bytes_in</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">custom_received_bytes</span>
 <a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a><span class="w">  </span><span class="nt">emitters</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[]</span><span class="w">                           </span><span class="c1"># same format as top-level emitters</span>
 </code></pre></div>
+<div class="admonition warning">
+<p class="admonition-title">Requires <code>metrics</code> to be configured</p>
+<p><code>topic_attribution.enabled: true</code> requires a <code>metrics</code> section in <code>plugin_settings</code>.
+Config validation rejects the combination of <code>enabled: true</code> and no <code>metrics</code> source — startup
+fails with a <code>ValidationError</code> rather than silently producing even-split attribution from zero data.</p>
+</div>
 <h3 id="topic_attribution-fields"><code>topic_attribution</code> fields<a class="headerlink" href="#topic_attribution-fields" title="Permanent link">&para;</a></h3>
 <table>
 <thead>

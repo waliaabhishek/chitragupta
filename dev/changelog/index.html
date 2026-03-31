@@ -1375,8 +1375,49 @@ stage with its own star schema, composable attribution models
 and configurable retention. (<a href="https://github.com/waliaabhishek/chitragupta/commit/919cc42a68b78773389577ce74c3f43c17544869">919cc42</a>)</p>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
-<li>Fix: TASK-167 — Remove duplicated _distribute_remainder from topic attribution models</li>
+<li>Fix: TASK-174 — Remove metrics_available dead code from topic attribution</li>
 </ul>
+<p>Remove the always-True metrics_available field from TopicAttributionContext
+and the unreachable guard in TopicUsageRatioModel.attribute(). Infra failure
+is handled at the phase level before context construction, making this field
+impossible to be False. No behavioral change. (<a href="https://github.com/waliaabhishek/chitragupta/commit/d61a17424cfae8e4aeb383a37063d23c61a42e19">d61a174</a>)
+- Fix: TASK-173 — Topic attribution export uses true streaming with iter_by_filters</p>
+<p>Replace find_by_filters(limit=100_000) with iter_by_filters() in the topic
+attribution CSV export endpoint, eliminating silent truncation and memory
+spikes. Adds iter_by_filters to the TopicAttributionRepository protocol and
+SQLModel implementation using yield_per/partitions pattern. Extracts shared
+_build_ta_where helper to DRY filter logic across find_by_filters and
+iter_by_filters. (<a href="https://github.com/waliaabhishek/chitragupta/commit/5609a1f128a3407ebc79ef61652b56305d829ac8">5609a1f</a>)
+- Fix: TASK-172 — Add attribution_method label to Prometheus topic attribution gauge</p>
+<p>The chitragupta_topic_attribution_amount gauge was missing the
+attribution_method label, causing rows with different attribution
+methods (bytes_ratio, even_split) to silently overwrite each other.
+Added the label to the gauge definition and sample construction,
+matching the CSV emitter's output dimensions. Fixed test fixture
+cleanup for _topic_attribution_col. (<a href="https://github.com/waliaabhishek/chitragupta/commit/d3b6e16aa5862b7a86c2b8a29968f9cc9fdb00c1">d3b6e16</a>)
+- Fix: TASK-171 — Remove server_default from topic_attribution_facts.amount column</p>
+<p>Removes server_default="" from the amount column in migration 012 and adds
+migration 015 to drop the default for existing installs, aligning with the
+chargeback_facts schema pattern where missing amounts cause NOT NULL violations
+instead of silently storing empty strings. (<a href="https://github.com/waliaabhishek/chitragupta/commit/c0db7c44b6f13aabdf202cfb5fb812e7638942ab">c0db7c4</a>)
+- Fix: TASK-170 — Topic discovery queries now respect metric_name_overrides</p>
+<p>Discovery was querying hardcoded Confluent metric names, silently ignoring
+metric_name_overrides config. Both discovery and attribution now resolve
+metric names through the same build_metric_queries function. (<a href="https://github.com/waliaabhishek/chitragupta/commit/7cff7d0dd7b25e077d88d61d8afbd6b4070b0057">7cff7d0</a>)
+- Fix: TASK-169 — Fail config validation when topic attribution enabled without Prometheus</p>
+<p>Add cross-field model_validator on CCloudPluginConfig that rejects
+topic_attribution.enabled=True without a configured metrics source,
+preventing silent even-split attribution from zero data. Replace the
+dead return {} path in _fetch_topic_metrics() with RuntimeError for
+defense-in-depth. (<a href="https://github.com/waliaabhishek/chitragupta/commit/ebb0982748f7fa4f4ceba5a54dbb6f23c092e3af">ebb0982</a>)
+- Fix: TASK-168 — Generalize EmitterRunner for pipeline-agnostic emission tracking</p>
+<p>Generalize EmitterRunner to accept pluggable date-source, row-fetcher, and
+emitter-builder protocols instead of hardcoding chargeback repository calls.
+Add pipeline discriminator column to EmissionRecord so chargeback and topic
+attribution emissions don't collide. Topic attribution now gets idempotent
+emission tracking (skip already-emitted dates, retry failed, lookback_days).
+Delete TopicAttributionEmitterRunner. Migration 014 adds pipeline column. (<a href="https://github.com/waliaabhishek/chitragupta/commit/e1b6bb4c7c543605f3ec9cdfc24f85838e501b95">e1b6bb4</a>)
+- Fix: TASK-167 — Remove duplicated _distribute_remainder from topic attribution models</p>
 <p>Delete local _distribute_remainder (unbounded while loop) and _CENT constant
 from topic_attribution_models.py; import the bounded version from helpers.py
 that raises RuntimeError on non-convergence (fixed in TASK-120). (<a href="https://github.com/waliaabhishek/chitragupta/commit/90de49da3278f333dbc1f8f756f3a3281fa69eff">90de49d</a>)
