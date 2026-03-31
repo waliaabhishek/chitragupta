@@ -51,6 +51,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     from core attribution models (DIP-compliant)
 
 ### Fixed
+- Fix: TASK-170 — Topic discovery queries now respect `metric_name_overrides`
+
+  Topic discovery (`gather_topic_resources`) was querying hardcoded Confluent metric names,
+  silently ignoring any `topic_attribution.metric_name_overrides` configured by the user.
+  Discovery and attribution were resolving different metric names, so overrides only took
+  effect for attribution — not for discovering which topics exist.
+
+  `build_discovery_queries` now delegates to `build_metric_queries` (the single source of
+  truth for `_DEFAULT_METRIC_NAMES` and `_QUERY_TEMPLATES`) and renames keys with a `disc_`
+  prefix. Both phases now use the same resolved metric names.
+
 - Fix: TASK-169 — Config validation rejects `topic_attribution.enabled: true` without a `metrics` source
 
   Previously, enabling topic attribution without a configured Prometheus metrics source was silently

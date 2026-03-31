@@ -143,15 +143,16 @@ class ConfluentCloudPlugin:
             return
 
         from core.models.resource import CoreResource
-        from plugins.confluent_cloud.overlays.topic_attribution import _DISCOVERY_QUERIES
+        from plugins.confluent_cloud.overlays.topic_attribution import build_discovery_queries
 
+        discovery_queries = build_discovery_queries(self._config.topic_attribution.metric_name_overrides)
         end = datetime.now(UTC)
         start = end - timedelta(hours=1)
 
         for cluster_id in cluster_ids:
             try:
                 raw = self._metrics_source.query(
-                    queries=_DISCOVERY_QUERIES,
+                    queries=discovery_queries,
                     start=start,
                     end=end,
                     resource_id_filter=cluster_id,

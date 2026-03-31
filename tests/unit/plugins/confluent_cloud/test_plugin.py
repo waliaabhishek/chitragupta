@@ -228,6 +228,40 @@ class TestConfluentCloudPluginGetFallbackAllocator:
         assert callable(fallback)
 
 
+class TestGatherTopicResourcesMetricNameOverrides:
+    """GIT-170-01: gather_topic_resources passes metric_name_overrides to discovery queries."""
+
+    def test_metric_name_override_reaches_discovery_query(self) -> None:
+        """Override in topic_attribution.metric_name_overrides propagates to query expression."""
+        from unittest.mock import MagicMock
+
+        from plugins.confluent_cloud import ConfluentCloudPlugin
+
+        plugin = ConfluentCloudPlugin()
+        plugin.initialize(
+            {
+                "ccloud_api": {"key": "k", "secret": "s"},
+                "metrics": {"type": "prometheus", "url": "http://prom:9090"},
+                "topic_attribution": {
+                    "enabled": True,
+                    "metric_name_overrides": {"topic_bytes_in": "custom_metric"},
+                },
+            }
+        )
+
+        mock_metrics_source = MagicMock()
+        mock_metrics_source.query.return_value = {}
+        plugin._metrics_source = mock_metrics_source
+
+        list(plugin.gather_topic_resources("tenant1", ["lkc-abc"]))
+
+        assert mock_metrics_source.query.called
+        call_kwargs = mock_metrics_source.query.call_args
+        queries = call_kwargs.kwargs.get("queries") or call_kwargs.args[0]
+        expressions = [q.query_expression for q in queries]
+        assert any("custom_metric" in expr for expr in expressions)
+
+
 class TestConfluentCloudPluginClose:
     def test_close_closes_metrics_source(self) -> None:
         """Plugin.close() must close _metrics_source when set."""

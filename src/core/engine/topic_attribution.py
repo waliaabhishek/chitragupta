@@ -35,7 +35,7 @@ _DEFAULT_METRIC_NAMES: dict[str, str] = {
 }
 
 
-def _build_metric_queries(overrides: dict[str, str]) -> list[MetricQuery]:
+def build_metric_queries(overrides: dict[str, str]) -> list[MetricQuery]:
     """Build MetricQuery list from default metric names + user overrides."""
     from core.models.metrics import MetricQuery
 
@@ -91,7 +91,7 @@ class TopicAttributionPhase:
         self._metrics_step = metrics_step
         self._topic_filter = _build_topic_filter(config.exclude_topic_patterns)
         self._attribution_models = resolve_topic_attribution_models(config.cost_mapping_overrides)
-        self._metric_queries = _build_metric_queries(config.metric_name_overrides)
+        self._metric_queries = build_metric_queries(config.metric_name_overrides)
 
     def run(self, uow: UnitOfWork, tracking_date: date) -> int:
         """Compute topic attribution for all Kafka clusters on tracking_date.

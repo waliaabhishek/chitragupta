@@ -201,30 +201,63 @@ class TestTopicAttributionConfigRetention:
             )
 
 
-class TestTopicAttributionDiscoveryQueries:
-    def test_discovery_queries_defined(self) -> None:
-        """_DISCOVERY_QUERIES has 3 MetricQuery instances with correct keys."""
-        from plugins.confluent_cloud.overlays.topic_attribution import (
-            _DISC_BYTES_IN,
-            _DISC_BYTES_OUT,
-            _DISC_RETAINED,
-            _DISCOVERY_QUERIES,
-        )
+class TestBuildDiscoveryQueries:
+    def test_defaults_return_three_queries(self) -> None:
+        """build_discovery_queries({}) returns 3 queries with default Confluent metric names."""
+        from plugins.confluent_cloud.overlays.topic_attribution import build_discovery_queries
 
-        assert len(_DISCOVERY_QUERIES) == 3
-        assert _DISCOVERY_QUERIES[0] is _DISC_BYTES_IN
-        assert _DISCOVERY_QUERIES[1] is _DISC_BYTES_OUT
-        assert _DISCOVERY_QUERIES[2] is _DISC_RETAINED
+        queries = build_discovery_queries({})
+        assert len(queries) == 3
+        expressions = [q.query_expression for q in queries]
+        assert any("confluent_kafka_server_received_bytes" in e for e in expressions)
+        assert any("confluent_kafka_server_sent_bytes" in e for e in expressions)
+        assert any("confluent_kafka_server_retained_bytes" in e for e in expressions)
 
-    def test_discovery_query_keys_are_unique(self) -> None:
-        from plugins.confluent_cloud.overlays.topic_attribution import _DISCOVERY_QUERIES
+    def test_overrides_applied_to_discovery(self) -> None:
+        """Overrides change the metric name in discovery query expressions."""
+        from plugins.confluent_cloud.overlays.topic_attribution import build_discovery_queries
 
-        keys = [q.key for q in _DISCOVERY_QUERIES]
-        assert len(keys) == len(set(keys))
+        queries = build_discovery_queries({"topic_bytes_in": "my_custom_metric"})
+        by_key = {q.key: q for q in queries}
+        assert "my_custom_metric" in by_key["disc_bytes_in"].query_expression
 
-    def test_discovery_queries_have_topic_label(self) -> None:
-        from plugins.confluent_cloud.overlays.topic_attribution import _DISCOVERY_QUERIES
+    def test_discovery_and_attribution_same_expressions(self) -> None:
+        """Discovery and attribution resolve the same PromQL expressions for given overrides."""
+        from core.engine.topic_attribution import build_metric_queries
+        from plugins.confluent_cloud.overlays.topic_attribution import build_discovery_queries
 
-        for query in _DISCOVERY_QUERIES:
+        overrides = {"topic_bytes_in": "custom_received", "topic_retained_bytes": "custom_retained"}
+        attr_queries = build_metric_queries(overrides)
+        disc_queries = build_discovery_queries(overrides)
+        attr_exprs = sorted(q.query_expression for q in attr_queries)
+        disc_exprs = sorted(q.query_expression for q in disc_queries)
+        assert attr_exprs == disc_exprs
+
+    def test_all_keys_have_disc_prefix(self) -> None:
+        """All discovery query keys start with disc_."""
+        from plugins.confluent_cloud.overlays.topic_attribution import build_discovery_queries
+
+        queries = build_discovery_queries({})
+        keys = {q.key for q in queries}
+        assert keys == {"disc_bytes_in", "disc_bytes_out", "disc_retained"}
+
+    def test_all_queries_have_topic_label(self) -> None:
+        """All discovery queries have 'topic' in label_keys and kafka_id as resource_label."""
+        from plugins.confluent_cloud.overlays.topic_attribution import build_discovery_queries
+
+        for query in build_discovery_queries({}):
             assert "topic" in query.label_keys
             assert query.resource_label == "kafka_id"
+
+    def test_old_constants_removed(self) -> None:
+        """Old hardcoded constants no longer importable."""
+        with pytest.raises(ImportError):
+            from plugins.confluent_cloud.overlays.topic_attribution import _DISCOVERY_QUERIES  # noqa: F401
+        with pytest.raises(ImportError):
+            from plugins.confluent_cloud.overlays.topic_attribution import _DISC_BYTES_IN  # noqa: F401
+
+    def test_build_metric_queries_is_public(self) -> None:
+        """build_metric_queries (no underscore) is importable from core.engine.topic_attribution."""
+        from core.engine.topic_attribution import build_metric_queries  # noqa: F401
+
+        assert callable(build_metric_queries)
