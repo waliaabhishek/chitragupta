@@ -6,6 +6,7 @@ from decimal import Decimal
 from fastapi.testclient import TestClient  # noqa: TC002
 
 from core.models.chargeback import ChargebackRow, CostType
+from core.models.topic_attribution import TopicAttributionRow
 from core.storage.backends.sqlmodel.unit_of_work import SQLModelBackend  # noqa: TC001
 
 
@@ -294,3 +295,64 @@ class TestExportStreaming:
         assert response.status_code == 200
         lines = [ln for ln in response.text.strip().split("\n") if ln]
         assert len(lines) == db_total + 1  # header + matching data rows
+
+
+def _seed_topic_attributions(backend: SQLModelBackend, rows: list[TopicAttributionRow]) -> None:
+    with backend.create_unit_of_work() as uow:
+        uow.topic_attributions.upsert_batch(rows)
+        uow.commit()
+
+
+def _make_ta_row(topic_name: str, timestamp: datetime = datetime(2026, 2, 15, tzinfo=UTC)) -> TopicAttributionRow:
+    return TopicAttributionRow(
+        ecosystem="test-eco",
+        tenant_id="test-tenant",
+        timestamp=timestamp,
+        env_id="env-1",
+        cluster_resource_id="lkc-abc",
+        topic_name=topic_name,
+        product_category="KAFKA",
+        product_type="KAFKA_NETWORK_WRITE",
+        attribution_method="bytes_ratio",
+        amount=Decimal("10.00"),
+    )
+
+
+class TestExportTopicAttributions:
+    """Integration tests for POST /topic-attributions/export via iter_by_filters()."""
+
+    def test_export_empty_returns_header_only(self, app_with_ccloud_backend: TestClient) -> None:
+        response = app_with_ccloud_backend.post(
+            "/api/v1/tenants/test-tenant/topic-attributions/export",
+            params={"start_date": "2026-02-01", "end_date": "2026-02-28"},
+        )
+        assert response.status_code == 200
+        assert "text/csv" in response.headers["content-type"]
+        lines = [ln for ln in response.text.strip().split("\n") if ln]
+        assert len(lines) == 1  # header only
+
+    def test_export_all_seeded_rows_returned(
+        self, app_with_ccloud_backend: TestClient, in_memory_ccloud_backend: SQLModelBackend
+    ) -> None:
+        _seed_topic_attributions(
+            in_memory_ccloud_backend,
+            [
+                _make_ta_row("orders"),
+                _make_ta_row("payments"),
+                _make_ta_row("events"),
+            ],
+        )
+
+        response = app_with_ccloud_backend.post(
+            "/api/v1/tenants/test-tenant/topic-attributions/export",
+            params={"start_date": "2026-02-01", "end_date": "2026-02-28"},
+        )
+
+        assert response.status_code == 200
+        assert "text/csv" in response.headers["content-type"]
+        lines = [ln for ln in response.text.strip().split("\n") if ln]
+        assert len(lines) == 4  # header + 3 data rows
+        content = response.text
+        assert "orders" in content
+        assert "payments" in content
+        assert "events" in content

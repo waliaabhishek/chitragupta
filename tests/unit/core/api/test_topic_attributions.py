@@ -232,9 +232,8 @@ class TestExportTopicAttributionsEndpoint:
     def test_export_returns_csv_response(self) -> None:
         """POST .../export → CSV content-type, header row + data rows."""
         mock_uow = MagicMock()
-        mock_uow.topic_attributions.find_by_filters.return_value = (
-            [_make_ta_row(topic_name="orders", amount=Decimal("5.00"))],
-            1,
+        mock_uow.topic_attributions.iter_by_filters.return_value = iter(
+            [_make_ta_row(topic_name="orders", amount=Decimal("5.00"))]
         )
         with _app_with_mock_uow(mock_uow) as client:
             resp = client.post("/api/v1/tenants/prod/topic-attributions/export")
@@ -248,10 +247,7 @@ class TestExportTopicAttributionsEndpoint:
 
     def test_export_includes_all_columns(self) -> None:
         mock_uow = MagicMock()
-        mock_uow.topic_attributions.find_by_filters.return_value = (
-            [_make_ta_row()],
-            1,
-        )
+        mock_uow.topic_attributions.iter_by_filters.return_value = iter([_make_ta_row()])
         with _app_with_mock_uow(mock_uow) as client:
             resp = client.post("/api/v1/tenants/prod/topic-attributions/export")
 
@@ -262,10 +258,72 @@ class TestExportTopicAttributionsEndpoint:
 
     def test_export_empty_result_returns_header_only(self) -> None:
         mock_uow = MagicMock()
-        mock_uow.topic_attributions.find_by_filters.return_value = ([], 0)
+        mock_uow.topic_attributions.iter_by_filters.return_value = iter([])
         with _app_with_mock_uow(mock_uow) as client:
             resp = client.post("/api/v1/tenants/prod/topic-attributions/export")
 
         assert resp.status_code == 200
         lines = [ln for ln in resp.text.strip().split("\n") if ln]
         assert len(lines) == 1  # header only
+
+    def test_export_uses_iter_by_filters_not_find_by_filters(self) -> None:
+        """Export endpoint calls iter_by_filters(), never find_by_filters()."""
+        mock_uow = MagicMock()
+        mock_uow.topic_attributions.iter_by_filters.return_value = iter([_make_ta_row()])
+        with _app_with_mock_uow(mock_uow) as client:
+            client.post("/api/v1/tenants/prod/topic-attributions/export")
+
+        mock_uow.topic_attributions.iter_by_filters.assert_called_once()
+        mock_uow.topic_attributions.find_by_filters.assert_not_called()
+
+    def test_export_passes_ecosystem_and_tenant_to_iter(self) -> None:
+        """iter_by_filters is called with ecosystem and tenant_id from path."""
+        mock_uow = MagicMock()
+        mock_uow.topic_attributions.iter_by_filters.return_value = iter([])
+        with _app_with_mock_uow(mock_uow) as client:
+            client.post("/api/v1/tenants/prod/topic-attributions/export")
+
+        call_kwargs = mock_uow.topic_attributions.iter_by_filters.call_args.kwargs
+        assert call_kwargs["ecosystem"] == "eco"
+        assert call_kwargs["tenant_id"] == "prod"
+
+    def test_export_passes_date_range_to_iter(self) -> None:
+        """iter_by_filters receives start and end datetimes from query params."""
+        mock_uow = MagicMock()
+        mock_uow.topic_attributions.iter_by_filters.return_value = iter([])
+        with _app_with_mock_uow(mock_uow) as client:
+            client.post(
+                "/api/v1/tenants/prod/topic-attributions/export",
+                params={"start_date": "2026-01-01", "end_date": "2026-01-31"},
+            )
+
+        call_kwargs = mock_uow.topic_attributions.iter_by_filters.call_args.kwargs
+        assert call_kwargs["start"] == datetime(2026, 1, 1, tzinfo=UTC)
+        assert call_kwargs["end"] == datetime(2026, 2, 1, tzinfo=UTC)  # exclusive: midnight of day after end_date
+
+    def test_export_streams_all_rows_from_iterator(self) -> None:
+        """All rows yielded by iter_by_filters appear in the CSV output."""
+        mock_uow = MagicMock()
+        mock_uow.topic_attributions.iter_by_filters.return_value = iter(
+            [
+                _make_ta_row(topic_name="alpha"),
+                _make_ta_row(topic_name="beta"),
+                _make_ta_row(topic_name="gamma"),
+            ]
+        )
+        with _app_with_mock_uow(mock_uow) as client:
+            resp = client.post("/api/v1/tenants/prod/topic-attributions/export")
+
+        assert resp.status_code == 200
+        lines = [ln for ln in resp.text.strip().split("\n") if ln]
+        assert len(lines) == 4  # 1 header + 3 data rows
+        content = resp.text
+        assert "alpha" in content
+        assert "beta" in content
+        assert "gamma" in content
+
+    def test_export_unknown_tenant_returns_404(self) -> None:
+        mock_uow = MagicMock()
+        with _app_with_mock_uow(mock_uow) as client:
+            resp = client.post("/api/v1/tenants/nonexistent/topic-attributions/export")
+        assert resp.status_code == 404

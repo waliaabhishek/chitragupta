@@ -418,6 +418,21 @@ class TopicAttributionRepository(Protocol):
         """Returns (items, total_count). All filters applied at SQL level."""
         ...
 
+    def iter_by_filters(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        cluster_resource_id: str | None = None,
+        topic_name: str | None = None,
+        product_type: str | None = None,
+        attribution_method: str | None = None,
+        batch_size: int = 5000,
+    ) -> Iterator[TopicAttributionRow]:
+        """Yield rows matching filters in batches. No limit cap; bounded memory."""
+        ...
+
     def aggregate(
         self,
         ecosystem: str,

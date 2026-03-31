@@ -154,18 +154,16 @@ async def export_topic_attributions(
     timezone: Annotated[str | None, Query()] = None,
 ) -> StreamingResponse:
     start_dt, end_dt = resolve_date_range(start_date, end_date, timezone=timezone)
-    rows, _ = uow.topic_attributions.find_by_filters(
+    rows = uow.topic_attributions.iter_by_filters(
         ecosystem=tenant_config.ecosystem,
         tenant_id=tenant_config.tenant_id,
         start=start_dt,
         end=end_dt,
-        limit=100_000,
-        offset=0,
     )
 
     def generate() -> Iterator[str]:
         buf = io.StringIO()
-        writer = csv.writer(buf)
+        writer = csv.writer(buf, lineterminator="\n")
         writer.writerow(
             [
                 "ecosystem",

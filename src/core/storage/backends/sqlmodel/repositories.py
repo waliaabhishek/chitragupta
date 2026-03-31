@@ -1890,6 +1890,38 @@ class TopicAttributionRepository:
         )
         return [_ta_to_domain(dim, fact) for dim, fact in self._session.exec(stmt).all()]
 
+    def _build_ta_where(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        cluster_resource_id: str | None = None,
+        topic_name: str | None = None,
+        product_type: str | None = None,
+        attribution_method: str | None = None,
+    ) -> tuple[list[Any], Any]:
+        """Build WHERE clauses and join condition for topic attribution queries."""
+        _base_where = [
+            col(TopicAttributionDimensionTable.ecosystem) == ecosystem,
+            col(TopicAttributionDimensionTable.tenant_id) == tenant_id,
+        ]
+        optional: list[Any] = []
+        if start is not None:
+            optional.append(col(TopicAttributionFactTable.timestamp) >= start)
+        if end is not None:
+            optional.append(col(TopicAttributionFactTable.timestamp) < end)
+        if cluster_resource_id is not None:
+            optional.append(col(TopicAttributionDimensionTable.cluster_resource_id) == cluster_resource_id)
+        if topic_name is not None:
+            optional.append(col(TopicAttributionDimensionTable.topic_name) == topic_name)
+        if product_type is not None:
+            optional.append(col(TopicAttributionDimensionTable.product_type) == product_type)
+        if attribution_method is not None:
+            optional.append(col(TopicAttributionDimensionTable.attribution_method) == attribution_method)
+        join_cond = col(TopicAttributionFactTable.dimension_id) == col(TopicAttributionDimensionTable.dimension_id)
+        return [*_base_where, *optional], join_cond
+
     def find_by_filters(
         self,
         ecosystem: str,
@@ -1906,45 +1938,51 @@ class TopicAttributionRepository:
         """Returns (items, total_count). All filters applied at SQL level."""
         from sqlalchemy import func as sa_func
 
-        _base_where = [
-            col(TopicAttributionDimensionTable.ecosystem) == ecosystem,
-            col(TopicAttributionDimensionTable.tenant_id) == tenant_id,
-        ]
-
-        optional: list[Any] = []
-        if start is not None:
-            optional.append(col(TopicAttributionFactTable.timestamp) >= start)
-        if end is not None:
-            optional.append(col(TopicAttributionFactTable.timestamp) < end)
-        if cluster_resource_id is not None:
-            optional.append(col(TopicAttributionDimensionTable.cluster_resource_id) == cluster_resource_id)
-        if topic_name is not None:
-            optional.append(col(TopicAttributionDimensionTable.topic_name) == topic_name)
-        if product_type is not None:
-            optional.append(col(TopicAttributionDimensionTable.product_type) == product_type)
-        if attribution_method is not None:
-            optional.append(col(TopicAttributionDimensionTable.attribution_method) == attribution_method)
-
-        _join_condition_expr = col(TopicAttributionFactTable.dimension_id) == col(
-            TopicAttributionDimensionTable.dimension_id
+        where, join_cond = self._build_ta_where(
+            ecosystem, tenant_id, start, end, cluster_resource_id, topic_name, product_type, attribution_method
         )
         count_stmt = (
             select(sa_func.count())
             .select_from(TopicAttributionFactTable)
-            .join(TopicAttributionDimensionTable, _join_condition_expr)
-            .where(*_base_where, *optional)
+            .join(TopicAttributionDimensionTable, join_cond)
+            .where(*where)
         )
         total: int = self._session.execute(count_stmt).scalar_one()
 
         data_stmt = (
             select(TopicAttributionDimensionTable, TopicAttributionFactTable)
-            .join(TopicAttributionFactTable, _join_condition_expr)
-            .where(*_base_where, *optional)
+            .join(TopicAttributionFactTable, join_cond)
+            .where(*where)
             .offset(offset)
             .limit(limit)
         )
         rows = self._session.exec(data_stmt).all()
         return [_ta_to_domain(dim, fact) for dim, fact in rows], total
+
+    def iter_by_filters(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        cluster_resource_id: str | None = None,
+        topic_name: str | None = None,
+        product_type: str | None = None,
+        attribution_method: str | None = None,
+        batch_size: int = 5000,
+    ) -> Iterator[TopicAttributionRow]:
+        """Yield TopicAttributionRow objects in batches. Memory bounded to batch_size rows."""
+        where, join_cond = self._build_ta_where(
+            ecosystem, tenant_id, start, end, cluster_resource_id, topic_name, product_type, attribution_method
+        )
+        stmt = (
+            select(TopicAttributionDimensionTable, TopicAttributionFactTable)
+            .join(TopicAttributionFactTable, join_cond)
+            .where(*where)
+            .execution_options(yield_per=batch_size)
+        )
+        for partition in self._session.execute(stmt).partitions(batch_size):
+            yield from (_ta_to_domain(dim, fact) for dim, fact in partition)
 
     def aggregate(
         self,
