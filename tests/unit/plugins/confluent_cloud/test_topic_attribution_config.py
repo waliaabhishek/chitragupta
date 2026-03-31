@@ -3,6 +3,8 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
+_METRICS_STUB = {"type": "prometheus", "url": "http://prom:9090"}
+
 
 def _make_base_config(**overrides) -> dict:
     base = {
@@ -44,7 +46,9 @@ class TestTopicAttributionConfigEnabled:
     def test_can_enable_topic_attribution(self) -> None:
         from plugins.confluent_cloud.config import CCloudPluginConfig
 
-        config = CCloudPluginConfig.from_plugin_settings(_make_base_config(topic_attribution={"enabled": True}))
+        config = CCloudPluginConfig.from_plugin_settings(
+            _make_base_config(topic_attribution={"enabled": True}, metrics=_METRICS_STUB)
+        )
         assert config.topic_attribution.enabled is True
 
     def test_missing_metrics_behavior_skip(self) -> None:
@@ -55,7 +59,8 @@ class TestTopicAttributionConfigEnabled:
                 topic_attribution={
                     "enabled": True,
                     "missing_metrics_behavior": "skip",
-                }
+                },
+                metrics=_METRICS_STUB,
             )
         )
         assert config.topic_attribution.missing_metrics_behavior == "skip"
@@ -69,7 +74,8 @@ class TestTopicAttributionConfigEnabled:
                     topic_attribution={
                         "enabled": True,
                         "missing_metrics_behavior": "invalid_mode",
-                    }
+                    },
+                    metrics=_METRICS_STUB,
                 )
             )
 
@@ -86,7 +92,8 @@ class TestTopicAttributionConfigCostMappingOverrides:
                         "KAFKA_PARTITION": "even_split",
                         "KAFKA_BASE": "bytes_ratio",
                     },
-                }
+                },
+                metrics=_METRICS_STUB,
             )
         )
         overrides = config.topic_attribution.cost_mapping_overrides
@@ -102,7 +109,8 @@ class TestTopicAttributionConfigCostMappingOverrides:
                     topic_attribution={
                         "enabled": True,
                         "cost_mapping_overrides": {"KAFKA_BASE": "bogus_method"},
-                    }
+                    },
+                    metrics=_METRICS_STUB,
                 )
             )
 
@@ -114,7 +122,8 @@ class TestTopicAttributionConfigCostMappingOverrides:
                 topic_attribution={
                     "enabled": True,
                     "cost_mapping_overrides": {"KAFKA_BASE": "disabled"},
-                }
+                },
+                metrics=_METRICS_STUB,
             )
         )
         assert config.topic_attribution.cost_mapping_overrides["KAFKA_BASE"] == "disabled"
@@ -131,7 +140,8 @@ class TestTopicAttributionConfigMetricNameOverrides:
                     "metric_name_overrides": {
                         "topic_bytes_in": "custom_received_bytes",
                     },
-                }
+                },
+                metrics=_METRICS_STUB,
             )
         )
         assert config.topic_attribution.metric_name_overrides["topic_bytes_in"] == "custom_received_bytes"
@@ -145,7 +155,8 @@ class TestTopicAttributionConfigMetricNameOverrides:
                     topic_attribution={
                         "enabled": True,
                         "metric_name_overrides": {"invalid_key": "some_metric"},
-                    }
+                    },
+                    metrics=_METRICS_STUB,
                 )
             )
 
@@ -158,7 +169,8 @@ class TestTopicAttributionConfigMetricNameOverrides:
                     topic_attribution={
                         "enabled": True,
                         "metric_name_overrides": {"topic_bytes_in": ""},
-                    }
+                    },
+                    metrics=_METRICS_STUB,
                 )
             )
 
@@ -168,7 +180,7 @@ class TestTopicAttributionConfigRetention:
         from plugins.confluent_cloud.config import CCloudPluginConfig
 
         config = CCloudPluginConfig.from_plugin_settings(
-            _make_base_config(topic_attribution={"enabled": True, "retention_days": 30})
+            _make_base_config(topic_attribution={"enabled": True, "retention_days": 30}, metrics=_METRICS_STUB)
         )
         assert config.topic_attribution.retention_days == 30
 
@@ -177,7 +189,7 @@ class TestTopicAttributionConfigRetention:
 
         with pytest.raises(ValidationError):
             CCloudPluginConfig.from_plugin_settings(
-                _make_base_config(topic_attribution={"enabled": True, "retention_days": 0})
+                _make_base_config(topic_attribution={"enabled": True, "retention_days": 0}, metrics=_METRICS_STUB)
             )
 
     def test_retention_days_over_365_raises(self) -> None:
@@ -185,7 +197,7 @@ class TestTopicAttributionConfigRetention:
 
         with pytest.raises(ValidationError):
             CCloudPluginConfig.from_plugin_settings(
-                _make_base_config(topic_attribution={"enabled": True, "retention_days": 400})
+                _make_base_config(topic_attribution={"enabled": True, "retention_days": 400}, metrics=_METRICS_STUB)
             )
 
 

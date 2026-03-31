@@ -51,6 +51,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     from core attribution models (DIP-compliant)
 
 ### Fixed
+- Fix: TASK-169 — Config validation rejects `topic_attribution.enabled: true` without a `metrics` source
+
+  Previously, enabling topic attribution without a configured Prometheus metrics source was silently
+  accepted. `TopicAttributionPhase._fetch_topic_metrics()` returned `{}` (empty), which the caller
+  treated as "healthy but no data" and proceeded to produce even-split attribution rows based on zero
+  metric data — indistinguishable from a legitimate empty cluster.
+
+  A new `@model_validator` on `CCloudPluginConfig` now raises `ValidationError` at load time when
+  `topic_attribution.enabled=True` and `metrics` is `None`. `_fetch_topic_metrics()` also raises
+  `RuntimeError` if somehow called without a metrics source, making the invariant violation loud
+  rather than silent.
+
 - Fix: TASK-167 — Remove duplicated `_distribute_remainder` from `topic_attribution_models.py`
 
   The local copy used an unbounded `while diff != 0` loop, which could hang forever on

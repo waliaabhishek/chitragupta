@@ -455,6 +455,18 @@ class TestChargebackOrchestratorOverlayLoop:
         mock_uow.pipeline_state.find_needing_topic_attribution.assert_not_called()
 
 
+class TestFetchTopicMetricsWithoutMetricsSource:
+    def test_fetch_topic_metrics_without_metrics_source_raises_runtime_error(self) -> None:
+        from datetime import UTC, datetime
+
+        phase = _make_phase(metrics_source=None)
+        b_start = datetime(2026, 1, 1, tzinfo=UTC)
+        b_end = datetime(2026, 1, 2, tzinfo=UTC)
+
+        with pytest.raises(RuntimeError, match="should have been caught at config validation"):
+            phase._fetch_topic_metrics("lkc-abc", b_start, b_end)
+
+
 class TestTopicAttributionPhaseIntegration:
     """Integration tests: TopicAttributionPhase.run() against real SQLite storage."""
 
@@ -512,10 +524,13 @@ class TestTopicAttributionPhaseIntegration:
             )
             uow.commit()
 
+        metrics_source = MagicMock()
+        metrics_source.query.return_value = {}  # Prometheus healthy but no data for cluster
+
         phase = TopicAttributionPhase(
             ecosystem="eco",
             tenant_id="t1",
-            metrics_source=None,  # no metrics → even_split fallback
+            metrics_source=metrics_source,  # healthy metrics source, empty response → even_split fallback
             config=cfg,
             metrics_step=timedelta(minutes=1),
         )

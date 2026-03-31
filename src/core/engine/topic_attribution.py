@@ -191,9 +191,13 @@ class TopicAttributionPhase:
 
         Returns None on infrastructure failure (Prometheus unreachable).
         Returns {} if Prometheus healthy but no data.
+        Raises RuntimeError if called with no metrics source configured.
         """
         if not self._metrics_source:
-            return {}
+            raise RuntimeError(
+                "TopicAttributionPhase._fetch_topic_metrics() called without a metrics_source — "
+                "this should have been caught at config validation"
+            )
 
         try:
             raw = self._metrics_source.query(

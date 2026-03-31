@@ -234,6 +234,44 @@ def test_cku_ratios_boundary_within_tolerance() -> None:
     assert config.allocator_params["kafka_cku_usage_ratio"] == 0.70001
 
 
+def test_topic_attribution_enabled_without_metrics_raises() -> None:
+    from plugins.confluent_cloud.config import CCloudPluginConfig
+
+    with pytest.raises(ValidationError, match="topic_attribution.enabled=True requires"):
+        CCloudPluginConfig.from_plugin_settings(
+            {
+                "ccloud_api": {"key": "k", "secret": "s"},
+                "topic_attribution": {"enabled": True},
+            }
+        )
+
+
+def test_topic_attribution_enabled_with_metrics_passes() -> None:
+    from plugins.confluent_cloud.config import CCloudPluginConfig
+
+    config = CCloudPluginConfig.from_plugin_settings(
+        {
+            "ccloud_api": {"key": "k", "secret": "s"},
+            "topic_attribution": {"enabled": True},
+            "metrics": {"type": "prometheus", "url": "http://prom:9090"},
+        }
+    )
+    assert config.topic_attribution.enabled is True
+    assert config.metrics is not None
+
+
+def test_topic_attribution_disabled_without_metrics_passes() -> None:
+    from plugins.confluent_cloud.config import CCloudPluginConfig
+
+    config = CCloudPluginConfig.from_plugin_settings(
+        {
+            "ccloud_api": {"key": "k", "secret": "s"},
+        }
+    )
+    assert config.topic_attribution.enabled is False
+    assert config.metrics is None
+
+
 def test_cku_ratios_boundary_outside_tolerance() -> None:
     from plugins.confluent_cloud.config import CCloudPluginConfig
 

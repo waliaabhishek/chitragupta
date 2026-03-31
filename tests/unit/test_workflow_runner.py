@@ -2113,10 +2113,13 @@ class TestCleanupRetentionTopicAttribution:
         return mock_backend, mock_uow
 
     def _make_tenant_with_ta(self, *, ta_enabled: bool, ta_retention_days: int = 30) -> TenantConfig:
+        from core.metrics.config import MetricsConnectionConfig
         from plugins.confluent_cloud.config import CCloudPluginConfig, TopicAttributionConfig
 
+        metrics = MetricsConnectionConfig(type="prometheus", url="http://prom:9090") if ta_enabled else None
         plugin_settings = CCloudPluginConfig(
             ccloud_api={"key": "k", "secret": "s"},
+            metrics=metrics,
             topic_attribution=TopicAttributionConfig(
                 enabled=ta_enabled,
                 retention_days=ta_retention_days,

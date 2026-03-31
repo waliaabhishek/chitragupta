@@ -168,6 +168,11 @@ topic_attribution:
   emitters: []                           # same format as top-level emitters
 ```
 
+!!! warning "Requires `metrics` to be configured"
+    `topic_attribution.enabled: true` requires a `metrics` section in `plugin_settings`.
+    Config validation rejects the combination of `enabled: true` and no `metrics` source — startup
+    fails with a `ValidationError` rather than silently producing even-split attribution from zero data.
+
 ### `topic_attribution` fields
 
 | Field | Type | Default | Description |

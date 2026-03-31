@@ -116,6 +116,16 @@ class CCloudPluginConfig(PluginSettingsBase):
                 )
         return self
 
+    @model_validator(mode="after")
+    def validate_topic_attribution_requires_metrics(self) -> CCloudPluginConfig:
+        """Topic attribution requires a configured metrics source."""
+        if self.topic_attribution.enabled and self.metrics is None:
+            raise ValueError(
+                "topic_attribution.enabled=True requires a configured metrics source; "
+                "set plugin_settings.metrics or disable topic_attribution"
+            )
+        return self
+
     @classmethod
     def from_plugin_settings(cls, settings: dict[str, Any]) -> CCloudPluginConfig:
         """Validate and parse plugin_settings dict."""
