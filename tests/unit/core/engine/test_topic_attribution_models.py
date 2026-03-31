@@ -37,7 +37,6 @@ def _make_ctx(**overrides) -> TopicAttributionContext:
         cluster_cost=Decimal("10.00"),
         topics=frozenset(["a", "b"]),
         topic_metrics={"topic_bytes_in": {"a": 80.0, "b": 20.0}},
-        metrics_available=True,
         config=_make_config(),
     )
     defaults.update(overrides)
@@ -61,12 +60,6 @@ class TestTopicUsageRatioModel:
     def test_topic_usage_ratio_returns_none_when_all_zero(self) -> None:
         """All metric values zero → returns None to signal chain fallback."""
         ctx = _make_ctx(topic_metrics={"topic_bytes_in": {"a": 0.0, "b": 0.0}})
-        model = TopicUsageRatioModel(metric_keys=("topic_bytes_in",))
-        result = model.attribute(ctx)
-        assert result is None
-
-    def test_topic_usage_ratio_returns_none_when_metrics_unavailable(self) -> None:
-        ctx = _make_ctx(metrics_available=False)
         model = TopicUsageRatioModel(metric_keys=("topic_bytes_in",))
         result = model.attribute(ctx)
         assert result is None
@@ -204,6 +197,19 @@ class TestHelpersSymbolImport:
         source_file = inspect.getsourcefile(tam._distribute_remainder)
         assert source_file is not None
         assert source_file.endswith("helpers.py")
+
+
+class TestDeadCodeRemoval:
+    def test_no_metrics_available_field_on_context(self) -> None:
+        """metrics_available must not exist as a field on TopicAttributionContext after removal."""
+        assert "metrics_available" not in TopicAttributionContext.__dataclass_fields__
+
+    def test_usage_ratio_no_metrics_available_guard(self) -> None:
+        """Empty topic_metrics → cluster_total == 0.0 path returns None, not a removed guard."""
+        ctx = _make_ctx(topic_metrics={})
+        model = TopicUsageRatioModel(metric_keys=("topic_bytes_in",))
+        result = model.attribute(ctx)
+        assert result is None
 
 
 class TestTopicFilter:

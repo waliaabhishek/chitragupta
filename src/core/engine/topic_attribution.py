@@ -172,7 +172,6 @@ class TopicAttributionPhase:
                 cluster_cost=Decimal(str(line.total_cost)),
                 topics=all_topics,
                 topic_metrics=topic_metrics,
-                metrics_available=True,
                 config=self._config,
             )
             topic_rows = model.attribute(ctx)

@@ -50,7 +50,6 @@ class TopicAttributionContext:
     cluster_cost: Decimal
     topics: frozenset[str]
     topic_metrics: dict[str, dict[str, float]]  # {metric_key: {topic_name: value}}
-    metrics_available: bool  # False if Prometheus returned None
     config: TopicAttributionConfigProtocol
 
 
@@ -76,9 +75,6 @@ class TopicUsageRatioModel:
     method_name: str = "bytes_ratio"
 
     def attribute(self, ctx: TopicAttributionContext) -> list[TopicAttributionRow] | None:
-        if not ctx.metrics_available:
-            return None
-
         topic_usage: dict[str, float] = {}
         for key in self.metric_keys:
             for topic, value in ctx.topic_metrics.get(key, {}).items():
