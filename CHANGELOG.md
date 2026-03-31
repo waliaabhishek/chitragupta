@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **Fix:** Removed `server_default=""` from `topic_attribution_facts.amount` column — the database now rejects inserts with missing amount values instead of silently storing empty strings, matching the `chargeback_facts` schema pattern. New migration 015 removes the default for existing installs. (TASK-171)
+
 ### Added
 - Feat: TASK-168 — Generalize `EmitterRunner` for pipeline-agnostic emission tracking
 

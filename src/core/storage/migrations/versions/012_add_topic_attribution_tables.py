@@ -57,7 +57,7 @@ def upgrade() -> None:
         sa.Column(
             "dimension_id", sa.Integer(), sa.ForeignKey("topic_attribution_dimensions.dimension_id"), primary_key=True
         ),
-        sa.Column("amount", sa.String(), nullable=False, server_default=""),
+        sa.Column("amount", sa.String(), nullable=False),
     )
     op.create_index("ix_topic_attr_facts_dim_ts", "topic_attribution_facts", ["dimension_id", "timestamp"])
 

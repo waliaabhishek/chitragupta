@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
 
 import pytest
 from sqlalchemy import inspect as sa_inspect
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import create_engine
+
+if TYPE_CHECKING:
+    from alembic.config import Config
 
 from core.storage.backends.sqlmodel.engine import _engine_lock, _engines
 from core.storage.backends.sqlmodel.module import CoreStorageModule
@@ -448,3 +453,121 @@ class TestMigration014PipelineColumn:
         assert rows, "emission_records table not found after upgrade"
         table_sql = rows[0][0] or ""
         assert "pipeline" in table_sql, "Unique constraint must include pipeline column"
+
+
+class TestMigration015RemoveAmountServerDefault:
+    """Verification: Migration 015 removes server_default from topic_attribution_facts.amount."""
+
+    def _get_alembic_cfg(self, conn: str) -> Config:
+        import pathlib
+
+        from alembic.config import Config
+
+        migrations_dir = pathlib.Path(__file__).resolve().parents[4] / "src" / "core" / "storage" / "migrations"
+        alembic_ini = migrations_dir / "alembic.ini"
+        cfg = Config(str(alembic_ini))
+        cfg.set_main_option("script_location", str(migrations_dir))
+        cfg.set_main_option("sqlalchemy.url", conn)
+        return cfg
+
+    def test_migration_015_upgrade_removes_amount_server_default(self, tmp_path) -> None:
+        """After upgrading to 015, INSERT into topic_attribution_facts without amount raises IntegrityError."""
+        from alembic import command
+        from sqlalchemy import create_engine, text
+
+        db_path = tmp_path / "test.db"
+        conn = f"sqlite:///{db_path}"
+        cfg = self._get_alembic_cfg(conn)
+
+        command.upgrade(cfg, "014")
+        command.upgrade(cfg, "015")
+
+        engine = create_engine(conn)
+        with engine.connect() as c:
+            c.execute(
+                text("""
+                INSERT INTO topic_attribution_dimensions
+                    (ecosystem, tenant_id, env_id, cluster_resource_id, topic_name,
+                     product_category, product_type, attribution_method)
+                VALUES
+                    ('eco', 't-1', 'env-1', 'lkc-001', 'topic-a',
+                     'compute', 'kafka', 'proportional')
+            """)
+            )
+            c.commit()
+            dim_id = c.execute(text("SELECT dimension_id FROM topic_attribution_dimensions LIMIT 1")).scalar()
+
+        with engine.connect() as c, pytest.raises(IntegrityError):
+            c.execute(
+                text(
+                    "INSERT INTO topic_attribution_facts"
+                    " (timestamp, dimension_id) VALUES ('2026-01-01 00:00:00', :dim_id)"
+                ).bindparams(dim_id=dim_id)
+            )
+            c.commit()
+
+        engine.dispose()
+
+    def test_migration_015_downgrade_restores_amount_server_default(self, tmp_path) -> None:
+        """After downgrading from 015 to 014, INSERT without amount succeeds with amount=''."""
+        from alembic import command
+        from sqlalchemy import create_engine, text
+
+        db_path = tmp_path / "test.db"
+        conn = f"sqlite:///{db_path}"
+        cfg = self._get_alembic_cfg(conn)
+
+        command.upgrade(cfg, "015")
+        command.downgrade(cfg, "014")
+
+        engine = create_engine(conn)
+        with engine.connect() as c:
+            c.execute(
+                text("""
+                INSERT INTO topic_attribution_dimensions
+                    (ecosystem, tenant_id, env_id, cluster_resource_id, topic_name,
+                     product_category, product_type, attribution_method)
+                VALUES
+                    ('eco', 't-1', 'env-1', 'lkc-001', 'topic-a',
+                     'compute', 'kafka', 'proportional')
+            """)
+            )
+            c.commit()
+            dim_id = c.execute(text("SELECT dimension_id FROM topic_attribution_dimensions LIMIT 1")).scalar()
+            c.execute(
+                text(
+                    "INSERT INTO topic_attribution_facts"
+                    " (timestamp, dimension_id) VALUES ('2026-01-01 00:00:00', :dim_id)"
+                ).bindparams(dim_id=dim_id)
+            )
+            c.commit()
+            row = c.execute(text("SELECT amount FROM topic_attribution_facts LIMIT 1")).fetchone()
+
+        engine.dispose()
+
+        assert row is not None, "Row should have been inserted after downgrade restores server_default"
+        assert row[0] == "", f"amount should be empty string from server_default, got {row[0]!r}"
+
+    def test_migration_012_amount_column_has_no_server_default(self) -> None:
+        """Migration 012 source must NOT have server_default on the amount column."""
+        import pathlib
+
+        migration_file = (
+            pathlib.Path(__file__).resolve().parents[4]
+            / "src"
+            / "core"
+            / "storage"
+            / "migrations"
+            / "versions"
+            / "012_add_topic_attribution_tables.py"
+        )
+        content = migration_file.read_text()
+
+        # Find the line defining the amount column
+        amount_lines = [line for line in content.splitlines() if '"amount"' in line or "'amount'" in line]
+        assert amount_lines, "Could not find amount column definition in migration 012"
+
+        for line in amount_lines:
+            assert "server_default" not in line, (
+                f"Migration 012 amount column must not have server_default, but found: {line.strip()!r}"
+            )
