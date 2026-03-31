@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **Fix:** Added missing `attribution_method` label to the `chitragupta_topic_attribution_amount` Prometheus gauge. Without this label, topic attribution rows with the same topic but different attribution methods (e.g. `bytes_ratio` vs `even_split`) silently overwrote each other. The Prometheus emitter now matches the CSV emitter's output dimensions. Also fixed test fixture cleanup for `_topic_attribution_col`. (TASK-172)
 - **Fix:** Removed `server_default=""` from `topic_attribution_facts.amount` column — the database now rejects inserts with missing amount values instead of silently storing empty strings, matching the `chargeback_facts` schema pattern. New migration 015 removes the default for existing installs. (TASK-171)
 
 ### Added

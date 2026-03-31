@@ -132,7 +132,7 @@ def reset_prometheus_emitter_state() -> Any:
 
     from emitters.prometheus_emitter import PrometheusEmitter
 
-    for attr in ("_chargeback_col", "_billing_col", "_resource_col", "_identity_col"):
+    for attr in ("_chargeback_col", "_billing_col", "_resource_col", "_identity_col", "_topic_attribution_col"):
         col = getattr(PrometheusEmitter, attr)
         if col is not None:
             with contextlib.suppress(Exception):
@@ -661,3 +661,85 @@ class TestRegistryGetUnknownEmitter:
 
         with pytest.raises(ValueError, match="nonexistent_emitter"):
             get("nonexistent_emitter", {})
+
+
+# ---------------------------------------------------------------------------
+# TASK-172 — Topic attribution metric: attribution_method label
+# ---------------------------------------------------------------------------
+
+
+def _make_topic_attribution_row(
+    *,
+    ecosystem: str = ECOSYSTEM,
+    env_id: str = "env-abc",
+    cluster_resource_id: str = "lkc-xyz",
+    topic_name: str = "orders-events",
+    product_category: str = "KAFKA",
+    product_type: str = "KAFKA_NETWORK_WRITE",
+    attribution_method: str = "bytes_ratio",
+    amount: Decimal = Decimal("10.00"),
+) -> Any:
+    from core.models.topic_attribution import TopicAttributionRow
+
+    return TopicAttributionRow(
+        ecosystem=ecosystem,
+        tenant_id=TENANT_ID,
+        timestamp=datetime(2024, 1, 15, 0, 0, 0, tzinfo=UTC),
+        env_id=env_id,
+        cluster_resource_id=cluster_resource_id,
+        topic_name=topic_name,
+        product_category=product_category,
+        product_type=product_type,
+        attribution_method=attribution_method,
+        amount=amount,
+    )
+
+
+class TestTopicAttributionMetric:
+    def test_attribution_method_in_label_names(self) -> None:
+        from emitters.prometheus_emitter import PrometheusEmitter
+
+        sb, _ = _mock_storage_backend()
+        emitter = PrometheusEmitter(port=9090, storage_backend=sb)
+        emitter.emit_topic_attributions(TENANT_ID, DATE, [_make_topic_attribution_row()])
+
+        assert "attribution_method" in PrometheusEmitter._topic_attribution_col._label_names
+
+    def test_attribution_method_in_sample_values(self) -> None:
+        from emitters.prometheus_emitter import PrometheusEmitter
+
+        sb, _ = _mock_storage_backend()
+        emitter = PrometheusEmitter(port=9090, storage_backend=sb)
+        emitter.emit_topic_attributions(
+            TENANT_ID, DATE, [_make_topic_attribution_row(attribution_method="bytes_ratio")]
+        )
+
+        samples = PrometheusEmitter._topic_attribution_col._samples_by_tenant[TENANT_ID]
+        assert len(samples) == 1
+        labels, value, ts = samples[0]
+        assert "bytes_ratio" in labels
+        assert value == float(Decimal("10.00"))
+        assert ts == DATE_TS
+
+    def test_different_attribution_methods_produce_distinct_samples(self) -> None:
+        from emitters.prometheus_emitter import PrometheusEmitter
+
+        sb, _ = _mock_storage_backend()
+        emitter = PrometheusEmitter(port=9090, storage_backend=sb)
+        rows = [
+            _make_topic_attribution_row(attribution_method="bytes_ratio", amount=Decimal("10.00")),
+            _make_topic_attribution_row(attribution_method="even_split", amount=Decimal("5.00")),
+        ]
+        emitter.emit_topic_attributions(TENANT_ID, DATE, rows)
+
+        samples = PrometheusEmitter._topic_attribution_col._samples_by_tenant[TENANT_ID]
+        assert len(samples) == 2
+        label_sets = [tuple(s[0]) for s in samples]
+        assert len(set(label_sets)) == 2, "Label sets must be distinct — no silent overwrite"
+
+    def test_empty_rows_does_not_raise(self) -> None:
+        from emitters.prometheus_emitter import PrometheusEmitter
+
+        sb, _ = _mock_storage_backend()
+        emitter = PrometheusEmitter(port=9090, storage_backend=sb)
+        emitter.emit_topic_attributions(TENANT_ID, DATE, [])  # must not raise

@@ -123,6 +123,7 @@ class PrometheusEmitter:
                         "topic_name",
                         "product_category",
                         "product_type",
+                        "attribution_method",
                     ],
                 )
 
@@ -214,6 +215,7 @@ class PrometheusEmitter:
                     row.topic_name,
                     row.product_category,
                     row.product_type,
+                    row.attribution_method,
                 ],
                 float(row.amount),
                 ts_float,
