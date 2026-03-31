@@ -281,3 +281,70 @@ class TestConfluentCloudPluginClose:
         assert plugin._connection is None
         mock_metrics.close.assert_called_once()
         assert plugin._metrics_source is None
+
+
+class TestConfluentCloudPluginGetOverlayConfig:
+    """get_overlay_config must implement the OverlayPlugin protocol."""
+
+    def test_get_overlay_config_topic_attribution_returns_config(self) -> None:
+        from plugins.confluent_cloud import ConfluentCloudPlugin
+        from plugins.confluent_cloud.config import TopicAttributionConfig
+
+        plugin = ConfluentCloudPlugin()
+        plugin.initialize(
+            {
+                "ccloud_api": {"key": "k", "secret": "s"},
+                "metrics": {"type": "prometheus", "url": "http://prom:9090"},
+                "topic_attribution": {"enabled": True},
+            }
+        )
+
+        result = plugin.get_overlay_config("topic_attribution")
+
+        assert result is not None
+        assert isinstance(result, TopicAttributionConfig)
+        assert result.enabled is True
+
+    def test_get_overlay_config_unknown_name_returns_none(self) -> None:
+        from plugins.confluent_cloud import ConfluentCloudPlugin
+
+        plugin = ConfluentCloudPlugin()
+        plugin.initialize({"ccloud_api": {"key": "k", "secret": "s"}})
+
+        result = plugin.get_overlay_config("unknown_name")
+
+        assert result is None
+
+    def test_get_overlay_config_returns_object_satisfying_both_protocols(self) -> None:
+        from core.engine.topic_attribution_models import TopicAttributionConfigProtocol
+        from core.plugin.protocols import OverlayConfig
+        from plugins.confluent_cloud import ConfluentCloudPlugin
+
+        plugin = ConfluentCloudPlugin()
+        plugin.initialize(
+            {
+                "ccloud_api": {"key": "k", "secret": "s"},
+                "metrics": {"type": "prometheus", "url": "http://prom:9090"},
+                "topic_attribution": {"enabled": True},
+            }
+        )
+
+        result = plugin.get_overlay_config("topic_attribution")
+
+        assert result is not None
+        assert isinstance(result, OverlayConfig)
+        assert isinstance(result, TopicAttributionConfigProtocol)
+
+    def test_confluent_cloud_plugin_satisfies_overlay_plugin_protocol(self) -> None:
+        from core.plugin.protocols import OverlayPlugin
+        from plugins.confluent_cloud import ConfluentCloudPlugin
+
+        plugin = ConfluentCloudPlugin()
+        assert isinstance(plugin, OverlayPlugin)
+
+    def test_get_overlay_config_before_initialize_returns_none(self) -> None:
+        from plugins.confluent_cloud import ConfluentCloudPlugin
+
+        plugin = ConfluentCloudPlugin()
+        result = plugin.get_overlay_config("topic_attribution")
+        assert result is None

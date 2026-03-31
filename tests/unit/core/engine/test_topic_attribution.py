@@ -275,17 +275,15 @@ class TestGatherPhaseTopicDiscovery:
 
         assert isinstance(mock_plugin, TopicDiscoveryPlugin)
 
+        mock_ta_config = MagicMock()
+        mock_ta_config.enabled = True
+        mock_plugin.get_overlay_config = MagicMock(return_value=mock_ta_config)
+
         mock_bundle = MagicMock()
         mock_bundle.plugin = mock_plugin
         mock_bundle.handlers = {}
 
-        mock_ta_config = MagicMock()
-        mock_ta_config.enabled = True
-        mock_plugin_settings = MagicMock()
-        mock_plugin_settings.topic_attribution = mock_ta_config
-
         mock_tenant_config = MagicMock()
-        mock_tenant_config.plugin_settings = mock_plugin_settings
         mock_tenant_config.lookback_days = 30
         mock_tenant_config.cutoff_days = 5
         mock_tenant_config.zero_gather_deletion_threshold = -1

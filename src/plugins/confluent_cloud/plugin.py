@@ -20,7 +20,7 @@ from plugins.confluent_cloud.handlers.schema_registry import SchemaRegistryHandl
 if TYPE_CHECKING:
     from core.metrics.protocol import MetricsSource
     from core.models.resource import Resource
-    from core.plugin.protocols import CostAllocator, CostInput, ServiceHandler
+    from core.plugin.protocols import CostAllocator, CostInput, OverlayConfig, ServiceHandler
     from plugins.confluent_cloud.shared_context import CCloudSharedContext
     from plugins.confluent_cloud.storage.module import CCloudStorageModule
 
@@ -181,6 +181,11 @@ class ConfluentCloudPlugin:
                     display_name=topic_name,
                     parent_id=cluster_id,
                 )
+
+    def get_overlay_config(self, name: str) -> OverlayConfig | None:
+        if name == "topic_attribution" and self._config is not None:
+            return self._config.topic_attribution
+        return None
 
     def get_storage_module(self) -> CCloudStorageModule:
         from plugins.confluent_cloud.storage.module import CCloudStorageModule

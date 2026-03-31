@@ -17,7 +17,7 @@ from core.engine.loading import load_protocol_callable
 from core.models.chargeback import ChargebackRow, CostType
 from core.models.identity import SENTINEL_IDENTITY_TYPES, CoreIdentity, IdentityResolution, IdentitySet
 from core.models.pipeline import PipelineState
-from core.plugin.protocols import TopicDiscoveryPlugin
+from core.plugin.protocols import OverlayPlugin, TopicDiscoveryPlugin
 from core.plugin.registry import EcosystemBundle
 
 if TYPE_CHECKING:
@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     from core.models.billing import BillingLineItem
     from core.models.metrics import MetricQuery, MetricRow
     from core.models.resource import Resource
-    from core.plugin.protocols import CostAllocator, EcosystemPlugin, ResolveContext, ServiceHandler
+    from core.plugin.protocols import CostAllocator, EcosystemPlugin, OverlayConfig, ResolveContext, ServiceHandler
     from core.storage.interface import StorageBackend, UnitOfWork
 
     class _EntityRepo(Protocol):
@@ -40,10 +40,11 @@ if TYPE_CHECKING:
         def mark_deleted(self, ecosystem: str, tenant_id: str, entity_id: str, deleted_at: datetime) -> None: ...
 
 
-def _get_ta_config(tenant_config: TenantConfig) -> Any:
-    """Return plugin_settings.topic_attribution if present, else None."""
-    plugin_settings = getattr(tenant_config, "plugin_settings", None)
-    return getattr(plugin_settings, "topic_attribution", None) if plugin_settings else None
+def _get_ta_config(plugin: EcosystemPlugin) -> OverlayConfig | None:
+    """Return topic attribution overlay config from the plugin."""
+    if isinstance(plugin, OverlayPlugin):
+        return plugin.get_overlay_config("topic_attribution")
+    return None
 
 
 logger = logging.getLogger(__name__)
@@ -162,7 +163,7 @@ class GatherPhase:
         # In-memory state — must survive across run() calls on same instance
         self._last_resource_gather_at: datetime | None = None
         self._zero_gather_counters: dict[str, int] = {"resources": 0, "identities": 0}
-        ta_config = _get_ta_config(tenant_config)
+        ta_config = _get_ta_config(bundle.plugin)
         self._topic_attribution_enabled: bool = bool(ta_config and ta_config.enabled)
 
     def run(self, uow: UnitOfWork | None = None) -> GatherResult:
@@ -763,17 +764,20 @@ class ChargebackOrchestrator:
         self._gather_failure_threshold = tenant_config.gather_failure_threshold
 
         self._topic_overlay_phase: TopicAttributionPhase | None = None
-        ta_config = _get_ta_config(tenant_config)
+        ta_config = _get_ta_config(bundle.plugin)
         if ta_config and ta_config.enabled:
-            from core.engine.topic_attribution import TopicAttributionPhase
+            from core.engine.topic_attribution_models import TopicAttributionConfigProtocol
 
-            self._topic_overlay_phase = TopicAttributionPhase(
-                ecosystem=self._ecosystem,
-                tenant_id=self._tenant_id,
-                metrics_source=metrics_source,
-                config=ta_config,
-                metrics_step=metrics_step,
-            )
+            if isinstance(ta_config, TopicAttributionConfigProtocol):
+                from core.engine.topic_attribution import TopicAttributionPhase
+
+                self._topic_overlay_phase = TopicAttributionPhase(
+                    ecosystem=self._ecosystem,
+                    tenant_id=self._tenant_id,
+                    metrics_source=metrics_source,
+                    config=ta_config,
+                    metrics_step=metrics_step,
+                )
 
         with storage_backend.create_unit_of_work() as uow:
             _ensure_unallocated_identity(uow, self._ecosystem, self._tenant_id)

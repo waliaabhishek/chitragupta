@@ -163,6 +163,24 @@ class TopicDiscoveryPlugin(Protocol):
 
 
 @runtime_checkable
+class OverlayConfig(Protocol):
+    """Base protocol for overlay configuration."""
+
+    enabled: bool
+
+
+@runtime_checkable
+class OverlayPlugin(Protocol):
+    """Plugin capability for providing overlay configurations.
+
+    Implement alongside EcosystemPlugin to provide overlay-specific config
+    to core code without getattr probing.
+    """
+
+    def get_overlay_config(self, name: str) -> OverlayConfig | None: ...
+
+
+@runtime_checkable
 class Emitter(Protocol):
     """Protocol for output sinks — called after chargeback calculation is committed.
 

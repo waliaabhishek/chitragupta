@@ -196,3 +196,49 @@ class TestEcosystemPluginCloseRequired:
                 return None
 
         assert not isinstance(PluginWithoutClose(), EcosystemPlugin)
+
+
+# --- OverlayConfig and OverlayPlugin Protocol Tests ---
+
+
+class TestOverlayConfigProtocol:
+    def test_conforming_class_satisfies_overlay_config(self) -> None:
+        from core.plugin.protocols import OverlayConfig
+
+        class ConformingConfig:
+            enabled: bool = True
+
+        assert isinstance(ConformingConfig(), OverlayConfig)
+
+    def test_non_conforming_class_does_not_satisfy_overlay_config(self) -> None:
+        from core.plugin.protocols import OverlayConfig
+
+        class NonConforming:
+            pass
+
+        assert not isinstance(NonConforming(), OverlayConfig)
+
+
+class TestOverlayPluginProtocol:
+    def test_conforming_class_satisfies_overlay_plugin(self) -> None:
+        from core.plugin.protocols import OverlayConfig, OverlayPlugin
+
+        class ConformingPlugin:
+            def get_overlay_config(self, name: str) -> OverlayConfig | None:
+                return None
+
+        assert isinstance(ConformingPlugin(), OverlayPlugin)
+
+    def test_non_conforming_class_does_not_satisfy_overlay_plugin(self) -> None:
+        from core.plugin.protocols import OverlayPlugin
+
+        class NonConforming:
+            pass
+
+        assert not isinstance(NonConforming(), OverlayPlugin)
+
+    def test_fake_ecosystem_plugin_does_not_satisfy_overlay_plugin(self) -> None:
+        from core.plugin.protocols import OverlayPlugin
+
+        # FakeEcosystemPlugin defined above has no get_overlay_config
+        assert not isinstance(FakeEcosystemPlugin(), OverlayPlugin)

@@ -2133,13 +2133,18 @@ class TestCleanupRetentionTopicAttribution:
         )
 
     def test_calls_topic_attributions_delete_before_when_enabled(self) -> None:
+        from plugins.confluent_cloud.config import TopicAttributionConfig
+
         mock_backend, mock_uow = self._make_mock_backend_with_uow()
         tenant = self._make_tenant_with_ta(ta_enabled=True, ta_retention_days=60)
         settings = _make_settings(tenants={"t1": tenant})
         runner = WorkflowRunner(settings, MagicMock())
+        ta_config = TopicAttributionConfig(enabled=True, retention_days=60)
+        plugin = MagicMock()
+        plugin.get_overlay_config = MagicMock(return_value=ta_config)
         runtime = TenantRuntime(
             tenant_name="t1",
-            plugin=MagicMock(),
+            plugin=plugin,
             storage=mock_backend,
             orchestrator=MagicMock(),
             config_hash="abc123",
@@ -2154,13 +2159,18 @@ class TestCleanupRetentionTopicAttribution:
         """ta_config.retention_days (60) must be used, not config.retention_days (30)."""
         from datetime import timedelta
 
+        from plugins.confluent_cloud.config import TopicAttributionConfig
+
         mock_backend, mock_uow = self._make_mock_backend_with_uow()
         tenant = self._make_tenant_with_ta(ta_enabled=True, ta_retention_days=60)
         settings = _make_settings(tenants={"t1": tenant})
         runner = WorkflowRunner(settings, MagicMock())
+        ta_config = TopicAttributionConfig(enabled=True, retention_days=60)
+        plugin = MagicMock()
+        plugin.get_overlay_config = MagicMock(return_value=ta_config)
         runtime = TenantRuntime(
             tenant_name="t1",
-            plugin=MagicMock(),
+            plugin=plugin,
             storage=mock_backend,
             orchestrator=MagicMock(),
             config_hash="abc123",

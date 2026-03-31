@@ -14,17 +14,25 @@ from typing import TYPE_CHECKING, Any
 from core.emitters.runner import EmitterRunner
 from core.emitters.sources import ChargebackDateSource, ChargebackRowFetcher, RegistryEmitterBuilder
 from core.engine.orchestrator import ChargebackOrchestrator, GatherFailureThresholdError, PipelineRunResult
+from core.plugin.protocols import OverlayPlugin
 
 if TYPE_CHECKING:
     from datetime import date as date_type
 
     from core.config.models import AppSettings, EmitterSpec, TenantConfig
     from core.models.pipeline import PipelineRun
-    from core.plugin.protocols import EcosystemPlugin
+    from core.plugin.protocols import EcosystemPlugin, OverlayConfig
     from core.plugin.registry import PluginRegistry
     from core.storage.interface import StorageBackend
 
 logger = logging.getLogger(__name__)
+
+
+def _get_overlay_ta_config(plugin: EcosystemPlugin) -> OverlayConfig | None:
+    """Return topic attribution overlay config from plugin if available."""
+    if isinstance(plugin, OverlayPlugin):
+        return plugin.get_overlay_config("topic_attribution")
+    return None
 
 
 @dataclass
@@ -482,23 +490,31 @@ class WorkflowRunner:
                         logger.exception("EmitterRunner failed for tenant=%s — pipeline result unaffected", name)
 
                 # Post-pipeline hook: emit topic attribution after successful pipeline commit
-                ta_config = getattr(getattr(config, "plugin_settings", None), "topic_attribution", None)
-                if ta_config and ta_config.enabled and ta_config.emitters:
-                    ta_emitter_runner = EmitterRunner(
-                        ecosystem=config.ecosystem,
-                        storage_backend=runtime.storage,
-                        emitter_specs=ta_config.emitters,
-                        date_source=TopicAttributionDateSource(runtime.storage),
-                        row_fetcher=TopicAttributionRowFetcher(runtime.storage),
-                        emitter_builder=TopicAttributionEmitterBuilder(runtime.storage),
-                        pipeline="topic_attribution",
-                    )
-                    try:
-                        ta_emitter_runner.run(config.tenant_id)
-                    except Exception:
-                        logger.exception(
-                            "EmitterRunner (topic_attribution) failed for tenant=%s — pipeline result unaffected", name
+                ta_config = _get_overlay_ta_config(runtime.plugin)
+                if ta_config and ta_config.enabled:
+                    from core.engine.topic_attribution_models import TopicAttributionConfigProtocol
+
+                    if isinstance(ta_config, TopicAttributionConfigProtocol):
+                        emitters = getattr(ta_config, "emitters", None)
+                    else:
+                        emitters = None
+                    if emitters:
+                        ta_emitter_runner = EmitterRunner(
+                            ecosystem=config.ecosystem,
+                            storage_backend=runtime.storage,
+                            emitter_specs=emitters,
+                            date_source=TopicAttributionDateSource(runtime.storage),
+                            row_fetcher=TopicAttributionRowFetcher(runtime.storage),
+                            emitter_builder=TopicAttributionEmitterBuilder(runtime.storage),
+                            pipeline="topic_attribution",
                         )
+                        try:
+                            ta_emitter_runner.run(config.tenant_id)
+                        except Exception:
+                            logger.exception(
+                                "EmitterRunner (topic_attribution) failed for tenant=%s — pipeline result unaffected",
+                                name,
+                            )
 
                 return result
             except Exception:
@@ -575,12 +591,18 @@ class WorkflowRunner:
                     deleted_identities = uow.identities.delete_before(config.ecosystem, config.tenant_id, cutoff)
                     deleted_chargebacks = uow.chargebacks.delete_before(config.ecosystem, config.tenant_id, cutoff)
 
-                    plugin_settings = getattr(config, "plugin_settings", None)
-                    ta_config = getattr(plugin_settings, "topic_attribution", None) if plugin_settings else None
+                    ta_config = _get_overlay_ta_config(runtime.plugin)
                     deleted_ta = 0
                     if ta_config and ta_config.enabled:
-                        ta_cutoff = datetime.now(UTC) - timedelta(days=ta_config.retention_days)
-                        deleted_ta = uow.topic_attributions.delete_before(config.ecosystem, config.tenant_id, ta_cutoff)
+                        from core.engine.topic_attribution_models import TopicAttributionConfigProtocol
+
+                        if isinstance(ta_config, TopicAttributionConfigProtocol):
+                            retention_days = getattr(ta_config, "retention_days", None)
+                            if retention_days:
+                                ta_cutoff = datetime.now(UTC) - timedelta(days=retention_days)
+                                deleted_ta = uow.topic_attributions.delete_before(
+                                    config.ecosystem, config.tenant_id, ta_cutoff
+                                )
 
                     uow.commit()
 
