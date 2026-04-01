@@ -9,17 +9,18 @@ from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from core.emitters.runner import EmitterRunner
 from core.emitters.sources import ChargebackDateSource, ChargebackRowFetcher, RegistryEmitterBuilder
+from core.emitters.wiring import create_auxiliary_prometheus_runners
 from core.engine.orchestrator import ChargebackOrchestrator, GatherFailureThresholdError, PipelineRunResult
 from core.plugin.protocols import OverlayPlugin
 
 if TYPE_CHECKING:
     from datetime import date as date_type
 
-    from core.config.models import AppSettings, EmitterSpec, TenantConfig
+    from core.config.models import AppSettings, TenantConfig
     from core.models.pipeline import PipelineRun
     from core.plugin.protocols import EcosystemPlugin, OverlayConfig
     from core.plugin.registry import PluginRegistry
@@ -166,55 +167,6 @@ def cleanup_orphaned_runs_for_all_tenants(
             logger.warning("Failed to clean up orphaned runs for %s", tenant_name, exc_info=True)
         finally:
             storage.dispose()
-
-
-class TopicAttributionDateSource:
-    """PipelineDateSource backed by TopicAttributionRepository (read-only UoW)."""
-
-    def __init__(self, storage_backend: StorageBackend) -> None:
-        self._storage_backend = storage_backend
-
-    def get_distinct_dates(self, ecosystem: str, tenant_id: str) -> list[date_type]:
-        with self._storage_backend.create_read_only_unit_of_work() as uow:
-            return uow.topic_attributions.get_distinct_dates(ecosystem, tenant_id)
-
-
-class TopicAttributionRowFetcher:
-    """PipelineRowFetcher backed by TopicAttributionRepository (read-only UoW).
-
-    Implements PipelineRowFetcher only — NOT PipelineAggregatedRowFetcher.
-    No fetch_aggregated method: topic attribution has no aggregation concept.
-    """
-
-    def __init__(self, storage_backend: StorageBackend) -> None:
-        self._storage_backend = storage_backend
-
-    def fetch_by_date(self, ecosystem: str, tenant_id: str, dt: date_type) -> list[Any]:
-        with self._storage_backend.create_read_only_unit_of_work() as uow:
-            return uow.topic_attributions.find_by_date(ecosystem, tenant_id, dt)
-
-
-class TopicAttributionEmitterBuilder:
-    """PipelineEmitterBuilder for topic attribution — builds emitters directly, not via registry."""
-
-    def __init__(self, storage_backend: StorageBackend) -> None:
-        self._storage_backend = storage_backend
-
-    def build(self, spec: EmitterSpec) -> Any:
-        if spec.type == "csv":
-            from emitters.topic_attribution_csv_emitter import TopicAttributionCsvEmitter
-
-            output_dir = spec.params.get("output_dir", "/tmp/topic_attribution")
-            return TopicAttributionCsvEmitter(output_dir)
-        if spec.type == "prometheus":
-            from emitters.prometheus_emitter import PrometheusEmitter
-
-            emitter_obj = PrometheusEmitter(
-                port=spec.params.get("port", 8000),
-                storage_backend=self._storage_backend,
-            )
-            return emitter_obj.emit_topic_attributions
-        raise ValueError(f"TopicAttributionEmitterBuilder: unknown emitter type {spec.type!r}")
 
 
 class WorkflowRunner:
@@ -474,20 +426,40 @@ class WorkflowRunner:
 
                 # Post-pipeline hook: emit after successful pipeline commit
                 if config.plugin_settings.emitters:
-                    emitter_runner = EmitterRunner(
-                        ecosystem=config.ecosystem,
-                        storage_backend=runtime.storage,
-                        emitter_specs=config.plugin_settings.emitters,
-                        date_source=ChargebackDateSource(runtime.storage),
-                        row_fetcher=ChargebackRowFetcher(runtime.storage),
-                        emitter_builder=RegistryEmitterBuilder(runtime.storage),
-                        pipeline="chargeback",
-                        chargeback_granularity=config.plugin_settings.chargeback_granularity,
-                    )
-                    try:
-                        emitter_runner.run(config.tenant_id)
-                    except Exception:
-                        logger.exception("EmitterRunner failed for tenant=%s — pipeline result unaffected", name)
+                    chargeback_date_source = ChargebackDateSource(runtime.storage)
+                    # Billing/resource/identity rows are Prometheus-only — only pass prometheus specs
+                    # to avoid spurious emission tracking records for CSV emitters.
+                    prometheus_specs = [s for s in config.plugin_settings.emitters if s.type == "prometheus"]
+
+                    emitter_runners = [
+                        EmitterRunner(
+                            ecosystem=config.ecosystem,
+                            storage_backend=runtime.storage,
+                            emitter_specs=config.plugin_settings.emitters,
+                            date_source=chargeback_date_source,
+                            row_fetcher=ChargebackRowFetcher(runtime.storage),
+                            emitter_builder=RegistryEmitterBuilder(),
+                            pipeline="chargeback",
+                            chargeback_granularity=config.plugin_settings.chargeback_granularity,
+                        ),
+                    ]
+                    if prometheus_specs:
+                        emitter_runners += create_auxiliary_prometheus_runners(
+                            ecosystem=config.ecosystem,
+                            storage_backend=runtime.storage,
+                            prometheus_specs=prometheus_specs,
+                            date_source=chargeback_date_source,
+                        )
+
+                    for emitter_runner in emitter_runners:
+                        try:
+                            emitter_runner.run(config.tenant_id)
+                        except Exception:
+                            logger.exception(
+                                "EmitterRunner failed for tenant=%s pipeline=%s — pipeline result unaffected",
+                                name,
+                                emitter_runner._pipeline,
+                            )
 
                 # Post-pipeline hook: emit topic attribution after successful pipeline commit
                 ta_config = _get_overlay_ta_config(runtime.plugin)
@@ -499,17 +471,21 @@ class WorkflowRunner:
                     else:
                         emitters = None
                     if emitters:
-                        ta_emitter_runner = EmitterRunner(
-                            ecosystem=config.ecosystem,
-                            storage_backend=runtime.storage,
-                            emitter_specs=emitters,
-                            date_source=TopicAttributionDateSource(runtime.storage),
-                            row_fetcher=TopicAttributionRowFetcher(runtime.storage),
-                            emitter_builder=TopicAttributionEmitterBuilder(runtime.storage),
-                            pipeline="topic_attribution",
-                        )
                         try:
-                            ta_emitter_runner.run(config.tenant_id)
+                            from core.emitters.sources import (
+                                TopicAttributionDateSource,
+                                TopicAttributionRowFetcher,
+                            )
+
+                            EmitterRunner(
+                                ecosystem=config.ecosystem,
+                                storage_backend=runtime.storage,
+                                emitter_specs=emitters,
+                                date_source=TopicAttributionDateSource(runtime.storage),
+                                row_fetcher=TopicAttributionRowFetcher(runtime.storage),
+                                emitter_builder=RegistryEmitterBuilder(),
+                                pipeline="topic_attribution",
+                            ).run(config.tenant_id)
                         except Exception:
                             logger.exception(
                                 "EmitterRunner (topic_attribution) failed for tenant=%s — pipeline result unaffected",

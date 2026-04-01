@@ -382,7 +382,7 @@ class TestTopicAttributionEmitterRunnerDeleted:
 class TestISPCompliance:
     def test_topic_attribution_row_fetcher_is_not_aggregated_row_fetcher(self) -> None:
         from core.emitters.protocols import PipelineAggregatedRowFetcher
-        from workflow_runner import TopicAttributionRowFetcher  # type: ignore[attr-defined]
+        from core.emitters.sources import TopicAttributionRowFetcher  # type: ignore[attr-defined]
 
         storage = MagicMock()
         fetcher = TopicAttributionRowFetcher(storage)
@@ -399,7 +399,7 @@ class TestISPCompliance:
 class TestAggregationGuardRaisesOnWrongFetcher:
     def test_fetch_rows_raises_value_error_for_non_aggregated_fetcher_with_daily_spec(self) -> None:
         from core.emitters.runner import EmitterRunner
-        from workflow_runner import TopicAttributionRowFetcher  # type: ignore[attr-defined]
+        from core.emitters.sources import TopicAttributionRowFetcher  # type: ignore[attr-defined]
 
         spec = _make_spec(aggregation="daily")
         storage = MockStorageBackendV2()

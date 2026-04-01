@@ -52,6 +52,24 @@ class TopicAttributionConfig(BaseModel):
     retention_days: int = Field(default=90, gt=0, le=365)
     emitters: list[EmitterSpec] = Field(default_factory=list)
 
+    @model_validator(mode="before")
+    @classmethod
+    def _apply_emitter_defaults(cls, data: Any) -> Any:
+        """Inject TA-specific defaults into emitter params before validation.
+
+        Preserves backwards compatibility: users who relied on the old
+        TopicAttributionCsvEmitter filename and output_dir defaults get
+        identical behavior without specifying these in their YAML config.
+        Users can override via topic_attribution.emitters[].params.
+        """
+        if isinstance(data, dict) and "emitters" in data:
+            for spec in data["emitters"]:
+                if isinstance(spec, dict) and spec.get("type") == "csv":
+                    params = spec.setdefault("params", {})
+                    params.setdefault("output_dir", "/tmp/topic_attribution")
+                    params.setdefault("filename_template", "topic_attr_{tenant_id}_{date}.csv")
+        return data
+
     @field_validator("missing_metrics_behavior", mode="before")
     @classmethod
     def normalize_missing_metrics_behavior(cls, v: str) -> str:

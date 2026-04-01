@@ -4,71 +4,64 @@ import csv
 import logging
 from collections.abc import Sequence
 from datetime import date as date_type
+from datetime import datetime
+from decimal import Decimal
+from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import Any
 
-if TYPE_CHECKING:
-    from core.models.chargeback import ChargebackRow
 logger = logging.getLogger(__name__)
 
 
+def _serialize(value: Any) -> str:
+    """Serialize a field value to CSV string."""
+    if value is None:
+        return ""
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, Decimal):
+        return str(value)
+    if isinstance(value, StrEnum):
+        return str(value)
+    return str(value)
+
+
 class CsvEmitter:
-    """Writes chargeback rows for one tenant/date (or period) to a CSV file.
+    """Generic CSV emitter — reads __csv_fields__ from the row type at emit time.
 
-    Receives rows that have already been aggregated by EmitPhase — no
-    aggregation logic here. Overwrites on each call — idempotent for re-runs
-    and monthly accumulation rewrites.
+    Works for any row type that declares __csv_fields__: ClassVar[tuple[str, ...]].
+    Overwrites on each call — idempotent for re-runs and monthly accumulation rewrites.
 
-    Output columns (in order):
-        ecosystem, tenant_id, timestamp, resource_id, product_category,
-        product_type, identity_id, cost_type, amount, allocation_method,
-        allocation_detail
+    If the row type has empty __csv_fields__ (e.g. BillingEmitRow — Prometheus-only),
+    the emitter is a no-op. This is intentional: billing/resource/identity rows only
+    feed Prometheus; their EmitterRunner instances only receive prometheus-type specs,
+    so CsvEmitter will never be built for those pipelines in practice.
     """
-
-    _FIELDNAMES = (
-        "ecosystem",
-        "tenant_id",
-        "timestamp",
-        "resource_id",
-        "product_category",
-        "product_type",
-        "identity_id",
-        "cost_type",
-        "amount",
-        "allocation_method",
-        "allocation_detail",
-    )
 
     def __init__(self, output_dir: str, filename_template: str = "{tenant_id}_{date}.csv") -> None:
         self._output_dir = Path(output_dir)
         self._filename_template = filename_template
 
-    def __call__(self, tenant_id: str, date: date_type, rows: Sequence[ChargebackRow]) -> None:
+    def __call__(self, tenant_id: str, date: date_type, rows: Sequence[Any]) -> None:
+        if not rows:
+            # Practically unreachable: EmitterRunner only calls emitters for dates that
+            # have data (date source returns only dates with rows). Defensive guard only.
+            return
+        fields: tuple[str, ...] = type(rows[0]).__csv_fields__
+        if not fields:
+            return  # row type opts out of CSV (e.g. BillingEmitRow)
+
         self._output_dir.mkdir(parents=True, exist_ok=True)
         filename = self._filename_template.format(tenant_id=tenant_id, date=date.isoformat())
         out_path = self._output_dir / filename
 
         with out_path.open("w", newline="", encoding="utf-8") as fh:
-            writer = csv.DictWriter(fh, fieldnames=self._FIELDNAMES)
+            writer = csv.DictWriter(fh, fieldnames=fields)
             writer.writeheader()
             for row in rows:
-                writer.writerow(
-                    {
-                        "ecosystem": row.ecosystem,
-                        "tenant_id": row.tenant_id,
-                        "timestamp": row.timestamp.isoformat(),
-                        "resource_id": row.resource_id or "",
-                        "product_category": row.product_category,
-                        "product_type": row.product_type,
-                        "identity_id": row.identity_id,
-                        "cost_type": str(row.cost_type),
-                        "amount": str(row.amount),
-                        "allocation_method": row.allocation_method or "",
-                        "allocation_detail": row.allocation_detail or "",
-                    }
-                )
+                writer.writerow({f: _serialize(getattr(row, f)) for f in fields})
 
-        logger.info("CSV emitter wrote %d rows to %s", len(rows), out_path)
+        logger.info("CsvEmitter wrote %d rows to %s", len(rows), out_path)
 
 
 def make_csv_emitter(
@@ -77,11 +70,9 @@ def make_csv_emitter(
 ) -> CsvEmitter:
     """Factory registered as ``"csv"`` in EmitterRegistry.
 
-    Example YAML:
-        emitters:
-          - type: csv
-            aggregation: daily
-            params:
-              output_dir: "/data/csv"
+    The default filename_template is chargeback-oriented. For topic attribution,
+    the TA overlay config (TopicAttributionConfig) injects
+    ``filename_template="topic_attr_{tenant_id}_{date}.csv"`` as a per-spec default
+    so callers never see the chargeback default for TA CSV files.
     """
     return CsvEmitter(output_dir=output_dir, filename_template=filename_template)

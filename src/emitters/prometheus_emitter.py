@@ -5,15 +5,13 @@ import threading
 from collections.abc import Iterator, Sequence
 from datetime import UTC, datetime
 from datetime import date as date_type
-from typing import TYPE_CHECKING
+from enum import StrEnum
+from typing import Any
 
 from prometheus_client import REGISTRY, start_http_server
 from prometheus_client.core import CollectorRegistry, GaugeMetricFamily
 
-if TYPE_CHECKING:
-    from core.models.chargeback import ChargebackRow
-    from core.models.topic_attribution import TopicAttributionRow
-    from core.storage.interface import StorageBackend
+from core.models.emit_descriptors import MetricDescriptor  # from models layer, not emitters layer  # noqa: TC001
 
 logger = logging.getLogger(__name__)
 
@@ -54,24 +52,31 @@ class _TimestampedGaugeCollector:
         yield family
 
 
-class PrometheusEmitter:
-    """Exposes chargeback, billing, resource, and identity data as Prometheus metrics."""
+def _serialize_label(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, StrEnum):
+        return str(value)
+    return str(value)
 
-    _chargeback_col: _TimestampedGaugeCollector | None = None
-    _billing_col: _TimestampedGaugeCollector | None = None
-    _resource_col: _TimestampedGaugeCollector | None = None
-    _identity_col: _TimestampedGaugeCollector | None = None
-    _topic_attribution_col: _TimestampedGaugeCollector | None = None
-    _col_lock: threading.Lock = threading.Lock()
+
+class PrometheusEmitter:
+    """Generic Prometheus emitter — reads __prometheus_metrics__ from row type at emit time.
+
+    No storage_backend dependency. No hardcoded metric names or label sets.
+    Collectors are lazily created and cached in a class-level dict keyed by metric name.
+    Works for any row type that declares __prometheus_metrics__: ClassVar[tuple[MetricDescriptor, ...]].
+    """
+
+    _collectors: dict[str, _TimestampedGaugeCollector] = {}
+    _collectors_lock: threading.Lock = threading.Lock()
 
     _server_started: bool = False
     _server_lock: threading.Lock = threading.Lock()
 
-    def __init__(self, port: int, storage_backend: StorageBackend) -> None:
+    def __init__(self, port: int = 8000) -> None:
         self._port = port
-        self._storage_backend = storage_backend
         self._start_server_once()
-        self._init_collectors_once()
 
     def _start_server_once(self) -> None:
         with PrometheusEmitter._server_lock:
@@ -80,159 +85,36 @@ class PrometheusEmitter:
                 logger.info("Prometheus metrics server started on :%d", self._port)
                 PrometheusEmitter._server_started = True
 
-    def _init_collectors_once(self) -> None:
-        with PrometheusEmitter._col_lock:
-            if PrometheusEmitter._chargeback_col is None:
-                PrometheusEmitter._chargeback_col = _TimestampedGaugeCollector(
-                    "chitragupta_chargeback_amount",
-                    "Chargeback cost amount per identity/resource/product combination",
-                    [
-                        "tenant_id",
-                        "ecosystem",
-                        "identity_id",
-                        "resource_id",
-                        "product_type",
-                        "cost_type",
-                        "allocation_method",
-                    ],
+    def _get_or_create_collector(self, descriptor: MetricDescriptor) -> _TimestampedGaugeCollector:
+        with PrometheusEmitter._collectors_lock:
+            if descriptor.name not in PrometheusEmitter._collectors:
+                PrometheusEmitter._collectors[descriptor.name] = _TimestampedGaugeCollector(
+                    descriptor.name,
+                    descriptor.documentation,
+                    list(descriptor.label_fields),
                 )
-                PrometheusEmitter._billing_col = _TimestampedGaugeCollector(
-                    "chitragupta_billing_amount",
-                    "Billing total cost per resource/product combination",
-                    ["tenant_id", "ecosystem", "resource_id", "product_type", "product_category"],
-                )
-                PrometheusEmitter._resource_col = _TimestampedGaugeCollector(
-                    "chitragupta_resource_active",
-                    "Active resources at billing date (1 = active)",
-                    ["tenant_id", "ecosystem", "resource_id", "resource_type"],
-                )
-                PrometheusEmitter._identity_col = _TimestampedGaugeCollector(
-                    "chitragupta_identity_active",
-                    "Active identities at billing date (1 = active)",
-                    ["tenant_id", "ecosystem", "identity_id", "identity_type"],
-                )
-            if PrometheusEmitter._topic_attribution_col is None:
-                PrometheusEmitter._topic_attribution_col = _TimestampedGaugeCollector(
-                    "chitragupta_topic_attribution_amount",
-                    "Topic attribution cost amount per topic/cluster/product combination",
-                    [
-                        "tenant_id",
-                        "ecosystem",
-                        "env_id",
-                        "cluster_resource_id",
-                        "topic_name",
-                        "product_category",
-                        "product_type",
-                        "attribution_method",
-                    ],
-                )
+            return PrometheusEmitter._collectors[descriptor.name]
 
-    def __call__(
-        self,
-        tenant_id: str,
-        date: date_type,
-        rows: Sequence[ChargebackRow],
-    ) -> None:
+    def __call__(self, tenant_id: str, date: date_type, rows: Sequence[Any]) -> None:
         if not rows:
+            return
+        descriptors: tuple[MetricDescriptor, ...] = type(rows[0]).__prometheus_metrics__
+        if not descriptors:
             return
 
         billing_ts = datetime(date.year, date.month, date.day, 0, 0, 0, tzinfo=UTC)
         ts_float = billing_ts.timestamp()
-        ecosystem = rows[0].ecosystem
 
-        if PrometheusEmitter._chargeback_col is None:
-            raise RuntimeError("Collectors not initialized — call _init_collectors_once first")
-        chargeback_samples: list[_Sample] = [
-            (
-                [
-                    tenant_id,
-                    row.ecosystem,
-                    row.identity_id,
-                    row.resource_id or "",
-                    row.product_type,
-                    str(row.cost_type),
-                    row.allocation_method or "",
-                ],
-                float(row.amount),
-                ts_float,
-            )
-            for row in rows
-        ]
-        PrometheusEmitter._chargeback_col.set_samples_for_tenant(tenant_id, chargeback_samples)
-
-        if (
-            PrometheusEmitter._billing_col is None
-            or PrometheusEmitter._resource_col is None
-            or PrometheusEmitter._identity_col is None
-        ):
-            raise RuntimeError("Collectors not initialized — call _init_collectors_once first")
-        with self._storage_backend.create_unit_of_work() as uow:
-            billing_lines = uow.billing.find_by_date(ecosystem, tenant_id, date)
-            billing_samples: list[_Sample] = [
-                (
-                    [tenant_id, line.ecosystem, line.resource_id, line.product_type, line.product_category],
-                    float(line.total_cost),
-                    ts_float,
-                )
-                for line in billing_lines
-            ]
-            PrometheusEmitter._billing_col.set_samples_for_tenant(tenant_id, billing_samples)
-
-            resources, _ = uow.resources.find_active_at(ecosystem, tenant_id, billing_ts, count=False)
-            resource_samples: list[_Sample] = [
-                ([tenant_id, r.ecosystem, r.resource_id, r.resource_type], 1.0, ts_float) for r in resources
-            ]
-            PrometheusEmitter._resource_col.set_samples_for_tenant(tenant_id, resource_samples)
-
-            identities, _ = uow.identities.find_active_at(ecosystem, tenant_id, billing_ts, count=False)
-            identity_samples: list[_Sample] = [
-                ([tenant_id, i.ecosystem, i.identity_id, i.identity_type], 1.0, ts_float) for i in identities
-            ]
-            PrometheusEmitter._identity_col.set_samples_for_tenant(tenant_id, identity_samples)
-
-    def emit_topic_attributions(
-        self,
-        tenant_id: str,
-        date: date_type,
-        rows: Sequence[TopicAttributionRow],
-    ) -> None:
-        """Expose topic attribution rows as chitragupta_topic_attribution_amount gauge."""
-        if not rows:
-            return
-        if PrometheusEmitter._topic_attribution_col is None:
-            raise RuntimeError("Collectors not initialized — call _init_collectors_once first")
-
-        billing_ts = datetime(date.year, date.month, date.day, 0, 0, 0, tzinfo=UTC)
-        ts_float = billing_ts.timestamp()
-
-        samples: list[_Sample] = [
-            (
-                [
-                    tenant_id,
-                    row.ecosystem,
-                    row.env_id,
-                    row.cluster_resource_id,
-                    row.topic_name,
-                    row.product_category,
-                    row.product_type,
-                    row.attribution_method,
-                ],
-                float(row.amount),
-                ts_float,
-            )
-            for row in rows
-        ]
-        PrometheusEmitter._topic_attribution_col.set_samples_for_tenant(tenant_id, samples)
+        for descriptor in descriptors:
+            collector = self._get_or_create_collector(descriptor)
+            samples: list[_Sample] = []
+            for row in rows:
+                label_values = [_serialize_label(getattr(row, f)) for f in descriptor.label_fields]
+                value = float(getattr(row, descriptor.value_field))
+                samples.append((label_values, value, ts_float))
+            collector.set_samples_for_tenant(tenant_id, samples)
 
 
-def make_prometheus_emitter(
-    port: int = 8000,
-    storage_backend: StorageBackend | None = None,
-) -> PrometheusEmitter:
-    """Factory registered in the emitter registry."""
-    if storage_backend is None:
-        raise ValueError("PrometheusEmitter requires storage_backend — ensure _load_emitters injects it")
-    return PrometheusEmitter(port=port, storage_backend=storage_backend)
-
-
-make_prometheus_emitter.needs_storage_backend = True  # type: ignore[attr-defined]
+def make_prometheus_emitter(port: int = 8000) -> PrometheusEmitter:
+    """Factory registered as ``"prometheus"`` in EmitterRegistry."""
+    return PrometheusEmitter(port=port)

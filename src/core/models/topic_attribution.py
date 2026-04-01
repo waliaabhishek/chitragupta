@@ -4,7 +4,9 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
-from typing import Any
+from typing import Any, ClassVar
+
+from core.models.emit_descriptors import MetricDescriptor
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +30,36 @@ class TopicAttributionRow:
     amount: Decimal = Decimal(0)  # attributed cost
     metadata: dict[str, Any] = field(default_factory=dict)
     dimension_id: int | None = None
+
+    __csv_fields__: ClassVar[tuple[str, ...]] = (
+        "ecosystem",
+        "tenant_id",
+        "timestamp",
+        "env_id",
+        "cluster_resource_id",
+        "topic_name",
+        "product_category",
+        "product_type",
+        "attribution_method",
+        "amount",
+    )
+    __prometheus_metrics__: ClassVar[tuple[MetricDescriptor, ...]] = (
+        MetricDescriptor(
+            name="chitragupta_topic_attribution_amount",
+            value_field="amount",
+            label_fields=(
+                "tenant_id",
+                "ecosystem",
+                "env_id",
+                "cluster_resource_id",
+                "topic_name",
+                "product_category",
+                "product_type",
+                "attribution_method",
+            ),
+            documentation="Topic attribution cost amount per topic/cluster/product combination",
+        ),
+    )
 
 
 @dataclass

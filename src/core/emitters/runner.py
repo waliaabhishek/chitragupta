@@ -36,7 +36,7 @@ class EmitterRunner:
         storage_backend: StorageBackend,
         emitter_specs: list[EmitterSpec],
         date_source: PipelineDateSource,
-        row_fetcher: PipelineRowFetcher,
+        row_fetcher: PipelineRowFetcher[Any],
         emitter_builder: PipelineEmitterBuilder,
         pipeline: str,
         chargeback_granularity: str | None = None,
@@ -106,7 +106,7 @@ class EmitterRunner:
     def _run_monthly(
         self,
         tenant_id: str,
-        emitter: Emitter | LifecycleEmitter | ExpositionEmitter,
+        emitter: Emitter | LifecycleEmitter[Any] | ExpositionEmitter[Any],
         pending: list[date],
         failed: set[date],
     ) -> dict[date, EmitOutcome]:
@@ -188,9 +188,9 @@ class EmitterRunner:
     def _run_exposition(
         self,
         tenant_id: str,
-        emitter: ExpositionEmitter,
+        emitter: ExpositionEmitter[Any],
         manifest: EmitManifest,
-        row_provider: RowProvider,
+        row_provider: RowProvider[Any],
     ) -> dict[date, EmitOutcome]:
         emitter.load(tenant_id, manifest, row_provider)
         consumed = emitter.get_consumed(tenant_id)

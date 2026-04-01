@@ -48,76 +48,61 @@ def _make_row(
     )
 
 
-def _make_billing_line(
+def _make_billing_emit_row(
     *,
     ecosystem: str = ECOSYSTEM,
     resource_id: str = "cluster-1",
     product_type: str = "KAFKA_CKU",
     product_category: str = "kafka",
-    total_cost: Decimal = Decimal("50.00"),
+    amount: Decimal = Decimal("50.00"),
 ) -> Any:
-    from core.models.billing import CoreBillingLineItem
+    from core.emitters.emit_rows import BillingEmitRow
 
-    return CoreBillingLineItem(
-        ecosystem=ecosystem,
+    return BillingEmitRow(
         tenant_id=TENANT_ID,
-        timestamp=datetime(2024, 1, 15, 0, 0, 0, tzinfo=UTC),
+        ecosystem=ecosystem,
         resource_id=resource_id,
-        product_category=product_category,
         product_type=product_type,
-        quantity=Decimal("1"),
-        unit_price=total_cost,
-        total_cost=total_cost,
+        product_category=product_category,
+        amount=amount,
+        timestamp=datetime(2024, 1, 15, 0, 0, 0, tzinfo=UTC),
     )
 
 
-def _make_resource(
+def _make_resource_emit_row(
     *,
     ecosystem: str = ECOSYSTEM,
     resource_id: str = "cluster-1",
     resource_type: str = "kafka_cluster",
 ) -> Any:
-    from core.models.resource import CoreResource
+    from core.emitters.emit_rows import ResourceEmitRow
 
-    return CoreResource(
-        ecosystem=ecosystem,
+    return ResourceEmitRow(
         tenant_id=TENANT_ID,
+        ecosystem=ecosystem,
         resource_id=resource_id,
         resource_type=resource_type,
-        last_seen_at=datetime(2024, 1, 15, 0, 0, 0, tzinfo=UTC),
+        amount=Decimal(1),
+        timestamp=datetime(2024, 1, 15, 0, 0, 0, tzinfo=UTC),
     )
 
 
-def _make_identity(
+def _make_identity_emit_row(
     *,
     ecosystem: str = ECOSYSTEM,
     identity_id: str = "user-1",
     identity_type: str = "service_account",
 ) -> Any:
-    from core.models.identity import CoreIdentity
+    from core.emitters.emit_rows import IdentityEmitRow
 
-    return CoreIdentity(
-        ecosystem=ecosystem,
+    return IdentityEmitRow(
         tenant_id=TENANT_ID,
+        ecosystem=ecosystem,
         identity_id=identity_id,
         identity_type=identity_type,
-        last_seen_at=datetime(2024, 1, 15, 0, 0, 0, tzinfo=UTC),
+        amount=Decimal(1),
+        timestamp=datetime(2024, 1, 15, 0, 0, 0, tzinfo=UTC),
     )
-
-
-def _mock_storage_backend(
-    billing_lines: list[Any] | None = None,
-    resources: list[Any] | None = None,
-    identities: list[Any] | None = None,
-) -> tuple[Any, Any]:
-    uow = MagicMock()
-    uow.billing.find_by_date.return_value = billing_lines or []
-    uow.resources.find_active_at.return_value = (resources or [], len(resources or []))
-    uow.identities.find_active_at.return_value = (identities or [], len(identities or []))
-    sb = MagicMock()
-    sb.create_unit_of_work.return_value.__enter__ = MagicMock(return_value=uow)
-    sb.create_unit_of_work.return_value.__exit__ = MagicMock(return_value=False)
-    return sb, uow
 
 
 # ---------------------------------------------------------------------------
@@ -132,12 +117,11 @@ def reset_prometheus_emitter_state() -> Any:
 
     from emitters.prometheus_emitter import PrometheusEmitter
 
-    for attr in ("_chargeback_col", "_billing_col", "_resource_col", "_identity_col", "_topic_attribution_col"):
-        col = getattr(PrometheusEmitter, attr)
-        if col is not None:
+    with PrometheusEmitter._collectors_lock:
+        for col in list(PrometheusEmitter._collectors.values()):
             with contextlib.suppress(Exception):
                 REGISTRY.unregister(col)
-        setattr(PrometheusEmitter, attr, None)
+        PrometheusEmitter._collectors.clear()
     PrometheusEmitter._server_started = False
 
 
@@ -156,8 +140,7 @@ class TestPrometheusEmitterProtocol:
         from core.plugin.protocols import Emitter
         from emitters.prometheus_emitter import PrometheusEmitter
 
-        sb, _ = _mock_storage_backend()
-        instance = PrometheusEmitter(port=9090, storage_backend=sb)
+        instance = PrometheusEmitter(port=9090)
         assert isinstance(instance, Emitter)
 
 
@@ -178,11 +161,11 @@ class TestChargebackMetric:
             amount=Decimal("10.00"),
             allocation_method="even",
         )
-        sb, _ = _mock_storage_backend()
-        emitter = PrometheusEmitter(port=9090, storage_backend=sb)
+        emitter = PrometheusEmitter(port=9090)
         emitter(TENANT_ID, DATE, [row])
 
-        samples = PrometheusEmitter._chargeback_col._samples_by_tenant[TENANT_ID]
+        col = PrometheusEmitter._collectors["chitragupta_chargeback_amount"]
+        samples = col._samples_by_tenant[TENANT_ID]
         assert len(samples) == 1
         labels, value, ts = samples[0]
         assert labels == [
@@ -201,18 +184,18 @@ class TestChargebackMetric:
         from emitters.prometheus_emitter import PrometheusEmitter
 
         row = _make_row(resource_id=None, amount=Decimal("5.00"))
-        sb, _ = _mock_storage_backend()
-        emitter = PrometheusEmitter(port=9090, storage_backend=sb)
+        emitter = PrometheusEmitter(port=9090)
         emitter(TENANT_ID, DATE, [row])
 
-        samples = PrometheusEmitter._chargeback_col._samples_by_tenant[TENANT_ID]
+        col = PrometheusEmitter._collectors["chitragupta_chargeback_amount"]
+        samples = col._samples_by_tenant[TENANT_ID]
         assert len(samples) == 1
         labels, value, _ts = samples[0]
         assert labels[3] == ""  # resource_id label empty string for None
 
 
 # ---------------------------------------------------------------------------
-# AC #3 — Billing metric
+# AC #3 — Billing metric (via BillingEmitRow)
 # ---------------------------------------------------------------------------
 
 
@@ -220,29 +203,29 @@ class TestBillingMetric:
     def test_billing_samples_count_and_values(self) -> None:
         from emitters.prometheus_emitter import PrometheusEmitter
 
-        line1 = _make_billing_line(resource_id="cluster-1", product_type="KAFKA_CKU", total_cost=Decimal("50.00"))
-        line2 = _make_billing_line(resource_id="cluster-2", product_type="KAFKA_STORAGE", total_cost=Decimal("20.00"))
-        sb, _ = _mock_storage_backend(billing_lines=[line1, line2])
-        emitter = PrometheusEmitter(port=9090, storage_backend=sb)
-        emitter(TENANT_ID, DATE, [_make_row()])
+        row1 = _make_billing_emit_row(resource_id="cluster-1", product_type="KAFKA_CKU", amount=Decimal("50.00"))
+        row2 = _make_billing_emit_row(resource_id="cluster-2", product_type="KAFKA_STORAGE", amount=Decimal("20.00"))
+        emitter = PrometheusEmitter(port=9090)
+        emitter(TENANT_ID, DATE, [row1, row2])
 
-        samples = PrometheusEmitter._billing_col._samples_by_tenant[TENANT_ID]
+        col = PrometheusEmitter._collectors["chitragupta_billing_amount"]
+        samples = col._samples_by_tenant[TENANT_ID]
         assert len(samples) == 2
 
     def test_billing_sample_label_and_value(self) -> None:
         from emitters.prometheus_emitter import PrometheusEmitter
 
-        line = _make_billing_line(
+        row = _make_billing_emit_row(
             resource_id="cluster-1",
             product_type="KAFKA_CKU",
             product_category="kafka",
-            total_cost=Decimal("50.00"),
+            amount=Decimal("50.00"),
         )
-        sb, _ = _mock_storage_backend(billing_lines=[line])
-        emitter = PrometheusEmitter(port=9090, storage_backend=sb)
-        emitter(TENANT_ID, DATE, [_make_row()])
+        emitter = PrometheusEmitter(port=9090)
+        emitter(TENANT_ID, DATE, [row])
 
-        samples = PrometheusEmitter._billing_col._samples_by_tenant[TENANT_ID]
+        col = PrometheusEmitter._collectors["chitragupta_billing_amount"]
+        samples = col._samples_by_tenant[TENANT_ID]
         assert len(samples) == 1
         labels, value, ts = samples[0]
         assert ECOSYSTEM in labels
@@ -253,7 +236,7 @@ class TestBillingMetric:
 
 
 # ---------------------------------------------------------------------------
-# AC #4 — Resource presence metric
+# AC #4 — Resource presence metric (via ResourceEmitRow)
 # ---------------------------------------------------------------------------
 
 
@@ -261,23 +244,23 @@ class TestResourceMetric:
     def test_resource_samples_count_and_value(self) -> None:
         from emitters.prometheus_emitter import PrometheusEmitter
 
-        resources = [
-            _make_resource(resource_id="cluster-1", resource_type="kafka_cluster"),
-            _make_resource(resource_id="cluster-2", resource_type="kafka_cluster"),
-            _make_resource(resource_id="sr-1", resource_type="schema_registry"),
+        rows = [
+            _make_resource_emit_row(resource_id="cluster-1", resource_type="kafka_cluster"),
+            _make_resource_emit_row(resource_id="cluster-2", resource_type="kafka_cluster"),
+            _make_resource_emit_row(resource_id="sr-1", resource_type="schema_registry"),
         ]
-        sb, _ = _mock_storage_backend(resources=resources)
-        emitter = PrometheusEmitter(port=9090, storage_backend=sb)
-        emitter(TENANT_ID, DATE, [_make_row()])
+        emitter = PrometheusEmitter(port=9090)
+        emitter(TENANT_ID, DATE, rows)
 
-        samples = PrometheusEmitter._resource_col._samples_by_tenant[TENANT_ID]
+        col = PrometheusEmitter._collectors["chitragupta_resource_active"]
+        samples = col._samples_by_tenant[TENANT_ID]
         assert len(samples) == 3
         for _, value, _ in samples:
             assert value == 1.0
 
 
 # ---------------------------------------------------------------------------
-# AC #5 — Identity presence metric
+# AC #5 — Identity presence metric (via IdentityEmitRow)
 # ---------------------------------------------------------------------------
 
 
@@ -285,15 +268,15 @@ class TestIdentityMetric:
     def test_identity_samples_count_and_value(self) -> None:
         from emitters.prometheus_emitter import PrometheusEmitter
 
-        identities = [
-            _make_identity(identity_id="user-1", identity_type="user"),
-            _make_identity(identity_id="sa-1", identity_type="service_account"),
+        rows = [
+            _make_identity_emit_row(identity_id="user-1", identity_type="user"),
+            _make_identity_emit_row(identity_id="sa-1", identity_type="service_account"),
         ]
-        sb, _ = _mock_storage_backend(identities=identities)
-        emitter = PrometheusEmitter(port=9090, storage_backend=sb)
-        emitter(TENANT_ID, DATE, [_make_row()])
+        emitter = PrometheusEmitter(port=9090)
+        emitter(TENANT_ID, DATE, rows)
 
-        samples = PrometheusEmitter._identity_col._samples_by_tenant[TENANT_ID]
+        col = PrometheusEmitter._collectors["chitragupta_identity_active"]
+        samples = col._samples_by_tenant[TENANT_ID]
         assert len(samples) == 2
         for _, value, _ in samples:
             assert value == 1.0
@@ -308,18 +291,28 @@ class TestTimestampedSamples:
     def test_all_collectors_use_midnight_utc_timestamp(self) -> None:
         from emitters.prometheus_emitter import PrometheusEmitter
 
-        billing_lines = [_make_billing_line()]
-        resources = [_make_resource()]
-        identities = [_make_identity()]
-        sb, _ = _mock_storage_backend(billing_lines=billing_lines, resources=resources, identities=identities)
-        emitter = PrometheusEmitter(port=9090, storage_backend=sb)
-        emitter(TENANT_ID, DATE, [_make_row()])
+        chargeback_emitter = PrometheusEmitter(port=9090)
+        chargeback_emitter(TENANT_ID, DATE, [_make_row()])
 
-        for attr in ("_chargeback_col", "_billing_col", "_resource_col", "_identity_col"):
-            col = getattr(PrometheusEmitter, attr)
+        billing_emitter = PrometheusEmitter(port=9090)
+        billing_emitter(TENANT_ID, DATE, [_make_billing_emit_row()])
+
+        resource_emitter = PrometheusEmitter(port=9090)
+        resource_emitter(TENANT_ID, DATE, [_make_resource_emit_row()])
+
+        identity_emitter = PrometheusEmitter(port=9090)
+        identity_emitter(TENANT_ID, DATE, [_make_identity_emit_row()])
+
+        for metric_name in (
+            "chitragupta_chargeback_amount",
+            "chitragupta_billing_amount",
+            "chitragupta_resource_active",
+            "chitragupta_identity_active",
+        ):
+            col = PrometheusEmitter._collectors[metric_name]
             samples = col._samples_by_tenant[TENANT_ID]
             for _, _, ts in samples:
-                assert ts == DATE_TS, f"Expected {DATE_TS} but got {ts} in {attr}"
+                assert ts == DATE_TS, f"Expected {DATE_TS} but got {ts} in {metric_name}"
 
 
 # ---------------------------------------------------------------------------
@@ -331,8 +324,7 @@ class TestIdempotentReEmit:
     def test_second_emit_replaces_first(self) -> None:
         from emitters.prometheus_emitter import PrometheusEmitter
 
-        sb, _ = _mock_storage_backend()
-        emitter = PrometheusEmitter(port=9090, storage_backend=sb)
+        emitter = PrometheusEmitter(port=9090)
 
         rows_v1 = [_make_row(identity_id="user-1"), _make_row(identity_id="user-2")]
         rows_v2 = [_make_row(identity_id="user-3")]
@@ -340,7 +332,8 @@ class TestIdempotentReEmit:
         emitter(TENANT_ID, DATE, rows_v1)
         emitter(TENANT_ID, DATE, rows_v2)
 
-        samples = PrometheusEmitter._chargeback_col._samples_by_tenant[TENANT_ID]
+        col = PrometheusEmitter._collectors["chitragupta_chargeback_amount"]
+        samples = col._samples_by_tenant[TENANT_ID]
         assert len(samples) == len(rows_v2)
 
 
@@ -356,9 +349,8 @@ class TestServerSingleton:
 
         from emitters.prometheus_emitter import PrometheusEmitter
 
-        sb, _ = _mock_storage_backend()
-        PrometheusEmitter(port=9090, storage_backend=sb)
-        PrometheusEmitter(port=9090, storage_backend=sb)
+        PrometheusEmitter(port=9090)
+        PrometheusEmitter(port=9090)
 
         mock_start.assert_called_once()
 
@@ -375,10 +367,9 @@ class TestMultiTenantSingleton:
 
         from emitters.prometheus_emitter import PrometheusEmitter
 
-        sb, _ = _mock_storage_backend()
-        PrometheusEmitter(port=9090, storage_backend=sb)
-        PrometheusEmitter(port=9090, storage_backend=sb)
-        PrometheusEmitter(port=9090, storage_backend=sb)
+        PrometheusEmitter(port=9090)
+        PrometheusEmitter(port=9090)
+        PrometheusEmitter(port=9090)
 
         mock_start.assert_called_once()
 
@@ -428,18 +419,16 @@ class TestEmptyRowsGuard:
     def test_empty_rows_returns_without_error(self) -> None:
         from emitters.prometheus_emitter import PrometheusEmitter
 
-        sb, uow = _mock_storage_backend()
-        emitter = PrometheusEmitter(port=9090, storage_backend=sb)
+        emitter = PrometheusEmitter(port=9090)
         emitter(TENANT_ID, DATE, [])  # must not raise
 
-    def test_empty_rows_makes_no_storage_queries(self) -> None:
+    def test_empty_rows_creates_no_collectors(self) -> None:
         from emitters.prometheus_emitter import PrometheusEmitter
 
-        sb, uow = _mock_storage_backend()
-        emitter = PrometheusEmitter(port=9090, storage_backend=sb)
+        emitter = PrometheusEmitter(port=9090)
         emitter(TENANT_ID, DATE, [])
 
-        uow.billing.find_by_date.assert_not_called()
+        assert len(PrometheusEmitter._collectors) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -453,14 +442,14 @@ class TestEcosystemAgnosticMetricNames:
 
         from emitters.prometheus_emitter import PrometheusEmitter
 
-        sb, _ = _mock_storage_backend()
-        emitter = PrometheusEmitter(port=9090, storage_backend=sb)
+        emitter = PrometheusEmitter(port=9090)
 
         row_ccloud = _make_row(ecosystem="ccloud", identity_id="user-ccloud")
         row_self = _make_row(ecosystem="self-managed", identity_id="user-self")
         emitter(TENANT_ID, DATE, [row_ccloud, row_self])
 
-        families = list(PrometheusEmitter._chargeback_col.collect())
+        col = PrometheusEmitter._collectors["chitragupta_chargeback_amount"]
+        families = list(col.collect())
         assert len(families) == 1
         family = families[0]
         assert isinstance(family, GaugeMetricFamily)
@@ -499,7 +488,7 @@ class TestExampleConfigExists:
 
 
 # ---------------------------------------------------------------------------
-# AC #16 — EmitterRunner storage_backend injection wiring test
+# AC #16 — EmitterRunner wiring (no storage_backend needed)
 # ---------------------------------------------------------------------------
 
 
@@ -538,40 +527,12 @@ class TestLoadEmittersWiring:
         storage.create_unit_of_work.return_value = uow
         return storage
 
-    def test_load_emitters_passes_storage_backend_to_factories_needing_it(self) -> None:
-        from core.config.models import EmitterSpec
-        from core.emitters.registry import register
-        from core.emitters.runner import EmitterRunner
+    def test_registry_emitter_builder_no_args(self) -> None:
+        """RegistryEmitterBuilder no longer takes storage_backend — constructor takes no args."""
+        from core.emitters.sources import RegistryEmitterBuilder
 
-        received_kwargs: dict[str, Any] = {}
-
-        def mock_prometheus_factory(**kwargs: Any) -> Any:
-            received_kwargs.update(kwargs)
-            emitter = MagicMock()
-            emitter.__call__ = MagicMock()
-            return emitter
-
-        mock_prometheus_factory.needs_storage_backend = True  # type: ignore[attr-defined]
-        register("_test_prometheus_factory", mock_prometheus_factory)
-
-        storage = self._make_mock_storage()
-        spec = EmitterSpec(type="_test_prometheus_factory", params={"port": 9091})
-        from core.emitters.sources import ChargebackDateSource, ChargebackRowFetcher, RegistryEmitterBuilder
-
-        runner = EmitterRunner(
-            ecosystem="test-eco",
-            storage_backend=storage,
-            emitter_specs=[spec],
-            date_source=ChargebackDateSource(storage),
-            row_fetcher=ChargebackRowFetcher(storage),
-            emitter_builder=RegistryEmitterBuilder(storage),
-            pipeline="chargeback",
-            chargeback_granularity="daily",
-        )
-        runner.run("tenant-1")
-
-        assert "storage_backend" in received_kwargs
-        assert received_kwargs["storage_backend"] is storage
+        builder = RegistryEmitterBuilder()
+        assert builder is not None
 
     def test_load_emitters_does_not_pass_storage_backend_to_csv_factory(self) -> None:
         from core.config.models import EmitterSpec
@@ -598,7 +559,7 @@ class TestLoadEmittersWiring:
             emitter_specs=[spec],
             date_source=ChargebackDateSource(storage),
             row_fetcher=ChargebackRowFetcher(storage),
-            emitter_builder=RegistryEmitterBuilder(storage),
+            emitter_builder=RegistryEmitterBuilder(),
             pipeline="chargeback",
             chargeback_granularity="daily",
         )
@@ -618,11 +579,11 @@ class TestCollectOutputShape:
 
         from emitters.prometheus_emitter import PrometheusEmitter
 
-        sb, _ = _mock_storage_backend()
-        emitter = PrometheusEmitter(port=9090, storage_backend=sb)
+        emitter = PrometheusEmitter(port=9090)
         emitter(TENANT_ID, DATE, [_make_row()])
 
-        families = list(PrometheusEmitter._chargeback_col.collect())
+        col = PrometheusEmitter._collectors["chitragupta_chargeback_amount"]
+        families = list(col.collect())
         assert len(families) == 1
         family = families[0]
         assert isinstance(family, GaugeMetricFamily)
@@ -630,24 +591,23 @@ class TestCollectOutputShape:
 
 
 # ---------------------------------------------------------------------------
-# GIT-001 — make_prometheus_emitter factory
+# GIT-001 — make_prometheus_emitter factory (simplified — no storage_backend)
 # ---------------------------------------------------------------------------
 
 
 class TestMakePrometheusEmitterFactory:
-    def test_make_prometheus_emitter_raises_value_error_when_no_storage_backend(self) -> None:
-        from emitters.prometheus_emitter import make_prometheus_emitter
-
-        with pytest.raises(ValueError, match="storage_backend"):
-            make_prometheus_emitter(storage_backend=None)
-
-    def test_make_prometheus_emitter_returns_instance_with_correct_storage_backend(self) -> None:
+    def test_make_prometheus_emitter_returns_instance(self) -> None:
         from emitters.prometheus_emitter import PrometheusEmitter, make_prometheus_emitter
 
-        sb, _ = _mock_storage_backend()
-        instance = make_prometheus_emitter(port=9090, storage_backend=sb)
+        instance = make_prometheus_emitter(port=9090)
         assert isinstance(instance, PrometheusEmitter)
-        assert instance._storage_backend is sb
+
+    def test_make_prometheus_emitter_no_storage_backend_required(self) -> None:
+        from emitters.prometheus_emitter import make_prometheus_emitter
+
+        # Must not raise — storage_backend no longer needed
+        instance = make_prometheus_emitter()
+        assert instance is not None
 
 
 # ---------------------------------------------------------------------------
@@ -699,22 +659,20 @@ class TestTopicAttributionMetric:
     def test_attribution_method_in_label_names(self) -> None:
         from emitters.prometheus_emitter import PrometheusEmitter
 
-        sb, _ = _mock_storage_backend()
-        emitter = PrometheusEmitter(port=9090, storage_backend=sb)
-        emitter.emit_topic_attributions(TENANT_ID, DATE, [_make_topic_attribution_row()])
+        emitter = PrometheusEmitter(port=9090)
+        emitter(TENANT_ID, DATE, [_make_topic_attribution_row()])
 
-        assert "attribution_method" in PrometheusEmitter._topic_attribution_col._label_names
+        col = PrometheusEmitter._collectors["chitragupta_topic_attribution_amount"]
+        assert "attribution_method" in col._label_names
 
     def test_attribution_method_in_sample_values(self) -> None:
         from emitters.prometheus_emitter import PrometheusEmitter
 
-        sb, _ = _mock_storage_backend()
-        emitter = PrometheusEmitter(port=9090, storage_backend=sb)
-        emitter.emit_topic_attributions(
-            TENANT_ID, DATE, [_make_topic_attribution_row(attribution_method="bytes_ratio")]
-        )
+        emitter = PrometheusEmitter(port=9090)
+        emitter(TENANT_ID, DATE, [_make_topic_attribution_row(attribution_method="bytes_ratio")])
 
-        samples = PrometheusEmitter._topic_attribution_col._samples_by_tenant[TENANT_ID]
+        col = PrometheusEmitter._collectors["chitragupta_topic_attribution_amount"]
+        samples = col._samples_by_tenant[TENANT_ID]
         assert len(samples) == 1
         labels, value, ts = samples[0]
         assert "bytes_ratio" in labels
@@ -724,15 +682,15 @@ class TestTopicAttributionMetric:
     def test_different_attribution_methods_produce_distinct_samples(self) -> None:
         from emitters.prometheus_emitter import PrometheusEmitter
 
-        sb, _ = _mock_storage_backend()
-        emitter = PrometheusEmitter(port=9090, storage_backend=sb)
+        emitter = PrometheusEmitter(port=9090)
         rows = [
             _make_topic_attribution_row(attribution_method="bytes_ratio", amount=Decimal("10.00")),
             _make_topic_attribution_row(attribution_method="even_split", amount=Decimal("5.00")),
         ]
-        emitter.emit_topic_attributions(TENANT_ID, DATE, rows)
+        emitter(TENANT_ID, DATE, rows)
 
-        samples = PrometheusEmitter._topic_attribution_col._samples_by_tenant[TENANT_ID]
+        col = PrometheusEmitter._collectors["chitragupta_topic_attribution_amount"]
+        samples = col._samples_by_tenant[TENANT_ID]
         assert len(samples) == 2
         label_sets = [tuple(s[0]) for s in samples]
         assert len(set(label_sets)) == 2, "Label sets must be distinct — no silent overwrite"
@@ -740,6 +698,5 @@ class TestTopicAttributionMetric:
     def test_empty_rows_does_not_raise(self) -> None:
         from emitters.prometheus_emitter import PrometheusEmitter
 
-        sb, _ = _mock_storage_backend()
-        emitter = PrometheusEmitter(port=9090, storage_backend=sb)
-        emitter.emit_topic_attributions(TENANT_ID, DATE, [])  # must not raise
+        emitter = PrometheusEmitter(port=9090)
+        emitter(TENANT_ID, DATE, [])  # must not raise

@@ -5,7 +5,9 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
-from typing import Any
+from typing import Any, ClassVar
+
+from core.models.emit_descriptors import MetricDescriptor
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +76,36 @@ class ChargebackRow:
     tags: dict[str, str] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
     dimension_id: int | None = None
+
+    __csv_fields__: ClassVar[tuple[str, ...]] = (
+        "ecosystem",
+        "tenant_id",
+        "timestamp",
+        "resource_id",
+        "product_category",
+        "product_type",
+        "identity_id",
+        "cost_type",
+        "amount",
+        "allocation_method",
+        "allocation_detail",
+    )
+    __prometheus_metrics__: ClassVar[tuple[MetricDescriptor, ...]] = (
+        MetricDescriptor(
+            name="chitragupta_chargeback_amount",
+            value_field="amount",
+            label_fields=(
+                "tenant_id",
+                "ecosystem",
+                "identity_id",
+                "resource_id",
+                "product_type",
+                "cost_type",
+                "allocation_method",
+            ),
+            documentation="Chargeback cost amount per identity/resource/product combination",
+        ),
+    )
 
 
 @dataclass

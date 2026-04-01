@@ -133,7 +133,7 @@ def _make_runner(
         emitter_specs=specs,
         date_source=ChargebackDateSource(storage),
         row_fetcher=ChargebackRowFetcher(storage),
-        emitter_builder=RegistryEmitterBuilder(storage),
+        emitter_builder=RegistryEmitterBuilder(),
         pipeline="chargeback",
         chargeback_granularity=granularity,
     )

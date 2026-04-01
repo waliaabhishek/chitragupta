@@ -23,7 +23,6 @@ if TYPE_CHECKING:
         MetricRow,
         Resource,
     )
-    from core.models.chargeback import ChargebackRow
     from core.storage.interface import (
         BillingRepository,
         ChargebackRepository,
@@ -182,20 +181,16 @@ class OverlayPlugin(Protocol):
 
 @runtime_checkable
 class Emitter(Protocol):
-    """Protocol for output sinks — called after chargeback calculation is committed.
+    """Protocol for output sinks — called after pipeline calculation is committed.
 
-    An emitter is a callable that receives a batch of chargeback rows for one
-    tenant/date and writes them to an external sink (CSV, webhook, etc.).
-
-    Emitters MUST be idempotent — they may be called again if the pipeline re-runs
-    for the same date (recalculation window). Implementations should overwrite/upsert.
-
-    Failures in emit do NOT roll back calculated chargebacks. Emit is best-effort.
+    Emitters MUST be idempotent. Failures do NOT roll back calculated rows.
+    Uses Sequence[Any] at the protocol level — runtime_checkable protocols cannot
+    check generic parameters. Concrete implementations carry their own row-specific types.
     """
 
     def __call__(
         self,
         tenant_id: str,
         date: date_type,
-        rows: Sequence[ChargebackRow],
+        rows: Sequence[Any],
     ) -> None: ...

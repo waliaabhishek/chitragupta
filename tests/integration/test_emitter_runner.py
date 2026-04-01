@@ -84,7 +84,7 @@ class TestEmitterRunnerIntegration:
             emitter_specs=[spec],
             date_source=ChargebackDateSource(storage),
             row_fetcher=ChargebackRowFetcher(storage),
-            emitter_builder=RegistryEmitterBuilder(storage),
+            emitter_builder=RegistryEmitterBuilder(),
             pipeline="chargeback",
             chargeback_granularity="daily",
         )
@@ -133,7 +133,7 @@ class TestEmitterRunnerIntegration:
             [spec],
             ChargebackDateSource(storage),
             ChargebackRowFetcher(storage),
-            RegistryEmitterBuilder(storage),
+            RegistryEmitterBuilder(),
             "chargeback",
             "daily",
         )
@@ -164,7 +164,7 @@ class TestEmitterRunnerIntegration:
             [spec],
             ChargebackDateSource(storage),
             ChargebackRowFetcher(storage),
-            RegistryEmitterBuilder(storage),
+            RegistryEmitterBuilder(),
             "chargeback",
             "daily",
         )
@@ -200,7 +200,7 @@ class TestEmitterRunnerIntegration:
             [spec],
             ChargebackDateSource(storage),
             ChargebackRowFetcher(storage),
-            RegistryEmitterBuilder(storage),
+            RegistryEmitterBuilder(),
             "chargeback",
             "daily",
         )

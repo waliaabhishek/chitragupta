@@ -22,11 +22,6 @@ def register(name: str, factory: Callable[..., Emitter]) -> None:
     _REGISTRY[name] = factory
 
 
-def get_factory(name: str) -> Callable[..., Emitter] | None:
-    """Return the registered factory for *name*, or None if not registered."""
-    return _REGISTRY.get(name)
-
-
 def get(name: str, params: dict[str, Any], extra: dict[str, Any] | None = None) -> Emitter:
     """Instantiate an emitter by registered name.
 

@@ -183,7 +183,7 @@ topic_attribution:
 | `retention_days` | int | `90` | Days to keep topic attribution rows (1–365). Independent of the tenant-level `retention_days`. |
 | `cost_mapping_overrides` | dict[string, string] | `{}` | Override the attribution method per CCloud product type. Valid methods: `bytes_ratio`, `retained_bytes_ratio`, `even_split`, `disabled`. |
 | `metric_name_overrides` | dict[string, string] | `{}` | Override Prometheus metric names. Valid keys: `topic_bytes_in`, `topic_bytes_out`, `topic_retained_bytes`. |
-| `emitters` | list | `[]` | Emitter specs for topic attribution output. Same format as top-level `emitters`. |
+| `emitters` | list | `[]` | Emitter specs for topic attribution output. Same format as top-level `emitters`. For `type: csv`, `output_dir` defaults to `/tmp/topic_attribution` and `filename_template` defaults to `topic_attr_{tenant_id}_{date}.csv` — both are overridable per-spec. |
 
 ### Default cost mappings
 

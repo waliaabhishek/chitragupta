@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import logging
 from datetime import date
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from core.emitters.models import EmitManifest, EmitOutcome
+from core.emitters.protocols import RowProvider  # module-level import — safe with PEP 695  # noqa: TC001
 
 if TYPE_CHECKING:
-    from core.emitters.protocols import LifecycleEmitter, RowProvider
+    from core.emitters.protocols import LifecycleEmitter
     from core.plugin.protocols import Emitter
 
 logger = logging.getLogger(__name__)
@@ -23,7 +24,7 @@ class PerDateDriver:
         self,
         tenant_id: str,
         manifest: EmitManifest,
-        row_provider: RowProvider,
+        row_provider: RowProvider[Any],
     ) -> dict[date, EmitOutcome]:
         outcomes: dict[date, EmitOutcome] = {}
         for dt in manifest.pending_dates:
@@ -48,14 +49,14 @@ class PerDateDriver:
 class LifecycleDriver:
     """Drives LifecycleEmitter protocol — open → N×emit → close."""
 
-    def __init__(self, emitter: LifecycleEmitter) -> None:
+    def __init__(self, emitter: LifecycleEmitter[Any]) -> None:
         self._emitter = emitter
 
     def run(
         self,
         tenant_id: str,
         manifest: EmitManifest,
-        row_provider: RowProvider,
+        row_provider: RowProvider[Any],
     ) -> dict[date, EmitOutcome]:
         try:
             self._emitter.open(tenant_id, manifest)
