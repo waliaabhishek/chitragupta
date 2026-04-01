@@ -1375,8 +1375,15 @@ stage with its own star schema, composable attribution models
 and configurable retention. (<a href="https://github.com/waliaabhishek/chitragupta/commit/919cc42a68b78773389577ce74c3f43c17544869">919cc42</a>)</p>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
-<li>Fix: TASK-174 — Remove metrics_available dead code from topic attribution</li>
+<li>Fix: TASK-175 — Replace getattr config probing with typed overlay config protocol</li>
 </ul>
+<p>Add OverlayConfig and OverlayPlugin protocols to core/plugin/protocols.py,
+following the TopicDiscoveryPlugin pattern. ConfluentCloudPlugin implements
+get_overlay_config returning TopicAttributionConfig for "topic_attribution".
+All 3 getattr chains removed from orchestrator.py and workflow_runner.py —
+core code now accesses overlay config via isinstance(plugin, OverlayPlugin)
+checks. No behavioral change. (<a href="https://github.com/waliaabhishek/chitragupta/commit/516aeb0f23d2a1939da5c33af103a626729a1828">516aeb0</a>)
+- Fix: TASK-174 — Remove metrics_available dead code from topic attribution</p>
 <p>Remove the always-True metrics_available field from TopicAttributionContext
 and the unreachable guard in TopicUsageRatioModel.attribute(). Infra failure
 is handled at the phase level before context construction, making this field
