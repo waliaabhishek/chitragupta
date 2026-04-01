@@ -89,8 +89,8 @@ class TestTopicAttributionPhasePrometheusFailure:
         assert count == 0
         mock_uow.topic_attributions.upsert_batch.assert_not_called()
 
-    def test_prometheus_infra_failure_still_marks_calculated(self) -> None:
-        """Even if cluster skipped, pipeline state is still marked topic_attribution_calculated."""
+    def test_prometheus_infra_failure_does_not_mark_calculated(self) -> None:
+        """Infra failure → mark_topic_attribution_calculated must NOT be called (date stays retryable)."""
         mock_metrics_source = MagicMock()
         mock_metrics_source.query.side_effect = RuntimeError("down")
 
@@ -102,7 +102,7 @@ class TestTopicAttributionPhasePrometheusFailure:
         mock_uow.resources.find_by_parent.return_value = [_make_resource("topic-a")]
 
         phase.run(mock_uow, date(2026, 1, 1))
-        mock_uow.pipeline_state.mark_topic_attribution_calculated.assert_called_once_with("eco", "t1", date(2026, 1, 1))
+        mock_uow.pipeline_state.mark_topic_attribution_calculated.assert_not_called()
 
 
 class TestTopicAttributionPhaseNoTopics:
@@ -118,6 +118,91 @@ class TestTopicAttributionPhaseNoTopics:
         count = phase.run(mock_uow, date(2026, 1, 1))
         assert count == 0
         mock_uow.topic_attributions.upsert_batch.assert_not_called()
+
+
+class TestMarkCalculatedGating:
+    def test_no_topics_in_resources_still_marks_calculated(self) -> None:
+        """No topics → legitimate empty → mark_topic_attribution_calculated IS called (regression guard)."""
+        phase = _make_phase()
+        mock_uow = MagicMock()
+        mock_uow.billing.find_by_date.return_value = [
+            _make_billing_line(resource_id="lkc-abc"),
+        ]
+        mock_uow.resources.find_by_parent.return_value = []
+
+        phase.run(mock_uow, date(2026, 1, 1))
+        mock_uow.pipeline_state.mark_topic_attribution_calculated.assert_called_once_with("eco", "t1", date(2026, 1, 1))
+
+    def test_no_billing_lines_still_marks_calculated(self) -> None:
+        """No billing lines → empty clusters → mark_topic_attribution_calculated IS called (regression guard)."""
+        phase = _make_phase()
+        mock_uow = MagicMock()
+        mock_uow.billing.find_by_date.return_value = []
+
+        phase.run(mock_uow, date(2026, 1, 1))
+        mock_uow.pipeline_state.mark_topic_attribution_calculated.assert_called_once_with("eco", "t1", date(2026, 1, 1))
+
+    def test_partial_failure_upserts_successful_cluster_does_not_mark_calculated(self) -> None:
+        """One cluster fails metrics fetch, one succeeds: successful rows upserted, date NOT marked calculated."""
+        mock_metrics_source = MagicMock()
+
+        def _query_side_effect(**kwargs):
+            if kwargs.get("resource_id_filter") == "lkc-fail":
+                raise RuntimeError("down")
+            # lkc-ok succeeds with empty metrics (even_split fallback)
+            return {}
+
+        mock_metrics_source.query.side_effect = _query_side_effect
+
+        phase = _make_phase(metrics_source=mock_metrics_source)
+        mock_uow = MagicMock()
+        mock_uow.billing.find_by_date.return_value = [
+            _make_billing_line(resource_id="lkc-ok", env_id="env-1"),
+            _make_billing_line(resource_id="lkc-fail", env_id="env-1"),
+        ]
+        mock_uow.resources.find_by_parent.return_value = [_make_resource("topic-a")]
+        mock_uow.topic_attributions.upsert_batch.return_value = 1
+
+        phase.run(mock_uow, date(2026, 1, 1))
+
+        mock_uow.topic_attributions.upsert_batch.assert_called_once()
+        mock_uow.pipeline_state.mark_topic_attribution_calculated.assert_not_called()
+
+
+class TestAttributeClusterReturnType:
+    def test_attribute_cluster_returns_none_on_infra_failure(self) -> None:
+        """_attribute_cluster must return None (not []) when metrics_source raises."""
+        mock_metrics_source = MagicMock()
+        mock_metrics_source.query.side_effect = RuntimeError("connection refused")
+
+        phase = _make_phase(metrics_source=mock_metrics_source)
+        mock_uow = MagicMock()
+        mock_uow.resources.find_by_parent.return_value = [_make_resource("topic-a")]
+
+        result = phase._attribute_cluster(
+            mock_uow,
+            "lkc-abc",
+            "env-1",
+            [_make_billing_line()],
+            date(2026, 1, 1),
+        )
+        assert result is None
+
+    def test_attribute_cluster_returns_empty_list_on_no_topics(self) -> None:
+        """_attribute_cluster must return [] (not None) when no topics exist — legitimate empty (regression guard)."""
+        phase = _make_phase()
+        mock_uow = MagicMock()
+        mock_uow.resources.find_by_parent.return_value = []
+
+        result = phase._attribute_cluster(
+            mock_uow,
+            "lkc-abc",
+            "env-1",
+            [_make_billing_line()],
+            date(2026, 1, 1),
+        )
+        assert result == []
+        assert result is not None
 
 
 class TestTopicAttributionPipelineStateFlags:

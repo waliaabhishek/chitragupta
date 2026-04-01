@@ -111,19 +111,24 @@ class TopicAttributionPhase:
             clusters.setdefault(key, []).append(line)
 
         all_rows: list[TopicAttributionRow] = []
+        infra_failure = False
         for (cluster_id, env_id), lines in clusters.items():
             rows = self._attribute_cluster(uow, cluster_id, env_id, lines, tracking_date)
-            all_rows.extend(rows)
+            if rows is None:
+                infra_failure = True
+            else:
+                all_rows.extend(rows)
 
         count = 0
         if all_rows:
             count = uow.topic_attributions.upsert_batch(all_rows)
 
-        uow.pipeline_state.mark_topic_attribution_calculated(
-            self._ecosystem,
-            self._tenant_id,
-            tracking_date,
-        )
+        if not infra_failure:
+            uow.pipeline_state.mark_topic_attribution_calculated(
+                self._ecosystem,
+                self._tenant_id,
+                tracking_date,
+            )
         return count
 
     def _attribute_cluster(
@@ -133,7 +138,7 @@ class TopicAttributionPhase:
         env_id: str,
         billing_lines: list[BillingLineItem],
         tracking_date: date,
-    ) -> list[TopicAttributionRow]:
+    ) -> list[TopicAttributionRow] | None:
         first_line = billing_lines[0]
         b_start = first_line.timestamp
         b_end = b_start + _granularity_to_duration(first_line.granularity)
@@ -153,7 +158,7 @@ class TopicAttributionPhase:
                 cluster_id,
                 tracking_date,
             )
-            return []
+            return None
 
         rows: list[TopicAttributionRow] = []
         for line in billing_lines:
