@@ -1375,8 +1375,19 @@ stage with its own star schema, composable attribution models
 and configurable retention. (<a href="https://github.com/waliaabhishek/chitragupta/commit/919cc42a68b78773389577ce74c3f43c17544869">919cc42</a>)</p>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
-<li>Fix: TASK-175 — Replace getattr config probing with typed overlay config protocol</li>
+<li>Fix: TASK-176 — Unify emitter plugins to be row-type-agnostic across all pipelines</li>
 </ul>
+<p>Row types now declare <strong>csv_fields</strong> and <strong>prometheus_metrics</strong> ClassVars.
+One generic CsvEmitter and one generic PrometheusEmitter serve all pipelines
+(chargeback, topic attribution, future stages) without per-pipeline subclasses.</p>
+<p>PrometheusEmitter no longer queries storage_backend internally — billing,
+resource, and identity metrics are decomposed into separate EmitterRunner
+streams with dedicated row fetchers (BillingRowFetcher, ResourceRowFetcher,
+IdentityRowFetcher). TopicAttributionEmitterBuilder and
+TopicAttributionCsvEmitter deleted; all pipelines use RegistryEmitterBuilder.</p>
+<p>Adding a new pipeline now requires only a row dataclass with descriptors +
+a DateSource + a RowFetcher — zero emitter code changes. (<a href="https://github.com/waliaabhishek/chitragupta/commit/cf046889ab6a7381d3d75766bf41ba11cfff2f37">cf04688</a>)
+- Fix: TASK-175 — Replace getattr config probing with typed overlay config protocol</p>
 <p>Add OverlayConfig and OverlayPlugin protocols to core/plugin/protocols.py,
 following the TopicDiscoveryPlugin pattern. ConfluentCloudPlugin implements
 get_overlay_config returning TopicAttributionConfig for "topic_attribution".

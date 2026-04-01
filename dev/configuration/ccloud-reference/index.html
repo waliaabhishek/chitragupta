@@ -1906,7 +1906,7 @@ fails with a <code>ValidationError</code> rather than silently producing even-sp
 <td><code>emitters</code></td>
 <td>list</td>
 <td><code>[]</code></td>
-<td>Emitter specs for topic attribution output. Same format as top-level <code>emitters</code>.</td>
+<td>Emitter specs for topic attribution output. Same format as top-level <code>emitters</code>. For <code>type: csv</code>, <code>output_dir</code> defaults to <code>/tmp/topic_attribution</code> and <code>filename_template</code> defaults to <code>topic_attr_{tenant_id}_{date}.csv</code> — both are overridable per-spec.</td>
 </tr>
 </tbody>
 </table>
