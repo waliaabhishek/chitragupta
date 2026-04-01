@@ -290,6 +290,7 @@ class MockUnitOfWork:
         self.billing = MockBillingRepo()
         self.chargebacks = MockChargebackRepo()
         self.pipeline_state = MockPipelineStateRepo()
+        self.topic_attributions = MagicMock()
         self.tags = MagicMock()
         self._committed = False
 
@@ -752,6 +753,96 @@ class TestGatherPhaseApplyRecalculationWindow:
         state_after = uow.pipeline_state.get(ECOSYSTEM, TENANT_ID, billing_date)
         assert state_after is not None
         assert state_after.chargeback_calculated is True
+
+    def test_topic_attributions_deleted_within_recalculation_window(self) -> None:
+        """Topic attribution rows are deleted when a calculated date falls within the recalculation window."""
+        tc = _make_tenant_config(cutoff_days=5)
+        phase = _make_gather_phase(tenant_config=tc)
+
+        recalc_cutoff = (NOW - timedelta(days=5)).date()
+        billing_date = (NOW - timedelta(days=2)).date()
+        assert billing_date >= recalc_cutoff
+
+        uow = MockUnitOfWork()
+
+        state = PipelineState(
+            ecosystem=ECOSYSTEM,
+            tenant_id=TENANT_ID,
+            tracking_date=billing_date,
+            billing_gathered=True,
+            resources_gathered=True,
+            chargeback_calculated=True,
+        )
+        uow.pipeline_state.upsert(state)
+
+        cb_ts = datetime(billing_date.year, billing_date.month, billing_date.day, tzinfo=UTC)
+        uow.chargebacks._data.append(
+            ChargebackRow(
+                ecosystem=ECOSYSTEM,
+                tenant_id=TENANT_ID,
+                timestamp=cb_ts,
+                resource_id="cluster-1",
+                product_category="kafka",
+                product_type="KAFKA_CKU",
+                identity_id="user-1",
+                cost_type=CostType.USAGE,
+                amount=Decimal("100"),
+                allocation_method="test",
+            )
+        )
+
+        phase._apply_recalculation_window(uow, {billing_date}, NOW)
+
+        uow.topic_attributions.delete_by_date.assert_called_once_with(ECOSYSTEM, TENANT_ID, billing_date)
+
+    def test_topic_attributions_not_deleted_outside_recalculation_window(self) -> None:
+        """Topic attribution rows are NOT deleted for dates outside the recalculation window."""
+        tc = _make_tenant_config(cutoff_days=5)
+        phase = _make_gather_phase(tenant_config=tc)
+
+        billing_date = (NOW - timedelta(days=10)).date()
+
+        uow = MockUnitOfWork()
+        state = PipelineState(
+            ecosystem=ECOSYSTEM,
+            tenant_id=TENANT_ID,
+            tracking_date=billing_date,
+            billing_gathered=True,
+            resources_gathered=True,
+            chargeback_calculated=True,
+        )
+        uow.pipeline_state.upsert(state)
+
+        phase._apply_recalculation_window(uow, {billing_date}, NOW)
+
+        uow.topic_attributions.delete_by_date.assert_not_called()
+
+    def test_first_time_computation_skips_deletion(self) -> None:
+        """Neither chargebacks nor topic attributions are deleted when chargeback_calculated is False."""
+        tc = _make_tenant_config(cutoff_days=5)
+        phase = _make_gather_phase(tenant_config=tc)
+
+        recalc_cutoff = (NOW - timedelta(days=5)).date()
+        billing_date = (NOW - timedelta(days=2)).date()
+        assert billing_date >= recalc_cutoff
+
+        uow = MockUnitOfWork()
+        uow.chargebacks = MagicMock()
+
+        state = PipelineState(
+            ecosystem=ECOSYSTEM,
+            tenant_id=TENANT_ID,
+            tracking_date=billing_date,
+            billing_gathered=True,
+            resources_gathered=True,
+            chargeback_calculated=False,
+        )
+        uow.pipeline_state.upsert(state)
+
+        phase._apply_recalculation_window(uow, {billing_date}, NOW)
+
+        uow.chargebacks.delete_by_date.assert_not_called()
+        uow.topic_attributions.delete_by_date.assert_not_called()
 
 
 # =============================================================================

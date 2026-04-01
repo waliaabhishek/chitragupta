@@ -230,6 +230,7 @@ class MockUnitOfWork:
         self.chargebacks = MockChargebackRepo()
         self.pipeline_state = MockPipelineStateRepo()
         self.tags = MagicMock()
+        self.topic_attributions = MagicMock()
         self._committed = False
 
     def __enter__(self) -> MockUnitOfWork:

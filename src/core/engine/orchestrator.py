@@ -368,6 +368,7 @@ class GatherPhase:
                 existing_state = uow.pipeline_state.get(self._ecosystem, self._tenant_id, billing_date)
                 if existing_state and existing_state.chargeback_calculated:
                     uow.chargebacks.delete_by_date(self._ecosystem, self._tenant_id, billing_date)
+                    uow.topic_attributions.delete_by_date(self._ecosystem, self._tenant_id, billing_date)
                     uow.pipeline_state.mark_needs_recalculation(self._ecosystem, self._tenant_id, billing_date)
                     logger.info("Date %s within recalculation window — will recompute", billing_date)
 

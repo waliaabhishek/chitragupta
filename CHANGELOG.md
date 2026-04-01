@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **Fix:** Recalculation window now deletes stale topic attribution facts before recompute. Previously, only chargeback rows were deleted, so topics removed between runs could cause silent double-accounting on the next calculation. (TASK-178)
+
 - **Fix:** Transient Prometheus outages during topic attribution no longer permanently mark affected dates as calculated. `_attribute_cluster` now returns `None` (instead of `[]`) on infrastructure failure, and `run()` skips `mark_topic_attribution_calculated` when any cluster experienced a metrics fetch failure — leaving the date pending for retry on the next pipeline run. (TASK-177)
 
 - **Chore:** Unified emitter system — one generic `CsvEmitter` and one generic `PrometheusEmitter` now serve all pipelines. Row types (`ChargebackRow`, `TopicAttributionRow`, `BillingEmitRow`, `ResourceEmitRow`, `IdentityEmitRow`) declare `__csv_fields__` and `__prometheus_metrics__` ClassVars; emitters read these at emit time. `PrometheusEmitter` no longer takes `storage_backend` — billing, resource, and identity Prometheus metrics are now emitted via separate `EmitterRunner` instances with dedicated row fetchers (`BillingRowFetcher`, `ResourceRowFetcher`, `IdentityRowFetcher`). `TopicAttributionConfig` now auto-injects `output_dir="/tmp/topic_attribution"` and `filename_template="topic_attr_{tenant_id}_{date}.csv"` for CSV emitter specs under `topic_attribution.emitters` (overridable per-spec). `TopicAttributionEmitterBuilder` and `TopicAttributionCsvEmitter` removed. (TASK-176)
