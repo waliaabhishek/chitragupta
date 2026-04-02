@@ -147,7 +147,7 @@ class CCloudBillingRepository:
         )
         return [_table_to_line(r) for r in self._session.exec(stmt).all()]
 
-    def increment_allocation_attempts(self, line: BillingLineItem) -> int:
+    def _increment_int_column(self, line: BillingLineItem, attr: str) -> int:
         ccloud_line = cast("CCloudBillingLineItem", line)
         row = self._session.get(CCloudBillingTable, _billing_pk(ccloud_line))
         if row is None:
@@ -157,10 +157,16 @@ class CCloudBillingRepository:
                 f"product_type={line.product_type!r}, product_category={line.product_category!r}"
             )
             raise KeyError(msg)
-        row.allocation_attempts += 1
+        setattr(row, attr, getattr(row, attr) + 1)
         self._session.add(row)
         self._session.flush()
-        return row.allocation_attempts
+        return int(getattr(row, attr))
+
+    def increment_allocation_attempts(self, line: BillingLineItem) -> int:
+        return self._increment_int_column(line, "allocation_attempts")
+
+    def increment_topic_attribution_attempts(self, line: BillingLineItem) -> int:
+        return self._increment_int_column(line, "topic_attribution_attempts")
 
     def delete_before(self, ecosystem: str, tenant_id: str, before: datetime) -> int:
         stmt = delete(CCloudBillingTable).where(

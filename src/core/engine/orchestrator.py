@@ -126,16 +126,29 @@ class RetryManager:
 
     Opens a separate UoW (committed immediately) so the counter survives
     the caller's UoW rollback on allocation failure.
+
+    increment_fn: called inside the UoW to increment and return the new counter.
+    Defaults to allocation_attempts for backward compatibility.
     """
 
-    def __init__(self, storage_backend: StorageBackend, limit: int) -> None:
+    def __init__(
+        self,
+        storage_backend: StorageBackend,
+        limit: int,
+        increment_fn: Callable[[UnitOfWork, BillingLineItem], int] | None = None,
+    ) -> None:
         self._storage_backend = storage_backend
         self._limit = limit
+        self._increment_fn: Callable[[UnitOfWork, BillingLineItem], int] = (
+            increment_fn
+            if increment_fn is not None
+            else lambda uow, line: uow.billing.increment_allocation_attempts(line)
+        )
 
     def increment_and_check(self, line: BillingLineItem) -> tuple[int, bool]:
-        """Increment attempt counter. Returns (new_attempts, should_fallback_to_unallocated)."""
+        """Increment attempt counter. Returns (new_attempts, should_fallback)."""
         with self._storage_backend.create_unit_of_work() as uow:
-            new_attempts = uow.billing.increment_allocation_attempts(line)
+            new_attempts = self._increment_fn(uow, line)
             uow.commit()
         return new_attempts, new_attempts >= self._limit
 
@@ -772,12 +785,18 @@ class ChargebackOrchestrator:
             if isinstance(ta_config, TopicAttributionConfigProtocol):
                 from core.engine.topic_attribution import TopicAttributionPhase
 
+                topic_retry_manager = RetryManager(
+                    storage_backend=storage_backend,
+                    limit=tenant_config.topic_attribution_retry_limit,
+                    increment_fn=lambda uow, line: uow.billing.increment_topic_attribution_attempts(line),
+                )
                 self._topic_overlay_phase = TopicAttributionPhase(
                     ecosystem=self._ecosystem,
                     tenant_id=self._tenant_id,
                     metrics_source=metrics_source,
                     config=ta_config,
                     metrics_step=metrics_step,
+                    retry_checker=topic_retry_manager,
                 )
 
         with storage_backend.create_unit_of_work() as uow:

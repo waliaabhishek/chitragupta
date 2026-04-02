@@ -589,7 +589,7 @@ class SQLModelBillingRepository:
         )
         return [billing_to_domain(r) for r in self._session.exec(stmt).all()]
 
-    def increment_allocation_attempts(self, line: BillingLineItem) -> int:
+    def _increment_int_column(self, line: BillingLineItem, attr: str) -> int:
         row = self._session.get(BillingTable, _billing_pk(line))
         if row is None:
             msg = (
@@ -598,10 +598,16 @@ class SQLModelBillingRepository:
                 f"product_type={line.product_type!r}, product_category={line.product_category!r}"
             )
             raise KeyError(msg)
-        row.allocation_attempts += 1
+        setattr(row, attr, getattr(row, attr) + 1)
         self._session.add(row)
         self._session.flush()
-        return row.allocation_attempts
+        return int(getattr(row, attr))
+
+    def increment_allocation_attempts(self, line: BillingLineItem) -> int:
+        return self._increment_int_column(line, "allocation_attempts")
+
+    def increment_topic_attribution_attempts(self, line: BillingLineItem) -> int:
+        return self._increment_int_column(line, "topic_attribution_attempts")
 
     def find_by_filters(
         self,

@@ -65,6 +65,7 @@ tenants:
 | `cutoff_days` | int | 5 | Skip dates within this many days of today (billing lag, max 30) |
 | `retention_days` | int | 250 | Delete data older than this (max 730) |
 | `allocation_retry_limit` | int | 3 | Max identity resolution retries before fallback (max 10) |
+| `topic_attribution_retry_limit` | int | 3 | Max Prometheus fetch retries per cluster before producing sentinel rows (1–10). See [Topic attribution retry behavior](#topic-attribution-retry-behavior). |
 | `gather_failure_threshold` | int | 5 | Consecutive gather failures before tenant suspension |
 | `tenant_execution_timeout_seconds` | int | 3600 | Per-tenant run timeout (0 = no timeout) |
 | `metrics_prefetch_workers` | int | 4 | Parallel metrics query threads (1–20) |
@@ -198,6 +199,26 @@ topic_attribution:
 
 For bytes_ratio product types, if Prometheus returns all-zero values, the
 `missing_metrics_behavior` setting determines the fallback.
+
+### Topic attribution retry behavior
+
+When Prometheus is unreachable for a cluster, the pipeline leaves that date pending and retries on the next run. The per-billing-line attempt count is stored in `billing.topic_attribution_attempts` (migration 016).
+
+Once all billing lines for a cluster reach `topic_attribution_retry_limit` attempts without a successful metrics fetch, the pipeline produces sentinel rows instead of retrying indefinitely:
+
+- `topic_name`: `__UNATTRIBUTED__`
+- `attribution_method`: `ATTRIBUTION_FAILED`
+- `amount`: full cluster cost (no money is silently lost)
+
+The date is marked calculated only when every cluster is resolved — either with real attribution rows, empty metrics, or sentinel rows. Clusters still below the retry limit return pending and do not block other clusters from being marked.
+
+To identify sentinel rows in the database or API:
+
+```sql
+SELECT * FROM topic_attribution_facts
+JOIN topic_attribution_dimensions USING (dimension_id)
+WHERE attribution_method = 'ATTRIBUTION_FAILED';
+```
 
 ## Emitters
 

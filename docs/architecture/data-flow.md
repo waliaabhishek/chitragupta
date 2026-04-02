@@ -86,9 +86,13 @@ The pipeline loop ends at step 8. Topic overlay (step 9) is a separate pass over
    Runs after chargeback calculation. For each Kafka billing line item, queries
    Prometheus for per-topic byte metrics and splits the cluster cost across
    active topics. Results are written to `topic_attribution_facts`. Enabled via
-   `plugin_settings.topic_attribution.enabled: true`. If Prometheus data is
-   unavailable, falls back to even-split across known topics (configurable via
-   `missing_metrics_behavior`).
+   `plugin_settings.topic_attribution.enabled: true`. If Prometheus returns
+   all-zero data, the `missing_metrics_behavior` setting controls the fallback
+   (even-split or skip). If Prometheus is unreachable (infrastructure failure),
+   the date stays pending and the pipeline retries on the next run. After
+   `topic_attribution_retry_limit` consecutive failures for a cluster, sentinel
+   rows are written (`topic_name=__UNATTRIBUTED__`, `attribution_method=ATTRIBUTION_FAILED`)
+   preserving full cost, and the date is marked calculated.
 
 10. **Emit (post-pipeline)** — `EmitterRunner` runs after each pipeline cycle completes.
    It queries storage for pending dates (not yet emitted, or previously failed, within

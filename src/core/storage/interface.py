@@ -232,6 +232,14 @@ class BillingRepository(Protocol):
         """
         ...
 
+    def increment_topic_attribution_attempts(self, line: BillingLineItem) -> int:
+        """Increments topic_attribution_attempts in DB and returns the new value.
+
+        Identifies the billing line via the domain object's composite key.
+        The domain model (BillingLineItem) is not modified — it remains frozen.
+        """
+        ...
+
     def delete_before(self, ecosystem: str, tenant_id: str, before: datetime) -> int: ...
 
     def find_by_filters(

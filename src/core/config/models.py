@@ -143,6 +143,7 @@ class TenantConfig(BaseModel):
     cutoff_days: int = Field(default=5, gt=0, le=30)
     retention_days: int = Field(default=250, gt=0, le=730)
     allocation_retry_limit: int = Field(default=3, gt=0, le=10)
+    topic_attribution_retry_limit: int = Field(default=3, gt=0, le=10)
     zero_gather_deletion_threshold: int = Field(default=-1, ge=-1)
     gather_failure_threshold: int = Field(default=5, gt=0)
     tenant_execution_timeout_seconds: int = Field(default=3600, ge=0)

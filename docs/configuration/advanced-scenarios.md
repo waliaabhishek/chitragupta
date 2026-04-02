@@ -73,6 +73,7 @@ when and how to adjust these.
 | `gather_failure_threshold` | int | 5 | Consecutive gather failures before tenant is permanently suspended | Increase if transient API errors are common (rate limiting, network blips). Decrease to fail fast on bad credentials. |
 | `tenant_execution_timeout_seconds` | int | 3600 | Per-tenant pipeline run timeout in seconds (0 = no timeout) | Increase for large backfills (200+ lookback days on first run). Decrease for alerting on stuck pipelines. |
 | `allocation_retry_limit` | int | 3 | Max identity resolution retries before allocating to UNALLOCATED (1–10) | Increase if identity data arrives with a delay (eventual consistency). Rarely needs changing. |
+| `topic_attribution_retry_limit` | int | 3 | Max Prometheus fetch retries per cluster before producing sentinel rows (1–10) | Increase if your Prometheus endpoint has intermittent outages longer than your pipeline run interval. Decrease to resolve dead clusters faster. |
 
 ## API server configuration
 

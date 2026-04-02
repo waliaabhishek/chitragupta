@@ -8,6 +8,7 @@ from decimal import Decimal
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from core.engine.orchestrator import RetryChecker
     from core.metrics.protocol import MetricsSource
     from core.models.billing import BillingLineItem
     from core.models.metrics import MetricQuery
@@ -83,12 +84,14 @@ class TopicAttributionPhase:
         metrics_source: MetricsSource | None,
         config: TopicAttributionConfigProtocol,
         metrics_step: timedelta,
+        retry_checker: RetryChecker | None = None,
     ) -> None:
         self._ecosystem = ecosystem
         self._tenant_id = tenant_id
         self._metrics_source = metrics_source
         self._config = config
         self._metrics_step = metrics_step
+        self._retry_checker = retry_checker
         self._topic_filter = _build_topic_filter(config.exclude_topic_patterns)
         self._attribution_models = resolve_topic_attribution_models(config.cost_mapping_overrides)
         self._metric_queries = build_metric_queries(config.metric_name_overrides)
@@ -111,19 +114,19 @@ class TopicAttributionPhase:
             clusters.setdefault(key, []).append(line)
 
         all_rows: list[TopicAttributionRow] = []
-        infra_failure = False
+        any_pending = False  # True if any cluster still has retries remaining (returned None)
         for (cluster_id, env_id), lines in clusters.items():
             rows = self._attribute_cluster(uow, cluster_id, env_id, lines, tracking_date)
             if rows is None:
-                infra_failure = True
+                any_pending = True  # cluster not yet resolved — do not mark calculated
             else:
-                all_rows.extend(rows)
+                all_rows.extend(rows)  # includes sentinels when retry limit exhausted
 
         count = 0
         if all_rows:
             count = uow.topic_attributions.upsert_batch(all_rows)
 
-        if not infra_failure:
+        if not any_pending:
             uow.pipeline_state.mark_topic_attribution_calculated(
                 self._ecosystem,
                 self._tenant_id,
@@ -147,12 +150,7 @@ class TopicAttributionPhase:
 
         topic_metrics = self._fetch_topic_metrics(cluster_id, b_start, b_end)
         if topic_metrics is None:
-            logger.warning(
-                "Skipping attribution for cluster=%s date=%s — metrics infrastructure unavailable",
-                cluster_id,
-                tracking_date,
-            )
-            return None
+            return self._handle_cluster_metrics_failure(billing_lines, cluster_id, env_id, tracking_date)
 
         # Union: resources table topics + all topics seen in metrics for this window.
         # _fetch_topic_metrics already applies self._topic_filter, so the comprehension
@@ -191,6 +189,102 @@ class TopicAttributionPhase:
             if topic_rows:
                 rows.extend(topic_rows)
         return rows
+
+    def _handle_cluster_metrics_failure(
+        self,
+        billing_lines: list[BillingLineItem],
+        cluster_id: str,
+        env_id: str,
+        tracking_date: date,
+    ) -> list[TopicAttributionRow] | None:
+        """Handle Prometheus failure for a cluster.
+
+        Without retry_checker: return None (leave pending indefinitely — legacy behavior).
+        With retry_checker:
+          - Increment topic_attribution_attempts for all lines.
+          - If all lines still below limit: return None (leave pending, will retry).
+          - If all lines at limit: return sentinel rows (cluster resolved, costs preserved).
+        """
+        if self._retry_checker is None:
+            logger.warning(
+                "Skipping attribution for cluster=%s date=%s — metrics infrastructure unavailable",
+                cluster_id,
+                tracking_date,
+            )
+            return None
+
+        # Increment all billing lines and collect results.
+        attempt_results: list[tuple[int, bool]] = []
+        for line in billing_lines:
+            try:
+                new_attempts, should_fallback = self._retry_checker.increment_and_check(line)
+                attempt_results.append((new_attempts, should_fallback))
+            except Exception as retry_exc:
+                logger.warning(
+                    "Failed to persist retry counter for cluster=%s line=%s/%s: %s — leaving pending",
+                    cluster_id,
+                    line.resource_id,
+                    line.product_type,
+                    retry_exc,
+                )
+                return None  # counter not persisted — safe to leave pending
+
+        all_at_limit = all(should_fallback for _, should_fallback in attempt_results)
+        max_attempts = max(attempts for attempts, _ in attempt_results)
+
+        if not all_at_limit:
+            logger.warning(
+                "Cluster=%s date=%s — metrics unavailable (attempt %d), will retry",
+                cluster_id,
+                tracking_date,
+                max_attempts,
+            )
+            return None  # below limit — leave date pending
+
+        # All lines exhausted — produce sentinels so date can be resolved.
+        logger.error(
+            "Cluster=%s date=%s — metrics permanently unavailable after %d attempts, producing %d sentinel rows",
+            cluster_id,
+            tracking_date,
+            max_attempts,
+            len(billing_lines),
+        )
+        return self._produce_sentinel_rows(billing_lines, cluster_id, env_id, max_attempts)
+
+    def _produce_sentinel_rows(
+        self,
+        billing_lines: list[BillingLineItem],
+        cluster_id: str,
+        env_id: str,
+        attempts: int,
+    ) -> list[TopicAttributionRow]:
+        """Produce one sentinel TopicAttributionRow per billing line.
+
+        Preserves full cost in amount so no money is silently lost.
+        topic_name=__UNATTRIBUTED__, attribution_method=ATTRIBUTION_FAILED.
+        """
+        from core.models.topic_attribution import TopicAttributionRow
+
+        return [
+            TopicAttributionRow(
+                ecosystem=self._ecosystem,
+                tenant_id=self._tenant_id,
+                timestamp=line.timestamp,
+                env_id=env_id,
+                cluster_resource_id=cluster_id,
+                topic_name="__UNATTRIBUTED__",
+                product_category=line.product_category,
+                product_type=line.product_type,
+                attribution_method="ATTRIBUTION_FAILED",
+                amount=Decimal(str(line.total_cost)),
+                metadata={
+                    "error": "Prometheus metrics permanently unavailable",
+                    "cluster_id": cluster_id,
+                    "topic_attribution_attempts": attempts,
+                },
+            )
+            for line in billing_lines
+        ]
 
     def _fetch_topic_metrics(
         self,

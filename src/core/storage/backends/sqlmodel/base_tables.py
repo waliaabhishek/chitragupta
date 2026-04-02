@@ -69,4 +69,5 @@ class BillingTable(SQLModel, table=True):
     currency: str = "USD"
     granularity: str = "daily"
     allocation_attempts: int = Field(default=0)
+    topic_attribution_attempts: int = Field(default=0)
     metadata_json: str | None = Field(default=None)
