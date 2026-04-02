@@ -45,6 +45,7 @@ class TestCreateAuxiliaryPrometheusRunners:
             storage_backend=fake_storage,
             prometheus_specs=prometheus_specs,
             date_source=ChargebackDateSource(fake_storage),
+            resource_types=["kafka_cluster"],
         )
         assert len(runners) == 3
 
@@ -59,6 +60,7 @@ class TestCreateAuxiliaryPrometheusRunners:
             storage_backend=fake_storage,
             prometheus_specs=prometheus_specs,
             date_source=ChargebackDateSource(fake_storage),
+            resource_types=["kafka_cluster"],
         )
         pipelines = [r._pipeline for r in runners]
         assert "billing" in pipelines
@@ -77,6 +79,7 @@ class TestCreateAuxiliaryPrometheusRunners:
             storage_backend=fake_storage,
             prometheus_specs=prometheus_specs,
             date_source=ChargebackDateSource(fake_storage),
+            resource_types=["kafka_cluster"],
         )
         for runner in runners:
             assert runner._emitter_specs == prometheus_specs
@@ -93,6 +96,7 @@ class TestCreateAuxiliaryPrometheusRunners:
             storage_backend=fake_storage,
             prometheus_specs=prometheus_specs,
             date_source=date_source,
+            resource_types=["kafka_cluster"],
         )
         for runner in runners:
             assert runner._date_source is date_source
@@ -111,6 +115,7 @@ class TestCreateAuxiliaryPrometheusRunners:
             storage_backend=fake_storage,
             prometheus_specs=prometheus_specs,
             date_source=ChargebackDateSource(fake_storage),
+            resource_types=["kafka_cluster"],
         )
         for runner in runners:
             assert len(runner._emitter_specs) == 2

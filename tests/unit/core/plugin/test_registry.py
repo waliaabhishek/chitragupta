@@ -250,3 +250,67 @@ class TestEcosystemBundleFallbackAllocator:
 
         assert bundle.fallback_allocator is specific_fallback
         assert callable(bundle.fallback_allocator)
+
+
+# --- EcosystemBundle.billing_resource_types (TASK-182) ---
+
+
+class StubHandlerWithResourceTypes(StubHandler):
+    """StubHandler extended with gathered_resource_types for TASK-182 tests."""
+
+    def __init__(
+        self,
+        svc_type: str,
+        product_types: Sequence[str],
+        resource_types: Sequence[str],
+    ) -> None:
+        super().__init__(svc_type, product_types)
+        self._resource_types = resource_types
+
+    @property
+    def gathered_resource_types(self) -> Sequence[str]:
+        return self._resource_types
+
+
+class TestEcosystemBundleBillingResourceTypes:
+    """EcosystemBundle.billing_resource_types — sorted union of all handler gathered types."""
+
+    def test_billing_resource_types_returns_sorted_union(self) -> None:
+        kafka = StubHandlerWithResourceTypes("kafka", [], ["environment", "kafka_cluster"])
+        flink = StubHandlerWithResourceTypes("flink", [], ["flink_compute_pool"])
+        plugin = StubPlugin("ccloud", {"kafka": kafka, "flink": flink})
+        bundle = EcosystemBundle.build(plugin)
+        assert bundle.billing_resource_types == ["environment", "flink_compute_pool", "kafka_cluster"]
+
+    def test_billing_resource_types_is_sorted(self) -> None:
+        h = StubHandlerWithResourceTypes("h", [], ["zzz_type", "aaa_type", "mmm_type"])
+        plugin = StubPlugin("ccloud", {"h": h})
+        bundle = EcosystemBundle.build(plugin)
+        assert bundle.billing_resource_types == ["aaa_type", "mmm_type", "zzz_type"]
+
+    def test_billing_resource_types_deduplicates(self) -> None:
+        h1 = StubHandlerWithResourceTypes("h1", [], ["environment", "kafka_cluster"])
+        h2 = StubHandlerWithResourceTypes("h2", [], ["environment"])
+        plugin = StubPlugin("ccloud", {"h1": h1, "h2": h2})
+        bundle = EcosystemBundle.build(plugin)
+        assert bundle.billing_resource_types == ["environment", "kafka_cluster"]
+
+    def test_billing_resource_types_excludes_handlers_with_empty_lists(self) -> None:
+        kafka = StubHandlerWithResourceTypes("kafka", [], ["kafka_cluster"])
+        default = StubHandlerWithResourceTypes("default", [], [])
+        plugin = StubPlugin("ccloud", {"kafka": kafka, "default": default})
+        bundle = EcosystemBundle.build(plugin)
+        assert bundle.billing_resource_types == ["kafka_cluster"]
+
+    def test_billing_resource_types_empty_when_no_handlers(self) -> None:
+        plugin = StubPlugin("ccloud", {})
+        bundle = EcosystemBundle.build(plugin)
+        assert bundle.billing_resource_types == []
+
+    def test_billing_resource_types_excludes_topic(self) -> None:
+        """Topic is an overlay type and must never appear in billing_resource_types."""
+        kafka = StubHandlerWithResourceTypes("kafka", [], ["environment", "kafka_cluster"])
+        # No handler declares "topic" as a gathered type
+        plugin = StubPlugin("ccloud", {"kafka": kafka})
+        bundle = EcosystemBundle.build(plugin)
+        assert "topic" not in bundle.billing_resource_types

@@ -44,6 +44,10 @@ class IntegrationHandler:
     def handles_product_types(self) -> list[str]:
         return self._product_types
 
+    @property
+    def gathered_resource_types(self) -> list[str]:
+        return []
+
     def set_resources(self, resources: list[Resource]) -> None:
         self._resources = resources
 
@@ -204,7 +208,7 @@ class TestEndToEndPipeline:
 
         # Verify data persisted in real DB
         with storage.create_unit_of_work() as uow:
-            resources, _ = uow.resources.find_active_at(ECOSYSTEM, TENANT_ID, NOW)
+            resources, _ = uow.resources.find_active_at(ECOSYSTEM, TENANT_ID, NOW, resource_type="kafka_cluster")
             resource_ids = {r.resource_id for r in resources}
             assert "cluster-1" in resource_ids
 

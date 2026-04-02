@@ -28,7 +28,7 @@ if TYPE_CHECKING:
     from core.models.metrics import MetricQuery, MetricRow
     from core.models.resource import Resource
     from core.plugin.protocols import CostAllocator, EcosystemPlugin, OverlayConfig, ResolveContext, ServiceHandler
-    from core.storage.interface import StorageBackend, UnitOfWork
+    from core.storage.interface import ResourceRepository, StorageBackend, UnitOfWork
 
     class _EntityRepo(Protocol):
         """Structural minimum for deletion detection — covers ResourceRepository and IdentityRepository."""
@@ -251,7 +251,13 @@ class GatherPhase:
                 gather_errors.append(f"Handler {handler.service_type} gather failed: {exc}")
 
         if gather_complete:
-            self._detect_deletions(uow, now, all_gathered_resource_ids, all_gathered_identity_ids)
+            self._detect_deletions(
+                uow,
+                now,
+                all_gathered_resource_ids,
+                all_gathered_identity_ids,
+                gathered_resource_types=self._bundle.billing_resource_types,
+            )
         else:
             logger.warning("Skipping deletion detection — incomplete gather for %s", self._tenant_id)
 
@@ -312,16 +318,21 @@ class GatherPhase:
             gathered_identity_ids.add(identity.identity_id)
         return gathered_resource_ids, gathered_identity_ids
 
-    def _detect_entity_deletions(
+    def _run_deletion_scan(
         self,
-        repo: _EntityRepo,
+        active_entities: Sequence[Any],
         gathered_ids: set[str],
         entity_name: str,
-        id_getter: Callable[[Any], str],
         now: datetime,
+        id_getter: Callable[[Any], str],
+        mark_fn: Callable[[str, datetime], None],
     ) -> None:
+        """Shared deletion logic: zero-gather counter, threshold checks, mark-deleted loop.
+
+        Callers pre-fetch active_entities using their own typed find_active_at call,
+        then pass the results here along with id_getter and mark_fn closures.
+        """
         threshold = self._tenant_config.zero_gather_deletion_threshold
-        active_entities, _ = repo.find_active_at(self._ecosystem, self._tenant_id, now, count=False)
         if not gathered_ids and active_entities:
             self._zero_gather_counters[entity_name] += 1
             consecutive = self._zero_gather_counters[entity_name]
@@ -342,14 +353,60 @@ class GatherPhase:
                 for entity in active_entities:
                     entity_id = id_getter(entity)
                     if entity_id not in gathered_ids:
-                        repo.mark_deleted(self._ecosystem, self._tenant_id, entity_id, now)
+                        mark_fn(entity_id, now)
                 self._zero_gather_counters[entity_name] = 0
         else:
             self._zero_gather_counters[entity_name] = 0
             for entity in active_entities:
                 entity_id = id_getter(entity)
                 if entity_id not in gathered_ids:
-                    repo.mark_deleted(self._ecosystem, self._tenant_id, entity_id, now)
+                    mark_fn(entity_id, now)
+
+    def _detect_resource_deletions(
+        self,
+        repo: ResourceRepository,
+        gathered_ids: set[str],
+        now: datetime,
+        resource_types: Sequence[str],
+    ) -> None:
+        """Deletion detection scoped to billing-relevant resource types.
+
+        Uses ResourceRepository directly (not _EntityRepo) to pass the mandatory
+        resource_type parameter type-safely. Delegates shared logic to _run_deletion_scan.
+        """
+        active_resources, _ = repo.find_active_at(
+            self._ecosystem,
+            self._tenant_id,
+            now,
+            resource_type=resource_types,
+            count=False,
+        )
+        self._run_deletion_scan(
+            active_resources,
+            gathered_ids,
+            "resources",
+            now,
+            id_getter=lambda r: r.resource_id,
+            mark_fn=lambda rid, ts: repo.mark_deleted(self._ecosystem, self._tenant_id, rid, ts),
+        )
+
+    def _detect_entity_deletions(
+        self,
+        repo: _EntityRepo,
+        gathered_ids: set[str],
+        entity_name: str,
+        id_getter: Callable[[Any], str],
+        now: datetime,
+    ) -> None:
+        active_entities, _ = repo.find_active_at(self._ecosystem, self._tenant_id, now, count=False)
+        self._run_deletion_scan(
+            active_entities,
+            gathered_ids,
+            entity_name,
+            now,
+            id_getter=id_getter,
+            mark_fn=lambda eid, ts: repo.mark_deleted(self._ecosystem, self._tenant_id, eid, ts),
+        )
 
     def _detect_deletions(
         self,
@@ -357,8 +414,9 @@ class GatherPhase:
         now: datetime,
         gathered_resource_ids: set[str],
         gathered_identity_ids: set[str],
+        gathered_resource_types: Sequence[str],
     ) -> None:
-        self._detect_entity_deletions(uow.resources, gathered_resource_ids, "resources", lambda r: r.resource_id, now)
+        self._detect_resource_deletions(uow.resources, gathered_resource_ids, now, gathered_resource_types)
         self._detect_entity_deletions(uow.identities, gathered_identity_ids, "identities", lambda i: i.identity_id, now)
 
     def _gather_billing(self, uow: UnitOfWork, now: datetime) -> set[date_type]:
@@ -550,8 +608,16 @@ class CalculatePhase:
         self, uow: UnitOfWork, billing_windows: set[tuple[datetime, datetime]]
     ) -> dict[tuple[datetime, datetime], dict[str, Resource]]:
         cache: dict[tuple[datetime, datetime], dict[str, Resource]] = {}
+        billing_types = self._bundle.billing_resource_types
         for b_start, b_end in billing_windows:
-            resources, _ = uow.resources.find_by_period(self._ecosystem, self._tenant_id, b_start, b_end, count=False)
+            resources, _ = uow.resources.find_by_period(
+                self._ecosystem,
+                self._tenant_id,
+                b_start,
+                b_end,
+                resource_type=billing_types,
+                count=False,
+            )
             cache[(b_start, b_end)] = {r.resource_id: r for r in resources}
         return cache
 

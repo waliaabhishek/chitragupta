@@ -61,6 +61,10 @@ class KsqldbHandler(BaseServiceHandler["CCloudConnection | None", "CCloudPluginC
     def handles_product_types(self) -> Sequence[str]:
         return _KSQLDB_PRODUCT_TYPES
 
+    @property
+    def gathered_resource_types(self) -> Sequence[str]:
+        return ["ksqldb_cluster"]
+
     def gather_resources(self, tenant_id: str, uow: UnitOfWork, shared_ctx: object | None = None) -> Iterable[Resource]:
         """Gather ksqlDB clusters using env_ids from shared context.
 

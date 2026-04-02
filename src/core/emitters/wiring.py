@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 from core.emitters.sources import (
@@ -24,6 +25,7 @@ def create_auxiliary_prometheus_runners(
     storage_backend: StorageBackend,
     prometheus_specs: list[EmitterSpec],
     date_source: PipelineDateSource,
+    resource_types: Sequence[str],
 ) -> list[EmitterRunner]:
     """Create billing/resource/identity EmitterRunner instances for Prometheus-only streams.
 
@@ -51,7 +53,7 @@ def create_auxiliary_prometheus_runners(
             storage_backend=storage_backend,
             emitter_specs=prometheus_specs,
             date_source=date_source,
-            row_fetcher=ResourceRowFetcher(storage_backend),
+            row_fetcher=ResourceRowFetcher(storage_backend, resource_types),
             emitter_builder=RegistryEmitterBuilder(),
             pipeline="resource",
         ),

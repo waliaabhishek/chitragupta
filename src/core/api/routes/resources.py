@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import math
+from collections.abc import Sequence
 from datetime import datetime
 from typing import Annotated
 
@@ -41,12 +42,22 @@ async def list_resources(
     tid = tenant_config.tenant_id
     offset = (page - 1) * page_size
 
+    # Resolve effective type filter before any repo branch.
+    # When the user provides a type, use it directly.
+    # When no type is specified, pass all types present in the DB (show-all semantics).
+    # Empty DB → empty list → _apply_resource_type_filter emits literal(False) → zero rows. Correct.
+    if resource_type is not None:
+        effective_rt: str | Sequence[str] = resource_type
+    else:
+        type_counts = uow.resources.count_by_type(eco, tid)
+        effective_rt = list(type_counts.keys())
+
     if tp.active_at:
         items, total = uow.resources.find_active_at(
             eco,
             tid,
             tp.active_at,
-            resource_type=resource_type,
+            resource_type=effective_rt,
             status=status,
             limit=page_size,
             offset=offset,
@@ -57,7 +68,7 @@ async def list_resources(
             tid,
             tp.period_start,
             tp.period_end,
-            resource_type=resource_type,
+            resource_type=effective_rt,
             status=status,
             limit=page_size,
             offset=offset,
@@ -68,7 +79,7 @@ async def list_resources(
             tid,
             limit=page_size,
             offset=offset,
-            resource_type=resource_type,
+            resource_type=effective_rt,
             status=status,
             search=search,
             sort_by=sort_by,

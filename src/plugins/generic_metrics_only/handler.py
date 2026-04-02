@@ -144,6 +144,10 @@ class GenericMetricsOnlyHandler:
     def handles_product_types(self) -> Sequence[str]:
         return self._handles_product_types
 
+    @property
+    def gathered_resource_types(self) -> Sequence[str]:
+        return ["cluster"]
+
     def gather_resources(self, tenant_id: str, uow: UnitOfWork, shared_ctx: object | None = None) -> Iterable[Resource]:
         logger.debug("Gathering %s resources for tenant %s", self.service_type, tenant_id)
         if isinstance(shared_ctx, GenericSharedContext):

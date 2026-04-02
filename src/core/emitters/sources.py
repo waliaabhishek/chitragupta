@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -87,13 +88,20 @@ class BillingRowFetcher:
 class ResourceRowFetcher:
     """PipelineRowFetcher for active resources — wraps Resource into ResourceEmitRow."""
 
-    def __init__(self, storage_backend: StorageBackend) -> None:
+    def __init__(self, storage_backend: StorageBackend, resource_types: Sequence[str]) -> None:
         self._storage_backend = storage_backend
+        self._resource_types = resource_types
 
     def fetch_by_date(self, ecosystem: str, tenant_id: str, dt: date) -> list[ResourceEmitRow]:
         billing_ts = datetime(dt.year, dt.month, dt.day, 0, 0, 0, tzinfo=UTC)
         with self._storage_backend.create_unit_of_work() as uow:
-            resources, _ = uow.resources.find_active_at(ecosystem, tenant_id, billing_ts, count=False)
+            resources, _ = uow.resources.find_active_at(
+                ecosystem,
+                tenant_id,
+                billing_ts,
+                resource_type=self._resource_types,
+                count=False,
+            )
             return [ResourceEmitRow.from_resource(r, tenant_id, billing_ts) for r in resources]
 
 

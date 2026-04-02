@@ -95,6 +95,10 @@ class FlinkHandler(BaseServiceHandler["CCloudConnection | None", "CCloudPluginCo
     def handles_product_types(self) -> Sequence[str]:
         return _FLINK_PRODUCT_TYPES
 
+    @property
+    def gathered_resource_types(self) -> Sequence[str]:
+        return ["flink_compute_pool", "flink_statement"]
+
     def gather_resources(self, tenant_id: str, uow: UnitOfWork, shared_ctx: object | None = None) -> Iterable[Resource]:
         """Gather Flink compute pools and statements using env_ids from shared context.
 

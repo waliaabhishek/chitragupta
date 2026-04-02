@@ -319,7 +319,7 @@ class TestResourceFindPaginatedSearch:
         repo.upsert(_make_resource(resource_id="ksql-dev"))
         session.commit()
 
-        items, total = repo.find_paginated("eco", "t1", limit=10, offset=0, search="kafka")
+        items, total = repo.find_paginated("eco", "t1", limit=10, offset=0, resource_type="kafka", search="kafka")
 
         assert total == 1
         assert items[0].resource_id == "kafka-prod"
@@ -330,7 +330,7 @@ class TestResourceFindPaginatedSearch:
         repo.upsert(_make_resource(resource_id="r2", display_name="Dev Cache"))
         session.commit()
 
-        items, total = repo.find_paginated("eco", "t1", limit=10, offset=0, search="database")
+        items, total = repo.find_paginated("eco", "t1", limit=10, offset=0, resource_type="kafka", search="database")
 
         assert total == 1
         assert items[0].resource_id == "r1"
@@ -341,7 +341,7 @@ class TestResourceFindPaginatedSearch:
         repo.upsert(_make_resource(resource_id="ksql-cluster"))
         session.commit()
 
-        items, total = repo.find_paginated("eco", "t1", limit=10, offset=0, search="kafka")
+        items, total = repo.find_paginated("eco", "t1", limit=10, offset=0, resource_type="kafka", search="kafka")
 
         assert total == 1
 
@@ -350,7 +350,9 @@ class TestResourceFindPaginatedSearch:
         repo.upsert(_make_resource(resource_id="kafka-prod"))
         session.commit()
 
-        items, total = repo.find_paginated("eco", "t1", limit=10, offset=0, search="zzz-nonexistent")
+        items, total = repo.find_paginated(
+            "eco", "t1", limit=10, offset=0, resource_type="kafka", search="zzz-nonexistent"
+        )
 
         assert total == 0
         assert items == []
@@ -368,7 +370,9 @@ class TestResourceFindPaginatedSort:
         repo.upsert(_make_resource(resource_id="aaa-resource"))
         session.commit()
 
-        items, _ = repo.find_paginated("eco", "t1", limit=10, offset=0, sort_by="resource_id", sort_order="asc")
+        items, _ = repo.find_paginated(
+            "eco", "t1", limit=10, offset=0, resource_type="kafka", sort_by="resource_id", sort_order="asc"
+        )
 
         assert items[0].resource_id == "aaa-resource"
 
@@ -378,7 +382,9 @@ class TestResourceFindPaginatedSort:
         repo.upsert(_make_resource(resource_id="aaa-resource"))
         session.commit()
 
-        items, _ = repo.find_paginated("eco", "t1", limit=10, offset=0, sort_by="resource_id", sort_order="desc")
+        items, _ = repo.find_paginated(
+            "eco", "t1", limit=10, offset=0, resource_type="kafka", sort_by="resource_id", sort_order="desc"
+        )
 
         assert items[0].resource_id == "zzz-resource"
 
@@ -388,7 +394,9 @@ class TestResourceFindPaginatedSort:
         repo.upsert(_make_resource(resource_id="r2", display_name="Apple Cache"))
         session.commit()
 
-        items, _ = repo.find_paginated("eco", "t1", limit=10, offset=0, sort_by="display_name", sort_order="asc")
+        items, _ = repo.find_paginated(
+            "eco", "t1", limit=10, offset=0, resource_type="kafka", sort_by="display_name", sort_order="asc"
+        )
 
         assert items[0].display_name == "Apple Cache"
 
@@ -398,7 +406,9 @@ class TestResourceFindPaginatedSort:
         repo.upsert(_make_resource(resource_id="r2", resource_type="kafka"))
         session.commit()
 
-        items, _ = repo.find_paginated("eco", "t1", limit=10, offset=0, sort_by="resource_type", sort_order="asc")
+        items, _ = repo.find_paginated(
+            "eco", "t1", limit=10, offset=0, resource_type=["kafka", "ksql"], sort_by="resource_type", sort_order="asc"
+        )
 
         # "kafka" < "ksql" alphabetically
         assert items[0].resource_type == "kafka"
@@ -409,7 +419,9 @@ class TestResourceFindPaginatedSort:
         repo.upsert(_make_resource(resource_id="r2", status=ResourceStatus.ACTIVE))
         session.commit()
 
-        items, _ = repo.find_paginated("eco", "t1", limit=10, offset=0, sort_by="status", sort_order="asc")
+        items, _ = repo.find_paginated(
+            "eco", "t1", limit=10, offset=0, resource_type="kafka", sort_by="status", sort_order="asc"
+        )
 
         # "active" < "deleted" alphabetically
         assert items[0].resource_id == "r2"
@@ -421,7 +433,9 @@ class TestResourceFindPaginatedSort:
         session.commit()
 
         # Invalid sort_by — must not raise, falls back to resource_id asc
-        items, total = repo.find_paginated("eco", "t1", limit=10, offset=0, sort_by="invalid_column")
+        items, total = repo.find_paginated(
+            "eco", "t1", limit=10, offset=0, resource_type="kafka", sort_by="invalid_column"
+        )
 
         assert total == 2
         assert items[0].resource_id == "aaa"
@@ -442,7 +456,9 @@ class TestResourceFindPaginatedTagFilter:
         tag_repo.add_tag("t1", "resource", "r-tagged", "cost_center", "eng", "admin")
         session.commit()
 
-        items, total = repo.find_paginated("eco", "t1", limit=10, offset=0, tag_key="cost_center", tags_repo=tag_repo)
+        items, total = repo.find_paginated(
+            "eco", "t1", limit=10, offset=0, resource_type="kafka", tag_key="cost_center", tags_repo=tag_repo
+        )
 
         assert total == 1
         assert items[0].resource_id == "r-tagged"
@@ -462,6 +478,7 @@ class TestResourceFindPaginatedTagFilter:
             "t1",
             limit=10,
             offset=0,
+            resource_type="kafka",
             tag_key="env",
             tag_value="prod",
             tags_repo=tag_repo,
@@ -482,7 +499,9 @@ class TestResourceFindPaginatedTagFilter:
         # r3 untagged
         session.commit()
 
-        items, total = repo.find_paginated("eco", "t1", limit=10, offset=0, tag_key="team", tags_repo=tag_repo)
+        items, total = repo.find_paginated(
+            "eco", "t1", limit=10, offset=0, resource_type="kafka", tag_key="team", tags_repo=tag_repo
+        )
 
         assert total == 2
 
@@ -496,7 +515,9 @@ class TestResourceFindPaginatedTagFilter:
         tag_repo.add_tag("t1", "identity", "u1", "cost_center", "eng", "admin")
         session.commit()
 
-        items, total = repo.find_paginated("eco", "t1", limit=10, offset=0, tag_key="cost_center", tags_repo=tag_repo)
+        items, total = repo.find_paginated(
+            "eco", "t1", limit=10, offset=0, resource_type="kafka", tag_key="cost_center", tags_repo=tag_repo
+        )
 
         assert total == 0
 
@@ -526,7 +547,9 @@ class TestResourceFindPaginatedCombined:
         repo.upsert(_make_resource(resource_id="r-active-other", status=ResourceStatus.ACTIVE))
         session.commit()
 
-        items, total = repo.find_paginated("eco", "t1", limit=10, offset=0, search="match", status="active")
+        items, total = repo.find_paginated(
+            "eco", "t1", limit=10, offset=0, resource_type="kafka", search="match", status="active"
+        )
 
         assert total == 1
         assert items[0].resource_id == "r-active-match"
@@ -547,6 +570,7 @@ class TestResourceFindPaginatedCombined:
             "t1",
             limit=10,
             offset=0,
+            resource_type="kafka",
             search="kafka",
             tag_key="owner",
             tags_repo=tag_repo,
@@ -581,6 +605,8 @@ class TestTagValueWithoutTagKeyIgnored:
         repo.upsert(_make_resource(resource_id="r2"))
         session.commit()
 
-        items, total = repo.find_paginated("eco", "t1", limit=10, offset=0, tag_value="prod", tags_repo=None)
+        items, total = repo.find_paginated(
+            "eco", "t1", limit=10, offset=0, resource_type="kafka", tag_value="prod", tags_repo=None
+        )
 
         assert total == 2

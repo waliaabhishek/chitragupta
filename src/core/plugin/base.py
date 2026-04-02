@@ -13,7 +13,7 @@ resolve_identities, and get_metrics_for_product_type.
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from typing import TYPE_CHECKING, ClassVar
 
 if TYPE_CHECKING:
@@ -41,6 +41,11 @@ class BaseServiceHandler[ConnT, CfgT]:
         self._connection = connection
         self._config = config
         self._ecosystem = ecosystem
+
+    @property
+    def gathered_resource_types(self) -> Sequence[str]:
+        """Default: empty. Override in handlers that gather resources."""
+        return []
 
     def gather_identities(self, tenant_id: str, uow: UnitOfWork) -> Iterable[Identity]:
         """Default: return empty iterable. Override when handler gathers identities."""

@@ -19,6 +19,15 @@ class EcosystemBundle:
     product_type_to_handler: dict[str, ServiceHandler]
     fallback_allocator: CostAllocator | None = None
 
+    @property
+    def billing_resource_types(self) -> list[str]:
+        """Sorted union of gathered_resource_types across all registered handlers.
+
+        Used anywhere the code needs the set of types gathered by billing handlers,
+        to scope resource queries and exclude overlay types (e.g. topic).
+        """
+        return sorted({rt for handler in self.handlers.values() for rt in handler.gathered_resource_types})
+
     @staticmethod
     def build(plugin: EcosystemPlugin) -> EcosystemBundle:
         """Build from an initialized plugin. Call after plugin.initialize()."""

@@ -76,6 +76,10 @@ class ConnectorHandler(BaseServiceHandler["CCloudConnection | None", "CCloudPlug
     def handles_product_types(self) -> Sequence[str]:
         return _CONNECTOR_PRODUCT_TYPES
 
+    @property
+    def gathered_resource_types(self) -> Sequence[str]:
+        return ["connector"]
+
     def gather_resources(self, tenant_id: str, uow: UnitOfWork, shared_ctx: object | None = None) -> Iterable[Resource]:
         """Gather connectors for all Kafka clusters via shared context.
 

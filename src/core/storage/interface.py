@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from datetime import date, datetime
 from typing import TYPE_CHECKING, Any, Protocol, Self, runtime_checkable
 
@@ -39,7 +39,7 @@ class ResourceRepository(Protocol):
         tenant_id: str,
         timestamp: datetime,
         *,
-        resource_type: str | None = None,
+        resource_type: str | Sequence[str],
         status: str | None = None,
         limit: int | None = None,
         offset: int = 0,
@@ -63,7 +63,7 @@ class ResourceRepository(Protocol):
         end: datetime,
         *,
         parent_id: str | None = None,
-        resource_type: str | None = None,
+        resource_type: str | Sequence[str],
         status: str | None = None,
         metadata_filter: dict[str, str | int | float | bool | None] | None = None,
         limit: int | None = None,
@@ -93,7 +93,8 @@ class ResourceRepository(Protocol):
         ecosystem: str,
         tenant_id: str,
         parent_id: str,
-        resource_type: str | None = None,
+        *,
+        resource_type: str | Sequence[str],
     ) -> list[Resource]:
         """Return resources with the given parent_id, optionally filtered by resource_type.
 
@@ -107,7 +108,8 @@ class ResourceRepository(Protocol):
         tenant_id: str,
         limit: int,
         offset: int,
-        resource_type: str | None = None,
+        *,
+        resource_type: str | Sequence[str],
         status: str | None = None,
         search: str | None = None,
         sort_by: str | None = None,

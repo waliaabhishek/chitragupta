@@ -48,6 +48,10 @@ class FakeServiceHandler:
     def handles_product_types(self) -> Sequence[str]:
         return ["KAFKA_NUM_CKUS", "KAFKA_STORAGE"]
 
+    @property
+    def gathered_resource_types(self) -> Sequence[str]:
+        return []
+
     def gather_resources(self, tenant_id: str, uow: Any) -> Iterable[Resource]:
         return []
 

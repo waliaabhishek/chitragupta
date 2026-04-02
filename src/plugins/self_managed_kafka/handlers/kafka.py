@@ -103,6 +103,10 @@ class SelfManagedKafkaHandler:
     def handles_product_types(self) -> Sequence[str]:
         return _SELF_KAFKA_PRODUCT_TYPES
 
+    @property
+    def gathered_resource_types(self) -> Sequence[str]:
+        return ["cluster", "broker", "topic"]
+
     def gather_resources(self, tenant_id: str, uow: UnitOfWork, shared_ctx: object | None = None) -> Iterable[Resource]:
         """Gather cluster, brokers, and topics.
 

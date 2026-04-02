@@ -7,7 +7,7 @@ from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
 from cachetools import TTLCache
-from sqlalchemy import case, cast, delete, func, or_, update
+from sqlalchemy import case, cast, delete, func, literal, or_, update
 from sqlalchemy.types import String
 from sqlmodel import Session, col, select
 
@@ -138,6 +138,22 @@ def _temporal_by_period_filter(
 # --- ResourceRepository ---
 
 
+def _apply_resource_type_filter(where: list[Any], resource_type: str | Sequence[str]) -> None:
+    """Append resource_type WHERE clause.
+
+    str → equality clause.
+    Non-empty Sequence → IN clause.
+    Empty Sequence → always-false clause (literal(False)) — guarantees zero rows,
+    consistent with IN () semantics and avoids an accidental full-table scan.
+    """
+    if isinstance(resource_type, str):
+        where.append(col(ResourceTable.resource_type) == resource_type)
+    elif resource_type:  # non-empty sequence → IN clause
+        where.append(col(ResourceTable.resource_type).in_(list(resource_type)))
+    else:  # empty sequence → always-false clause → zero rows returned
+        where.append(literal(False))
+
+
 class SQLModelResourceRepository:
     def __init__(
         self,
@@ -173,15 +189,14 @@ class SQLModelResourceRepository:
         tenant_id: str,
         timestamp: datetime,
         *,
-        resource_type: str | None = None,
+        resource_type: str | Sequence[str],
         status: str | None = None,
         limit: int | None = None,
         offset: int = 0,
         count: bool = True,
     ) -> tuple[list[Resource], int]:
         where = _temporal_active_at_filter(ResourceTable, ecosystem, tenant_id, timestamp)
-        if resource_type is not None:
-            where.append(col(ResourceTable.resource_type) == resource_type)
+        _apply_resource_type_filter(where, resource_type)
         if status is not None:
             where.append(col(ResourceTable.status) == status)
 
@@ -206,7 +221,7 @@ class SQLModelResourceRepository:
         end: datetime,
         *,
         parent_id: str | None = None,
-        resource_type: str | None = None,
+        resource_type: str | Sequence[str],
         status: str | None = None,
         metadata_filter: dict[str, str | int | float | bool | None] | None = None,
         limit: int | None = None,
@@ -216,8 +231,7 @@ class SQLModelResourceRepository:
         where = _temporal_by_period_filter(ResourceTable, ecosystem, tenant_id, start, end)
         if parent_id is not None:
             where.append(col(ResourceTable.parent_id) == parent_id)
-        if resource_type is not None:
-            where.append(col(ResourceTable.resource_type) == resource_type)
+        _apply_resource_type_filter(where, resource_type)
         if status is not None:
             where.append(col(ResourceTable.status) == status)
         if metadata_filter is not None:
@@ -253,7 +267,8 @@ class SQLModelResourceRepository:
         tenant_id: str,
         limit: int,
         offset: int,
-        resource_type: str | None = None,
+        *,
+        resource_type: str | Sequence[str],
         status: str | None = None,
         search: str | None = None,
         sort_by: str | None = None,
@@ -265,8 +280,7 @@ class SQLModelResourceRepository:
         # tags_repo gates tag filtering per Protocol contract — callers must provide it
         # when tag_key is set. The actual subquery uses self._session directly.
         where = [col(ResourceTable.ecosystem) == ecosystem, col(ResourceTable.tenant_id) == tenant_id]
-        if resource_type is not None:
-            where.append(col(ResourceTable.resource_type) == resource_type)
+        _apply_resource_type_filter(where, resource_type)
         if status is not None:
             where.append(col(ResourceTable.status) == status)
         if search is not None:
@@ -332,16 +346,17 @@ class SQLModelResourceRepository:
         ecosystem: str,
         tenant_id: str,
         parent_id: str,
-        resource_type: str | None = None,
+        *,
+        resource_type: str | Sequence[str],
     ) -> list[Resource]:
-        stmt = select(ResourceTable).where(
+        where: list[Any] = [
             col(ResourceTable.ecosystem) == ecosystem,
             col(ResourceTable.tenant_id) == tenant_id,
             col(ResourceTable.parent_id) == parent_id,
             col(ResourceTable.deleted_at).is_(None),
-        )
-        if resource_type is not None:
-            stmt = stmt.where(col(ResourceTable.resource_type) == resource_type)
+        ]
+        _apply_resource_type_filter(where, resource_type)
+        stmt = select(ResourceTable).where(*where)
         return [resource_to_domain(r) for r in self._session.exec(stmt).all()]
 
 

@@ -348,6 +348,10 @@ class MockServiceHandler:
     def handles_product_types(self) -> list[str]:
         return self._product_types
 
+    @property
+    def gathered_resource_types(self) -> list[str]:
+        return []
+
     def gather_resources(self, tenant_id: str, uow: Any, shared_ctx: object | None = None) -> Iterable[Resource]:
         return self._resources
 

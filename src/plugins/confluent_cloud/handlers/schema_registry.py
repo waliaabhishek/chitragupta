@@ -59,6 +59,10 @@ class SchemaRegistryHandler(BaseServiceHandler["CCloudConnection | None", "CClou
     def handles_product_types(self) -> Sequence[str]:
         return _SR_PRODUCT_TYPES
 
+    @property
+    def gathered_resource_types(self) -> Sequence[str]:
+        return ["schema_registry"]
+
     def gather_resources(self, tenant_id: str, uow: UnitOfWork, shared_ctx: object | None = None) -> Iterable[Resource]:
         """Gather Schema Registry clusters using env_ids from shared context.
 

@@ -16,6 +16,7 @@ from core.emitters.sources import ChargebackDateSource, ChargebackRowFetcher, Re
 from core.emitters.wiring import create_auxiliary_prometheus_runners
 from core.engine.orchestrator import ChargebackOrchestrator, GatherFailureThresholdError, PipelineRunResult
 from core.plugin.protocols import OverlayPlugin
+from core.plugin.registry import EcosystemBundle
 
 if TYPE_CHECKING:
     from datetime import date as date_type
@@ -449,6 +450,7 @@ class WorkflowRunner:
                             storage_backend=runtime.storage,
                             prometheus_specs=prometheus_specs,
                             date_source=chargeback_date_source,
+                            resource_types=EcosystemBundle.build(runtime.plugin).billing_resource_types,
                         )
 
                     for emitter_runner in emitter_runners:

@@ -530,3 +530,107 @@ class TestCountersAreIndependent:
         )
         assert orch._zero_gather_counters["resources"] == 2  # type: ignore[attr-defined]
         assert orch._zero_gather_counters["identities"] == 1  # type: ignore[attr-defined]
+
+
+# ---------------------------------------------------------------------------
+# Tests: _detect_resource_deletions (TASK-182)
+# ---------------------------------------------------------------------------
+
+
+class _CapturingResourceRepo:
+    """Resource repo that captures find_active_at kwargs and records mark_deleted calls."""
+
+    def __init__(self, active_ids: list[str] | None = None) -> None:
+        self._active_ids = active_ids or []
+        self.find_active_at_kwargs: list[dict[str, Any]] = []
+        self.mark_deleted_calls: list[tuple[str, datetime]] = []
+
+    def find_active_at(
+        self, ecosystem: str, tenant_id: str, timestamp: datetime, **kwargs: Any
+    ) -> tuple[list[_FakeResource], int]:
+        self.find_active_at_kwargs.append(kwargs)
+        entities = [_FakeResource(rid) for rid in self._active_ids]
+        return entities, len(entities)
+
+    def mark_deleted(self, ecosystem: str, tenant_id: str, resource_id: str, deleted_at: datetime) -> None:
+        self.mark_deleted_calls.append((resource_id, deleted_at))
+
+
+class TestDetectResourceDeletions:
+    """_detect_resource_deletions on GatherPhase passes resource_type filter to repo."""
+
+    def test_method_exists_on_gather_phase(self) -> None:
+        orch = _make_orchestrator()
+        assert hasattr(orch._gather_phase, "_detect_resource_deletions"), (  # type: ignore[attr-defined]
+            "_detect_resource_deletions not found on GatherPhase"
+        )
+
+    def test_method_is_callable(self) -> None:
+        orch = _make_orchestrator()
+        assert callable(orch._gather_phase._detect_resource_deletions)  # type: ignore[attr-defined]
+
+    def test_passes_resource_type_to_find_active_at(self) -> None:
+        """resource_types arg must be forwarded as resource_type= kwarg to repo.find_active_at."""
+        orch = _make_orchestrator()
+        repo = _CapturingResourceRepo(active_ids=[])
+        orch._gather_phase._detect_resource_deletions(  # type: ignore[attr-defined]
+            repo=repo,
+            gathered_ids=set(),
+            now=NOW,
+            resource_types=["kafka_cluster"],
+        )
+        assert len(repo.find_active_at_kwargs) == 1
+        assert repo.find_active_at_kwargs[0].get("resource_type") == ["kafka_cluster"]
+
+    def test_topic_type_never_queried_when_filtering_kafka(self) -> None:
+        """When resource_types=["kafka_cluster"], topic resources must not be queried."""
+        orch = _make_orchestrator()
+        repo = _CapturingResourceRepo(active_ids=[])
+        orch._gather_phase._detect_resource_deletions(  # type: ignore[attr-defined]
+            repo=repo,
+            gathered_ids=set(),
+            now=NOW,
+            resource_types=["kafka_cluster"],
+        )
+        for kwargs in repo.find_active_at_kwargs:
+            rt = kwargs.get("resource_type")
+            if isinstance(rt, list):
+                assert "topic" not in rt
+            elif isinstance(rt, str):
+                assert rt != "topic"
+
+    def test_marks_absent_resources_deleted(self) -> None:
+        """Resources active in DB but absent from gathered_ids must be marked deleted."""
+        orch = _make_orchestrator()
+        repo = _CapturingResourceRepo(active_ids=["kc-1", "kc-2"])
+        orch._gather_phase._detect_resource_deletions(  # type: ignore[attr-defined]
+            repo=repo,
+            gathered_ids={"kc-1"},
+            now=NOW,
+            resource_types=["kafka_cluster"],
+        )
+        deleted_ids = {call[0] for call in repo.mark_deleted_calls}
+        assert deleted_ids == {"kc-2"}
+
+    def test_does_not_mark_gathered_resources_deleted(self) -> None:
+        orch = _make_orchestrator()
+        repo = _CapturingResourceRepo(active_ids=["kc-1"])
+        orch._gather_phase._detect_resource_deletions(  # type: ignore[attr-defined]
+            repo=repo,
+            gathered_ids={"kc-1"},
+            now=NOW,
+            resource_types=["kafka_cluster"],
+        )
+        assert repo.mark_deleted_calls == []
+
+    def test_passes_multiple_resource_types(self) -> None:
+        """Multiple resource_types forwarded as list to repo."""
+        orch = _make_orchestrator()
+        repo = _CapturingResourceRepo(active_ids=[])
+        orch._gather_phase._detect_resource_deletions(  # type: ignore[attr-defined]
+            repo=repo,
+            gathered_ids=set(),
+            now=NOW,
+            resource_types=["kafka_cluster", "environment", "connector"],
+        )
+        assert repo.find_active_at_kwargs[0].get("resource_type") == ["kafka_cluster", "environment", "connector"]

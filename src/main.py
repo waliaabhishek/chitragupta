@@ -15,7 +15,7 @@ from core.emitters.runner import EmitterRunner
 from core.emitters.sources import ChargebackDateSource, ChargebackRowFetcher, RegistryEmitterBuilder
 from core.emitters.wiring import create_auxiliary_prometheus_runners
 from core.plugin.loader import discover_plugins
-from core.plugin.registry import PluginRegistry
+from core.plugin.registry import EcosystemBundle, PluginRegistry
 from core.storage.registry import create_storage_backend
 from emitters.csv_emitter import make_csv_emitter
 from emitters.prometheus_emitter import make_prometheus_emitter
@@ -266,9 +266,16 @@ def main(argv: list[str] | None = None) -> None:
     setup_logging(settings)
 
     if args.emit_once:
+        registry = _build_registry(settings)
         for _tenant_name, tenant_config in settings.tenants.items():
             storage = _build_storage(tenant_config.storage)
             storage.create_tables()
+
+            plugin = registry.create(tenant_config.ecosystem)
+            plugin.initialize(tenant_config.plugin_settings.model_dump())
+            billing_types = EcosystemBundle.build(plugin).billing_resource_types
+            plugin.close()
+
             chargeback_date_source = ChargebackDateSource(storage)
             prometheus_specs = [s for s in tenant_config.plugin_settings.emitters if s.type == "prometheus"]
 
@@ -290,6 +297,7 @@ def main(argv: list[str] | None = None) -> None:
                     storage_backend=storage,
                     prometheus_specs=prometheus_specs,
                     date_source=chargeback_date_source,
+                    resource_types=billing_types,
                 )
             for emitter_runner in runners:
                 emitter_runner.run(tenant_config.tenant_id)

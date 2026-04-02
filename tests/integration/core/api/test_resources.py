@@ -197,13 +197,210 @@ class TestListResources:
         assert len(data["items"]) == 10
         assert data["pages"] == 2
 
+
+# ---------------------------------------------------------------------------
+# TASK-182: Tests 8, 9, 10 — resource_type mandatory, count_by_type show-all
+# ---------------------------------------------------------------------------
+
+
+class TestListResourcesShowAll:
+    """Test 8: GET /resources with no params returns both billing and overlay types."""
+
+    def test_no_params_returns_all_resource_types(
+        self, app_with_backend: TestClient, in_memory_backend: SQLModelBackend
+    ) -> None:
+        """count_by_type must drive type resolution when no resource_type param is given."""
+        with in_memory_backend.create_unit_of_work() as uow:
+            uow.resources.upsert(
+                CoreResource(
+                    ecosystem="test-eco",
+                    tenant_id="test-tenant",
+                    resource_id="kc-1",
+                    resource_type="kafka_cluster",
+                    status=ResourceStatus.ACTIVE,
+                    created_at=datetime(2026, 1, 1, tzinfo=UTC),
+                    metadata={},
+                )
+            )
+            uow.resources.upsert(
+                CoreResource(
+                    ecosystem="test-eco",
+                    tenant_id="test-tenant",
+                    resource_id="topic-1",
+                    resource_type="topic",
+                    status=ResourceStatus.ACTIVE,
+                    created_at=datetime(2026, 1, 1, tzinfo=UTC),
+                    metadata={},
+                )
+            )
+            uow.commit()
+
+        response = app_with_backend.get("/api/v1/tenants/test-tenant/resources")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["total"] == 2
+        returned_types = {item["resource_type"] for item in data["items"]}
+        assert "kafka_cluster" in returned_types
+        assert "topic" in returned_types
+
+    def test_no_params_includes_overlay_types_in_count(
+        self, app_with_backend: TestClient, in_memory_backend: SQLModelBackend
+    ) -> None:
+        """Total count must include overlay (topic) resources when no filter given."""
+        with in_memory_backend.create_unit_of_work() as uow:
+            for i in range(3):
+                uow.resources.upsert(
+                    CoreResource(
+                        ecosystem="test-eco",
+                        tenant_id="test-tenant",
+                        resource_id=f"topic-{i}",
+                        resource_type="topic",
+                        status=ResourceStatus.ACTIVE,
+                        created_at=datetime(2026, 1, 1, tzinfo=UTC),
+                        metadata={},
+                    )
+                )
+            uow.resources.upsert(
+                CoreResource(
+                    ecosystem="test-eco",
+                    tenant_id="test-tenant",
+                    resource_id="kc-1",
+                    resource_type="kafka_cluster",
+                    status=ResourceStatus.ACTIVE,
+                    created_at=datetime(2026, 1, 1, tzinfo=UTC),
+                    metadata={},
+                )
+            )
+            uow.commit()
+
+        response = app_with_backend.get("/api/v1/tenants/test-tenant/resources")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["total"] == 4
+
+
+class TestListResourcesTopicFilter:
+    """Test 9: GET /resources?resource_type=topic returns only topic resources."""
+
+    def test_topic_filter_returns_only_topics(
+        self, app_with_backend: TestClient, in_memory_backend: SQLModelBackend
+    ) -> None:
+        with in_memory_backend.create_unit_of_work() as uow:
+            uow.resources.upsert(
+                CoreResource(
+                    ecosystem="test-eco",
+                    tenant_id="test-tenant",
+                    resource_id="kc-1",
+                    resource_type="kafka_cluster",
+                    status=ResourceStatus.ACTIVE,
+                    created_at=datetime(2026, 1, 1, tzinfo=UTC),
+                    metadata={},
+                )
+            )
+            uow.resources.upsert(
+                CoreResource(
+                    ecosystem="test-eco",
+                    tenant_id="test-tenant",
+                    resource_id="topic-1",
+                    resource_type="topic",
+                    status=ResourceStatus.ACTIVE,
+                    created_at=datetime(2026, 1, 1, tzinfo=UTC),
+                    metadata={},
+                )
+            )
+            uow.resources.upsert(
+                CoreResource(
+                    ecosystem="test-eco",
+                    tenant_id="test-tenant",
+                    resource_id="topic-2",
+                    resource_type="topic",
+                    status=ResourceStatus.ACTIVE,
+                    created_at=datetime(2026, 1, 1, tzinfo=UTC),
+                    metadata={},
+                )
+            )
+            uow.commit()
+
         response = app_with_backend.get(
             "/api/v1/tenants/test-tenant/resources",
-            params={"page": 2, "page_size": 10},
+            params={"resource_type": "topic"},
         )
         assert response.status_code == 200
         data = response.json()
-        assert len(data["items"]) == 5
+        assert data["total"] == 2
+        assert all(item["resource_type"] == "topic" for item in data["items"])
+
+    def test_topic_filter_excludes_kafka_cluster(
+        self, app_with_backend: TestClient, in_memory_backend: SQLModelBackend
+    ) -> None:
+        with in_memory_backend.create_unit_of_work() as uow:
+            uow.resources.upsert(
+                CoreResource(
+                    ecosystem="test-eco",
+                    tenant_id="test-tenant",
+                    resource_id="kc-1",
+                    resource_type="kafka_cluster",
+                    status=ResourceStatus.ACTIVE,
+                    created_at=datetime(2026, 1, 1, tzinfo=UTC),
+                    metadata={},
+                )
+            )
+            uow.resources.upsert(
+                CoreResource(
+                    ecosystem="test-eco",
+                    tenant_id="test-tenant",
+                    resource_id="topic-1",
+                    resource_type="topic",
+                    status=ResourceStatus.ACTIVE,
+                    created_at=datetime(2026, 1, 1, tzinfo=UTC),
+                    metadata={},
+                )
+            )
+            uow.commit()
+
+        response = app_with_backend.get(
+            "/api/v1/tenants/test-tenant/resources",
+            params={"resource_type": "topic"},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["total"] == 1
+        assert data["items"][0]["resource_id"] == "topic-1"
+
+
+class TestListResourcesEmptyTenant:
+    """Test 10: GET /resources on empty tenant returns empty list, not 500."""
+
+    def test_empty_tenant_returns_200_empty_list(self, app_with_backend: TestClient) -> None:
+        """Empty DB → count_by_type returns {} → effective_rt=[] → literal(False) → zero rows."""
+        response = app_with_backend.get("/api/v1/tenants/test-tenant/resources")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["items"] == []
+        assert data["total"] == 0
+
+    def test_empty_tenant_with_active_at_returns_empty_not_500(self, app_with_backend: TestClient) -> None:
+        response = app_with_backend.get(
+            "/api/v1/tenants/test-tenant/resources",
+            params={"active_at": "2026-01-15T00:00:00Z"},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["items"] == []
+        assert data["total"] == 0
+
+    def test_empty_tenant_with_period_returns_empty_not_500(self, app_with_backend: TestClient) -> None:
+        response = app_with_backend.get(
+            "/api/v1/tenants/test-tenant/resources",
+            params={
+                "period_start": "2026-01-01T00:00:00Z",
+                "period_end": "2026-02-01T00:00:00Z",
+            },
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["items"] == []
+        assert data["total"] == 0
 
 
 class TestResourcesApiCountParamSmoke:

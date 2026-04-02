@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **TASK-182**: Resource type filtering is now mandatory on all resource repository read methods. This fixes three bugs: (1) topic resources being falsely marked as deleted during pipeline runs, (2) topic resources inflating Prometheus `chitragupta_resource_active` metric cardinality, (3) topic resources unnecessarily loaded into the chargeback resource cache.
+
 - **Fix:** Poison-pill dates with permanently unavailable Prometheus metrics no longer retry forever after TASK-177. Topic attribution now tracks per-billing-line attempt counts (`topic_attribution_attempts` column, migration 016) and caps retries at `topic_attribution_retry_limit` (default 3, range 1–10). When all billing lines for a cluster exhaust the limit, sentinel `TopicAttributionRow` entries are produced (`topic_name=__UNATTRIBUTED__`, `attribution_method=ATTRIBUTION_FAILED`) preserving full cost. The date is marked calculated only when every cluster is resolved (success, empty, or sentinel). Clusters still below the limit return `None`, leaving the date pending for the next run. (TASK-181)
 
 - **Fix:** Topic attribution no longer filters Prometheus metric data through the resources table. `_attribute_cluster` now computes the union of resources-table topics and metrics-discovered topics before constructing `TopicAttributionContext`. Topics that Prometheus reports as active during the billing window but that are absent from the resources table (never discovered by gather, or deleted before gather ran) are now correctly included in cost attribution instead of being silently discarded. (TASK-180)

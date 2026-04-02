@@ -159,7 +159,7 @@ class TestResourceRowFetcher:
         from core.emitters.emit_rows import ResourceEmitRow
         from core.emitters.sources import ResourceRowFetcher
 
-        fetcher = ResourceRowFetcher(fake_storage)
+        fetcher = ResourceRowFetcher(fake_storage, ["kafka_cluster", "schema_registry"])
         rows = fetcher.fetch_by_date(ECOSYSTEM, TENANT_ID, DATE)
         assert len(rows) == 2
         assert all(isinstance(r, ResourceEmitRow) for r in rows)
@@ -168,7 +168,7 @@ class TestResourceRowFetcher:
         """Verification test 8 from design doc — active indicator."""
         from core.emitters.sources import ResourceRowFetcher
 
-        fetcher = ResourceRowFetcher(fake_storage)
+        fetcher = ResourceRowFetcher(fake_storage, ["kafka_cluster"])
         rows = fetcher.fetch_by_date(ECOSYSTEM, TENANT_ID, DATE)
         assert all(r.amount == Decimal(1) for r in rows)
 
@@ -176,7 +176,7 @@ class TestResourceRowFetcher:
         """Verification test 8 from design doc."""
         from core.emitters.sources import ResourceRowFetcher
 
-        fetcher = ResourceRowFetcher(fake_storage)
+        fetcher = ResourceRowFetcher(fake_storage, ["kafka_cluster"])
         rows = fetcher.fetch_by_date(ECOSYSTEM, TENANT_ID, DATE)
         assert all(r.timestamp == datetime(2024, 1, 15, 0, 0, 0, tzinfo=UTC) for r in rows)
 
@@ -184,8 +184,49 @@ class TestResourceRowFetcher:
         from core.emitters.protocols import PipelineRowFetcher
         from core.emitters.sources import ResourceRowFetcher
 
-        fetcher = ResourceRowFetcher(fake_storage)
+        fetcher = ResourceRowFetcher(fake_storage, ["kafka_cluster"])
         assert isinstance(fetcher, PipelineRowFetcher)
+
+
+# ---------------------------------------------------------------------------
+# ResourceRowFetcher with resource_types (TASK-182)
+# ---------------------------------------------------------------------------
+
+
+class TestResourceRowFetcherWithResourceTypes:
+    """ResourceRowFetcher must accept resource_types at construction and filter results."""
+
+    def test_constructor_accepts_resource_types(self, fake_storage: Any) -> None:
+        from core.emitters.sources import ResourceRowFetcher
+
+        # Should not raise
+        fetcher = ResourceRowFetcher(fake_storage, ["kafka_cluster"])
+        assert fetcher is not None
+
+    def test_constructor_requires_resource_types(self, fake_storage: Any) -> None:
+        """ResourceRowFetcher(storage) without resource_types must raise TypeError."""
+        from core.emitters.sources import ResourceRowFetcher
+
+        with pytest.raises(TypeError):
+            ResourceRowFetcher(fake_storage)  # type: ignore[call-arg]
+
+    def test_passes_resource_types_to_find_active_at(self, fake_storage: Any) -> None:
+        """resource_types must be forwarded as resource_type= kwarg to uow.resources.find_active_at."""
+        from core.emitters.sources import ResourceRowFetcher
+
+        fetcher = ResourceRowFetcher(fake_storage, ["kafka_cluster"])
+        fetcher.fetch_by_date(ECOSYSTEM, TENANT_ID, DATE)
+
+        uow = fake_storage.create_unit_of_work.return_value.__enter__.return_value
+        call_kwargs = uow.resources.find_active_at.call_args
+        assert call_kwargs is not None
+        assert call_kwargs.kwargs.get("resource_type") == ["kafka_cluster"]
+
+    def test_empty_resource_types_accepted(self, fake_storage: Any) -> None:
+        from core.emitters.sources import ResourceRowFetcher
+
+        fetcher = ResourceRowFetcher(fake_storage, [])
+        assert fetcher is not None
 
 
 # ---------------------------------------------------------------------------

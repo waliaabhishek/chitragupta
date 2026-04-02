@@ -103,6 +103,15 @@ class ServiceHandler(Protocol):
     @property
     def handles_product_types(self) -> Sequence[str]: ...
 
+    @property
+    def gathered_resource_types(self) -> Sequence[str]:
+        """Resource types this handler produces via gather_resources().
+
+        Used by deletion detection and cache loading to scope queries to
+        billing-relevant types only. Handlers that gather no resources return [].
+        """
+        ...
+
     def gather_resources(
         self, tenant_id: str, uow: UnitOfWork, shared_ctx: object | None = None
     ) -> Iterable[Resource]: ...

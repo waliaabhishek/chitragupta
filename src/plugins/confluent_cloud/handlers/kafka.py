@@ -108,6 +108,10 @@ class KafkaHandler(BaseServiceHandler["CCloudConnection | None", "CCloudPluginCo
     def handles_product_types(self) -> Sequence[str]:
         return _KAFKA_PRODUCT_TYPES
 
+    @property
+    def gathered_resource_types(self) -> Sequence[str]:
+        return ["environment", "kafka_cluster"]
+
     def gather_resources(self, tenant_id: str, uow: UnitOfWork, shared_ctx: object | None = None) -> Iterable[Resource]:
         """Yield environment and Kafka cluster resources from shared context.
 

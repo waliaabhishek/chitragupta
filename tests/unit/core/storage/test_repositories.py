@@ -83,7 +83,7 @@ class TestResourceRepository:
         # Resource created Jan 10, active at Jan 15
         repo.upsert(self._make_resource(created_at=datetime(2026, 1, 10, tzinfo=UTC)))
         session.commit()
-        results, total = repo.find_active_at("eco", "t1", datetime(2026, 1, 15, tzinfo=UTC))
+        results, total = repo.find_active_at("eco", "t1", datetime(2026, 1, 15, tzinfo=UTC), resource_type="kafka")
         assert len(results) == 1
         assert total == 1
 
@@ -91,7 +91,7 @@ class TestResourceRepository:
         repo = SQLModelResourceRepository(session)
         repo.upsert(self._make_resource(created_at=datetime(2026, 1, 10, tzinfo=UTC)))
         session.commit()
-        results, total = repo.find_active_at("eco", "t1", datetime(2026, 1, 5, tzinfo=UTC))
+        results, total = repo.find_active_at("eco", "t1", datetime(2026, 1, 5, tzinfo=UTC), resource_type="kafka")
         assert len(results) == 0
         assert total == 0
 
@@ -104,7 +104,7 @@ class TestResourceRepository:
             )
         )
         session.commit()
-        results, total = repo.find_active_at("eco", "t1", datetime(2026, 1, 15, tzinfo=UTC))
+        results, total = repo.find_active_at("eco", "t1", datetime(2026, 1, 15, tzinfo=UTC), resource_type="kafka")
         assert len(results) == 0
         assert total == 0
 
@@ -112,7 +112,7 @@ class TestResourceRepository:
         repo = SQLModelResourceRepository(session)
         repo.upsert(self._make_resource(created_at=None))
         session.commit()
-        results, total = repo.find_active_at("eco", "t1", datetime(2026, 1, 1, tzinfo=UTC))
+        results, total = repo.find_active_at("eco", "t1", datetime(2026, 1, 1, tzinfo=UTC), resource_type="kafka")
         assert len(results) == 1
         assert total == 1
 
@@ -125,7 +125,7 @@ class TestResourceRepository:
             )
         )
         session.commit()
-        results, total = repo.find_active_at("eco", "t1", datetime(2026, 6, 1, tzinfo=UTC))
+        results, total = repo.find_active_at("eco", "t1", datetime(2026, 6, 1, tzinfo=UTC), resource_type="kafka")
         assert len(results) == 1
         assert total == 1
 
@@ -140,7 +140,11 @@ class TestResourceRepository:
         session.commit()
         # Period [Jan 10, Jan 15) — resource overlaps
         results, total = repo.find_by_period(
-            "eco", "t1", datetime(2026, 1, 10, tzinfo=UTC), datetime(2026, 1, 15, tzinfo=UTC)
+            "eco",
+            "t1",
+            datetime(2026, 1, 10, tzinfo=UTC),
+            datetime(2026, 1, 15, tzinfo=UTC),
+            resource_type="kafka",
         )
         assert len(results) == 1
         assert total == 1
@@ -150,7 +154,11 @@ class TestResourceRepository:
         repo.upsert(self._make_resource(created_at=datetime(2026, 2, 1, tzinfo=UTC)))
         session.commit()
         results, total = repo.find_by_period(
-            "eco", "t1", datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 1, 31, tzinfo=UTC)
+            "eco",
+            "t1",
+            datetime(2026, 1, 1, tzinfo=UTC),
+            datetime(2026, 1, 31, tzinfo=UTC),
+            resource_type="kafka",
         )
         assert len(results) == 0
         assert total == 0
@@ -165,7 +173,11 @@ class TestResourceRepository:
         )
         session.commit()
         results, total = repo.find_by_period(
-            "eco", "t1", datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 1, 31, tzinfo=UTC)
+            "eco",
+            "t1",
+            datetime(2026, 1, 1, tzinfo=UTC),
+            datetime(2026, 1, 31, tzinfo=UTC),
+            resource_type="kafka",
         )
         assert len(results) == 0
         assert total == 0
@@ -180,7 +192,11 @@ class TestResourceRepository:
         )
         session.commit()
         results, total = repo.find_by_period(
-            "eco", "t1", datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 1, 31, tzinfo=UTC)
+            "eco",
+            "t1",
+            datetime(2026, 1, 1, tzinfo=UTC),
+            datetime(2026, 1, 31, tzinfo=UTC),
+            resource_type="kafka",
         )
         assert len(results) == 1
         assert total == 1
@@ -238,10 +254,10 @@ class TestResourceRepository:
         repo.upsert(self._make_resource(resource_id="r3"))
         session.commit()
         ts = datetime(2026, 1, 15, tzinfo=UTC)
-        all_results, total = repo.find_active_at("eco", "t1", ts)
+        all_results, total = repo.find_active_at("eco", "t1", ts, resource_type="kafka")
         assert total == 3
-        page1, _ = repo.find_active_at("eco", "t1", ts, limit=2, offset=0)
-        page2, _ = repo.find_active_at("eco", "t1", ts, limit=2, offset=2)
+        page1, _ = repo.find_active_at("eco", "t1", ts, resource_type="kafka", limit=2, offset=0)
+        page2, _ = repo.find_active_at("eco", "t1", ts, resource_type="kafka", limit=2, offset=2)
         assert len(page1) == 2
         assert len(page2) == 1
         assert {r.resource_id for r in page1 + page2} == {"r1", "r2", "r3"}
@@ -268,9 +284,9 @@ class TestResourceRepository:
             repo.upsert(self._make_resource(resource_id=f"r{i}"))
         session.commit()
         start, end = datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 2, 1, tzinfo=UTC)
-        _, total = repo.find_by_period("eco", "t1", start, end)
+        _, total = repo.find_by_period("eco", "t1", start, end, resource_type="kafka")
         assert total == 4
-        page, _ = repo.find_by_period("eco", "t1", start, end, limit=2, offset=0)
+        page, _ = repo.find_by_period("eco", "t1", start, end, resource_type="kafka", limit=2, offset=0)
         assert len(page) == 2
 
     def test_find_by_period_metadata_filter_single_key_returns_matching(self, session: Session) -> None:
@@ -287,7 +303,9 @@ class TestResourceRepository:
         )
         session.commit()
         start, end = datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 2, 1, tzinfo=UTC)
-        results, total = repo.find_by_period("eco", "t1", start, end, metadata_filter={"compute_pool_id": "pool-1"})
+        results, total = repo.find_by_period(
+            "eco", "t1", start, end, resource_type="flink_statement", metadata_filter={"compute_pool_id": "pool-1"}
+        )
         assert total == 1
         assert len(results) == 1
         assert results[0].resource_id == "r-pool1"
@@ -306,7 +324,9 @@ class TestResourceRepository:
         )
         session.commit()
         start, end = datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 2, 1, tzinfo=UTC)
-        results, total = repo.find_by_period("eco", "t1", start, end, metadata_filter=None)
+        results, total = repo.find_by_period(
+            "eco", "t1", start, end, resource_type="flink_statement", metadata_filter=None
+        )
         assert total == 2
         assert len(results) == 2
 
@@ -320,7 +340,12 @@ class TestResourceRepository:
         session.commit()
         start, end = datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 2, 1, tzinfo=UTC)
         results, total = repo.find_by_period(
-            "eco", "t1", start, end, metadata_filter={"compute_pool_id": "pool-nonexistent"}
+            "eco",
+            "t1",
+            start,
+            end,
+            resource_type="flink_statement",
+            metadata_filter={"compute_pool_id": "pool-nonexistent"},
         )
         assert results == []
         assert total == 0
@@ -335,7 +360,9 @@ class TestResourceRepository:
         repo.upsert(self._make_resource(resource_id="r-k2only", metadata={"k1": "other", "k2": "v2"}))
         session.commit()
         start, end = datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 2, 1, tzinfo=UTC)
-        results, total = repo.find_by_period("eco", "t1", start, end, metadata_filter={"k1": "v1", "k2": "v2"})
+        results, total = repo.find_by_period(
+            "eco", "t1", start, end, resource_type="kafka", metadata_filter={"k1": "v1", "k2": "v2"}
+        )
         assert total == 1
         assert len(results) == 1
         assert results[0].resource_id == "r-both"
@@ -349,7 +376,7 @@ class TestResourceRepository:
         repo.upsert(self._make_resource(resource_id="r-other", parent_id="lkc-xyz"))
         session.commit()
         start, end = datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 2, 1, tzinfo=UTC)
-        results, total = repo.find_by_period("eco", "t1", start, end, parent_id="lkc-abc")
+        results, total = repo.find_by_period("eco", "t1", start, end, resource_type="kafka", parent_id="lkc-abc")
         assert total == 1
         assert len(results) == 1
         assert results[0].resource_id == "r-match"
@@ -360,7 +387,7 @@ class TestResourceRepository:
         repo.upsert(self._make_resource(resource_id="r-other", parent_id="lkc-xyz"))
         session.commit()
         start, end = datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 2, 1, tzinfo=UTC)
-        results, total = repo.find_by_period("eco", "t1", start, end, parent_id="lkc-abc")
+        results, total = repo.find_by_period("eco", "t1", start, end, resource_type="kafka", parent_id="lkc-abc")
         assert results == []
         assert total == 0
 
@@ -371,7 +398,7 @@ class TestResourceRepository:
         repo.upsert(self._make_resource(resource_id="r2", parent_id="lkc-xyz"))
         session.commit()
         start, end = datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 2, 1, tzinfo=UTC)
-        results, total = repo.find_by_period("eco", "t1", start, end, parent_id=None)
+        results, total = repo.find_by_period("eco", "t1", start, end, resource_type="kafka", parent_id=None)
         assert total == 2
         assert len(results) == 2
 
@@ -389,7 +416,7 @@ class TestResourceRepository:
             )
         )
         session.commit()
-        results, total = repo.find_by_period("eco", "t1", b_start, b_end, parent_id="lkc-abc")
+        results, total = repo.find_by_period("eco", "t1", b_start, b_end, resource_type="kafka", parent_id="lkc-abc")
         assert len(results) == 1
         assert results[0].resource_id == "r-deleted-in-window"
 
@@ -406,7 +433,7 @@ class TestResourceRepository:
             )
         )
         session.commit()
-        results, total = repo.find_by_period("eco", "t1", b_start, b_end, parent_id="lkc-abc")
+        results, total = repo.find_by_period("eco", "t1", b_start, b_end, resource_type="kafka", parent_id="lkc-abc")
         assert results == []
         assert total == 0
 
@@ -423,7 +450,7 @@ class TestResourceRepository:
             )
         )
         session.commit()
-        results, total = repo.find_by_period("eco", "t1", b_start, b_end, parent_id="lkc-abc")
+        results, total = repo.find_by_period("eco", "t1", b_start, b_end, resource_type="kafka", parent_id="lkc-abc")
         assert results == []
         assert total == 0
 
@@ -1146,7 +1173,7 @@ class TestResourceFindPaginated:
         for i in range(5):
             repo.upsert(self._make_resource(resource_id=f"r{i}"))
         session.commit()
-        items, total = repo.find_paginated("eco", "t1", limit=2, offset=0)
+        items, total = repo.find_paginated("eco", "t1", limit=2, offset=0, resource_type="kafka")
         assert total == 5
         assert len(items) == 2
 
@@ -1164,7 +1191,7 @@ class TestResourceFindPaginated:
         repo.upsert(self._make_resource(resource_id="r1", status=ResourceStatus.ACTIVE))
         repo.upsert(self._make_resource(resource_id="r2", status=ResourceStatus.DELETED))
         session.commit()
-        items, total = repo.find_paginated("eco", "t1", limit=10, offset=0, status="active")
+        items, total = repo.find_paginated("eco", "t1", limit=10, offset=0, resource_type="kafka", status="active")
         assert total == 1
 
     def test_returns_correct_total(self, session: Session) -> None:
@@ -1172,7 +1199,7 @@ class TestResourceFindPaginated:
         for i in range(10):
             repo.upsert(self._make_resource(resource_id=f"r{i}"))
         session.commit()
-        items, total = repo.find_paginated("eco", "t1", limit=3, offset=6)
+        items, total = repo.find_paginated("eco", "t1", limit=3, offset=6, resource_type="kafka")
         assert total == 10
         assert len(items) == 3
 
@@ -1620,7 +1647,9 @@ class TestResourceRepositoryCountParam:
             return original_exec(stmt, *args, **kwargs)
 
         with patch.object(session, "exec", side_effect=tracking_exec):
-            results, total = repo.find_active_at("eco", "t1", datetime(2026, 1, 15, tzinfo=UTC), count=False)
+            results, total = repo.find_active_at(
+                "eco", "t1", datetime(2026, 1, 15, tzinfo=UTC), resource_type="kafka", count=False
+            )
 
         assert total == 0
         assert len(results) == 1
@@ -1642,7 +1671,9 @@ class TestResourceRepositoryCountParam:
             return original_exec(stmt, *args, **kwargs)
 
         with patch.object(session, "exec", side_effect=tracking_exec):
-            results, total = repo.find_active_at("eco", "t1", datetime(2026, 1, 15, tzinfo=UTC), count=True)
+            results, total = repo.find_active_at(
+                "eco", "t1", datetime(2026, 1, 15, tzinfo=UTC), resource_type="kafka", count=True
+            )
 
         assert total == 1
         assert len(results) == 1
@@ -1669,6 +1700,7 @@ class TestResourceRepositoryCountParam:
                 "t1",
                 datetime(2026, 1, 1, tzinfo=UTC),
                 datetime(2026, 2, 1, tzinfo=UTC),
+                resource_type="kafka",
                 count=False,
             )
 
@@ -1697,6 +1729,7 @@ class TestResourceRepositoryCountParam:
                 "t1",
                 datetime(2026, 1, 1, tzinfo=UTC),
                 datetime(2026, 2, 1, tzinfo=UTC),
+                resource_type="kafka",
                 count=True,
             )
 

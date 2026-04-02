@@ -1056,10 +1056,17 @@ class TestEmitOnce:
         mock_runner_instance = MagicMock()
         mock_runner_cls.return_value = mock_runner_instance
 
+        mock_plugin = MagicMock()
+        mock_plugin.get_service_handlers.return_value = {}
+        mock_plugin.get_fallback_allocator.return_value = None
+        mock_registry = MagicMock()
+        mock_registry.create.return_value = mock_plugin
+
         from main import main
 
-        with patch("main._build_storage") as mock_storage:
+        with patch("main._build_storage") as mock_storage, patch("main._build_registry") as mock_reg:
             mock_storage.return_value = MagicMock()
+            mock_reg.return_value = mock_registry
             main(["--config-file", "dummy.yaml", "--emit-once"])
 
         # EmitterRunner instantiated once per tenant

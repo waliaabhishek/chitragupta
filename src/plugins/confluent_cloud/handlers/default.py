@@ -70,6 +70,10 @@ class DefaultHandler:
     def handles_product_types(self) -> Sequence[str]:
         return _DEFAULT_PRODUCT_TYPES
 
+    @property
+    def gathered_resource_types(self) -> Sequence[str]:
+        return []
+
     def gather_resources(self, tenant_id: str, uow: UnitOfWork, shared_ctx: object | None = None) -> Iterable[Resource]:
         logger.debug("Gathering %s resources for tenant %s (no-op)", self.service_type, tenant_id)
         return iter([])
