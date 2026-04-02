@@ -446,6 +446,154 @@ class TestGatherPhaseTopicDiscovery:
         mock_plugin.gather_topic_resources.assert_not_called()
 
 
+def _make_metric_row(topic: str, value: float, cluster_id: str = "lkc-abc") -> MagicMock:
+    row = MagicMock()
+    row.labels = {"topic": topic, "kafka_id": cluster_id}
+    row.value = value
+    return row
+
+
+class TestMetricsResourcesUnion:
+    """TASK-180: _attribute_cluster must union resources-table topics with metrics-discovered topics."""
+
+    def test_metrics_only_topic_included_in_attribution(self) -> None:
+        """AC1: topic present in metrics but not resources table → appears in attribution rows."""
+        mock_metrics_source = MagicMock()
+        mock_metrics_source.query.return_value = {
+            "topic_bytes_in": [
+                _make_metric_row("topic-a", 50.0),
+                _make_metric_row("topic-b", 50.0),
+            ],
+        }
+
+        phase = _make_phase(metrics_source=mock_metrics_source)
+        mock_uow = MagicMock()
+        # resources table only has topic-a; topic-b is metrics-only
+        mock_uow.resources.find_by_period.return_value = ([_make_resource("topic-a")], 0)
+
+        result = phase._attribute_cluster(mock_uow, "lkc-abc", "env-1", [_make_billing_line()], date(2026, 1, 1))
+
+        assert result is not None
+        topic_names = {r.topic_name for r in result}
+        assert "topic-b" in topic_names, "metrics-only topic must be included in attribution"
+
+    def test_resources_only_topic_gets_zero_ratio_when_metrics_topic_present(self) -> None:
+        """AC2: resources-only topic gets 0.0 ratio; metrics-only topic gets its share.
+
+        When topic-a is in resources but has no metrics, and topic-b is in metrics only,
+        combined_topics includes both. topic-a ratio=0.00, topic-b takes full cost.
+        """
+        mock_metrics_source = MagicMock()
+        mock_metrics_source.query.return_value = {
+            "topic_bytes_in": [
+                _make_metric_row("topic-b", 100.0),
+            ],
+        }
+
+        phase = _make_phase(metrics_source=mock_metrics_source)
+        mock_uow = MagicMock()
+        # topic-a is in resources only (no metric data); topic-b is metrics-only
+        mock_uow.resources.find_by_period.return_value = ([_make_resource("topic-a")], 0)
+
+        result = phase._attribute_cluster(mock_uow, "lkc-abc", "env-1", [_make_billing_line()], date(2026, 1, 1))
+
+        assert result is not None
+        assert len(result) == 2, "both resources-only and metrics-only topics must appear"
+        by_topic = {r.topic_name: r.amount for r in result}
+        assert "topic-a" in by_topic
+        assert "topic-b" in by_topic
+        assert by_topic["topic-a"] == Decimal("0.00")
+        assert by_topic["topic-b"] == Decimal("10.00")
+
+    def test_topic_in_both_sources_attributed_normally(self) -> None:
+        """AC3: topic present in both resources and metrics → normal bytes_ratio attribution (regression)."""
+        mock_metrics_source = MagicMock()
+        mock_metrics_source.query.return_value = {
+            "topic_bytes_in": [
+                _make_metric_row("topic-a", 100.0),
+            ],
+        }
+
+        phase = _make_phase(metrics_source=mock_metrics_source)
+        mock_uow = MagicMock()
+        mock_uow.resources.find_by_period.return_value = ([_make_resource("topic-a")], 0)
+
+        result = phase._attribute_cluster(mock_uow, "lkc-abc", "env-1", [_make_billing_line()], date(2026, 1, 1))
+
+        assert result is not None
+        assert len(result) == 1
+        assert result[0].topic_name == "topic-a"
+        assert result[0].amount == Decimal("10.00")
+
+    def test_excluded_metrics_only_topic_not_attributed(self) -> None:
+        """AC4: excluded-pattern topic in metrics only → filtered out; non-excluded metrics topic IS included."""
+        mock_metrics_source = MagicMock()
+        mock_metrics_source.query.return_value = {
+            "topic_bytes_in": [
+                _make_metric_row("topic-a", 60.0),
+                _make_metric_row("topic-b", 40.0),
+                _make_metric_row("__consumer_offsets", 999.0),  # matches exclude pattern
+            ],
+        }
+
+        phase = _make_phase(metrics_source=mock_metrics_source)
+        mock_uow = MagicMock()
+        # resources only has topic-a; topic-b and __consumer_offsets are metrics-only
+        mock_uow.resources.find_by_period.return_value = ([_make_resource("topic-a")], 0)
+
+        result = phase._attribute_cluster(mock_uow, "lkc-abc", "env-1", [_make_billing_line()], date(2026, 1, 1))
+
+        assert result is not None
+        topic_names = {r.topic_name for r in result}
+        assert "topic-b" in topic_names, "non-excluded metrics-only topic must be included"
+        assert "__consumer_offsets" not in topic_names, "excluded topic must never be attributed"
+
+    def test_all_metrics_topics_in_resources_no_behavioral_change(self) -> None:
+        """AC5: all metrics topics already in resources → combined == all_topics, same result (regression)."""
+        mock_metrics_source = MagicMock()
+        mock_metrics_source.query.return_value = {
+            "topic_bytes_in": [
+                _make_metric_row("topic-a", 80.0),
+                _make_metric_row("topic-b", 20.0),
+            ],
+        }
+
+        phase = _make_phase(metrics_source=mock_metrics_source)
+        mock_uow = MagicMock()
+        mock_uow.resources.find_by_period.return_value = (
+            [_make_resource("topic-a"), _make_resource("topic-b")],
+            0,
+        )
+
+        result = phase._attribute_cluster(mock_uow, "lkc-abc", "env-1", [_make_billing_line()], date(2026, 1, 1))
+
+        assert result is not None
+        assert len(result) == 2
+        by_topic = {r.topic_name: r.amount for r in result}
+        assert by_topic["topic-a"] == Decimal("8.00")
+        assert by_topic["topic-b"] == Decimal("2.00")
+
+    def test_resources_empty_metrics_have_data_proceeds(self) -> None:
+        """AC6: resources table empty but metrics have data → attribution proceeds (no early return)."""
+        mock_metrics_source = MagicMock()
+        mock_metrics_source.query.return_value = {
+            "topic_bytes_in": [
+                _make_metric_row("topic-x", 100.0),
+            ],
+        }
+
+        phase = _make_phase(metrics_source=mock_metrics_source)
+        mock_uow = MagicMock()
+        mock_uow.resources.find_by_period.return_value = ([], 0)  # empty resources table
+
+        result = phase._attribute_cluster(mock_uow, "lkc-abc", "env-1", [_make_billing_line()], date(2026, 1, 1))
+
+        assert result is not None
+        assert len(result) > 0, "must not early-return [] when metrics have data"
+        topic_names = {r.topic_name for r in result}
+        assert "topic-x" in topic_names
+
+
 class TestChargebackOrchestratorOverlayLoop:
     """GIT-2: ChargebackOrchestrator.run() topic overlay loop when phase is set."""
 
@@ -908,3 +1056,92 @@ class TestTopicAttributionPhaseIntegration:
         topic_names = {r.topic_name for r in rows}
         assert topic_names == {"payments"}
         assert "analytics-v2" not in topic_names  # new topic excluded
+
+    def test_run_metrics_only_topic_attributed_via_union(self, storage) -> None:
+        """TASK-180: topic in metrics but NOT in resources table gets attribution via union.
+
+        resources table: payments only
+        metrics: payments (70%) + analytics (30%)
+        Expected: both payments and analytics receive attribution rows with correct proportional amounts.
+        """
+        from core.engine.topic_attribution import TopicAttributionPhase
+        from core.models.billing import CoreBillingLineItem
+        from core.models.resource import CoreResource
+        from plugins.confluent_cloud.config import TopicAttributionConfig
+
+        tracking_date = date(2026, 1, 1)
+        timestamp = datetime(2026, 1, 1, tzinfo=UTC)
+
+        cfg = TopicAttributionConfig(
+            enabled=True,
+            missing_metrics_behavior="even_split",
+            exclude_topic_patterns=["__consumer_offsets"],
+        )
+
+        with storage.create_unit_of_work() as uow:
+            # Only `payments` is in the resources table — `analytics` is absent
+            uow.resources.upsert(
+                CoreResource(
+                    ecosystem="eco",
+                    tenant_id="t1",
+                    resource_id="lkc-abc:topic:payments",
+                    resource_type="topic",
+                    display_name="payments",
+                    parent_id="lkc-abc",
+                )
+            )
+            uow.billing.upsert(
+                CoreBillingLineItem(
+                    ecosystem="eco",
+                    tenant_id="t1",
+                    timestamp=timestamp,
+                    resource_id="lkc-abc",
+                    product_category="KAFKA",
+                    product_type="KAFKA_NETWORK_WRITE",
+                    quantity=Decimal("1"),
+                    unit_price=Decimal("10.00"),
+                    total_cost=Decimal("10.00"),
+                    granularity="daily",
+                )
+            )
+            uow.commit()
+
+        # metrics source returns data for BOTH payments and analytics
+        metrics_source = MagicMock()
+        payments_row = MagicMock()
+        payments_row.labels = {"topic": "payments", "kafka_id": "lkc-abc"}
+        payments_row.value = 70.0
+        analytics_row = MagicMock()
+        analytics_row.labels = {"topic": "analytics", "kafka_id": "lkc-abc"}
+        analytics_row.value = 30.0
+        metrics_source.query.return_value = {
+            "topic_bytes_in": [payments_row, analytics_row],
+        }
+
+        phase = TopicAttributionPhase(
+            ecosystem="eco",
+            tenant_id="t1",
+            metrics_source=metrics_source,
+            config=cfg,
+            metrics_step=timedelta(minutes=1),
+        )
+
+        with storage.create_unit_of_work() as uow:
+            count = phase.run(uow, tracking_date)
+            uow.commit()
+
+        assert count == 2  # payments + analytics
+
+        with storage.create_unit_of_work() as uow:
+            rows, total = uow.topic_attributions.find_by_filters(ecosystem="eco", tenant_id="t1", limit=100, offset=0)
+
+        assert total == 2
+        topic_names = {r.topic_name for r in rows}
+        assert "payments" in topic_names
+        assert "analytics" in topic_names, "metrics-only topic must be attributed via union"
+
+        by_topic = {r.topic_name: r.amount for r in rows}
+        assert by_topic["payments"] == Decimal("7.00")
+        assert by_topic["analytics"] == Decimal("3.00")
+        total_amount = sum(r.amount for r in rows)
+        assert total_amount == Decimal("10.00")

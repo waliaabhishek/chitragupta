@@ -212,6 +212,79 @@ class TestDeadCodeRemoval:
         assert result is None
 
 
+class TestMetricsResourcesUnionModels:
+    """TASK-180: Model-level contracts for AC6 sub-cases (resources empty, metrics-discovered topics)."""
+
+    def test_ac6a_single_metrics_topic_bytes_ratio_full_cost(self) -> None:
+        """AC6a: single metrics-discovered topic → bytes_ratio attributes full cluster cost to it."""
+        ctx = _make_ctx(
+            topics=frozenset(["topic-x"]),
+            topic_metrics={"topic_bytes_in": {"topic-x": 100.0}},
+            cluster_cost=Decimal("10.00"),
+        )
+        model = TopicUsageRatioModel(metric_keys=("topic_bytes_in",))
+        rows = model.attribute(ctx)
+
+        assert rows is not None
+        assert len(rows) == 1
+        assert rows[0].topic_name == "topic-x"
+        assert rows[0].amount == Decimal("10.00")
+
+    def test_ac6b_two_metrics_topics_correct_proportional_split(self) -> None:
+        """AC6b: two metrics-discovered topics → correct proportional split by bytes."""
+        ctx = _make_ctx(
+            topics=frozenset(["alpha", "beta"]),
+            topic_metrics={"topic_bytes_in": {"alpha": 80.0, "beta": 20.0}},
+            cluster_cost=Decimal("10.00"),
+        )
+        model = TopicUsageRatioModel(metric_keys=("topic_bytes_in",))
+        rows = model.attribute(ctx)
+
+        assert rows is not None
+        assert len(rows) == 2
+        by_topic = {r.topic_name: r.amount for r in rows}
+        assert by_topic["alpha"] == Decimal("8.00")
+        assert by_topic["beta"] == Decimal("2.00")
+        assert sum(by_topic.values()) == Decimal("10.00")
+
+    def test_ac6c_metrics_topic_no_data_falls_back_to_even_split(self) -> None:
+        """AC6c: metrics-discovered topic present in ctx.topics but no metric data → even_split fallback."""
+        ctx = _make_ctx(
+            topics=frozenset(["topic-x"]),
+            topic_metrics={},  # no metric data
+            cluster_cost=Decimal("10.00"),
+            config=_make_config(missing_metrics_behavior="even_split"),
+        )
+        model = TopicMissingMetricsFallbackModel()
+        rows = model.attribute(ctx)
+
+        assert rows is not None
+        assert len(rows) == 1
+        assert rows[0].topic_name == "topic-x"
+        assert rows[0].amount == Decimal("10.00")
+        assert rows[0].attribution_method == "even_split"
+
+    def test_ac6d_mixed_metrics_and_resources_topics_correct_ratio(self) -> None:
+        """AC6d: combined topics include both metrics-discovered and resources-table topics.
+
+        metrics-topic has data → takes proportional share; resources-only topic has no data → 0.00.
+        """
+        ctx = _make_ctx(
+            topics=frozenset(["metrics-topic", "resources-topic"]),
+            topic_metrics={"topic_bytes_in": {"metrics-topic": 100.0}},
+            cluster_cost=Decimal("10.00"),
+        )
+        model = TopicUsageRatioModel(metric_keys=("topic_bytes_in",))
+        rows = model.attribute(ctx)
+
+        assert rows is not None
+        assert len(rows) == 2
+        by_topic = {r.topic_name: r.amount for r in rows}
+        assert by_topic["metrics-topic"] == Decimal("10.00")
+        assert by_topic["resources-topic"] == Decimal("0.00")
+        assert sum(by_topic.values()) == Decimal("10.00")
+
+
 class TestTopicFilter:
     def test_consumer_offsets_excluded_by_default(self) -> None:
         """__consumer_offsets excluded at _get_cluster_topics level; not in topics frozenset."""

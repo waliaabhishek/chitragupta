@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **Fix:** Topic attribution no longer filters Prometheus metric data through the resources table. `_attribute_cluster` now computes the union of resources-table topics and metrics-discovered topics before constructing `TopicAttributionContext`. Topics that Prometheus reports as active during the billing window but that are absent from the resources table (never discovered by gather, or deleted before gather ran) are now correctly included in cost attribution instead of being silently discarded. (TASK-180)
+
 - **Fix:** Topic attribution now uses point-in-time topic membership for historical billing periods instead of current topic inventory. `_get_cluster_topics` queries `find_by_period` with the billing window `[b_start, b_end)` and `parent_id` filtering, so deleted topics that had traffic during the billing period are correctly included, and topics created after the billing period are excluded. `ResourceRepository.find_by_period` gains an optional `parent_id` parameter. (TASK-179)
 
 - **Fix:** Recalculation window now deletes stale topic attribution facts before recompute. Previously, only chargeback rows were deleted, so topics removed between runs could cause silent double-accounting on the next calculation. (TASK-178)

@@ -144,12 +144,6 @@ class TopicAttributionPhase:
         b_end = b_start + _granularity_to_duration(first_line.granularity)
 
         all_topics = self._get_cluster_topics(uow, cluster_id, b_start, b_end)
-        if not all_topics:
-            logger.warning(
-                "No topics in resources table for cluster=%s — skipping attribution",
-                cluster_id,
-            )
-            return []
 
         topic_metrics = self._fetch_topic_metrics(cluster_id, b_start, b_end)
         if topic_metrics is None:
@@ -160,12 +154,26 @@ class TopicAttributionPhase:
             )
             return None
 
+        # Union: resources table topics + all topics seen in metrics for this window.
+        # _fetch_topic_metrics already applies self._topic_filter, so the comprehension
+        # filter below is defense-in-depth only.
+        metrics_topics = frozenset(
+            topic for metric_values in topic_metrics.values() for topic in metric_values if self._topic_filter(topic)
+        )
+        combined_topics = all_topics | metrics_topics
+
+        if not combined_topics:
+            logger.warning(
+                "No topics in resources table or metrics for cluster=%s — skipping attribution",
+                cluster_id,
+            )
+            return []
+
         rows: list[TopicAttributionRow] = []
         for line in billing_lines:
             model = self._attribution_models.get(line.product_type)
             if not model:
                 continue
-
             ctx = TopicAttributionContext(
                 ecosystem=self._ecosystem,
                 tenant_id=self._tenant_id,
@@ -175,14 +183,13 @@ class TopicAttributionPhase:
                 product_category=line.product_category,
                 product_type=line.product_type,
                 cluster_cost=Decimal(str(line.total_cost)),
-                topics=all_topics,
+                topics=combined_topics,  # CHANGED: union instead of resources-only
                 topic_metrics=topic_metrics,
                 config=self._config,
             )
             topic_rows = model.attribute(ctx)
             if topic_rows:
                 rows.extend(topic_rows)
-
         return rows
 
     def _fetch_topic_metrics(
