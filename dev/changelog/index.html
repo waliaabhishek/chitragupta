@@ -1375,8 +1375,21 @@ stage with its own star schema, composable attribution models
 and configurable retention. (<a href="https://github.com/waliaabhishek/chitragupta/commit/919cc42a68b78773389577ce74c3f43c17544869">919cc42</a>)</p>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
-<li>Fix: TASK-176 — Unify emitter plugins to be row-type-agnostic across all pipelines</li>
+<li>Fix: TASK-179 — Topic attribution uses point-in-time topic membership instead of current inventory</li>
 </ul>
+<p>_get_cluster_topics now queries find_by_period with billing window [b_start, b_end)
+and parent_id filtering, so deleted topics with historical traffic are included and
+topics created after the billing period are excluded. ResourceRepository.find_by_period
+gains an optional parent_id parameter. (<a href="https://github.com/waliaabhishek/chitragupta/commit/cdbb830416baf1be8f832d3c95eead4f614a2e79">cdbb830</a>)
+- Fix: TASK-178 — Recalculation window now deletes stale topic attribution facts before recompute</p>
+<p>Previously, _apply_recalculation_window() deleted chargeback rows but not
+topic attribution facts. Rows for deleted topics survived indefinitely,
+causing silent double-accounting in queries and exports. (<a href="https://github.com/waliaabhishek/chitragupta/commit/b0f708fc8cd4b4dd6900f39f4769d93ff9aa4d62">b0f708f</a>)
+- Fix: TASK-177 — Transient topic-attribution failures no longer silently marked as calculated</p>
+<p>_attribute_cluster now returns None (instead of []) when _fetch_topic_metrics
+reports infrastructure failure, and run() skips mark_topic_attribution_calculated
+when any cluster returned None — leaving the date pending for retry. (<a href="https://github.com/waliaabhishek/chitragupta/commit/771322a34b591e3fbb609a81458f8819ecac59db">771322a</a>)
+- Fix: TASK-176 — Unify emitter plugins to be row-type-agnostic across all pipelines</p>
 <p>Row types now declare <strong>csv_fields</strong> and <strong>prometheus_metrics</strong> ClassVars.
 One generic CsvEmitter and one generic PrometheusEmitter serve all pipelines
 (chargeback, topic attribution, future stages) without per-pipeline subclasses.</p>
