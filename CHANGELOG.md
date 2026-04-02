@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **Fix:** Topic attribution now uses point-in-time topic membership for historical billing periods instead of current topic inventory. `_get_cluster_topics` queries `find_by_period` with the billing window `[b_start, b_end)` and `parent_id` filtering, so deleted topics that had traffic during the billing period are correctly included, and topics created after the billing period are excluded. `ResourceRepository.find_by_period` gains an optional `parent_id` parameter. (TASK-179)
+
 - **Fix:** Recalculation window now deletes stale topic attribution facts before recompute. Previously, only chargeback rows were deleted, so topics removed between runs could cause silent double-accounting on the next calculation. (TASK-178)
 
 - **Fix:** Transient Prometheus outages during topic attribution no longer permanently mark affected dates as calculated. `_attribute_cluster` now returns `None` (instead of `[]`) on infrastructure failure, and `run()` skips `mark_topic_attribution_calculated` when any cluster experienced a metrics fetch failure — leaving the date pending for retry on the next pipeline run. (TASK-177)

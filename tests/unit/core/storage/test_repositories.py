@@ -340,6 +340,93 @@ class TestResourceRepository:
         assert len(results) == 1
         assert results[0].resource_id == "r-both"
 
+    # TASK-179: find_by_period parent_id filter tests
+
+    def test_find_by_period_parent_id_filters_to_matching_parent(self, session: Session) -> None:
+        """find_by_period(parent_id='lkc-abc') returns only resources with that parent_id."""
+        repo = SQLModelResourceRepository(session)
+        repo.upsert(self._make_resource(resource_id="r-match", parent_id="lkc-abc"))
+        repo.upsert(self._make_resource(resource_id="r-other", parent_id="lkc-xyz"))
+        session.commit()
+        start, end = datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 2, 1, tzinfo=UTC)
+        results, total = repo.find_by_period("eco", "t1", start, end, parent_id="lkc-abc")
+        assert total == 1
+        assert len(results) == 1
+        assert results[0].resource_id == "r-match"
+
+    def test_find_by_period_parent_id_excludes_other_parents(self, session: Session) -> None:
+        """find_by_period(parent_id='lkc-abc') returns empty when only other parent_ids exist."""
+        repo = SQLModelResourceRepository(session)
+        repo.upsert(self._make_resource(resource_id="r-other", parent_id="lkc-xyz"))
+        session.commit()
+        start, end = datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 2, 1, tzinfo=UTC)
+        results, total = repo.find_by_period("eco", "t1", start, end, parent_id="lkc-abc")
+        assert results == []
+        assert total == 0
+
+    def test_find_by_period_parent_id_none_returns_all_parents(self, session: Session) -> None:
+        """find_by_period(parent_id=None) returns all resources regardless of parent_id."""
+        repo = SQLModelResourceRepository(session)
+        repo.upsert(self._make_resource(resource_id="r1", parent_id="lkc-abc"))
+        repo.upsert(self._make_resource(resource_id="r2", parent_id="lkc-xyz"))
+        session.commit()
+        start, end = datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 2, 1, tzinfo=UTC)
+        results, total = repo.find_by_period("eco", "t1", start, end, parent_id=None)
+        assert total == 2
+        assert len(results) == 2
+
+    def test_find_by_period_parent_id_deleted_after_start_included(self, session: Session) -> None:
+        """Topic deleted after b_start (deleted_at >= b_start) is included by temporal filter."""
+        repo = SQLModelResourceRepository(session)
+        b_start = datetime(2026, 3, 1, tzinfo=UTC)
+        b_end = datetime(2026, 3, 2, tzinfo=UTC)
+        repo.upsert(
+            self._make_resource(
+                resource_id="r-deleted-in-window",
+                parent_id="lkc-abc",
+                created_at=datetime(2026, 1, 1, tzinfo=UTC),
+                deleted_at=datetime(2026, 3, 1, 12, 0, 0, tzinfo=UTC),  # deleted_at >= b_start
+            )
+        )
+        session.commit()
+        results, total = repo.find_by_period("eco", "t1", b_start, b_end, parent_id="lkc-abc")
+        assert len(results) == 1
+        assert results[0].resource_id == "r-deleted-in-window"
+
+    def test_find_by_period_parent_id_created_after_end_excluded(self, session: Session) -> None:
+        """Topic created after b_end (created_at >= b_end) is excluded by temporal filter."""
+        repo = SQLModelResourceRepository(session)
+        b_start = datetime(2026, 3, 1, tzinfo=UTC)
+        b_end = datetime(2026, 3, 2, tzinfo=UTC)
+        repo.upsert(
+            self._make_resource(
+                resource_id="r-created-after",
+                parent_id="lkc-abc",
+                created_at=datetime(2026, 3, 3, tzinfo=UTC),  # created_at >= b_end
+            )
+        )
+        session.commit()
+        results, total = repo.find_by_period("eco", "t1", b_start, b_end, parent_id="lkc-abc")
+        assert results == []
+        assert total == 0
+
+    def test_find_by_period_parent_id_topic_never_in_cluster_excluded(self, session: Session) -> None:
+        """Topic with different cluster parent_id is always excluded regardless of temporal state."""
+        repo = SQLModelResourceRepository(session)
+        b_start = datetime(2026, 3, 1, tzinfo=UTC)
+        b_end = datetime(2026, 3, 2, tzinfo=UTC)
+        repo.upsert(
+            self._make_resource(
+                resource_id="r-wrong-cluster",
+                parent_id="lkc-other",  # different cluster
+                created_at=datetime(2026, 1, 1, tzinfo=UTC),
+            )
+        )
+        session.commit()
+        results, total = repo.find_by_period("eco", "t1", b_start, b_end, parent_id="lkc-abc")
+        assert results == []
+        assert total == 0
+
 
 # --- Identity Repository ---
 

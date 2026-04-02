@@ -79,10 +79,10 @@ class TestTopicAttributionPhasePrometheusFailure:
         mock_uow.billing.find_by_date.return_value = [
             _make_billing_line(resource_id="lkc-abc", product_type="KAFKA_NETWORK_WRITE"),
         ]
-        mock_uow.resources.find_by_parent.return_value = [
-            _make_resource("topic-a"),
-            _make_resource("topic-b"),
-        ]
+        mock_uow.resources.find_by_period.return_value = (
+            [_make_resource("topic-a"), _make_resource("topic-b")],
+            0,
+        )
         mock_uow.topic_attributions.upsert_batch.return_value = 0
 
         count = phase.run(mock_uow, date(2026, 1, 1))
@@ -99,7 +99,7 @@ class TestTopicAttributionPhasePrometheusFailure:
         mock_uow.billing.find_by_date.return_value = [
             _make_billing_line(resource_id="lkc-abc"),
         ]
-        mock_uow.resources.find_by_parent.return_value = [_make_resource("topic-a")]
+        mock_uow.resources.find_by_period.return_value = ([_make_resource("topic-a")], 0)
 
         phase.run(mock_uow, date(2026, 1, 1))
         mock_uow.pipeline_state.mark_topic_attribution_calculated.assert_not_called()
@@ -113,7 +113,7 @@ class TestTopicAttributionPhaseNoTopics:
         mock_uow.billing.find_by_date.return_value = [
             _make_billing_line(resource_id="lkc-abc"),
         ]
-        mock_uow.resources.find_by_parent.return_value = []  # no topics
+        mock_uow.resources.find_by_period.return_value = ([], 0)  # no topics
 
         count = phase.run(mock_uow, date(2026, 1, 1))
         assert count == 0
@@ -128,7 +128,7 @@ class TestMarkCalculatedGating:
         mock_uow.billing.find_by_date.return_value = [
             _make_billing_line(resource_id="lkc-abc"),
         ]
-        mock_uow.resources.find_by_parent.return_value = []
+        mock_uow.resources.find_by_period.return_value = ([], 0)
 
         phase.run(mock_uow, date(2026, 1, 1))
         mock_uow.pipeline_state.mark_topic_attribution_calculated.assert_called_once_with("eco", "t1", date(2026, 1, 1))
@@ -160,7 +160,7 @@ class TestMarkCalculatedGating:
             _make_billing_line(resource_id="lkc-ok", env_id="env-1"),
             _make_billing_line(resource_id="lkc-fail", env_id="env-1"),
         ]
-        mock_uow.resources.find_by_parent.return_value = [_make_resource("topic-a")]
+        mock_uow.resources.find_by_period.return_value = ([_make_resource("topic-a")], 0)
         mock_uow.topic_attributions.upsert_batch.return_value = 1
 
         phase.run(mock_uow, date(2026, 1, 1))
@@ -177,7 +177,7 @@ class TestAttributeClusterReturnType:
 
         phase = _make_phase(metrics_source=mock_metrics_source)
         mock_uow = MagicMock()
-        mock_uow.resources.find_by_parent.return_value = [_make_resource("topic-a")]
+        mock_uow.resources.find_by_period.return_value = ([_make_resource("topic-a")], 0)
 
         result = phase._attribute_cluster(
             mock_uow,
@@ -192,7 +192,7 @@ class TestAttributeClusterReturnType:
         """_attribute_cluster must return [] (not None) when no topics exist — legitimate empty (regression guard)."""
         phase = _make_phase()
         mock_uow = MagicMock()
-        mock_uow.resources.find_by_parent.return_value = []
+        mock_uow.resources.find_by_period.return_value = ([], 0)
 
         result = phase._attribute_cluster(
             mock_uow,
@@ -218,7 +218,7 @@ class TestTopicAttributionPipelineStateFlags:
         mock_uow.billing.find_by_date.return_value = [
             _make_billing_line(resource_id="lkc-abc"),
         ]
-        mock_uow.resources.find_by_parent.return_value = [_make_resource("orders")]
+        mock_uow.resources.find_by_period.return_value = ([_make_resource("orders")], 0)
         mock_uow.topic_attributions.upsert_batch.return_value = 1
 
         phase.run(mock_uow, date(2026, 1, 1))
@@ -550,15 +550,120 @@ class TestFetchTopicMetricsWithoutMetricsSource:
             phase._fetch_topic_metrics("lkc-abc", b_start, b_end)
 
 
+class TestGetClusterTopicsTemporal:
+    """TASK-179: _get_cluster_topics uses find_by_period(parent_id=cluster_id) with billing window."""
+
+    def test_get_cluster_topics_calls_find_by_period_not_find_by_parent(self) -> None:
+        """_get_cluster_topics calls find_by_period(parent_id=...) instead of find_by_parent."""
+        phase = _make_phase()
+        mock_uow = MagicMock()
+        b_start = datetime(2026, 3, 1, tzinfo=UTC)
+        b_end = datetime(2026, 3, 2, tzinfo=UTC)
+        mock_uow.resources.find_by_period.return_value = ([], 0)
+
+        phase._get_cluster_topics(mock_uow, "lkc-abc", b_start, b_end)
+
+        mock_uow.resources.find_by_period.assert_called_once_with(
+            "eco",
+            "t1",
+            b_start,
+            b_end,
+            parent_id="lkc-abc",
+            resource_type="topic",
+            count=False,
+        )
+        mock_uow.resources.find_by_parent.assert_not_called()
+
+    def test_get_cluster_topics_includes_topic_deleted_within_window(self) -> None:
+        """Topic deleted after b_start but before attribution run appears in result set."""
+        phase = _make_phase()
+        mock_uow = MagicMock()
+        b_start = datetime(2026, 3, 1, tzinfo=UTC)
+        b_end = datetime(2026, 3, 2, tzinfo=UTC)
+        deleted_topic = _make_resource("orders-v1")
+        mock_uow.resources.find_by_period.return_value = ([deleted_topic], 0)
+
+        result = phase._get_cluster_topics(mock_uow, "lkc-abc", b_start, b_end)
+
+        assert "orders-v1" in result
+
+    def test_get_cluster_topics_excludes_topic_created_after_billing_end(self) -> None:
+        """Topic created after b_end is absent — find_by_period temporal filter excludes it."""
+        phase = _make_phase()
+        mock_uow = MagicMock()
+        b_start = datetime(2026, 3, 1, tzinfo=UTC)
+        b_end = datetime(2026, 3, 2, tzinfo=UTC)
+        mock_uow.resources.find_by_period.return_value = ([], 0)
+
+        result = phase._get_cluster_topics(mock_uow, "lkc-abc", b_start, b_end)
+
+        assert len(result) == 0
+
+    def test_get_cluster_topics_excludes_topic_from_different_cluster(self) -> None:
+        """Topic with different cluster parent_id absent — parent_id filter applied in repo."""
+        phase = _make_phase()
+        mock_uow = MagicMock()
+        b_start = datetime(2026, 3, 1, tzinfo=UTC)
+        b_end = datetime(2026, 3, 2, tzinfo=UTC)
+        mock_uow.resources.find_by_period.return_value = ([], 0)
+
+        result = phase._get_cluster_topics(mock_uow, "lkc-abc", b_start, b_end)
+
+        assert len(result) == 0
+        mock_uow.resources.find_by_period.assert_called_once_with(
+            "eco", "t1", b_start, b_end, parent_id="lkc-abc", resource_type="topic", count=False
+        )
+
+    def test_get_cluster_topics_current_day_no_changes_returns_same_topics(self) -> None:
+        """Current-day attribution with no recent creates/deletes: same result as find_by_parent."""
+        phase = _make_phase()
+        mock_uow = MagicMock()
+        b_start = datetime(2026, 1, 1, tzinfo=UTC)
+        b_end = datetime(2026, 1, 2, tzinfo=UTC)
+        topic_a = _make_resource("topic-a")
+        topic_b = _make_resource("topic-b")
+        mock_uow.resources.find_by_period.return_value = ([topic_a, topic_b], 0)
+
+        result = phase._get_cluster_topics(mock_uow, "lkc-abc", b_start, b_end)
+
+        assert result == frozenset({"topic-a", "topic-b"})
+
+    def test_attribute_cluster_passes_billing_window_to_get_cluster_topics(self) -> None:
+        """_attribute_cluster passes b_start and b_end to _get_cluster_topics."""
+        phase = _make_phase()
+        mock_uow = MagicMock()
+        billing_ts = datetime(2026, 3, 15, tzinfo=UTC)
+        line = _make_billing_line(timestamp=billing_ts, granularity="daily")
+        mock_uow.resources.find_by_period.return_value = ([], 0)
+
+        phase._attribute_cluster(mock_uow, "lkc-abc", "env-1", [line], date(2026, 3, 15))
+
+        # b_start = billing_ts, b_end = billing_ts + 1 day
+        expected_b_end = billing_ts + timedelta(days=1)
+        mock_uow.resources.find_by_period.assert_called_once_with(
+            "eco",
+            "t1",
+            billing_ts,
+            expected_b_end,
+            parent_id="lkc-abc",
+            resource_type="topic",
+            count=False,
+        )
+
+
 class TestTopicAttributionPhaseIntegration:
     """Integration tests: TopicAttributionPhase.run() against real SQLite storage."""
 
     @pytest.fixture
     def storage(self):
+        import uuid
+
         from core.storage.backends.sqlmodel.module import CoreStorageModule
         from core.storage.backends.sqlmodel.unit_of_work import SQLModelBackend
 
-        backend = SQLModelBackend("sqlite:///:memory:", CoreStorageModule(), use_migrations=False)
+        db_name = f"test_{uuid.uuid4().hex}"
+        connection_string = f"sqlite:///file:{db_name}?mode=memory&cache=shared&uri=true"
+        backend = SQLModelBackend(connection_string, CoreStorageModule(), use_migrations=False)
         backend.create_tables()
         return backend
 
@@ -639,3 +744,167 @@ class TestTopicAttributionPhaseIntegration:
         total_amount = sum(r.amount for r in rows)
         assert total_amount == Decimal("10.00")
         assert all(r.attribution_method == "even_split" for r in rows)
+
+    def test_run_includes_topic_deleted_after_billing_window_start(self, storage) -> None:
+        """TASK-179: Topic deleted after b_start receives attribution for that billing period."""
+        from core.engine.topic_attribution import TopicAttributionPhase
+        from core.models.billing import CoreBillingLineItem
+        from core.models.resource import CoreResource
+        from plugins.confluent_cloud.config import TopicAttributionConfig
+
+        tracking_date = date(2026, 1, 1)
+        b_start = datetime(2026, 1, 1, tzinfo=UTC)  # billing window start
+
+        cfg = TopicAttributionConfig(
+            enabled=True,
+            missing_metrics_behavior="even_split",
+            exclude_topic_patterns=["__consumer_offsets"],
+        )
+
+        with storage.create_unit_of_work() as uow:
+            # orders-v1: deleted after b_start — must be included
+            uow.resources.upsert(
+                CoreResource(
+                    ecosystem="eco",
+                    tenant_id="t1",
+                    resource_id="lkc-abc:topic:orders-v1",
+                    resource_type="topic",
+                    display_name="orders-v1",
+                    parent_id="lkc-abc",
+                    created_at=datetime(2025, 12, 1, tzinfo=UTC),
+                    deleted_at=datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC),  # deleted_at >= b_start
+                )
+            )
+            # payments: still alive
+            uow.resources.upsert(
+                CoreResource(
+                    ecosystem="eco",
+                    tenant_id="t1",
+                    resource_id="lkc-abc:topic:payments",
+                    resource_type="topic",
+                    display_name="payments",
+                    parent_id="lkc-abc",
+                    created_at=datetime(2025, 12, 1, tzinfo=UTC),
+                )
+            )
+            uow.billing.upsert(
+                CoreBillingLineItem(
+                    ecosystem="eco",
+                    tenant_id="t1",
+                    timestamp=b_start,
+                    resource_id="lkc-abc",
+                    product_category="KAFKA",
+                    product_type="KAFKA_NETWORK_WRITE",
+                    quantity=Decimal("1"),
+                    unit_price=Decimal("10.00"),
+                    total_cost=Decimal("10.00"),
+                    granularity="daily",
+                )
+            )
+            uow.commit()
+
+        metrics_source = MagicMock()
+        metrics_source.query.return_value = {}
+
+        phase = TopicAttributionPhase(
+            ecosystem="eco",
+            tenant_id="t1",
+            metrics_source=metrics_source,
+            config=cfg,
+            metrics_step=timedelta(minutes=1),
+        )
+
+        with storage.create_unit_of_work() as uow:
+            count = phase.run(uow, tracking_date)
+            uow.commit()
+
+        assert count == 2  # both topics attributed
+
+        with storage.create_unit_of_work() as uow:
+            rows, total = uow.topic_attributions.find_by_filters(ecosystem="eco", tenant_id="t1", limit=100, offset=0)
+
+        assert total == 2
+        topic_names = {r.topic_name for r in rows}
+        assert "orders-v1" in topic_names  # deleted topic included
+
+    def test_run_excludes_topic_created_after_billing_window_end(self, storage) -> None:
+        """TASK-179: Topic created after b_end receives no attribution for that billing period."""
+        from core.engine.topic_attribution import TopicAttributionPhase
+        from core.models.billing import CoreBillingLineItem
+        from core.models.resource import CoreResource
+        from plugins.confluent_cloud.config import TopicAttributionConfig
+
+        tracking_date = date(2026, 1, 1)
+        b_start = datetime(2026, 1, 1, tzinfo=UTC)
+
+        cfg = TopicAttributionConfig(
+            enabled=True,
+            missing_metrics_behavior="even_split",
+            exclude_topic_patterns=["__consumer_offsets"],
+        )
+
+        with storage.create_unit_of_work() as uow:
+            # payments: existed during billing window
+            uow.resources.upsert(
+                CoreResource(
+                    ecosystem="eco",
+                    tenant_id="t1",
+                    resource_id="lkc-abc:topic:payments",
+                    resource_type="topic",
+                    display_name="payments",
+                    parent_id="lkc-abc",
+                    created_at=datetime(2025, 12, 1, tzinfo=UTC),
+                )
+            )
+            # analytics-v2: created AFTER b_end — must be excluded
+            uow.resources.upsert(
+                CoreResource(
+                    ecosystem="eco",
+                    tenant_id="t1",
+                    resource_id="lkc-abc:topic:analytics-v2",
+                    resource_type="topic",
+                    display_name="analytics-v2",
+                    parent_id="lkc-abc",
+                    created_at=datetime(2026, 1, 3, tzinfo=UTC),  # created_at >= b_end
+                )
+            )
+            uow.billing.upsert(
+                CoreBillingLineItem(
+                    ecosystem="eco",
+                    tenant_id="t1",
+                    timestamp=b_start,
+                    resource_id="lkc-abc",
+                    product_category="KAFKA",
+                    product_type="KAFKA_NETWORK_WRITE",
+                    quantity=Decimal("1"),
+                    unit_price=Decimal("10.00"),
+                    total_cost=Decimal("10.00"),
+                    granularity="daily",
+                )
+            )
+            uow.commit()
+
+        metrics_source = MagicMock()
+        metrics_source.query.return_value = {}
+
+        phase = TopicAttributionPhase(
+            ecosystem="eco",
+            tenant_id="t1",
+            metrics_source=metrics_source,
+            config=cfg,
+            metrics_step=timedelta(minutes=1),
+        )
+
+        with storage.create_unit_of_work() as uow:
+            count = phase.run(uow, tracking_date)
+            uow.commit()
+
+        assert count == 1  # only payments attributed
+
+        with storage.create_unit_of_work() as uow:
+            rows, total = uow.topic_attributions.find_by_filters(ecosystem="eco", tenant_id="t1", limit=100, offset=0)
+
+        assert total == 1
+        topic_names = {r.topic_name for r in rows}
+        assert topic_names == {"payments"}
+        assert "analytics-v2" not in topic_names  # new topic excluded

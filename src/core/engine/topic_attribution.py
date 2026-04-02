@@ -143,7 +143,7 @@ class TopicAttributionPhase:
         b_start = first_line.timestamp
         b_end = b_start + _granularity_to_duration(first_line.granularity)
 
-        all_topics = self._get_cluster_topics(uow, cluster_id)
+        all_topics = self._get_cluster_topics(uow, cluster_id, b_start, b_end)
         if not all_topics:
             logger.warning(
                 "No topics in resources table for cluster=%s — skipping attribution",
@@ -246,12 +246,17 @@ class TopicAttributionPhase:
 
         return result
 
-    def _get_cluster_topics(self, uow: UnitOfWork, cluster_id: str) -> frozenset[str]:
-        """Get active topic names for a cluster from the resources table."""
-        resources = uow.resources.find_by_parent(
+    def _get_cluster_topics(
+        self, uow: UnitOfWork, cluster_id: str, b_start: datetime, b_end: datetime
+    ) -> frozenset[str]:
+        """Get topic names for a cluster that existed during the billing window [b_start, b_end)."""
+        resources, _ = uow.resources.find_by_period(
             self._ecosystem,
             self._tenant_id,
-            cluster_id,
+            b_start,
+            b_end,
+            parent_id=cluster_id,
             resource_type="topic",
+            count=False,
         )
         return frozenset(r.display_name for r in resources if r.display_name and self._topic_filter(r.display_name))

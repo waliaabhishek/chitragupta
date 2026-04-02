@@ -205,6 +205,7 @@ class SQLModelResourceRepository:
         start: datetime,
         end: datetime,
         *,
+        parent_id: str | None = None,
         resource_type: str | None = None,
         status: str | None = None,
         metadata_filter: dict[str, str | int | float | bool | None] | None = None,
@@ -213,6 +214,8 @@ class SQLModelResourceRepository:
         count: bool = True,
     ) -> tuple[list[Resource], int]:
         where = _temporal_by_period_filter(ResourceTable, ecosystem, tenant_id, start, end)
+        if parent_id is not None:
+            where.append(col(ResourceTable.parent_id) == parent_id)
         if resource_type is not None:
             where.append(col(ResourceTable.resource_type) == resource_type)
         if status is not None:

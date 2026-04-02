@@ -62,6 +62,7 @@ class ResourceRepository(Protocol):
         start: datetime,
         end: datetime,
         *,
+        parent_id: str | None = None,
         resource_type: str | None = None,
         status: str | None = None,
         metadata_filter: dict[str, str | int | float | bool | None] | None = None,
@@ -73,6 +74,8 @@ class ResourceRepository(Protocol):
 
         Overlapped means: (created_at IS NULL OR created_at < end)
                       AND (deleted_at IS NULL OR deleted_at >= start)
+
+        If parent_id is provided, only resources with that parent_id are returned.
 
         metadata_filter: dict of {key: scalar_value} matched via json_extract on metadata_json.
         All entries are ANDed. Values must be scalars (str/int/float/bool/None) — nested
