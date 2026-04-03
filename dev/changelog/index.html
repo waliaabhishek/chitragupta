@@ -1364,8 +1364,19 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased">[Unreleased]<a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
-<li>Feat: TASK-165 — Backend topic attribution overlay for CCloud Kafka</li>
+<li>Feat: TASK-164 — Topic Attribution frontend page and pipeline status update</li>
 </ul>
+<p>New /topic-attributions page with Table tab (paginated AG Grid with
+filters, CSV export) and Analytics tab (9 visualization components:
+Top Topics, Cost Composition, Cost Velocity, Attribution Method
+Confidence, Zombie Topics, Environment Cost Comparison, Cluster
+Concentration, Product Type Mix, Pivoted Cost Breakdown).</p>
+<p>Pipeline status page extended with topic_overlay as 4th workflow
+stepper stage plus Topic Overlay Gathered and Topic Attribution
+Calculated columns in per-date processing grid.</p>
+<p>Also fixes pre-existing eslint-disable placement in filter hooks
+and adds coverage tests for previously untested hooks. (<a href="https://github.com/waliaabhishek/chitragupta/commit/eca73653074b22a852452988eba6e57562317ad2">eca7365</a>)
+- Feat: TASK-165 — Backend topic attribution overlay for CCloud Kafka</p>
 <p>Add topic attribution as an analytical overlay that distributes
 cluster-level Kafka billing costs to individual topics using
 Prometheus topic-level metrics (received_bytes, sent_bytes,
