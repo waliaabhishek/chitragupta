@@ -77,8 +77,13 @@ def _insert_topic_resources(storage: SQLModelBackend, topics: list[str]) -> None
         uow.commit()
 
 
-def _seed_pipeline_state(storage: SQLModelBackend, tracking_date: date = TRACKING_DATE) -> None:
-    """Seed a pipeline_state row with topic_overlay_gathered=True."""
+def _seed_pipeline_state(
+    storage: SQLModelBackend,
+    tracking_date: date = TRACKING_DATE,
+    *,
+    topic_overlay_gathered: bool = True,
+) -> None:
+    """Seed a pipeline_state row with topic_overlay_gathered=True by default."""
     from core.models.pipeline import PipelineState
 
     state = PipelineState(
@@ -88,7 +93,7 @@ def _seed_pipeline_state(storage: SQLModelBackend, tracking_date: date = TRACKIN
         billing_gathered=True,
         resources_gathered=True,
         chargeback_calculated=True,
-        topic_overlay_gathered=True,
+        topic_overlay_gathered=topic_overlay_gathered,
         topic_attribution_calculated=False,
     )
     with storage.create_unit_of_work() as uow:
@@ -229,6 +234,19 @@ class TestTopicAttributionE2EFullPipeline:
     def test_find_needing_topic_attribution_returns_pending(self, storage: SQLModelBackend) -> None:
         """Seeded pipeline state with topic_overlay_gathered=True shows in find_needing_topic_attribution."""
         _seed_pipeline_state(storage)
+
+        with storage.create_read_only_unit_of_work() as uow:
+            pending = uow.pipeline_state.find_needing_topic_attribution(ECOSYSTEM, TENANT_ID)
+
+        assert any(p.tracking_date == TRACKING_DATE for p in pending)
+
+    def test_mark_overlay_gathered_with_zero_topics_enables_attribution(self, storage: SQLModelBackend) -> None:
+        """mark_topic_overlay_gathered with no topics upserted → date appears in find_needing_topic_attribution."""
+        _seed_pipeline_state(storage, topic_overlay_gathered=False)
+
+        with storage.create_unit_of_work() as uow:
+            uow.pipeline_state.mark_topic_overlay_gathered(ECOSYSTEM, TENANT_ID, TRACKING_DATE)
+            uow.commit()
 
         with storage.create_read_only_unit_of_work() as uow:
             pending = uow.pipeline_state.find_needing_topic_attribution(ECOSYSTEM, TENANT_ID)

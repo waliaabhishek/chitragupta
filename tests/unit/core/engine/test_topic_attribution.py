@@ -1145,3 +1145,114 @@ class TestTopicAttributionPhaseIntegration:
         assert by_topic["analytics"] == Decimal("3.00")
         total_amount = sum(r.amount for r in rows)
         assert total_amount == Decimal("10.00")
+
+
+class TestGatherPhaseEmptyTopicList:
+    """TASK-183: empty topic list must still mark_topic_overlay_gathered."""
+
+    def _make_enabled_phase(self, *, gather_side_effect=None):
+        from unittest.mock import MagicMock
+
+        from core.engine.orchestrator import GatherPhase
+        from core.plugin.protocols import TopicDiscoveryPlugin
+
+        mock_plugin = MagicMock()
+        mock_plugin.ecosystem = "eco"
+        if gather_side_effect is not None:
+            mock_plugin.gather_topic_resources = MagicMock(side_effect=gather_side_effect)
+        else:
+            mock_plugin.gather_topic_resources = MagicMock(return_value=[])
+        mock_plugin.build_shared_context.return_value = None
+
+        assert isinstance(mock_plugin, TopicDiscoveryPlugin)
+
+        mock_ta_config = MagicMock()
+        mock_ta_config.enabled = True
+        mock_plugin.get_overlay_config = MagicMock(return_value=mock_ta_config)
+
+        mock_bundle = MagicMock()
+        mock_bundle.plugin = mock_plugin
+        mock_bundle.handlers = {}
+
+        mock_tenant_config = MagicMock()
+        mock_tenant_config.lookback_days = 30
+        mock_tenant_config.cutoff_days = 5
+        mock_tenant_config.zero_gather_deletion_threshold = -1
+
+        phase = GatherPhase(
+            ecosystem="eco",
+            tenant_id="t1",
+            tenant_config=mock_tenant_config,
+            bundle=mock_bundle,
+        )
+        assert phase._topic_attribution_enabled is True
+        return phase, mock_plugin
+
+    def test_empty_topic_list_marks_overlay_gathered(self) -> None:
+        """Empty topic list → mark_topic_overlay_gathered IS still called for each billing date."""
+        from unittest.mock import patch
+
+        phase, mock_plugin = self._make_enabled_phase()
+        mock_uow = MagicMock()
+        billing_date = date(2026, 1, 1)
+
+        with (
+            patch.object(phase, "_gather_billing", return_value={billing_date}),
+            patch.object(phase, "_gather_resources_and_identities", return_value=(set(), set())),
+            patch.object(phase, "_apply_recalculation_window"),
+            patch.object(phase, "_detect_deletions"),
+        ):
+            phase._run_full(mock_uow)
+
+        mock_uow.pipeline_state.mark_topic_overlay_gathered.assert_called_once_with(
+            "eco",
+            "t1",
+            billing_date,
+        )
+
+    def test_empty_topic_list_does_not_upsert_resources(self) -> None:
+        """Empty topic list → uow.resources.upsert is NOT called (nothing to upsert)."""
+        from unittest.mock import patch
+
+        phase, _mock_plugin = self._make_enabled_phase()
+        mock_uow = MagicMock()
+        billing_date = date(2026, 1, 1)
+
+        with (
+            patch.object(phase, "_gather_billing", return_value={billing_date}),
+            patch.object(phase, "_gather_resources_and_identities", return_value=(set(), set())),
+            patch.object(phase, "_apply_recalculation_window"),
+            patch.object(phase, "_detect_deletions"),
+        ):
+            phase._run_full(mock_uow)
+
+        mock_uow.resources.upsert.assert_not_called()
+
+    def test_exception_skips_mark_overlay_gathered(self) -> None:
+        """Plugin raises → mark_topic_overlay_gathered must NOT be called (date stays retryable)."""
+        from unittest.mock import patch
+
+        phase, _ = self._make_enabled_phase(gather_side_effect=RuntimeError("API down"))
+        mock_uow = MagicMock()
+        billing_date = date(2026, 1, 1)
+
+        with (
+            patch.object(phase, "_gather_billing", return_value={billing_date}),
+            patch.object(phase, "_gather_resources_and_identities", return_value=(set(), set())),
+            patch.object(phase, "_apply_recalculation_window"),
+            patch.object(phase, "_detect_deletions"),
+        ):
+            phase._run_full(mock_uow)
+
+        mock_uow.pipeline_state.mark_topic_overlay_gathered.assert_not_called()
+
+    def test_zero_billing_lines_attribution_phase_marks_calculated_and_returns_zero(self) -> None:
+        """TopicAttributionPhase.run() with no billing lines → marks calculated, returns 0."""
+        phase = _make_phase()
+        mock_uow = MagicMock()
+        mock_uow.billing.find_by_date.return_value = []
+
+        result = phase.run(mock_uow, date(2026, 1, 1))
+
+        mock_uow.pipeline_state.mark_topic_attribution_calculated.assert_called_once_with("eco", "t1", date(2026, 1, 1))
+        assert result == 0

@@ -279,13 +279,12 @@ class GatherPhase:
                 topic_resources = list(self._bundle.plugin.gather_topic_resources(self._tenant_id, cluster_ids))
                 for resource in topic_resources:
                     uow.resources.upsert(resource)
-                if topic_resources:
-                    for billing_date in gathered_billing_dates:
-                        uow.pipeline_state.mark_topic_overlay_gathered(
-                            self._ecosystem,
-                            self._tenant_id,
-                            billing_date,
-                        )
+                for billing_date in gathered_billing_dates:
+                    uow.pipeline_state.mark_topic_overlay_gathered(
+                        self._ecosystem,
+                        self._tenant_id,
+                        billing_date,
+                    )
             except Exception:
                 logger.warning(
                     "Topic discovery failed for tenant=%s — topic_overlay_gathered stays False",
