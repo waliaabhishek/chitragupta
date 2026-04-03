@@ -11,6 +11,7 @@ import {
 import { API_URL } from "../../config";
 import type { IdentityResponse, PaginatedResponse } from "../../types/api";
 import { gridTheme, defaultColDef } from "../../utils/gridDefaults";
+import { ConfluentLinkRenderer } from "../common/ConfluentLinkRenderer";
 
 interface IdentityGridProps {
   tenantName: string;
@@ -19,7 +20,13 @@ interface IdentityGridProps {
 }
 
 const columnDefs: ColDef[] = [
-  { field: "identity_id", headerName: "Identity ID", flex: 2, minWidth: 200 },
+  {
+    field: "identity_id",
+    headerName: "Identity ID",
+    flex: 2,
+    minWidth: 200,
+    cellRenderer: ConfluentLinkRenderer,
+  },
   { field: "identity_type", headerName: "Type", width: 160 },
   { field: "display_name", headerName: "Display Name", flex: 2, minWidth: 160 },
 ];

@@ -14,6 +14,7 @@ import {
 import { API_URL } from "../../config";
 import type { ChargebackResponse, PaginatedResponse } from "../../types/api";
 import { gridTheme, defaultColDef } from "../../utils/gridDefaults";
+import { ConfluentLinkRenderer } from "../common/ConfluentLinkRenderer";
 import { dateFormatter, currencyFormatter } from "../../utils/gridFormatters";
 
 interface ChargebackGridProps {
@@ -50,9 +51,19 @@ const columnDefs: ColDef[] = [
     valueFormatter: dateFormatter,
     width: 120,
   },
-  { field: "identity_id", headerName: "Identity", flex: 1 },
+  {
+    field: "identity_id",
+    headerName: "Identity",
+    flex: 1,
+    cellRenderer: ConfluentLinkRenderer,
+  },
   { field: "product_type", headerName: "Product", width: 180 },
-  { field: "resource_id", headerName: "Resource", flex: 1 },
+  {
+    field: "resource_id",
+    headerName: "Resource",
+    flex: 1,
+    cellRenderer: ConfluentLinkRenderer,
+  },
   {
     field: "amount",
     headerName: "Amount",

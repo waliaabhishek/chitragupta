@@ -41,6 +41,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   Pipeline status page extended with `topic_overlay` as a 4th stage in the workflow stepper, plus `Topic Overlay Gathered` and `Topic Attribution Calculated` columns in the per-date processing grid.
 
+- **Feat:** TASK-186 — Confluent Cloud console deep-link rendering
+
+  Resource identifiers (environment IDs, cluster IDs, topic names, service account IDs) across all UI views now render as clickable hyperlinks to the corresponding Confluent Cloud console page. Links open in a new tab. A "Links" toggle in the header enables/disables deep-links (off by default, persisted via localStorage). Deleted resources are excluded from link resolution. Covers: resources, billing, chargebacks, topic attribution, allocation issues, identities grids and detail drawers.
+
 - Feat: TASK-168 — Generalize `EmitterRunner` for pipeline-agnostic emission tracking
 
   `EmitterRunner` is now pipeline-agnostic via constructor-injected protocols:

@@ -12,6 +12,7 @@ import {
 import { API_URL } from "../../config";
 import type { BillingLineResponse, PaginatedResponse } from "../../types/api";
 import { gridTheme, defaultColDef } from "../../utils/gridDefaults";
+import { ConfluentLinkRenderer } from "../common/ConfluentLinkRenderer";
 import { dateFormatter, currencyFormatter } from "../../utils/gridFormatters";
 
 interface BillingGridProps {
@@ -29,7 +30,12 @@ const columnDefs: ColDef[] = [
   },
   { field: "product_category", headerName: "Category", width: 140 },
   { field: "product_type", headerName: "Product", width: 180 },
-  { field: "resource_id", headerName: "Resource", flex: 1 },
+  {
+    field: "resource_id",
+    headerName: "Resource",
+    flex: 1,
+    cellRenderer: ConfluentLinkRenderer,
+  },
   {
     field: "quantity",
     headerName: "Quantity",

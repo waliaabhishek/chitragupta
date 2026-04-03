@@ -27,6 +27,18 @@ vi.mock("./TenantSelector", () => ({
   TenantSelector: () => <div data-testid="tenant-selector" />,
 }));
 
+// Mock ResourceLinkContext to avoid provider requirement.
+vi.mock("../providers/ResourceLinkContext", () => ({
+  useResourceLinks: vi.fn(() => ({
+    enabled: false,
+    setEnabled: vi.fn(),
+    resolveUrl: vi.fn(() => null),
+    isLoading: false,
+  })),
+  ResourceLinkProvider: ({ children }: { children: React.ReactNode }) =>
+    children,
+}));
+
 function wrapper({
   children,
 }: {

@@ -2,6 +2,7 @@ import type React from "react";
 import { Descriptions, Divider, Drawer } from "antd";
 import { EntityTagEditor } from "../entities/EntityTagEditor";
 import type { IdentityResponse } from "../../types/api";
+import { ConfluentLinkRenderer } from "../common/ConfluentLinkRenderer";
 
 interface IdentityDetailDrawerProps {
   identity: IdentityResponse;
@@ -18,7 +19,7 @@ export function IdentityDetailDrawer({
     <Drawer open onClose={onClose} title="Identity Details" width={480}>
       <Descriptions column={1} size="small" bordered>
         <Descriptions.Item label="Identity ID">
-          {identity.identity_id}
+          <ConfluentLinkRenderer value={identity.identity_id} />
         </Descriptions.Item>
         <Descriptions.Item label="Type">
           {identity.identity_type}

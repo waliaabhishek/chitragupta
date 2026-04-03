@@ -10,6 +10,7 @@ import type {
 import type { ChargebackFilters } from "../../types/filters";
 import { gridTheme, defaultColDef } from "../../utils/gridDefaults";
 import { currencyFormatter } from "../../utils/gridFormatters";
+import { ConfluentLinkRenderer } from "../common/ConfluentLinkRenderer";
 
 export type AllocationIssueItem = AllocationIssueResponse;
 
@@ -25,10 +26,16 @@ const columnDefs: ColDef[] = [
     headerName: "Resource",
     flex: 1,
     minWidth: 160,
-    valueFormatter: (p) => p.value ?? "—",
+    cellRenderer: ConfluentLinkRenderer,
   },
   { field: "product_type", headerName: "Product Type", width: 160 },
-  { field: "identity_id", headerName: "Identity", flex: 1, minWidth: 160 },
+  {
+    field: "identity_id",
+    headerName: "Identity",
+    flex: 1,
+    minWidth: 160,
+    cellRenderer: ConfluentLinkRenderer,
+  },
   {
     field: "allocation_detail",
     headerName: "Allocation Detail",

@@ -9,6 +9,7 @@ import "@refinedev/antd/dist/reset.css";
 
 import { dataProvider } from "./providers/dataProvider";
 import { TenantProvider } from "./providers/TenantContext";
+import { ResourceLinkProvider } from "./providers/ResourceLinkContext";
 import { AppLayout } from "./components/Layout";
 import { useTheme } from "./hooks/useTheme";
 import { DashboardPage } from "./pages/index";
@@ -41,40 +42,51 @@ export function App(): React.JSX.Element {
         <AntApp>
           <QueryClientProvider client={queryClient}>
             <TenantProvider>
-              <Refine
-                dataProvider={dataProvider}
-                notificationProvider={useNotificationProvider}
-                resources={[
-                  { name: "topic-attributions", list: "/topic-attributions" },
-                  { name: "chargebacks", list: "/chargebacks" },
-                  { name: "billing", list: "/billing" },
-                  { name: "resources", list: "/resources" },
-                  { name: "identities", list: "/identities" },
-                  { name: "pipeline", list: "/pipeline" },
-                  { name: "tags", list: "/tags" },
-                ]}
-                options={{ syncWithLocation: true }}
-              >
-                <AppLayout isDark={isDark} onToggleTheme={toggleTheme}>
-                  <Routes>
-                    <Route path="/" element={<DashboardPage />} />
-                    <Route path="/dashboard" element={<CostDashboardPage />} />
-                    <Route
-                      path="/topic-attributions"
-                      element={<TopicAttributionPage />}
-                    />
-                    <Route
-                      path="/chargebacks"
-                      element={<ChargebackListPage />}
-                    />
-                    <Route path="/billing" element={<BillingListPage />} />
-                    <Route path="/resources" element={<ResourceListPage />} />
-                    <Route path="/identities" element={<IdentityListPage />} />
-                    <Route path="/pipeline" element={<PipelineStatusPage />} />
-                    <Route path="/tags" element={<TagManagementPage />} />
-                  </Routes>
-                </AppLayout>
-              </Refine>
+              <ResourceLinkProvider>
+                <Refine
+                  dataProvider={dataProvider}
+                  notificationProvider={useNotificationProvider}
+                  resources={[
+                    { name: "topic-attributions", list: "/topic-attributions" },
+                    { name: "chargebacks", list: "/chargebacks" },
+                    { name: "billing", list: "/billing" },
+                    { name: "resources", list: "/resources" },
+                    { name: "identities", list: "/identities" },
+                    { name: "pipeline", list: "/pipeline" },
+                    { name: "tags", list: "/tags" },
+                  ]}
+                  options={{ syncWithLocation: true }}
+                >
+                  <AppLayout isDark={isDark} onToggleTheme={toggleTheme}>
+                    <Routes>
+                      <Route path="/" element={<DashboardPage />} />
+                      <Route
+                        path="/dashboard"
+                        element={<CostDashboardPage />}
+                      />
+                      <Route
+                        path="/topic-attributions"
+                        element={<TopicAttributionPage />}
+                      />
+                      <Route
+                        path="/chargebacks"
+                        element={<ChargebackListPage />}
+                      />
+                      <Route path="/billing" element={<BillingListPage />} />
+                      <Route path="/resources" element={<ResourceListPage />} />
+                      <Route
+                        path="/identities"
+                        element={<IdentityListPage />}
+                      />
+                      <Route
+                        path="/pipeline"
+                        element={<PipelineStatusPage />}
+                      />
+                      <Route path="/tags" element={<TagManagementPage />} />
+                    </Routes>
+                  </AppLayout>
+                </Refine>
+              </ResourceLinkProvider>
             </TenantProvider>
             {import.meta.env.DEV && (
               <ReactQueryDevtools initialIsOpen={false} />

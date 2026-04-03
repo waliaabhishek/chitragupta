@@ -11,10 +11,18 @@ import {
   TeamOutlined,
   ThunderboltOutlined,
 } from "@ant-design/icons";
-import { Button, Layout as AntLayout, Menu, theme, Typography } from "antd";
+import {
+  Button,
+  Layout as AntLayout,
+  Menu,
+  Switch,
+  theme,
+  Typography,
+} from "antd";
 import { useState } from "react";
 import { useNavigate, useLocation } from "react-router";
 import { useTenant } from "../providers/TenantContext";
+import { useResourceLinks } from "../providers/ResourceLinkContext";
 import { PipelineStatusBanner } from "./PipelineStatusBanner";
 import { TenantSelector } from "./TenantSelector";
 
@@ -36,6 +44,8 @@ export function AppLayout({
   const navigate = useNavigate();
   const location = useLocation();
   const { currentTenant } = useTenant();
+  const { enabled: deepLinksEnabled, setEnabled: setDeepLinksEnabled } =
+    useResourceLinks();
   const {
     token: { colorBgContainer },
   } = theme.useToken();
@@ -139,6 +149,16 @@ export function AppLayout({
             icon={isDark ? <BulbFilled /> : <BulbOutlined />}
             onClick={onToggleTheme}
             title={isDark ? "Switch to light mode" : "Switch to dark mode"}
+          />
+          <Switch
+            checked={deepLinksEnabled}
+            onChange={setDeepLinksEnabled}
+            checkedChildren="Links"
+            unCheckedChildren="Links"
+            size="small"
+            title={
+              deepLinksEnabled ? "Disable deep links" : "Enable deep links"
+            }
           />
           <TenantSelector />
         </Header>

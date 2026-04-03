@@ -1,5 +1,10 @@
 import type React from "react";
-import type { ColDef, IDatasource, IGetRowsParams } from "ag-grid-community";
+import type {
+  ColDef,
+  ICellRendererParams,
+  IDatasource,
+  IGetRowsParams,
+} from "ag-grid-community";
 import { AgGridReact } from "ag-grid-react";
 import {
   type MutableRefObject,
@@ -11,7 +16,10 @@ import {
 } from "react";
 import { fetchTopicAttributions } from "../../api/topicAttributions";
 import { gridTheme, defaultColDef } from "../../utils/gridDefaults";
+import { ConfluentLinkRenderer } from "../common/ConfluentLinkRenderer";
+import { clusterUrl, topicUrl } from "../../config/confluentCloudUrls";
 import { dateFormatter, currencyFormatter } from "../../utils/gridFormatters";
+import type { TopicAttributionResponse } from "../../types/api";
 
 interface TopicAttributionGridProps {
   tenantName: string;
@@ -26,8 +34,34 @@ const columnDefs: ColDef[] = [
     valueFormatter: dateFormatter,
     width: 120,
   },
-  { field: "topic_name", headerName: "Topic", flex: 1 },
-  { field: "cluster_resource_id", headerName: "Cluster", flex: 1 },
+  {
+    field: "cluster_resource_id",
+    headerName: "Cluster",
+    flex: 1,
+    cellRenderer: ConfluentLinkRenderer,
+    cellRendererParams: (p: ICellRendererParams<TopicAttributionResponse>) => ({
+      url:
+        p.data?.env_id && p.data?.cluster_resource_id
+          ? clusterUrl(p.data.env_id, p.data.cluster_resource_id)
+          : null,
+    }),
+  },
+  {
+    field: "topic_name",
+    headerName: "Topic",
+    flex: 1,
+    cellRenderer: ConfluentLinkRenderer,
+    cellRendererParams: (p: ICellRendererParams<TopicAttributionResponse>) => ({
+      url:
+        p.data?.env_id && p.data?.cluster_resource_id && p.data?.topic_name
+          ? topicUrl(
+              p.data.env_id,
+              p.data.cluster_resource_id,
+              p.data.topic_name,
+            )
+          : null,
+    }),
+  },
   { field: "product_type", headerName: "Product Type", width: 180 },
   { field: "attribution_method", headerName: "Method", width: 160 },
   {

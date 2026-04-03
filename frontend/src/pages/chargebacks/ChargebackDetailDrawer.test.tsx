@@ -177,6 +177,17 @@ vi.mock("antd", () => ({
   ),
 }));
 
+vi.mock("../../providers/ResourceLinkContext", () => ({
+  useResourceLinks: vi.fn(() => ({
+    enabled: false,
+    setEnabled: vi.fn(),
+    resolveUrl: vi.fn(() => null),
+    isLoading: false,
+  })),
+  ResourceLinkProvider: ({ children }: { children: React.ReactNode }) =>
+    children,
+}));
+
 vi.mock("../../providers/TenantContext", () => {
   const tenant = {
     tenant_name: "acme",

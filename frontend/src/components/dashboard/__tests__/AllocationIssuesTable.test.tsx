@@ -112,7 +112,7 @@ describe("AllocationIssuesTable (AG Grid)", () => {
     expect(grid.getAttribute("data-cacheblocksize")).toBe("100");
   });
 
-  it("resource_id column has a valueFormatter that returns dash for null", () => {
+  it("resource_id column uses ConfluentLinkRenderer cell renderer", () => {
     render(
       <AllocationIssuesTable tenantName="test-tenant" filters={MOCK_FILTERS} />,
     );
@@ -121,8 +121,10 @@ describe("AllocationIssuesTable (AG Grid)", () => {
       (c) => c.field === "resource_id",
     );
     expect(resourceCol).toBeDefined();
-    expect(resourceCol?.valueFormatter?.({ value: null })).toBe("—");
-    expect(resourceCol?.valueFormatter?.({ value: "lkc-123" })).toBe("lkc-123");
+    expect(resourceCol?.valueFormatter).toBeUndefined();
+    expect(
+      (resourceCol as Record<string, unknown>)?.cellRenderer,
+    ).toBeDefined();
   });
 
   it("datasource getRows calls the correct API URL with filters", () => {

@@ -12,6 +12,8 @@ export default defineConfig({
       provider: "v8",
       reporter: ["text", "json", "html"],
       include: [
+        "src/config/**/*.{ts,tsx}",
+        "src/components/common/**/*.{ts,tsx}",
         "src/providers/**/*.{ts,tsx}",
         "src/hooks/**/*.{ts,tsx}",
         "src/components/chargebacks/**/*.{ts,tsx}",

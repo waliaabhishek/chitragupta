@@ -12,6 +12,7 @@ import { useEffect, useState } from "react";
 import { API_URL } from "../../config";
 import { useTenant } from "../../providers/TenantContext";
 import type { ChargebackDimensionResponse } from "../../types/api";
+import { ConfluentLinkRenderer } from "../../components/common/ConfluentLinkRenderer";
 
 interface ChargebackDetailDrawerProps {
   dimensionId: number | null;
@@ -91,10 +92,10 @@ export function ChargebackDetailDrawer({
               {dimension.product_category}
             </Descriptions.Item>
             <Descriptions.Item label="Identity">
-              {dimension.identity_id}
+              <ConfluentLinkRenderer value={dimension.identity_id} />
             </Descriptions.Item>
             <Descriptions.Item label="Resource">
-              {dimension.resource_id ?? "—"}
+              <ConfluentLinkRenderer value={dimension.resource_id ?? null} />
             </Descriptions.Item>
             <Descriptions.Item label="Cost Type">
               {dimension.cost_type}

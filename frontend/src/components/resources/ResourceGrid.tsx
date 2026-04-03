@@ -11,6 +11,7 @@ import {
 import { API_URL } from "../../config";
 import type { PaginatedResponse, ResourceResponse } from "../../types/api";
 import { gridTheme, defaultColDef } from "../../utils/gridDefaults";
+import { ConfluentLinkRenderer } from "../common/ConfluentLinkRenderer";
 
 interface ResourceGridProps {
   tenantName: string;
@@ -19,7 +20,13 @@ interface ResourceGridProps {
 }
 
 const columnDefs: ColDef[] = [
-  { field: "resource_id", headerName: "Resource ID", flex: 2, minWidth: 200 },
+  {
+    field: "resource_id",
+    headerName: "Resource ID",
+    flex: 2,
+    minWidth: 200,
+    cellRenderer: ConfluentLinkRenderer,
+  },
   { field: "resource_type", headerName: "Type", width: 160 },
   { field: "display_name", headerName: "Display Name", flex: 2, minWidth: 160 },
   { field: "status", headerName: "Status", width: 120 },
