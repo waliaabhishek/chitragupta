@@ -42,6 +42,8 @@ The `examples/` directory contains self-contained Docker Compose setups. Each in
 | `examples/ccloud-full/` | Pipeline + API + Grafana + UI | Full CCloud stack |
 | `examples/self-managed-full/` | Pipeline + API + Grafana + UI | Self-managed Kafka |
 
+Topic attribution (CCloud only) requires a configured Prometheus metrics source. See the [CCloud configuration reference](../configuration/ccloud-reference.md#topic-attribution).
+
 ```bash
 cd examples/ccloud-full        # or ccloud-grafana, self-managed-full
 cp .env.example .env

@@ -50,6 +50,10 @@ By default, costs are allocated evenly. Uncomment the `metrics:` block in `confi
 
 Uncomment the `flink:` block in `config.yaml` and set the Flink credentials in `.env` to include Confluent Flink compute pool costs.
 
+### Optional: topic attribution
+
+If you have `metrics:` configured, you can also enable per-topic cost attribution by uncommenting the `topic_attribution:` block in `config.yaml`. See the [CCloud configuration reference](../../docs/configuration/ccloud-reference.md#topic-attribution) for details.
+
 ## Troubleshooting
 
 **Dashboards show "No data"**

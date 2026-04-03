@@ -215,6 +215,33 @@ a cost was allocated the way it was.
 
 ---
 
+## Configuring Topic Attribution
+
+Topic attribution is an optional overlay that breaks Kafka cluster costs down to individual topics. It runs after chargeback calculation and writes results to a separate star-schema table.
+
+**Should you enable it?**
+
+- **Confluent Cloud + Prometheus metrics configured** → yes, add `topic_attribution.enabled: true` under `plugin_settings`
+- **Confluent Cloud without Prometheus** → no — config validation rejects `enabled: true` without a `metrics` source
+- **Self-managed Kafka or Generic metrics** → not supported
+
+The minimal config:
+
+```yaml
+plugin_settings:
+  metrics:
+    type: prometheus
+    url: "${PROMETHEUS_URL}"
+  topic_attribution:
+    enabled: true
+```
+
+This uses all defaults: `even_split` fallback when metrics are missing, 90-day retention, no exclusion overrides beyond the built-in internal topics.
+
+For the full field reference (exclusion patterns, cost mapping overrides, custom metric names, retry behavior), see the [CCloud configuration reference](ccloud-reference.md#topic-attribution).
+
+---
+
 ## Configuring Self-Managed Kafka
 
 ### The cost model: you define the rates

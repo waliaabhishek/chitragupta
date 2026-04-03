@@ -29,6 +29,7 @@ This was originally built for Confluent Cloud but has been extended to support o
 - Evolving REST API for querying chargeback data and triggering pipeline runs.
 - New UI (still in progress) that does need Grafana or external viewers.
 - Multi emitter support for different output formats and more coming as needed/requested in the future.
+- Topic attribution overlay — breaks Kafka cluster costs down to individual topics using Prometheus metrics (CCloud-only, requires a configured metrics source).
 - Nascent support for Self Managed Kafka styled cost models.
 
 ## Breaking Changes from V1
@@ -80,7 +81,7 @@ AppSettings → WorkflowRunner → ChargebackOrchestrator
                                   └── Emitter×N
 ```
 
-Each tenant maps to one ecosystem plugin. The orchestrator runs a per-tenant, per-date pipeline: gather resources → resolve identities → fetch costs → allocate → store → emit.
+Each tenant maps to one ecosystem plugin. The orchestrator runs a per-tenant, per-date pipeline: gather resources → resolve identities → fetch costs → allocate → store → emit. An optional **topic attribution** overlay stage (CCloud + Prometheus only) runs after chargeback calculation to attribute Kafka cluster costs to individual topics.
 
 ## Documentation
 

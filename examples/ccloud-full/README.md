@@ -54,6 +54,18 @@ By default, costs are allocated evenly. Uncomment the `metrics:` block in `confi
 
 Uncomment the `flink:` block in `config.yaml` and set the Flink credentials in `.env` to include Confluent Flink compute pool costs.
 
+### Optional: topic attribution
+
+Uncomment the `topic_attribution:` block in `config.yaml` to break Kafka cluster costs down to individual topics. Requires the `metrics:` block to be configured first.
+
+```yaml
+plugin_settings:
+  topic_attribution:
+    enabled: true
+```
+
+See the [CCloud configuration reference](../../docs/configuration/ccloud-reference.md#topic-attribution) for all options.
+
 ### Multi-tenant setup
 
 Add additional entries under `tenants:` in `config.yaml`. Each tenant can have its own `lookback_days`, `cutoff_days`, and `connection_string`.

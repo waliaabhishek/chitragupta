@@ -15,6 +15,8 @@ Runtime-checkable protocols:
 | `Emitter` | Callable: `(tenant_id, date, rows) → None` |
 | `StorageModule` | Plugin-supplied table schemas: custom billing/resource/identity repositories |
 | `IdentityResolver` | Standalone callable override for identity resolution per product type |
+| `TopicDiscoveryPlugin` | Gather topic resources from Prometheus for topic attribution (CCloud only) |
+| `OverlayPlugin` | Provide overlay-specific config (e.g., topic attribution) to core code |
 
 ## Plugin discovery
 
@@ -75,6 +77,36 @@ register("my_emitter", make_my_emitter)
 ```
 
 The built-in emitters are `csv` (no storage needed) and `prometheus` (`needs_storage_backend = True`).
+
+## Topic attribution protocols
+
+Two additional runtime-checkable protocols support the topic attribution overlay:
+
+**`TopicDiscoveryPlugin`** (`src/core/plugin/protocols.py:160-171`)
+
+```python
+class TopicDiscoveryPlugin(Protocol):
+    def gather_topic_resources(
+        self, tenant_id: str, cluster_ids: list[str],
+    ) -> Iterable[Resource]: ...
+```
+
+Implement alongside `EcosystemPlugin` to enable topic discovery via Prometheus metrics.
+
+**`OverlayPlugin`** (`src/core/plugin/protocols.py:181-188`)
+
+```python
+class OverlayPlugin(Protocol):
+    def get_overlay_config(self, name: str) -> OverlayConfig | None: ...
+```
+
+Provides overlay-specific configuration (e.g., `TopicAttributionConfig`) to core code without `getattr` probing.
+
+| Plugin | TopicDiscoveryPlugin | OverlayPlugin |
+|---|---|---|
+| `confluent_cloud` | Yes | Yes |
+| `self_managed_kafka` | No | No |
+| `generic_metrics_only` | No | No |
 
 ## Lifecycle
 

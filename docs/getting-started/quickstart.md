@@ -126,6 +126,19 @@ You should see the pipeline running — discovering resources, fetching billing 
 
 Each example directory is self-contained with its own `docker-compose.yml`, `config.yaml`, `.env.example`, and `README.md`.
 
+## Optional: topic attribution
+
+If you use Confluent Cloud with Prometheus metrics, you can enable per-topic cost attribution. Add this under `plugin_settings` in `config.yaml`:
+
+```yaml
+plugin_settings:
+  topic_attribution:
+    enabled: true
+```
+
+!!! note
+    Topic attribution requires a configured `metrics` source (Prometheus). See the [CCloud configuration reference](../configuration/ccloud-reference.md#topic-attribution) for all options.
+
 ## Tear down
 
 ```bash

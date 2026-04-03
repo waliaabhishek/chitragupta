@@ -152,6 +152,23 @@ tenants:
       #   key: "${FLINK_API_KEY_EU}"
       #   secret: "${FLINK_API_SECRET_EU}"
 
+      # ── Topic attribution (optional, CCloud-only) ────────────────────────
+      # Breaks Kafka cluster costs down to individual topics using Prometheus
+      # metrics. Requires a configured metrics source (above).
+      # Config validation rejects enabled=true without a metrics section.
+      # See docs/configuration/ccloud-reference.md for full field reference.
+      # topic_attribution:
+      #   enabled: false                          # default: false
+      #   exclude_topic_patterns:                 # default: ["__consumer_offsets", "_schemas", "_confluent-*"]
+      #     - "__consumer_offsets"
+      #     - "_schemas"
+      #     - "_confluent-*"
+      #   missing_metrics_behavior: even_split    # even_split | skip (default: even_split)
+      #   retention_days: 90                      # 1–365, independent of tenant retention_days (default: 90)
+      #   cost_mapping_overrides: {}              # override attribution method per product type (default: {})
+      #   metric_name_overrides: {}               # override Prometheus metric names (default: {})
+      #   emitters: []                            # TA-specific emitters, same format as top-level (default: [])
+
       # ── Allocation tuning (optional) ───────────────────────────────────────
       # Controls how Kafka CKU costs are split between usage-based and shared
       # (even-split) allocation. The two ratios must sum to 1.0.

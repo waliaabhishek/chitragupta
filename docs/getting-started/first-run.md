@@ -31,6 +31,8 @@ uv run python src/main.py --config-file config.yaml --emit-once
 7. `EmitterRunner` dispatches pending dates to each configured emitter; outcomes persisted
 8. Loop sleeps for `features.refresh_interval` seconds (default 1800)
 
+If topic attribution is enabled, an additional **Topic Overlay** stage runs between steps 6 and 7: topic resources are discovered via Prometheus, and Kafka cluster costs are attributed to individual topics.
+
 ## `--emit-once` flag
 
 Runs `EmitterRunner` for all configured tenants without triggering a pipeline

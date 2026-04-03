@@ -36,6 +36,8 @@
 !!! note
     OrganizationAdmin is broader than ideal. Confluent Cloud RBAC doesn't currently allow more granular scoping for the APIs this tool requires.
 
+- (Optional) **Prometheus with CCloud topic-level metrics** — required for [topic attribution](../configuration/ccloud-reference.md#topic-attribution). The Prometheus instance must scrape `received_bytes`, `sent_bytes`, and `retained_bytes` per topic from the CCloud Metrics API.
+
 ### Self-managed Kafka
 - Prometheus endpoint scraping Kafka JMX metrics
   (kafka_server_brokertopicmetrics_bytesin_total, etc.)

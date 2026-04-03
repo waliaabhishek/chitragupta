@@ -137,6 +137,38 @@
 **Cause**: `features.refresh_interval` (default 1800s) is shorter than actual run duration.
 **Fix**: Increase `features.refresh_interval` to at least 2× your typical run duration. Check `gathered` / `calculated` counts in logs to estimate run time.
 
+## Topic attribution issues
+
+### No topic attribution data appearing
+
+**Cause**: Feature not enabled, metrics source missing, or pipeline hasn't reached the overlay stage yet.
+**Fix**:
+- Verify `plugin_settings.topic_attribution.enabled: true` in your config.
+- Verify `plugin_settings.metrics` is configured — topic attribution requires a Prometheus source.
+- Check pipeline status API: `topic_overlay_gathered` flag indicates whether the overlay stage has run for each date.
+
+### All topics showing `even_split` attribution
+
+**Cause**: Prometheus is not returning per-topic metrics for the queried clusters.
+**Fix**:
+- Verify your Prometheus instance has `received_bytes`, `sent_bytes`, and `retained_bytes` per topic.
+- Check the `missing_metrics_behavior` setting — `even_split` (default) distributes costs evenly when metrics are zero or unavailable. Set to `skip` to omit clusters with no metrics instead.
+
+### Sentinel rows with `ATTRIBUTION_FAILED`
+
+**Cause**: Prometheus fetch retries exhausted for a cluster (`topic_attribution_retry_limit` reached).
+**Fix**:
+- Check Prometheus connectivity — the pipeline retries on each run until the limit is hit.
+- Verify `metric_name_overrides` if you use non-standard Prometheus metric names.
+- Increase `topic_attribution_retry_limit` (default 3) if outages are transient but longer than your run interval.
+
+### Topic attribution stuck on old dates
+
+**Cause**: Dates processed before topic attribution was enabled don't have overlay data.
+**Fix**:
+- These dates need a backfill — the pipeline only runs topic attribution for dates that enter the processing queue.
+- Trigger recalculation for the affected date range to queue them for overlay processing.
+
 ## API issues
 
 ### `HTTP 401 Unauthorized` on API requests

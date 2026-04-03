@@ -27,7 +27,14 @@ tenants:
 | `retention_days` | 250 | 1–730 | Set 0 to disable (not recommended) |
 | `lookback_days` | 200 | 1–364 | Must be < retention_days for data continuity |
 
-Topic attribution rows use a separate retention setting (`plugin_settings.topic_attribution.retention_days`, default 90, max 365) independent of the tenant-level `retention_days`.
+**Topic attribution retention** is independent of tenant-level `retention_days`:
+
+| Setting | Scope | Default | Range | What it purges |
+|---|---|---|---|---|
+| `tenants.*.retention_days` | Tenant | 250 | 1–730 | `billing_line_items`, `resources`, `identities`, `chargeback_rows` |
+| `plugin_settings.topic_attribution.retention_days` | Topic attribution | 90 | 1–365 | `topic_attribution_facts`, `topic_attribution_dimensions` |
+
+The two settings are evaluated independently — tenant retention does not affect topic attribution tables and vice versa. Set each according to the relevant reporting needs.
 
 ## Recommendation
 

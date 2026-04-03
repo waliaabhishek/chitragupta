@@ -98,6 +98,32 @@ A tenant enters permanently-failed state after `gather_failure_threshold` (defau
 consecutive gather failures. The engine logs a `CRITICAL` alert and stops processing
 that tenant. Manual operator intervention (fix config + restart) is required.
 
+## Monitoring topic attribution
+
+If topic attribution is enabled, monitor these additional indicators:
+
+**Pipeline status flags** (via `GET /api/v1/tenants/{name}/pipeline/status`):
+
+- `topic_overlay_gathered` — topic discovery and metrics fetch completed for a date
+- `topic_attribution_calculated` — attribution rows written for a date
+
+**Log messages:**
+
+- `Topic discovery` — topic resources being gathered from Prometheus
+- `Topic attribution backfill` — overlay processing queued dates
+
+**Sentinel row detection:**
+
+Rows with `attribution_method = 'ATTRIBUTION_FAILED'` indicate a cluster where Prometheus retries were exhausted. Query the API or database:
+
+```sql
+SELECT * FROM topic_attribution_facts
+JOIN topic_attribution_dimensions USING (dimension_id)
+WHERE attribution_method = 'ATTRIBUTION_FAILED';
+```
+
+**Per-date processing:** Use the pipeline status API to check which dates have completed topic attribution. Dates where `topic_overlay_gathered = true` but `topic_attribution_calculated = false` are still pending calculation.
+
 ## Metrics to collect from logs
 
 - `gathered` count per run — drop indicates billing API issues

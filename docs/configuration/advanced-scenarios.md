@@ -75,6 +75,37 @@ when and how to adjust these.
 | `allocation_retry_limit` | int | 3 | Max identity resolution retries before allocating to UNALLOCATED (1–10) | Increase if identity data arrives with a delay (eventual consistency). Rarely needs changing. |
 | `topic_attribution_retry_limit` | int | 3 | Max Prometheus fetch retries per cluster before producing sentinel rows (1–10) | Increase if your Prometheus endpoint has intermittent outages longer than your pipeline run interval. Decrease to resolve dead clusters faster. |
 
+## Topic attribution overrides
+
+### Cost mapping overrides
+
+Override the attribution method for specific CCloud product types. Valid methods: `bytes_ratio`, `retained_bytes_ratio`, `even_split`, `disabled`.
+
+```yaml
+topic_attribution:
+  enabled: true
+  cost_mapping_overrides:
+    KAFKA_PARTITION: even_split    # override: split partition costs evenly instead of by bytes
+    KAFKA_BASE: disabled           # exclude base costs from topic attribution entirely
+```
+
+See the [default cost mappings](ccloud-reference.md#default-cost-mappings) for the full list of product types and their default methods.
+
+### Metric name overrides
+
+If your Prometheus instance uses non-standard metric names for CCloud topic-level metrics:
+
+```yaml
+topic_attribution:
+  enabled: true
+  metric_name_overrides:
+    topic_bytes_in: my_custom_received_bytes
+    topic_bytes_out: my_custom_sent_bytes
+    topic_retained_bytes: my_custom_retained_bytes
+```
+
+Valid keys: `topic_bytes_in`, `topic_bytes_out`, `topic_retained_bytes`.
+
 ## API server configuration
 
 ```yaml
