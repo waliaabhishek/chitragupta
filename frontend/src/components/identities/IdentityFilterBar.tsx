@@ -17,7 +17,8 @@ export function IdentityFilterBar({
   onChange,
   onReset,
 }: IdentityFilterBarProps): React.JSX.Element {
-  const { identityTypeOptions, isLoading } = useIdentityFilterOptions(tenantName);
+  const { identityTypeOptions, isLoading } =
+    useIdentityFilterOptions(tenantName);
 
   return (
     <Form layout="inline" style={{ padding: "8px 0", flexWrap: "wrap" }}>
@@ -34,7 +35,9 @@ export function IdentityFilterBar({
         <Select
           placeholder="Any type"
           value={filters.identity_type ?? undefined}
-          onChange={(val: string | undefined) => onChange("identity_type", val ?? null)}
+          onChange={(val: string | undefined) =>
+            onChange("identity_type", val ?? null)
+          }
           options={identityTypeOptions}
           showSearch
           allowClear

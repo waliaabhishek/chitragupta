@@ -47,11 +47,13 @@ vi.mock("../../components/chargebacks/ChargebackGrid", () => {
 });
 
 vi.mock("../../components/chargebacks/FilterPanel", () => ({
-  FilterPanel: vi.fn(({ onReset }: { onReset: () => void; onRefresh?: () => void }) => (
-    <div data-testid="filter-panel">
-      <button onClick={onReset}>Reset</button>
-    </div>
-  )),
+  FilterPanel: vi.fn(
+    ({ onReset }: { onReset: () => void; onRefresh?: () => void }) => (
+      <div data-testid="filter-panel">
+        <button onClick={onReset}>Reset</button>
+      </div>
+    ),
+  ),
 }));
 
 vi.mock("./ChargebackDetailDrawer", () => ({
@@ -71,7 +73,12 @@ vi.mock("../../components/chargebacks/ExportButton", () => ({
 }));
 
 vi.mock("../../components/chargebacks/BulkTagModal", () => ({
-  BulkTagModal: ({ onClose }: { onClose: () => void; onSuccess: () => void }) => (
+  BulkTagModal: ({
+    onClose,
+  }: {
+    onClose: () => void;
+    onSuccess: () => void;
+  }) => (
     <div data-testid="bulk-modal">
       <button onClick={onClose}>Close</button>
     </div>
@@ -125,11 +132,7 @@ vi.mock("../../providers/TenantContext", () => ({
 }));
 
 function wrapper({ children }: { children: ReactNode }): React.JSX.Element {
-  return (
-    <MemoryRouter>
-      {children}
-    </MemoryRouter>
-  );
+  return <MemoryRouter>{children}</MemoryRouter>;
 }
 
 describe("ChargebackListPage — queryParams reference stability (GAP-100)", () => {
@@ -147,12 +150,14 @@ describe("ChargebackListPage — queryParams reference stability (GAP-100)", () 
     expect(screen.getByTestId("chargeback-grid")).toBeTruthy();
     expect(capturedFilters.values.length).toBeGreaterThan(0);
 
-    const firstFiltersRef = capturedFilters.values[capturedFilters.values.length - 1];
+    const firstFiltersRef =
+      capturedFilters.values[capturedFilters.values.length - 1];
 
     // Trigger a re-render by changing selection state (does not change filters).
     fireEvent.click(screen.getByTestId("trigger-selection"));
 
-    const secondFiltersRef = capturedFilters.values[capturedFilters.values.length - 1];
+    const secondFiltersRef =
+      capturedFilters.values[capturedFilters.values.length - 1];
 
     // FAILS in red state: toQueryParams() returns a new object on every render.
     expect(secondFiltersRef).toBe(firstFiltersRef);

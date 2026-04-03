@@ -18,7 +18,12 @@ import type {
 
 const STORAGE_KEY = "chargeback_selected_tenant";
 
-export type AppStatus = "loading" | "initializing" | "no_data" | "ready" | "error";
+export type AppStatus =
+  | "loading"
+  | "initializing"
+  | "no_data"
+  | "ready"
+  | "error";
 
 interface TenantContextValue {
   tenants: TenantStatusSummary[];
@@ -57,10 +62,14 @@ function computeIsReadOnly(
   tenants: TenantReadiness[],
   tenantName: string | undefined,
 ): boolean {
-  return tenants.some((t) => t.tenant_name === tenantName && t.pipeline_running);
+  return tenants.some(
+    (t) => t.tenant_name === tenantName && t.pipeline_running,
+  );
 }
 
-export function TenantProvider({ children }: TenantProviderProps): React.JSX.Element {
+export function TenantProvider({
+  children,
+}: TenantProviderProps): React.JSX.Element {
   const [tenants, setTenants] = useState<TenantStatusSummary[]>([]);
   const [currentTenant, setCurrentTenantState] =
     useState<TenantStatusSummary | null>(null);
@@ -81,14 +90,17 @@ export function TenantProvider({ children }: TenantProviderProps): React.JSX.Ele
 
   // GIA-001 fix: single helper replaces duplicated 6-line isReadOnly recompute blocks.
   // Reads readinessRef and isReadOnlyRef from closure — both are stable refs.
-  const applyIsReadOnly = useCallback((tenantName: string | undefined): void => {
-    if (!readinessRef.current) return;
-    const newRO = computeIsReadOnly(readinessRef.current.tenants, tenantName);
-    if (newRO !== isReadOnlyRef.current) {
-      isReadOnlyRef.current = newRO;
-      setIsReadOnly(newRO);
-    }
-  }, []);
+  const applyIsReadOnly = useCallback(
+    (tenantName: string | undefined): void => {
+      if (!readinessRef.current) return;
+      const newRO = computeIsReadOnly(readinessRef.current.tenants, tenantName);
+      if (newRO !== isReadOnlyRef.current) {
+        isReadOnlyRef.current = newRO;
+        setIsReadOnly(newRO);
+      }
+    },
+    [],
+  );
 
   const fetchReadiness = useCallback(
     async (signal: AbortSignal): Promise<ReadinessResponse | null> => {
@@ -111,15 +123,17 @@ export function TenantProvider({ children }: TenantProviderProps): React.JSX.Ele
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
-        const data = (await response.json()) as { tenants: TenantStatusSummary[] };
+        const data = (await response.json()) as {
+          tenants: TenantStatusSummary[];
+        };
         setTenants(data.tenants);
-        tenantsLoadedRef.current = true;  // ref write — no re-render, no effect re-run
+        tenantsLoadedRef.current = true; // ref write — no re-render, no effect re-run
         const savedName = localStorage.getItem(STORAGE_KEY);
         if (savedName) {
           const found = data.tenants.find((t) => t.tenant_name === savedName);
           if (found) {
             setCurrentTenantState(found);
-            currentTenantRef.current = found;  // GPI-001: keep ref in sync with auto-selected tenant
+            currentTenantRef.current = found; // GPI-001: keep ref in sync with auto-selected tenant
             applyIsReadOnly(found.tenant_name); // recompute now that tenant is known
           } else if (data.tenants.length > 0) {
             setCurrentTenantState(data.tenants[0]);
@@ -150,7 +164,9 @@ export function TenantProvider({ children }: TenantProviderProps): React.JSX.Ele
       if (data === null) {
         setAppStatus("loading");
         setIsLoading(true);
-        pollRef.current = setTimeout(() => { void poll(); }, 5000);
+        pollRef.current = setTimeout(() => {
+          void poll();
+        }, 5000);
         return;
       }
 
@@ -168,7 +184,9 @@ export function TenantProvider({ children }: TenantProviderProps): React.JSX.Ele
       if (data.status === "initializing" || data.status === "no_data") {
         setAppStatus(data.status);
         setIsLoading(false);
-        pollRef.current = setTimeout(() => { void poll(); }, 5000);
+        pollRef.current = setTimeout(() => {
+          void poll();
+        }, 5000);
       } else if (data.status === "error") {
         setAppStatus("error");
         const failures = data.tenants
@@ -182,7 +200,9 @@ export function TenantProvider({ children }: TenantProviderProps): React.JSX.Ele
         setIsLoading(false);
         const anyRunning = data.tenants.some((t) => t.pipeline_running);
         const interval = anyRunning ? 5000 : 15000;
-        pollRef.current = setTimeout(() => { void poll(); }, interval);
+        pollRef.current = setTimeout(() => {
+          void poll();
+        }, interval);
       }
 
       // Fetch tenant list once — ref check never triggers effect re-run
@@ -196,14 +216,14 @@ export function TenantProvider({ children }: TenantProviderProps): React.JSX.Ele
       controller.abort();
       if (pollRef.current) clearTimeout(pollRef.current);
     };
-  }, [fetchReadiness, fetchTenants, applyIsReadOnly, restartKey]);  // restartKey restarts poll after error
+  }, [fetchReadiness, fetchTenants, applyIsReadOnly, restartKey]); // restartKey restarts poll after error
 
   const refetch = useCallback(() => {
     setIsLoading(true);
     setError(null);
-    tenantsLoadedRef.current = false;         // re-fetch tenants on next poll
-    readinessFingerprintRef.current = null;   // force readiness state update on next poll
-    setRestartKey((k) => k + 1);             // restart poll loop (only mechanism after error branch stops it)
+    tenantsLoadedRef.current = false; // re-fetch tenants on next poll
+    readinessFingerprintRef.current = null; // force readiness state update on next poll
+    setRestartKey((k) => k + 1); // restart poll loop (only mechanism after error branch stops it)
   }, []);
 
   const setCurrentTenant = useCallback(
@@ -234,7 +254,15 @@ export function TenantProvider({ children }: TenantProviderProps): React.JSX.Ele
       refetch,
       isReadOnly,
     }),
-    [tenants, currentTenant, setCurrentTenant, isLoading, error, refetch, isReadOnly],
+    [
+      tenants,
+      currentTenant,
+      setCurrentTenant,
+      isLoading,
+      error,
+      refetch,
+      isReadOnly,
+    ],
   );
 
   // Memoize readiness context value — changes on every poll (only PipelineStatusBanner subscribes)

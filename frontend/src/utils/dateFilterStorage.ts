@@ -23,9 +23,16 @@ export function loadDatesFromStorage(key: string): StoredDates {
   }
 }
 
-export function saveDatesToStorage(key: string, start: string | null, end: string | null): void {
+export function saveDatesToStorage(
+  key: string,
+  start: string | null,
+  end: string | null,
+): void {
   try {
-    localStorage.setItem(key, JSON.stringify({ start_date: start, end_date: end }));
+    localStorage.setItem(
+      key,
+      JSON.stringify({ start_date: start, end_date: end }),
+    );
   } catch {
     // localStorage unavailable — silent fail
   }

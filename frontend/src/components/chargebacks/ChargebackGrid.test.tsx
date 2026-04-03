@@ -24,7 +24,9 @@ const mockPurgeInfiniteCache = vi.hoisted(() => vi.fn());
 
 // Per-test render override: set before render(), consumed once, then cleared.
 // Tests that need to capture props use this instead of vi.mocked().mockImplementationOnce().
-type RenderOverrideFn = (props: AgGridProps & { ref?: React.Ref<unknown> }) => React.JSX.Element;
+type RenderOverrideFn = (
+  props: AgGridProps & { ref?: React.Ref<unknown> },
+) => React.JSX.Element;
 let renderOverride: RenderOverrideFn | undefined;
 
 // Mock AG Grid so ChargebackGrid's internalRef is properly populated and
@@ -91,11 +93,7 @@ describe("ChargebackGrid", () => {
 
   it("renders AG Grid wrapper", () => {
     render(
-      <ChargebackGrid
-        tenantName="acme"
-        filters={{}}
-        onRowClick={vi.fn()}
-      />,
+      <ChargebackGrid tenantName="acme" filters={{}} onRowClick={vi.fn()} />,
     );
     expect(screen.getByTestId("ag-grid")).toBeTruthy();
   });
@@ -108,19 +106,15 @@ describe("ChargebackGrid", () => {
         onRowClick={vi.fn()}
       />,
     );
-    expect(screen.getByTestId("ag-grid").getAttribute("data-has-datasource")).toBe(
-      "true",
-    );
+    expect(
+      screen.getByTestId("ag-grid").getAttribute("data-has-datasource"),
+    ).toBe("true");
   });
 
   it("calls onRowClick when row is clicked", () => {
     const onRowClick = vi.fn();
     render(
-      <ChargebackGrid
-        tenantName="acme"
-        filters={{}}
-        onRowClick={onRowClick}
-      />,
+      <ChargebackGrid tenantName="acme" filters={{}} onRowClick={onRowClick} />,
     );
     screen.getByTestId("ag-grid").click();
     expect(onRowClick).toHaveBeenCalledWith(
@@ -130,11 +124,7 @@ describe("ChargebackGrid", () => {
 
   it("renders tags cell with max 2 visible and overflow count", () => {
     render(
-      <ChargebackGrid
-        tenantName="acme"
-        filters={{}}
-        onRowClick={vi.fn()}
-      />,
+      <ChargebackGrid tenantName="acme" filters={{}} onRowClick={vi.fn()} />,
     );
     const tagsCell = screen.getByTestId("tags-cell");
     // TagsCellRenderer receives ["alpha", "beta", "gamma"] — shows 2, overflow +1
@@ -144,7 +134,15 @@ describe("ChargebackGrid", () => {
   });
 
   it("datasource fetches data from API", async () => {
-    let capturedDatasource: { getRows: (p: { startRow: number; successCallback: (rows: unknown[], total: number) => void; failCallback: () => void }) => void } | undefined;
+    let capturedDatasource:
+      | {
+          getRows: (p: {
+            startRow: number;
+            successCallback: (rows: unknown[], total: number) => void;
+            failCallback: () => void;
+          }) => void;
+        }
+      | undefined;
 
     renderOverride = ({ datasource }: AgGridProps) => {
       capturedDatasource = datasource as typeof capturedDatasource;
@@ -164,11 +162,7 @@ describe("ChargebackGrid", () => {
     );
 
     render(
-      <ChargebackGrid
-        tenantName="acme"
-        filters={{}}
-        onRowClick={vi.fn()}
-      />,
+      <ChargebackGrid tenantName="acme" filters={{}} onRowClick={vi.fn()} />,
     );
 
     expect(capturedDatasource).toBeDefined();
@@ -191,7 +185,15 @@ describe("ChargebackGrid", () => {
   });
 
   it("datasource calls failCallback on API error", async () => {
-    let capturedDatasource: { getRows: (p: { startRow: number; successCallback: (rows: unknown[], total: number) => void; failCallback: () => void }) => void } | undefined;
+    let capturedDatasource:
+      | {
+          getRows: (p: {
+            startRow: number;
+            successCallback: (rows: unknown[], total: number) => void;
+            failCallback: () => void;
+          }) => void;
+        }
+      | undefined;
 
     renderOverride = ({ datasource }: AgGridProps) => {
       capturedDatasource = datasource as typeof capturedDatasource;
@@ -205,11 +207,7 @@ describe("ChargebackGrid", () => {
     );
 
     render(
-      <ChargebackGrid
-        tenantName="acme"
-        filters={{}}
-        onRowClick={vi.fn()}
-      />,
+      <ChargebackGrid tenantName="acme" filters={{}} onRowClick={vi.fn()} />,
     );
 
     const successCallback = vi.fn();
@@ -225,7 +223,6 @@ describe("ChargebackGrid", () => {
       expect(failCallback).toHaveBeenCalled();
     });
   });
-
 
   it("calls purgeInfiniteCache on the grid when filters change", () => {
     const { rerender } = render(
@@ -295,7 +292,15 @@ describe("ChargebackGrid", () => {
   });
 
   it("datasource applies filters as query params when getRows is called", async () => {
-    let capturedDatasource: { getRows: (p: { startRow: number; successCallback: (rows: unknown[], total: number) => void; failCallback: () => void }) => void } | undefined;
+    let capturedDatasource:
+      | {
+          getRows: (p: {
+            startRow: number;
+            successCallback: (rows: unknown[], total: number) => void;
+            failCallback: () => void;
+          }) => void;
+        }
+      | undefined;
     let capturedUrl = "";
 
     renderOverride = ({ datasource }: AgGridProps) => {
@@ -359,10 +364,10 @@ describe("ChargebackGrid", () => {
       </div>,
     );
 
-    const tagsCell = container.querySelector("[data-testid='tags-cell-empty']")!;
+    const tagsCell = container.querySelector(
+      "[data-testid='tags-cell-empty']",
+    )!;
     // No tag chips rendered for empty dict
     expect(tagsCell.textContent).toBe("");
   });
-
 });
-

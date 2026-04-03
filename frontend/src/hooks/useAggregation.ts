@@ -22,7 +22,9 @@ export interface UseAggregationResult {
   refetch: () => void;
 }
 
-export function useAggregation(params: UseAggregationParams): UseAggregationResult {
+export function useAggregation(
+  params: UseAggregationParams,
+): UseAggregationResult {
   const {
     tenantName,
     groupBy,
@@ -39,7 +41,19 @@ export function useAggregation(params: UseAggregationParams): UseAggregationResu
   const groupByKey = groupBy.join(",");
 
   const query = useQuery({
-    queryKey: ["aggregation", tenantName, groupByKey, timeBucket, startDate, endDate, identityId ?? null, productType ?? null, resourceId ?? null, costType ?? null, timezone ?? null],
+    queryKey: [
+      "aggregation",
+      tenantName,
+      groupByKey,
+      timeBucket,
+      startDate,
+      endDate,
+      identityId ?? null,
+      productType ?? null,
+      resourceId ?? null,
+      costType ?? null,
+      timezone ?? null,
+    ],
     queryFn: async ({ signal }) => {
       const qs = new URLSearchParams();
       for (const g of groupByKey.split(",").filter(Boolean)) {
@@ -56,7 +70,8 @@ export function useAggregation(params: UseAggregationParams): UseAggregationResu
 
       const url = `${API_URL}/tenants/${tenantName}/chargebacks/aggregate?${qs.toString()}`;
       const response = await fetch(url, { signal });
-      if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      if (!response.ok)
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       return response.json() as Promise<AggregationResponse>;
     },
     enabled: !!tenantName && !!startDate && !!endDate,

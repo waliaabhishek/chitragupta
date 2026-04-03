@@ -14,9 +14,13 @@ const { Text, Title } = Typography;
 
 export function ChargebackListPage(): React.JSX.Element {
   const { currentTenant, isReadOnly } = useTenant();
-  const { filters, setFilter, setFilters, resetFilters, queryParams } = useChargebackFilters();
+  const { filters, setFilter, setFilters, resetFilters, queryParams } =
+    useChargebackFilters();
   const [searchParams] = useSearchParams();
-  const [selectedRow, setSelectedRow] = useState<{ id: number; tags: Record<string, string> } | null>(null);
+  const [selectedRow, setSelectedRow] = useState<{
+    id: number;
+    tags: Record<string, string>;
+  } | null>(null);
   const gridRef = useRef<AgGridReact>(null);
 
   // Read `selected` param from URL to open drawer on mount — run once
@@ -53,7 +57,11 @@ export function ChargebackListPage(): React.JSX.Element {
         <Title level={3} style={{ margin: 0 }}>
           Chargebacks
         </Title>
-        <ExportButton filters={queryParams} tenantName={currentTenant.tenant_name} disabled={isReadOnly} />
+        <ExportButton
+          filters={queryParams}
+          tenantName={currentTenant.tenant_name}
+          disabled={isReadOnly}
+        />
       </div>
       <FilterPanel
         filters={filters}
@@ -68,7 +76,9 @@ export function ChargebackListPage(): React.JSX.Element {
         ref={gridRef}
         tenantName={currentTenant.tenant_name}
         filters={queryParams}
-        onRowClick={(row) => setSelectedRow({ id: row.dimension_id!, tags: row.tags })}
+        onRowClick={(row) =>
+          setSelectedRow({ id: row.dimension_id!, tags: row.tags })
+        }
       />
       <ChargebackDetailDrawer
         dimensionId={selectedRow?.id ?? null}

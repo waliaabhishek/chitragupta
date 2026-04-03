@@ -5,8 +5,14 @@ import { useTenant } from "../providers/TenantContext";
 const { Text } = Typography;
 
 export function TenantSelector(): React.JSX.Element {
-  const { tenants, currentTenant, setCurrentTenant, isLoading, error, refetch } =
-    useTenant();
+  const {
+    tenants,
+    currentTenant,
+    setCurrentTenant,
+    isLoading,
+    error,
+    refetch,
+  } = useTenant();
 
   if (error) {
     return (

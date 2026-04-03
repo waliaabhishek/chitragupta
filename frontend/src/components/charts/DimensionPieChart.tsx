@@ -50,5 +50,7 @@ export function DimensionPieChart({
     };
   }, [data, dimension, topN]);
 
-  return <ReactECharts option={option} style={{ height }} showLoading={loading} />;
+  return (
+    <ReactECharts option={option} style={{ height }} showLoading={loading} />
+  );
 }

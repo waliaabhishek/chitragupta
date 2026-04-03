@@ -74,9 +74,13 @@ vi.mock("../../providers/TenantContext", () => ({
 
 vi.mock("antd", () => ({
   Typography: {
-    Title: ({ children }: { children: ReactNode; level?: number; style?: object }) => (
-      <h3>{children}</h3>
-    ),
+    Title: ({
+      children,
+    }: {
+      children: ReactNode;
+      level?: number;
+      style?: object;
+    }) => <h3>{children}</h3>,
     Text: ({ children, type }: { children: ReactNode; type?: string }) => (
       <span data-type={type}>{children}</span>
     ),
@@ -149,7 +153,9 @@ describe("IdentityListPage", () => {
 
     expect(screen.getByTestId("identity-grid")).toBeTruthy();
     expect(screen.getByTestId("identity-filter-bar")).toBeTruthy();
-    expect(screen.getByTestId("identity-grid").getAttribute("data-tenant")).toBe("acme");
+    expect(
+      screen.getByTestId("identity-grid").getAttribute("data-tenant"),
+    ).toBe("acme");
   });
 
   it("clicking Details opens IdentityDetailDrawer with EntityTagEditor", async () => {
@@ -245,6 +251,8 @@ describe("IdentityListPage", () => {
 
     // IdentityGrid handles its own data fetching and error notifications.
     // The page passes correct tenantName/queryParams to the grid.
-    expect(screen.getByTestId("identity-grid").getAttribute("data-tenant")).toBe("acme");
+    expect(
+      screen.getByTestId("identity-grid").getAttribute("data-tenant"),
+    ).toBe("acme");
   });
 });

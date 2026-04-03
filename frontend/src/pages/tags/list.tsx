@@ -13,15 +13,23 @@ export function TagManagementPage(): React.JSX.Element {
     return (
       <div>
         <Typography.Title level={3}>Tags</Typography.Title>
-        <Typography.Text type="secondary">Select a tenant to view tags.</Typography.Text>
+        <Typography.Text type="secondary">
+          Select a tenant to view tags.
+        </Typography.Text>
       </div>
     );
   }
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
-      <Typography.Title level={3} style={{ margin: "0 0 16px 0" }}>Tag Management</Typography.Title>
-      <TagFilterBar filters={filters} onChange={setFilter} onReset={resetFilters} />
+      <Typography.Title level={3} style={{ margin: "0 0 16px 0" }}>
+        Tag Management
+      </Typography.Title>
+      <TagFilterBar
+        filters={filters}
+        onChange={setFilter}
+        onReset={resetFilters}
+      />
       <TagsGrid
         tenantName={currentTenant.tenant_name}
         queryParams={queryParams}

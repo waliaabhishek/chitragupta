@@ -26,7 +26,9 @@ describe("ExportButton", () => {
     const appendSpy = vi.spyOn(document.body, "appendChild");
     const removeSpy = vi.spyOn(document.body, "removeChild");
 
-    render(<ExportButton tenantName="acme" filters={{ start_date: "2024-01-01" }} />);
+    render(
+      <ExportButton tenantName="acme" filters={{ start_date: "2024-01-01" }} />,
+    );
     fireEvent.click(screen.getByText("Export CSV"));
 
     await waitFor(() => {
@@ -43,7 +45,9 @@ describe("ExportButton", () => {
       }),
     );
 
-    const errorSpy = vi.spyOn(notification, "error").mockImplementation(vi.fn());
+    const errorSpy = vi
+      .spyOn(notification, "error")
+      .mockImplementation(vi.fn());
 
     render(<ExportButton tenantName="acme" filters={{}} />);
     fireEvent.click(screen.getByText("Export CSV"));
@@ -62,14 +66,20 @@ describe("ExportButton", () => {
     server.use(
       http.post("/api/v1/tenants/acme/export", async ({ request }) => {
         capturedBody = (await request.json()) as Record<string, unknown>;
-        return new HttpResponse("date,amount\n", { headers: { "Content-Type": "text/csv" } });
+        return new HttpResponse("date,amount\n", {
+          headers: { "Content-Type": "text/csv" },
+        });
       }),
     );
 
     render(
       <ExportButton
         tenantName="acme"
-        filters={{ start_date: "2026-01-01", end_date: "2026-01-31", timezone: "America/Chicago" }}
+        filters={{
+          start_date: "2026-01-01",
+          end_date: "2026-01-31",
+          timezone: "America/Chicago",
+        }}
       />,
     );
     fireEvent.click(screen.getByText("Export CSV"));

@@ -38,7 +38,9 @@ describe("ProductChartTypeToggle", () => {
 
   it("reflects current value as selected", () => {
     render(<ProductChartTypeToggle value="treemap" onChange={vi.fn()} />);
-    expect(screen.getByTestId("segmented").getAttribute("data-value")).toBe("treemap");
+    expect(screen.getByTestId("segmented").getAttribute("data-value")).toBe(
+      "treemap",
+    );
   });
 
   it("calls onChange with 'pie' when pie option is clicked", async () => {

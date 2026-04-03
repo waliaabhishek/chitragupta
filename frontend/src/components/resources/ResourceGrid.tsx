@@ -1,7 +1,13 @@
 import type React from "react";
 import type { ColDef, IDatasource, IGetRowsParams } from "ag-grid-community";
 import { AgGridReact } from "ag-grid-react";
-import { type MutableRefObject, useMemo, useCallback, useEffect, useRef } from "react";
+import {
+  type MutableRefObject,
+  useMemo,
+  useCallback,
+  useEffect,
+  useRef,
+} from "react";
 import { API_URL } from "../../config";
 import type { PaginatedResponse, ResourceResponse } from "../../types/api";
 import { gridTheme, defaultColDef } from "../../utils/gridDefaults";
@@ -27,7 +33,9 @@ function createDatasource(
   return {
     getRows: (params: IGetRowsParams) => {
       const page = Math.floor(params.startRow / 100) + 1;
-      const url = new URL(`${window.location.origin}${API_URL}/tenants/${tenantName}/resources`);
+      const url = new URL(
+        `${window.location.origin}${API_URL}/tenants/${tenantName}/resources`,
+      );
       url.searchParams.set("page", String(page));
       url.searchParams.set("page_size", "100");
       for (const [k, v] of Object.entries(queryParams)) {
@@ -51,7 +59,11 @@ function createDatasource(
   };
 }
 
-export function ResourceGrid({ tenantName, queryParams, onRowClick }: ResourceGridProps): React.JSX.Element {
+export function ResourceGrid({
+  tenantName,
+  queryParams,
+  onRowClick,
+}: ResourceGridProps): React.JSX.Element {
   const gridRef = useRef<AgGridReact>(null);
   const abortControllerRef = useRef(new AbortController());
 

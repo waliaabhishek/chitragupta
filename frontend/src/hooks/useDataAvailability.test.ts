@@ -16,7 +16,11 @@ function createTestQueryClient() {
 function createWrapper() {
   const queryClient = createTestQueryClient();
   return function Wrapper({ children }: { children: ReactNode }) {
-    return createElement(QueryClientProvider, { client: queryClient }, children);
+    return createElement(
+      QueryClientProvider,
+      { client: queryClient },
+      children,
+    );
   };
 }
 
@@ -26,7 +30,9 @@ const BASE_PARAMS = {
 
 describe("useDataAvailability", () => {
   it("starts in loading state", () => {
-    const { result } = renderHook(() => useDataAvailability(BASE_PARAMS), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useDataAvailability(BASE_PARAMS), {
+      wrapper: createWrapper(),
+    });
     expect(result.current.isLoading).toBe(true);
     expect(result.current.data).toBeNull();
     expect(result.current.error).toBeNull();
@@ -39,7 +45,9 @@ describe("useDataAvailability", () => {
       ),
     );
 
-    const { result } = renderHook(() => useDataAvailability(BASE_PARAMS), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useDataAvailability(BASE_PARAMS), {
+      wrapper: createWrapper(),
+    });
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
     expect(result.current.data?.dates).toEqual(["2026-01-15", "2026-01-17"]);
@@ -53,7 +61,9 @@ describe("useDataAvailability", () => {
       ),
     );
 
-    const { result } = renderHook(() => useDataAvailability(BASE_PARAMS), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useDataAvailability(BASE_PARAMS), {
+      wrapper: createWrapper(),
+    });
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
     expect(result.current.data?.dates).toEqual([]);
@@ -67,7 +77,9 @@ describe("useDataAvailability", () => {
       ),
     );
 
-    const { result } = renderHook(() => useDataAvailability(BASE_PARAMS), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useDataAvailability(BASE_PARAMS), {
+      wrapper: createWrapper(),
+    });
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
     expect(result.current.error).not.toBeNull();
@@ -76,7 +88,9 @@ describe("useDataAvailability", () => {
   });
 
   it("exposes a refetch function", () => {
-    const { result } = renderHook(() => useDataAvailability(BASE_PARAMS), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useDataAvailability(BASE_PARAMS), {
+      wrapper: createWrapper(),
+    });
     expect(typeof result.current.refetch).toBe("function");
   });
 
@@ -89,7 +103,9 @@ describe("useDataAvailability", () => {
       }),
     );
 
-    const { result } = renderHook(() => useDataAvailability(BASE_PARAMS), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useDataAvailability(BASE_PARAMS), {
+      wrapper: createWrapper(),
+    });
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
     const countAfterFirst = callCount;

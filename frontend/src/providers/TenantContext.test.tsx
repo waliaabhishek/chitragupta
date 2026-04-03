@@ -75,7 +75,9 @@ describe("TenantContext", () => {
 
   it("useTenant throws outside provider", () => {
     // Suppress React's verbose error boundary output for this expected throw.
-    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
     try {
       expect(() => renderHook(() => useTenant())).toThrow(
         "useTenant must be used within TenantProvider",
@@ -92,7 +94,10 @@ describe("TenantContext", () => {
 
     server.use(
       http.get("/api/v1/tenants", () => {
-        return new HttpResponse(null, { status: 500, statusText: "Internal Server Error" });
+        return new HttpResponse(null, {
+          status: 500,
+          statusText: "Internal Server Error",
+        });
       }),
     );
 
@@ -328,7 +333,9 @@ describe("TenantContext — context split (GAP-100)", () => {
 
   it("useReadiness() called outside TenantProvider throws expected error (verification item 1)", () => {
     // FAILS in red state: useReadiness is not exported from TenantContext yet.
-    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
     try {
       expect(() => renderHook(() => useReadiness())).toThrow(
         "useReadiness must be used within TenantProvider",

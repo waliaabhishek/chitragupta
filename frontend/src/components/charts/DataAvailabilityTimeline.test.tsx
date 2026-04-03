@@ -40,9 +40,10 @@ describe("DataAvailabilityTimeline", () => {
     render(<DataAvailabilityTimeline {...BASE_PROPS} />);
 
     const chart = screen.getByTestId("echarts");
-    const series = JSON.parse(
-      chart.getAttribute("data-series") ?? "[]",
-    ) as [number, number][];
+    const series = JSON.parse(chart.getAttribute("data-series") ?? "[]") as [
+      number,
+      number,
+    ][];
 
     expect(series).toHaveLength(2);
   });
@@ -51,13 +52,16 @@ describe("DataAvailabilityTimeline", () => {
     render(<DataAvailabilityTimeline {...BASE_PROPS} />);
 
     const chart = screen.getByTestId("echarts");
-    const series = JSON.parse(
-      chart.getAttribute("data-series") ?? "[]",
-    ) as [number, number][];
+    const series = JSON.parse(chart.getAttribute("data-series") ?? "[]") as [
+      number,
+      number,
+    ][];
 
     // The x-axis values are timestamps; verify only 2 points exist (no 2026-01-16)
     expect(series).toHaveLength(2);
-    const timestamps = series.map(([x]) => new Date(x).toISOString().slice(0, 10));
+    const timestamps = series.map(([x]) =>
+      new Date(x).toISOString().slice(0, 10),
+    );
     expect(timestamps).not.toContain("2026-01-16");
     expect(timestamps).toContain("2026-01-15");
     expect(timestamps).toContain("2026-01-17");
@@ -80,24 +84,22 @@ describe("DataAvailabilityTimeline", () => {
     );
 
     const chart = screen.getByTestId("echarts");
-    const series = JSON.parse(
-      chart.getAttribute("data-series") ?? "[]",
-    ) as [number, number][];
+    const series = JSON.parse(chart.getAttribute("data-series") ?? "[]") as [
+      number,
+      number,
+    ][];
 
     // Only 2026-01-15 and 2026-01-17 are within [2026-01-14, 2026-01-18]
     expect(series).toHaveLength(2);
-    const timestamps = series.map(([x]) => new Date(x).toISOString().slice(0, 10));
+    const timestamps = series.map(([x]) =>
+      new Date(x).toISOString().slice(0, 10),
+    );
     expect(timestamps).not.toContain("2026-01-10");
     expect(timestamps).not.toContain("2026-01-25");
   });
 
   it("renders graphic overlay when dates is empty (no scatter series)", () => {
-    render(
-      <DataAvailabilityTimeline
-        {...BASE_PROPS}
-        dates={[]}
-      />,
-    );
+    render(<DataAvailabilityTimeline {...BASE_PROPS} dates={[]} />);
 
     const chart = screen.getByTestId("echarts");
     expect(chart.getAttribute("data-has-graphic")).toBe("true");
@@ -105,36 +107,21 @@ describe("DataAvailabilityTimeline", () => {
   });
 
   it("passes showLoading=true to ReactECharts when loading prop is true", () => {
-    render(
-      <DataAvailabilityTimeline
-        {...BASE_PROPS}
-        loading={true}
-      />,
-    );
+    render(<DataAvailabilityTimeline {...BASE_PROPS} loading={true} />);
 
     const chart = screen.getByTestId("echarts");
     expect(chart.getAttribute("data-loading")).toBe("true");
   });
 
   it("passes showLoading=false to ReactECharts when loading prop is false", () => {
-    render(
-      <DataAvailabilityTimeline
-        {...BASE_PROPS}
-        loading={false}
-      />,
-    );
+    render(<DataAvailabilityTimeline {...BASE_PROPS} loading={false} />);
 
     const chart = screen.getByTestId("echarts");
     expect(chart.getAttribute("data-loading")).toBe("false");
   });
 
   it("renders chart even when loading (ChartCard handles the spinner overlay)", () => {
-    render(
-      <DataAvailabilityTimeline
-        {...BASE_PROPS}
-        loading={true}
-      />,
-    );
+    render(<DataAvailabilityTimeline {...BASE_PROPS} loading={true} />);
 
     expect(screen.getByTestId("echarts")).toBeInTheDocument();
   });

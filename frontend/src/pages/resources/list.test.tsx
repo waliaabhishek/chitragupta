@@ -46,7 +46,9 @@ vi.mock("../../components/resources/ResourceDetailDrawer", () => ({
         data-entity-type="resource"
         data-entity-id={props.resource.resource_id}
       />
-      <span data-testid="display-name">{props.resource.display_name ?? "—"}</span>
+      <span data-testid="display-name">
+        {props.resource.display_name ?? "—"}
+      </span>
     </div>
   ),
 }));
@@ -74,9 +76,13 @@ vi.mock("../../providers/TenantContext", () => ({
 
 vi.mock("antd", () => ({
   Typography: {
-    Title: ({ children }: { children: ReactNode; level?: number; style?: object }) => (
-      <h3>{children}</h3>
-    ),
+    Title: ({
+      children,
+    }: {
+      children: ReactNode;
+      level?: number;
+      style?: object;
+    }) => <h3>{children}</h3>,
     Text: ({ children, type }: { children: ReactNode; type?: string }) => (
       <span data-type={type}>{children}</span>
     ),
@@ -155,7 +161,9 @@ describe("ResourceListPage", () => {
 
     expect(screen.getByTestId("resource-grid")).toBeTruthy();
     expect(screen.getByTestId("resource-filter-bar")).toBeTruthy();
-    expect(screen.getByTestId("resource-grid").getAttribute("data-tenant")).toBe("acme");
+    expect(
+      screen.getByTestId("resource-grid").getAttribute("data-tenant"),
+    ).toBe("acme");
   });
 
   it("clicking Details opens ResourceDetailDrawer with EntityTagEditor", async () => {
@@ -246,6 +254,8 @@ describe("ResourceListPage", () => {
 
     // ResourceGrid handles its own data fetching and error notifications.
     // The page passes correct tenantName/queryParams to the grid.
-    expect(screen.getByTestId("resource-grid").getAttribute("data-tenant")).toBe("acme");
+    expect(
+      screen.getByTestId("resource-grid").getAttribute("data-tenant"),
+    ).toBe("acme");
   });
 });

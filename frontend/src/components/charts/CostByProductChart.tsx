@@ -24,15 +24,22 @@ export function CostByProductChart({
     if (byProduct.length === 0) {
       return {
         graphic: [
-          { type: "text", left: "center", top: "middle",
-            style: { text: "No data", fontSize: 14, fill: "#999" } },
+          {
+            type: "text",
+            left: "center",
+            top: "middle",
+            style: { text: "No data", fontSize: 14, fill: "#999" },
+          },
         ],
       };
     }
     return {
       tooltip: { formatter: "{b}: {c}" },
       series: [
-        { type: "treemap", data: byProduct.map((d) => ({ name: d.key, value: d.amount })) },
+        {
+          type: "treemap",
+          data: byProduct.map((d) => ({ name: d.key, value: d.amount })),
+        },
       ],
     };
   }, [data, chartType]);
@@ -49,5 +56,11 @@ export function CostByProductChart({
     );
   }
 
-  return <ReactECharts option={treemapOption} style={{ height }} showLoading={loading} />;
+  return (
+    <ReactECharts
+      option={treemapOption}
+      style={{ height }}
+      showLoading={loading}
+    />
+  );
 }

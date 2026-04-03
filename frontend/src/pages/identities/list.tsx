@@ -10,21 +10,26 @@ import type { IdentityResponse } from "../../types/api";
 
 export function IdentityListPage(): React.JSX.Element {
   const { currentTenant } = useTenant();
-  const { filters, setFilter, resetFilters, queryParams } = useIdentityFilters();
+  const { filters, setFilter, resetFilters, queryParams } =
+    useIdentityFilters();
   const [selected, setSelected] = useState<IdentityResponse | null>(null);
 
   if (!currentTenant) {
     return (
       <div>
         <Typography.Title level={3}>Identities</Typography.Title>
-        <Typography.Text type="secondary">Select a tenant to begin.</Typography.Text>
+        <Typography.Text type="secondary">
+          Select a tenant to begin.
+        </Typography.Text>
       </div>
     );
   }
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
-      <Typography.Title level={3} style={{ margin: "0 0 16px 0" }}>Identities</Typography.Title>
+      <Typography.Title level={3} style={{ margin: "0 0 16px 0" }}>
+        Identities
+      </Typography.Title>
       <IdentityFilterBar
         tenantName={currentTenant.tenant_name}
         filters={filters}

@@ -21,7 +21,8 @@ export default {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   async setup(global: Record<string, any>, options: Record<string, unknown>) {
     // Capture native classes BEFORE jsdom's populateGlobal installs its getter
-    const NativeAbortController = global.AbortController as typeof AbortController;
+    const NativeAbortController =
+      global.AbortController as typeof AbortController;
     const NativeAbortSignal = global.AbortSignal as typeof AbortSignal;
 
     // Set up jsdom (installs getter/setter mechanism via populateGlobal)

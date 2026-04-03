@@ -17,7 +17,8 @@ export function ResourceFilterBar({
   onChange,
   onReset,
 }: ResourceFilterBarProps): React.JSX.Element {
-  const { resourceTypeOptions, resourceStatusOptions, isLoading } = useResourceFilterOptions(tenantName);
+  const { resourceTypeOptions, resourceStatusOptions, isLoading } =
+    useResourceFilterOptions(tenantName);
 
   return (
     <Form layout="inline" style={{ padding: "8px 0", flexWrap: "wrap" }}>
@@ -34,7 +35,9 @@ export function ResourceFilterBar({
         <Select
           placeholder="Any type"
           value={filters.resource_type ?? undefined}
-          onChange={(val: string | undefined) => onChange("resource_type", val ?? null)}
+          onChange={(val: string | undefined) =>
+            onChange("resource_type", val ?? null)
+          }
           options={resourceTypeOptions}
           showSearch
           allowClear
@@ -47,7 +50,9 @@ export function ResourceFilterBar({
         <Select
           placeholder="Any status"
           value={filters.status ?? undefined}
-          onChange={(val: string | undefined) => onChange("status", val ?? null)}
+          onChange={(val: string | undefined) =>
+            onChange("status", val ?? null)
+          }
           options={resourceStatusOptions}
           allowClear
           style={{ width: 130 }}

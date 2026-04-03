@@ -42,16 +42,24 @@ vi.mock("../../components/chargebacks/ChargebackGrid", () => ({
 }));
 
 vi.mock("../../components/chargebacks/FilterPanel", () => ({
-  FilterPanel: vi.fn(({ onReset, onRefresh }: { onReset: () => void; onRefresh?: () => void }) => (
-    <div data-testid="filter-panel">
-      <button onClick={onReset}>Reset</button>
-      {onRefresh !== undefined && (
-        <button data-testid="filter-refresh" onClick={onRefresh}>
-          Refresh Data
-        </button>
-      )}
-    </div>
-  )),
+  FilterPanel: vi.fn(
+    ({
+      onReset,
+      onRefresh,
+    }: {
+      onReset: () => void;
+      onRefresh?: () => void;
+    }) => (
+      <div data-testid="filter-panel">
+        <button onClick={onReset}>Reset</button>
+        {onRefresh !== undefined && (
+          <button data-testid="filter-refresh" onClick={onRefresh}>
+            Refresh Data
+          </button>
+        )}
+      </div>
+    ),
+  ),
 }));
 
 vi.mock("./ChargebackDetailDrawer", () => ({
@@ -72,7 +80,9 @@ vi.mock("./ChargebackDetailDrawer", () => ({
           </button>
           {Object.keys(inheritedTags ?? {}).length > 0 && (
             <span data-testid="drawer-inherited-tags">
-              {Object.entries(inheritedTags).map(([k, v]) => `${k}: ${v}`).join(", ")}
+              {Object.entries(inheritedTags)
+                .map(([k, v]) => `${k}: ${v}`)
+                .join(", ")}
             </span>
           )}
         </div>
@@ -87,15 +97,16 @@ vi.mock("../../components/chargebacks/ExportButton", () => ({
 // Mock antd
 vi.mock("antd", () => ({
   Typography: {
-    Title: ({ children }: { children: ReactNode; level?: number; style?: object }) => (
-      <h3>{children}</h3>
-    ),
-    Text: ({
+    Title: ({
       children,
     }: {
       children: ReactNode;
-      type?: string;
-    }) => <span>{children}</span>,
+      level?: number;
+      style?: object;
+    }) => <h3>{children}</h3>,
+    Text: ({ children }: { children: ReactNode; type?: string }) => (
+      <span>{children}</span>
+    ),
   },
 }));
 
@@ -122,11 +133,7 @@ vi.mock("../../providers/TenantContext", () => ({
 }));
 
 function wrapper({ children }: { children: ReactNode }): React.JSX.Element {
-  return (
-    <MemoryRouter>
-      {children}
-    </MemoryRouter>
-  );
+  return <MemoryRouter>{children}</MemoryRouter>;
 }
 
 describe("ChargebackListPage", () => {
@@ -205,7 +212,9 @@ describe("ChargebackListPage", () => {
     render(<ChargebackListPage />, { wrapper });
 
     expect(screen.getByTestId("filter-refresh")).toBeInTheDocument();
-    expect(() => fireEvent.click(screen.getByTestId("filter-refresh"))).not.toThrow();
+    expect(() =>
+      fireEvent.click(screen.getByTestId("filter-refresh")),
+    ).not.toThrow();
   });
 
   it("row click passes full row tags as inheritedTags to drawer", async () => {
@@ -225,9 +234,13 @@ describe("ChargebackListPage", () => {
     fireEvent.click(screen.getByTestId("trigger-row-click"));
 
     // Drawer appears with correct dimension_id
-    expect(screen.getByTestId("drawer").getAttribute("data-dimension-id")).toBe("1");
+    expect(screen.getByTestId("drawer").getAttribute("data-dimension-id")).toBe(
+      "1",
+    );
     // Inherited tags from the row are passed through
-    expect(screen.getByTestId("drawer-inherited-tags").textContent).toContain("env: prod");
+    expect(screen.getByTestId("drawer-inherited-tags").textContent).toContain(
+      "env: prod",
+    );
   });
 
   it("closing the drawer resets selection", async () => {
@@ -290,6 +303,8 @@ describe("ChargebackListPage", () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByTestId("drawer").getAttribute("data-dimension-id")).toBe("42");
+    expect(screen.getByTestId("drawer").getAttribute("data-dimension-id")).toBe(
+      "42",
+    );
   });
 });

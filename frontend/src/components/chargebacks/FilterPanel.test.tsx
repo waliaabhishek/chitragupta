@@ -103,10 +103,12 @@ vi.mock("antd", async () => {
       }: {
         value?: unknown;
         onChange?: (
-          dates: [
-            { format: (f: string) => string } | null,
-            { format: (f: string) => string } | null,
-          ] | null,
+          dates:
+            | [
+                { format: (f: string) => string } | null,
+                { format: (f: string) => string } | null,
+              ]
+            | null,
         ) => void;
         allowClear?: boolean;
       }) => (
@@ -142,12 +144,9 @@ vi.mock("antd", async () => {
         style?: object;
       }) => <form>{children}</form>,
       {
-        Item: ({
-          children,
-        }: {
-          children: React.ReactNode;
-          label?: string;
-        }) => <div>{children}</div>,
+        Item: ({ children }: { children: React.ReactNode; label?: string }) => (
+          <div>{children}</div>
+        ),
       },
     ),
     Input: ({
@@ -160,13 +159,7 @@ vi.mock("antd", async () => {
       onChange?: (e: React.ChangeEvent<HTMLInputElement>) => void;
       allowClear?: boolean;
       style?: object;
-    }) => (
-      <input
-        placeholder={placeholder}
-        onChange={onChange}
-        style={style}
-      />
-    ),
+    }) => <input placeholder={placeholder} onChange={onChange} style={style} />,
     Select: MockSelect,
     Space: ({ children }: { children: React.ReactNode; wrap?: boolean }) => (
       <span>{children}</span>

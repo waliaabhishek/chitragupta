@@ -33,6 +33,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Fix:** Removed `server_default=""` from `topic_attribution_facts.amount` column — the database now rejects inserts with missing amount values instead of silently storing empty strings, matching the `chargeback_facts` schema pattern. New migration 015 removes the default for existing installs. (TASK-171)
 
 ### Added
+- **Feat:** TASK-164 — Topic Attribution frontend page and pipeline status update
+
+  New `/topic-attributions` page with two tabs:
+  - **Table tab**: Paginated AG Grid of topic attribution rows with filtering by cluster, date range, product type, attribution method, and timezone. CSV export via POST endpoint.
+  - **Analytics tab**: 9 visualization components — Top Topics (treemap/bar toggle), Cost Composition (stacked bar), Cost Velocity (line), Attribution Method Confidence (donut), Zombie Topic Candidates (table), Environment Cost Comparison (grouped bar), Cluster Concentration (stacked bar), Product Type Mix (normalized area), and Pivoted Cost Breakdown (table).
+
+  Pipeline status page extended with `topic_overlay` as a 4th stage in the workflow stepper, plus `Topic Overlay Gathered` and `Topic Attribution Calculated` columns in the per-date processing grid.
+
 - Feat: TASK-168 — Generalize `EmitterRunner` for pipeline-agnostic emission tracking
 
   `EmitterRunner` is now pipeline-agnostic via constructor-injected protocols:

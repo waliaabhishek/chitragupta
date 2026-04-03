@@ -9,7 +9,11 @@ interface TagFilterBarProps {
   onReset: () => void;
 }
 
-export function TagFilterBar({ filters, onChange, onReset }: TagFilterBarProps): React.JSX.Element {
+export function TagFilterBar({
+  filters,
+  onChange,
+  onReset,
+}: TagFilterBarProps): React.JSX.Element {
   return (
     <Form layout="inline" style={{ padding: "8px 0", flexWrap: "wrap" }}>
       <Form.Item label="Tag Key">
@@ -25,7 +29,9 @@ export function TagFilterBar({ filters, onChange, onReset }: TagFilterBarProps):
         <Select
           placeholder="Any type"
           value={filters.entity_type ?? undefined}
-          onChange={(val: string | undefined) => onChange("entity_type", val ?? null)}
+          onChange={(val: string | undefined) =>
+            onChange("entity_type", val ?? null)
+          }
           options={ENTITY_TYPE_OPTIONS}
           allowClear
           style={{ width: 140 }}

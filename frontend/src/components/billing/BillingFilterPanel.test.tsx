@@ -83,10 +83,12 @@ vi.mock("antd", async () => {
       }: {
         value?: unknown;
         onChange?: (
-          dates: [
-            { format: (f: string) => string } | null,
-            { format: (f: string) => string } | null,
-          ] | null,
+          dates:
+            | [
+                { format: (f: string) => string } | null,
+                { format: (f: string) => string } | null,
+              ]
+            | null,
         ) => void;
         allowClear?: boolean;
       }) => (
@@ -122,12 +124,9 @@ vi.mock("antd", async () => {
         style?: object;
       }) => <form>{children}</form>,
       {
-        Item: ({
-          children,
-        }: {
-          children: React.ReactNode;
-          label?: string;
-        }) => <div>{children}</div>,
+        Item: ({ children }: { children: React.ReactNode; label?: string }) => (
+          <div>{children}</div>
+        ),
       },
     ),
     Input: ({
@@ -159,7 +158,13 @@ beforeEach(() => {
     "fetch",
     vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ items: [], total: 0, page: 1, page_size: 1000, pages: 0 }),
+      json: async () => ({
+        items: [],
+        total: 0,
+        page: 1,
+        page_size: 1000,
+        pages: 0,
+      }),
     }),
   );
 });

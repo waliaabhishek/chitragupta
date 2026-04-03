@@ -23,22 +23,38 @@ interface UseResourceFilterOptionsResult {
   isLoading: boolean;
 }
 
-export function useIdentityFilterOptions(tenantName: string): UseIdentityFilterOptionsResult {
+export function useIdentityFilterOptions(
+  tenantName: string,
+): UseIdentityFilterOptionsResult {
   const { data, isLoading } = useInventorySummary({ tenantName });
   const identityTypeOptions = useMemo(
-    () => Object.keys(data?.identity_counts ?? {}).map((t) => ({ label: t, value: t })),
+    () =>
+      Object.keys(data?.identity_counts ?? {}).map((t) => ({
+        label: t,
+        value: t,
+      })),
     [data],
   );
   return { identityTypeOptions, isLoading };
 }
 
-export function useResourceFilterOptions(tenantName: string): UseResourceFilterOptionsResult {
+export function useResourceFilterOptions(
+  tenantName: string,
+): UseResourceFilterOptionsResult {
   const { data, isLoading } = useInventorySummary({ tenantName });
   const resourceTypeOptions = useMemo(
-    () => Object.keys(data?.resource_counts ?? {}).map((t) => ({ label: t, value: t })),
+    () =>
+      Object.keys(data?.resource_counts ?? {}).map((t) => ({
+        label: t,
+        value: t,
+      })),
     [data],
   );
-  return { resourceTypeOptions, resourceStatusOptions: RESOURCE_STATUS_OPTIONS, isLoading };
+  return {
+    resourceTypeOptions,
+    resourceStatusOptions: RESOURCE_STATUS_OPTIONS,
+    isLoading,
+  };
 }
 
 export { ENTITY_TYPE_OPTIONS };

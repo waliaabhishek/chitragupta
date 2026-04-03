@@ -33,27 +33,53 @@ interface DashboardContentProps {
 }
 
 /** Inner component: hooks are unconditionally called here (tenant is always set). */
-function DashboardContent({ tenant, filters, timeBucket }: DashboardContentProps): React.JSX.Element {
-  const [productChartType, setProductChartType] = useState<"pie" | "treemap">("pie");
+function DashboardContent({
+  tenant,
+  filters,
+  timeBucket,
+}: DashboardContentProps): React.JSX.Element {
+  const [productChartType, setProductChartType] = useState<"pie" | "treemap">(
+    "pie",
+  );
 
-  const sharedParams: Omit<UseAggregationParams, "groupBy"> = useMemo(() => ({
+  const sharedParams: Omit<UseAggregationParams, "groupBy"> = useMemo(
+    () => ({
+      tenantName: tenant.tenant_name,
+      timeBucket,
+      startDate: filters.start_date ?? "",
+      endDate: filters.end_date ?? "",
+      identityId: filters.identity_id,
+      productType: filters.product_type,
+      resourceId: filters.resource_id,
+      costType: filters.cost_type,
+      timezone: filters.timezone,
+    }),
+    [tenant.tenant_name, timeBucket, filters],
+  );
+
+  const trendData = useAggregation({
+    ...sharedParams,
+    groupBy: ["identity_id"],
+  });
+  const productData = useAggregation({
+    ...sharedParams,
+    groupBy: ["product_type"],
+  });
+  const resourceData = useAggregation({
+    ...sharedParams,
+    groupBy: ["resource_id"],
+  });
+  const environmentData = useAggregation({
+    ...sharedParams,
+    groupBy: ["environment_id"],
+  });
+  const productCategoryData = useAggregation({
+    ...sharedParams,
+    groupBy: ["product_category"],
+  });
+  const availabilityData = useDataAvailability({
     tenantName: tenant.tenant_name,
-    timeBucket,
-    startDate: filters.start_date ?? "",
-    endDate: filters.end_date ?? "",
-    identityId: filters.identity_id,
-    productType: filters.product_type,
-    resourceId: filters.resource_id,
-    costType: filters.cost_type,
-    timezone: filters.timezone,
-  }), [tenant.tenant_name, timeBucket, filters]);
-
-  const trendData = useAggregation({ ...sharedParams, groupBy: ["identity_id"] });
-  const productData = useAggregation({ ...sharedParams, groupBy: ["product_type"] });
-  const resourceData = useAggregation({ ...sharedParams, groupBy: ["resource_id"] });
-  const environmentData = useAggregation({ ...sharedParams, groupBy: ["environment_id"] });
-  const productCategoryData = useAggregation({ ...sharedParams, groupBy: ["product_category"] });
-  const availabilityData = useDataAvailability({ tenantName: tenant.tenant_name });
+  });
   const inventoryData = useInventorySummary({ tenantName: tenant.tenant_name });
 
   return (
@@ -96,7 +122,10 @@ function DashboardContent({ tenant, filters, timeBucket }: DashboardContentProps
           error={trendData.error}
           onRetry={trendData.refetch}
         >
-          <CostTrendChart data={trendData.data?.buckets ?? []} timeBucket={timeBucket} />
+          <CostTrendChart
+            data={trendData.data?.buckets ?? []}
+            timeBucket={timeBucket}
+          />
         </ChartCard>
       </Col>
 
@@ -118,7 +147,10 @@ function DashboardContent({ tenant, filters, timeBucket }: DashboardContentProps
           error={environmentData.error}
           onRetry={environmentData.refetch}
         >
-          <DimensionPieChart data={environmentData.data?.buckets ?? []} dimension="environment_id" />
+          <DimensionPieChart
+            data={environmentData.data?.buckets ?? []}
+            dimension="environment_id"
+          />
         </ChartCard>
       </Col>
 
@@ -139,9 +171,17 @@ function DashboardContent({ tenant, filters, timeBucket }: DashboardContentProps
           loading={productData.isLoading}
           error={productData.error}
           onRetry={productData.refetch}
-          extra={<ProductChartTypeToggle value={productChartType} onChange={setProductChartType} />}
+          extra={
+            <ProductChartTypeToggle
+              value={productChartType}
+              onChange={setProductChartType}
+            />
+          }
         >
-          <CostByProductChart data={productData.data?.buckets ?? []} chartType={productChartType} />
+          <CostByProductChart
+            data={productData.data?.buckets ?? []}
+            chartType={productChartType}
+          />
         </ChartCard>
       </Col>
 
@@ -152,7 +192,10 @@ function DashboardContent({ tenant, filters, timeBucket }: DashboardContentProps
           error={productCategoryData.error}
           onRetry={productCategoryData.refetch}
         >
-          <DimensionPieChart data={productCategoryData.data?.buckets ?? []} dimension="product_category" />
+          <DimensionPieChart
+            data={productCategoryData.data?.buckets ?? []}
+            dimension="product_category"
+          />
         </ChartCard>
       </Col>
 
@@ -171,7 +214,8 @@ function DashboardContent({ tenant, filters, timeBucket }: DashboardContentProps
 /** Top-level page: handles tenant check and filter/time-bucket state. */
 export function CostDashboardPage(): React.JSX.Element {
   const { currentTenant } = useTenant();
-  const { filters, setFilter, setFilters, resetFilters } = useChargebackFilters();
+  const { filters, setFilter, setFilters, resetFilters } =
+    useChargebackFilters();
   const [timeBucket, setTimeBucket] = useState<TimeBucket>("day");
   const [refreshKey, setRefreshKey] = useState(0);
 

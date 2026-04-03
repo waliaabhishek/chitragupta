@@ -58,5 +58,7 @@ export function CostTrendChart({
     };
   }, [data, timeBucket]);
 
-  return <ReactECharts option={option} style={{ height }} showLoading={loading} />;
+  return (
+    <ReactECharts option={option} style={{ height }} showLoading={loading} />
+  );
 }

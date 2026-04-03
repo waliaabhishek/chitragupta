@@ -1,7 +1,19 @@
 import type React from "react";
-import { Card, Col, Collapse, Empty, Row, Skeleton, Statistic, Typography } from "antd";
+import {
+  Card,
+  Col,
+  Collapse,
+  Empty,
+  Row,
+  Skeleton,
+  Statistic,
+  Typography,
+} from "antd";
 import { useMemo } from "react";
-import type { InventorySummaryResponse, TypeStatusCounts } from "../../types/api";
+import type {
+  InventorySummaryResponse,
+  TypeStatusCounts,
+} from "../../types/api";
 
 const SKELETON_INDICES = [0, 1, 2];
 const EMPTY_COUNTS: Record<string, TypeStatusCounts> = {};
@@ -24,7 +36,12 @@ interface CounterRowProps {
   error: string | null;
 }
 
-function CounterRow({ label, counts, isLoading, error }: CounterRowProps): React.JSX.Element {
+function CounterRow({
+  label,
+  counts,
+  isLoading,
+  error,
+}: CounterRowProps): React.JSX.Element {
   const entries = Object.entries(counts);
 
   if (!isLoading && !error && entries.length === 0) {
@@ -33,52 +50,63 @@ function CounterRow({ label, counts, isLoading, error }: CounterRowProps): React
         <Typography.Text type="secondary" style={{ fontSize: 12 }}>
           {label}
         </Typography.Text>
-        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No inventory data" style={{ margin: "8px 0" }} />
+        <Empty
+          image={Empty.PRESENTED_IMAGE_SIMPLE}
+          description="No inventory data"
+          style={{ margin: "8px 0" }}
+        />
       </div>
     );
   }
 
   return (
     <div style={{ marginBottom: 16 }}>
-      <Typography.Text type="secondary" style={{ fontSize: 12, display: "block", marginBottom: 8 }}>
+      <Typography.Text
+        type="secondary"
+        style={{ fontSize: 12, display: "block", marginBottom: 8 }}
+      >
         {label}
       </Typography.Text>
       <Row gutter={[12, 12]}>
-        {isLoading
-          ? SKELETON_INDICES.map((i) => (
-              <Col xs={12} sm={8} md={6} key={i}>
-                <Card size="small">
-                  <Skeleton active paragraph={false} />
-                </Card>
-              </Col>
-            ))
-          : entries.length === 0
-            ? (
-              <Col span={24}>
-                <Typography.Text type="secondary">—</Typography.Text>
-              </Col>
-            )
-            : entries.map(([key, value]) => (
-              <Col xs={12} sm={8} md={6} key={key}>
-                <Card size="small">
-                  <Statistic
-                    title={toTitleCase(key)}
-                    value={error ? "—" : value.total}
-                  />
-                  {!error && (
-                    <Typography.Text type="secondary" style={{ fontSize: 11 }}>
-                      {`Active: ${value.active} / Deleted: ${value.deleted}`}
-                    </Typography.Text>
-                  )}
-                </Card>
-              </Col>
-            ))}
+        {isLoading ? (
+          SKELETON_INDICES.map((i) => (
+            <Col xs={12} sm={8} md={6} key={i}>
+              <Card size="small">
+                <Skeleton active paragraph={false} />
+              </Card>
+            </Col>
+          ))
+        ) : entries.length === 0 ? (
+          <Col span={24}>
+            <Typography.Text type="secondary">—</Typography.Text>
+          </Col>
+        ) : (
+          entries.map(([key, value]) => (
+            <Col xs={12} sm={8} md={6} key={key}>
+              <Card size="small">
+                <Statistic
+                  title={toTitleCase(key)}
+                  value={error ? "—" : value.total}
+                />
+                {!error && (
+                  <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+                    {`Active: ${value.active} / Deleted: ${value.deleted}`}
+                  </Typography.Text>
+                )}
+              </Card>
+            </Col>
+          ))
+        )}
       </Row>
     </div>
   );
 }
 
-export function InventoryCounters({ data, isLoading, error }: InventoryCountersProps): React.JSX.Element {
+export function InventoryCounters({
+  data,
+  isLoading,
+  error,
+}: InventoryCountersProps): React.JSX.Element {
   const resourceCounts = data?.resource_counts ?? EMPTY_COUNTS;
   const identityCounts = data?.identity_counts ?? EMPTY_COUNTS;
 

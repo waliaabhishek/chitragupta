@@ -6,6 +6,7 @@ import {
   CloudServerOutlined,
   DashboardOutlined,
   DollarOutlined,
+  LineChartOutlined,
   TagsOutlined,
   TeamOutlined,
   ThunderboltOutlined,
@@ -26,7 +27,11 @@ interface AppLayoutProps {
   onToggleTheme: () => void;
 }
 
-export function AppLayout({ children, isDark, onToggleTheme }: AppLayoutProps): React.JSX.Element {
+export function AppLayout({
+  children,
+  isDark,
+  onToggleTheme,
+}: AppLayoutProps): React.JSX.Element {
   const [collapsed, setCollapsed] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
@@ -48,6 +53,12 @@ export function AppLayout({ children, isDark, onToggleTheme }: AppLayoutProps): 
       key: "/chargebacks",
       icon: <DollarOutlined />,
       label: "Chargebacks",
+      disabled: tenantRequired,
+    },
+    {
+      key: "/topic-attributions",
+      icon: <LineChartOutlined />,
+      label: "Topic Attribution",
       disabled: tenantRequired,
     },
     {

@@ -10,21 +10,26 @@ import type { ResourceResponse } from "../../types/api";
 
 export function ResourceListPage(): React.JSX.Element {
   const { currentTenant } = useTenant();
-  const { filters, setFilter, resetFilters, queryParams } = useResourceFilters();
+  const { filters, setFilter, resetFilters, queryParams } =
+    useResourceFilters();
   const [selected, setSelected] = useState<ResourceResponse | null>(null);
 
   if (!currentTenant) {
     return (
       <div>
         <Typography.Title level={3}>Resources</Typography.Title>
-        <Typography.Text type="secondary">Select a tenant to begin.</Typography.Text>
+        <Typography.Text type="secondary">
+          Select a tenant to begin.
+        </Typography.Text>
       </div>
     );
   }
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
-      <Typography.Title level={3} style={{ margin: "0 0 16px 0" }}>Resources</Typography.Title>
+      <Typography.Title level={3} style={{ margin: "0 0 16px 0" }}>
+        Resources
+      </Typography.Title>
       <ResourceFilterBar
         tenantName={currentTenant.tenant_name}
         filters={filters}

@@ -54,13 +54,21 @@ vi.mock("antd", () => ({
 
 describe("ChartCard", () => {
   it("renders title and children", () => {
-    render(<ChartCard title="Test Chart"><div>chart content</div></ChartCard>);
+    render(
+      <ChartCard title="Test Chart">
+        <div>chart content</div>
+      </ChartCard>,
+    );
     expect(screen.getByTestId("card-title").textContent).toBe("Test Chart");
     expect(screen.getByText("chart content")).toBeInTheDocument();
   });
 
   it("shows Spin when loading", () => {
-    render(<ChartCard title="Loading Chart" loading><div>hidden</div></ChartCard>);
+    render(
+      <ChartCard title="Loading Chart" loading>
+        <div>hidden</div>
+      </ChartCard>,
+    );
     expect(screen.getByTestId("spin")).toBeInTheDocument();
     expect(screen.queryByText("hidden")).toBeNull();
   });
@@ -82,7 +90,9 @@ describe("ChartCard", () => {
       </ChartCard>,
     );
     expect(screen.getByTestId("result")).toBeInTheDocument();
-    expect(screen.getByTestId("result-subtitle").textContent).toBe("Network timeout");
+    expect(screen.getByTestId("result-subtitle").textContent).toBe(
+      "Network timeout",
+    );
     expect(screen.queryByText("hidden content")).toBeNull();
   });
 

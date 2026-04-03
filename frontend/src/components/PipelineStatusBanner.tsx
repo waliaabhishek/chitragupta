@@ -2,10 +2,7 @@ import type React from "react";
 import { Alert, Spin } from "antd";
 import { useTenant, useReadiness } from "../providers/TenantContext";
 
-function formatStage(
-  stage: string | null,
-  currentDate: string | null,
-): string {
+function formatStage(stage: string | null, currentDate: string | null): string {
   if (!stage) return "Starting up...";
   switch (stage) {
     case "gathering":

@@ -25,7 +25,11 @@ vi.mock("echarts-for-react", () => ({
   ),
 }));
 
-function makeBucket(dimension: string, value: string, amount: string): AggregationBucket {
+function makeBucket(
+  dimension: string,
+  value: string,
+  amount: string,
+): AggregationBucket {
   return {
     dimensions: { [dimension]: value },
     time_bucket: "2026-02-01",
@@ -59,7 +63,9 @@ describe("DimensionPieChart", () => {
     const data = Array.from({ length: 15 }, (_, i) =>
       makeBucket("product_type", `type-${i}`, String(100 - i * 5)),
     );
-    render(<DimensionPieChart data={data} dimension="product_type" topN={10} />);
+    render(
+      <DimensionPieChart data={data} dimension="product_type" topN={10} />,
+    );
     const chart = screen.getByTestId("echarts");
     expect(chart.getAttribute("data-series-count")).toBe("11"); // 10 + Other
   });

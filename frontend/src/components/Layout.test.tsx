@@ -27,12 +27,12 @@ vi.mock("./TenantSelector", () => ({
   TenantSelector: () => <div data-testid="tenant-selector" />,
 }));
 
-function wrapper({ children }: { children: React.ReactNode }): React.JSX.Element {
-  return (
-    <MemoryRouter>
-      {children}
-    </MemoryRouter>
-  );
+function wrapper({
+  children,
+}: {
+  children: React.ReactNode;
+}): React.JSX.Element {
+  return <MemoryRouter>{children}</MemoryRouter>;
 }
 
 describe("AppLayout toggle button", () => {

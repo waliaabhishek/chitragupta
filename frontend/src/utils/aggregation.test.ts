@@ -1,8 +1,15 @@
 import { describe, expect, it } from "vitest";
 import type { AggregationBucket } from "../types/api";
-import { aggregateByDimension, aggregateByTime, formatCurrency, topNWithOther } from "./aggregation";
+import {
+  aggregateByDimension,
+  aggregateByTime,
+  formatCurrency,
+  topNWithOther,
+} from "./aggregation";
 
-function makeBucket(overrides: Partial<AggregationBucket> = {}): AggregationBucket {
+function makeBucket(
+  overrides: Partial<AggregationBucket> = {},
+): AggregationBucket {
   return {
     dimensions: { identity_id: "user-1" },
     time_bucket: "2026-02-01",
@@ -60,8 +67,14 @@ describe("aggregateByDimension", () => {
 
   it("sums amounts for same dimension value", () => {
     const buckets = [
-      makeBucket({ dimensions: { identity_id: "user-1" }, total_amount: "10.00" }),
-      makeBucket({ dimensions: { identity_id: "user-1" }, total_amount: "5.00" }),
+      makeBucket({
+        dimensions: { identity_id: "user-1" },
+        total_amount: "10.00",
+      }),
+      makeBucket({
+        dimensions: { identity_id: "user-1" },
+        total_amount: "5.00",
+      }),
     ];
     const result = aggregateByDimension(buckets, "identity_id");
     expect(result).toHaveLength(1);
@@ -71,8 +84,14 @@ describe("aggregateByDimension", () => {
 
   it("keeps separate entries for different dimension values", () => {
     const buckets = [
-      makeBucket({ dimensions: { identity_id: "user-1" }, total_amount: "10.00" }),
-      makeBucket({ dimensions: { identity_id: "user-2" }, total_amount: "5.00" }),
+      makeBucket({
+        dimensions: { identity_id: "user-1" },
+        total_amount: "10.00",
+      }),
+      makeBucket({
+        dimensions: { identity_id: "user-2" },
+        total_amount: "5.00",
+      }),
     ];
     const result = aggregateByDimension(buckets, "identity_id");
     expect(result).toHaveLength(2);
@@ -132,5 +151,53 @@ describe("formatCurrency", () => {
 
   it("formats a positive amount with 2 decimal places", () => {
     expect(formatCurrency(12.5)).toMatch(/^\$12\.50$/);
+  });
+});
+
+// TASK-164: BucketLike structural interface tests
+// TopicAttributionAggregationBucket satisfies BucketLike without usage_amount/shared_amount
+
+describe("BucketLike structural interface (TASK-164)", () => {
+  it("aggregateByTime accepts TopicAttributionAggregationBucket (no usage_amount/shared_amount)", () => {
+    // TopicAttributionAggregationBucket shape — no usage_amount/shared_amount
+    const topicBuckets = [
+      {
+        dimensions: { topic_name: "my-topic" },
+        time_bucket: "2026-01-01",
+        total_amount: "25.00",
+        row_count: 3,
+      },
+      {
+        dimensions: { topic_name: "other-topic" },
+        time_bucket: "2026-01-01",
+        total_amount: "10.00",
+        row_count: 1,
+      },
+    ];
+    // Must not throw — BucketLike is structurally satisfied
+    const result = aggregateByTime(topicBuckets);
+    expect(result).toHaveLength(1);
+    expect(result[0].amount).toBeCloseTo(35.0);
+  });
+
+  it("aggregateByDimension accepts TopicAttributionAggregationBucket", () => {
+    const topicBuckets = [
+      {
+        dimensions: { topic_name: "topic-a" },
+        time_bucket: "2026-01-01",
+        total_amount: "30.00",
+        row_count: 2,
+      },
+      {
+        dimensions: { topic_name: "topic-b" },
+        time_bucket: "2026-01-01",
+        total_amount: "20.00",
+        row_count: 1,
+      },
+    ];
+    const result = aggregateByDimension(topicBuckets, "topic_name");
+    expect(result).toHaveLength(2);
+    const topicA = result.find((r) => r.key === "topic-a");
+    expect(topicA?.amount).toBeCloseTo(30.0);
   });
 });

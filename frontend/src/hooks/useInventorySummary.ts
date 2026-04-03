@@ -13,7 +13,9 @@ export interface UseInventorySummaryResult {
   refetch: () => void;
 }
 
-export function useInventorySummary(params: UseInventorySummaryParams): UseInventorySummaryResult {
+export function useInventorySummary(
+  params: UseInventorySummaryParams,
+): UseInventorySummaryResult {
   const { tenantName } = params;
 
   const query = useQuery({
@@ -21,7 +23,8 @@ export function useInventorySummary(params: UseInventorySummaryParams): UseInven
     queryFn: async ({ signal }) => {
       const url = `${API_URL}/tenants/${tenantName}/inventory/summary`;
       const response = await fetch(url, { signal });
-      if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      if (!response.ok)
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       return response.json() as Promise<InventorySummaryResponse>;
     },
     enabled: !!tenantName,

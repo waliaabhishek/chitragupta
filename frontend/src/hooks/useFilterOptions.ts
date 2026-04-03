@@ -44,11 +44,15 @@ export function useFilterOptions(
 
       return {
         identityOptions: identities.items.map((i) => ({
-          label: i.display_name ? `${i.display_name} (${i.identity_id})` : i.identity_id,
+          label: i.display_name
+            ? `${i.display_name} (${i.identity_id})`
+            : i.identity_id,
           value: i.identity_id,
         })),
         resourceOptions: resources.items.map((r) => ({
-          label: r.display_name ? `${r.display_name} (${r.resource_id})` : r.resource_id,
+          label: r.display_name
+            ? `${r.display_name} (${r.resource_id})`
+            : r.resource_id,
           value: r.resource_id,
         })),
       };
@@ -59,7 +63,10 @@ export function useFilterOptions(
   const productTypeQuery = useQuery({
     queryKey: ["filterOptions", "productType", tenantName, startDate, endDate],
     queryFn: async ({ signal }) => {
-      const qs = new URLSearchParams({ group_by: "product_type", time_bucket: "day" });
+      const qs = new URLSearchParams({
+        group_by: "product_type",
+        time_bucket: "day",
+      });
       if (startDate) qs.set("start_date", startDate);
       if (endDate) qs.set("end_date", endDate);
       const productTypeUrl = `${API_URL}/tenants/${tenantName}/chargebacks/aggregate?${qs.toString()}`;
@@ -87,6 +94,9 @@ export function useFilterOptions(
     resourceOptions: identityResourceQuery.data?.resourceOptions ?? [],
     productTypeOptions: productTypeQuery.data ?? [],
     isLoading: identityResourceQuery.isLoading || productTypeQuery.isLoading,
-    error: identityResourceQuery.error?.message ?? productTypeQuery.error?.message ?? null,
+    error:
+      identityResourceQuery.error?.message ??
+      productTypeQuery.error?.message ??
+      null,
   };
 }

@@ -6,8 +6,14 @@ import { createElement } from "react";
 import { afterEach, describe, expect, it } from "vitest";
 import { useBillingFilters } from "./useBillingFilters";
 
-function makeWrapper(initialSearch = ""): ({ children }: { children: ReactNode }) => React.JSX.Element {
-  return function Wrapper({ children }: { children: ReactNode }): React.JSX.Element {
+function makeWrapper(
+  initialSearch = "",
+): ({ children }: { children: ReactNode }) => React.JSX.Element {
+  return function Wrapper({
+    children,
+  }: {
+    children: ReactNode;
+  }): React.JSX.Element {
     return createElement(
       MemoryRouter,
       { initialEntries: [`/${initialSearch}`] },
@@ -95,5 +101,49 @@ describe("useBillingFilters — timezone", () => {
       (result.current.setFilters as any)({ timezone: "Europe/London" });
     });
     expect(localStorage.getItem("user_timezone")).toBe("Europe/London");
+  });
+
+  it("setFilters with empty string for timezone clears localStorage", () => {
+    localStorage.setItem("user_timezone", "America/Denver");
+    const { result } = renderHook(() => useBillingFilters(), {
+      wrapper: makeWrapper(),
+    });
+    act(() => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (result.current.setFilters as any)({ timezone: "" });
+    });
+    expect(localStorage.getItem("user_timezone")).toBeNull();
+  });
+});
+
+describe("useBillingFilters — setFilters date persistence", () => {
+  it("setFilters with date updates persists dates to localStorage", () => {
+    const { result } = renderHook(() => useBillingFilters(), {
+      wrapper: makeWrapper(),
+    });
+    act(() => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (result.current.setFilters as any)({
+        start_date: "2026-01-01",
+        end_date: "2026-01-31",
+      });
+    });
+    const stored = JSON.parse(
+      localStorage.getItem("billing_date_range")!,
+    );
+    expect(stored.start_date).toBe("2026-01-01");
+    expect(stored.end_date).toBe("2026-01-31");
+  });
+
+  it("setFilters with null value removes the param", () => {
+    const { result } = renderHook(() => useBillingFilters(), {
+      wrapper: makeWrapper("?product_type=KAFKA_STORAGE"),
+    });
+    act(() => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (result.current.setFilters as any)({ product_type: null });
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect((result.current.filters as any).product_type).toBeNull();
   });
 });

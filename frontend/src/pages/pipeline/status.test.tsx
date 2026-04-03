@@ -23,7 +23,11 @@ import type {
 
 // Capture AG Grid column defs for assertion
 const gridCapture = vi.hoisted(() => ({
-  columnDefs: null as Array<{ field?: string; sort?: string; headerName?: string }> | null,
+  columnDefs: null as Array<{
+    field?: string;
+    sort?: string;
+    headerName?: string;
+  }> | null,
   rowData: null as Array<Record<string, unknown>> | null,
 }));
 
@@ -37,7 +41,12 @@ const gridCapture = vi.hoisted(() => ({
 
 vi.mock("ag-grid-react", () => ({
   AgGridReact: (props: {
-    columnDefs?: Array<{ field?: string; sort?: string; headerName?: string; cellRenderer?: (p: { value: unknown }) => ReactNode }>;
+    columnDefs?: Array<{
+      field?: string;
+      sort?: string;
+      headerName?: string;
+      cellRenderer?: (p: { value: unknown }) => ReactNode;
+    }>;
     rowData?: Array<Record<string, unknown>>;
     theme?: unknown;
     defaultColDef?: unknown;
@@ -62,7 +71,9 @@ vi.mock("ag-grid-react", () => ({
                 {columnDefs?.map((col) => (
                   <td key={col.field ?? col.headerName}>
                     {col.cellRenderer
-                      ? col.cellRenderer({ value: col.field ? row[col.field] : undefined })
+                      ? col.cellRenderer({
+                          value: col.field ? row[col.field] : undefined,
+                        })
                       : String(col.field ? (row[col.field] ?? "") : "")}
                   </td>
                 ))}
@@ -123,20 +134,12 @@ vi.mock("antd", () => {
 
   return {
     Typography: {
-      Title: ({
-        children,
-        level,
-      }: {
-        children: ReactNode;
-        level?: number;
-      }) => <h3 data-level={String(level)}>{children}</h3>,
-      Text: ({
-        children,
-        type,
-      }: {
-        children: ReactNode;
-        type?: string;
-      }) => <span data-type={type}>{children}</span>,
+      Title: ({ children, level }: { children: ReactNode; level?: number }) => (
+        <h3 data-level={String(level)}>{children}</h3>
+      ),
+      Text: ({ children, type }: { children: ReactNode; type?: string }) => (
+        <span data-type={type}>{children}</span>
+      ),
     },
     Steps: ({
       items,
@@ -420,8 +423,14 @@ describe("AC-1: Stepper", () => {
     });
     setupDefaultQueries();
     render(<PipelineStatusPage />);
-    expect(screen.getByTestId("step-0")).toHaveAttribute("data-status", "finish");
-    expect(screen.getByTestId("step-1")).toHaveAttribute("data-status", "process");
+    expect(screen.getByTestId("step-0")).toHaveAttribute(
+      "data-status",
+      "finish",
+    );
+    expect(screen.getByTestId("step-1")).toHaveAttribute(
+      "data-status",
+      "process",
+    );
     expect(screen.getByTestId("step-1")).toHaveAttribute(
       "data-description",
       "Calculating chargebacks for 2026-03-14",
@@ -437,11 +446,24 @@ describe("AC-1: Stepper", () => {
     });
     setupDefaultQueries();
     render(<PipelineStatusPage />);
-    expect(screen.getByTestId("step-0")).toHaveAttribute("data-status", "finish");
-    expect(screen.getByTestId("step-1")).toHaveAttribute("data-status", "finish");
-    expect(screen.getByTestId("step-2")).toHaveAttribute("data-status", "finish");
+    expect(screen.getByTestId("step-0")).toHaveAttribute(
+      "data-status",
+      "finish",
+    );
+    expect(screen.getByTestId("step-1")).toHaveAttribute(
+      "data-status",
+      "finish",
+    );
+    expect(screen.getByTestId("step-2")).toHaveAttribute(
+      "data-status",
+      "finish",
+    );
+    expect(screen.getByTestId("step-3")).toHaveAttribute(
+      "data-status",
+      "finish",
+    );
     expect(
-      screen.getByTestId("step-2").getAttribute("data-description"),
+      screen.getByTestId("step-3").getAttribute("data-description"),
     ).toContain("2026-03-26T10:05:00Z");
   });
 
@@ -453,8 +475,14 @@ describe("AC-1: Stepper", () => {
     });
     setupDefaultQueries();
     render(<PipelineStatusPage />);
-    expect(screen.getByTestId("step-0")).toHaveAttribute("data-status", "finish");
-    expect(screen.getByTestId("step-1")).toHaveAttribute("data-status", "error");
+    expect(screen.getByTestId("step-0")).toHaveAttribute(
+      "data-status",
+      "finish",
+    );
+    expect(screen.getByTestId("step-1")).toHaveAttribute(
+      "data-status",
+      "error",
+    );
     expect(screen.getByTestId("step-2")).toHaveAttribute("data-status", "wait");
   });
 });
@@ -528,7 +556,9 @@ describe("AC-2: Run Pipeline button", () => {
       expect(screen.getByTestId("alert")).toBeInTheDocument();
     });
     expect(screen.getByTestId("alert")).toHaveAttribute("data-type", "error");
-    expect(screen.getByTestId("alert").textContent).toContain("Network failure");
+    expect(screen.getByTestId("alert").textContent).toContain(
+      "Network failure",
+    );
   });
 });
 
@@ -557,12 +587,8 @@ describe("AC-3: Last Run Summary", () => {
     });
     render(<PipelineStatusPage />);
     expect(screen.getByTestId("descriptions")).toBeInTheDocument();
-    expect(
-      screen.getByTestId("desc-item-completed-at"),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByTestId("desc-item-dates-gathered"),
-    ).toBeInTheDocument();
+    expect(screen.getByTestId("desc-item-completed-at")).toBeInTheDocument();
+    expect(screen.getByTestId("desc-item-dates-gathered")).toBeInTheDocument();
     expect(
       screen.getByTestId("desc-item-dates-calculated"),
     ).toBeInTheDocument();
@@ -656,7 +682,9 @@ describe("AC-4: Per-Date Processing Status grid", () => {
     setupDefaultQueries({}, { states: [] });
     render(<PipelineStatusPage />);
     expect(gridCapture.columnDefs).not.toBeNull();
-    const dateCol = gridCapture.columnDefs?.find((c) => c.field === "tracking_date");
+    const dateCol = gridCapture.columnDefs?.find(
+      (c) => c.field === "tracking_date",
+    );
     expect(dateCol).toBeDefined();
     expect(dateCol?.sort).toBe("desc");
   });
@@ -749,5 +777,104 @@ describe("AC-6: Layout and imports", () => {
     expect(source).toMatch(/from\s+["']\.\.\/\.\.\/config["']/);
     // Must not locally redefine Pipeline types
     expect(source).not.toMatch(/^(?:interface|type)\s+Pipeline/m);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AC-7 (TASK-164): 4-Stage stepper with topic_overlay
+// ---------------------------------------------------------------------------
+
+describe("AC-7 (TASK-164): 4-stage stepper", () => {
+  it("test 22: pipeline_stage=topic_overlay renders 4 steps with no underscore in labels", () => {
+    setupTenantContext({
+      pipeline_running: true,
+      pipeline_stage: "topic_overlay",
+      pipeline_current_date: "2026-04-01",
+    });
+    setupDefaultQueries();
+    render(<PipelineStatusPage />);
+
+    // 4 steps must exist (indices 0–3)
+    expect(screen.getByTestId("step-0")).toBeTruthy();
+    expect(screen.getByTestId("step-1")).toBeTruthy();
+    expect(screen.getByTestId("step-2")).toBeTruthy();
+    expect(screen.getByTestId("step-3")).toBeTruthy();
+
+    // Step 2 (topic_overlay) must be process and have no underscore in title
+    expect(screen.getByTestId("step-2")).toHaveAttribute(
+      "data-status",
+      "process",
+    );
+    expect(screen.getByTestId("step-2").textContent).not.toContain("_");
+    // Human-readable label: "Topic Overlay"
+    expect(screen.getByTestId("step-2").textContent).toContain("Topic Overlay");
+  });
+
+  it("test 23: pipeline_stage=gathering still works with 4-step stepper", () => {
+    setupTenantContext({
+      pipeline_running: true,
+      pipeline_stage: "gathering",
+      pipeline_current_date: null,
+    });
+    setupDefaultQueries();
+    render(<PipelineStatusPage />);
+
+    expect(screen.getByTestId("step-0")).toHaveAttribute(
+      "data-status",
+      "process",
+    );
+    expect(screen.getByTestId("step-1")).toHaveAttribute("data-status", "wait");
+    expect(screen.getByTestId("step-2")).toHaveAttribute("data-status", "wait");
+    expect(screen.getByTestId("step-3")).toHaveAttribute("data-status", "wait");
+  });
+
+  it("test 24: pipeline_stage=emitting still works with 4-step stepper — step 3 is process", () => {
+    setupTenantContext({
+      pipeline_running: true,
+      pipeline_stage: "emitting",
+      pipeline_current_date: null,
+    });
+    setupDefaultQueries();
+    render(<PipelineStatusPage />);
+
+    expect(screen.getByTestId("step-0")).toHaveAttribute(
+      "data-status",
+      "finish",
+    );
+    expect(screen.getByTestId("step-1")).toHaveAttribute(
+      "data-status",
+      "finish",
+    );
+    expect(screen.getByTestId("step-2")).toHaveAttribute(
+      "data-status",
+      "finish",
+    );
+    expect(screen.getByTestId("step-3")).toHaveAttribute(
+      "data-status",
+      "process",
+    );
+  });
+
+  it("test 25: per-date grid renders Topic Overlay and Topic Attribution columns", () => {
+    setupTenantContext();
+    setupDefaultQueries(
+      {},
+      {
+        states: [
+          {
+            tracking_date: "2026-04-01",
+            billing_gathered: true,
+            resources_gathered: true,
+            chargeback_calculated: true,
+            topic_overlay_gathered: true,
+            topic_attribution_calculated: false,
+          },
+        ],
+      },
+    );
+    render(<PipelineStatusPage />);
+
+    expect(screen.getByText("Topic Overlay")).toBeInTheDocument();
+    expect(screen.getByText("Topic Attribution")).toBeInTheDocument();
   });
 });

@@ -37,6 +37,8 @@ export interface PipelineStateResponse {
   billing_gathered: boolean;
   resources_gathered: boolean;
   chargeback_calculated: boolean;
+  topic_overlay_gathered?: boolean; // absent for tenants without topic attribution
+  topic_attribution_calculated?: boolean; // absent for tenants without topic attribution
 }
 
 export interface TenantStatusDetailResponse {
@@ -195,6 +197,35 @@ export interface AggregationResponse {
   total_amount: string;
   usage_amount: string;
   shared_amount: string;
+  total_rows: number;
+}
+
+// --- Topic Attribution ---
+
+export interface TopicAttributionResponse {
+  dimension_id: number | null;
+  ecosystem: string;
+  tenant_id: string;
+  timestamp: string; // ISO datetime
+  env_id: string;
+  cluster_resource_id: string;
+  topic_name: string;
+  product_category: string;
+  product_type: string;
+  attribution_method: string;
+  amount: string; // Decimal as string
+}
+
+export interface TopicAttributionAggregationBucket {
+  dimensions: Record<string, string>;
+  time_bucket: string; // "2026-01-01" (day) | "2026-W01" (week) | "2026-01" (month)
+  total_amount: string; // Decimal as string
+  row_count: number;
+}
+
+export interface TopicAttributionAggregationResponse {
+  buckets: TopicAttributionAggregationBucket[];
+  total_amount: string;
   total_rows: number;
 }
 

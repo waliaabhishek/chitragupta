@@ -36,13 +36,11 @@ vi.mock("antd", () => ({
     </div>
   ),
   Typography: {
-    Text: ({
-      children,
-      type,
-    }: {
-      children: ReactNode;
-      type?: string;
-    }) => <span data-testid="typography-text" data-type={type}>{children}</span>,
+    Text: ({ children, type }: { children: ReactNode; type?: string }) => (
+      <span data-testid="typography-text" data-type={type}>
+        {children}
+      </span>
+    ),
   },
   Collapse: ({
     items,
@@ -51,7 +49,10 @@ vi.mock("antd", () => ({
     items: Array<{ key: string; label: string; children: ReactNode }>;
     defaultActiveKey?: string[];
   }) => (
-    <div data-testid="collapse" data-default-active-key={JSON.stringify(defaultActiveKey ?? [])}>
+    <div
+      data-testid="collapse"
+      data-default-active-key={JSON.stringify(defaultActiveKey ?? [])}
+    >
       {items.map((item) => (
         <div key={item.key} data-testid="collapse-panel">
           <button
@@ -62,7 +63,9 @@ vi.mock("antd", () => ({
               );
               if (panel) {
                 (panel as HTMLElement).style.display =
-                  (panel as HTMLElement).style.display === "none" ? "block" : "none";
+                  (panel as HTMLElement).style.display === "none"
+                    ? "block"
+                    : "none";
               }
             }}
           >
@@ -95,22 +98,30 @@ const MOCK_DATA: InventorySummaryResponse = {
 
 describe("InventoryCounters", () => {
   it("renders correct count cards from mock data", () => {
-    render(<InventoryCounters data={MOCK_DATA} isLoading={false} error={null} />);
+    render(
+      <InventoryCounters data={MOCK_DATA} isLoading={false} error={null} />,
+    );
 
-    const titles = screen.getAllByTestId("statistic-title").map((el) => el.textContent);
+    const titles = screen
+      .getAllByTestId("statistic-title")
+      .map((el) => el.textContent);
     expect(titles).toContain("Kafka Cluster");
     expect(titles).toContain("Connector");
     expect(titles).toContain("Service Account");
     expect(titles).toContain("User");
 
-    const values = screen.getAllByTestId("statistic-value").map((el) => el.textContent);
+    const values = screen
+      .getAllByTestId("statistic-value")
+      .map((el) => el.textContent);
     expect(values).toContain("5");
     expect(values).toContain("3");
     expect(values).toContain("12");
   });
 
   it("renders active/deleted secondary text", () => {
-    render(<InventoryCounters data={MOCK_DATA} isLoading={false} error={null} />);
+    render(
+      <InventoryCounters data={MOCK_DATA} isLoading={false} error={null} />,
+    );
 
     expect(screen.getByText("Active: 4 / Deleted: 1")).toBeDefined();
   });
@@ -127,24 +138,32 @@ describe("InventoryCounters", () => {
     };
     render(<InventoryCounters data={data} isLoading={false} error={null} />);
 
-    const titles = screen.getAllByTestId("statistic-title").map((el) => el.textContent);
+    const titles = screen
+      .getAllByTestId("statistic-title")
+      .map((el) => el.textContent);
     expect(titles).toContain("Kafka Cluster");
     expect(titles).toContain("Identity Pool");
     expect(titles).toContain("Service Account");
   });
 
   it("renders a Collapse component (collapsed by default — no defaultActiveKey)", () => {
-    render(<InventoryCounters data={MOCK_DATA} isLoading={false} error={null} />);
+    render(
+      <InventoryCounters data={MOCK_DATA} isLoading={false} error={null} />,
+    );
 
     const collapse = screen.getByTestId("collapse");
     expect(collapse).toBeDefined();
     // defaultActiveKey must be absent/empty — panel starts closed
-    const activeKey = JSON.parse(collapse.getAttribute("data-default-active-key") ?? "[]");
+    const activeKey = JSON.parse(
+      collapse.getAttribute("data-default-active-key") ?? "[]",
+    );
     expect(activeKey).toHaveLength(0);
   });
 
   it("renders collapse header labelled Inventory", () => {
-    render(<InventoryCounters data={MOCK_DATA} isLoading={false} error={null} />);
+    render(
+      <InventoryCounters data={MOCK_DATA} isLoading={false} error={null} />,
+    );
 
     const header = screen.getByTestId("collapse-header");
     expect(header.textContent).toBe("Inventory");
@@ -164,7 +183,9 @@ describe("InventoryCounters", () => {
       resource_counts: {},
       identity_counts: {},
     };
-    render(<InventoryCounters data={emptyData} isLoading={false} error={null} />);
+    render(
+      <InventoryCounters data={emptyData} isLoading={false} error={null} />,
+    );
 
     const empties = screen.getAllByTestId("empty");
     expect(empties.length).toBe(2); // one per section
@@ -175,10 +196,16 @@ describe("InventoryCounters", () => {
 
   it("renders em dash values on error when data is populated", () => {
     render(
-      <InventoryCounters data={MOCK_DATA} isLoading={false} error="fetch failed" />,
+      <InventoryCounters
+        data={MOCK_DATA}
+        isLoading={false}
+        error="fetch failed"
+      />,
     );
 
-    const values = screen.getAllByTestId("statistic-value").map((el) => el.textContent);
+    const values = screen
+      .getAllByTestId("statistic-value")
+      .map((el) => el.textContent);
     expect(values.every((v) => v === "—")).toBe(true);
     expect(values.length).toBeGreaterThan(0);
 
@@ -200,7 +227,9 @@ describe("InventoryCounters", () => {
   });
 
   it("card Col elements use xs=12 for mobile (2 per row)", () => {
-    render(<InventoryCounters data={MOCK_DATA} isLoading={false} error={null} />);
+    render(
+      <InventoryCounters data={MOCK_DATA} isLoading={false} error={null} />,
+    );
 
     const cols = screen.getAllByTestId("col");
     const xsCols = cols.filter((el) => el.getAttribute("data-xs") === "12");
@@ -208,7 +237,9 @@ describe("InventoryCounters", () => {
   });
 
   it("card Col elements use md=6 for desktop (4 per row)", () => {
-    render(<InventoryCounters data={MOCK_DATA} isLoading={false} error={null} />);
+    render(
+      <InventoryCounters data={MOCK_DATA} isLoading={false} error={null} />,
+    );
 
     const cols = screen.getAllByTestId("col");
     const mdCols = cols.filter((el) => el.getAttribute("data-md") === "6");

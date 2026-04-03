@@ -1,6 +1,15 @@
 import type React from "react";
 import { useState } from "react";
-import { Alert, Button, Card, Col, Descriptions, Row, Steps, Typography } from "antd";
+import {
+  Alert,
+  Button,
+  Card,
+  Col,
+  Descriptions,
+  Row,
+  Steps,
+  Typography,
+} from "antd";
 import {
   CheckCircleOutlined,
   ClockCircleOutlined,
@@ -25,8 +34,20 @@ const { Title, Text } = Typography;
 // Stage helpers
 // ---------------------------------------------------------------------------
 
-const STAGES = ["gathering", "calculating", "emitting"] as const;
+const STAGES = [
+  "gathering",
+  "calculating",
+  "topic_overlay",
+  "emitting",
+] as const;
 type Stage = (typeof STAGES)[number];
+
+const STAGE_LABELS: Record<Stage, string> = {
+  gathering: "Gathering",
+  calculating: "Calculating",
+  topic_overlay: "Topic Overlay",
+  emitting: "Emitting",
+};
 
 function stageDescription(stage: Stage, currentDate: string | null): string {
   switch (stage) {
@@ -38,6 +59,8 @@ function stageDescription(stage: Stage, currentDate: string | null): string {
       return currentDate
         ? `Calculating chargebacks for ${currentDate}`
         : "Calculating chargebacks";
+    case "topic_overlay":
+      return "Computing topic attribution overlay";
     case "emitting":
       return "Finalizing output";
   }
@@ -116,6 +139,8 @@ function buildStepperItems(
 // ---------------------------------------------------------------------------
 
 function BoolIconRenderer(params: ICellRendererParams): React.JSX.Element {
+  // Absent fields (undefined/null) render nothing — only tenants with topic attribution have these columns populated
+  if (params.value === undefined || params.value === null) return <></>;
   return params.value ? (
     <CheckCircleOutlined style={{ color: "#52c41a" }} />
   ) : (
@@ -147,6 +172,18 @@ const stateColumnDefs: ColDef[] = [
     headerName: "Chargeback Calculated",
     cellRenderer: BoolIconRenderer,
     width: 190,
+  },
+  {
+    field: "topic_overlay_gathered",
+    headerName: "Topic Overlay Gathered",
+    cellRenderer: BoolIconRenderer,
+    width: 180,
+  },
+  {
+    field: "topic_attribution_calculated",
+    headerName: "Topic Attribution",
+    cellRenderer: BoolIconRenderer,
+    width: 160,
   },
 ];
 
@@ -210,7 +247,7 @@ function PipelineStatusContent({
     tenantReadiness?.last_run_status ?? null,
     tenantReadiness?.last_run_at ?? null,
   ).map((cfg, i) => ({
-    title: STAGES[i].charAt(0).toUpperCase() + STAGES[i].slice(1),
+    title: STAGE_LABELS[STAGES[i]],
     status: cfg.status,
     description: cfg.description,
   }));

@@ -11,12 +11,24 @@ interface ChartCardProps {
   extra?: ReactNode;
 }
 
-export function ChartCard({ title, children, loading, error, onRetry, extra }: ChartCardProps): React.JSX.Element {
+export function ChartCard({
+  title,
+  children,
+  loading,
+  error,
+  onRetry,
+  extra,
+}: ChartCardProps): React.JSX.Element {
   return (
     <Card title={title} extra={extra} style={{ height: "100%" }}>
       {loading ? (
         <div
-          style={{ display: "flex", justifyContent: "center", alignItems: "center", minHeight: 200 }}
+          style={{
+            display: "flex",
+            justifyContent: "center",
+            alignItems: "center",
+            minHeight: 200,
+          }}
         >
           <Spin />
         </div>

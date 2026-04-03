@@ -11,7 +11,10 @@ const CHART_TYPE_OPTIONS: Array<{ label: string; value: "pie" | "treemap" }> = [
   { label: "Treemap", value: "treemap" },
 ];
 
-export function ProductChartTypeToggle({ value, onChange }: ProductChartTypeToggleProps): React.JSX.Element {
+export function ProductChartTypeToggle({
+  value,
+  onChange,
+}: ProductChartTypeToggleProps): React.JSX.Element {
   return (
     <Segmented
       size="small"

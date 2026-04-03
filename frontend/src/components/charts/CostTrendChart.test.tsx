@@ -47,8 +47,12 @@ describe("CostTrendChart", () => {
     ];
     render(<CostTrendChart data={data} timeBucket="day" />);
     const chart = screen.getByTestId("echarts");
-    const xAxis = JSON.parse(chart.getAttribute("data-xaxis") ?? "[]") as string[];
-    const series = JSON.parse(chart.getAttribute("data-series") ?? "[]") as number[];
+    const xAxis = JSON.parse(
+      chart.getAttribute("data-xaxis") ?? "[]",
+    ) as string[];
+    const series = JSON.parse(
+      chart.getAttribute("data-series") ?? "[]",
+    ) as number[];
     expect(xAxis).toHaveLength(1);
     expect(series[0]).toBeCloseTo(15.0);
   });
@@ -61,7 +65,9 @@ describe("CostTrendChart", () => {
     ];
     render(<CostTrendChart data={data} timeBucket="day" />);
     const chart = screen.getByTestId("echarts");
-    const xAxis = JSON.parse(chart.getAttribute("data-xaxis") ?? "[]") as string[];
+    const xAxis = JSON.parse(
+      chart.getAttribute("data-xaxis") ?? "[]",
+    ) as string[];
     expect(xAxis).toHaveLength(2);
   });
 
@@ -73,7 +79,9 @@ describe("CostTrendChart", () => {
     ];
     render(<CostTrendChart data={data} timeBucket="day" />);
     const chart = screen.getByTestId("echarts");
-    const xAxis = JSON.parse(chart.getAttribute("data-xaxis") ?? "[]") as string[];
+    const xAxis = JSON.parse(
+      chart.getAttribute("data-xaxis") ?? "[]",
+    ) as string[];
     expect(xAxis[0]).toBe("2026-02-01");
     expect(xAxis[1]).toBe("2026-02-02");
     expect(xAxis[2]).toBe("2026-02-03");
@@ -82,8 +90,12 @@ describe("CostTrendChart", () => {
   it("renders empty state for empty data with no data points", () => {
     render(<CostTrendChart data={[]} timeBucket="day" />);
     const chart = screen.getByTestId("echarts");
-    const xAxis = JSON.parse(chart.getAttribute("data-xaxis") ?? "[]") as string[];
-    const series = JSON.parse(chart.getAttribute("data-series") ?? "[]") as number[];
+    const xAxis = JSON.parse(
+      chart.getAttribute("data-xaxis") ?? "[]",
+    ) as string[];
+    const series = JSON.parse(
+      chart.getAttribute("data-series") ?? "[]",
+    ) as number[];
     expect(xAxis).toHaveLength(0);
     expect(series).toHaveLength(0);
   });

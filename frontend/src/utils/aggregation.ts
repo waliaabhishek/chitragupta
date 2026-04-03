@@ -1,12 +1,20 @@
-import type { AggregationBucket } from "../types/api";
+/** Structural minimum required by aggregation utilities. */
+export interface BucketLike {
+  dimensions: Record<string, string>;
+  time_bucket: string;
+  total_amount: string;
+}
 
 /** Aggregate buckets by time_bucket: sum all dimension amounts per time period. */
 export function aggregateByTime(
-  buckets: AggregationBucket[],
+  buckets: BucketLike[],
 ): { time: string; amount: number }[] {
   const map = new Map<string, number>();
   for (const b of buckets) {
-    map.set(b.time_bucket, (map.get(b.time_bucket) ?? 0) + parseFloat(b.total_amount));
+    map.set(
+      b.time_bucket,
+      (map.get(b.time_bucket) ?? 0) + parseFloat(b.total_amount),
+    );
   }
   return Array.from(map.entries())
     .map(([time, amount]) => ({ time, amount }))
@@ -15,7 +23,7 @@ export function aggregateByTime(
 
 /** Aggregate buckets by a dimension value: sum across time buckets. */
 export function aggregateByDimension(
-  buckets: AggregationBucket[],
+  buckets: BucketLike[],
   dimension: string,
 ): { key: string; amount: number }[] {
   const map = new Map<string, number>();

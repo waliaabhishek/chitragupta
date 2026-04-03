@@ -16,7 +16,11 @@ function createTestQueryClient() {
 function createWrapper() {
   const queryClient = createTestQueryClient();
   return function Wrapper({ children }: { children: ReactNode }) {
-    return createElement(QueryClientProvider, { client: queryClient }, children);
+    return createElement(
+      QueryClientProvider,
+      { client: queryClient },
+      children,
+    );
   };
 }
 
@@ -30,14 +34,18 @@ const BASE_PARAMS = {
 
 describe("useAggregation", () => {
   it("starts in loading state", () => {
-    const { result } = renderHook(() => useAggregation(BASE_PARAMS), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useAggregation(BASE_PARAMS), {
+      wrapper: createWrapper(),
+    });
     expect(result.current.isLoading).toBe(true);
     expect(result.current.data).toBeNull();
     expect(result.current.error).toBeNull();
   });
 
   it("returns data after successful fetch", async () => {
-    const { result } = renderHook(() => useAggregation(BASE_PARAMS), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useAggregation(BASE_PARAMS), {
+      wrapper: createWrapper(),
+    });
     await waitFor(() => expect(result.current.isLoading).toBe(false));
     expect(result.current.data).not.toBeNull();
     expect(result.current.data?.buckets).toHaveLength(2);
@@ -47,7 +55,10 @@ describe("useAggregation", () => {
   it("returns error when server responds with 500", async () => {
     server.use(
       http.get("/api/v1/tenants/error-tenant/chargebacks/aggregate", () => {
-        return HttpResponse.json({ detail: "Internal Server Error" }, { status: 500 });
+        return HttpResponse.json(
+          { detail: "Internal Server Error" },
+          { status: 500 },
+        );
       }),
     );
 
@@ -67,7 +78,11 @@ describe("useAggregation", () => {
     server.use(
       http.get("/api/v1/tenants/acme/chargebacks/aggregate", ({ request }) => {
         capturedUrl = request.url;
-        return HttpResponse.json({ buckets: [], total_amount: "0", total_rows: 0 });
+        return HttpResponse.json({
+          buckets: [],
+          total_amount: "0",
+          total_rows: 0,
+        });
       }),
     );
 
@@ -95,7 +110,11 @@ describe("useAggregation", () => {
     server.use(
       http.get("/api/v1/tenants/acme/chargebacks/aggregate", () => {
         callCount++;
-        return HttpResponse.json({ buckets: [], total_amount: "0", total_rows: 0 });
+        return HttpResponse.json({
+          buckets: [],
+          total_amount: "0",
+          total_rows: 0,
+        });
       }),
     );
 
@@ -119,7 +138,9 @@ describe("useAggregation", () => {
       ),
     );
 
-    const { result } = renderHook(() => useAggregation(BASE_PARAMS), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useAggregation(BASE_PARAMS), {
+      wrapper: createWrapper(),
+    });
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
     expect(result.current.data?.buckets).toEqual([]);
@@ -128,7 +149,9 @@ describe("useAggregation", () => {
   });
 
   it("refetch triggers a new fetch", async () => {
-    const { result } = renderHook(() => useAggregation(BASE_PARAMS), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useAggregation(BASE_PARAMS), {
+      wrapper: createWrapper(),
+    });
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
     act(() => {
@@ -143,7 +166,11 @@ describe("useAggregation", () => {
     server.use(
       http.get("/api/v1/tenants/acme/chargebacks/aggregate", ({ request }) => {
         capturedUrl = request.url;
-        return HttpResponse.json({ buckets: [], total_amount: "0", total_rows: 0 });
+        return HttpResponse.json({
+          buckets: [],
+          total_amount: "0",
+          total_rows: 0,
+        });
       }),
     );
 
@@ -161,7 +188,11 @@ describe("useAggregation", () => {
     server.use(
       http.get("/api/v1/tenants/acme/chargebacks/aggregate", () => {
         callCount++;
-        return HttpResponse.json({ buckets: [], total_amount: "0", total_rows: 0 });
+        return HttpResponse.json({
+          buckets: [],
+          total_amount: "0",
+          total_rows: 0,
+        });
       }),
     );
 

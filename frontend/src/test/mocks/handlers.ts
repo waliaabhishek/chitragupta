@@ -239,55 +239,67 @@ export const handlers = [
   }),
 
   // Entity tag CRUD handlers
-  http.get(`${BASE}/tenants/:tenant/entities/:entityType/:entityId/tags`, ({ params }) => {
-    const tags: EntityTagResponse[] = [
-      {
+  http.get(
+    `${BASE}/tenants/:tenant/entities/:entityType/:entityId/tags`,
+    ({ params }) => {
+      const tags: EntityTagResponse[] = [
+        {
+          tag_id: 1,
+          tenant_id: "t-001",
+          entity_type: params.entityType as string,
+          entity_id: params.entityId as string,
+          tag_key: "env",
+          tag_value: "production",
+          created_by: "ui",
+          created_at: null,
+        },
+      ];
+      return HttpResponse.json(tags);
+    },
+  ),
+
+  http.post(
+    `${BASE}/tenants/:tenant/entities/:entityType/:entityId/tags`,
+    async ({ request, params }) => {
+      const body = (await request.json()) as EntityTagCreateRequest;
+      const tag: EntityTagResponse = {
+        tag_id: Date.now(),
+        tenant_id: "t-001",
+        entity_type: params.entityType as string,
+        entity_id: params.entityId as string,
+        tag_key: body.tag_key,
+        tag_value: body.tag_value,
+        created_by: body.created_by,
+        created_at: null,
+      };
+      return HttpResponse.json(tag, { status: 201 });
+    },
+  ),
+
+  http.put(
+    `${BASE}/tenants/:tenant/entities/:entityType/:entityId/tags/:tagKey`,
+    async ({ request, params }) => {
+      const body = (await request.json()) as { tag_value: string };
+      const tag: EntityTagResponse = {
         tag_id: 1,
         tenant_id: "t-001",
         entity_type: params.entityType as string,
         entity_id: params.entityId as string,
-        tag_key: "env",
-        tag_value: "production",
+        tag_key: params.tagKey as string,
+        tag_value: body.tag_value,
         created_by: "ui",
         created_at: null,
-      },
-    ];
-    return HttpResponse.json(tags);
-  }),
+      };
+      return HttpResponse.json(tag);
+    },
+  ),
 
-  http.post(`${BASE}/tenants/:tenant/entities/:entityType/:entityId/tags`, async ({ request, params }) => {
-    const body = (await request.json()) as EntityTagCreateRequest;
-    const tag: EntityTagResponse = {
-      tag_id: Date.now(),
-      tenant_id: "t-001",
-      entity_type: params.entityType as string,
-      entity_id: params.entityId as string,
-      tag_key: body.tag_key,
-      tag_value: body.tag_value,
-      created_by: body.created_by,
-      created_at: null,
-    };
-    return HttpResponse.json(tag, { status: 201 });
-  }),
-
-  http.put(`${BASE}/tenants/:tenant/entities/:entityType/:entityId/tags/:tagKey`, async ({ request, params }) => {
-    const body = await request.json() as { tag_value: string };
-    const tag: EntityTagResponse = {
-      tag_id: 1,
-      tenant_id: "t-001",
-      entity_type: params.entityType as string,
-      entity_id: params.entityId as string,
-      tag_key: params.tagKey as string,
-      tag_value: body.tag_value,
-      created_by: "ui",
-      created_at: null,
-    };
-    return HttpResponse.json(tag);
-  }),
-
-  http.delete(`${BASE}/tenants/:tenant/entities/:entityType/:entityId/tags/:tagKey`, () => {
-    return new HttpResponse(null, { status: 204 });
-  }),
+  http.delete(
+    `${BASE}/tenants/:tenant/entities/:entityType/:entityId/tags/:tagKey`,
+    () => {
+      return new HttpResponse(null, { status: 204 });
+    },
+  ),
 
   // Export endpoint — returns CSV blob
   http.post(`${BASE}/tenants/:tenant/export`, () => {

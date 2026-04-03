@@ -51,13 +51,7 @@ vi.mock("antd", () => ({
       bordered?: boolean;
     }) => <dl>{children}</dl>,
     {
-      Item: ({
-        label,
-        children,
-      }: {
-        label: string;
-        children: ReactNode;
-      }) => (
+      Item: ({ label, children }: { label: string; children: ReactNode }) => (
         <div>
           <dt>{label}</dt>
           <dd>{children}</dd>
@@ -82,7 +76,11 @@ vi.mock("antd", () => ({
     <span>
       {children}
       {closable && (
-        <button className="ant-tag-close-icon" onClick={onClose} aria-label="remove">
+        <button
+          className="ant-tag-close-icon"
+          onClick={onClose}
+          aria-label="remove"
+        >
           x
         </button>
       )}
@@ -96,9 +94,13 @@ vi.mock("antd", () => ({
       <span>{children}</span>
     ),
   },
-  Space: ({ children }: { children: ReactNode; wrap?: boolean; style?: object }) => (
-    <span>{children}</span>
-  ),
+  Space: ({
+    children,
+  }: {
+    children: ReactNode;
+    wrap?: boolean;
+    style?: object;
+  }) => <span>{children}</span>,
   Form: Object.assign(
     ({
       children,
@@ -125,9 +127,7 @@ vi.mock("antd", () => ({
         children: ReactNode;
         name?: string;
         rules?: unknown[];
-      }) => (
-        <div data-name={name}>{children}</div>
-      ),
+      }) => <div data-name={name}>{children}</div>,
       useForm: () => [
         {
           resetFields: vi.fn(),
@@ -214,11 +214,7 @@ const dimensionFixture: ChargebackDimensionResponse = {
 };
 
 function wrapper({ children }: { children: ReactNode }): React.JSX.Element {
-  return (
-    <MemoryRouter>
-      {children}
-    </MemoryRouter>
-  );
+  return <MemoryRouter>{children}</MemoryRouter>;
 }
 
 beforeEach(() => {

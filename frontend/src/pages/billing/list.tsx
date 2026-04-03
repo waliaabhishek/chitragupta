@@ -11,7 +11,8 @@ const { Text, Title } = Typography;
 
 export function BillingListPage(): React.JSX.Element {
   const { currentTenant } = useTenant();
-  const { filters, setFilter, setFilters, resetFilters, queryParams } = useBillingFilters();
+  const { filters, setFilter, setFilters, resetFilters, queryParams } =
+    useBillingFilters();
   const gridRef = useRef<AgGridReact>(null);
 
   if (!currentTenant) {

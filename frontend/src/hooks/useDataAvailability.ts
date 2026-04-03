@@ -13,7 +13,9 @@ export interface UseDataAvailabilityResult {
   refetch: () => void;
 }
 
-export function useDataAvailability(params: UseDataAvailabilityParams): UseDataAvailabilityResult {
+export function useDataAvailability(
+  params: UseDataAvailabilityParams,
+): UseDataAvailabilityResult {
   const { tenantName } = params;
 
   const query = useQuery({
@@ -21,7 +23,8 @@ export function useDataAvailability(params: UseDataAvailabilityParams): UseDataA
     queryFn: async ({ signal }) => {
       const url = `${API_URL}/tenants/${tenantName}/chargebacks/dates`;
       const response = await fetch(url, { signal });
-      if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      if (!response.ok)
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       return response.json() as Promise<ChargebackDatesResponse>;
     },
     enabled: !!tenantName,

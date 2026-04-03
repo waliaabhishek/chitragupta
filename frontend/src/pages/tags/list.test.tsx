@@ -56,9 +56,13 @@ vi.mock("../../providers/TenantContext", () => ({
 
 vi.mock("antd", () => ({
   Typography: {
-    Title: ({ children }: { children: ReactNode; level?: number; style?: object }) => (
-      <h3>{children}</h3>
-    ),
+    Title: ({
+      children,
+    }: {
+      children: ReactNode;
+      level?: number;
+      style?: object;
+    }) => <h3>{children}</h3>,
     Text: ({ children, type }: { children: ReactNode; type?: string }) => (
       <span data-type={type}>{children}</span>
     ),
@@ -124,7 +128,9 @@ describe("TagManagementPage", () => {
     // Error handling lives in TagsGrid; page renders TagsGrid with correct tenantName.
     await setupTenant();
     render(<TagManagementPage />, { wrapper });
-    expect(screen.getByTestId("tags-grid").getAttribute("data-tenant")).toBe("acme");
+    expect(screen.getByTestId("tags-grid").getAttribute("data-tenant")).toBe(
+      "acme",
+    );
   });
 
   it("pressing Enter in edit input saves the tag via PUT", async () => {
@@ -138,7 +144,9 @@ describe("TagManagementPage", () => {
     // Error handling lives in TagsGrid; page renders TagsGrid with correct tenantName.
     await setupTenant();
     render(<TagManagementPage />, { wrapper });
-    expect(screen.getByTestId("tags-grid").getAttribute("data-tenant")).toBe("acme");
+    expect(screen.getByTestId("tags-grid").getAttribute("data-tenant")).toBe(
+      "acme",
+    );
   });
 
   it("shows fetch failure notification when API fails", async () => {
@@ -174,6 +182,8 @@ describe("TagManagementPage", () => {
     await setupTenant(true);
     render(<TagManagementPage />, { wrapper });
     expect(capturedTagsGridProps.isReadOnly).toBe(true);
-    expect(screen.getByTestId("tags-grid").getAttribute("data-readonly")).toBe("true");
+    expect(screen.getByTestId("tags-grid").getAttribute("data-readonly")).toBe(
+      "true",
+    );
   });
 });

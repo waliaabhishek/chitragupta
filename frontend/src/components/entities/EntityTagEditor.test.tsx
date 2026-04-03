@@ -8,7 +8,10 @@ import { server } from "../../test/mocks/server";
 // This import WILL fail — component does not exist yet (red state).
 import { EntityTagEditor } from "./EntityTagEditor";
 // Type imports are erased at runtime; they do not cause red state by themselves.
-import type { EntityTagCreateRequest, EntityTagResponse } from "../../types/api";
+import type {
+  EntityTagCreateRequest,
+  EntityTagResponse,
+} from "../../types/api";
 
 // Mock antd — Tag with optional close button, Form, Input, Button, Space, Typography, Spin
 vi.mock("antd", () => ({
@@ -20,7 +23,11 @@ vi.mock("antd", () => ({
       <span>{children}</span>
     ),
   },
-  Spin: ({ size }: { size?: string }) => <div data-testid="spinner" data-size={size}>Loading</div>,
+  Spin: ({ size }: { size?: string }) => (
+    <div data-testid="spinner" data-size={size}>
+      Loading
+    </div>
+  ),
   Tag: ({
     children,
     closable,
@@ -33,7 +40,11 @@ vi.mock("antd", () => ({
     <span>
       {children}
       {closable && (
-        <button className="ant-tag-close-icon" onClick={onClose} aria-label="remove-tag">
+        <button
+          className="ant-tag-close-icon"
+          onClick={onClose}
+          aria-label="remove-tag"
+        >
           x
         </button>
       )}
@@ -57,7 +68,8 @@ vi.mock("antd", () => ({
             e.preventDefault();
             if (!onFinish) return;
             const values: Record<string, string> = {};
-            const items = ref.current?.querySelectorAll<HTMLElement>("[data-name]");
+            const items =
+              ref.current?.querySelectorAll<HTMLElement>("[data-name]");
             items?.forEach((item) => {
               const name = item.getAttribute("data-name");
               const input = item.querySelector("input");
@@ -85,7 +97,9 @@ vi.mock("antd", () => ({
           resetFields: vi.fn(),
           setFieldsValue: vi.fn(),
           getFieldValue: vi.fn(),
-          validateFields: vi.fn().mockResolvedValue({ tag_key: "env", tag_value: "prod" }),
+          validateFields: vi
+            .fn()
+            .mockResolvedValue({ tag_key: "env", tag_value: "prod" }),
         },
       ],
     },
@@ -126,9 +140,13 @@ vi.mock("antd", () => ({
       {children}
     </button>
   ),
-  Space: ({ children }: { children: ReactNode; wrap?: boolean; style?: object }) => (
-    <span>{children}</span>
-  ),
+  Space: ({
+    children,
+  }: {
+    children: ReactNode;
+    wrap?: boolean;
+    style?: object;
+  }) => <span>{children}</span>,
   notification: {
     error: vi.fn(),
   },
@@ -171,15 +189,21 @@ beforeEach(() => {
     http.get("/api/v1/tenants/acme/entities/resource/42/tags", () => {
       return HttpResponse.json([entityTagFixture]);
     }),
-    http.post("/api/v1/tenants/acme/entities/resource/42/tags", async ({ request }) => {
-      const body = (await request.json()) as EntityTagCreateRequest;
-      return HttpResponse.json({
-        ...body,
-        entity_type: "resource",
-        entity_id: "42",
-        created_at: null,
-      }, { status: 201 });
-    }),
+    http.post(
+      "/api/v1/tenants/acme/entities/resource/42/tags",
+      async ({ request }) => {
+        const body = (await request.json()) as EntityTagCreateRequest;
+        return HttpResponse.json(
+          {
+            ...body,
+            entity_type: "resource",
+            entity_id: "42",
+            created_at: null,
+          },
+          { status: 201 },
+        );
+      },
+    ),
     http.delete("/api/v1/tenants/acme/entities/resource/42/tags/:key", () => {
       return new HttpResponse(null, { status: 204 });
     }),
@@ -201,17 +225,23 @@ describe("EntityTagEditor", () => {
     let capturedBody: EntityTagCreateRequest | undefined;
 
     server.use(
-      http.post("/api/v1/tenants/acme/entities/resource/42/tags", async ({ request }) => {
-        capturedBody = (await request.json()) as EntityTagCreateRequest;
-        return HttpResponse.json({
-          entity_type: "resource",
-          entity_id: "42",
-          tag_key: capturedBody.tag_key,
-          tag_value: capturedBody.tag_value,
-          created_by: capturedBody.created_by,
-          created_at: null,
-        }, { status: 201 });
-      }),
+      http.post(
+        "/api/v1/tenants/acme/entities/resource/42/tags",
+        async ({ request }) => {
+          capturedBody = (await request.json()) as EntityTagCreateRequest;
+          return HttpResponse.json(
+            {
+              entity_type: "resource",
+              entity_id: "42",
+              tag_key: capturedBody.tag_key,
+              tag_value: capturedBody.tag_value,
+              created_by: capturedBody.created_by,
+              created_at: null,
+            },
+            { status: 201 },
+          );
+        },
+      ),
     );
 
     render(
@@ -222,8 +252,12 @@ describe("EntityTagEditor", () => {
       expect(screen.getByPlaceholderText("Key")).toBeTruthy();
     });
 
-    fireEvent.change(screen.getByPlaceholderText("Key"), { target: { value: "team" } });
-    fireEvent.change(screen.getByPlaceholderText("Value"), { target: { value: "platform" } });
+    fireEvent.change(screen.getByPlaceholderText("Key"), {
+      target: { value: "team" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("Value"), {
+      target: { value: "platform" },
+    });
     fireEvent.click(screen.getByText("Add"));
 
     await waitFor(() => {
@@ -243,10 +277,13 @@ describe("EntityTagEditor", () => {
         refetchCount += 1;
         return HttpResponse.json(refetchCount === 1 ? [entityTagFixture] : []);
       }),
-      http.delete("/api/v1/tenants/acme/entities/resource/42/tags/:key", ({ params }) => {
-        deletedKey = params.key as string;
-        return new HttpResponse(null, { status: 204 });
-      }),
+      http.delete(
+        "/api/v1/tenants/acme/entities/resource/42/tags/:key",
+        ({ params }) => {
+          deletedKey = params.key as string;
+          return new HttpResponse(null, { status: 204 });
+        },
+      ),
     );
 
     render(
@@ -302,8 +339,12 @@ describe("EntityTagEditor", () => {
       expect(screen.getByPlaceholderText("Key")).toBeTruthy();
     });
 
-    fireEvent.change(screen.getByPlaceholderText("Key"), { target: { value: "env" } });
-    fireEvent.change(screen.getByPlaceholderText("Value"), { target: { value: "prod" } });
+    fireEvent.change(screen.getByPlaceholderText("Key"), {
+      target: { value: "env" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("Value"), {
+      target: { value: "prod" },
+    });
     fireEvent.click(screen.getByText("Add"));
 
     await waitFor(() => {
@@ -317,9 +358,12 @@ describe("EntityTagEditor", () => {
     const { notification } = await import("antd");
 
     server.use(
-      http.delete("/api/v1/tenants/acme/entities/resource/42/tags/:tagKey", () => {
-        return new HttpResponse(null, { status: 500 });
-      }),
+      http.delete(
+        "/api/v1/tenants/acme/entities/resource/42/tags/:tagKey",
+        () => {
+          return new HttpResponse(null, { status: 500 });
+        },
+      ),
     );
 
     render(

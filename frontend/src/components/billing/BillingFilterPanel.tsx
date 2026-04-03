@@ -43,7 +43,9 @@ export function BillingFilterPanel({
       .then((resources) => {
         setResourceOptions(
           resources.items.map((r) => ({
-            label: r.display_name ? `${r.display_name} (${r.resource_id})` : r.resource_id,
+            label: r.display_name
+              ? `${r.display_name} (${r.resource_id})`
+              : r.resource_id,
             value: r.resource_id,
           })),
         );
@@ -95,7 +97,9 @@ export function BillingFilterPanel({
         <Select
           placeholder="Any resource"
           value={filters.resource_id ?? undefined}
-          onChange={(val: string | undefined) => onChange("resource_id", val ?? null)}
+          onChange={(val: string | undefined) =>
+            onChange("resource_id", val ?? null)
+          }
           options={resourceOptions}
           showSearch
           allowClear
@@ -108,7 +112,9 @@ export function BillingFilterPanel({
       <Form.Item label="Timezone">
         <Select
           value={filters.timezone ?? undefined}
-          onChange={(val: string | undefined) => onChange("timezone", val ?? null)}
+          onChange={(val: string | undefined) =>
+            onChange("timezone", val ?? null)
+          }
           options={TIMEZONE_OPTIONS}
           showSearch
           filterOption={filterByLabel}

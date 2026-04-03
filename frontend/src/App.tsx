@@ -19,6 +19,7 @@ import { ResourceListPage } from "./pages/resources/list";
 import { IdentityListPage } from "./pages/identities/list";
 import { PipelineStatusPage } from "./pages/pipeline/status";
 import { TagManagementPage } from "./pages/tags/list";
+import { TopicAttributionPage } from "./pages/topicAttributions/list";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -44,6 +45,7 @@ export function App(): React.JSX.Element {
                 dataProvider={dataProvider}
                 notificationProvider={useNotificationProvider}
                 resources={[
+                  { name: "topic-attributions", list: "/topic-attributions" },
                   { name: "chargebacks", list: "/chargebacks" },
                   { name: "billing", list: "/billing" },
                   { name: "resources", list: "/resources" },
@@ -57,7 +59,14 @@ export function App(): React.JSX.Element {
                   <Routes>
                     <Route path="/" element={<DashboardPage />} />
                     <Route path="/dashboard" element={<CostDashboardPage />} />
-                    <Route path="/chargebacks" element={<ChargebackListPage />} />
+                    <Route
+                      path="/topic-attributions"
+                      element={<TopicAttributionPage />}
+                    />
+                    <Route
+                      path="/chargebacks"
+                      element={<ChargebackListPage />}
+                    />
                     <Route path="/billing" element={<BillingListPage />} />
                     <Route path="/resources" element={<ResourceListPage />} />
                     <Route path="/identities" element={<IdentityListPage />} />
@@ -67,7 +76,9 @@ export function App(): React.JSX.Element {
                 </AppLayout>
               </Refine>
             </TenantProvider>
-            {import.meta.env.DEV && <ReactQueryDevtools initialIsOpen={false} />}
+            {import.meta.env.DEV && (
+              <ReactQueryDevtools initialIsOpen={false} />
+            )}
           </QueryClientProvider>
         </AntApp>
       </ConfigProvider>

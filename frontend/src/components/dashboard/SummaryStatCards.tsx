@@ -9,7 +9,11 @@ interface SummaryStatCardsProps {
   error?: string | null;
 }
 
-export function SummaryStatCards({ data, isLoading, error }: SummaryStatCardsProps): React.JSX.Element {
+export function SummaryStatCards({
+  data,
+  isLoading,
+  error,
+}: SummaryStatCardsProps): React.JSX.Element {
   const total = data ? parseFloat(data.total_amount) : 0;
   const usage = data ? parseFloat(data.usage_amount) : 0;
   const shared = data ? parseFloat(data.shared_amount) : 0;
@@ -28,7 +32,10 @@ export function SummaryStatCards({ data, isLoading, error }: SummaryStatCardsPro
             {isLoading ? (
               <Skeleton active paragraph={false} />
             ) : (
-              <Statistic title={title} value={error ? "—" : formatCurrency(value)} />
+              <Statistic
+                title={title}
+                value={error ? "—" : formatCurrency(value)}
+              />
             )}
           </Card>
         </Col>

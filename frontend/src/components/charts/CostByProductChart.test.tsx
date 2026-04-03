@@ -46,7 +46,10 @@ function makeBucket(productType: string, amount: string): AggregationBucket {
 
 describe("CostByProductChart", () => {
   it("delegates to DimensionPieChart in pie mode", () => {
-    const data = [makeBucket("kafka", "100.00"), makeBucket("connect", "50.00")];
+    const data = [
+      makeBucket("kafka", "100.00"),
+      makeBucket("connect", "50.00"),
+    ];
     render(<CostByProductChart data={data} />);
     expect(screen.getByTestId("dimension-pie-chart")).toBeInTheDocument();
     expect(screen.queryByTestId("echarts")).toBeNull();

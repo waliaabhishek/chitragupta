@@ -7,7 +7,13 @@ import type {
 } from "ag-grid-community";
 import { AgGridReact } from "ag-grid-react";
 import { Popconfirm, Button, notification } from "antd";
-import { type MutableRefObject, useMemo, useCallback, useEffect, useRef } from "react";
+import {
+  type MutableRefObject,
+  useMemo,
+  useCallback,
+  useEffect,
+  useRef,
+} from "react";
 import { API_URL } from "../../config";
 import type { EntityTagResponse, PaginatedResponse } from "../../types/api";
 import { gridTheme, defaultColDef } from "../../utils/gridDefaults";
@@ -64,7 +70,9 @@ function createDatasource(
   return {
     getRows: (params: IGetRowsParams) => {
       const page = Math.floor(params.startRow / 100) + 1;
-      const url = new URL(`${window.location.origin}${API_URL}/tenants/${tenantName}/tags`);
+      const url = new URL(
+        `${window.location.origin}${API_URL}/tenants/${tenantName}/tags`,
+      );
       url.searchParams.set("page", String(page));
       url.searchParams.set("page_size", "100");
       for (const [k, v] of Object.entries(queryParams)) {
@@ -88,7 +96,11 @@ function createDatasource(
   };
 }
 
-export function TagsGrid({ tenantName, queryParams, isReadOnly }: TagsGridProps): React.JSX.Element {
+export function TagsGrid({
+  tenantName,
+  queryParams,
+  isReadOnly,
+}: TagsGridProps): React.JSX.Element {
   const gridRef = useRef<AgGridReact>(null);
   const abortControllerRef = useRef(new AbortController());
 
@@ -155,7 +167,11 @@ export function TagsGrid({ tenantName, queryParams, isReadOnly }: TagsGridProps)
               headerName: "Actions",
               width: 100,
               cellRenderer: (props: { data: EntityTagResponse | undefined }) =>
-                DeleteCellRenderer({ ...props, tenantName, onDeleted: handleDeleted }),
+                DeleteCellRenderer({
+                  ...props,
+                  tenantName,
+                  onDeleted: handleDeleted,
+                }),
             },
           ]
         : []),

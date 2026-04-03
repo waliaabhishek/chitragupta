@@ -81,7 +81,9 @@ const MOCK_FILTERS: ChargebackFilters = {
 
 describe("AllocationIssuesTable (AG Grid)", () => {
   it("renders all 8 expected column headers", () => {
-    render(<AllocationIssuesTable tenantName="test-tenant" filters={MOCK_FILTERS} />);
+    render(
+      <AllocationIssuesTable tenantName="test-tenant" filters={MOCK_FILTERS} />,
+    );
 
     const expectedColumns = [
       "Ecosystem",
@@ -101,7 +103,9 @@ describe("AllocationIssuesTable (AG Grid)", () => {
   });
 
   it("uses infinite row model with cacheBlockSize=100", () => {
-    render(<AllocationIssuesTable tenantName="test-tenant" filters={MOCK_FILTERS} />);
+    render(
+      <AllocationIssuesTable tenantName="test-tenant" filters={MOCK_FILTERS} />,
+    );
 
     const grid = screen.getByTestId("ag-grid");
     expect(grid.getAttribute("data-rowmodel")).toBe("infinite");
@@ -109,9 +113,13 @@ describe("AllocationIssuesTable (AG Grid)", () => {
   });
 
   it("resource_id column has a valueFormatter that returns dash for null", () => {
-    render(<AllocationIssuesTable tenantName="test-tenant" filters={MOCK_FILTERS} />);
+    render(
+      <AllocationIssuesTable tenantName="test-tenant" filters={MOCK_FILTERS} />,
+    );
 
-    const resourceCol = gridCapture.columnDefs?.find((c) => c.field === "resource_id");
+    const resourceCol = gridCapture.columnDefs?.find(
+      (c) => c.field === "resource_id",
+    );
     expect(resourceCol).toBeDefined();
     expect(resourceCol?.valueFormatter?.({ value: null })).toBe("—");
     expect(resourceCol?.valueFormatter?.({ value: "lkc-123" })).toBe("lkc-123");
@@ -128,16 +136,27 @@ describe("AllocationIssuesTable (AG Grid)", () => {
       timezone: "UTC",
     };
 
-    render(<AllocationIssuesTable tenantName="acme" filters={filtersWithValues} />);
+    render(
+      <AllocationIssuesTable tenantName="acme" filters={filtersWithValues} />,
+    );
 
     expect(gridCapture.datasource).not.toBeNull();
 
     // Mock fetch to verify the URL
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
-      new Response(JSON.stringify({ items: [], total: 0, page: 1, page_size: 100, pages: 0 }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      }),
+      new Response(
+        JSON.stringify({
+          items: [],
+          total: 0,
+          page: 1,
+          page_size: 100,
+          pages: 0,
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
     );
 
     const successCallback = vi.fn();

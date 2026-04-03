@@ -87,10 +87,13 @@ describe("dataProvider.update", () => {
     const { server } = await import("../test/mocks/server");
     const { http, HttpResponse } = await import("msw");
     server.use(
-      http.patch("/api/v1/tenants/:tenant/chargebacks/:id", async ({ request }) => {
-        const body = await request.json();
-        return HttpResponse.json(body);
-      }),
+      http.patch(
+        "/api/v1/tenants/:tenant/chargebacks/:id",
+        async ({ request }) => {
+          const body = await request.json();
+          return HttpResponse.json(body);
+        },
+      ),
     );
     const variables = { amount: "20.00" };
     const result = await dataProvider.update({
@@ -120,8 +123,9 @@ describe("fetchJson error handling", () => {
     const { http, HttpResponse } = await import("msw");
 
     server.use(
-      http.get("/api/v1/tenants/acme/chargebacks", () =>
-        new HttpResponse(null, { status: 404, statusText: "Not Found" }),
+      http.get(
+        "/api/v1/tenants/acme/chargebacks",
+        () => new HttpResponse(null, { status: 404, statusText: "Not Found" }),
       ),
     );
 

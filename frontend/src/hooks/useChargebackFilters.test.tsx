@@ -10,15 +10,17 @@ import { describe, expect, it } from "vitest";
 import { useChargebackFilters } from "./useChargebackFilters";
 
 function wrapper({ children }: { children: ReactNode }): React.JSX.Element {
-  return (
-    <MemoryRouter>
-      {children}
-    </MemoryRouter>
-  );
+  return <MemoryRouter>{children}</MemoryRouter>;
 }
 
-function makeWrapper(initialSearch = ""): ({ children }: { children: ReactNode }) => React.JSX.Element {
-  return function Wrapper({ children }: { children: ReactNode }): React.JSX.Element {
+function makeWrapper(
+  initialSearch = "",
+): ({ children }: { children: ReactNode }) => React.JSX.Element {
+  return function Wrapper({
+    children,
+  }: {
+    children: ReactNode;
+  }): React.JSX.Element {
     return createElement(
       MemoryRouter,
       { initialEntries: [`/${initialSearch}`] },
@@ -31,7 +33,9 @@ describe("useChargebackFilters — object reference stability (GAP-100)", () => 
   it("returns the same filters object reference across re-renders when searchParams have not changed", () => {
     // Verification item 4: filters must be memoized so that downstream useMemo/useEffect
     // deps that reference `filters` are not invalidated on every parent re-render.
-    const { result, rerender } = renderHook(() => useChargebackFilters(), { wrapper });
+    const { result, rerender } = renderHook(() => useChargebackFilters(), {
+      wrapper,
+    });
 
     const firstRef = result.current.filters;
     rerender();
@@ -44,7 +48,9 @@ describe("useChargebackFilters — object reference stability (GAP-100)", () => 
   it("returns queryParams as a stable memoized value on the return object", () => {
     // Verification item 5: queryParams must be a memoized value (not a function call result)
     // so that ChargebackGrid and ExportButton receive a stable reference in JSX.
-    const { result, rerender } = renderHook(() => useChargebackFilters(), { wrapper });
+    const { result, rerender } = renderHook(() => useChargebackFilters(), {
+      wrapper,
+    });
 
     // FAILS in red state: queryParams is not in the current return type at all.
     expect(result.current.queryParams).toBeDefined();

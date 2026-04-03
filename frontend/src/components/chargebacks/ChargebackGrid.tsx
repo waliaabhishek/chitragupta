@@ -2,7 +2,15 @@ import type React from "react";
 import type { ColDef, IDatasource, IGetRowsParams } from "ag-grid-community";
 import { AgGridReact } from "ag-grid-react";
 import { Tag } from "antd";
-import { type MutableRefObject, type Ref, useMemo, useCallback, useEffect, useRef, useImperativeHandle } from "react";
+import {
+  type MutableRefObject,
+  type Ref,
+  useMemo,
+  useCallback,
+  useEffect,
+  useRef,
+  useImperativeHandle,
+} from "react";
 import { API_URL } from "../../config";
 import type { ChargebackResponse, PaginatedResponse } from "../../types/api";
 import { gridTheme, defaultColDef } from "../../utils/gridDefaults";
@@ -15,7 +23,9 @@ interface ChargebackGridProps {
   ref?: Ref<AgGridReact>;
 }
 
-function TagsCellRenderer(props: { value: Record<string, string> }): React.JSX.Element {
+function TagsCellRenderer(props: {
+  value: Record<string, string>;
+}): React.JSX.Element {
   const entries = Object.entries(props.value ?? {});
   const maxVisible = 2;
   const visible = entries.slice(0, maxVisible);
@@ -49,7 +59,12 @@ const columnDefs: ColDef[] = [
     valueFormatter: currencyFormatter,
     width: 110,
   },
-  { field: "tags", headerName: "Tags", cellRenderer: TagsCellRenderer, flex: 1 },
+  {
+    field: "tags",
+    headerName: "Tags",
+    cellRenderer: TagsCellRenderer,
+    flex: 1,
+  },
 ];
 
 function createDatasource(
@@ -91,7 +106,10 @@ function createDatasource(
 }
 
 export function ChargebackGrid({
-  tenantName, filters, onRowClick, ref,
+  tenantName,
+  filters,
+  onRowClick,
+  ref,
 }: ChargebackGridProps): React.JSX.Element {
   const internalRef = useRef<AgGridReact>(null);
   const abortControllerRef = useRef(new AbortController());

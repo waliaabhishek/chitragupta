@@ -10,6 +10,16 @@ export interface ChargebackFilters {
   tag_value: string | null;
 }
 
+export interface TopicAttributionFilters {
+  start_date: string | null; // YYYY-MM-DD
+  end_date: string | null;
+  cluster_resource_id: string | null;
+  topic_name: string | null;
+  product_type: string | null;
+  attribution_method: string | null;
+  timezone: string | null;
+}
+
 export interface BillingFilters {
   start_date: string | null; // YYYY-MM-DD
   end_date: string | null;

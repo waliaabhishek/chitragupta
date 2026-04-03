@@ -35,7 +35,8 @@ export function useTheme(): UseThemeReturn {
 
   return {
     isDark: mode === "dark",
-    algorithm: mode === "dark" ? antTheme.darkAlgorithm : antTheme.defaultAlgorithm,
+    algorithm:
+      mode === "dark" ? antTheme.darkAlgorithm : antTheme.defaultAlgorithm,
     toggleTheme,
   };
 }

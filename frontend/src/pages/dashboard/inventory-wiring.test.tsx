@@ -104,7 +104,9 @@ vi.mock("../../components/charts/ProductChartTypeToggle", () => ({
 }));
 
 vi.mock("../../components/dashboard/AllocationIssuesTable", () => ({
-  AllocationIssuesTable: vi.fn(() => <div data-testid="allocation-issues-table" />),
+  AllocationIssuesTable: vi.fn(() => (
+    <div data-testid="allocation-issues-table" />
+  )),
 }));
 
 // Partial antd mock — includes all components used by InventoryCounters
@@ -152,7 +154,9 @@ vi.mock("antd", () => ({
   ),
   Radio: {
     Group: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-    Button: ({ children }: { children: ReactNode }) => <button>{children}</button>,
+    Button: ({ children }: { children: ReactNode }) => (
+      <button>{children}</button>
+    ),
   },
 }));
 
@@ -162,9 +166,7 @@ function wrapper({ children }: { children: ReactNode }): React.JSX.Element {
   });
   return (
     <QueryClientProvider client={testQueryClient}>
-      <MemoryRouter>
-        {children}
-      </MemoryRouter>
+      <MemoryRouter>{children}</MemoryRouter>
     </QueryClientProvider>
   );
 }
@@ -206,8 +208,8 @@ describe("InventoryCounters wiring integration", () => {
     const values = screen
       .getAllByTestId("statistic-value")
       .map((el) => el.textContent);
-    expect(values).toContain("5");   // kafka_cluster total
-    expect(values).toContain("3");   // connector total
-    expect(values).toContain("12");  // service_account total
+    expect(values).toContain("5"); // kafka_cluster total
+    expect(values).toContain("3"); // connector total
+    expect(values).toContain("12"); // service_account total
   });
 });

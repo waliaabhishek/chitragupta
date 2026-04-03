@@ -16,7 +16,11 @@ function createTestQueryClient() {
 function createWrapper() {
   const queryClient = createTestQueryClient();
   return function Wrapper({ children }: { children: ReactNode }) {
-    return createElement(QueryClientProvider, { client: queryClient }, children);
+    return createElement(
+      QueryClientProvider,
+      { client: queryClient },
+      children,
+    );
   };
 }
 
@@ -37,7 +41,9 @@ const MOCK_SUMMARY = {
 
 describe("useInventorySummary", () => {
   it("starts in loading state", () => {
-    const { result } = renderHook(() => useInventorySummary(BASE_PARAMS), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useInventorySummary(BASE_PARAMS), {
+      wrapper: createWrapper(),
+    });
     expect(result.current.isLoading).toBe(true);
     expect(result.current.data).toBeNull();
     expect(result.current.error).toBeNull();
@@ -50,7 +56,9 @@ describe("useInventorySummary", () => {
       ),
     );
 
-    const { result } = renderHook(() => useInventorySummary(BASE_PARAMS), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useInventorySummary(BASE_PARAMS), {
+      wrapper: createWrapper(),
+    });
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
     expect(result.current.data?.resource_counts).toEqual({
@@ -71,7 +79,9 @@ describe("useInventorySummary", () => {
       ),
     );
 
-    const { result } = renderHook(() => useInventorySummary(BASE_PARAMS), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useInventorySummary(BASE_PARAMS), {
+      wrapper: createWrapper(),
+    });
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
     expect(result.current.data?.resource_counts).toEqual({});
@@ -86,7 +96,9 @@ describe("useInventorySummary", () => {
       ),
     );
 
-    const { result } = renderHook(() => useInventorySummary(BASE_PARAMS), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useInventorySummary(BASE_PARAMS), {
+      wrapper: createWrapper(),
+    });
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
     expect(result.current.error).not.toBeNull();
@@ -103,7 +115,9 @@ describe("useInventorySummary", () => {
       }),
     );
 
-    const { result } = renderHook(() => useInventorySummary(BASE_PARAMS), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useInventorySummary(BASE_PARAMS), {
+      wrapper: createWrapper(),
+    });
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
     const countAfterFirst = callCount;
@@ -132,6 +146,8 @@ describe("useInventorySummary", () => {
 
     tenantName = "globex";
     rerender();
-    await waitFor(() => expect(result.current.data?.resource_counts).toEqual({}));
+    await waitFor(() =>
+      expect(result.current.data?.resource_counts).toEqual({}),
+    );
   });
 });

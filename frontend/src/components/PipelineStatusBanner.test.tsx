@@ -75,9 +75,7 @@ describe("PipelineStatusBanner — no_data status", () => {
     render(<PipelineStatusBanner />);
 
     expect(
-      screen.getByText(
-        /This instance does not run the pipeline/i,
-      ),
+      screen.getByText(/This instance does not run the pipeline/i),
     ).toBeInTheDocument();
     expect(
       screen.queryByText(/Waiting for pipeline to run/i),
@@ -119,13 +117,19 @@ describe("PipelineStatusBanner — per-tenant permanent_failure", () => {
     });
     mockUseReadiness.mockReturnValue({
       appStatus: "ready" as AppStatus,
-      readiness: makeReadiness({ status: "ready", mode: "both", tenants: [tenant] }),
+      readiness: makeReadiness({
+        status: "ready",
+        mode: "both",
+        tenants: [tenant],
+      }),
     });
 
     const { container } = render(<PipelineStatusBanner />);
 
     expect(container.firstChild).not.toBeNull();
-    expect(screen.getByText(/acme.*API credentials invalid/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/acme.*API credentials invalid/i),
+    ).toBeInTheDocument();
 
     const alert = container.querySelector(".ant-alert-error");
     expect(alert).not.toBeNull();
@@ -157,9 +161,7 @@ describe("PipelineStatusBanner — all tenants failed", () => {
 
     render(<PipelineStatusBanner />);
 
-    expect(
-      screen.getByText(/Credentials expired/i),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/Credentials expired/i)).toBeInTheDocument();
   });
 });
 
@@ -192,7 +194,11 @@ describe("PipelineStatusBanner — pipeline running stage text (GAP-100 verifica
     });
     mockUseReadiness.mockReturnValue({
       appStatus: "ready" as AppStatus,
-      readiness: makeReadiness({ status: "ready", mode: "both", tenants: [acmeTenant] }),
+      readiness: makeReadiness({
+        status: "ready",
+        mode: "both",
+        tenants: [acmeTenant],
+      }),
     });
 
     render(<PipelineStatusBanner />);

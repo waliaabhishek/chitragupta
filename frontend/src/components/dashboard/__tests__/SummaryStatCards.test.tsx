@@ -36,7 +36,9 @@ vi.mock("antd", () => ({
   },
   Radio: {
     Group: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-    Button: ({ children }: { children: ReactNode }) => <button>{children}</button>,
+    Button: ({ children }: { children: ReactNode }) => (
+      <button>{children}</button>
+    ),
   },
 }));
 
@@ -98,7 +100,9 @@ vi.mock("../../../components/dashboard/InventoryCounters", () => ({
 }));
 
 vi.mock("../../../components/charts/DataAvailabilityTimeline", () => ({
-  DataAvailabilityTimeline: () => <div data-testid="data-availability-timeline" />,
+  DataAvailabilityTimeline: () => (
+    <div data-testid="data-availability-timeline" />
+  ),
 }));
 
 vi.mock("../../../providers/TenantContext", () => ({
@@ -134,23 +138,23 @@ const mockData: AggregationResponse = {
 };
 
 function wrapper({ children }: { children: ReactNode }): React.JSX.Element {
-  return (
-    <MemoryRouter>
-      {children}
-    </MemoryRouter>
-  );
+  return <MemoryRouter>{children}</MemoryRouter>;
 }
 
 describe("SummaryStatCards", () => {
   it("renders Total Cost, Usage Cost, Shared Cost headings with correct formatted values", () => {
     render(<SummaryStatCards data={mockData} isLoading={false} />);
 
-    const titles = screen.getAllByTestId("statistic-title").map((el) => el.textContent);
+    const titles = screen
+      .getAllByTestId("statistic-title")
+      .map((el) => el.textContent);
     expect(titles).toContain("Total Cost");
     expect(titles).toContain("Usage Cost");
     expect(titles).toContain("Shared Cost");
 
-    const values = screen.getAllByTestId("statistic-value").map((el) => el.textContent);
+    const values = screen
+      .getAllByTestId("statistic-value")
+      .map((el) => el.textContent);
     expect(values).toContain("$1,234.56");
     expect(values).toContain("$900.00");
     expect(values).toContain("$334.56");
@@ -167,15 +171,21 @@ describe("SummaryStatCards", () => {
   it("shows $0.00 for all three cards when data=null and not loading", () => {
     render(<SummaryStatCards data={null} isLoading={false} />);
 
-    const values = screen.getAllByTestId("statistic-value").map((el) => el.textContent);
+    const values = screen
+      .getAllByTestId("statistic-value")
+      .map((el) => el.textContent);
     expect(values).toHaveLength(3);
     expect(values.every((v) => v === "$0.00")).toBe(true);
   });
 
   it("shows em dash for all three cards when error is set", () => {
-    render(<SummaryStatCards data={null} isLoading={false} error="some error" />);
+    render(
+      <SummaryStatCards data={null} isLoading={false} error="some error" />,
+    );
 
-    const values = screen.getAllByTestId("statistic-value").map((el) => el.textContent);
+    const values = screen
+      .getAllByTestId("statistic-value")
+      .map((el) => el.textContent);
     expect(values).toHaveLength(3);
     expect(values.every((v) => v === "—")).toBe(true);
   });
@@ -193,16 +203,21 @@ describe("DashboardContent integration", () => {
 
     // Stat card titles must appear before the first chart card in the DOM
     expect(
-      statTitles[0].compareDocumentPosition(chartCards[0]) & Node.DOCUMENT_POSITION_FOLLOWING,
+      statTitles[0].compareDocumentPosition(chartCards[0]) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
   });
 });
 
 describe("SummaryStatCards filter reactivity", () => {
   it("updates displayed values when data changes (simulating filter change)", () => {
-    const { rerender } = render(<SummaryStatCards data={mockData} isLoading={false} />);
+    const { rerender } = render(
+      <SummaryStatCards data={mockData} isLoading={false} />,
+    );
 
-    let values = screen.getAllByTestId("statistic-value").map((el) => el.textContent);
+    let values = screen
+      .getAllByTestId("statistic-value")
+      .map((el) => el.textContent);
     expect(values).toContain("$1,234.56");
     expect(values).toContain("$900.00");
     expect(values).toContain("$334.56");
@@ -217,7 +232,9 @@ describe("SummaryStatCards filter reactivity", () => {
 
     rerender(<SummaryStatCards data={updatedData} isLoading={false} />);
 
-    values = screen.getAllByTestId("statistic-value").map((el) => el.textContent);
+    values = screen
+      .getAllByTestId("statistic-value")
+      .map((el) => el.textContent);
     expect(values).toContain("$500.00");
     expect(values).toContain("$400.00");
     expect(values).toContain("$100.00");

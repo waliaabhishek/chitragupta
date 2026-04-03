@@ -6,8 +6,14 @@ import { createElement } from "react";
 import { afterEach, describe, expect, it } from "vitest";
 import { useChargebackFilters } from "./useChargebackFilters";
 
-function makeWrapper(initialSearch = ""): ({ children }: { children: ReactNode }) => React.JSX.Element {
-  return function Wrapper({ children }: { children: ReactNode }): React.JSX.Element {
+function makeWrapper(
+  initialSearch = "",
+): ({ children }: { children: ReactNode }) => React.JSX.Element {
+  return function Wrapper({
+    children,
+  }: {
+    children: ReactNode;
+  }): React.JSX.Element {
     return createElement(
       MemoryRouter,
       { initialEntries: [`/${initialSearch}`] },
@@ -43,7 +49,9 @@ describe("useChargebackFilters", () => {
 
   it("reads initial values from URL search params", () => {
     const { result } = renderHook(() => useChargebackFilters(), {
-      wrapper: makeWrapper("?start_date=2026-01-01&end_date=2026-01-31&identity_id=user-1"),
+      wrapper: makeWrapper(
+        "?start_date=2026-01-01&end_date=2026-01-31&identity_id=user-1",
+      ),
     });
 
     expect(result.current.filters.start_date).toBe("2026-01-01");
@@ -77,7 +85,9 @@ describe("useChargebackFilters", () => {
 
   it("resetFilters clears all filter params", () => {
     const { result } = renderHook(() => useChargebackFilters(), {
-      wrapper: makeWrapper("?identity_id=user-1&cost_type=usage&product_type=kafka"),
+      wrapper: makeWrapper(
+        "?identity_id=user-1&cost_type=usage&product_type=kafka",
+      ),
     });
 
     act(() => {
@@ -157,7 +167,10 @@ describe("useChargebackFilters", () => {
     });
 
     act(() => {
-      result.current.setFilters({ start_date: "2026-01-01", end_date: "2026-01-31" });
+      result.current.setFilters({
+        start_date: "2026-01-01",
+        end_date: "2026-01-31",
+      });
     });
 
     const stored = JSON.parse(localStorage.getItem("chargeback_date_range")!);
@@ -269,5 +282,40 @@ describe("useChargebackFilters — timezone", () => {
       (result.current.setFilters as any)({ timezone: "Asia/Tokyo" });
     });
     expect(localStorage.getItem("user_timezone")).toBe("Asia/Tokyo");
+  });
+
+  it("setFilter with empty string for timezone clears localStorage", () => {
+    localStorage.setItem("user_timezone", "America/Chicago");
+    const { result } = renderHook(() => useChargebackFilters(), {
+      wrapper: makeWrapper(),
+    });
+    act(() => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (result.current.setFilter as any)("timezone", "");
+    });
+    expect(localStorage.getItem("user_timezone")).toBeNull();
+  });
+
+  it("setFilters with empty string for timezone clears localStorage", () => {
+    localStorage.setItem("user_timezone", "America/Chicago");
+    const { result } = renderHook(() => useChargebackFilters(), {
+      wrapper: makeWrapper(),
+    });
+    act(() => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (result.current.setFilters as any)({ timezone: "" });
+    });
+    expect(localStorage.getItem("user_timezone")).toBeNull();
+  });
+
+  it("setFilters with null value removes the param", () => {
+    const { result } = renderHook(() => useChargebackFilters(), {
+      wrapper: makeWrapper("?identity_id=sa-123"),
+    });
+    act(() => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (result.current.setFilters as any)({ identity_id: null });
+    });
+    expect(result.current.filters.identity_id).toBeNull();
   });
 });

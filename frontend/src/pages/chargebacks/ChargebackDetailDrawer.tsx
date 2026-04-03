@@ -1,5 +1,13 @@
 import type React from "react";
-import { Descriptions, Divider, Drawer, Space, Spin, Tag, Typography } from "antd";
+import {
+  Descriptions,
+  Divider,
+  Drawer,
+  Space,
+  Spin,
+  Tag,
+  Typography,
+} from "antd";
 import { useEffect, useState } from "react";
 import { API_URL } from "../../config";
 import { useTenant } from "../../providers/TenantContext";
@@ -104,7 +112,9 @@ export function ChargebackDetailDrawer({
             ) : (
               <Space wrap>
                 {tagEntries.map(([k, v]) => (
-                  <Tag key={k}>{k}: {v}</Tag>
+                  <Tag key={k}>
+                    {k}: {v}
+                  </Tag>
                 ))}
               </Space>
             );

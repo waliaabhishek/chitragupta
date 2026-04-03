@@ -34,7 +34,7 @@ interface UseChargebackFiltersReturn {
   setFilters: (updates: Partial<ChargebackFilters>) => void;
   resetFilters: () => void;
   toQueryParams: () => Record<string, string>;
-  queryParams: Record<string, string>;   // stable memoized value for render-time use
+  queryParams: Record<string, string>; // stable memoized value for render-time use
 }
 
 export function useChargebackFilters(): UseChargebackFiltersReturn {
@@ -42,10 +42,16 @@ export function useChargebackFilters(): UseChargebackFiltersReturn {
 
   // Cache localStorage read — only re-read when searchParams change (which triggers a
   // re-render anyway). Avoids redundant JSON.parse on every render.
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- searchParams triggers re-read of localStorage when URL changes
-  const storedDates = useMemo(() => loadDatesFromStorage(DATE_STORAGE_KEY), [searchParams]);
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- searchParams triggers re-read of localStorage when URL changes
-  const storedTimezone = useMemo(() => loadTimezoneFromStorage(), [searchParams]);
+  const storedDates = useMemo(
+    () => loadDatesFromStorage(DATE_STORAGE_KEY),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- searchParams triggers re-read of localStorage when URL changes
+    [searchParams],
+  );
+  const storedTimezone = useMemo(
+    () => loadTimezoneFromStorage(),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- searchParams triggers re-read of localStorage when URL changes
+    [searchParams],
+  );
   const spStartDate = searchParams.get("start_date");
   const spEndDate = searchParams.get("end_date");
   const spIdentityId = searchParams.get("identity_id");
@@ -68,9 +74,20 @@ export function useChargebackFilters(): UseChargebackFiltersReturn {
       tag_key: spTagKey,
       tag_value: spTagValue,
     }),
-    [spStartDate, spEndDate, spIdentityId, spProductType, spResourceId, spCostType,
-     spTimezone, storedDates.start_date, storedDates.end_date, storedTimezone,
-     spTagKey, spTagValue],
+    [
+      spStartDate,
+      spEndDate,
+      spIdentityId,
+      spProductType,
+      spResourceId,
+      spCostType,
+      spTimezone,
+      storedDates.start_date,
+      storedDates.end_date,
+      storedTimezone,
+      spTagKey,
+      spTagValue,
+    ],
   );
 
   const setFilter = useCallback(
@@ -92,7 +109,11 @@ export function useChargebackFilters(): UseChargebackFiltersReturn {
         const current = loadDatesFromStorage(DATE_STORAGE_KEY);
         const stored = value === null || value === "" ? null : value;
         const updated = { ...current, [key]: stored };
-        saveDatesToStorage(DATE_STORAGE_KEY, updated.start_date, updated.end_date);
+        saveDatesToStorage(
+          DATE_STORAGE_KEY,
+          updated.start_date,
+          updated.end_date,
+        );
       }
       if (key === "timezone") {
         if (value === null || value === "") {
@@ -127,11 +148,19 @@ export function useChargebackFilters(): UseChargebackFiltersReturn {
         const current = loadDatesFromStorage(DATE_STORAGE_KEY);
         const updated = {
           start_date:
-            "start_date" in updates ? (updates.start_date ?? null) : current.start_date,
+            "start_date" in updates
+              ? (updates.start_date ?? null)
+              : current.start_date,
           end_date:
-            "end_date" in updates ? (updates.end_date ?? null) : current.end_date,
+            "end_date" in updates
+              ? (updates.end_date ?? null)
+              : current.end_date,
         };
-        saveDatesToStorage(DATE_STORAGE_KEY, updated.start_date, updated.end_date);
+        saveDatesToStorage(
+          DATE_STORAGE_KEY,
+          updated.start_date,
+          updated.end_date,
+        );
       }
       if ("timezone" in updates) {
         const tz = updates.timezone;
@@ -178,5 +207,12 @@ export function useChargebackFilters(): UseChargebackFiltersReturn {
     [queryParams],
   );
 
-  return { filters, setFilter, setFilters, resetFilters, toQueryParams, queryParams };
+  return {
+    filters,
+    setFilter,
+    setFilters,
+    resetFilters,
+    toQueryParams,
+    queryParams,
+  };
 }

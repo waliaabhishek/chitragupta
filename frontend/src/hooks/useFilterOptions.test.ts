@@ -22,7 +22,11 @@ function createTestQueryClient() {
 function createWrapper() {
   const queryClient = createTestQueryClient();
   return function Wrapper({ children }: { children: ReactNode }) {
-    return createElement(QueryClientProvider, { client: queryClient }, children);
+    return createElement(
+      QueryClientProvider,
+      { client: queryClient },
+      children,
+    );
   };
 }
 
@@ -121,7 +125,9 @@ const aggregateFixture: AggregationResponse = {
 
 describe("useFilterOptions", () => {
   it("starts in loading state", () => {
-    const { result } = renderHook(() => useFilterOptions("acme", null, null), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useFilterOptions("acme", null, null), {
+      wrapper: createWrapper(),
+    });
     expect(result.current.isLoading).toBe(true);
     expect(result.current.identityOptions).toEqual([]);
     expect(result.current.resourceOptions).toEqual([]);
@@ -142,7 +148,9 @@ describe("useFilterOptions", () => {
       ),
     );
 
-    const { result } = renderHook(() => useFilterOptions("acme", null, null), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useFilterOptions("acme", null, null), {
+      wrapper: createWrapper(),
+    });
 
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
@@ -197,7 +205,9 @@ describe("useFilterOptions", () => {
       ),
     );
 
-    const { result } = renderHook(() => useFilterOptions("acme", null, null), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useFilterOptions("acme", null, null), {
+      wrapper: createWrapper(),
+    });
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
     expect(result.current.productTypeOptions).toHaveLength(2);
@@ -212,7 +222,9 @@ describe("useFilterOptions", () => {
       http.get("/api/v1/tenants/acme/identities", () => HttpResponse.error()),
     );
 
-    const { result } = renderHook(() => useFilterOptions("acme", null, null), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useFilterOptions("acme", null, null), {
+      wrapper: createWrapper(),
+    });
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
     expect(result.current.identityOptions).toEqual([]);
@@ -223,7 +235,9 @@ describe("useFilterOptions", () => {
   it("useFilterOptions_does_not_call_fetch_when_tenantName_is_empty_string", () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch");
 
-    const { result } = renderHook(() => useFilterOptions("", null, null), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useFilterOptions("", null, null), {
+      wrapper: createWrapper(),
+    });
 
     expect(result.current.isLoading).toBe(false);
     expect(result.current.identityOptions).toEqual([]);
@@ -251,7 +265,10 @@ describe("useFilterOptions", () => {
     const { rerender } = renderHook(
       ({ startDate }: { startDate: string | null }) =>
         useFilterOptions("acme", startDate, null),
-      { wrapper: createWrapper(), initialProps: { startDate: null as string | null } },
+      {
+        wrapper: createWrapper(),
+        initialProps: { startDate: null as string | null },
+      },
     );
 
     await waitFor(() => expect(callCount).toBeGreaterThanOrEqual(1));
@@ -280,7 +297,10 @@ describe("useFilterOptions", () => {
     const { rerender } = renderHook(
       ({ endDate }: { endDate: string | null }) =>
         useFilterOptions("acme", null, endDate),
-      { wrapper: createWrapper(), initialProps: { endDate: null as string | null } },
+      {
+        wrapper: createWrapper(),
+        initialProps: { endDate: null as string | null },
+      },
     );
 
     await waitFor(() => expect(callCount).toBeGreaterThanOrEqual(1));
@@ -297,7 +317,9 @@ describe("useFilterOptions", () => {
       ),
     );
 
-    const { result } = renderHook(() => useFilterOptions("acme", null, null), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useFilterOptions("acme", null, null), {
+      wrapper: createWrapper(),
+    });
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
     expect(result.current.error).not.toBeNull();
@@ -312,7 +334,9 @@ describe("useFilterOptions", () => {
       ),
     );
 
-    const { result } = renderHook(() => useFilterOptions("acme", null, null), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useFilterOptions("acme", null, null), {
+      wrapper: createWrapper(),
+    });
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
     expect(result.current.error).not.toBeNull();
@@ -329,7 +353,9 @@ describe("useFilterOptions", () => {
       ),
     );
 
-    const { result } = renderHook(() => useFilterOptions("acme", null, null), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useFilterOptions("acme", null, null), {
+      wrapper: createWrapper(),
+    });
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
     expect(result.current.error).not.toBeNull();
@@ -352,7 +378,9 @@ describe("useFilterOptions", () => {
       }),
     );
 
-    const { unmount } = renderHook(() => useFilterOptions("acme", null, null), { wrapper: createWrapper() });
+    const { unmount } = renderHook(() => useFilterOptions("acme", null, null), {
+      wrapper: createWrapper(),
+    });
 
     // Unmount before the delayed identity fetch resolves
     unmount();

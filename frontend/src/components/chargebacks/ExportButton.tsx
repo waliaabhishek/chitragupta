@@ -10,7 +10,11 @@ interface ExportButtonProps {
   disabled?: boolean;
 }
 
-export function ExportButton({ tenantName, filters, disabled }: ExportButtonProps): React.JSX.Element {
+export function ExportButton({
+  tenantName,
+  filters,
+  disabled,
+}: ExportButtonProps): React.JSX.Element {
   const [loading, setLoading] = useState(false);
 
   const handleExport = async (): Promise<void> => {
@@ -22,7 +26,12 @@ export function ExportButton({ tenantName, filters, disabled }: ExportButtonProp
       if (filters.end_date) body.end_date = filters.end_date;
       if (filters.timezone) body.timezone = filters.timezone;
 
-      const filterKeys = ["identity_id", "product_type", "resource_id", "cost_type"] as const;
+      const filterKeys = [
+        "identity_id",
+        "product_type",
+        "resource_id",
+        "cost_type",
+      ] as const;
       const activeFilters: Record<string, string> = {};
       for (const key of filterKeys) {
         if (filters[key]) {

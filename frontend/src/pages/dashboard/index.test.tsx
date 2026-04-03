@@ -13,45 +13,69 @@ vi.mock("echarts-for-react", () => ({
 
 // Mock chart components to avoid deep ECharts rendering
 vi.mock("../../components/charts/ProductChartTypeToggle", () => ({
-  ProductChartTypeToggle: vi.fn(() => <div data-testid="product-chart-type-toggle" />),
+  ProductChartTypeToggle: vi.fn(() => (
+    <div data-testid="product-chart-type-toggle" />
+  )),
 }));
 vi.mock("../../components/charts/CostTrendChart", () => ({
   CostTrendChart: vi.fn(() => <div data-testid="cost-trend-chart" />),
 }));
 vi.mock("../../components/charts/CostByIdentityChart", () => ({
-  CostByIdentityChart: vi.fn(() => <div data-testid="cost-by-identity-chart" />),
+  CostByIdentityChart: vi.fn(() => (
+    <div data-testid="cost-by-identity-chart" />
+  )),
 }));
 vi.mock("../../components/charts/CostByProductChart", () => ({
   CostByProductChart: vi.fn(() => <div data-testid="cost-by-product-chart" />),
 }));
 vi.mock("../../components/charts/CostByResourceChart", () => ({
-  CostByResourceChart: vi.fn(() => <div data-testid="cost-by-resource-chart" />),
+  CostByResourceChart: vi.fn(() => (
+    <div data-testid="cost-by-resource-chart" />
+  )),
 }));
 vi.mock("../../components/charts/DimensionPieChart", () => ({
   DimensionPieChart: vi.fn(() => <div data-testid="dimension-pie-chart" />),
 }));
 vi.mock("../../components/charts/DataAvailabilityTimeline", () => ({
-  DataAvailabilityTimeline: vi.fn(() => <div data-testid="data-availability-timeline" />),
+  DataAvailabilityTimeline: vi.fn(() => (
+    <div data-testid="data-availability-timeline" />
+  )),
 }));
 
 // Mock FilterPanel — expose onRefresh so tests can trigger it
 vi.mock("../../components/chargebacks/FilterPanel", () => ({
-  FilterPanel: vi.fn(({ onReset, onRefresh }: { onReset: () => void; onRefresh?: () => void }) => (
-    <div data-testid="filter-panel">
-      <button onClick={onReset}>Reset</button>
-      {onRefresh !== undefined && (
-        <button data-testid="filter-refresh" onClick={onRefresh}>
-          Refresh Data
-        </button>
-      )}
-    </div>
-  )),
+  FilterPanel: vi.fn(
+    ({
+      onReset,
+      onRefresh,
+    }: {
+      onReset: () => void;
+      onRefresh?: () => void;
+    }) => (
+      <div data-testid="filter-panel">
+        <button onClick={onReset}>Reset</button>
+        {onRefresh !== undefined && (
+          <button data-testid="filter-refresh" onClick={onRefresh}>
+            Refresh Data
+          </button>
+        )}
+      </div>
+    ),
+  ),
 }));
 
 // Mock ChartCard — just render children
 vi.mock("../../components/charts/ChartCard", () => ({
   ChartCard: vi.fn(
-    ({ title, children, loading }: { title: string; children: ReactNode; loading?: boolean }) =>
+    ({
+      title,
+      children,
+      loading,
+    }: {
+      title: string;
+      children: ReactNode;
+      loading?: boolean;
+    }) =>
       loading ? (
         <div data-testid="chart-card-loading">{title}</div>
       ) : (
@@ -96,19 +120,32 @@ vi.mock("../../components/dashboard/InventoryCounters", () => ({
 }));
 
 vi.mock("../../components/dashboard/AllocationIssuesTable", () => ({
-  AllocationIssuesTable: vi.fn(() => <div data-testid="allocation-issues-table" />),
+  AllocationIssuesTable: vi.fn(() => (
+    <div data-testid="allocation-issues-table" />
+  )),
 }));
 
 // Mock antd
 vi.mock("antd", () => ({
   Typography: {
-    Title: ({ children }: { children: ReactNode; level?: number }) => <h3>{children}</h3>,
-    Text: ({ children }: { children: ReactNode; type?: string }) => <span>{children}</span>,
+    Title: ({ children }: { children: ReactNode; level?: number }) => (
+      <h3>{children}</h3>
+    ),
+    Text: ({ children }: { children: ReactNode; type?: string }) => (
+      <span>{children}</span>
+    ),
   },
-  Row: ({ children }: { children: ReactNode; gutter?: number | number[] }) => <div>{children}</div>,
-  Col: ({ children }: { children: ReactNode; span?: number; xs?: number; md?: number }) => (
+  Row: ({ children }: { children: ReactNode; gutter?: number | number[] }) => (
     <div>{children}</div>
   ),
+  Col: ({
+    children,
+  }: {
+    children: ReactNode;
+    span?: number;
+    xs?: number;
+    md?: number;
+  }) => <div>{children}</div>,
   Card: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   Skeleton: () => <div data-testid="skeleton" />,
   Statistic: ({ title, value }: { title: string; value: string | number }) => (
@@ -179,11 +216,7 @@ vi.mock("../../hooks/useChargebackFilters", () => ({
 }));
 
 function wrapper({ children }: { children: ReactNode }): React.JSX.Element {
-  return (
-    <MemoryRouter>
-      {children}
-    </MemoryRouter>
-  );
+  return <MemoryRouter>{children}</MemoryRouter>;
 }
 
 describe("CostDashboardPage", () => {
@@ -207,7 +240,9 @@ describe("CostDashboardPage", () => {
   it("shows placeholder when no tenant selected", () => {
     render(<CostDashboardPage />, { wrapper });
     expect(screen.getByText("Cost Dashboard")).toBeInTheDocument();
-    expect(screen.getByText("Select a tenant to view cost analytics.")).toBeInTheDocument();
+    expect(
+      screen.getByText("Select a tenant to view cost analytics."),
+    ).toBeInTheDocument();
     expect(screen.queryByTestId("filter-panel")).toBeNull();
     expect(screen.queryByTestId("time-bucket-selector")).toBeNull();
     expect(screen.queryByText("Cost Trend Over Time")).toBeNull();
@@ -234,7 +269,9 @@ describe("CostDashboardPage", () => {
 
     expect(screen.getByTestId("inventory-counters")).toBeInTheDocument();
     expect(screen.getByText("Data Availability")).toBeInTheDocument();
-    expect(screen.getByTestId("data-availability-timeline")).toBeInTheDocument();
+    expect(
+      screen.getByTestId("data-availability-timeline"),
+    ).toBeInTheDocument();
     expect(screen.getByText("Cost Trend Over Time")).toBeInTheDocument();
     expect(screen.getByText("Cost by Identity")).toBeInTheDocument();
     expect(screen.getByText("Cost by Environment")).toBeInTheDocument();
@@ -289,7 +326,8 @@ describe("CostDashboardPage", () => {
       isReadOnly: false,
     });
 
-    const { useChargebackFilters } = await import("../../hooks/useChargebackFilters");
+    const { useChargebackFilters } =
+      await import("../../hooks/useChargebackFilters");
     vi.mocked(useChargebackFilters).mockReturnValue({
       filters: {
         start_date: "2026-01-01",
@@ -336,7 +374,8 @@ describe("CostDashboardPage", () => {
       isReadOnly: false,
     });
 
-    const { useChargebackFilters } = await import("../../hooks/useChargebackFilters");
+    const { useChargebackFilters } =
+      await import("../../hooks/useChargebackFilters");
     vi.mocked(useChargebackFilters).mockReturnValue({
       filters: {
         start_date: "2026-01-01",
@@ -388,9 +427,13 @@ describe("CostDashboardPage", () => {
       expect(screen.getByTestId("time-bucket-selector")).toBeInTheDocument();
     });
 
-    expect(screen.getByTestId("time-bucket-selector").getAttribute("data-value")).toBe("day");
+    expect(
+      screen.getByTestId("time-bucket-selector").getAttribute("data-value"),
+    ).toBe("day");
     await userEvent.click(screen.getByTestId("select-week"));
-    expect(screen.getByTestId("time-bucket-selector").getAttribute("data-value")).toBe("week");
+    expect(
+      screen.getByTestId("time-bucket-selector").getAttribute("data-value"),
+    ).toBe("week");
   });
 
   it("passes onRefresh to FilterPanel and remounts DashboardContent on click", async () => {
@@ -424,6 +467,8 @@ describe("CostDashboardPage", () => {
     await userEvent.click(screen.getByTestId("filter-refresh"));
 
     // DashboardContent remount triggers useAggregation calls again
-    expect(vi.mocked(useAggregation).mock.calls.length).toBeGreaterThan(callsAfterMount);
+    expect(vi.mocked(useAggregation).mock.calls.length).toBeGreaterThan(
+      callsAfterMount,
+    );
   });
 });

@@ -41,7 +41,9 @@ describe("CostByIdentityChart", () => {
     ];
     render(<CostByIdentityChart data={data} topN={3} />);
     const chart = screen.getByTestId("echarts");
-    const yAxis = JSON.parse(chart.getAttribute("data-yaxis") ?? "[]") as string[];
+    const yAxis = JSON.parse(
+      chart.getAttribute("data-yaxis") ?? "[]",
+    ) as string[];
     // Reversed so highest is at top (last in yAxis array for horizontal bar)
     expect(yAxis[yAxis.length - 1]).toBe("user-expensive");
   });
@@ -52,15 +54,21 @@ describe("CostByIdentityChart", () => {
     );
     render(<CostByIdentityChart data={data} topN={5} />);
     const chart = screen.getByTestId("echarts");
-    const yAxis = JSON.parse(chart.getAttribute("data-yaxis") ?? "[]") as string[];
+    const yAxis = JSON.parse(
+      chart.getAttribute("data-yaxis") ?? "[]",
+    ) as string[];
     expect(yAxis).toHaveLength(5);
   });
 
   it("renders empty state for empty data with no bars", () => {
     render(<CostByIdentityChart data={[]} />);
     const chart = screen.getByTestId("echarts");
-    const yAxis = JSON.parse(chart.getAttribute("data-yaxis") ?? "[]") as string[];
-    const series = JSON.parse(chart.getAttribute("data-series") ?? "[]") as number[];
+    const yAxis = JSON.parse(
+      chart.getAttribute("data-yaxis") ?? "[]",
+    ) as string[];
+    const series = JSON.parse(
+      chart.getAttribute("data-series") ?? "[]",
+    ) as number[];
     expect(yAxis).toHaveLength(0);
     expect(series).toHaveLength(0);
   });

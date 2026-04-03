@@ -1,12 +1,23 @@
 import type React from "react";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { http, HttpResponse } from "msw";
 import { server } from "../../test/mocks/server";
 import { TagsGrid } from "./TagsGrid";
 import type { EntityTagResponse } from "../../types/api";
-import type { CellValueChangedEvent, ColDef, IDatasource, IGetRowsParams } from "ag-grid-community";
+import type {
+  CellValueChangedEvent,
+  ColDef,
+  IDatasource,
+  IGetRowsParams,
+} from "ag-grid-community";
 
 type AgGridProps = {
   ref?: React.Ref<unknown>;
@@ -63,7 +74,11 @@ vi.mock("antd", () => ({
     danger?: boolean;
     size?: string;
   }) => (
-    <button onClick={onClick} data-btn-type={btnType} data-danger={danger ? "true" : undefined}>
+    <button
+      onClick={onClick}
+      data-btn-type={btnType}
+      data-danger={danger ? "true" : undefined}
+    >
       {children}
     </button>
   ),
@@ -97,7 +112,9 @@ describe("TagsGrid", () => {
 
   it("TagManagementPage_renders_EntityTagResponse_columns", () => {
     render(<TagsGrid tenantName="acme" queryParams={{}} isReadOnly={false} />);
-    const fields = capturedProps.columnDefs?.map((c: ColDef) => c.field ?? c.headerName);
+    const fields = capturedProps.columnDefs?.map(
+      (c: ColDef) => c.field ?? c.headerName,
+    );
     expect(fields).toContain("entity_type");
     expect(fields).toContain("entity_id");
     expect(fields).toContain("tag_key");
@@ -107,10 +124,16 @@ describe("TagsGrid", () => {
   it("TagManagementPage_edit_calls_PUT_on_entity_endpoint", async () => {
     let putCalled = false;
     server.use(
-      http.put("/api/v1/tenants/acme/entities/resource/r-001/tags/env", async () => {
-        putCalled = true;
-        return HttpResponse.json({ ...entityTagFixture, tag_value: "staging" });
-      }),
+      http.put(
+        "/api/v1/tenants/acme/entities/resource/r-001/tags/env",
+        async () => {
+          putCalled = true;
+          return HttpResponse.json({
+            ...entityTagFixture,
+            tag_value: "staging",
+          });
+        },
+      ),
     );
 
     render(<TagsGrid tenantName="acme" queryParams={{}} isReadOnly={false} />);
@@ -133,22 +156,29 @@ describe("TagsGrid", () => {
   it("TagManagementPage_delete_calls_DELETE_on_entity_endpoint", async () => {
     let deleteCalled = false;
     server.use(
-      http.delete("/api/v1/tenants/acme/entities/resource/r-001/tags/env", () => {
-        deleteCalled = true;
-        return new HttpResponse(null, { status: 204 });
-      }),
+      http.delete(
+        "/api/v1/tenants/acme/entities/resource/r-001/tags/env",
+        () => {
+          deleteCalled = true;
+          return new HttpResponse(null, { status: 204 });
+        },
+      ),
     );
 
     render(<TagsGrid tenantName="acme" queryParams={{}} isReadOnly={false} />);
 
-    const actionsCol = capturedProps.columnDefs?.find((c: ColDef) => c.headerName === "Actions");
+    const actionsCol = capturedProps.columnDefs?.find(
+      (c: ColDef) => c.headerName === "Actions",
+    );
     expect(actionsCol).toBeDefined();
 
     const cellRenderer = actionsCol!.cellRenderer as (props: {
       data: EntityTagResponse;
     }) => React.JSX.Element;
 
-    const { getByTestId } = render(<div>{cellRenderer({ data: entityTagFixture })}</div>);
+    const { getByTestId } = render(
+      <div>{cellRenderer({ data: entityTagFixture })}</div>,
+    );
 
     act(() => {
       fireEvent.click(getByTestId("popconfirm"));
@@ -161,19 +191,26 @@ describe("TagsGrid", () => {
 
   it("shows error notification when DELETE fails", async () => {
     server.use(
-      http.delete("/api/v1/tenants/acme/entities/resource/r-001/tags/env", () => {
-        return new HttpResponse(null, { status: 500 });
-      }),
+      http.delete(
+        "/api/v1/tenants/acme/entities/resource/r-001/tags/env",
+        () => {
+          return new HttpResponse(null, { status: 500 });
+        },
+      ),
     );
 
     render(<TagsGrid tenantName="acme" queryParams={{}} isReadOnly={false} />);
 
-    const actionsCol = capturedProps.columnDefs?.find((c: ColDef) => c.headerName === "Actions");
+    const actionsCol = capturedProps.columnDefs?.find(
+      (c: ColDef) => c.headerName === "Actions",
+    );
     const cellRenderer = actionsCol!.cellRenderer as (props: {
       data: EntityTagResponse;
     }) => React.JSX.Element;
 
-    const { getByTestId } = render(<div>{cellRenderer({ data: entityTagFixture })}</div>);
+    const { getByTestId } = render(
+      <div>{cellRenderer({ data: entityTagFixture })}</div>,
+    );
 
     act(() => {
       fireEvent.click(getByTestId("popconfirm"));
@@ -191,10 +228,16 @@ describe("TagsGrid", () => {
     // AG Grid fires onCellValueChanged when the user commits an edit (Enter or Tab).
     let putCalled = false;
     server.use(
-      http.put("/api/v1/tenants/acme/entities/resource/r-001/tags/env", async () => {
-        putCalled = true;
-        return HttpResponse.json({ ...entityTagFixture, tag_value: "staging" });
-      }),
+      http.put(
+        "/api/v1/tenants/acme/entities/resource/r-001/tags/env",
+        async () => {
+          putCalled = true;
+          return HttpResponse.json({
+            ...entityTagFixture,
+            tag_value: "staging",
+          });
+        },
+      ),
     );
 
     render(<TagsGrid tenantName="acme" queryParams={{}} isReadOnly={false} />);
@@ -274,11 +317,15 @@ describe("TagsGrid", () => {
     render(<TagsGrid tenantName="acme" queryParams={{}} isReadOnly={true} />);
 
     // No Actions column when isReadOnly=true
-    const actionsCol = capturedProps.columnDefs?.find((c: ColDef) => c.headerName === "Actions");
+    const actionsCol = capturedProps.columnDefs?.find(
+      (c: ColDef) => c.headerName === "Actions",
+    );
     expect(actionsCol).toBeUndefined();
 
     // tag_value column is not editable when isReadOnly=true
-    const valueCol = capturedProps.columnDefs?.find((c: ColDef) => c.field === "tag_value");
+    const valueCol = capturedProps.columnDefs?.find(
+      (c: ColDef) => c.field === "tag_value",
+    );
     expect(valueCol?.editable).toBe(false);
   });
 
@@ -296,7 +343,11 @@ describe("TagsGrid", () => {
     );
 
     render(
-      <TagsGrid tenantName="acme" queryParams={{ tag_key: "env" }} isReadOnly={false} />,
+      <TagsGrid
+        tenantName="acme"
+        queryParams={{ tag_key: "env" }}
+        isReadOnly={false}
+      />,
     );
 
     const capturedDatasource = capturedProps.datasource;

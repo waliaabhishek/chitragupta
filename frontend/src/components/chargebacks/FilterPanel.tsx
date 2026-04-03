@@ -57,7 +57,9 @@ export function FilterPanel({
         <Select
           placeholder="Any identity"
           value={filters.identity_id ?? undefined}
-          onChange={(val: string | undefined) => onChange("identity_id", val ?? null)}
+          onChange={(val: string | undefined) =>
+            onChange("identity_id", val ?? null)
+          }
           options={identityOptions}
           showSearch
           allowClear
@@ -71,7 +73,9 @@ export function FilterPanel({
         <Select
           placeholder="Any product type"
           value={filters.product_type ?? undefined}
-          onChange={(val: string | undefined) => onChange("product_type", val ?? null)}
+          onChange={(val: string | undefined) =>
+            onChange("product_type", val ?? null)
+          }
           options={productTypeOptions}
           showSearch
           allowClear
@@ -85,7 +89,9 @@ export function FilterPanel({
         <Select
           placeholder="Any resource"
           value={filters.resource_id ?? undefined}
-          onChange={(val: string | undefined) => onChange("resource_id", val ?? null)}
+          onChange={(val: string | undefined) =>
+            onChange("resource_id", val ?? null)
+          }
           options={resourceOptions}
           showSearch
           allowClear
@@ -99,7 +105,9 @@ export function FilterPanel({
         <Select
           placeholder="Any"
           value={filters.cost_type ?? undefined}
-          onChange={(val: string | undefined) => onChange("cost_type", val ?? null)}
+          onChange={(val: string | undefined) =>
+            onChange("cost_type", val ?? null)
+          }
           options={COST_TYPE_OPTIONS}
           allowClear
           style={{ width: 120 }}
@@ -109,7 +117,9 @@ export function FilterPanel({
       <Form.Item label="Timezone">
         <Select
           value={filters.timezone ?? undefined}
-          onChange={(val: string | undefined) => onChange("timezone", val ?? null)}
+          onChange={(val: string | undefined) =>
+            onChange("timezone", val ?? null)
+          }
           options={TIMEZONE_OPTIONS}
           showSearch
           filterOption={filterByLabel}
