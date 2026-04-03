@@ -286,6 +286,7 @@ const mockTenant: TenantStatusSummary = {
   dates_pending: 0,
   dates_calculated: 10,
   last_calculated_date: null,
+  topic_attribution_enabled: false,
 };
 
 function makeTenantReadiness(
@@ -301,6 +302,7 @@ function makeTenantReadiness(
     last_run_status: null,
     last_run_at: null,
     permanent_failure: null,
+    topic_attribution_enabled: true,
     ...overrides,
   };
 }
@@ -353,6 +355,7 @@ function defaultStatesData(): TenantStatusDetailResponse {
     tenant_id: "t-001",
     ecosystem: "ccloud",
     states: [],
+    topic_attribution_enabled: false,
   };
 }
 
@@ -806,8 +809,8 @@ describe("AC-7 (TASK-164): 4-stage stepper", () => {
       "process",
     );
     expect(screen.getByTestId("step-2").textContent).not.toContain("_");
-    // Human-readable label: "Topic Overlay"
-    expect(screen.getByTestId("step-2").textContent).toContain("Topic Overlay");
+    // Human-readable label: "Topic Attribution Stage"
+    expect(screen.getByTestId("step-2").textContent).toContain("Topic Attribution");
   });
 
   it("test 23: pipeline_stage=gathering still works with 4-step stepper", () => {
@@ -874,7 +877,75 @@ describe("AC-7 (TASK-164): 4-stage stepper", () => {
     );
     render(<PipelineStatusPage />);
 
-    expect(screen.getByText("Topic Overlay")).toBeInTheDocument();
+    expect(screen.getByText("Topic Metrics Gathered")).toBeInTheDocument();
     expect(screen.getByText("Topic Attribution")).toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TASK-187: Topic Attribution Enabled Flag
+// ---------------------------------------------------------------------------
+
+describe("TASK-187: Topic Attribution Enabled Flag", () => {
+  it("test 26: topic_attribution_enabled=false → topic_overlay step has status wait and description 'Not configured'", () => {
+    setupTenantContext({
+      pipeline_running: false,
+      last_run_status: "completed",
+      last_run_at: "2026-04-01T10:00:00Z",
+      topic_attribution_enabled: false,
+    });
+    setupDefaultQueries();
+    render(<PipelineStatusPage />);
+
+    expect(screen.getByTestId("step-2")).toHaveAttribute("data-status", "wait");
+    expect(screen.getByTestId("step-2")).toHaveAttribute(
+      "data-description",
+      "Not configured",
+    );
+  });
+
+  it("test 27: topic_attribution_enabled=true → topic_overlay step renders normally (not overridden)", () => {
+    setupTenantContext({
+      pipeline_running: false,
+      last_run_status: "completed",
+      last_run_at: "2026-04-01T10:00:00Z",
+      topic_attribution_enabled: true,
+    });
+    setupDefaultQueries();
+    render(<PipelineStatusPage />);
+
+    expect(screen.getByTestId("step-2")).toHaveAttribute("data-status", "finish");
+  });
+
+  it("test 28: topic_attribution_enabled=false → grid hides Topic Overlay and Topic Attribution columns", () => {
+    setupTenantContext({
+      topic_attribution_enabled: false,
+    });
+    setupDefaultQueries();
+    render(<PipelineStatusPage />);
+
+    expect(gridCapture.columnDefs).not.toBeNull();
+    expect(gridCapture.columnDefs?.length).toBe(4);
+    const headerNames = gridCapture.columnDefs?.map((c) => c.headerName);
+    expect(headerNames).toContain("Date");
+    expect(headerNames).toContain("Billing Gathered");
+    expect(headerNames).toContain("Resources Gathered");
+    expect(headerNames).toContain("Chargeback Calculated");
+    expect(headerNames).not.toContain("Topic Metrics Gathered");
+    expect(headerNames).not.toContain("Topic Attribution");
+  });
+
+  it("test 29: topic_attribution_enabled=true → grid shows all 6 columns including Topic Overlay and Topic Attribution", () => {
+    setupTenantContext({
+      topic_attribution_enabled: true,
+    });
+    setupDefaultQueries();
+    render(<PipelineStatusPage />);
+
+    expect(gridCapture.columnDefs).not.toBeNull();
+    expect(gridCapture.columnDefs?.length).toBe(6);
+    const headerNames = gridCapture.columnDefs?.map((c) => c.headerName);
+    expect(headerNames).toContain("Topic Metrics Gathered");
+    expect(headerNames).toContain("Topic Attribution");
   });
 });

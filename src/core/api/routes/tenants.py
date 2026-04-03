@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from datetime import date
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
 from fastapi import APIRouter, Depends, Query, Request
 
@@ -16,9 +16,18 @@ from core.api.schemas import (
 from core.config.models import AppSettings, TenantConfig  # noqa: TC001  # FastAPI evaluates annotations at runtime
 from core.storage.interface import ReadOnlyUnitOfWork  # noqa: TC001
 
+if TYPE_CHECKING:
+    from core.config.models import PluginSettingsBase
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["tenants"])
+
+
+def _is_topic_attribution_enabled(plugin_settings: PluginSettingsBase) -> bool:
+    """Return True if topic attribution is enabled in the tenant's plugin config."""
+    ta = getattr(plugin_settings, "topic_attribution", None)
+    return bool(ta and getattr(ta, "enabled", False))
 
 
 @router.get("/tenants", response_model=TenantListResponse)
@@ -44,6 +53,7 @@ async def list_tenants(
                 dates_pending=pending,
                 dates_calculated=calculated,
                 last_calculated_date=last_date,
+                topic_attribution_enabled=_is_topic_attribution_enabled(tenant_config.plugin_settings),
             )
         )
     logger.info("Listed tenants count=%d", len(summaries))
@@ -82,6 +92,7 @@ async def get_tenant_status(
         tenant_name=tenant_name,
         tenant_id=tenant_config.tenant_id,
         ecosystem=tenant_config.ecosystem,
+        topic_attribution_enabled=_is_topic_attribution_enabled(tenant_config.plugin_settings),
         states=[
             PipelineStateResponse(
                 tracking_date=s.tracking_date,

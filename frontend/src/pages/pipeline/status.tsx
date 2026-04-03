@@ -45,7 +45,7 @@ type Stage = (typeof STAGES)[number];
 const STAGE_LABELS: Record<Stage, string> = {
   gathering: "Gathering",
   calculating: "Calculating",
-  topic_overlay: "Topic Overlay",
+  topic_overlay: "Topic Attribution Stage",
   emitting: "Emitting",
 };
 
@@ -81,40 +81,37 @@ function buildStepperItems(
   pipelineCurrentDate: string | null,
   lastRunStatus: string | null,
   lastRunAt: string | null,
+  topicAttributionEnabled: boolean,
 ): StepperConfig[] {
+  let result: StepperConfig[];
+
   // Never run
   if (!lastRunStatus && !pipelineRunning) {
-    return STAGES.map(() => ({ status: "wait" }));
-  }
-
-  // Idle + success → all finish, completion timestamp on last stage
-  if (!pipelineRunning && lastRunStatus === "completed") {
-    return STAGES.map((_, i) => ({
+    result = STAGES.map(() => ({ status: "wait" }));
+  } else if (!pipelineRunning && lastRunStatus === "completed") {
+    // Idle + success → all finish, completion timestamp on last stage
+    result = STAGES.map((_, i) => ({
       status: "finish",
       description:
         i === STAGES.length - 1 && lastRunAt
           ? `Completed at ${lastRunAt}`
           : undefined,
     }));
-  }
-
-  // Idle + failed → find the failed stage index; error on it, finish before, wait after.
-  // When pipelineStage is null or unknown after failure, default error to first stage.
-  if (!pipelineRunning && lastRunStatus === "failed") {
+  } else if (!pipelineRunning && lastRunStatus === "failed") {
+    // Idle + failed → find the failed stage index; error on it, finish before, wait after.
+    // When pipelineStage is null or unknown after failure, default error to first stage.
     const rawIdx = pipelineStage ? STAGES.indexOf(pipelineStage as Stage) : 0;
     const failedIdx = rawIdx === -1 ? 0 : rawIdx;
-    return STAGES.map((_, i) => {
+    result = STAGES.map((_, i) => {
       if (i < failedIdx) return { status: "finish" };
       if (i === failedIdx) return { status: "error" };
       return { status: "wait" };
     });
-  }
-
-  // Running → active stage is "process", previous are "finish", future are "wait"
-  if (pipelineRunning && pipelineStage) {
+  } else if (pipelineRunning && pipelineStage) {
+    // Running → active stage is "process", previous are "finish", future are "wait"
     const activeIdx = STAGES.indexOf(pipelineStage as Stage);
     if (activeIdx !== -1) {
-      return STAGES.map((s, i) => {
+      result = STAGES.map((s, i) => {
         if (i < activeIdx) return { status: "finish" };
         if (i === activeIdx) {
           return {
@@ -124,14 +121,26 @@ function buildStepperItems(
         }
         return { status: "wait" };
       });
+    } else {
+      // Unknown stage string — fall through to "running but stage unknown" branch
+      result = STAGES.map((_, i) =>
+        i === 0 ? { status: "process" } : { status: "wait" },
+      );
     }
-    // Unknown stage string — fall through to "running but stage unknown" branch
+  } else {
+    // Running but stage unknown (transient)
+    result = STAGES.map((_, i) =>
+      i === 0 ? { status: "process" } : { status: "wait" },
+    );
   }
 
-  // Running but stage unknown (transient)
-  return STAGES.map((_, i) =>
-    i === 0 ? { status: "process" } : { status: "wait" },
-  );
+  if (!topicAttributionEnabled) {
+    result[STAGES.indexOf("topic_overlay")] = {
+      status: "wait",
+      description: "Not configured",
+    };
+  }
+  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -148,44 +157,21 @@ function BoolIconRenderer(params: ICellRendererParams): React.JSX.Element {
   );
 }
 
-const stateColumnDefs: ColDef[] = [
-  {
-    field: "tracking_date",
-    headerName: "Date",
-    sort: "desc",
-    flex: 1,
-  },
-  {
-    field: "billing_gathered",
-    headerName: "Billing Gathered",
-    cellRenderer: BoolIconRenderer,
-    width: 160,
-  },
-  {
-    field: "resources_gathered",
-    headerName: "Resources Gathered",
-    cellRenderer: BoolIconRenderer,
-    width: 170,
-  },
-  {
-    field: "chargeback_calculated",
-    headerName: "Chargeback Calculated",
-    cellRenderer: BoolIconRenderer,
-    width: 190,
-  },
-  {
-    field: "topic_overlay_gathered",
-    headerName: "Topic Overlay Gathered",
-    cellRenderer: BoolIconRenderer,
-    width: 180,
-  },
-  {
-    field: "topic_attribution_calculated",
-    headerName: "Topic Attribution",
-    cellRenderer: BoolIconRenderer,
-    width: 160,
-  },
-];
+function getStateColumnDefs(topicAttributionEnabled: boolean): ColDef[] {
+  const cols: ColDef[] = [
+    { field: "tracking_date", headerName: "Date", sort: "desc", flex: 1 },
+    { field: "billing_gathered", headerName: "Billing Gathered", cellRenderer: BoolIconRenderer, width: 160 },
+    { field: "resources_gathered", headerName: "Resources Gathered", cellRenderer: BoolIconRenderer, width: 170 },
+    { field: "chargeback_calculated", headerName: "Chargeback Calculated", cellRenderer: BoolIconRenderer, width: 190 },
+  ];
+  if (topicAttributionEnabled) {
+    cols.push(
+      { field: "topic_overlay_gathered", headerName: "Topic Metrics Gathered", cellRenderer: BoolIconRenderer, width: 180 },
+      { field: "topic_attribution_calculated", headerName: "Topic Attribution", cellRenderer: BoolIconRenderer, width: 160 },
+    );
+  }
+  return cols;
+}
 
 // ---------------------------------------------------------------------------
 // Inner page component — all hooks unconditionally called (tenant always set)
@@ -212,6 +198,7 @@ function PipelineStatusContent({
   );
   const pipelineRunning = tenantReadiness?.pipeline_running ?? false;
   const isApiOnly = readiness?.mode === "api";
+  const topicAttributionEnabled = tenantReadiness?.topic_attribution_enabled ?? false;
 
   // AC-3: Last Run Summary — refetch faster while running
   const statusQuery = useQuery<PipelineStatusResponse>({
@@ -246,6 +233,7 @@ function PipelineStatusContent({
     tenantReadiness?.pipeline_current_date ?? null,
     tenantReadiness?.last_run_status ?? null,
     tenantReadiness?.last_run_at ?? null,
+    topicAttributionEnabled,
   ).map((cfg, i) => ({
     title: STAGE_LABELS[STAGES[i]],
     status: cfg.status,
@@ -368,7 +356,7 @@ function PipelineStatusContent({
           <div style={{ height: 500 }}>
             <AgGridReact
               theme={gridTheme}
-              columnDefs={stateColumnDefs}
+              columnDefs={getStateColumnDefs(topicAttributionEnabled)}
               defaultColDef={defaultColDef}
               rowData={statesQuery.data?.states ?? []}
               getRowId={(params) => params.data.tracking_date}

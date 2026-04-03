@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TopicAttributionPage } from "./list";
+import type { TenantStatusSummary } from "../../types/api";
 
 // ---------------------------------------------------------------------------
 // Mock TopicAttributionGrid — captures filters prop for integration assertions
@@ -130,6 +131,21 @@ vi.mock("antd", () => ({
   ),
   Empty: () => <div data-testid="empty" />,
   notification: { error: vi.fn(), success: vi.fn() },
+  Alert: ({
+    type,
+    message,
+    description,
+  }: {
+    type: string;
+    message: string;
+    description?: ReactNode;
+    showIcon?: boolean;
+  }) => (
+    <div data-testid="alert" data-type={type}>
+      {message}
+      {description}
+    </div>
+  ),
 }));
 
 // ---------------------------------------------------------------------------
@@ -197,17 +213,19 @@ import { useSearchParams } from "react-router";
 function setupTenantContext(
   tenantName: string | null = "acme",
   isReadOnly = false,
+  topicAttributionEnabled?: boolean,
 ): void {
   mockUseTenant.mockReturnValue({
     currentTenant: tenantName
-      ? {
+      ? ({
           tenant_name: tenantName,
           tenant_id: "t-001",
           ecosystem: "ccloud",
           dates_pending: 0,
           dates_calculated: 10,
           last_calculated_date: null,
-        }
+          topic_attribution_enabled: topicAttributionEnabled ?? false,
+        } as TenantStatusSummary)
       : null,
     tenants: [],
     isLoading: false,
@@ -249,7 +267,7 @@ describe("TopicAttributionPage", () => {
   });
 
   it("Export button is disabled when isReadOnly=true", () => {
-    setupTenantContext("acme", true);
+    setupTenantContext("acme", true, true);
     render(<TopicAttributionPage />);
     // Find the export button by text or test-id and verify it is disabled
     const exportBtn = screen.getByText("Export CSV").closest("button");
@@ -276,7 +294,7 @@ describe("TopicAttributionPage — filter param integration", () => {
       ),
       vi.fn(),
     ]);
-    setupTenantContext("acme");
+    setupTenantContext("acme", false, true);
     render(<TopicAttributionPage />);
     const grid = screen.getByTestId("ag-grid");
     expect(grid).toBeTruthy();
@@ -297,5 +315,29 @@ describe("TopicAttributionPage — filter param integration", () => {
     render(<TopicAttributionPage />);
     expect(screen.queryByTestId("ag-grid")).toBeNull();
     expect(screen.getByText("Select a tenant to begin.")).toBeTruthy();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TASK-187: topic_attribution_enabled flag — feature discovery
+// ---------------------------------------------------------------------------
+
+describe("TASK-187: topic_attribution_enabled flag", () => {
+  it("topic_attribution_enabled=false → shows feature discovery alert instead of data page", () => {
+    setupTenantContext("acme", false, false);
+    render(<TopicAttributionPage />);
+
+    const alert = screen.getByTestId("alert");
+    expect(alert).toBeTruthy();
+    expect(alert.textContent?.toLowerCase()).toContain("not configured");
+    expect(screen.queryByTestId("ag-grid")).toBeNull();
+  });
+
+  it("topic_attribution_enabled=true → shows normal data page", () => {
+    setupTenantContext("acme", false, true);
+    render(<TopicAttributionPage />);
+
+    expect(screen.queryByTestId("alert")).toBeNull();
+    expect(screen.queryByText("Select a tenant to begin.")).toBeNull();
   });
 });

@@ -12,6 +12,7 @@ import {
   ThunderboltOutlined,
 } from "@ant-design/icons";
 import {
+  Badge,
   Button,
   Layout as AntLayout,
   Menu,
@@ -52,6 +53,7 @@ export function AppLayout({
 
   // Tenant-scoped pages are disabled/greyed when no tenant is selected.
   const tenantRequired = !currentTenant;
+  const topicAttributionEnabled = currentTenant?.topic_attribution_enabled ?? false;
   const menuItems = [
     {
       key: "/dashboard",
@@ -67,8 +69,22 @@ export function AppLayout({
     },
     {
       key: "/topic-attributions",
-      icon: <LineChartOutlined />,
-      label: "Topic Attribution",
+      icon: (
+        <LineChartOutlined
+          style={!tenantRequired && !topicAttributionEnabled ? { color: "#bfbfbf" } : undefined}
+        />
+      ),
+      label: !tenantRequired && !topicAttributionEnabled ? (
+        <span>
+          Topic Attribution{" "}
+          <Badge
+            count="Not configured"
+            style={{ backgroundColor: "#f0f0f0", color: "#8c8c8c", fontSize: 10, boxShadow: "none" }}
+          />
+        </span>
+      ) : (
+        "Topic Attribution"
+      ),
       disabled: tenantRequired,
     },
     {

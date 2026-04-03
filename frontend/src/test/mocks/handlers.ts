@@ -23,6 +23,7 @@ export const tenantFixtures: TenantListResponse = {
       dates_pending: 2,
       dates_calculated: 10,
       last_calculated_date: "2024-01-10",
+      topic_attribution_enabled: false,
     },
     {
       tenant_name: "globex",
@@ -31,6 +32,7 @@ export const tenantFixtures: TenantListResponse = {
       dates_pending: 0,
       dates_calculated: 5,
       last_calculated_date: "2024-01-08",
+      topic_attribution_enabled: false,
     },
   ],
 };
@@ -74,6 +76,7 @@ export const readinessFixture: ReadinessResponse = {
       last_run_status: "completed",
       last_run_at: null,
       permanent_failure: null,
+      topic_attribution_enabled: false,
     },
     {
       tenant_name: "globex",
@@ -85,6 +88,7 @@ export const readinessFixture: ReadinessResponse = {
       last_run_status: "completed",
       last_run_at: null,
       permanent_failure: null,
+      topic_attribution_enabled: false,
     },
   ],
 };
@@ -339,6 +343,7 @@ export const handlers = [
       tenant_name: params.tenant as string,
       tenant_id: "t-001",
       ecosystem: "ccloud",
+      topic_attribution_enabled: false,
       states: [
         {
           tracking_date: "2026-03-26",

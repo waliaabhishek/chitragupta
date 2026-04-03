@@ -136,6 +136,7 @@ describe("TenantContext", () => {
         dates_pending: 0,
         dates_calculated: 0,
         last_calculated_date: null,
+        topic_attribution_enabled: false,
       });
     });
 
@@ -209,6 +210,7 @@ describe("TenantContext — adaptive polling interval", () => {
           last_run_status: pipelineRunning ? "running" : "completed",
           last_run_at: null,
           permanent_failure: null,
+          topic_attribution_enabled: false,
         },
       ],
     };
@@ -327,6 +329,7 @@ describe("TenantContext — context split (GAP-100)", () => {
         last_run_status: t.running ? "running" : "completed",
         last_run_at: null,
         permanent_failure: null,
+        topic_attribution_enabled: false,
       })),
     };
   }

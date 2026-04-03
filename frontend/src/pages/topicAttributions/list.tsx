@@ -1,5 +1,5 @@
 import type React from "react";
-import { Typography, Tabs } from "antd";
+import { Alert, Typography, Tabs } from "antd";
 import { useRef, useState } from "react";
 import type { AgGridReact } from "ag-grid-react";
 import { TopicAttributionGrid } from "../../components/topicAttributions/TopicAttributionGrid";
@@ -23,6 +23,27 @@ export function TopicAttributionPage(): React.JSX.Element {
       <div>
         <Title level={3}>Topic Attribution</Title>
         <Text type="secondary">Select a tenant to begin.</Text>
+      </div>
+    );
+  }
+
+  if (currentTenant.topic_attribution_enabled === false) {
+    return (
+      <div>
+        <Title level={3}>Topic Attribution</Title>
+        <Alert
+          type="info"
+          showIcon
+          message="Topic Attribution is not configured"
+          description={
+            <span>
+              Topic Attribution overlays Kafka topic-level cost attribution on top of chargeback data,
+              enabling per-topic cost breakdowns across your Confluent Cloud environment.
+              To enable it, add <code>topic_attribution.enabled: true</code> under your tenant&apos;s
+              <code>plugin_settings</code> in the YAML config and restart the service.
+            </span>
+          }
+        />
       </div>
     );
   }

@@ -67,6 +67,7 @@ def _call_check(
     workflow_runner: MagicMock | None = None,
     failed_tenants: dict[str, str] | None = None,
     tenant_name: str = "t",
+    topic_attribution_enabled: bool = False,
 ) -> TenantReadiness:
     backend = _make_backend(latest_run=latest_run, count=count)
     with patch("core.api.routes.readiness.get_or_create_backend", return_value=backend):
@@ -78,6 +79,7 @@ def _call_check(
             backends={},
             workflow_runner=workflow_runner,
             failed_tenants=failed_tenants or {},
+            topic_attribution_enabled=topic_attribution_enabled,
         )
 
 

@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Annotated
 from fastapi import APIRouter, Depends, Request
 
 if TYPE_CHECKING:
-    from core.config.models import StorageConfig
+    from core.config.models import PluginSettingsBase, StorageConfig
     from workflow_runner import WorkflowRunner
 
 from core.api import API_VERSION
@@ -32,6 +32,11 @@ def _get_backends(request: Request) -> dict[str, object]:
     return request.app.state.backends  # type: ignore[no-any-return]  # app.state is untyped
 
 
+def _is_topic_attribution_enabled(plugin_settings: PluginSettingsBase) -> bool:
+    ta = getattr(plugin_settings, "topic_attribution", None)
+    return bool(ta and getattr(ta, "enabled", False))
+
+
 def _check_tenant_readiness(
     tenant_name: str,
     ecosystem: str,
@@ -40,6 +45,7 @@ def _check_tenant_readiness(
     backends: dict[str, object],
     workflow_runner: WorkflowRunner | None,
     failed_tenants: dict[str, str],
+    topic_attribution_enabled: bool,
 ) -> TenantReadiness:
     """Check readiness for a single tenant. Pure function over injected dependencies."""
     tables_ready = True
@@ -93,6 +99,7 @@ def _check_tenant_readiness(
         last_run_status=last_run_status,
         last_run_at=last_run_at,
         permanent_failure=permanent_failure,
+        topic_attribution_enabled=topic_attribution_enabled,
     )
 
 
@@ -136,6 +143,7 @@ def readiness(
             backends=backends,
             workflow_runner=workflow_runner,
             failed_tenants=failed_tenants,
+            topic_attribution_enabled=_is_topic_attribution_enabled(cfg.plugin_settings),
         )
         for name, cfg in settings.tenants.items()
     ]

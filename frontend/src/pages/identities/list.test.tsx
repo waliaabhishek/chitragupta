@@ -94,6 +94,7 @@ const mockTenant = {
   dates_pending: 0,
   dates_calculated: 10,
   last_calculated_date: null,
+  topic_attribution_enabled: false,
 };
 
 const identityFixtures: IdentityResponse[] = [

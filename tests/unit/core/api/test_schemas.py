@@ -43,6 +43,7 @@ class TestTenantSchemas:
             dates_pending=5,
             dates_calculated=10,
             last_calculated_date=date(2026, 1, 15),
+            topic_attribution_enabled=False,
         )
         assert s.tenant_name == "t1"
         assert s.last_calculated_date == date(2026, 1, 15)
@@ -55,6 +56,7 @@ class TestTenantSchemas:
             dates_pending=0,
             dates_calculated=0,
             last_calculated_date=None,
+            topic_attribution_enabled=False,
         )
         assert s.last_calculated_date is None
 
@@ -77,6 +79,7 @@ class TestTenantSchemas:
             tenant_id="id1",
             ecosystem="eco",
             states=[],
+            topic_attribution_enabled=False,
         )
         assert resp.states == []
 

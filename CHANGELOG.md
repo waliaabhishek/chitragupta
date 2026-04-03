@@ -33,6 +33,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Fix:** Removed `server_default=""` from `topic_attribution_facts.amount` column — the database now rejects inserts with missing amount values instead of silently storing empty strings, matching the `chargeback_facts` schema pattern. New migration 015 removes the default for existing installs. (TASK-171)
 
 ### Added
+- **Feat:** TASK-187 — Show topic attribution as "not configured" when feature is disabled
+
+  Backend API responses (`GET /api/v1/tenants`, `GET /api/v1/tenants/{tenant}/status`, `GET /api/v1/readiness`) now include a `topic_attribution_enabled` boolean derived from the tenant's plugin config. Frontend uses this flag to:
+  - Show the Topic Attribution pipeline stage as grayed out / "Not configured" in the stepper when disabled
+  - Hide topic overlay columns from the per-date processing table when disabled
+  - Display a "Not configured" badge on the Topic Attribution sidebar nav item when disabled
+  - Show a feature discovery landing page at `/topic-attributions` explaining how to enable it
+
 - **Feat:** TASK-164 — Topic Attribution frontend page and pipeline status update
 
   New `/topic-attributions` page with two tabs:

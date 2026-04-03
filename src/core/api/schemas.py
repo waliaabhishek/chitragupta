@@ -38,6 +38,7 @@ class TenantStatusSummary(BaseModel):
     dates_pending: int
     dates_calculated: int
     last_calculated_date: date | None
+    topic_attribution_enabled: bool
 
 
 class TenantListResponse(BaseModel):
@@ -64,6 +65,7 @@ class TenantStatusDetailResponse(BaseModel):
     tenant_id: str
     ecosystem: str
     states: list[PipelineStateResponse]
+    topic_attribution_enabled: bool
 
 
 # --- Resource ---
@@ -363,6 +365,7 @@ class TenantReadiness(BaseModel):
     last_run_status: str | None
     last_run_at: datetime | None
     permanent_failure: str | None
+    topic_attribution_enabled: bool
 
 
 class ReadinessResponse(BaseModel):
