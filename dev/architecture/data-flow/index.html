@@ -1484,9 +1484,13 @@
    Runs after chargeback calculation. For each Kafka billing line item, queries
    Prometheus for per-topic byte metrics and splits the cluster cost across
    active topics. Results are written to <code>topic_attribution_facts</code>. Enabled via
-   <code>plugin_settings.topic_attribution.enabled: true</code>. If Prometheus data is
-   unavailable, falls back to even-split across known topics (configurable via
-   <code>missing_metrics_behavior</code>).</p>
+   <code>plugin_settings.topic_attribution.enabled: true</code>. If Prometheus returns
+   all-zero data, the <code>missing_metrics_behavior</code> setting controls the fallback
+   (even-split or skip). If Prometheus is unreachable (infrastructure failure),
+   the date stays pending and the pipeline retries on the next run. After
+   <code>topic_attribution_retry_limit</code> consecutive failures for a cluster, sentinel
+   rows are written (<code>topic_name=__UNATTRIBUTED__</code>, <code>attribution_method=ATTRIBUTION_FAILED</code>)
+   preserving full cost, and the date is marked calculated.</p>
 </li>
 <li>
 <p><strong>Emit (post-pipeline)</strong> — <code>EmitterRunner</code> runs after each pipeline cycle completes.

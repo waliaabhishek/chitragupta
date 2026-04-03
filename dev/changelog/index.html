@@ -1375,8 +1375,36 @@ stage with its own star schema, composable attribution models
 and configurable retention. (<a href="https://github.com/waliaabhishek/chitragupta/commit/919cc42a68b78773389577ce74c3f43c17544869">919cc42</a>)</p>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
-<li>Fix: TASK-179 — Topic attribution uses point-in-time topic membership instead of current inventory</li>
+<li>Fix: TASK-184 — Retry counters reset when dates re-enter processing queue via recalculation window</li>
 </ul>
+<p>Allocation and topic attribution attempt counters now reset to 0 when
+_apply_recalculation_window re-queues a date, preventing permanently
+stuck sentinel rows after transient infrastructure failures. (<a href="https://github.com/waliaabhishek/chitragupta/commit/a86aed0179b63421f0e369187e21969477014855">a86aed0</a>)
+- Fix: TASK-183 — Zero-topic discovery no longer leaves pipeline dates permanently stuck</p>
+<p>Remove the <code>if topic_resources:</code> guard so mark_topic_overlay_gathered runs
+unconditionally after successful discovery. Empty list is a valid outcome,
+not a failure — dates now correctly enter the attribution queue. (<a href="https://github.com/waliaabhishek/chitragupta/commit/1a8ac8765f0662316df10e6493b638f226e7b0b3">1a8ac87</a>)
+- Fix: TASK-182 — Resource type filtering now mandatory on resource repository read methods</p>
+<p>Makes resource_type a required parameter (str | Sequence[str]) on find_active_at,
+find_by_period, find_paginated, and find_by_parent. Fixes three bugs: (1) deletion
+detection falsely marking topic resources as deleted, (2) topics inflating Prometheus
+chitragupta_resource_active metric cardinality, (3) topics loaded into chargeback
+resource cache unnecessarily. Adds gathered_resource_types to ServiceHandler protocol,
+billing_resource_types to EcosystemBundle, and _apply_resource_type_filter SQL helper
+with literal(False) safety for empty sequences. (<a href="https://github.com/waliaabhishek/chitragupta/commit/afc40a4f3a19b113da27914d39f4cc8e61db6c30">afc40a4</a>)
+- Fix: TASK-181 — Topic attribution retry cap prevents poison-pill infinite retries</p>
+<p>Adds per-billing-line retry tracking (topic_attribution_attempts column) and
+configurable topic_attribution_retry_limit (default 3). When retries are
+exhausted, sentinel TopicAttributionRow entries (ATTRIBUTION_FAILED) preserve
+full cost instead of silently dropping data. Dates are only marked calculated
+when all clusters are resolved. (<a href="https://github.com/waliaabhishek/chitragupta/commit/0d9bce189a91d68a8634f1e3b09f7d830f571df0">0d9bce1</a>)
+- Fix: TASK-180 — Topic attribution no longer filters Prometheus metrics through resources table</p>
+<p>_attribute_cluster now computes the union of resources-table topics and
+metrics-discovered topics before constructing TopicAttributionContext.
+Topics that Prometheus reports as active during the billing window but
+absent from the resources table are correctly included in cost attribution
+instead of being silently discarded. (<a href="https://github.com/waliaabhishek/chitragupta/commit/7c0fcdee105ce083bec7ff18943d66378b259b61">7c0fcde</a>)
+- Fix: TASK-179 — Topic attribution uses point-in-time topic membership instead of current inventory</p>
 <p>_get_cluster_topics now queries find_by_period with billing window [b_start, b_end)
 and parent_id filtering, so deleted topics with historical traffic are included and
 topics created after the billing period are excluded. ResourceRepository.find_by_period

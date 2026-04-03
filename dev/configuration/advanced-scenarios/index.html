@@ -1690,6 +1690,13 @@ when and how to adjust these.</p>
 <td>Max identity resolution retries before allocating to UNALLOCATED (1–10)</td>
 <td>Increase if identity data arrives with a delay (eventual consistency). Rarely needs changing.</td>
 </tr>
+<tr>
+<td><code>topic_attribution_retry_limit</code></td>
+<td>int</td>
+<td>3</td>
+<td>Max Prometheus fetch retries per cluster before producing sentinel rows (1–10)</td>
+<td>Increase if your Prometheus endpoint has intermittent outages longer than your pipeline run interval. Decrease to resolve dead clusters faster.</td>
+</tr>
 </tbody>
 </table>
 <h2 id="api-server-configuration">API server configuration<a class="headerlink" href="#api-server-configuration" title="Permanent link">&para;</a></h2>

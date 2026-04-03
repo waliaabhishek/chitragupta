@@ -759,6 +759,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#topic-attribution-retry-behavior" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Topic attribution retry behavior
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -1477,6 +1488,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#topic-attribution-retry-behavior" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Topic attribution retry behavior
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -1610,6 +1632,12 @@ full field reference.</p>
 <td>int</td>
 <td>3</td>
 <td>Max identity resolution retries before fallback (max 10)</td>
+</tr>
+<tr>
+<td><code>topic_attribution_retry_limit</code></td>
+<td>int</td>
+<td>3</td>
+<td>Max Prometheus fetch retries per cluster before producing sentinel rows (1–10). See <a href="#topic-attribution-retry-behavior">Topic attribution retry behavior</a>.</td>
 </tr>
 <tr>
 <td><code>gather_failure_threshold</code></td>
@@ -1954,13 +1982,27 @@ fails with a <code>ValidationError</code> rather than silently producing even-sp
 </table>
 <p>For bytes_ratio product types, if Prometheus returns all-zero values, the
 <code>missing_metrics_behavior</code> setting determines the fallback.</p>
+<h3 id="topic-attribution-retry-behavior">Topic attribution retry behavior<a class="headerlink" href="#topic-attribution-retry-behavior" title="Permanent link">&para;</a></h3>
+<p>When Prometheus is unreachable for a cluster, the pipeline leaves that date pending and retries on the next run. The per-billing-line attempt count is stored in <code>billing.topic_attribution_attempts</code> (migration 016).</p>
+<p>Once all billing lines for a cluster reach <code>topic_attribution_retry_limit</code> attempts without a successful metrics fetch, the pipeline produces sentinel rows instead of retrying indefinitely:</p>
+<ul>
+<li><code>topic_name</code>: <code>__UNATTRIBUTED__</code></li>
+<li><code>attribution_method</code>: <code>ATTRIBUTION_FAILED</code></li>
+<li><code>amount</code>: full cluster cost (no money is silently lost)</li>
+</ul>
+<p>The date is marked calculated only when every cluster is resolved — either with real attribution rows, empty metrics, or sentinel rows. Clusters still below the retry limit return pending and do not block other clusters from being marked.</p>
+<p>To identify sentinel rows in the database or API:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="k">SELECT</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="n">topic_attribution_facts</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="k">JOIN</span><span class="w"> </span><span class="n">topic_attribution_dimensions</span><span class="w"> </span><span class="k">USING</span><span class="w"> </span><span class="p">(</span><span class="n">dimension_id</span><span class="p">)</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="k">WHERE</span><span class="w"> </span><span class="n">attribution_method</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;ATTRIBUTION_FAILED&#39;</span><span class="p">;</span>
+</code></pre></div>
 <h2 id="emitters">Emitters<a class="headerlink" href="#emitters" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nt">emitters</span><span class="p">:</span>
-<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">csv</span>
-<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">    </span><span class="nt">aggregation</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">daily</span><span class="w">       </span><span class="c1"># rows aggregated to daily before writing</span>
-<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">    </span><span class="nt">params</span><span class="p">:</span>
-<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="w">      </span><span class="nt">output_dir</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/data/csv</span>
-<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="w">      </span><span class="nt">filename_template</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;{tenant_id}_{date}.csv&quot;</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="nt">emitters</span><span class="p">:</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">csv</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">    </span><span class="nt">aggregation</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">daily</span><span class="w">       </span><span class="c1"># rows aggregated to daily before writing</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">    </span><span class="nt">params</span><span class="p">:</span>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">      </span><span class="nt">output_dir</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/data/csv</span>
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="w">      </span><span class="nt">filename_template</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;{tenant_id}_{date}.csv&quot;</span>
 </code></pre></div>
 <p><code>aggregation</code> options: <code>null</code> (as-is), <code>hourly</code>, <code>daily</code>, <code>monthly</code>.</p>
 
