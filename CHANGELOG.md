@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **Fix:** Retry counters (`allocation_attempts`, `topic_attribution_attempts`) now reset to 0 when a date is re-queued via the recalculation window, preventing permanently stuck sentinel rows after transient infrastructure failures. (TASK-184)
+
 - **Fix:** Topic discovery returning zero topics no longer leaves pipeline dates permanently stuck. `mark_topic_overlay_gathered` is now called unconditionally after a successful gather, regardless of whether any topic resources were returned. Previously, an empty topic list silently skipped the mark, causing the date to remain pending and retry forever. (TASK-183)
 
 - **TASK-182**: Resource type filtering is now mandatory on all resource repository read methods. This fixes three bugs: (1) topic resources being falsely marked as deleted during pipeline runs, (2) topic resources inflating Prometheus `chitragupta_resource_active` metric cardinality, (3) topic resources unnecessarily loaded into the chargeback resource cache.

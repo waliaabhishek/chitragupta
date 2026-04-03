@@ -206,6 +206,12 @@ class MockBillingRepo:
     def delete_before(self, *args: Any) -> int:
         return 0
 
+    def reset_allocation_attempts_by_date(self, ecosystem: str, tenant_id: str, tracking_date: date_type) -> int:
+        return 0
+
+    def reset_topic_attribution_attempts_by_date(self, ecosystem: str, tenant_id: str, tracking_date: date_type) -> int:
+        return 0
+
 
 class MockChargebackRepo:
     def __init__(self) -> None:

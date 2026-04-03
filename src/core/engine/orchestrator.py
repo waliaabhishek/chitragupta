@@ -440,6 +440,8 @@ class GatherPhase:
                     uow.chargebacks.delete_by_date(self._ecosystem, self._tenant_id, billing_date)
                     uow.topic_attributions.delete_by_date(self._ecosystem, self._tenant_id, billing_date)
                     uow.pipeline_state.mark_needs_recalculation(self._ecosystem, self._tenant_id, billing_date)
+                    uow.billing.reset_allocation_attempts_by_date(self._ecosystem, self._tenant_id, billing_date)
+                    uow.billing.reset_topic_attribution_attempts_by_date(self._ecosystem, self._tenant_id, billing_date)
                     logger.info("Date %s within recalculation window — will recompute", billing_date)
 
 

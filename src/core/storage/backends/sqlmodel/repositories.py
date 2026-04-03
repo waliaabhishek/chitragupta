@@ -624,6 +624,28 @@ class SQLModelBillingRepository:
     def increment_topic_attribution_attempts(self, line: BillingLineItem) -> int:
         return self._increment_int_column(line, "topic_attribution_attempts")
 
+    def _reset_int_column_by_date(self, ecosystem: str, tenant_id: str, tracking_date: date, attr: str) -> int:
+        start, end = _date_to_range(tracking_date)
+        stmt = (
+            update(BillingTable)
+            .where(
+                col(BillingTable.ecosystem) == ecosystem,
+                col(BillingTable.tenant_id) == tenant_id,
+                col(BillingTable.timestamp) >= start,
+                col(BillingTable.timestamp) < end,
+            )
+            .values({attr: 0})
+        )
+        result = self._session.execute(stmt)
+        self._session.flush()
+        return result.rowcount  # type: ignore[attr-defined, no-any-return]
+
+    def reset_allocation_attempts_by_date(self, ecosystem: str, tenant_id: str, tracking_date: date) -> int:
+        return self._reset_int_column_by_date(ecosystem, tenant_id, tracking_date, "allocation_attempts")
+
+    def reset_topic_attribution_attempts_by_date(self, ecosystem: str, tenant_id: str, tracking_date: date) -> int:
+        return self._reset_int_column_by_date(ecosystem, tenant_id, tracking_date, "topic_attribution_attempts")
+
     def find_by_filters(
         self,
         ecosystem: str,

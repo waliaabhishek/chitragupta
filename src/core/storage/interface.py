@@ -242,6 +242,20 @@ class BillingRepository(Protocol):
         """
         ...
 
+    def reset_allocation_attempts_by_date(self, ecosystem: str, tenant_id: str, tracking_date: date) -> int:
+        """Reset allocation_attempts to 0 for all billing rows on tracking_date.
+
+        Returns the number of rows updated.
+        """
+        ...
+
+    def reset_topic_attribution_attempts_by_date(self, ecosystem: str, tenant_id: str, tracking_date: date) -> int:
+        """Reset topic_attribution_attempts to 0 for all billing rows on tracking_date.
+
+        Returns the number of rows updated.
+        """
+        ...
+
     def delete_before(self, ecosystem: str, tenant_id: str, before: datetime) -> int: ...
 
     def find_by_filters(
