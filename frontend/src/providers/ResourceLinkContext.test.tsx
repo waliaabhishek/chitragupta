@@ -26,6 +26,7 @@ function makeWrapper() {
 }
 
 const RESOURCE_API = "/api/v1/tenants/acme/resources";
+const IDENTITY_API = "/api/v1/tenants/acme/identities";
 
 /** Minimal resource shape returned by the API for index building. */
 function makeResourcesResponse(
@@ -33,6 +34,7 @@ function makeResourcesResponse(
     resource_id: string;
     resource_type: string;
     parent_id: string | null;
+    metadata?: Record<string, unknown>;
   }>,
 ) {
   return {
@@ -48,7 +50,28 @@ function makeResourcesResponse(
       created_at: null,
       deleted_at: null,
       last_seen_at: null,
-      metadata: {},
+      metadata: r.metadata ?? {},
+    })),
+    total: items.length,
+    page: 1,
+    page_size: 100,
+    pages: 1,
+  };
+}
+
+/** Minimal identity shape returned by the identities API. */
+function makeIdentitiesResponse(
+  items: Array<{
+    identity_id: string;
+    identity_type: string;
+  }>,
+) {
+  return {
+    items: items.map((r) => ({
+      identity_id: r.identity_id,
+      identity_type: r.identity_type,
+      display_name: null,
+      deleted_at: null,
     })),
     total: items.length,
     page: 1,
@@ -263,6 +286,11 @@ describe("ResourceLinkContext — resource fetching", () => {
 describe("ResourceLinkContext — resolveUrl index lookups", () => {
   beforeEach(() => {
     localStorage.setItem("chargeback_deep_links_enabled", "true");
+    server.use(
+      http.get(IDENTITY_API, () =>
+        HttpResponse.json(makeIdentitiesResponse([])),
+      ),
+    );
   });
 
   it("env-xxx resolves to environments URL", async () => {
@@ -405,7 +433,7 @@ describe("ResourceLinkContext — resolveUrl index lookups", () => {
 
     const url = result.current.resolveUrl("lsrc-def456");
     expect(url).toBe(
-      "https://confluent.cloud/environments/env-abc123/schema-registry/lsrc-def456",
+      "https://confluent.cloud/environments/env-abc123/stream-governance/schema-registry/overview",
     );
   });
 
@@ -449,7 +477,7 @@ describe("ResourceLinkContext — resolveUrl index lookups", () => {
     );
   });
 
-  it("service_account in index resolves via service_account type to org service-accounts URL", async () => {
+  it("service_account in index resolves via service_account type to per-principal URL", async () => {
     // Use an ID with no prefix fallback so waitFor can only pass after index loads,
     // ensuring resolveFromEntry's service_account case is exercised.
     server.use(
@@ -472,7 +500,7 @@ describe("ResourceLinkContext — resolveUrl index lookups", () => {
 
     await waitFor(() => {
       expect(result.current.resolveUrl("mock-sa-001")).toBe(
-        "https://confluent.cloud/settings/org/service-accounts",
+        "https://confluent.cloud/settings/principals/mock-sa-001?view=identity",
       );
     });
   });
@@ -494,8 +522,8 @@ describe("ResourceLinkContext — resolveUrl index lookups", () => {
               parent_id: "env-abc123",
             },
             {
-              resource_id: "flink-pool-001",
-              resource_type: "flink_compute_pool",
+              resource_id: "unknown-001",
+              resource_type: "unknown_type",
               parent_id: null,
             },
           ]),
@@ -512,7 +540,7 @@ describe("ResourceLinkContext — resolveUrl index lookups", () => {
       expect(result.current.resolveUrl("lkc-def456")).toBeTruthy();
     });
 
-    const url = result.current.resolveUrl("flink-pool-001");
+    const url = result.current.resolveUrl("unknown-001");
     expect(url).toBeNull();
   });
 
@@ -686,6 +714,11 @@ describe("ResourceLinkContext — resolveUrl index lookups", () => {
 describe("ResourceLinkContext — prefix fallback for sa-", () => {
   beforeEach(() => {
     localStorage.setItem("chargeback_deep_links_enabled", "true");
+    server.use(
+      http.get(IDENTITY_API, () =>
+        HttpResponse.json(makeIdentitiesResponse([])),
+      ),
+    );
   });
 
   it("sa-xxx not in index resolves via prefix fallback to org service-accounts URL", async () => {
@@ -705,7 +738,9 @@ describe("ResourceLinkContext — prefix fallback for sa-", () => {
     });
 
     const url = result.current.resolveUrl("sa-abc123");
-    expect(url).toBe("https://confluent.cloud/settings/org/service-accounts");
+    expect(url).toBe(
+      "https://confluent.cloud/settings/principals/sa-abc123?view=identity",
+    );
   });
 
   it("sa- identity_id in chargebacks context resolves via prefix fallback", async () => {
@@ -726,7 +761,9 @@ describe("ResourceLinkContext — prefix fallback for sa-", () => {
 
     // Simulates chargebacks grid identity_id column with sa- prefix
     const url = result.current.resolveUrl("sa-service-account-001");
-    expect(url).toBe("https://confluent.cloud/settings/org/service-accounts");
+    expect(url).toBe(
+      "https://confluent.cloud/settings/principals/sa-service-account-001?view=identity",
+    );
   });
 
   it("sa- identity_id in allocation issues context resolves via prefix fallback", async () => {
@@ -746,7 +783,9 @@ describe("ResourceLinkContext — prefix fallback for sa-", () => {
     });
 
     const url = result.current.resolveUrl("sa-xyz999");
-    expect(url).toBe("https://confluent.cloud/settings/org/service-accounts");
+    expect(url).toBe(
+      "https://confluent.cloud/settings/principals/sa-xyz999?view=identity",
+    );
   });
 });
 
@@ -757,6 +796,11 @@ describe("ResourceLinkContext — prefix fallback for sa-", () => {
 describe("ResourceLinkContext — no broken links", () => {
   beforeEach(() => {
     localStorage.setItem("chargeback_deep_links_enabled", "true");
+    server.use(
+      http.get(IDENTITY_API, () =>
+        HttpResponse.json(makeIdentitiesResponse([])),
+      ),
+    );
   });
 
   it("resource ID with no index entry and no prefix fallback returns null", async () => {
@@ -775,9 +819,470 @@ describe("ResourceLinkContext — no broken links", () => {
       await new Promise((r) => setTimeout(r, 50));
     });
 
-    // Unknown prefix, not in index
-    const url = result.current.resolveUrl("u-unknownprefix");
+    // Unknown prefix (xyz- has no fallback), not in index
+    const url = result.current.resolveUrl("xyz-unknownprefix");
     expect(url).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// resolveUrl — flink_compute_pool
+// ---------------------------------------------------------------------------
+
+describe("ResourceLinkContext — resolveUrl flink_compute_pool", () => {
+  beforeEach(() => {
+    localStorage.setItem("chargeback_deep_links_enabled", "true");
+    server.use(
+      http.get(IDENTITY_API, () =>
+        HttpResponse.json(makeIdentitiesResponse([])),
+      ),
+    );
+  });
+
+  it("flink_compute_pool in index resolves to flink URL", async () => {
+    server.use(
+      http.get(RESOURCE_API, () =>
+        HttpResponse.json(
+          makeResourcesResponse([
+            {
+              resource_id: "mock-gate-flink",
+              resource_type: "service_account",
+              parent_id: null,
+            },
+            {
+              resource_id: "lfcp-def456",
+              resource_type: "flink_compute_pool",
+              parent_id: "env-abc123",
+            },
+          ]),
+        ),
+      ),
+    );
+
+    const { result } = renderHook(() => useResourceLinks(), {
+      wrapper: makeWrapper(),
+    });
+
+    await waitFor(() =>
+      expect(result.current.resolveUrl("mock-gate-flink")).toBeTruthy(),
+    );
+
+    expect(result.current.resolveUrl("lfcp-def456")).toBe(
+      "https://confluent.cloud/environments/env-abc123/flink/pools/lfcp-def456/overview",
+    );
+  });
+
+  it("flink_compute_pool with null parent_id returns null", async () => {
+    server.use(
+      http.get(RESOURCE_API, () =>
+        HttpResponse.json(
+          makeResourcesResponse([
+            {
+              resource_id: "mock-gate-flink2",
+              resource_type: "service_account",
+              parent_id: null,
+            },
+            {
+              resource_id: "lfcp-orphan",
+              resource_type: "flink_compute_pool",
+              parent_id: null,
+            },
+          ]),
+        ),
+      ),
+    );
+
+    const { result } = renderHook(() => useResourceLinks(), {
+      wrapper: makeWrapper(),
+    });
+
+    await waitFor(() =>
+      expect(result.current.resolveUrl("mock-gate-flink2")).toBeTruthy(),
+    );
+
+    expect(result.current.resolveUrl("lfcp-orphan")).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// resolveUrl — ksqldb_cluster
+// ---------------------------------------------------------------------------
+
+describe("ResourceLinkContext — resolveUrl ksqldb_cluster", () => {
+  beforeEach(() => {
+    localStorage.setItem("chargeback_deep_links_enabled", "true");
+    server.use(
+      http.get(IDENTITY_API, () =>
+        HttpResponse.json(makeIdentitiesResponse([])),
+      ),
+    );
+  });
+
+  it("ksqldb_cluster in index resolves to ksqlDB editor URL", async () => {
+    server.use(
+      http.get(RESOURCE_API, () =>
+        HttpResponse.json(
+          makeResourcesResponse([
+            {
+              resource_id: "mock-gate-ksql",
+              resource_type: "service_account",
+              parent_id: null,
+            },
+            {
+              resource_id: "lksqlc-ghi789",
+              resource_type: "ksqldb_cluster",
+              parent_id: "env-abc123",
+              metadata: { kafka_cluster_id: "lkc-def456" },
+            },
+          ]),
+        ),
+      ),
+    );
+
+    const { result } = renderHook(() => useResourceLinks(), {
+      wrapper: makeWrapper(),
+    });
+
+    await waitFor(() =>
+      expect(result.current.resolveUrl("mock-gate-ksql")).toBeTruthy(),
+    );
+
+    expect(result.current.resolveUrl("lksqlc-ghi789")).toBe(
+      "https://confluent.cloud/environments/env-abc123/clusters/lkc-def456/ksql/lksqlc-ghi789/editor",
+    );
+  });
+
+  it("ksqldb_cluster with null parent_id returns null", async () => {
+    server.use(
+      http.get(RESOURCE_API, () =>
+        HttpResponse.json(
+          makeResourcesResponse([
+            {
+              resource_id: "mock-gate-ksql2",
+              resource_type: "service_account",
+              parent_id: null,
+            },
+            {
+              resource_id: "lksqlc-orphan",
+              resource_type: "ksqldb_cluster",
+              parent_id: null,
+              metadata: { kafka_cluster_id: "lkc-def456" },
+            },
+          ]),
+        ),
+      ),
+    );
+
+    const { result } = renderHook(() => useResourceLinks(), {
+      wrapper: makeWrapper(),
+    });
+
+    await waitFor(() =>
+      expect(result.current.resolveUrl("mock-gate-ksql2")).toBeTruthy(),
+    );
+
+    expect(result.current.resolveUrl("lksqlc-orphan")).toBeNull();
+  });
+
+  it("ksqldb_cluster with missing kafka_cluster_id in metadata returns null", async () => {
+    server.use(
+      http.get(RESOURCE_API, () =>
+        HttpResponse.json(
+          makeResourcesResponse([
+            {
+              resource_id: "mock-gate-ksql3",
+              resource_type: "service_account",
+              parent_id: null,
+            },
+            {
+              resource_id: "lksqlc-no-kafka",
+              resource_type: "ksqldb_cluster",
+              parent_id: "env-abc123",
+              metadata: {},
+            },
+          ]),
+        ),
+      ),
+    );
+
+    const { result } = renderHook(() => useResourceLinks(), {
+      wrapper: makeWrapper(),
+    });
+
+    await waitFor(() =>
+      expect(result.current.resolveUrl("mock-gate-ksql3")).toBeTruthy(),
+    );
+
+    expect(result.current.resolveUrl("lksqlc-no-kafka")).toBeNull();
+  });
+
+  it("ksqldb_cluster with non-string kafka_cluster_id in metadata returns null", async () => {
+    server.use(
+      http.get(RESOURCE_API, () =>
+        HttpResponse.json(
+          makeResourcesResponse([
+            {
+              resource_id: "mock-gate-ksql4",
+              resource_type: "service_account",
+              parent_id: null,
+            },
+            {
+              resource_id: "lksqlc-bad-kafka",
+              resource_type: "ksqldb_cluster",
+              parent_id: "env-abc123",
+              metadata: { kafka_cluster_id: 42 },
+            },
+          ]),
+        ),
+      ),
+    );
+
+    const { result } = renderHook(() => useResourceLinks(), {
+      wrapper: makeWrapper(),
+    });
+
+    await waitFor(() =>
+      expect(result.current.resolveUrl("mock-gate-ksql4")).toBeTruthy(),
+    );
+
+    expect(result.current.resolveUrl("lksqlc-bad-kafka")).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// resolveUrl — identity index
+// ---------------------------------------------------------------------------
+
+describe("ResourceLinkContext — identity index", () => {
+  beforeEach(() => {
+    localStorage.setItem("chargeback_deep_links_enabled", "true");
+    server.use(
+      http.get(RESOURCE_API, () =>
+        HttpResponse.json(makeResourcesResponse([])),
+      ),
+    );
+  });
+
+  it("service_account in identity index resolves to per-principal URL", async () => {
+    server.use(
+      http.get(IDENTITY_API, () =>
+        HttpResponse.json(
+          makeIdentitiesResponse([
+            { identity_id: "mock-sa-via-identity", identity_type: "service_account" },
+          ]),
+        ),
+      ),
+    );
+
+    const { result } = renderHook(() => useResourceLinks(), {
+      wrapper: makeWrapper(),
+    });
+
+    await waitFor(() => expect(result.current.enabled).toBe(true));
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50));
+    });
+
+    expect(result.current.resolveUrl("mock-sa-via-identity")).toBe(
+      "https://confluent.cloud/settings/principals/mock-sa-via-identity?view=identity",
+    );
+  });
+
+  it("user in identity index resolves to principals URL", async () => {
+    server.use(
+      http.get(IDENTITY_API, () =>
+        HttpResponse.json(
+          makeIdentitiesResponse([
+            { identity_id: "mock-user-via-identity", identity_type: "user" },
+          ]),
+        ),
+      ),
+    );
+
+    const { result } = renderHook(() => useResourceLinks(), {
+      wrapper: makeWrapper(),
+    });
+
+    await waitFor(() => {
+      expect(result.current.resolveUrl("mock-user-via-identity")).toBe(
+        "https://confluent.cloud/settings/principals/mock-user-via-identity?view=identity",
+      );
+    });
+  });
+
+  it("identity_provider in identity index resolves to workload_identities URL", async () => {
+    server.use(
+      http.get(IDENTITY_API, () =>
+        HttpResponse.json(
+          makeIdentitiesResponse([
+            { identity_id: "mock-op-via-identity", identity_type: "identity_provider" },
+          ]),
+        ),
+      ),
+    );
+
+    const { result } = renderHook(() => useResourceLinks(), {
+      wrapper: makeWrapper(),
+    });
+
+    await waitFor(() => {
+      expect(result.current.resolveUrl("mock-op-via-identity")).toBe(
+        "https://confluent.cloud/settings/org/workload_identities/provider/oidc/view/mock-op-via-identity",
+      );
+    });
+  });
+
+  it("identity_pool in identity index resolves to principals URL", async () => {
+    server.use(
+      http.get(IDENTITY_API, () =>
+        HttpResponse.json(
+          makeIdentitiesResponse([
+            { identity_id: "mock-pool-via-identity", identity_type: "identity_pool" },
+          ]),
+        ),
+      ),
+    );
+
+    const { result } = renderHook(() => useResourceLinks(), {
+      wrapper: makeWrapper(),
+    });
+
+    await waitFor(() => {
+      expect(result.current.resolveUrl("mock-pool-via-identity")).toBe(
+        "https://confluent.cloud/settings/principals/mock-pool-via-identity?view=identity",
+      );
+    });
+  });
+
+  it("api_key in identity index resolves via identity fallback", async () => {
+    server.use(
+      http.get(IDENTITY_API, () =>
+        HttpResponse.json(
+          makeIdentitiesResponse([
+            { identity_id: "TRFPF55LGU5RBQIT", identity_type: "api_key" },
+            // non-prefixed gate to confirm identity index loaded
+            {
+              identity_id: "mock-gate-apikey",
+              identity_type: "service_account",
+            },
+          ]),
+        ),
+      ),
+    );
+
+    const { result } = renderHook(() => useResourceLinks(), {
+      wrapper: makeWrapper(),
+    });
+
+    // Gate on the non-prefixed identity entry — only resolves after identity index loads
+    await waitFor(() => {
+      expect(result.current.resolveUrl("mock-gate-apikey")).toBeTruthy();
+    });
+
+    expect(result.current.resolveUrl("TRFPF55LGU5RBQIT")).toBe(
+      "https://confluent.cloud/settings/api-keys/edit/TRFPF55LGU5RBQIT",
+    );
+  });
+
+  it("deleted identities are excluded from the identity index", async () => {
+    server.use(
+      http.get(IDENTITY_API, () =>
+        HttpResponse.json({
+          items: [
+            {
+              identity_id: "mock-deleted-identity",
+              identity_type: "service_account",
+              display_name: null,
+              deleted_at: "2024-01-01T00:00:00Z",
+            },
+            {
+              identity_id: "mock-active-identity",
+              identity_type: "user",
+              display_name: null,
+              deleted_at: null,
+            },
+          ],
+          total: 2,
+          page: 1,
+          page_size: 100,
+          pages: 1,
+        }),
+      ),
+    );
+
+    const { result } = renderHook(() => useResourceLinks(), {
+      wrapper: makeWrapper(),
+    });
+
+    // Gate: mock-active-identity has no prefix, resolves only after identity index loads
+    await waitFor(() =>
+      expect(result.current.resolveUrl("mock-active-identity")).toBeTruthy(),
+    );
+
+    expect(result.current.resolveUrl("mock-deleted-identity")).toBeNull();
+  });
+
+  it("u-* prefix fallback resolves without identity index", async () => {
+    server.use(
+      http.get(IDENTITY_API, () =>
+        HttpResponse.json(makeIdentitiesResponse([])),
+      ),
+    );
+
+    const { result } = renderHook(() => useResourceLinks(), {
+      wrapper: makeWrapper(),
+    });
+
+    await waitFor(() => expect(result.current.enabled).toBe(true));
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50));
+    });
+
+    expect(result.current.resolveUrl("u-xyz999")).toBe(
+      "https://confluent.cloud/settings/principals/u-xyz999?view=identity",
+    );
+  });
+
+  it("op-* prefix fallback resolves to workload_identities URL", async () => {
+    server.use(
+      http.get(IDENTITY_API, () =>
+        HttpResponse.json(makeIdentitiesResponse([])),
+      ),
+    );
+
+    const { result } = renderHook(() => useResourceLinks(), {
+      wrapper: makeWrapper(),
+    });
+
+    await waitFor(() => expect(result.current.enabled).toBe(true));
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50));
+    });
+
+    expect(result.current.resolveUrl("op-xyz999")).toBe(
+      "https://confluent.cloud/settings/org/workload_identities/provider/oidc/view/op-xyz999",
+    );
+  });
+
+  it("pool-* prefix fallback resolves to principals URL", async () => {
+    server.use(
+      http.get(IDENTITY_API, () =>
+        HttpResponse.json(makeIdentitiesResponse([])),
+      ),
+    );
+
+    const { result } = renderHook(() => useResourceLinks(), {
+      wrapper: makeWrapper(),
+    });
+
+    await waitFor(() => expect(result.current.enabled).toBe(true));
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50));
+    });
+
+    expect(result.current.resolveUrl("pool-xyz999")).toBe(
+      "https://confluent.cloud/settings/principals/pool-xyz999?view=identity",
+    );
   });
 });
 
@@ -787,12 +1292,17 @@ describe("ResourceLinkContext — no broken links", () => {
 
 describe("ResourceLinkContext — tenant switch", () => {
   it("tenant switch clears and rebuilds the resource index", async () => {
-    // Track fetch calls to ANY tenant's resources endpoint.
-    let fetchCount = 0;
+    // Track fetch calls to ANY tenant's resources and identities endpoints.
+    let resourceFetchCount = 0;
+    let identityFetchCount = 0;
     server.use(
       http.get("/api/v1/tenants/:tenant/resources", () => {
-        fetchCount++;
+        resourceFetchCount++;
         return HttpResponse.json(makeResourcesResponse([]));
+      }),
+      http.get("/api/v1/tenants/:tenant/identities", () => {
+        identityFetchCount++;
+        return HttpResponse.json(makeIdentitiesResponse([]));
       }),
     );
 
@@ -808,7 +1318,8 @@ describe("ResourceLinkContext — tenant switch", () => {
 
     await waitFor(() => expect(result.current.links.enabled).toBe(true));
 
-    const fetchCountAfterInit = fetchCount;
+    const resourceFetchCountAfterInit = resourceFetchCount;
+    const identityFetchCountAfterInit = identityFetchCount;
 
     // Simulate tenant switch by changing the active tenant
     act(() => {
@@ -820,12 +1331,15 @@ describe("ResourceLinkContext — tenant switch", () => {
         dates_calculated: 5,
         last_calculated_date: "2024-01-08",
         topic_attribution_status: "disabled" as const,
-      topic_attribution_error: null,
+        topic_attribution_error: null,
       });
     });
 
     await waitFor(() =>
-      expect(fetchCount).toBeGreaterThan(fetchCountAfterInit),
+      expect(resourceFetchCount).toBeGreaterThan(resourceFetchCountAfterInit),
+    );
+    await waitFor(() =>
+      expect(identityFetchCount).toBeGreaterThan(identityFetchCountAfterInit),
     );
   });
 });

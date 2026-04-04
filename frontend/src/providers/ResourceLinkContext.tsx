@@ -16,12 +16,25 @@ import {
   schemaRegistryUrl,
   serviceAccountUrl,
   connectorUrl,
+  userUrl,
+  identityProviderUrl,
+  identityPoolUrl,
+  apiKeyUrl,
+  flinkComputePoolUrl,
+  ksqldbClusterUrl,
 } from "../config/confluentCloudUrls";
 
 const STORAGE_KEY = "chargeback_deep_links_enabled";
 
-type ResourceEntry = { resource_type: string; parent_id: string | null };
+type ResourceEntry = {
+  resource_type: string;
+  parent_id: string | null;
+  metadata: Record<string, unknown>;
+};
 type ResourceIndex = Record<string, ResourceEntry>;
+
+type IdentityEntry = { identity_type: string };
+type IdentityIndex = Record<string, IdentityEntry>;
 
 interface ResourceLinkContextValue {
   resolveUrl: (resourceId: string) => string | null;
@@ -52,16 +65,46 @@ function resolveFromEntry(
     }
     case "schema_registry": {
       if (!entry.parent_id) return null;
-      return schemaRegistryUrl(entry.parent_id, resourceId);
+      return schemaRegistryUrl(entry.parent_id);
     }
     case "service_account":
-      return serviceAccountUrl();
+      return serviceAccountUrl(resourceId);
     case "connector": {
       if (!entry.parent_id) return null;
       const clusterEntry = index[entry.parent_id];
       if (!clusterEntry?.parent_id) return null;
       return connectorUrl(clusterEntry.parent_id, entry.parent_id, resourceId);
     }
+    case "flink_compute_pool": {
+      if (!entry.parent_id) return null;
+      return flinkComputePoolUrl(entry.parent_id, resourceId);
+    }
+    case "ksqldb_cluster": {
+      if (!entry.parent_id) return null;
+      const kafkaClusterId = entry.metadata.kafka_cluster_id;
+      if (typeof kafkaClusterId !== "string" || !kafkaClusterId) return null;
+      return ksqldbClusterUrl(entry.parent_id, kafkaClusterId, resourceId);
+    }
+    default:
+      return null;
+  }
+}
+
+function resolveFromIdentity(
+  identityId: string,
+  entry: IdentityEntry,
+): string | null {
+  switch (entry.identity_type) {
+    case "service_account":
+      return serviceAccountUrl(identityId);
+    case "user":
+      return userUrl(identityId);
+    case "identity_provider":
+      return identityProviderUrl(identityId);
+    case "identity_pool":
+      return identityPoolUrl(identityId);
+    case "api_key":
+      return apiKeyUrl(identityId);
     default:
       return null;
   }
@@ -78,6 +121,7 @@ export function ResourceLinkProvider({
   const [enabled, setEnabledState] = useState<boolean>(getInitialEnabled);
   const [index, setIndex] = useState<ResourceIndex>({});
   const [isLoading, setIsLoading] = useState(false);
+  const [identityIndex, setIdentityIndex] = useState<IdentityIndex>({});
 
   const setEnabled = useCallback((value: boolean) => {
     localStorage.setItem(STORAGE_KEY, String(value));
@@ -107,6 +151,7 @@ export function ResourceLinkProvider({
               resource_type: string;
               parent_id: string | null;
               deleted_at: string | null;
+              metadata: Record<string, unknown>;
             }>;
             page: number;
             pages: number;
@@ -116,6 +161,7 @@ export function ResourceLinkProvider({
             newIndex[r.resource_id] = {
               resource_type: r.resource_type,
               parent_id: r.parent_id,
+              metadata: r.metadata ?? {},
             };
           }
           hasMore = data.page < data.pages;
@@ -138,6 +184,53 @@ export function ResourceLinkProvider({
     return () => controller.abort();
   }, [enabled, currentTenant]);
 
+  useEffect(() => {
+    if (!enabled || !currentTenant) return;
+
+    const tenantName = currentTenant.tenant_name;
+    const controller = new AbortController();
+
+    async function fetchIdentities(): Promise<void> {
+      try {
+        const newIndex: IdentityIndex = {};
+        let page = 1;
+        let hasMore = true;
+
+        while (hasMore) {
+          const url = `${API_URL}/tenants/${tenantName}/identities?page=${page}&page_size=100`;
+          const res = await fetch(url, { signal: controller.signal });
+          if (!res.ok) break;
+          const data = (await res.json()) as {
+            items: Array<{
+              identity_id: string;
+              identity_type: string;
+              deleted_at: string | null;
+            }>;
+            page: number;
+            pages: number;
+          };
+          for (const r of data.items) {
+            if (r.deleted_at) continue;
+            newIndex[r.identity_id] = {
+              identity_type: r.identity_type,
+            };
+          }
+          hasMore = data.page < data.pages;
+          page++;
+        }
+
+        if (!controller.signal.aborted) {
+          setIdentityIndex(newIndex);
+        }
+      } catch (err) {
+        if (err instanceof Error && err.name === "AbortError") return;
+      }
+    }
+
+    void fetchIdentities();
+    return () => controller.abort();
+  }, [enabled, currentTenant]);
+
   const resolveUrl = useCallback(
     (resourceId: string): string | null => {
       if (!enabled) return null;
@@ -147,13 +240,24 @@ export function ResourceLinkProvider({
         return resolveFromEntry(resourceId, entry, index);
       }
 
-      // Prefix fallbacks for IDs not in index
-      if (resourceId.startsWith("sa-")) return serviceAccountUrl();
+      // Prefix fallbacks for IDs not in resource index
+      if (resourceId.startsWith("sa-")) return serviceAccountUrl(resourceId);
       if (resourceId.startsWith("env-")) return environmentUrl(resourceId);
-      // lkc-, lsrc- need parent context — cannot resolve without index
+      if (resourceId.startsWith("u-")) return userUrl(resourceId);
+      if (resourceId.startsWith("op-")) return identityProviderUrl(resourceId);
+      if (resourceId.startsWith("pool-")) return identityPoolUrl(resourceId);
+      // lkc-, lsrc-, lfcp-, lksqlc- need parent context — cannot resolve without index
+
+      // Identity index fallback — handles api_key (no prefix) and any
+      // identities not caught by prefix matching above
+      const identityEntry = identityIndex[resourceId];
+      if (identityEntry) {
+        return resolveFromIdentity(resourceId, identityEntry);
+      }
+
       return null;
     },
-    [enabled, index],
+    [enabled, index, identityIndex],
   );
 
   const value = useMemo<ResourceLinkContextValue>(
