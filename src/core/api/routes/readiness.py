@@ -8,12 +8,13 @@ from typing import TYPE_CHECKING, Annotated
 from fastapi import APIRouter, Depends, Request
 
 if TYPE_CHECKING:
-    from core.config.models import PluginSettingsBase, StorageConfig
+    from core.config.models import StorageConfig
     from workflow_runner import WorkflowRunner
 
 from core.api import API_VERSION
 from core.api.dependencies import get_or_create_backend, get_settings
 from core.api.schemas import ReadinessResponse, TenantReadiness
+from core.api.topic_attribution_status import TopicAttributionStatus, resolve_topic_attribution_status
 from core.config.models import AppSettings  # noqa: TC001  # FastAPI evaluates annotations at runtime
 
 logger = logging.getLogger(__name__)
@@ -32,11 +33,6 @@ def _get_backends(request: Request) -> dict[str, object]:
     return request.app.state.backends  # type: ignore[no-any-return]  # app.state is untyped
 
 
-def _is_topic_attribution_enabled(plugin_settings: PluginSettingsBase) -> bool:
-    ta = getattr(plugin_settings, "topic_attribution", None)
-    return bool(ta and getattr(ta, "enabled", False))
-
-
 def _check_tenant_readiness(
     tenant_name: str,
     ecosystem: str,
@@ -45,7 +41,7 @@ def _check_tenant_readiness(
     backends: dict[str, object],
     workflow_runner: WorkflowRunner | None,
     failed_tenants: dict[str, str],
-    topic_attribution_enabled: bool,
+    topic_attribution_status: TopicAttributionStatus,
 ) -> TenantReadiness:
     """Check readiness for a single tenant. Pure function over injected dependencies."""
     tables_ready = True
@@ -99,7 +95,8 @@ def _check_tenant_readiness(
         last_run_status=last_run_status,
         last_run_at=last_run_at,
         permanent_failure=permanent_failure,
-        topic_attribution_enabled=topic_attribution_enabled,
+        topic_attribution_status=topic_attribution_status.status,
+        topic_attribution_error=topic_attribution_status.error,
     )
 
 
@@ -143,7 +140,7 @@ def readiness(
             backends=backends,
             workflow_runner=workflow_runner,
             failed_tenants=failed_tenants,
-            topic_attribution_enabled=_is_topic_attribution_enabled(cfg.plugin_settings),
+            topic_attribution_status=resolve_topic_attribution_status(cfg.plugin_settings, cfg.ecosystem),
         )
         for name, cfg in settings.tenants.items()
     ]

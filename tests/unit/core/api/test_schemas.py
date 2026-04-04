@@ -43,10 +43,14 @@ class TestTenantSchemas:
             dates_pending=5,
             dates_calculated=10,
             last_calculated_date=date(2026, 1, 15),
-            topic_attribution_enabled=False,
+            topic_attribution_status="disabled",
         )
         assert s.tenant_name == "t1"
         assert s.last_calculated_date == date(2026, 1, 15)
+        data = s.model_dump()
+        assert data["topic_attribution_status"] == "disabled"
+        assert data["topic_attribution_error"] is None
+        assert "topic_attribution_enabled" not in data
 
     def test_tenant_status_summary_null_date(self) -> None:
         s = TenantStatusSummary(
@@ -56,7 +60,7 @@ class TestTenantSchemas:
             dates_pending=0,
             dates_calculated=0,
             last_calculated_date=None,
-            topic_attribution_enabled=False,
+            topic_attribution_status="disabled",
         )
         assert s.last_calculated_date is None
 
@@ -79,9 +83,13 @@ class TestTenantSchemas:
             tenant_id="id1",
             ecosystem="eco",
             states=[],
-            topic_attribution_enabled=False,
+            topic_attribution_status="disabled",
         )
         assert resp.states == []
+        data = resp.model_dump()
+        assert data["topic_attribution_status"] == "disabled"
+        assert data["topic_attribution_error"] is None
+        assert "topic_attribution_enabled" not in data
 
 
 class TestResourceResponse:

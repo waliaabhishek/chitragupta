@@ -58,7 +58,9 @@ Per-tenant readiness with pipeline state. TTL-cached for 2 seconds.
 | `mode` | string | Run mode (`api`, `worker`, `both`) |
 | `tenants` | list | Per-tenant status (see below) |
 
-**Per-tenant fields:** `tenant_name`, `tables_ready`, `has_data`, `pipeline_running`, `pipeline_stage`, `pipeline_current_date`, `last_run_status`, `last_run_at`, `permanent_failure`.
+**Per-tenant fields:** `tenant_name`, `tables_ready`, `has_data`, `pipeline_running`, `pipeline_stage`, `pipeline_current_date`, `last_run_status`, `last_run_at`, `permanent_failure`, `topic_attribution_status`, `topic_attribution_error`.
+
+`topic_attribution_status` is one of `"disabled"` | `"enabled"` | `"config_error"`. `topic_attribution_error` is a string describing the validation failure when `topic_attribution_status` is `"config_error"`, otherwise null.
 
 ---
 
@@ -68,7 +70,9 @@ Per-tenant readiness with pipeline state. TTL-cached for 2 seconds.
 
 List all configured tenants with summary pipeline state.
 
-**Response fields per tenant:** `tenant_name`, `tenant_id`, `ecosystem`, `dates_pending`, `dates_calculated`, `last_calculated_date`.
+**Response fields per tenant:** `tenant_name`, `tenant_id`, `ecosystem`, `dates_pending`, `dates_calculated`, `last_calculated_date`, `topic_attribution_status`, `topic_attribution_error`.
+
+`topic_attribution_status` is one of `"disabled"` | `"enabled"` | `"config_error"`. See `GET /api/v1/readiness` above for field semantics.
 
 ### `GET /api/v1/tenants/{tenant_name}/status`
 
@@ -79,7 +83,7 @@ Detailed per-date pipeline state for a tenant.
 | `start_date` | date | no | Filter from this date |
 | `end_date` | date | no | Filter to this date |
 
-**Response:** List of `{tracking_date, billing_gathered, resources_gathered, chargeback_calculated, topic_overlay_gathered, topic_attribution_calculated}` per date. The `topic_overlay_gathered` and `topic_attribution_calculated` fields are `false` when topic attribution is disabled.
+**Response:** `{tenant_name, tenant_id, ecosystem, topic_attribution_status, topic_attribution_error, states}` where `states` is a list of `{tracking_date, billing_gathered, resources_gathered, chargeback_calculated, topic_overlay_gathered, topic_attribution_calculated}` per date. The `topic_overlay_gathered` and `topic_attribution_calculated` fields are `false` when topic attribution is disabled or in `config_error` state.
 
 ---
 

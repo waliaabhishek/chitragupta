@@ -819,7 +819,8 @@ describe("ResourceLinkContext — tenant switch", () => {
         dates_pending: 0,
         dates_calculated: 5,
         last_calculated_date: "2024-01-08",
-        topic_attribution_enabled: false,
+        topic_attribution_status: "disabled" as const,
+      topic_attribution_error: null,
       });
     });
 

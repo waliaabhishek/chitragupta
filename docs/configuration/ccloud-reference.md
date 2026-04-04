@@ -174,6 +174,13 @@ topic_attribution:
     Config validation rejects the combination of `enabled: true` and no `metrics` source — startup
     fails with a `ValidationError` rather than silently producing even-split attribution from zero data.
 
+    When Chitragupta starts in API mode without full plugin validation (e.g., using a raw config that
+    hasn't been fully parsed as `CCloudPluginConfig`), this misconfiguration is surfaced at API query
+    time instead of startup. In that case, `GET /api/v1/tenants` and `GET /api/v1/readiness` return
+    `topic_attribution_status: "config_error"` with a human-readable `topic_attribution_error` message.
+    The frontend displays a red "Config error" badge in the sidebar and a red alert on the Topic
+    Attribution page. Correct the config and restart to resolve.
+
 ### `topic_attribution` fields
 
 | Field | Type | Default | Description |

@@ -27,7 +27,21 @@ export function TopicAttributionPage(): React.JSX.Element {
     );
   }
 
-  if (currentTenant.topic_attribution_enabled === false) {
+  if (currentTenant.topic_attribution_status === "config_error") {
+    return (
+      <div>
+        <Title level={3}>Topic Attribution</Title>
+        <Alert
+          type="error"
+          showIcon
+          message="Topic Attribution configuration error"
+          description={currentTenant.topic_attribution_error ?? "Configuration validation failed."}
+        />
+      </div>
+    );
+  }
+
+  if (currentTenant.topic_attribution_status === "disabled") {
     return (
       <div>
         <Title level={3}>Topic Attribution</Title>

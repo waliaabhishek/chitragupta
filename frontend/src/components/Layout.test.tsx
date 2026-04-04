@@ -92,7 +92,7 @@ describe("AppLayout toggle button", () => {
 // ---------------------------------------------------------------------------
 
 describe("TASK-187: Topic Attribution nav item", () => {
-  it("topic_attribution_enabled=false → Topic Attribution nav item shows 'Not configured' badge", () => {
+  it("topic_attribution_status=disabled → Topic Attribution nav item shows 'Not configured' badge", () => {
     vi.mocked(useTenant).mockReturnValue({
       currentTenant: {
         tenant_name: "acme",
@@ -101,7 +101,8 @@ describe("TASK-187: Topic Attribution nav item", () => {
         dates_pending: 0,
         dates_calculated: 10,
         last_calculated_date: null,
-        topic_attribution_enabled: false,
+        topic_attribution_status: "disabled",
+        topic_attribution_error: null,
       },
       tenants: [],
       isLoading: false,
@@ -121,7 +122,7 @@ describe("TASK-187: Topic Attribution nav item", () => {
     expect(screen.getByText("Not configured")).toBeTruthy();
   });
 
-  it("topic_attribution_enabled=true → Topic Attribution nav item shows normal label without 'Not configured'", () => {
+  it("topic_attribution_status=enabled → Topic Attribution nav item shows normal label without 'Not configured'", () => {
     vi.mocked(useTenant).mockReturnValue({
       currentTenant: {
         tenant_name: "acme",
@@ -130,7 +131,8 @@ describe("TASK-187: Topic Attribution nav item", () => {
         dates_pending: 0,
         dates_calculated: 10,
         last_calculated_date: null,
-        topic_attribution_enabled: true,
+        topic_attribution_status: "enabled",
+        topic_attribution_error: null,
       },
       tenants: [],
       isLoading: false,
@@ -147,6 +149,37 @@ describe("TASK-187: Topic Attribution nav item", () => {
       { wrapper },
     );
 
+    expect(screen.queryByText("Not configured")).toBeNull();
+  });
+
+  it("topic_attribution_status=config_error → Topic Attribution nav item shows 'Config error' badge", () => {
+    vi.mocked(useTenant).mockReturnValue({
+      currentTenant: {
+        tenant_name: "acme",
+        tenant_id: "t-001",
+        ecosystem: "ccloud",
+        dates_pending: 0,
+        dates_calculated: 10,
+        last_calculated_date: null,
+        topic_attribution_status: "config_error",
+        topic_attribution_error: "requires metrics",
+      },
+      tenants: [],
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+      setCurrentTenant: vi.fn(),
+      isReadOnly: false,
+    });
+
+    render(
+      <AppLayout isDark={false} onToggleTheme={vi.fn()}>
+        <div>content</div>
+      </AppLayout>,
+      { wrapper },
+    );
+
+    expect(screen.getByText("Config error")).toBeTruthy();
     expect(screen.queryByText("Not configured")).toBeNull();
   });
 });

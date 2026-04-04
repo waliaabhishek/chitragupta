@@ -81,7 +81,7 @@ function buildStepperItems(
   pipelineCurrentDate: string | null,
   lastRunStatus: string | null,
   lastRunAt: string | null,
-  topicAttributionEnabled: boolean,
+  topicAttributionStatus: "disabled" | "enabled" | "config_error",
 ): StepperConfig[] {
   let result: StepperConfig[];
 
@@ -134,7 +134,12 @@ function buildStepperItems(
     );
   }
 
-  if (!topicAttributionEnabled) {
+  if (topicAttributionStatus === "config_error") {
+    result[STAGES.indexOf("topic_overlay")] = {
+      status: "error",
+      description: "Config error",
+    };
+  } else if (topicAttributionStatus === "disabled") {
     result[STAGES.indexOf("topic_overlay")] = {
       status: "wait",
       description: "Not configured",
@@ -157,14 +162,14 @@ function BoolIconRenderer(params: ICellRendererParams): React.JSX.Element {
   );
 }
 
-function getStateColumnDefs(topicAttributionEnabled: boolean): ColDef[] {
+function getStateColumnDefs(topicAttributionStatus: "disabled" | "enabled" | "config_error"): ColDef[] {
   const cols: ColDef[] = [
     { field: "tracking_date", headerName: "Date", sort: "desc", flex: 1 },
     { field: "billing_gathered", headerName: "Billing Gathered", cellRenderer: BoolIconRenderer, width: 160 },
     { field: "resources_gathered", headerName: "Resources Gathered", cellRenderer: BoolIconRenderer, width: 170 },
     { field: "chargeback_calculated", headerName: "Chargeback Calculated", cellRenderer: BoolIconRenderer, width: 190 },
   ];
-  if (topicAttributionEnabled) {
+  if (topicAttributionStatus === "enabled") {
     cols.push(
       { field: "topic_overlay_gathered", headerName: "Topic Metrics Gathered", cellRenderer: BoolIconRenderer, width: 180 },
       { field: "topic_attribution_calculated", headerName: "Topic Attribution", cellRenderer: BoolIconRenderer, width: 160 },
@@ -198,7 +203,7 @@ function PipelineStatusContent({
   );
   const pipelineRunning = tenantReadiness?.pipeline_running ?? false;
   const isApiOnly = readiness?.mode === "api";
-  const topicAttributionEnabled = tenantReadiness?.topic_attribution_enabled ?? false;
+  const topicAttributionStatus = tenantReadiness?.topic_attribution_status ?? "disabled";
 
   // AC-3: Last Run Summary — refetch faster while running
   const statusQuery = useQuery<PipelineStatusResponse>({
@@ -233,7 +238,7 @@ function PipelineStatusContent({
     tenantReadiness?.pipeline_current_date ?? null,
     tenantReadiness?.last_run_status ?? null,
     tenantReadiness?.last_run_at ?? null,
-    topicAttributionEnabled,
+    topicAttributionStatus,
   ).map((cfg, i) => ({
     title: STAGE_LABELS[STAGES[i]],
     status: cfg.status,
@@ -356,7 +361,7 @@ function PipelineStatusContent({
           <div style={{ height: 500 }}>
             <AgGridReact
               theme={gridTheme}
-              columnDefs={getStateColumnDefs(topicAttributionEnabled)}
+              columnDefs={getStateColumnDefs(topicAttributionStatus)}
               defaultColDef={defaultColDef}
               rowData={statesQuery.data?.states ?? []}
               getRowId={(params) => params.data.tracking_date}

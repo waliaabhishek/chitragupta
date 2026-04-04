@@ -115,6 +115,9 @@ class TestNoCoreToPluginImport:
                 "grep",
                 "-r",
                 "--exclude=env.py",
+                # topic_attribution_status.py uses a lazy import (inside function body,
+                # guarded by ecosystem == "confluent_cloud") — intentional exception.
+                "--exclude=topic_attribution_status.py",
                 "--exclude-dir=__pycache__",
                 "plugins.confluent_cloud",
                 str(core_dir),

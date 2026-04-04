@@ -26,7 +26,8 @@ export interface TenantStatusSummary {
   dates_pending: number;
   dates_calculated: number;
   last_calculated_date: string | null;
-  topic_attribution_enabled: boolean;
+  topic_attribution_status: "disabled" | "enabled" | "config_error";
+  topic_attribution_error: string | null;
 }
 
 export interface TenantListResponse {
@@ -47,7 +48,8 @@ export interface TenantStatusDetailResponse {
   tenant_id: string;
   ecosystem: string;
   states: PipelineStateResponse[];
-  topic_attribution_enabled: boolean;
+  topic_attribution_status: "disabled" | "enabled" | "config_error";
+  topic_attribution_error: string | null;
 }
 
 // --- Resource ---
@@ -279,7 +281,8 @@ export interface TenantReadiness {
   last_run_status: string | null;
   last_run_at: string | null;
   permanent_failure: string | null;
-  topic_attribution_enabled: boolean;
+  topic_attribution_status: "disabled" | "enabled" | "config_error";
+  topic_attribution_error: string | null;
 }
 
 export interface ReadinessResponse {

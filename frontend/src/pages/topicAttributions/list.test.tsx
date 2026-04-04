@@ -213,7 +213,8 @@ import { useSearchParams } from "react-router";
 function setupTenantContext(
   tenantName: string | null = "acme",
   isReadOnly = false,
-  topicAttributionEnabled?: boolean,
+  topicAttributionStatus: "disabled" | "enabled" | "config_error" = "disabled",
+  topicAttributionError: string | null = null,
 ): void {
   mockUseTenant.mockReturnValue({
     currentTenant: tenantName
@@ -224,7 +225,8 @@ function setupTenantContext(
           dates_pending: 0,
           dates_calculated: 10,
           last_calculated_date: null,
-          topic_attribution_enabled: topicAttributionEnabled ?? false,
+          topic_attribution_status: topicAttributionStatus,
+          topic_attribution_error: topicAttributionError,
         } as TenantStatusSummary)
       : null,
     tenants: [],
@@ -267,7 +269,7 @@ describe("TopicAttributionPage", () => {
   });
 
   it("Export button is disabled when isReadOnly=true", () => {
-    setupTenantContext("acme", true, true);
+    setupTenantContext("acme", true, "enabled");
     render(<TopicAttributionPage />);
     // Find the export button by text or test-id and verify it is disabled
     const exportBtn = screen.getByText("Export CSV").closest("button");
@@ -294,7 +296,7 @@ describe("TopicAttributionPage — filter param integration", () => {
       ),
       vi.fn(),
     ]);
-    setupTenantContext("acme", false, true);
+    setupTenantContext("acme", false, "enabled");
     render(<TopicAttributionPage />);
     const grid = screen.getByTestId("ag-grid");
     expect(grid).toBeTruthy();
@@ -323,8 +325,8 @@ describe("TopicAttributionPage — filter param integration", () => {
 // ---------------------------------------------------------------------------
 
 describe("TASK-187: topic_attribution_enabled flag", () => {
-  it("topic_attribution_enabled=false → shows feature discovery alert instead of data page", () => {
-    setupTenantContext("acme", false, false);
+  it("topic_attribution_status=disabled → shows feature discovery alert instead of data page", () => {
+    setupTenantContext("acme", false, "disabled");
     render(<TopicAttributionPage />);
 
     const alert = screen.getByTestId("alert");
@@ -333,11 +335,22 @@ describe("TASK-187: topic_attribution_enabled flag", () => {
     expect(screen.queryByTestId("ag-grid")).toBeNull();
   });
 
-  it("topic_attribution_enabled=true → shows normal data page", () => {
-    setupTenantContext("acme", false, true);
+  it("topic_attribution_status=enabled → shows normal data page", () => {
+    setupTenantContext("acme", false, "enabled");
     render(<TopicAttributionPage />);
 
     expect(screen.queryByTestId("alert")).toBeNull();
     expect(screen.queryByText("Select a tenant to begin.")).toBeNull();
+  });
+
+  it("topic_attribution_status=config_error → shows error alert with error message", () => {
+    setupTenantContext("acme", false, "config_error", "requires metrics");
+    render(<TopicAttributionPage />);
+
+    const alert = screen.getByTestId("alert");
+    expect(alert).toBeTruthy();
+    expect(alert.textContent?.toLowerCase()).toContain("config");
+    expect(alert.textContent).toContain("requires metrics");
+    expect(screen.queryByTestId("ag-grid")).toBeNull();
   });
 });

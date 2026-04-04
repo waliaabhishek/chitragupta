@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **TASK-194** ⚠️ Breaking API change: `GET /api/v1/tenants`, `GET /api/v1/tenants/{tenant}/status`, and `GET /api/v1/readiness` no longer return `topic_attribution_enabled: boolean`. They now return two fields:
+  - `topic_attribution_status`: `"disabled"` | `"enabled"` | `"config_error"`
+  - `topic_attribution_error`: string or null
+
+  The `config_error` state surfaces Confluent Cloud plugin validation failures (e.g., `topic_attribution.enabled: true` set without a `metrics` source). Previously these silently appeared as `topic_attribution_enabled: false`, indistinguishable from intentionally disabled. The frontend now shows a red "Config error" badge in the sidebar nav and a red alert on the Topic Attribution page when this state is present.
+
 - **TASK-193**: Pipeline status API (`GET /tenants/{tenant_name}/status`) now defaults to `[today - lookback_days, today]` when no date range is provided, instead of returning all historical records. This scopes the frontend pipeline status table to only show dates the pipeline actively manages, removing stale rows from outside the active processing window.
 
 ### Fixed
@@ -38,7 +44,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - **Feat:** TASK-187 — Show topic attribution as "not configured" when feature is disabled
 
-  Backend API responses (`GET /api/v1/tenants`, `GET /api/v1/tenants/{tenant}/status`, `GET /api/v1/readiness`) now include a `topic_attribution_enabled` boolean derived from the tenant's plugin config. Frontend uses this flag to:
+  Backend API responses (`GET /api/v1/tenants`, `GET /api/v1/tenants/{tenant}/status`, `GET /api/v1/readiness`) now include `topic_attribution_status` and `topic_attribution_error` fields derived from the tenant's plugin config (superseded from `topic_attribution_enabled` by TASK-194). Frontend uses this signal to:
   - Show the Topic Attribution pipeline stage as grayed out / "Not configured" in the stepper when disabled
   - Hide topic overlay columns from the per-date processing table when disabled
   - Display a "Not configured" badge on the Topic Attribution sidebar nav item when disabled

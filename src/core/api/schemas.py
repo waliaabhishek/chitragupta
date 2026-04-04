@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -38,7 +38,8 @@ class TenantStatusSummary(BaseModel):
     dates_pending: int
     dates_calculated: int
     last_calculated_date: date | None
-    topic_attribution_enabled: bool
+    topic_attribution_status: Literal["disabled", "enabled", "config_error"]
+    topic_attribution_error: str | None = None
 
 
 class TenantListResponse(BaseModel):
@@ -65,7 +66,8 @@ class TenantStatusDetailResponse(BaseModel):
     tenant_id: str
     ecosystem: str
     states: list[PipelineStateResponse]
-    topic_attribution_enabled: bool
+    topic_attribution_status: Literal["disabled", "enabled", "config_error"]
+    topic_attribution_error: str | None = None
 
 
 # --- Resource ---
@@ -365,7 +367,8 @@ class TenantReadiness(BaseModel):
     last_run_status: str | None
     last_run_at: datetime | None
     permanent_failure: str | None
-    topic_attribution_enabled: bool
+    topic_attribution_status: Literal["disabled", "enabled", "config_error"]
+    topic_attribution_error: str | None = None
 
 
 class ReadinessResponse(BaseModel):

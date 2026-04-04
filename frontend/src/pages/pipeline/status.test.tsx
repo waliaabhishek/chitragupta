@@ -286,7 +286,8 @@ const mockTenant: TenantStatusSummary = {
   dates_pending: 0,
   dates_calculated: 10,
   last_calculated_date: null,
-  topic_attribution_enabled: false,
+  topic_attribution_status: "disabled",
+  topic_attribution_error: null,
 };
 
 function makeTenantReadiness(
@@ -302,7 +303,8 @@ function makeTenantReadiness(
     last_run_status: null,
     last_run_at: null,
     permanent_failure: null,
-    topic_attribution_enabled: true,
+    topic_attribution_status: "enabled",
+    topic_attribution_error: null,
     ...overrides,
   };
 }
@@ -355,7 +357,8 @@ function defaultStatesData(): TenantStatusDetailResponse {
     tenant_id: "t-001",
     ecosystem: "ccloud",
     states: [],
-    topic_attribution_enabled: false,
+    topic_attribution_status: "disabled",
+    topic_attribution_error: null,
   };
 }
 
@@ -887,12 +890,12 @@ describe("AC-7 (TASK-164): 4-stage stepper", () => {
 // ---------------------------------------------------------------------------
 
 describe("TASK-187: Topic Attribution Enabled Flag", () => {
-  it("test 26: topic_attribution_enabled=false → topic_overlay step has status wait and description 'Not configured'", () => {
+  it("test 26: topic_attribution_status=disabled → topic_overlay step has status wait and description 'Not configured'", () => {
     setupTenantContext({
       pipeline_running: false,
       last_run_status: "completed",
       last_run_at: "2026-04-01T10:00:00Z",
-      topic_attribution_enabled: false,
+      topic_attribution_status: "disabled",
     });
     setupDefaultQueries();
     render(<PipelineStatusPage />);
@@ -904,12 +907,12 @@ describe("TASK-187: Topic Attribution Enabled Flag", () => {
     );
   });
 
-  it("test 27: topic_attribution_enabled=true → topic_overlay step renders normally (not overridden)", () => {
+  it("test 27: topic_attribution_status=enabled → topic_overlay step renders normally (not overridden)", () => {
     setupTenantContext({
       pipeline_running: false,
       last_run_status: "completed",
       last_run_at: "2026-04-01T10:00:00Z",
-      topic_attribution_enabled: true,
+      topic_attribution_status: "enabled",
     });
     setupDefaultQueries();
     render(<PipelineStatusPage />);
@@ -917,9 +920,9 @@ describe("TASK-187: Topic Attribution Enabled Flag", () => {
     expect(screen.getByTestId("step-2")).toHaveAttribute("data-status", "finish");
   });
 
-  it("test 28: topic_attribution_enabled=false → grid hides Topic Overlay and Topic Attribution columns", () => {
+  it("test 28: topic_attribution_status=disabled → grid hides Topic Overlay and Topic Attribution columns", () => {
     setupTenantContext({
-      topic_attribution_enabled: false,
+      topic_attribution_status: "disabled",
     });
     setupDefaultQueries();
     render(<PipelineStatusPage />);
@@ -935,9 +938,9 @@ describe("TASK-187: Topic Attribution Enabled Flag", () => {
     expect(headerNames).not.toContain("Topic Attribution");
   });
 
-  it("test 29: topic_attribution_enabled=true → grid shows all 6 columns including Topic Overlay and Topic Attribution", () => {
+  it("test 29: topic_attribution_status=enabled → grid shows all 6 columns including Topic Overlay and Topic Attribution", () => {
     setupTenantContext({
-      topic_attribution_enabled: true,
+      topic_attribution_status: "enabled",
     });
     setupDefaultQueries();
     render(<PipelineStatusPage />);
@@ -947,5 +950,23 @@ describe("TASK-187: Topic Attribution Enabled Flag", () => {
     const headerNames = gridCapture.columnDefs?.map((c) => c.headerName);
     expect(headerNames).toContain("Topic Metrics Gathered");
     expect(headerNames).toContain("Topic Attribution");
+  });
+
+  it("test 30: topic_attribution_status=config_error → topic_overlay step has status error and description 'Config error'", () => {
+    setupTenantContext({
+      pipeline_running: false,
+      last_run_status: "completed",
+      last_run_at: "2026-04-01T10:00:00Z",
+      topic_attribution_status: "config_error",
+      topic_attribution_error: "requires metrics",
+    });
+    setupDefaultQueries();
+    render(<PipelineStatusPage />);
+
+    expect(screen.getByTestId("step-2")).toHaveAttribute("data-status", "error");
+    expect(screen.getByTestId("step-2")).toHaveAttribute(
+      "data-description",
+      "Config error",
+    );
   });
 });

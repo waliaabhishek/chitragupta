@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
 
 from core.api.routes.readiness import _check_tenant_readiness
+from core.api.topic_attribution_status import TopicAttributionStatus
 from core.config.models import AppSettings, StorageConfig, TenantConfig
 
 if TYPE_CHECKING:
@@ -67,7 +68,7 @@ def _call_check(
     workflow_runner: MagicMock | None = None,
     failed_tenants: dict[str, str] | None = None,
     tenant_name: str = "t",
-    topic_attribution_enabled: bool = False,
+    topic_attribution_status: TopicAttributionStatus | None = None,
 ) -> TenantReadiness:
     backend = _make_backend(latest_run=latest_run, count=count)
     with patch("core.api.routes.readiness.get_or_create_backend", return_value=backend):
@@ -79,7 +80,7 @@ def _call_check(
             backends={},
             workflow_runner=workflow_runner,
             failed_tenants=failed_tenants or {},
-            topic_attribution_enabled=topic_attribution_enabled,
+            topic_attribution_status=topic_attribution_status or TopicAttributionStatus(status="disabled"),
         )
 
 
@@ -188,8 +189,10 @@ class TestReadinessHttpIntegration:
         status='running' must return pipeline_running=false, last_run_status='failed'
         in the JSON response.
         """
+        import core.api.routes.readiness as readiness_module
         from core.api.app import create_app
 
+        readiness_module._readiness_cache = None  # ensure no stale TTL cache from other tests
         settings = _make_app_settings_with_tenant()
         app = create_app(settings, workflow_runner=None, mode="api")
 
@@ -214,3 +217,6 @@ class TestReadinessHttpIntegration:
         assert tenant["tenant_name"] == "acme"
         assert tenant["pipeline_running"] is False
         assert tenant["last_run_status"] == "failed"
+        assert "topic_attribution_status" in tenant
+        assert "topic_attribution_error" in tenant
+        assert "topic_attribution_enabled" not in tenant

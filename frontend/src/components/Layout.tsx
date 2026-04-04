@@ -53,7 +53,9 @@ export function AppLayout({
 
   // Tenant-scoped pages are disabled/greyed when no tenant is selected.
   const tenantRequired = !currentTenant;
-  const topicAttributionEnabled = currentTenant?.topic_attribution_enabled ?? false;
+  const taStatus = currentTenant?.topic_attribution_status ?? "disabled";
+  const topicAttributionEnabled = taStatus === "enabled";
+  const topicAttributionConfigError = taStatus === "config_error";
   const menuItems = [
     {
       key: "/dashboard",
@@ -77,10 +79,17 @@ export function AppLayout({
       label: !tenantRequired && !topicAttributionEnabled ? (
         <span>
           Topic Attribution{" "}
-          <Badge
-            count="Not configured"
-            style={{ backgroundColor: "#f0f0f0", color: "#8c8c8c", fontSize: 10, boxShadow: "none" }}
-          />
+          {topicAttributionConfigError ? (
+            <Badge
+              count="Config error"
+              style={{ backgroundColor: "#fff1f0", color: "#cf1322", fontSize: 10, boxShadow: "none" }}
+            />
+          ) : (
+            <Badge
+              count="Not configured"
+              style={{ backgroundColor: "#f0f0f0", color: "#8c8c8c", fontSize: 10, boxShadow: "none" }}
+            />
+          )}
         </span>
       ) : (
         "Topic Attribution"
