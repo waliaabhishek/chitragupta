@@ -1882,6 +1882,12 @@ configured under <code>plugin_settings.metrics</code>.</p>
 <p><code>topic_attribution.enabled: true</code> requires a <code>metrics</code> section in <code>plugin_settings</code>.
 Config validation rejects the combination of <code>enabled: true</code> and no <code>metrics</code> source — startup
 fails with a <code>ValidationError</code> rather than silently producing even-split attribution from zero data.</p>
+<p>When Chitragupta starts in API mode without full plugin validation (e.g., using a raw config that
+hasn't been fully parsed as <code>CCloudPluginConfig</code>), this misconfiguration is surfaced at API query
+time instead of startup. In that case, <code>GET /api/v1/tenants</code> and <code>GET /api/v1/readiness</code> return
+<code>topic_attribution_status: "config_error"</code> with a human-readable <code>topic_attribution_error</code> message.
+The frontend displays a red "Config error" badge in the sidebar and a red alert on the Topic
+Attribution page. Correct the config and restart to resolve.</p>
 </div>
 <h3 id="topic_attribution-fields"><code>topic_attribution</code> fields<a class="headerlink" href="#topic_attribution-fields" title="Permanent link">&para;</a></h3>
 <table>

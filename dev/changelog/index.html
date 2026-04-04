@@ -1386,8 +1386,24 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased">[Unreleased]<a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
-<li>Feat: TASK-193 — Pipeline status API defaults to lookback window when no date range provided</li>
+<li>Feat: TASK-195 — Fix and expand Confluent Cloud console deep links</li>
 </ul>
+<p>Fix 2 wrong URLs (service account, schema registry) and add 6 missing
+deep link types (user, identity provider, identity pool, API key,
+Flink compute pool, ksqlDB cluster). Expand ResourceLinkContext to
+fetch identities from /identities API for prefix-less API key resolution.
+ResourceEntry now includes metadata for ksqlDB kafka_cluster_id lookup. (<a href="https://github.com/waliaabhishek/chitragupta/commit/06a53c1b9a1c36c143e12135ffdbe446cdbd4994">06a53c1</a>)
+- Feat: TASK-194 — Replace topic_attribution_enabled bool with rich status signal</p>
+<p>Replace the boolean topic_attribution_enabled field across API schemas
+with topic_attribution_status (disabled|enabled|config_error) and
+topic_attribution_error (string|null). This surfaces config validation
+errors (e.g., topic attribution enabled without metrics source) through
+the API instead of silently returning false. Frontend now shows distinct
+UI states: disabled (gray badge), config_error (red badge + error alert),
+and enabled (data page).</p>
+<p>Breaking API change: /tenants, /tenants/{name}/status, and /readiness
+endpoints return new fields instead of topic_attribution_enabled. (<a href="https://github.com/waliaabhishek/chitragupta/commit/7f735a6fe387da72ebaeedfba8181957e8e6ab20">7f735a6</a>)
+- Feat: TASK-193 — Pipeline status API defaults to lookback window when no date range provided</p>
 <p>Default range for GET /tenants/{tenant_name}/status changed from
 [2000-01-01, 9999-12-31] to [today - lookback_days, today] when no
 start_date/end_date query params are given. Explicit date params

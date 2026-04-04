@@ -2488,12 +2488,14 @@
 </tr>
 </tbody>
 </table>
-<p><strong>Per-tenant fields:</strong> <code>tenant_name</code>, <code>tables_ready</code>, <code>has_data</code>, <code>pipeline_running</code>, <code>pipeline_stage</code>, <code>pipeline_current_date</code>, <code>last_run_status</code>, <code>last_run_at</code>, <code>permanent_failure</code>.</p>
+<p><strong>Per-tenant fields:</strong> <code>tenant_name</code>, <code>tables_ready</code>, <code>has_data</code>, <code>pipeline_running</code>, <code>pipeline_stage</code>, <code>pipeline_current_date</code>, <code>last_run_status</code>, <code>last_run_at</code>, <code>permanent_failure</code>, <code>topic_attribution_status</code>, <code>topic_attribution_error</code>.</p>
+<p><code>topic_attribution_status</code> is one of <code>"disabled"</code> | <code>"enabled"</code> | <code>"config_error"</code>. <code>topic_attribution_error</code> is a string describing the validation failure when <code>topic_attribution_status</code> is <code>"config_error"</code>, otherwise null.</p>
 <hr />
 <h2 id="tenants">Tenants<a class="headerlink" href="#tenants" title="Permanent link">&para;</a></h2>
 <h3 id="get-apiv1tenants"><code>GET /api/v1/tenants</code><a class="headerlink" href="#get-apiv1tenants" title="Permanent link">&para;</a></h3>
 <p>List all configured tenants with summary pipeline state.</p>
-<p><strong>Response fields per tenant:</strong> <code>tenant_name</code>, <code>tenant_id</code>, <code>ecosystem</code>, <code>dates_pending</code>, <code>dates_calculated</code>, <code>last_calculated_date</code>.</p>
+<p><strong>Response fields per tenant:</strong> <code>tenant_name</code>, <code>tenant_id</code>, <code>ecosystem</code>, <code>dates_pending</code>, <code>dates_calculated</code>, <code>last_calculated_date</code>, <code>topic_attribution_status</code>, <code>topic_attribution_error</code>.</p>
+<p><code>topic_attribution_status</code> is one of <code>"disabled"</code> | <code>"enabled"</code> | <code>"config_error"</code>. See <code>GET /api/v1/readiness</code> above for field semantics.</p>
 <h3 id="get-apiv1tenantstenant_namestatus"><code>GET /api/v1/tenants/{tenant_name}/status</code><a class="headerlink" href="#get-apiv1tenantstenant_namestatus" title="Permanent link">&para;</a></h3>
 <p>Detailed per-date pipeline state for a tenant.</p>
 <table>
@@ -2520,7 +2522,7 @@
 </tr>
 </tbody>
 </table>
-<p><strong>Response:</strong> List of <code>{tracking_date, billing_gathered, resources_gathered, chargeback_calculated, topic_overlay_gathered, topic_attribution_calculated}</code> per date. The <code>topic_overlay_gathered</code> and <code>topic_attribution_calculated</code> fields are <code>false</code> when topic attribution is disabled.</p>
+<p><strong>Response:</strong> <code>{tenant_name, tenant_id, ecosystem, topic_attribution_status, topic_attribution_error, states}</code> where <code>states</code> is a list of <code>{tracking_date, billing_gathered, resources_gathered, chargeback_calculated, topic_overlay_gathered, topic_attribution_calculated}</code> per date. The <code>topic_overlay_gathered</code> and <code>topic_attribution_calculated</code> fields are <code>false</code> when topic attribution is disabled or in <code>config_error</code> state.</p>
 <hr />
 <h2 id="billing">Billing<a class="headerlink" href="#billing" title="Permanent link">&para;</a></h2>
 <h3 id="get-apiv1tenantstenant_namebilling"><code>GET /api/v1/tenants/{tenant_name}/billing</code><a class="headerlink" href="#get-apiv1tenantstenant_namebilling" title="Permanent link">&para;</a></h3>
