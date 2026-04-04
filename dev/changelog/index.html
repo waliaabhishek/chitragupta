@@ -1447,8 +1447,13 @@ and configurable retention. (<a href="https://github.com/waliaabhishek/chitragup
 previously had no coverage, closing the discovery gap for CCloud users. (<a href="https://github.com/waliaabhishek/chitragupta/commit/4b87a5686408bd711ab6bb2e802e7fe12f35dd70">4b87a56</a>)</p>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
-<li>Fix: TASK-184 — Retry counters reset when dates re-enter processing queue via recalculation window</li>
+<li>Fix: TASK-196 — Disable broken Confluent Cloud deep links for connectors and identity pools</li>
 </ul>
+<p>Connector and identity pool URLs do not resolve to valid Confluent Cloud
+console pages. Remove the three code paths that generated these broken
+links so resolveUrl returns null, rendering plain text instead of broken
+hyperlinks. Temporary measure until correct URL patterns are determined. (<a href="https://github.com/waliaabhishek/chitragupta/commit/6c6999e3697947359ad51053e9e78139e7cc0f31">6c6999e</a>)
+- Fix: TASK-184 — Retry counters reset when dates re-enter processing queue via recalculation window</p>
 <p>Allocation and topic attribution attempt counters now reset to 0 when
 _apply_recalculation_window re-queues a date, preventing permanently
 stuck sentinel rows after transient infrastructure failures. (<a href="https://github.com/waliaabhishek/chitragupta/commit/a86aed0179b63421f0e369187e21969477014855">a86aed0</a>)
