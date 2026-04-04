@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   The `config_error` state surfaces Confluent Cloud plugin validation failures (e.g., `topic_attribution.enabled: true` set without a `metrics` source). Previously these silently appeared as `topic_attribution_enabled: false`, indistinguishable from intentionally disabled. The frontend now shows a red "Config error" badge in the sidebar nav and a red alert on the Topic Attribution page when this state is present.
 
+- **TASK-199**: Redesigned "Cluster Concentration" chart into two focused charts: "Top Clusters by Cost" (horizontal stacked bar showing top 10 clusters by total spend, stacked by top 5 topics + Other) and "Cluster Concentration Risk" (horizontal bar showing concentration percentage per cluster, color-coded green/yellow/red by risk threshold). Replaces the unreadable 71-cluster vertical bar chart. No new API calls — both charts reuse the existing cluster aggregation data.
+
 - **TASK-193**: Pipeline status API (`GET /tenants/{tenant_name}/status`) now defaults to `[today - lookback_days, today]` when no date range is provided, instead of returning all historical records. This scopes the frontend pipeline status table to only show dates the pipeline actively manages, removing stale rows from outside the active processing window.
 
 ### Fixed

@@ -8,7 +8,8 @@ import { CostVelocityChart } from "./charts/CostVelocityChart";
 import { AttributionMethodDonut } from "./charts/AttributionMethodDonut";
 import { ZombieTopicsTable } from "./charts/ZombieTopicsTable";
 import { EnvironmentCostChart } from "./charts/EnvironmentCostChart";
-import { ClusterConcentrationChart } from "./charts/ClusterConcentrationChart";
+import { TopClustersCostChart } from "./charts/TopClustersCostChart";
+import { ClusterConcentrationRiskChart } from "./charts/ClusterConcentrationRiskChart";
 import { ProductTypeMixChart } from "./charts/ProductTypeMixChart";
 import { PivotedCostBreakdown } from "./charts/PivotedCostBreakdown";
 import { useTopicAttributionAggregation } from "../../hooks/useTopicAttributionAggregation";
@@ -131,12 +132,22 @@ export function TopicAttributionAnalytics({
         </Col>
         <Col xs={24} lg={12}>
           <ChartCard
-            title="Cluster Concentration"
+            title="Top Clusters by Cost"
             loading={clusterData.isLoading}
             error={clusterData.error}
             onRetry={clusterData.refetch}
           >
-            <ClusterConcentrationChart data={clusterData.data?.buckets ?? []} />
+            <TopClustersCostChart data={clusterData.data?.buckets ?? []} />
+          </ChartCard>
+        </Col>
+        <Col xs={24} lg={12}>
+          <ChartCard
+            title="Cluster Concentration Risk"
+            loading={clusterData.isLoading}
+            error={clusterData.error}
+            onRetry={clusterData.refetch}
+          >
+            <ClusterConcentrationRiskChart data={clusterData.data?.buckets ?? []} />
           </ChartCard>
         </Col>
         <Col xs={24} lg={12}>
