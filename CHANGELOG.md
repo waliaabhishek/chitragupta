@@ -22,6 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **TASK-193**: Pipeline status API (`GET /tenants/{tenant_name}/status`) now defaults to `[today - lookback_days, today]` when no date range is provided, instead of returning all historical records. This scopes the frontend pipeline status table to only show dates the pipeline actively manages, removing stale rows from outside the active processing window.
 
 ### Fixed
+- **Fix:** Environment Cost chart x-axis label overflow — labels now truncated to 20 chars with ellipsis, horizontal scroll via dataZoom slider shows 5-6 topics at a time, chart height bumped to 350px (TASK-200)
+
 - **Fix:** Confluent Cloud console deep links for connectors and identity pools disabled — both URL patterns do not resolve to valid pages. `resolveUrl` now returns `null` for these resource types, rendering plain text instead of broken hyperlinks. The `pool-*` prefix fallback is also removed. Temporary measure until correct URL patterns are determined. (TASK-196)
 
 - **Fix:** Retry counters (`allocation_attempts`, `topic_attribution_attempts`) now reset to 0 when a date is re-queued via the recalculation window, preventing permanently stuck sentinel rows after transient infrastructure failures. (TASK-184)

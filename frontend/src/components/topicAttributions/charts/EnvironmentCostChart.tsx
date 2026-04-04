@@ -46,24 +46,42 @@ function buildGroupedBarData(
   };
 }
 
+const LABEL_MAX_LEN = 20;
+
 export function EnvironmentCostChart({
   data,
-  height = 300,
+  height = 350,
 }: EnvironmentCostChartProps): React.JSX.Element {
   const { topics, series } = useMemo(() => buildGroupedBarData(data), [data]);
 
   const option: EChartsOption = {
     tooltip: { trigger: "axis" },
-    legend: { bottom: 0 },
+    legend: { bottom: 45 },
+    grid: { bottom: 80 },
     xAxis: {
       type: "category",
       data: topics,
-      axisLabel: { rotate: 45, hideOverlap: true },
+      axisLabel: {
+        rotate: 45,
+        hideOverlap: false,
+        formatter: (value: string) =>
+          value.length > LABEL_MAX_LEN
+            ? `${value.slice(0, LABEL_MAX_LEN)}…`
+            : value,
+      },
     },
     yAxis: {
       type: "value",
       axisLabel: { formatter: (v: number) => formatCurrency(v) },
     },
+    dataZoom: [
+      {
+        type: "slider",
+        xAxisIndex: 0,
+        start: 0,
+        end: 50,
+      },
+    ],
     series,
   };
 
