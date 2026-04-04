@@ -15,10 +15,8 @@ import {
   clusterUrl,
   schemaRegistryUrl,
   serviceAccountUrl,
-  connectorUrl,
   userUrl,
   identityProviderUrl,
-  identityPoolUrl,
   apiKeyUrl,
   flinkComputePoolUrl,
   ksqldbClusterUrl,
@@ -54,7 +52,6 @@ function getInitialEnabled(): boolean {
 function resolveFromEntry(
   resourceId: string,
   entry: ResourceEntry,
-  index: ResourceIndex,
 ): string | null {
   switch (entry.resource_type) {
     case "environment":
@@ -69,12 +66,6 @@ function resolveFromEntry(
     }
     case "service_account":
       return serviceAccountUrl(resourceId);
-    case "connector": {
-      if (!entry.parent_id) return null;
-      const clusterEntry = index[entry.parent_id];
-      if (!clusterEntry?.parent_id) return null;
-      return connectorUrl(clusterEntry.parent_id, entry.parent_id, resourceId);
-    }
     case "flink_compute_pool": {
       if (!entry.parent_id) return null;
       return flinkComputePoolUrl(entry.parent_id, resourceId);
@@ -101,8 +92,6 @@ function resolveFromIdentity(
       return userUrl(identityId);
     case "identity_provider":
       return identityProviderUrl(identityId);
-    case "identity_pool":
-      return identityPoolUrl(identityId);
     case "api_key":
       return apiKeyUrl(identityId);
     default:
@@ -237,7 +226,7 @@ export function ResourceLinkProvider({
 
       const entry = index[resourceId];
       if (entry) {
-        return resolveFromEntry(resourceId, entry, index);
+        return resolveFromEntry(resourceId, entry);
       }
 
       // Prefix fallbacks for IDs not in resource index
@@ -245,7 +234,6 @@ export function ResourceLinkProvider({
       if (resourceId.startsWith("env-")) return environmentUrl(resourceId);
       if (resourceId.startsWith("u-")) return userUrl(resourceId);
       if (resourceId.startsWith("op-")) return identityProviderUrl(resourceId);
-      if (resourceId.startsWith("pool-")) return identityPoolUrl(resourceId);
       // lkc-, lsrc-, lfcp-, lksqlc- need parent context — cannot resolve without index
 
       // Identity index fallback — handles api_key (no prefix) and any

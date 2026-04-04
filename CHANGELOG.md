@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **TASK-193**: Pipeline status API (`GET /tenants/{tenant_name}/status`) now defaults to `[today - lookback_days, today]` when no date range is provided, instead of returning all historical records. This scopes the frontend pipeline status table to only show dates the pipeline actively manages, removing stale rows from outside the active processing window.
 
 ### Fixed
+- **Fix:** Confluent Cloud console deep links for connectors and identity pools disabled — both URL patterns do not resolve to valid pages. `resolveUrl` now returns `null` for these resource types, rendering plain text instead of broken hyperlinks. The `pool-*` prefix fallback is also removed. Temporary measure until correct URL patterns are determined. (TASK-196)
+
 - **Fix:** Retry counters (`allocation_attempts`, `topic_attribution_attempts`) now reset to 0 when a date is re-queued via the recalculation window, preventing permanently stuck sentinel rows after transient infrastructure failures. (TASK-184)
 
 - **Fix:** Topic discovery returning zero topics no longer leaves pipeline dates permanently stuck. `mark_topic_overlay_gathered` is now called unconditionally after a successful gather, regardless of whether any topic resources were returned. Previously, an empty topic list silently skipped the mark, causing the date to remain pending and retry forever. (TASK-183)

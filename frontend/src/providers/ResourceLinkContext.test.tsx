@@ -437,44 +437,27 @@ describe("ResourceLinkContext — resolveUrl index lookups", () => {
     );
   });
 
-  it("connector resolves to connector URL when cluster and env chain is in index", async () => {
+  it("connector in index returns null (broken link disabled)", async () => {
     server.use(
       http.get(RESOURCE_API, () =>
         HttpResponse.json(
           makeResourcesResponse([
-            {
-              resource_id: "env-abc123",
-              resource_type: "environment",
-              parent_id: null,
-            },
-            {
-              resource_id: "lkc-def456",
-              resource_type: "kafka_cluster",
-              parent_id: "env-abc123",
-            },
-            {
-              resource_id: "lcc-conn01",
-              resource_type: "connector",
-              parent_id: "lkc-def456",
-            },
+            { resource_id: "env-abc123", resource_type: "environment", parent_id: null },
+            { resource_id: "lkc-def456", resource_type: "kafka_cluster", parent_id: "env-abc123" },
+            { resource_id: "lcc-conn01", resource_type: "connector", parent_id: "lkc-def456" },
           ]),
         ),
       ),
     );
 
-    const { result } = renderHook(() => useResourceLinks(), {
-      wrapper: makeWrapper(),
-    });
+    const { result } = renderHook(() => useResourceLinks(), { wrapper: makeWrapper() });
 
+    // Wait for resource index to load. Must use lkc- (no prefix fallback) not env- (has prefix fallback line 245).
     await waitFor(() => {
-      const url = result.current.resolveUrl("lcc-conn01");
-      expect(url).toBeTruthy();
+      expect(result.current.resolveUrl("lkc-def456")).toBeTruthy();
     });
 
-    const url = result.current.resolveUrl("lcc-conn01");
-    expect(url).toBe(
-      "https://confluent.cloud/environments/env-abc123/clusters/lkc-def456/connectors/lcc-conn01",
-    );
+    expect(result.current.resolveUrl("lcc-conn01")).toBeNull();
   });
 
   it("service_account in index resolves via service_account type to per-principal URL", async () => {
@@ -1132,26 +1115,26 @@ describe("ResourceLinkContext — identity index", () => {
     });
   });
 
-  it("identity_pool in identity index resolves to principals URL", async () => {
+  it("identity_pool in identity index returns null (broken link disabled)", async () => {
     server.use(
       http.get(IDENTITY_API, () =>
         HttpResponse.json(
           makeIdentitiesResponse([
             { identity_id: "mock-pool-via-identity", identity_type: "identity_pool" },
+            { identity_id: "mock-gate-pool", identity_type: "api_key" },
           ]),
         ),
       ),
     );
 
-    const { result } = renderHook(() => useResourceLinks(), {
-      wrapper: makeWrapper(),
+    const { result } = renderHook(() => useResourceLinks(), { wrapper: makeWrapper() });
+
+    // Wait for identity index to load. Must use api_key (no prefix fallback) not sa- (has prefix fallback line 244).
+    await waitFor(() => {
+      expect(result.current.resolveUrl("mock-gate-pool")).toBeTruthy();
     });
 
-    await waitFor(() => {
-      expect(result.current.resolveUrl("mock-pool-via-identity")).toBe(
-        "https://confluent.cloud/settings/principals/mock-pool-via-identity?view=identity",
-      );
-    });
+    expect(result.current.resolveUrl("mock-pool-via-identity")).toBeNull();
   });
 
   it("api_key in identity index resolves via identity fallback", async () => {
@@ -1264,7 +1247,7 @@ describe("ResourceLinkContext — identity index", () => {
     );
   });
 
-  it("pool-* prefix fallback resolves to principals URL", async () => {
+  it("pool-* prefix fallback returns null (broken link disabled)", async () => {
     server.use(
       http.get(IDENTITY_API, () =>
         HttpResponse.json(makeIdentitiesResponse([])),
@@ -1280,9 +1263,7 @@ describe("ResourceLinkContext — identity index", () => {
       await new Promise((r) => setTimeout(r, 50));
     });
 
-    expect(result.current.resolveUrl("pool-xyz999")).toBe(
-      "https://confluent.cloud/settings/principals/pool-xyz999?view=identity",
-    );
+    expect(result.current.resolveUrl("pool-xyz999")).toBeNull();
   });
 });
 
