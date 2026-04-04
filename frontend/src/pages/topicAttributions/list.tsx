@@ -1,5 +1,5 @@
 import type React from "react";
-import { Alert, Typography, Tabs } from "antd";
+import { Alert, Typography, Segmented } from "antd";
 import { useRef, useState } from "react";
 import type { AgGridReact } from "ag-grid-react";
 import { TopicAttributionGrid } from "../../components/topicAttributions/TopicAttributionGrid";
@@ -10,6 +10,11 @@ import { useTopicAttributionFilters } from "../../hooks/useTopicAttributionFilte
 import { useTenant } from "../../providers/TenantContext";
 
 const { Text, Title } = Typography;
+
+const TAB_OPTIONS: Array<{ label: string; value: "table" | "analytics" }> = [
+  { label: "Table", value: "table" },
+  { label: "Analytics", value: "analytics" },
+];
 
 export function TopicAttributionPage(): React.JSX.Element {
   const { currentTenant, isReadOnly } = useTenant();
@@ -94,35 +99,26 @@ export function TopicAttributionPage(): React.JSX.Element {
             : undefined
         }
       />
-      <Tabs
-        activeKey={activeTab}
-        onChange={(key) => setActiveTab(key as "table" | "analytics")}
-        style={{ flex: 1 }}
-        items={[
-          {
-            key: "table",
-            label: "Table",
-            children: (
-              <TopicAttributionGrid
-                key={currentTenant.tenant_name}
-                ref={gridRef}
-                tenantName={currentTenant.tenant_name}
-                filters={queryParams}
-              />
-            ),
-          },
-          {
-            key: "analytics",
-            label: "Analytics",
-            children: (
-              <TopicAttributionAnalytics
-                tenantName={currentTenant.tenant_name}
-                filters={filters}
-              />
-            ),
-          },
-        ]}
+      <Segmented
+        options={TAB_OPTIONS}
+        value={activeTab}
+        onChange={(value) => setActiveTab(value as "table" | "analytics")}
+        style={{ marginBottom: 8, alignSelf: "flex-start" }}
       />
+      {activeTab === "table" && (
+        <TopicAttributionGrid
+          key={currentTenant.tenant_name}
+          ref={gridRef}
+          tenantName={currentTenant.tenant_name}
+          filters={queryParams}
+        />
+      )}
+      {activeTab === "analytics" && (
+        <TopicAttributionAnalytics
+          tenantName={currentTenant.tenant_name}
+          filters={filters}
+        />
+      )}
     </div>
   );
 }

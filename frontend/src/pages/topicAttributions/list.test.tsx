@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TopicAttributionPage } from "./list";
 import type { TenantStatusSummary } from "../../types/api";
@@ -17,6 +18,21 @@ vi.mock("../../components/topicAttributions/TopicAttributionGrid", () => ({
     <div data-testid="ag-grid" data-filters={JSON.stringify(filters)} />
   ),
 }));
+
+vi.mock("../../components/topicAttributions/TopicAttributionFilterPanel", () => ({
+  TopicAttributionFilterPanel: ({ onRefresh, activeTab }: { onRefresh?: () => void; activeTab: string; [key: string]: unknown }) => (
+    <div data-testid="filter-panel" data-active-tab={activeTab}>
+      {onRefresh && <button data-testid="refresh-btn" onClick={onRefresh}>Refresh</button>}
+    </div>
+  ),
+}));
+
+vi.mock(
+  "../../components/topicAttributions/TopicAttributionAnalytics",
+  () => ({
+    TopicAttributionAnalytics: () => <div data-testid="analytics-view" />,
+  }),
+);
 
 // ---------------------------------------------------------------------------
 // Mock ag-grid-react (needed by other components rendered in analytics tab)
@@ -54,28 +70,24 @@ vi.mock("antd", () => ({
       <span data-type={type}>{children}</span>
     ),
   },
-  Tabs: ({
-    items,
-    activeKey,
+  Segmented: ({
+    options,
+    value,
     onChange,
   }: {
-    items?: Array<{ key: string; label: string; children: ReactNode }>;
-    activeKey?: string;
-    onChange?: (key: string) => void;
+    options: Array<{ label: string; value: string }>;
+    value: string;
+    onChange?: (value: string) => void;
   }) => (
-    <div data-testid="tabs" data-active={activeKey}>
-      {items?.map((item) => (
-        <div key={item.key}>
-          <button
-            data-testid={`tab-${item.key}`}
-            onClick={() => onChange?.(item.key)}
-          >
-            {item.label}
-          </button>
-          {activeKey === item.key && (
-            <div data-testid={`tab-content-${item.key}`}>{item.children}</div>
-          )}
-        </div>
+    <div data-testid="segmented" data-value={value}>
+      {options.map((opt) => (
+        <button
+          key={opt.value}
+          data-testid={`tab-${opt.value}`}
+          onClick={() => onChange?.(opt.value)}
+        >
+          {opt.label}
+        </button>
       ))}
     </div>
   ),
@@ -262,10 +274,11 @@ describe("TopicAttributionPage", () => {
   });
 
   it("renders main content when tenant is selected", () => {
-    setupTenantContext("acme");
+    setupTenantContext("acme", false, "enabled");
     render(<TopicAttributionPage />);
     // Grid or tabs should be present
     expect(screen.queryByText("Select a tenant to begin.")).toBeNull();
+    expect(screen.getByTestId("segmented")).toBeTruthy();
   });
 
   it("Export button is disabled when isReadOnly=true", () => {
@@ -352,5 +365,58 @@ describe("TASK-187: topic_attribution_enabled flag", () => {
     expect(alert.textContent?.toLowerCase()).toContain("config");
     expect(alert.textContent).toContain("requires metrics");
     expect(screen.queryByTestId("ag-grid")).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TASK-198: AG Grid 0px height fix
+// ---------------------------------------------------------------------------
+
+describe("TASK-198: AG Grid 0px height fix", () => {
+  it("renders Segmented switcher instead of Tabs when enabled", () => {
+    setupTenantContext("acme", false, "enabled");
+    render(<TopicAttributionPage />);
+    expect(screen.getByTestId("segmented")).toBeTruthy();
+    expect(screen.queryByTestId("tabs")).toBeNull();
+  });
+
+  it("shows grid and hides analytics on Table tab (default)", () => {
+    setupTenantContext("acme", false, "enabled");
+    render(<TopicAttributionPage />);
+    expect(screen.getByTestId("ag-grid")).toBeTruthy();
+    expect(screen.queryByTestId("analytics-view")).toBeNull();
+  });
+
+  it("clicking Analytics hides grid and shows analytics", async () => {
+    setupTenantContext("acme", false, "enabled");
+    render(<TopicAttributionPage />);
+    const analyticsTab = screen.getByTestId("tab-analytics");
+    await userEvent.click(analyticsTab);
+    expect(screen.queryByTestId("ag-grid")).toBeNull();
+    expect(screen.getByTestId("analytics-view")).toBeTruthy();
+  });
+
+  it("clicking Table after Analytics restores grid", async () => {
+    setupTenantContext("acme", false, "enabled");
+    render(<TopicAttributionPage />);
+    await userEvent.click(screen.getByTestId("tab-analytics"));
+    await userEvent.click(screen.getByTestId("tab-table"));
+    expect(screen.getByTestId("ag-grid")).toBeTruthy();
+    expect(screen.queryByTestId("analytics-view")).toBeNull();
+  });
+
+  it("onRefresh is defined when activeTab is table", async () => {
+    setupTenantContext("acme", false, "enabled");
+    render(<TopicAttributionPage />);
+    const refreshBtn = screen.getByTestId("refresh-btn");
+    expect(refreshBtn).toBeTruthy();
+    await userEvent.click(refreshBtn);
+  });
+
+  it("onRefresh is undefined when activeTab is analytics", async () => {
+    setupTenantContext("acme", false, "enabled");
+    render(<TopicAttributionPage />);
+    await userEvent.click(screen.getByTestId("tab-analytics"));
+    expect(screen.queryByTestId("refresh-btn")).toBeNull();
   });
 });
