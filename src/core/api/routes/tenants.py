@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import date
+from datetime import date, timedelta
 from typing import TYPE_CHECKING, Annotated
 
 from fastapi import APIRouter, Depends, Query, Request
@@ -83,10 +83,13 @@ async def get_tenant_status(
             tenant_config.ecosystem, tenant_config.tenant_id, date(2000, 1, 1), end_date
         )
     else:
-        # All states — use a very wide range
-        states = uow.pipeline_state.find_by_range(
-            tenant_config.ecosystem, tenant_config.tenant_id, date(2000, 1, 1), date(9999, 12, 31)
-        )
+        # Default to lookback window — records outside this are historical and
+        # won't be updated by the pipeline. end is +1 day because find_by_range
+        # uses strict < on end.
+        today = date.today()
+        start = today - timedelta(days=tenant_config.lookback_days)
+        end = today + timedelta(days=1)
+        states = uow.pipeline_state.find_by_range(tenant_config.ecosystem, tenant_config.tenant_id, start, end)
 
     return TenantStatusDetailResponse(
         tenant_name=tenant_name,

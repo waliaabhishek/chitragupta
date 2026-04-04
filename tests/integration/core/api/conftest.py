@@ -187,7 +187,7 @@ def sample_pipeline_state() -> PipelineState:
     return PipelineState(
         ecosystem="test-eco",
         tenant_id="test-tenant",
-        tracking_date=date(2026, 2, 15),
+        tracking_date=date.today() - timedelta(days=1),
         billing_gathered=True,
         resources_gathered=True,
         chargeback_calculated=True,

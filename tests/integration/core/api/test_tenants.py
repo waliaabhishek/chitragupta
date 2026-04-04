@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 from fastapi.testclient import TestClient
 
@@ -116,7 +116,7 @@ class TestGetTenantStatus:
         data = response.json()
         assert data["tenant_name"] == "test-tenant"
         assert len(data["states"]) == 1
-        assert data["states"][0]["tracking_date"] == "2026-02-15"
+        assert data["states"][0]["tracking_date"] == (date.today() - timedelta(days=1)).isoformat()
         assert data["states"][0]["chargeback_calculated"] is True
 
     def test_get_tenant_status_with_date_range(
@@ -215,7 +215,7 @@ class TestGetTenantStatusTopicAttributionFields:
                 PipelineState(
                     ecosystem="test-eco",
                     tenant_id="test-tenant",
-                    tracking_date=date(2026, 2, 15),
+                    tracking_date=date.today() - timedelta(days=1),
                     billing_gathered=True,
                     resources_gathered=True,
                     chargeback_calculated=True,
@@ -242,7 +242,7 @@ class TestGetTenantStatusTopicAttributionFields:
                 PipelineState(
                     ecosystem="test-eco",
                     tenant_id="test-tenant",
-                    tracking_date=date(2026, 2, 15),
+                    tracking_date=date.today() - timedelta(days=1),
                     billing_gathered=True,
                     resources_gathered=True,
                     chargeback_calculated=True,
@@ -269,7 +269,7 @@ class TestGetTenantStatusTopicAttributionFields:
                 PipelineState(
                     ecosystem="test-eco",
                     tenant_id="test-tenant",
-                    tracking_date=date(2026, 2, 15),
+                    tracking_date=date.today() - timedelta(days=1),
                     billing_gathered=True,
                     resources_gathered=True,
                     chargeback_calculated=True,
@@ -295,7 +295,7 @@ class TestGetTenantStatusTopicAttributionFields:
                 PipelineState(
                     ecosystem="test-eco",
                     tenant_id="test-tenant",
-                    tracking_date=date(2026, 2, 15),
+                    tracking_date=date.today() - timedelta(days=1),
                     billing_gathered=True,
                     resources_gathered=True,
                     chargeback_calculated=True,
@@ -321,7 +321,7 @@ class TestGetTenantStatusTopicAttributionFields:
                 PipelineState(
                     ecosystem="test-eco",
                     tenant_id="test-tenant",
-                    tracking_date=date(2026, 2, 15),
+                    tracking_date=date.today() - timedelta(days=1),
                     billing_gathered=True,
                     resources_gathered=True,
                     chargeback_calculated=True,
@@ -347,7 +347,7 @@ class TestGetTenantStatusTopicAttributionFields:
                 PipelineState(
                     ecosystem="test-eco",
                     tenant_id="test-tenant",
-                    tracking_date=date(2026, 2, 14),
+                    tracking_date=date.today() - timedelta(days=2),
                     billing_gathered=True,
                     resources_gathered=True,
                     chargeback_calculated=True,
@@ -359,7 +359,7 @@ class TestGetTenantStatusTopicAttributionFields:
                 PipelineState(
                     ecosystem="test-eco",
                     tenant_id="test-tenant",
-                    tracking_date=date(2026, 2, 15),
+                    tracking_date=date.today() - timedelta(days=1),
                     billing_gathered=True,
                     resources_gathered=True,
                     chargeback_calculated=True,
@@ -377,3 +377,216 @@ class TestGetTenantStatusTopicAttributionFields:
         for state in states:
             assert "topic_overlay_gathered" in state
             assert "topic_attribution_calculated" in state
+
+
+class TestGetTenantStatusDefaultLookbackWindow:
+    """Default lookback window behavior when no date params are provided."""
+
+    def test_default_range_excludes_old_records(
+        self, app_with_backend: TestClient, in_memory_backend: SQLModelBackend
+    ) -> None:
+        """Records older than lookback_days are excluded from the default response."""
+        today = date.today()
+        default_lookback = 200  # TenantConfig default
+
+        in_window_date = today - timedelta(days=1)
+        out_of_window_date = today - timedelta(days=default_lookback + 1)
+
+        with in_memory_backend.create_unit_of_work() as uow:
+            for d in [in_window_date, out_of_window_date]:
+                uow.pipeline_state.upsert(
+                    PipelineState(
+                        ecosystem="test-eco",
+                        tenant_id="test-tenant",
+                        tracking_date=d,
+                        billing_gathered=True,
+                        resources_gathered=True,
+                        chargeback_calculated=True,
+                    )
+                )
+            uow.commit()
+
+        response = app_with_backend.get("/api/v1/tenants/test-tenant/status")
+        assert response.status_code == 200
+        data = response.json()
+        returned_dates = [s["tracking_date"] for s in data["states"]]
+        assert in_window_date.isoformat() in returned_dates
+        assert out_of_window_date.isoformat() not in returned_dates
+
+    def test_default_range_uses_tenant_lookback_days(self, temp_db_path: str) -> None:
+        """Default window derives from tenant_config.lookback_days, not a hardcoded constant."""
+        lookback_days = 30
+        today = date.today()
+
+        in_window_date = today - timedelta(days=25)
+        out_of_window_date = today - timedelta(days=35)
+
+        backend = SQLModelBackend(temp_db_path, CoreStorageModule(), use_migrations=False)
+        backend.create_tables()
+        with backend.create_unit_of_work() as uow:
+            for d in [in_window_date, out_of_window_date]:
+                uow.pipeline_state.upsert(
+                    PipelineState(
+                        ecosystem="test-eco",
+                        tenant_id="test-tenant",
+                        tracking_date=d,
+                        billing_gathered=True,
+                        resources_gathered=True,
+                        chargeback_calculated=True,
+                    )
+                )
+            uow.commit()
+        backend.dispose()
+
+        settings = AppSettings(
+            api=ApiConfig(host="127.0.0.1", port=8080),
+            logging=LoggingConfig(),
+            tenants={
+                "test-tenant": TenantConfig(
+                    tenant_id="test-tenant",
+                    ecosystem="test-eco",
+                    lookback_days=lookback_days,
+                    storage=StorageConfig(connection_string=temp_db_path),
+                )
+            },
+        )
+        app = create_app(settings)
+        with TestClient(app) as client:
+            response = client.get("/api/v1/tenants/test-tenant/status")
+
+        assert response.status_code == 200
+        data = response.json()
+        returned_dates = [s["tracking_date"] for s in data["states"]]
+        assert in_window_date.isoformat() in returned_dates
+        assert out_of_window_date.isoformat() not in returned_dates
+
+    def test_default_range_includes_today(
+        self, app_with_backend: TestClient, in_memory_backend: SQLModelBackend
+    ) -> None:
+        """A record dated today is returned — validates the +1 day offset on the exclusive upper bound."""
+        today = date.today()
+
+        with in_memory_backend.create_unit_of_work() as uow:
+            uow.pipeline_state.upsert(
+                PipelineState(
+                    ecosystem="test-eco",
+                    tenant_id="test-tenant",
+                    tracking_date=today,
+                    billing_gathered=True,
+                    resources_gathered=True,
+                    chargeback_calculated=True,
+                )
+            )
+            uow.commit()
+
+        response = app_with_backend.get("/api/v1/tenants/test-tenant/status")
+        assert response.status_code == 200
+        data = response.json()
+        returned_dates = [s["tracking_date"] for s in data["states"]]
+        assert today.isoformat() in returned_dates
+
+    def test_explicit_start_end_params_unchanged(
+        self, app_with_backend: TestClient, in_memory_backend: SQLModelBackend
+    ) -> None:
+        """Explicit start_date + end_date still filter correctly — no regression from default window change."""
+        today = date.today()
+        d_before = today - timedelta(days=10)
+        d_in = today - timedelta(days=5)
+        d_after = today - timedelta(days=1)
+        start = today - timedelta(days=7)
+        end = today - timedelta(days=3)
+
+        with in_memory_backend.create_unit_of_work() as uow:
+            for d in [d_before, d_in, d_after]:
+                uow.pipeline_state.upsert(
+                    PipelineState(
+                        ecosystem="test-eco",
+                        tenant_id="test-tenant",
+                        tracking_date=d,
+                        billing_gathered=True,
+                        resources_gathered=True,
+                        chargeback_calculated=True,
+                    )
+                )
+            uow.commit()
+
+        response = app_with_backend.get(
+            "/api/v1/tenants/test-tenant/status",
+            params={"start_date": start.isoformat(), "end_date": end.isoformat()},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data["states"]) == 1
+        assert data["states"][0]["tracking_date"] == d_in.isoformat()
+
+    def test_explicit_start_only_unchanged(
+        self, app_with_backend: TestClient, in_memory_backend: SQLModelBackend
+    ) -> None:
+        """elif start_date branch continues working with its sentinel range."""
+        today = date.today()
+        d_old = today - timedelta(days=10)
+        d_mid = today - timedelta(days=5)
+        d_recent = today - timedelta(days=1)
+        boundary = today - timedelta(days=7)
+
+        with in_memory_backend.create_unit_of_work() as uow:
+            for d in [d_old, d_mid, d_recent]:
+                uow.pipeline_state.upsert(
+                    PipelineState(
+                        ecosystem="test-eco",
+                        tenant_id="test-tenant",
+                        tracking_date=d,
+                        billing_gathered=True,
+                        resources_gathered=True,
+                        chargeback_calculated=True,
+                    )
+                )
+            uow.commit()
+
+        # start_date only: d_mid and d_recent returned (>= boundary); d_old excluded
+        response = app_with_backend.get(
+            "/api/v1/tenants/test-tenant/status",
+            params={"start_date": boundary.isoformat()},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        returned_dates = {s["tracking_date"] for s in data["states"]}
+        assert d_mid.isoformat() in returned_dates
+        assert d_recent.isoformat() in returned_dates
+        assert d_old.isoformat() not in returned_dates
+
+    def test_explicit_end_only_unchanged(
+        self, app_with_backend: TestClient, in_memory_backend: SQLModelBackend
+    ) -> None:
+        """elif end_date branch continues working with its sentinel range."""
+        today = date.today()
+        d_old = today - timedelta(days=10)
+        d_mid = today - timedelta(days=5)
+        d_recent = today - timedelta(days=1)
+        boundary = today - timedelta(days=7)
+
+        with in_memory_backend.create_unit_of_work() as uow:
+            for d in [d_old, d_mid, d_recent]:
+                uow.pipeline_state.upsert(
+                    PipelineState(
+                        ecosystem="test-eco",
+                        tenant_id="test-tenant",
+                        tracking_date=d,
+                        billing_gathered=True,
+                        resources_gathered=True,
+                        chargeback_calculated=True,
+                    )
+                )
+            uow.commit()
+
+        # end_date only: d_old returned (< boundary); d_mid and d_recent excluded
+        response = app_with_backend.get(
+            "/api/v1/tenants/test-tenant/status",
+            params={"end_date": boundary.isoformat()},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        returned_dates = {s["tracking_date"] for s in data["states"]}
+        assert d_old.isoformat() in returned_dates
+        assert d_mid.isoformat() not in returned_dates
+        assert d_recent.isoformat() not in returned_dates
