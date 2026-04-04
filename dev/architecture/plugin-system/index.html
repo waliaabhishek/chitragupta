@@ -922,6 +922,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#topic-attribution-protocols" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Topic attribution protocols
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#lifecycle" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1405,6 +1416,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#topic-attribution-protocols" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Topic attribution protocols
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#lifecycle" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1475,6 +1497,14 @@
 <td><code>IdentityResolver</code></td>
 <td>Standalone callable override for identity resolution per product type</td>
 </tr>
+<tr>
+<td><code>TopicDiscoveryPlugin</code></td>
+<td>Gather topic resources from Prometheus for topic attribution (CCloud only)</td>
+</tr>
+<tr>
+<td><code>OverlayPlugin</code></td>
+<td>Provide overlay-specific config (e.g., topic attribution) to core code</td>
+</tr>
 </tbody>
 </table>
 <h2 id="plugin-discovery">Plugin discovery<a class="headerlink" href="#plugin-discovery" title="Permanent link">&para;</a></h2>
@@ -1517,6 +1547,46 @@ parameter for caching optimization. <code>ResolveContext</code> is a TypedDict c
 <a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="n">register</span><span class="p">(</span><span class="s2">&quot;my_emitter&quot;</span><span class="p">,</span> <span class="n">make_my_emitter</span><span class="p">)</span>
 </code></pre></div>
 <p>The built-in emitters are <code>csv</code> (no storage needed) and <code>prometheus</code> (<code>needs_storage_backend = True</code>).</p>
+<h2 id="topic-attribution-protocols">Topic attribution protocols<a class="headerlink" href="#topic-attribution-protocols" title="Permanent link">&para;</a></h2>
+<p>Two additional runtime-checkable protocols support the topic attribution overlay:</p>
+<p><strong><code>TopicDiscoveryPlugin</code></strong> (<code>src/core/plugin/protocols.py:160-171</code>)</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="k">class</span><span class="w"> </span><span class="nc">TopicDiscoveryPlugin</span><span class="p">(</span><span class="n">Protocol</span><span class="p">):</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">gather_topic_resources</span><span class="p">(</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>        <span class="bp">self</span><span class="p">,</span> <span class="n">tenant_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">cluster_ids</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Iterable</span><span class="p">[</span><span class="n">Resource</span><span class="p">]:</span> <span class="o">...</span>
+</code></pre></div>
+<p>Implement alongside <code>EcosystemPlugin</code> to enable topic discovery via Prometheus metrics.</p>
+<p><strong><code>OverlayPlugin</code></strong> (<code>src/core/plugin/protocols.py:181-188</code>)</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="k">class</span><span class="w"> </span><span class="nc">OverlayPlugin</span><span class="p">(</span><span class="n">Protocol</span><span class="p">):</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">get_overlay_config</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">OverlayConfig</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span> <span class="o">...</span>
+</code></pre></div>
+<p>Provides overlay-specific configuration (e.g., <code>TopicAttributionConfig</code>) to core code without <code>getattr</code> probing.</p>
+<table>
+<thead>
+<tr>
+<th>Plugin</th>
+<th>TopicDiscoveryPlugin</th>
+<th>OverlayPlugin</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>confluent_cloud</code></td>
+<td>Yes</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td><code>self_managed_kafka</code></td>
+<td>No</td>
+<td>No</td>
+</tr>
+<tr>
+<td><code>generic_metrics_only</code></td>
+<td>No</td>
+<td>No</td>
+</tr>
+</tbody>
+</table>
 <h2 id="lifecycle">Lifecycle<a class="headerlink" href="#lifecycle" title="Permanent link">&para;</a></h2>
 <ol>
 <li><code>plugin.initialize(config)</code> — validate config, create clients</li>

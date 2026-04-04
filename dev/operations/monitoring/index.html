@@ -1159,6 +1159,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#monitoring-topic-attribution" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Monitoring topic attribution
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#metrics-to-collect-from-logs" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1427,6 +1438,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#monitoring-topic-attribution" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Monitoring topic attribution
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#metrics-to-collect-from-logs" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1549,6 +1571,25 @@ use a format string like:</p>
 <p>A tenant enters permanently-failed state after <code>gather_failure_threshold</code> (default 5)
 consecutive gather failures. The engine logs a <code>CRITICAL</code> alert and stops processing
 that tenant. Manual operator intervention (fix config + restart) is required.</p>
+<h2 id="monitoring-topic-attribution">Monitoring topic attribution<a class="headerlink" href="#monitoring-topic-attribution" title="Permanent link">&para;</a></h2>
+<p>If topic attribution is enabled, monitor these additional indicators:</p>
+<p><strong>Pipeline status flags</strong> (via <code>GET /api/v1/tenants/{name}/pipeline/status</code>):</p>
+<ul>
+<li><code>topic_overlay_gathered</code> — topic discovery and metrics fetch completed for a date</li>
+<li><code>topic_attribution_calculated</code> — attribution rows written for a date</li>
+</ul>
+<p><strong>Log messages:</strong></p>
+<ul>
+<li><code>Topic discovery</code> — topic resources being gathered from Prometheus</li>
+<li><code>Topic attribution backfill</code> — overlay processing queued dates</li>
+</ul>
+<p><strong>Sentinel row detection:</strong></p>
+<p>Rows with <code>attribution_method = 'ATTRIBUTION_FAILED'</code> indicate a cluster where Prometheus retries were exhausted. Query the API or database:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="k">SELECT</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="n">topic_attribution_facts</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="k">JOIN</span><span class="w"> </span><span class="n">topic_attribution_dimensions</span><span class="w"> </span><span class="k">USING</span><span class="w"> </span><span class="p">(</span><span class="n">dimension_id</span><span class="p">)</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="k">WHERE</span><span class="w"> </span><span class="n">attribution_method</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;ATTRIBUTION_FAILED&#39;</span><span class="p">;</span>
+</code></pre></div>
+<p><strong>Per-date processing:</strong> Use the pipeline status API to check which dates have completed topic attribution. Dates where <code>topic_overlay_gathered = true</code> but <code>topic_attribution_calculated = false</code> are still pending calculation.</p>
 <h2 id="metrics-to-collect-from-logs">Metrics to collect from logs<a class="headerlink" href="#metrics-to-collect-from-logs" title="Permanent link">&para;</a></h2>
 <ul>
 <li><code>gathered</code> count per run — drop indicates billing API issues</li>

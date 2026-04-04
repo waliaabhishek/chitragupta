@@ -1431,7 +1431,35 @@ from all tables for each tenant.</p>
 </tr>
 </tbody>
 </table>
-<p>Topic attribution rows use a separate retention setting (<code>plugin_settings.topic_attribution.retention_days</code>, default 90, max 365) independent of the tenant-level <code>retention_days</code>.</p>
+<p><strong>Topic attribution retention</strong> is independent of tenant-level <code>retention_days</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Scope</th>
+<th>Default</th>
+<th>Range</th>
+<th>What it purges</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>tenants.*.retention_days</code></td>
+<td>Tenant</td>
+<td>250</td>
+<td>1–730</td>
+<td><code>billing_line_items</code>, <code>resources</code>, <code>identities</code>, <code>chargeback_rows</code></td>
+</tr>
+<tr>
+<td><code>plugin_settings.topic_attribution.retention_days</code></td>
+<td>Topic attribution</td>
+<td>90</td>
+<td>1–365</td>
+<td><code>topic_attribution_facts</code>, <code>topic_attribution_dimensions</code></td>
+</tr>
+</tbody>
+</table>
+<p>The two settings are evaluated independently — tenant retention does not affect topic attribution tables and vice versa. Set each according to the relevant reporting needs.</p>
 <h2 id="recommendation">Recommendation<a class="headerlink" href="#recommendation" title="Permanent link">&para;</a></h2>
 <p>Set <code>retention_days</code> &gt; <code>lookback_days</code>. If <code>retention_days</code> &lt; <code>lookback_days</code>, the
 engine may attempt to re-fetch data that has already been deleted.</p>

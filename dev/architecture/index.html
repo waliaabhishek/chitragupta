@@ -1284,7 +1284,7 @@
     E --&gt; H[CostAllocator]
     C --&gt; I[StorageBackend]
     C --&gt; J[Emitter×N]</code></pre>
-<p>The orchestrator delegates to three internal phase classes: <code>GatherPhase</code> (billing + resources + identities + deletion detection), <code>CalculatePhase</code> (metrics + identity resolution + allocation), and <code>EmitPhase</code> (commit + emitters).</p>
+<p>The orchestrator delegates to three internal phase classes: <code>GatherPhase</code> (billing + resources + identities + deletion detection), <code>CalculatePhase</code> (metrics + identity resolution + allocation), and <code>EmitPhase</code> (commit + emitters). When topic attribution is enabled (CCloud + Prometheus), an optional <strong>Topic Overlay</strong> stage runs between Calculate and Emit to attribute Kafka cluster costs to individual topics.</p>
 <h2 id="layers">Layers<a class="headerlink" href="#layers" title="Permanent link">&para;</a></h2>
 <table>
 <thead>

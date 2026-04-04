@@ -1249,6 +1249,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#documentation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Documentation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1322,6 +1333,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#documentation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Documentation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1364,8 +1386,25 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased">[Unreleased]<a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
-<li>Feat: TASK-164 — Topic Attribution frontend page and pipeline status update</li>
+<li>Feat: TASK-193 — Pipeline status API defaults to lookback window when no date range provided</li>
 </ul>
+<p>Default range for GET /tenants/{tenant_name}/status changed from
+[2000-01-01, 9999-12-31] to [today - lookback_days, today] when no
+start_date/end_date query params are given. Explicit date params
+are unaffected. Test fixtures updated to use dynamic dates. (<a href="https://github.com/waliaabhishek/chitragupta/commit/7bdf693809fa83f174000be2e194f0e176fc003a">7bdf693</a>)
+- Feat: TASK-187 — Show topic attribution as "not configured" when feature is disabled</p>
+<p>Expose topic_attribution_enabled boolean in API responses so frontend
+can render topic attribution as discoverable-but-unconfigured rather
+than appearing stuck/broken for tenants without the feature enabled. (<a href="https://github.com/waliaabhishek/chitragupta/commit/68e639b33ca5c8c37e7c5da651338ec70265423c">68e639b</a>)
+- Feat: TASK-186 — Confluent Cloud console deep-link rendering</p>
+<p>Resource identifiers (environment IDs, cluster IDs, topic names, service
+account IDs) across all UI views now render as clickable hyperlinks to
+the corresponding Confluent Cloud console page. Links open in a new tab.
+A "Links" toggle in the header enables/disables deep-links (off by
+default, persisted via localStorage). Deleted resources are excluded from
+link resolution. Covers: resources, billing, chargebacks, topic
+attribution, allocation issues, identities grids and detail drawers. (<a href="https://github.com/waliaabhishek/chitragupta/commit/89cd317d58e03d1d2791486206565393d3ba7f7f">89cd317</a>)
+- Feat: TASK-164 — Topic Attribution frontend page and pipeline status update</p>
 <p>New /topic-attributions page with Table tab (paginated AG Grid with
 filters, CSV export) and Analytics tab (9 visualization components:
 Top Topics, Cost Composition, Cost Velocity, Attribution Method
@@ -1384,6 +1423,12 @@ retained_bytes). Runs as an optional post-chargeback pipeline
 stage with its own star schema, composable attribution models
 (usage ratio, even split, chain fallback), 4 API endpoints,
 and configurable retention. (<a href="https://github.com/waliaabhishek/chitragupta/commit/919cc42a68b78773389577ce74c3f43c17544869">919cc42</a>)</p>
+<h3 id="documentation">Documentation<a class="headerlink" href="#documentation" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Docs: TASK-192 — Fill topic attribution documentation gaps across repository</li>
+</ul>
+<p>Add topic attribution mentions to 14 doc files and 3 example configs that
+previously had no coverage, closing the discovery gap for CCloud users. (<a href="https://github.com/waliaabhishek/chitragupta/commit/4b87a5686408bd711ab6bb2e802e7fe12f35dd70">4b87a56</a>)</p>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Fix: TASK-184 — Retry counters reset when dates re-enter processing queue via recalculation window</li>

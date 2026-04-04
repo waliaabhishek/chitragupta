@@ -1443,6 +1443,67 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#topic-attribution-issues" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Topic attribution issues
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Topic attribution issues">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#no-topic-attribution-data-appearing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        No topic attribution data appearing
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#all-topics-showing-even_split-attribution" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        All topics showing even_split attribution
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#sentinel-rows-with-attribution_failed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sentinel rows with ATTRIBUTION_FAILED
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#topic-attribution-stuck-on-old-dates" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Topic attribution stuck on old dates
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#api-issues" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1989,6 +2050,67 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#topic-attribution-issues" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Topic attribution issues
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Topic attribution issues">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#no-topic-attribution-data-appearing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        No topic attribution data appearing
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#all-topics-showing-even_split-attribution" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        All topics showing even_split attribution
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#sentinel-rows-with-attribution_failed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sentinel rows with ATTRIBUTION_FAILED
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#topic-attribution-stuck-on-old-dates" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Topic attribution stuck on old dates
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#api-issues" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2159,6 +2281,29 @@
 <h3 id="pipeline-runs-overlap-skipped--already-in-progress">Pipeline runs overlap (skipped — already in progress)<a class="headerlink" href="#pipeline-runs-overlap-skipped--already-in-progress" title="Permanent link">&para;</a></h3>
 <p><strong>Cause</strong>: <code>features.refresh_interval</code> (default 1800s) is shorter than actual run duration.
 <strong>Fix</strong>: Increase <code>features.refresh_interval</code> to at least 2× your typical run duration. Check <code>gathered</code> / <code>calculated</code> counts in logs to estimate run time.</p>
+<h2 id="topic-attribution-issues">Topic attribution issues<a class="headerlink" href="#topic-attribution-issues" title="Permanent link">&para;</a></h2>
+<h3 id="no-topic-attribution-data-appearing">No topic attribution data appearing<a class="headerlink" href="#no-topic-attribution-data-appearing" title="Permanent link">&para;</a></h3>
+<p><strong>Cause</strong>: Feature not enabled, metrics source missing, or pipeline hasn't reached the overlay stage yet.
+<strong>Fix</strong>:
+- Verify <code>plugin_settings.topic_attribution.enabled: true</code> in your config.
+- Verify <code>plugin_settings.metrics</code> is configured — topic attribution requires a Prometheus source.
+- Check pipeline status API: <code>topic_overlay_gathered</code> flag indicates whether the overlay stage has run for each date.</p>
+<h3 id="all-topics-showing-even_split-attribution">All topics showing <code>even_split</code> attribution<a class="headerlink" href="#all-topics-showing-even_split-attribution" title="Permanent link">&para;</a></h3>
+<p><strong>Cause</strong>: Prometheus is not returning per-topic metrics for the queried clusters.
+<strong>Fix</strong>:
+- Verify your Prometheus instance has <code>received_bytes</code>, <code>sent_bytes</code>, and <code>retained_bytes</code> per topic.
+- Check the <code>missing_metrics_behavior</code> setting — <code>even_split</code> (default) distributes costs evenly when metrics are zero or unavailable. Set to <code>skip</code> to omit clusters with no metrics instead.</p>
+<h3 id="sentinel-rows-with-attribution_failed">Sentinel rows with <code>ATTRIBUTION_FAILED</code><a class="headerlink" href="#sentinel-rows-with-attribution_failed" title="Permanent link">&para;</a></h3>
+<p><strong>Cause</strong>: Prometheus fetch retries exhausted for a cluster (<code>topic_attribution_retry_limit</code> reached).
+<strong>Fix</strong>:
+- Check Prometheus connectivity — the pipeline retries on each run until the limit is hit.
+- Verify <code>metric_name_overrides</code> if you use non-standard Prometheus metric names.
+- Increase <code>topic_attribution_retry_limit</code> (default 3) if outages are transient but longer than your run interval.</p>
+<h3 id="topic-attribution-stuck-on-old-dates">Topic attribution stuck on old dates<a class="headerlink" href="#topic-attribution-stuck-on-old-dates" title="Permanent link">&para;</a></h3>
+<p><strong>Cause</strong>: Dates processed before topic attribution was enabled don't have overlay data.
+<strong>Fix</strong>:
+- These dates need a backfill — the pipeline only runs topic attribution for dates that enter the processing queue.
+- Trigger recalculation for the affected date range to queue them for overlay processing.</p>
 <h2 id="api-issues">API issues<a class="headerlink" href="#api-issues" title="Permanent link">&para;</a></h2>
 <h3 id="http-401-unauthorized-on-api-requests"><code>HTTP 401 Unauthorized</code> on API requests<a class="headerlink" href="#http-401-unauthorized-on-api-requests" title="Permanent link">&para;</a></h3>
 <p><strong>Cause</strong>: The engine's REST API has no built-in auth — a reverse proxy or API gateway is returning 401.
