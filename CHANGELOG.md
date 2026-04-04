@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **TASK-197**: Added informative Ant Design tooltip to the Links toggle switch in the app header, explaining the deep links feature, unsupported resource types (connectors, identity pools), and deleted resource exclusion.
+
 ### Changed
 - **TASK-194** ⚠️ Breaking API change: `GET /api/v1/tenants`, `GET /api/v1/tenants/{tenant}/status`, and `GET /api/v1/readiness` no longer return `topic_attribution_enabled: boolean`. They now return two fields:
   - `topic_attribution_status`: `"disabled"` | `"enabled"` | `"config_error"`

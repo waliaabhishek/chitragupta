@@ -1,9 +1,11 @@
 import type React from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { describe, expect, it, vi } from "vitest";
 import { AppLayout } from "./Layout";
 import { useTenant } from "../providers/TenantContext";
+import { useResourceLinks } from "../providers/ResourceLinkContext";
 
 // Mock TenantContext to avoid provider requirement.
 // GAP-100: useReadiness added — PipelineStatusBanner (rendered by AppLayout) now calls both hooks.
@@ -181,5 +183,90 @@ describe("TASK-187: Topic Attribution nav item", () => {
 
     expect(screen.getByText("Config error")).toBeTruthy();
     expect(screen.queryByText("Not configured")).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TASK-197: Links toggle tooltip
+// ---------------------------------------------------------------------------
+
+describe("TASK-197: Links toggle tooltip", () => {
+  it("renders tooltip text about Confluent Cloud console", async () => {
+    render(
+      <AppLayout isDark={false} onToggleTheme={vi.fn()}>
+        <div>content</div>
+      </AppLayout>,
+      { wrapper },
+    );
+
+    await userEvent.hover(screen.getByRole("switch"));
+    expect(
+      await screen.findByText(/Confluent Cloud console/i),
+    ).toBeTruthy();
+  });
+
+  it("tooltip text mentions connectors and identity pools not supported", async () => {
+    render(
+      <AppLayout isDark={false} onToggleTheme={vi.fn()}>
+        <div>content</div>
+      </AppLayout>,
+      { wrapper },
+    );
+
+    await userEvent.hover(screen.getByRole("switch"));
+    expect(
+      await screen.findByText(/Connectors and identity pools/i),
+    ).toBeTruthy();
+  });
+
+  it("tooltip text mentions deleted resources", async () => {
+    render(
+      <AppLayout isDark={false} onToggleTheme={vi.fn()}>
+        <div>content</div>
+      </AppLayout>,
+      { wrapper },
+    );
+
+    await userEvent.hover(screen.getByRole("switch"));
+    expect(
+      await screen.findByText(/Deleted resources/i),
+    ).toBeTruthy();
+  });
+
+  it("Switch does not have title attribute", () => {
+    render(
+      <AppLayout isDark={false} onToggleTheme={vi.fn()}>
+        <div>content</div>
+      </AppLayout>,
+      { wrapper },
+    );
+
+    // The Links switch button should not carry a native title attribute
+    const linksSwitch = screen.getByRole("switch");
+    expect(linksSwitch.getAttribute("title")).toBeNull();
+    // Switch checked state reflects mocked enabled: false
+    expect(linksSwitch).not.toBeChecked();
+  });
+
+  it("Switch onChange fires when clicked", () => {
+    const mockSetEnabled = vi.fn();
+    vi.mocked(useResourceLinks).mockReturnValueOnce({
+      enabled: true,
+      setEnabled: mockSetEnabled,
+      resolveUrl: vi.fn(() => null),
+      isLoading: false,
+    });
+
+    render(
+      <AppLayout isDark={false} onToggleTheme={vi.fn()}>
+        <div>content</div>
+      </AppLayout>,
+      { wrapper },
+    );
+
+    const linksSwitch = screen.getByRole("switch");
+    fireEvent.click(linksSwitch);
+
+    expect(mockSetEnabled).toHaveBeenCalledTimes(1);
   });
 });

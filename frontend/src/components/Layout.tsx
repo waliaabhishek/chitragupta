@@ -18,6 +18,7 @@ import {
   Menu,
   Switch,
   theme,
+  Tooltip,
   Typography,
 } from "antd";
 import { useState } from "react";
@@ -175,16 +176,17 @@ export function AppLayout({
             onClick={onToggleTheme}
             title={isDark ? "Switch to light mode" : "Switch to dark mode"}
           />
-          <Switch
-            checked={deepLinksEnabled}
-            onChange={setDeepLinksEnabled}
-            checkedChildren="Links"
-            unCheckedChildren="Links"
-            size="small"
-            title={
-              deepLinksEnabled ? "Disable deep links" : "Enable deep links"
-            }
-          />
+          <Tooltip
+            title="Toggles clickable deep links from resource and identity IDs to their Confluent Cloud console pages. Connectors and identity pools are not supported — Confluent does not expose stable URLs for these. Deleted resources and identities will not have clickable links as they are excluded from the lookup index."
+          >
+            <Switch
+              checked={deepLinksEnabled}
+              onChange={setDeepLinksEnabled}
+              checkedChildren="Links"
+              unCheckedChildren="Links"
+              size="small"
+            />
+          </Tooltip>
           <TenantSelector />
         </Header>
         <PipelineStatusBanner />
