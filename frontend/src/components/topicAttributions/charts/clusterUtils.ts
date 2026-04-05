@@ -80,29 +80,29 @@ export function buildTopClustersCostData(
 } {
   const { clusterTopic, clusterTotals } = aggregateByCluster(buckets);
 
-  // globalTopicTotals needed only for topic ranking — compute here
-  const globalTopicTotals: Record<string, number> = {};
-  for (const topics of Object.values(clusterTopic)) {
-    for (const [t, amt] of Object.entries(topics)) {
-      globalTopicTotals[t] = (globalTopicTotals[t] ?? 0) + amt;
-    }
-  }
-
   // Top N clusters by total cost; ascending so highest renders at top of horizontal chart
   const clusters = Object.entries(clusterTotals)
     .sort((a, b) => a[1] - b[1])
     .slice(-topNClusters)
     .map(([c]) => c);
 
-  const topTopics = Object.entries(globalTopicTotals)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, topNTopics)
-    .map(([t]) => t);
+  // Per-cluster top topics: union of each cluster's top N topics
+  const allTopTopics = new Set<string>();
+  for (const c of clusters) {
+    const topics = clusterTopic[c] ?? {};
+    const sorted = Object.entries(topics)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, topNTopics);
+    for (const [t] of sorted) {
+      allTopTopics.add(t);
+    }
+  }
+  const topicList = [...allTopTopics];
 
   return {
     clusters,
     series: [
-      ...topTopics.map((topic) => ({
+      ...topicList.map((topic) => ({
         name: topic,
         type: "bar" as const,
         stack: "total",
@@ -113,11 +113,11 @@ export function buildTopClustersCostData(
         type: "bar" as const,
         stack: "total",
         data: clusters.map((c) => {
-          const topSum = topTopics.reduce(
+          const topSum = topicList.reduce(
             (s, t) => s + (clusterTopic[c]?.[t] ?? 0),
             0,
           );
-          return (clusterTotals[c] ?? 0) - topSum;
+          return Math.max(0, (clusterTotals[c] ?? 0) - topSum);
         }),
       },
     ],

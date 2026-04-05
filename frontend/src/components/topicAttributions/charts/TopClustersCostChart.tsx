@@ -24,9 +24,18 @@ export function TopClustersCostChart({
     tooltip: {
       trigger: "axis",
       axisPointer: { type: "shadow" },
-      valueFormatter: (v: unknown) => formatCurrency(v as number),
+      formatter: (params: unknown) => {
+        const list = params as { seriesName: string; value: number; marker: string }[];
+        const nonZero = list.filter((p) => p.value > 0);
+        if (!nonZero.length) return "";
+        const header = (list[0] as { axisValueLabel?: string }).axisValueLabel ?? "";
+        return [
+          `<b>${header}</b>`,
+          ...nonZero.map((p) => `${p.marker} ${p.seriesName}: ${formatCurrency(p.value)}`),
+        ].join("<br/>");
+      },
     },
-    legend: { bottom: 0 },
+    legend: { bottom: 0, type: "scroll" },
     grid: { left: "25%", right: "5%", containLabel: false },
     xAxis: {
       type: "value",

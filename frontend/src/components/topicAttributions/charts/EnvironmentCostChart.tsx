@@ -10,81 +10,101 @@ interface EnvironmentCostChartProps {
   height?: number;
 }
 
-function buildGroupedBarData(
+function buildEnvCostData(
   buckets: TopicAttributionAggregationBucket[],
-  topN: number = 10,
+  topNEnvs: number = 10,
+  topNTopicsPerEnv: number = 5,
 ): {
-  topics: string[];
-  series: { name: string; type: "bar"; data: number[] }[];
+  envs: string[];
+  series: { name: string; type: "bar"; stack: string; data: number[] }[];
 } {
-  const topicTotals: Record<string, number> = {};
+  const envTopic: Record<string, Record<string, number>> = {};
+  const envTotals: Record<string, number> = {};
   for (const b of buckets) {
-    const t = b.dimensions.topic_name ?? "Unknown";
-    topicTotals[t] = (topicTotals[t] ?? 0) + parseFloat(b.total_amount);
-  }
-  const topTopics = Object.entries(topicTotals)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, topN)
-    .map(([t]) => t);
-  const envIds = [
-    ...new Set(buckets.map((b) => b.dimensions.env_id ?? "Unknown")),
-  ];
-  const dataMap: Record<string, Record<string, number>> = {};
-  for (const b of buckets) {
-    const t = b.dimensions.topic_name ?? "Unknown";
     const e = b.dimensions.env_id ?? "Unknown";
-    dataMap[t] ??= {};
-    dataMap[t][e] = (dataMap[t][e] ?? 0) + parseFloat(b.total_amount);
+    const t = b.dimensions.topic_name ?? "Unknown";
+    const amt = parseFloat(b.total_amount);
+    envTopic[e] ??= {};
+    envTopic[e][t] = (envTopic[e][t] ?? 0) + amt;
+    envTotals[e] = (envTotals[e] ?? 0) + amt;
   }
+
+  // Top N envs by total cost; ascending so highest renders at top of horizontal chart
+  const envs = Object.entries(envTotals)
+    .sort((a, b) => a[1] - b[1])
+    .slice(-topNEnvs)
+    .map(([e]) => e);
+
+  // Collect the union of per-env top topics so each env shows its own top contributors
+  const allTopTopics = new Set<string>();
+  for (const env of envs) {
+    const topics = envTopic[env] ?? {};
+    const sorted = Object.entries(topics)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, topNTopicsPerEnv);
+    for (const [t] of sorted) {
+      allTopTopics.add(t);
+    }
+  }
+  const topicList = [...allTopTopics];
+
   return {
-    topics: topTopics,
-    series: envIds.map((env) => ({
-      name: env,
-      type: "bar" as const,
-      data: topTopics.map((t) => dataMap[t]?.[env] ?? 0),
-    })),
+    envs,
+    series: [
+      ...topicList.map((topic) => ({
+        name: topic,
+        type: "bar" as const,
+        stack: "total",
+        data: envs.map((e) => envTopic[e]?.[topic] ?? 0),
+      })),
+      {
+        name: "Other",
+        type: "bar" as const,
+        stack: "total",
+        data: envs.map((e) => {
+          const topSum = topicList.reduce(
+            (s, t) => s + (envTopic[e]?.[t] ?? 0),
+            0,
+          );
+          return Math.max(0, (envTotals[e] ?? 0) - topSum);
+        }),
+      },
+    ],
   };
 }
 
-const LABEL_MAX_LEN = 20;
-
 export function EnvironmentCostChart({
   data,
-  height = 350,
+  height = 300,
 }: EnvironmentCostChartProps): React.JSX.Element {
-  const { topics, series } = useMemo(() => buildGroupedBarData(data), [data]);
+  const { envs, series } = useMemo(() => buildEnvCostData(data), [data]);
 
   const option: EChartsOption = {
     tooltip: {
       trigger: "axis",
-      valueFormatter: (v: unknown) => formatCurrency(v as number),
-    },
-    legend: { type: "scroll", bottom: 45 },
-    grid: { bottom: 80 },
-    xAxis: {
-      type: "category",
-      data: topics,
-      axisLabel: {
-        rotate: 45,
-        hideOverlap: false,
-        formatter: (value: string) =>
-          value.length > LABEL_MAX_LEN
-            ? `${value.slice(0, LABEL_MAX_LEN)}…`
-            : value,
+      axisPointer: { type: "shadow" },
+      formatter: (params: unknown) => {
+        const list = params as { seriesName: string; value: number; marker: string }[];
+        const nonZero = list.filter((p) => p.value > 0);
+        if (!nonZero.length) return "";
+        const header = (list[0] as { axisValueLabel?: string }).axisValueLabel ?? "";
+        return [
+          `<b>${header}</b>`,
+          ...nonZero.map((p) => `${p.marker} ${p.seriesName}: ${formatCurrency(p.value)}`),
+        ].join("<br/>");
       },
     },
-    yAxis: {
+    legend: { bottom: 0, type: "scroll" },
+    grid: { left: "25%", right: "5%", containLabel: false },
+    xAxis: {
       type: "value",
       axisLabel: { formatter: (v: number) => formatCurrency(v) },
     },
-    dataZoom: [
-      {
-        type: "slider",
-        xAxisIndex: 0,
-        start: 0,
-        end: 50,
-      },
-    ],
+    yAxis: {
+      type: "category",
+      data: envs,
+      axisLabel: { width: 120, overflow: "truncate" },
+    },
     series,
   };
 
