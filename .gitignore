@@ -6,6 +6,7 @@ backlog/
 .claude/
 memory/
 **/data/
+node_modules/
 
 CLAUDE.md
 
