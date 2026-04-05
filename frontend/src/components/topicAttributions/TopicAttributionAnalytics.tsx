@@ -112,7 +112,7 @@ export function TopicAttributionAnalytics({
         </Col>
         <Col xs={24} lg={12}>
           <ChartCard
-            title="Attribution Method Confidence"
+            title="Attribution Confidence"
             loading={methodData.isLoading}
             error={methodData.error}
             onRetry={methodData.refetch}
