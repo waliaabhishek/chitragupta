@@ -4,18 +4,23 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { TopTopicsChart } from "./TopTopicsChart";
 import type { TopicAttributionAggregationBucket } from "../../../types/api";
 
+let lastOption: Record<string, unknown> = {};
+
 // Mock echarts-for-react to avoid canvas issues in jsdom
 vi.mock("echarts-for-react", () => ({
-  default: ({ option }: { option: Record<string, unknown> }) => (
-    <div
-      data-testid="echarts"
-      data-series-type={
-        Array.isArray(option.series) && option.series.length > 0
-          ? (option.series[0] as { type: string }).type
-          : ""
-      }
-    />
-  ),
+  default: ({ option }: { option: Record<string, unknown> }) => {
+    lastOption = option;
+    return (
+      <div
+        data-testid="echarts"
+        data-series-type={
+          Array.isArray(option.series) && option.series.length > 0
+            ? (option.series[0] as { type: string }).type
+            : ""
+        }
+      />
+    );
+  },
 }));
 
 // Mock antd Radio.Group for toggle
@@ -70,6 +75,7 @@ function makeBucket(
 
 beforeEach(() => {
   vi.clearAllMocks();
+  lastOption = {};
 });
 
 describe("TopTopicsChart", () => {
@@ -115,5 +121,24 @@ describe("TopTopicsChart", () => {
 
     const chart = screen.getByTestId("echarts");
     expect(chart.getAttribute("data-series-type")).toBe("treemap");
+  });
+});
+
+describe("TASK-203: tooltip valueFormatter", () => {
+  it("TopTopicsChart bar view — valueFormatter present", () => {
+    const data = [makeBucket("topic-a", "100.00")];
+    render(<TopTopicsChart data={data} />);
+    fireEvent.click(screen.getByTestId("radio-bar"));
+    const tooltip = lastOption.tooltip as Record<string, unknown>;
+    expect(typeof tooltip?.valueFormatter).toBe("function");
+  });
+
+  it("TopTopicsChart bar view — valueFormatter output", () => {
+    const data = [makeBucket("topic-a", "100.00")];
+    render(<TopTopicsChart data={data} />);
+    fireEvent.click(screen.getByTestId("radio-bar"));
+    const tooltip = lastOption.tooltip as Record<string, unknown>;
+    const valueFormatter = tooltip?.valueFormatter as (v: number) => string;
+    expect(valueFormatter(1996.9649999999929)).toBe("$1,996.96");
   });
 });

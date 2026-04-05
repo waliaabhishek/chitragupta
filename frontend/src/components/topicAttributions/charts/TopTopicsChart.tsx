@@ -44,7 +44,10 @@ export function TopTopicsChart({
   };
 
   const barOption: EChartsOption = {
-    tooltip: { trigger: "axis" },
+    tooltip: {
+      trigger: "axis",
+      valueFormatter: (v: unknown) => formatCurrency(v as number),
+    },
     xAxis: {
       type: "value",
       axisLabel: { formatter: (v: number) => formatCurrency(v) },

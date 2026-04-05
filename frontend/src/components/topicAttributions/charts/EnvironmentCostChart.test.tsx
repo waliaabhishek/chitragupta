@@ -149,3 +149,27 @@ describe("TASK-200: label overflow fix", () => {
     expect(tooltip?.trigger).toBe("axis");
   });
 });
+
+describe("TASK-203: tooltip valueFormatter", () => {
+  it("EnvironmentCostChart — valueFormatter present", () => {
+    render(<EnvironmentCostChart data={[makeBucket("topic-a", "env-1", "100.00")]} />);
+    const tooltip = lastOption.tooltip as Record<string, unknown>;
+    expect(typeof tooltip?.valueFormatter).toBe("function");
+  });
+
+  it("EnvironmentCostChart — valueFormatter output", () => {
+    render(<EnvironmentCostChart data={[makeBucket("topic-a", "env-1", "100.00")]} />);
+    const tooltip = lastOption.tooltip as Record<string, unknown>;
+    const valueFormatter = tooltip?.valueFormatter as (v: number) => string;
+    expect(valueFormatter(1996.9649999999929)).toBe("$1,996.96");
+  });
+
+  it("EnvironmentCostChart — axisLabel formatter unchanged", () => {
+    render(<EnvironmentCostChart data={[makeBucket("topic-a", "env-1", "100.00")]} />);
+    type YAxis = { axisLabel?: { formatter?: (v: number) => string } };
+    const yAxis = lastOption.yAxis as YAxis;
+    const formatter = yAxis?.axisLabel?.formatter;
+    expect(typeof formatter).toBe("function");
+    expect(formatter!(1000)).toBe("$1,000.00");
+  });
+});

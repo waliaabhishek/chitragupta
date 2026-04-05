@@ -55,7 +55,10 @@ export function EnvironmentCostChart({
   const { topics, series } = useMemo(() => buildGroupedBarData(data), [data]);
 
   const option: EChartsOption = {
-    tooltip: { trigger: "axis" },
+    tooltip: {
+      trigger: "axis",
+      valueFormatter: (v: unknown) => formatCurrency(v as number),
+    },
     legend: { bottom: 45 },
     grid: { bottom: 80 },
     xAxis: {

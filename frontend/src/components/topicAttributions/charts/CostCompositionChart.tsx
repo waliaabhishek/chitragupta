@@ -36,7 +36,11 @@ export function CostCompositionChart({ data, height = 300 }: CostCompositionChar
   );
 
   const option: EChartsOption = {
-    tooltip: { trigger: "axis", axisPointer: { type: "shadow" } },
+    tooltip: {
+      trigger: "axis",
+      axisPointer: { type: "shadow" },
+      valueFormatter: (v: unknown) => formatCurrency(v as number),
+    },
     legend: { bottom: 0 },
     xAxis: {
       type: "category",
