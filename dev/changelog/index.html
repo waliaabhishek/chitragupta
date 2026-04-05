@@ -1386,8 +1386,32 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased">[Unreleased]<a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
-<li>Feat: TASK-195 — Fix and expand Confluent Cloud console deep links</li>
+<li>Feat: Change cluster and topic name filters to substring match</li>
 </ul>
+<p>Use SQL LIKE (contains) instead of exact equality for cluster_resource_id
+and topic_name filters in both list and aggregation queries. (<a href="https://github.com/waliaabhishek/chitragupta/commit/29925957097798ceb422a6cde9592fb4bdcf1fc3">2992595</a>)
+- Feat: TASK-202 — Improve Cost Velocity chart clarity with descriptive labels, top 10, and subtitle</p>
+<p>Tooltip now shows directional labels (+$X increase / -$X decrease / $0.00 no change)
+instead of raw signed values. Chart displays top 10 topics instead of 5. ChartCard
+gains optional subtitle prop; Cost Velocity card shows selection criteria subtitle. (<a href="https://github.com/waliaabhishek/chitragupta/commit/30672548424a7470b81f5ed05f284be7044648af">3067254</a>)
+- Feat: TASK-201 — Redesign Attribution Method donut into confidence-framed chart</p>
+<p>Replace misleading "Attribution Method Confidence" donut with a
+confidence-framed chart: headline metric showing percentage of cost
+attributed via metrics-based methods, semantic color-coded tiers
+(High/Medium/Low Confidence), and custom tooltip with tier name,
+method, dollar amount, and percentage. (<a href="https://github.com/waliaabhishek/chitragupta/commit/5d3d1e03bdc96080a99c9f2ce1ec86b17be74771">5d3d1e0</a>)
+- Feat: TASK-199 — Redesign Cluster Concentration into two charts</p>
+<p>Replace the unreadable 71-cluster vertical bar chart with two focused
+horizontal bar charts: "Top Clusters by Cost" (top 10 clusters stacked
+by top 5 topics + Other) and "Cluster Concentration Risk" (concentration
+percentage per cluster, color-coded green/yellow/red by risk threshold).
+Both charts reuse the existing clusterData aggregation — no new API calls. (<a href="https://github.com/waliaabhishek/chitragupta/commit/39122663ef0c58c22702f2514aa88be10142cdfa">3912266</a>)
+- Feat: TASK-197 — Add informative tooltip to Links toggle switch in app header</p>
+<p>Wrap the Links Switch in Layout.tsx with an Ant Design Tooltip explaining
+the deep links feature, unsupported resource types (connectors, identity
+pools), and deleted resource exclusion. Removes the basic HTML title
+attribute in favor of the richer Tooltip overlay. (<a href="https://github.com/waliaabhishek/chitragupta/commit/672a377f0b5a74b7eabad55058c4c4ce2fea6288">672a377</a>)
+- Feat: TASK-195 — Fix and expand Confluent Cloud console deep links</p>
 <p>Fix 2 wrong URLs (service account, schema registry) and add 6 missing
 deep link types (user, identity provider, identity pool, API key,
 Flink compute pool, ksqlDB cluster). Expand ResourceLinkContext to
@@ -1447,8 +1471,40 @@ and configurable retention. (<a href="https://github.com/waliaabhishek/chitragup
 previously had no coverage, closing the discovery gap for CCloud users. (<a href="https://github.com/waliaabhishek/chitragupta/commit/4b87a5686408bd711ab6bb2e802e7fe12f35dd70">4b87a56</a>)</p>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
-<li>Fix: TASK-196 — Disable broken Confluent Cloud deep links for connectors and identity pools</li>
+<li>Fix: Redesign Environment Cost and Top Clusters charts with per-entity topic stacking</li>
 </ul>
+<p>Environment Cost chart was a grouped bar with one series per environment per topic,
+causing thin illegible bars and tooltip overflow. Redesigned as horizontal stacked bar
+grouped by environment, with per-env top 5 topics stacked. Same per-entity topic
+selection applied to Top Clusters chart. Both tooltips now filter zero-value entries. (<a href="https://github.com/waliaabhishek/chitragupta/commit/2ac9c71eba168a6fdfa15ddc3a547ad39fb812bb">2ac9c71</a>)
+- Fix: Add notMerge to all ECharts instances and remove misleading Attribution Confidence chart</p>
+<p>ECharts merge-updates were accumulating stale series across re-renders,
+causing duplicate tooltip entries (e.g. PNR-DLQ appearing 8x). Adding
+notMerge ensures full option replacement on each render.</p>
+<p>Also removes the Attribution Confidence donut — it incorrectly marks
+intentional even_split product types (KAFKA_BASE, KAFKA_PARTITION) as
+low confidence, inflating the red slice. Needs backend work to
+distinguish designed vs fallback even_split before re-enabling. (<a href="https://github.com/waliaabhishek/chitragupta/commit/738e06a10a65fbc3639cfc36016884feb5b77d03">738e06a</a>)
+- Fix: Environment Cost legend overflow and remove misleading Other from Top Topics</p>
+<p>Use scrollable legend in Environment Cost chart to prevent dozens of
+environment entries from burying the chart. Filter out the Other bucket
+from Top Topics treemap/bar since it aggregates all remaining topics
+and always dominates the view. (<a href="https://github.com/waliaabhishek/chitragupta/commit/30a1b4d83aac9ff9e185f01796b008f550f6814e">30a1b4d</a>)
+- Fix: TASK-203 — Fix raw floating-point values in ECharts tooltips across topic attribution charts</p>
+<p>Add valueFormatter to tooltip configs in CostCompositionChart, EnvironmentCostChart,
+and TopTopicsChart (bar view) so tooltips display formatted currency ($X,XXX.XX)
+instead of raw JavaScript floats. Matches the existing pattern in TopClustersCostChart. (<a href="https://github.com/waliaabhishek/chitragupta/commit/3fb7b8f59f5880e9f18a4340770a8a93f8fe4ae0">3fb7b8f</a>)
+- Fix: TASK-200 — Fix Environment Cost chart label overflow with scrollable x-axis</p>
+<p>Truncate x-axis labels to 20 chars with ellipsis, add ECharts dataZoom
+slider showing 5-6 topics at a time, bump default height to 350px, and
+adjust legend/grid spacing to prevent overlap. (<a href="https://github.com/waliaabhishek/chitragupta/commit/d5588d55f836b65ad91cad72433592fbaa16bcc3">d5588d5</a>)
+- Fix: TASK-198 — Fix Topic Attribution table not displaying data (AG Grid 0px height)</p>
+<p>Replace Ant Design <Tabs> layout wrapper with <Segmented> switcher and
+conditional rendering so TopicAttributionGrid and TopicAttributionAnalytics
+are direct flex children of the page container — matching the pattern used
+by every other grid page. The <Tabs> component injected display:block
+wrapper divs that broke the flex chain, causing AG Grid to render at 0px. (<a href="https://github.com/waliaabhishek/chitragupta/commit/6f4da561667b7c3f2b1747f1c84aeb8a860b9a80">6f4da56</a>)
+- Fix: TASK-196 — Disable broken Confluent Cloud deep links for connectors and identity pools</p>
 <p>Connector and identity pool URLs do not resolve to valid Confluent Cloud
 console pages. Remove the three code paths that generated these broken
 links so resolveUrl returns null, rendering plain text instead of broken
