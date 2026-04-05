@@ -1,7 +1,7 @@
 import type React from "react";
 import { useMemo } from "react";
 import ReactECharts from "echarts-for-react";
-import type { EChartsOption } from "echarts";
+import type { EChartsOption, DefaultLabelFormatterCallbackParams } from "echarts";
 import type { TopicAttributionAggregationBucket } from "../../../types/api";
 import { formatCurrency } from "../../../utils/aggregation";
 
@@ -12,7 +12,7 @@ interface CostVelocityChartProps {
 
 function buildVelocityData(
   buckets: TopicAttributionAggregationBucket[],
-  topN: number = 5,
+  topN: number = 10,
 ): { times: string[]; series: { name: string; deltas: number[] }[] } {
   const topicTimeMap: Record<string, Record<string, number>> = {};
   for (const b of buckets) {
@@ -50,27 +50,52 @@ function buildVelocityData(
   };
 }
 
+function formatDelta(value: number): string {
+  if (value === 0) return `${formatCurrency(0)} no change`;
+  if (value > 0) return `+${formatCurrency(value)} increase`;
+  return `-${formatCurrency(Math.abs(value))} decrease`;
+}
+
 export function CostVelocityChart({
   data,
   height = 300,
 }: CostVelocityChartProps): React.JSX.Element {
   const { times, series } = useMemo(() => buildVelocityData(data), [data]);
 
-  const option: EChartsOption = {
-    tooltip: { trigger: "axis" },
-    legend: { bottom: 0 },
-    xAxis: { type: "category", data: times },
-    yAxis: {
-      type: "value",
-      axisLabel: { formatter: (v: number) => formatCurrency(v) },
-    },
-    series: series.map((s) => ({
-      name: s.name,
-      type: "line",
-      data: s.deltas,
-      smooth: true,
-    })),
-  };
+  const option: EChartsOption = useMemo(
+    () => ({
+      tooltip: {
+        trigger: "axis",
+        formatter: (
+          params:
+            | DefaultLabelFormatterCallbackParams
+            | DefaultLabelFormatterCallbackParams[],
+        ) => {
+          const items = Array.isArray(params) ? params : [params];
+          if (items.length === 0) return "";
+          const lines = items.map(
+            (p) =>
+              `${p.marker ?? ""} ${p.seriesName ?? ""}: ${formatDelta(p.value as number)}`,
+          );
+          const axisValue = (items[0] as { axisValue?: string }).axisValue ?? "";
+          return `<strong>${axisValue}</strong><br/>${lines.join("<br/>")}`;
+        },
+      },
+      legend: { bottom: 0 },
+      xAxis: { type: "category", data: times },
+      yAxis: {
+        type: "value",
+        axisLabel: { formatter: (v: number) => formatCurrency(v) },
+      },
+      series: series.map((s) => ({
+        name: s.name,
+        type: "line",
+        data: s.deltas,
+        smooth: true,
+      })),
+    }),
+    [times, series],
+  );
 
   return <ReactECharts option={option} style={{ height }} />;
 }

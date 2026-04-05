@@ -10,7 +10,7 @@ vi.mock("antd", () => ({
     children,
     extra,
   }: {
-    title: string;
+    title: React.ReactNode;
     children: React.ReactNode;
     extra?: React.ReactNode;
     style?: object;
@@ -50,6 +50,15 @@ vi.mock("antd", () => ({
       {children}
     </button>
   ),
+  Typography: {
+    Text: ({
+      children,
+    }: {
+      children: React.ReactNode;
+      type?: string;
+      style?: object;
+    }) => <span data-testid="typography-text">{children}</span>,
+  },
 }));
 
 describe("ChartCard", () => {
@@ -124,5 +133,23 @@ describe("ChartCard", () => {
     );
     await userEvent.click(screen.getByTestId("retry-button"));
     expect(onRetry).toHaveBeenCalledOnce();
+  });
+
+  it("renders subtitle when subtitle prop is provided", () => {
+    render(
+      <ChartCard title="T" subtitle="S">
+        <div>content</div>
+      </ChartCard>,
+    );
+    expect(screen.getByText("S")).toBeInTheDocument();
+  });
+
+  it("does not render subtitle text when subtitle prop is omitted", () => {
+    render(
+      <ChartCard title="T">
+        <div>content</div>
+      </ChartCard>,
+    );
+    expect(screen.queryByTestId("typography-text")).toBeNull();
   });
 });

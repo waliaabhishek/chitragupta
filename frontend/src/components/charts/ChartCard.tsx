@@ -1,9 +1,10 @@
 import type React from "react";
-import { Button, Card, Result, Spin } from "antd";
+import { Button, Card, Result, Spin, Typography } from "antd";
 import type { ReactNode } from "react";
 
 interface ChartCardProps {
   title: string;
+  subtitle?: string;
   children: ReactNode;
   loading?: boolean;
   error?: string | null;
@@ -13,14 +14,28 @@ interface ChartCardProps {
 
 export function ChartCard({
   title,
+  subtitle,
   children,
   loading,
   error,
   onRetry,
   extra,
 }: ChartCardProps): React.JSX.Element {
+  const cardTitle = (
+    <div>
+      <div>{title}</div>
+      {subtitle && (
+        <Typography.Text
+          type="secondary"
+          style={{ fontSize: 12, fontWeight: "normal" }}
+        >
+          {subtitle}
+        </Typography.Text>
+      )}
+    </div>
+  );
   return (
-    <Card title={title} extra={extra} style={{ height: "100%" }}>
+    <Card title={cardTitle} extra={extra} style={{ height: "100%" }}>
       {loading ? (
         <div
           style={{

@@ -93,21 +93,18 @@ export function TopicAttributionAnalytics({
             error={compositionData.error}
             onRetry={compositionData.refetch}
           >
-            <CostCompositionChart
-              data={compositionData.data?.buckets ?? []}
-            />
+            <CostCompositionChart data={compositionData.data?.buckets ?? []} />
           </ChartCard>
         </Col>
         <Col span={24}>
           <ChartCard
             title="Cost Velocity (Top Movers)"
+            subtitle="Top 10 topics by largest period-over-period cost change"
             loading={topTopicsData.isLoading}
             error={topTopicsData.error}
             onRetry={topTopicsData.refetch}
           >
-            <CostVelocityChart
-              data={topTopicsData.data?.buckets ?? []}
-            />
+            <CostVelocityChart data={topTopicsData.data?.buckets ?? []} />
           </ChartCard>
         </Col>
         <Col xs={24} lg={12}>
@@ -147,7 +144,9 @@ export function TopicAttributionAnalytics({
             error={clusterData.error}
             onRetry={clusterData.refetch}
           >
-            <ClusterConcentrationRiskChart data={clusterData.data?.buckets ?? []} />
+            <ClusterConcentrationRiskChart
+              data={clusterData.data?.buckets ?? []}
+            />
           </ChartCard>
         </Col>
         <Col xs={24} lg={12}>
@@ -157,9 +156,7 @@ export function TopicAttributionAnalytics({
             error={mixData.error}
             onRetry={mixData.refetch}
           >
-            <ProductTypeMixChart
-              data={mixData.data?.buckets ?? []}
-            />
+            <ProductTypeMixChart data={mixData.data?.buckets ?? []} />
           </ChartCard>
         </Col>
         <Col span={24}>
