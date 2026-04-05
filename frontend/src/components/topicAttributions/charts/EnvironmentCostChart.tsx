@@ -59,7 +59,7 @@ export function EnvironmentCostChart({
       trigger: "axis",
       valueFormatter: (v: unknown) => formatCurrency(v as number),
     },
-    legend: { bottom: 45 },
+    legend: { type: "scroll", bottom: 45 },
     grid: { bottom: 80 },
     xAxis: {
       type: "category",

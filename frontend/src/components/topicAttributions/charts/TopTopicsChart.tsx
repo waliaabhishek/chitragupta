@@ -22,7 +22,10 @@ export function TopTopicsChart({
   const [chartType, setChartType] = useState<"Treemap" | "Bar">("Treemap");
 
   const items = useMemo(
-    () => topNWithOther(aggregateByDimension(data, "topic_name"), 15),
+    () =>
+      topNWithOther(aggregateByDimension(data, "topic_name"), 15).filter(
+        (d) => d.key !== "Other",
+      ),
     [data],
   );
 
