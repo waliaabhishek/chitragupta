@@ -1482,21 +1482,21 @@
 <h1 id="monitoring">Monitoring<a class="headerlink" href="#monitoring" title="Permanent link">&para;</a></h1>
 <h2 id="log-levels">Log levels<a class="headerlink" href="#log-levels" title="Permanent link">&para;</a></h2>
 <p>Set <code>logging.level: INFO</code> for production. Use <code>DEBUG</code> for plugin-specific tracing:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nt">logging</span><span class="p">:</span>
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="nt">per_module_levels</span><span class="p">:</span>
-<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">    </span><span class="nt">core.metrics.prometheus</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">DEBUG</span>
-</code></pre></div>
+<p><code>yaml
+logging:
+  per_module_levels:
+    core.metrics.prometheus: DEBUG</code></p>
 <h2 id="log-format">Log format<a class="headerlink" href="#log-format" title="Permanent link">&para;</a></h2>
 <p>The log format is configurable via <code>logging.format</code> using standard Python
 <a href="https://docs.python.org/3/library/logging.html#logrecord-attributes">LogRecord attributes</a>:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">logging</span><span class="p">:</span>
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">format</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;%(asctime)s</span><span class="nv"> </span><span class="s">-</span><span class="nv"> </span><span class="s">%(name)s</span><span class="nv"> </span><span class="s">-</span><span class="nv"> </span><span class="s">%(levelname)s</span><span class="nv"> </span><span class="s">-</span><span class="nv"> </span><span class="s">%(message)s&quot;</span><span class="w">  </span><span class="c1"># default</span>
-</code></pre></div>
+<p><code>yaml
+logging:
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"  # default</code></p>
 <p>For JSON-style structured logging (useful with log aggregators like Loki or ELK),
 use a format string like:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nt">logging</span><span class="p">:</span>
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="nt">format</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;{&quot;time&quot;:&quot;%(asctime)s&quot;,&quot;logger&quot;:&quot;%(name)s&quot;,&quot;level&quot;:&quot;%(levelname)s&quot;,&quot;msg&quot;:&quot;%(message)s&quot;}&#39;</span>
-</code></pre></div>
+<p><code>yaml
+logging:
+  format: '{"time":"%(asctime)s","logger":"%(name)s","level":"%(levelname)s","msg":"%(message)s"}'</code></p>
 <h2 id="key-log-messages">Key log messages<a class="headerlink" href="#key-log-messages" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -1525,47 +1525,44 @@ use a format string like:</p>
 </tbody>
 </table>
 <h2 id="api-health-check">API health check<a class="headerlink" href="#api-health-check" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>GET /health
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>→ {&quot;status&quot;: &quot;ok&quot;, &quot;version&quot;: &quot;&lt;version&gt;&quot;}
-</code></pre></div>
+<p><code>GET /health
+→ {"status": "ok", "version": "&lt;version&gt;"}</code></p>
 <p><code>version</code> is the installed package version, or <code>"0.0.0-dev"</code> when running from source.</p>
 <h2 id="readiness-check">Readiness check<a class="headerlink" href="#readiness-check" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>GET /api/v1/readiness
-<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>→ {
-<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>    &quot;status&quot;: &quot;ready&quot;,           // ready | initializing | no_data | error
-<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>    &quot;version&quot;: &quot;&lt;version&gt;&quot;,
-<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>    &quot;mode&quot;: &quot;both&quot;,
-<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>    &quot;tenants&quot;: [
-<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>      {
-<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a>        &quot;tenant_name&quot;: &quot;my-org&quot;,
-<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a>        &quot;tables_ready&quot;: true,
-<a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a>        &quot;has_data&quot;: true,
-<a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a>        &quot;pipeline_running&quot;: false,
-<a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a>        &quot;pipeline_stage&quot;: null,
-<a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a>        &quot;pipeline_current_date&quot;: null,
-<a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a>        &quot;last_run_status&quot;: &quot;completed&quot;,
-<a id="__codelineno-4-15" name="__codelineno-4-15" href="#__codelineno-4-15"></a>        &quot;last_run_at&quot;: &quot;2026-03-17T12:00:00Z&quot;,
-<a id="__codelineno-4-16" name="__codelineno-4-16" href="#__codelineno-4-16"></a>        &quot;permanent_failure&quot;: null
-<a id="__codelineno-4-17" name="__codelineno-4-17" href="#__codelineno-4-17"></a>      }
-<a id="__codelineno-4-18" name="__codelineno-4-18" href="#__codelineno-4-18"></a>    ]
-<a id="__codelineno-4-19" name="__codelineno-4-19" href="#__codelineno-4-19"></a>  }
-</code></pre></div>
+<p><code>GET /api/v1/readiness
+→ {
+    "status": "ready",           // ready | initializing | no_data | error
+    "version": "&lt;version&gt;",
+    "mode": "both",
+    "tenants": [
+      {
+        "tenant_name": "my-org",
+        "tables_ready": true,
+        "has_data": true,
+        "pipeline_running": false,
+        "pipeline_stage": null,
+        "pipeline_current_date": null,
+        "last_run_status": "completed",
+        "last_run_at": "2026-03-17T12:00:00Z",
+        "permanent_failure": null
+      }
+    ]
+  }</code></p>
 <p>Response is TTL-cached for 2 seconds.</p>
 <h2 id="pipeline-status">Pipeline status<a class="headerlink" href="#pipeline-status" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>GET /api/v1/tenants/{tenant_name}/pipeline/status
-<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>→ {
-<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>    &quot;tenant_name&quot;: &quot;my-org&quot;,
-<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>    &quot;is_running&quot;: false,
-<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>    &quot;last_run&quot;: &quot;2026-03-17T12:00:00Z&quot;,
-<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>    &quot;last_result&quot;: {
-<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a>      &quot;dates_gathered&quot;: 5,
-<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a>      &quot;dates_calculated&quot;: 5,
-<a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a>      &quot;chargeback_rows_written&quot;: 142,
-<a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a>      &quot;errors&quot;: [],
-<a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a>      &quot;completed_at&quot;: &quot;2026-03-17T12:00:00Z&quot;
-<a id="__codelineno-5-12" name="__codelineno-5-12" href="#__codelineno-5-12"></a>    }
-<a id="__codelineno-5-13" name="__codelineno-5-13" href="#__codelineno-5-13"></a>  }
-</code></pre></div>
+<p><code>GET /api/v1/tenants/{tenant_name}/pipeline/status
+→ {
+    "tenant_name": "my-org",
+    "is_running": false,
+    "last_run": "2026-03-17T12:00:00Z",
+    "last_result": {
+      "dates_gathered": 5,
+      "dates_calculated": 5,
+      "chargeback_rows_written": 142,
+      "errors": [],
+      "completed_at": "2026-03-17T12:00:00Z"
+    }
+  }</code></p>
 <p><code>last_result</code> is <code>null</code> if no completed or failed runs exist yet.</p>
 <h2 id="failure-detection">Failure detection<a class="headerlink" href="#failure-detection" title="Permanent link">&para;</a></h2>
 <p>A tenant enters permanently-failed state after <code>gather_failure_threshold</code> (default 5)
@@ -1585,10 +1582,10 @@ that tenant. Manual operator intervention (fix config + restart) is required.</p
 </ul>
 <p><strong>Sentinel row detection:</strong></p>
 <p>Rows with <code>attribution_method = 'ATTRIBUTION_FAILED'</code> indicate a cluster where Prometheus retries were exhausted. Query the API or database:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="k">SELECT</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="n">topic_attribution_facts</span>
-<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="k">JOIN</span><span class="w"> </span><span class="n">topic_attribution_dimensions</span><span class="w"> </span><span class="k">USING</span><span class="w"> </span><span class="p">(</span><span class="n">dimension_id</span><span class="p">)</span>
-<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="k">WHERE</span><span class="w"> </span><span class="n">attribution_method</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;ATTRIBUTION_FAILED&#39;</span><span class="p">;</span>
-</code></pre></div>
+<p><code>sql
+SELECT * FROM topic_attribution_facts
+JOIN topic_attribution_dimensions USING (dimension_id)
+WHERE attribution_method = 'ATTRIBUTION_FAILED';</code></p>
 <p><strong>Per-date processing:</strong> Use the pipeline status API to check which dates have completed topic attribution. Dates where <code>topic_overlay_gathered = true</code> but <code>topic_attribution_calculated = false</code> are still pending calculation.</p>
 <h2 id="metrics-to-collect-from-logs">Metrics to collect from logs<a class="headerlink" href="#metrics-to-collect-from-logs" title="Permanent link">&para;</a></h2>
 <ul>

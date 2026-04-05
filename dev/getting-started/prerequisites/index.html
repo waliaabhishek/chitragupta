@@ -467,52 +467,8 @@
   
 </li>
         
-          <li class="md-nav__item">
-  <a href="#self-managed-kafka" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Self-managed Kafka
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#generic-metrics" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Generic metrics
-      
-    </span>
-  </a>
-  
-</li>
-        
       </ul>
     </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#storage" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Storage
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#local-development-optional" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Local development (optional)
-      
-    </span>
-  </a>
   
 </li>
       
@@ -1378,52 +1334,8 @@
   
 </li>
         
-          <li class="md-nav__item">
-  <a href="#self-managed-kafka" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Self-managed Kafka
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#generic-metrics" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Generic metrics
-      
-    </span>
-  </a>
-  
-</li>
-        
       </ul>
     </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#storage" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Storage
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#local-development-optional" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Local development (optional)
-      
-    </span>
-  </a>
   
 </li>
       
@@ -1463,21 +1375,21 @@
 <li><strong>OrganizationAdmin</strong> — required for Objects API, Metrics API, and viewing connector/ksqlDB principals for accurate chargeback</li>
 <li><strong>BillingAdmin</strong> — required to pull billing API data</li>
 </ul>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="c1"># Create the service account</span>
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>confluent<span class="w"> </span>login
-<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>confluent<span class="w"> </span>iam<span class="w"> </span>sa<span class="w"> </span>create<span class="w"> </span>chargeback_handler<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">  </span>--description<span class="w"> </span><span class="s2">&quot;Chargeback handler user&quot;</span>
-<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>
-<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="c1"># Assign required role bindings (replace &lt;sa_id&gt; with the output from above)</span>
-<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>confluent<span class="w"> </span>iam<span class="w"> </span>rbac<span class="w"> </span>role-binding<span class="w"> </span>create<span class="w"> </span>--principal<span class="w"> </span>User:&lt;sa_id&gt;<span class="w"> </span>--role<span class="w"> </span>MetricsViewer
-<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>confluent<span class="w"> </span>iam<span class="w"> </span>rbac<span class="w"> </span>role-binding<span class="w"> </span>create<span class="w"> </span>--principal<span class="w"> </span>User:&lt;sa_id&gt;<span class="w"> </span>--role<span class="w"> </span>OrganizationAdmin
-<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>confluent<span class="w"> </span>iam<span class="w"> </span>rbac<span class="w"> </span>role-binding<span class="w"> </span>create<span class="w"> </span>--principal<span class="w"> </span>User:&lt;sa_id&gt;<span class="w"> </span>--role<span class="w"> </span>BillingAdmin
-</code></pre></div>
+<p>```bash</p>
+<h1 id="create-the-service-account">Create the service account<a class="headerlink" href="#create-the-service-account" title="Permanent link">&para;</a></h1>
+<p>confluent login
+confluent iam sa create chargeback_handler \
+  --description "Chargeback handler user"</p>
+<h1 id="assign-required-role-bindings-replace-with-the-output-from-above">Assign required role bindings (replace <sa_id> with the output from above)<a class="headerlink" href="#assign-required-role-bindings-replace-with-the-output-from-above" title="Permanent link">&para;</a></h1>
+<p>confluent iam rbac role-binding create --principal User:<sa_id> --role MetricsViewer
+confluent iam rbac role-binding create --principal User:<sa_id> --role OrganizationAdmin
+confluent iam rbac role-binding create --principal User:<sa_id> --role BillingAdmin
+```</p>
 </li>
 <li>
 <p>A <strong>Cloud API key + secret</strong> created for that service account:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>confluent<span class="w"> </span>api-key<span class="w"> </span>create<span class="w"> </span>--resource<span class="w"> </span>cloud<span class="w"> </span>--service-account<span class="w"> </span>&lt;sa_id&gt;
-</code></pre></div>
+<p><code>bash
+confluent api-key create --resource cloud --service-account &lt;sa_id&gt;</code></p>
 </li>
 <li>
 <p>(Optional) Separate Metrics API key for usage-ratio allocation</p>

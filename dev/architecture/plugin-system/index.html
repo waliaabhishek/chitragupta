@@ -888,61 +888,6 @@
   
 </li>
       
-        <li class="md-nav__item">
-  <a href="#handler-dispatch" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Handler dispatch
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#resolvecontext" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        ResolveContext
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#emitter-registry" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Emitter registry
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#topic-attribution-protocols" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Topic attribution protocols
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#lifecycle" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Lifecycle
-      
-    </span>
-  </a>
-  
-</li>
-      
     </ul>
   
 </nav>
@@ -1382,61 +1327,6 @@
   
 </li>
       
-        <li class="md-nav__item">
-  <a href="#handler-dispatch" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Handler dispatch
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#resolvecontext" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        ResolveContext
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#emitter-registry" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Emitter registry
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#topic-attribution-protocols" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Topic attribution protocols
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#lifecycle" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Lifecycle
-      
-    </span>
-  </a>
-  
-</li>
-      
     </ul>
   
 </nav>
@@ -1520,16 +1410,17 @@ Two import strategies are used transparently:</p>
   directories not on <code>sys.path</code>. Each plugin package must contain <code>__init__.py</code>.</li>
 </ul>
 <h2 id="plugin-initialization">Plugin initialization<a class="headerlink" href="#plugin-initialization" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="c1"># src/core/plugin/protocols.py, line 95</span>
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="k">def</span><span class="w"> </span><span class="nf">initialize</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">config</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span> <span class="o">...</span>
-</code></pre></div>
+<p>```python</p>
+<h1 id="srccorepluginprotocolspy-line-95">src/core/plugin/protocols.py, line 95<a class="headerlink" href="#srccorepluginprotocolspy-line-95" title="Permanent link">&para;</a></h1>
+<p>def initialize(self, config: dict[str, Any]) -&gt; None: ...
+```</p>
 <p>Called once per tenant runtime with the raw <code>plugin_settings</code> dict. The plugin
 validates config (Pydantic), creates clients, and wires internal components.</p>
 <h2 id="handler-dispatch">Handler dispatch<a class="headerlink" href="#handler-dispatch" title="Permanent link">&para;</a></h2>
 <p>Each handler declares which product types it handles:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nd">@property</span>
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="k">def</span><span class="w"> </span><span class="nf">handles_product_types</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Sequence</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span> <span class="o">...</span>
-</code></pre></div>
+<p><code>python
+@property
+def handles_product_types(self) -&gt; Sequence[str]: ...</code></p>
 <p>The orchestrator routes each <code>BillingLineItem.product_type</code> to the matching handler.
 When no handler matches, <code>plugin.get_fallback_allocator()</code> is called. CCloud's fallback
 logs a warning and allocates the cost to UNALLOCATED.</p>
@@ -1540,26 +1431,26 @@ parameter for caching optimization. <code>ResolveContext</code> is a TypedDict c
 <h2 id="emitter-registry">Emitter registry<a class="headerlink" href="#emitter-registry" title="Permanent link">&para;</a></h2>
 <p>Emitters are registered at application startup via <code>core.emitters.registry.register(name, factory)</code>. The factory callable receives <code>**params</code> from the YAML config's <code>params</code> dict.</p>
 <p><strong>Storage injection:</strong> If a factory needs access to the storage backend (to query billing/resource/identity data at emit time), set the attribute <code>factory.needs_storage_backend = True</code>. The orchestrator detects this flag and injects <code>storage_backend</code> as a keyword argument alongside the configured params. Factories without this attribute receive only their configured params.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">make_my_emitter</span><span class="p">(</span><span class="n">port</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">storage_backend</span><span class="p">:</span> <span class="n">StorageBackend</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">MyEmitter</span><span class="p">:</span>
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>    <span class="k">return</span> <span class="n">MyEmitter</span><span class="p">(</span><span class="n">port</span><span class="o">=</span><span class="n">port</span><span class="p">,</span> <span class="n">storage_backend</span><span class="o">=</span><span class="n">storage_backend</span><span class="p">)</span>
-<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>
-<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="n">make_my_emitter</span><span class="o">.</span><span class="n">needs_storage_backend</span> <span class="o">=</span> <span class="kc">True</span>
-<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="n">register</span><span class="p">(</span><span class="s2">&quot;my_emitter&quot;</span><span class="p">,</span> <span class="n">make_my_emitter</span><span class="p">)</span>
-</code></pre></div>
+<p>```python
+def make_my_emitter(port: int, storage_backend: StorageBackend) -&gt; MyEmitter:
+    return MyEmitter(port=port, storage_backend=storage_backend)</p>
+<p>make_my_emitter.needs_storage_backend = True
+register("my_emitter", make_my_emitter)
+```</p>
 <p>The built-in emitters are <code>csv</code> (no storage needed) and <code>prometheus</code> (<code>needs_storage_backend = True</code>).</p>
 <h2 id="topic-attribution-protocols">Topic attribution protocols<a class="headerlink" href="#topic-attribution-protocols" title="Permanent link">&para;</a></h2>
 <p>Two additional runtime-checkable protocols support the topic attribution overlay:</p>
 <p><strong><code>TopicDiscoveryPlugin</code></strong> (<code>src/core/plugin/protocols.py:160-171</code>)</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="k">class</span><span class="w"> </span><span class="nc">TopicDiscoveryPlugin</span><span class="p">(</span><span class="n">Protocol</span><span class="p">):</span>
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">gather_topic_resources</span><span class="p">(</span>
-<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>        <span class="bp">self</span><span class="p">,</span> <span class="n">tenant_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">cluster_ids</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span>
-<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Iterable</span><span class="p">[</span><span class="n">Resource</span><span class="p">]:</span> <span class="o">...</span>
-</code></pre></div>
+<p><code>python
+class TopicDiscoveryPlugin(Protocol):
+    def gather_topic_resources(
+        self, tenant_id: str, cluster_ids: list[str],
+    ) -&gt; Iterable[Resource]: ...</code></p>
 <p>Implement alongside <code>EcosystemPlugin</code> to enable topic discovery via Prometheus metrics.</p>
 <p><strong><code>OverlayPlugin</code></strong> (<code>src/core/plugin/protocols.py:181-188</code>)</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="k">class</span><span class="w"> </span><span class="nc">OverlayPlugin</span><span class="p">(</span><span class="n">Protocol</span><span class="p">):</span>
-<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">get_overlay_config</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">OverlayConfig</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span> <span class="o">...</span>
-</code></pre></div>
+<p><code>python
+class OverlayPlugin(Protocol):
+    def get_overlay_config(self, name: str) -&gt; OverlayConfig | None: ...</code></p>
 <p>Provides overlay-specific configuration (e.g., <code>TopicAttributionConfig</code>) to core code without <code>getattr</code> probing.</p>
 <table>
 <thead>

@@ -1714,11 +1714,10 @@ rounding is handled. Every formula shown here maps directly to code in the engin
 <code>quantity</code>, <code>unit_price</code>, and <code>total_cost</code> pre-calculated. The engine's job
 is purely to <em>allocate</em> that cost across identities — it never modifies the
 total.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>Vendor Billing API
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>    → BillingLineItem(product_type=&quot;KAFKA_NUM_CKU&quot;, total_cost=$100.00)
-<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>    → Engine allocates $100.00 across identities
-<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>    → Sum of all ChargebackRows = $100.00 (guaranteed)
-</code></pre></div>
+<p><code>Vendor Billing API
+    → BillingLineItem(product_type="KAFKA_NUM_CKU", total_cost=$100.00)
+    → Engine allocates $100.00 across identities
+    → Sum of all ChargebackRows = $100.00 (guaranteed)</code></p>
 <h3 id="constructed-self-managed-kafka-generic-metrics">Constructed (Self-Managed Kafka, Generic Metrics)<a class="headerlink" href="#constructed-self-managed-kafka-generic-metrics" title="Permanent link">&para;</a></h3>
 <p>There is no billing API. The engine <em>constructs</em> billing lines by:</p>
 <ol>
@@ -1726,18 +1725,16 @@ total.</p>
 <li>Computing quantities from those metrics</li>
 <li>Multiplying by rates you define in YAML</li>
 </ol>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>Prometheus + YAML rates
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>    → Engine computes: quantity × rate = total_cost
-<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>    → BillingLineItem(product_type=&quot;SELF_KAFKA_COMPUTE&quot;, total_cost=$36.00)
-<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>    → Engine allocates $36.00 across identities
-</code></pre></div>
+<p><code>Prometheus + YAML rates
+    → Engine computes: quantity × rate = total_cost
+    → BillingLineItem(product_type="SELF_KAFKA_COMPUTE", total_cost=$36.00)
+    → Engine allocates $36.00 across identities</code></p>
 <hr />
 <h2 id="constructed-cost-math">Constructed cost math<a class="headerlink" href="#constructed-cost-math" title="Permanent link">&para;</a></h2>
 <h3 id="compute-costs-fixed-quantity">Compute costs (fixed quantity)<a class="headerlink" href="#compute-costs-fixed-quantity" title="Permanent link">&para;</a></h3>
 <p>Compute is a fixed cost based on the number of brokers (or instances). There is
 no Prometheus query — the quantity comes from your config.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>daily_cost = broker_count × 24 hours × compute_hourly_rate
-</code></pre></div>
+<p><code>daily_cost = broker_count × 24 hours × compute_hourly_rate</code></p>
 <table>
 <thead>
 <tr>
@@ -1756,17 +1753,15 @@ no Prometheus query — the quantity comes from your config.</p>
 </tr>
 </tbody>
 </table>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>daily_cost = 3 × 24 × $0.50 = $36.00
-</code></pre></div>
+<p><code>daily_cost = 3 × 24 × $0.50 = $36.00</code></p>
 <p>One <code>BillingLineItem</code> per day with <code>product_type = SELF_KAFKA_COMPUTE</code>.</p>
 <h3 id="storage-costs-gauge-metric-averaged">Storage costs (gauge metric, averaged)<a class="headerlink" href="#storage-costs-gauge-metric-averaged" title="Permanent link">&para;</a></h3>
 <p>Storage is measured as a point-in-time value (a Prometheus gauge). The engine
 queries <code>kafka_log_log_size</code> across the day, averages all samples, converts
 bytes to GiB, and charges per GiB-hour.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>avg_bytes = mean(all prometheus samples for the day)
-<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>avg_gib   = avg_bytes ÷ 1,073,741,824
-<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>daily_cost = avg_gib × 24 hours × storage_per_gib_hourly
-</code></pre></div>
+<p><code>avg_bytes = mean(all prometheus samples for the day)
+avg_gib   = avg_bytes ÷ 1,073,741,824
+daily_cost = avg_gib × 24 hours × storage_per_gib_hourly</code></p>
 <table>
 <thead>
 <tr>
@@ -1785,11 +1780,10 @@ bytes to GiB, and charges per GiB-hour.</p>
 </tr>
 </tbody>
 </table>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>avg_bytes  = (107,374,182,400 + 112,742,891,520 + 107,374,182,400) ÷ 3
-<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>           = 109,163,752,107 bytes
-<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>avg_gib    = 109,163,752,107 ÷ 1,073,741,824 = 101.67 GiB
-<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>daily_cost = 101.67 × 24 × $0.0001 = $0.2440
-</code></pre></div>
+<p><code>avg_bytes  = (107,374,182,400 + 112,742,891,520 + 107,374,182,400) ÷ 3
+           = 109,163,752,107 bytes
+avg_gib    = 109,163,752,107 ÷ 1,073,741,824 = 101.67 GiB
+daily_cost = 101.67 × 24 × $0.0001 = $0.2440</code></p>
 <div class="admonition note">
 <p class="admonition-title">Why average, not sum?</p>
 <p>Storage is not cumulative. A disk holding 100 GiB at hour 0 and 100 GiB at
@@ -1801,10 +1795,9 @@ Averaging across samples gives the representative GiB held over the day.</p>
 <code>kafka_server_brokertopicmetrics_bytesin_total</code> (and <code>bytesout</code>) using
 <code>increase()</code> over 1-hour windows, then sums all the hourly deltas to get the
 total bytes transferred in a day.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>total_bytes = sum(all hourly increase values for the day)
-<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>total_gib   = total_bytes ÷ 1,073,741,824
-<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>daily_cost  = total_gib × network_per_gib
-</code></pre></div>
+<p><code>total_bytes = sum(all hourly increase values for the day)
+total_gib   = total_bytes ÷ 1,073,741,824
+daily_cost  = total_gib × network_per_gib</code></p>
 <table>
 <thead>
 <tr>
@@ -1823,9 +1816,8 @@ total bytes transferred in a day.</p>
 </tr>
 </tbody>
 </table>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>total_gib  = 53,687,091,200 ÷ 1,073,741,824 = 50.0 GiB
-<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>daily_cost = 50.0 × $0.01 = $0.50
-</code></pre></div>
+<p><code>total_gib  = 53,687,091,200 ÷ 1,073,741,824 = 50.0 GiB
+daily_cost = 50.0 × $0.01 = $0.50</code></p>
 <div class="admonition note">
 <p class="admonition-title">Why sum, not average?</p>
 <p>Network bytes are a running total. <code>increase()</code> gives bytes transferred in
@@ -1868,28 +1860,26 @@ and the fallback chain.</p>
 <h3 id="even-split">Even split<a class="headerlink" href="#even-split" title="Permanent link">&para;</a></h3>
 <p>Divides the cost equally among a set of identities. Used for shared
 infrastructure costs where no per-identity usage metric exists.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>per_identity = total_cost ÷ identity_count
-</code></pre></div>
+<p><code>per_identity = total_cost ÷ identity_count</code></p>
 <p><strong>Rounding:</strong> All amounts are quantized to 4 decimal places ($0.0001). After
 dividing, the engine distributes any rounding remainder one unit at a time
 across the leading identities to guarantee the sum equals the total.</p>
 <p><strong>Example:</strong> $10.00 across 3 identities</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>base = $10.0000 ÷ 3 = $3.3333 (quantized to 4 decimals)
-<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>sum  = $3.3333 × 3 = $9.9999
-<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>diff = $10.0000 - $9.9999 = $0.0001
-<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a>
-<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a>Final:
-<a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a>  identity-a: $3.3334  (+$0.0001 remainder)
-<a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a>  identity-b: $3.3333
-<a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a>  identity-c: $3.3333
-<a id="__codelineno-9-9" name="__codelineno-9-9" href="#__codelineno-9-9"></a>  total:      $10.0000 ✓
-</code></pre></div>
+<p>```
+base = $10.0000 ÷ 3 = $3.3333 (quantized to 4 decimals)
+sum  = $3.3333 × 3 = $9.9999
+diff = $10.0000 - $9.9999 = $0.0001</p>
+<p>Final:
+  identity-a: $3.3334  (+$0.0001 remainder)
+  identity-b: $3.3333
+  identity-c: $3.3333
+  total:      $10.0000 ✓
+```</p>
 <h3 id="usage-ratio">Usage ratio<a class="headerlink" href="#usage-ratio" title="Permanent link">&para;</a></h3>
 <p>Divides the cost proportionally to a usage metric (e.g., bytes produced).
 Used for network costs and other usage-driven costs.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>ratio_i    = usage_i ÷ total_usage
-<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>amount_i   = total_cost × ratio_i
-</code></pre></div>
+<p><code>ratio_i    = usage_i ÷ total_usage
+amount_i   = total_cost × ratio_i</code></p>
 <p><strong>Rounding:</strong> Same approach — quantize each amount, then distribute remainder.</p>
 <p><strong>Example:</strong> $100.00 split by bytes</p>
 <table>
@@ -1994,14 +1984,13 @@ This isn't just a label — it indicates <em>why</em> the cost was allocated tha
 <h3 id="tiered-fallback-chainmodel">Tiered fallback (ChainModel)<a class="headerlink" href="#tiered-fallback-chainmodel" title="Permanent link">&para;</a></h3>
 <p>Most allocators use a tiered fallback chain. The engine tries each tier in order
 and uses the first one that succeeds (has data to work with).</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>Tier 0: Usage ratio (metrics available?)
-<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>    ↓ no metrics
-<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>Tier 1: Even split across active identities (identities known?)
-<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a>    ↓ no active identities
-<a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a>Tier 2: Even split across all tenant identities for the period
-<a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a>    ↓ no identities at all
-<a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a>Tier 3: Terminal — allocate to the resource ID itself
-</code></pre></div>
+<p><code>Tier 0: Usage ratio (metrics available?)
+    ↓ no metrics
+Tier 1: Even split across active identities (identities known?)
+    ↓ no active identities
+Tier 2: Even split across all tenant identities for the period
+    ↓ no identities at all
+Tier 3: Terminal — allocate to the resource ID itself</code></p>
 <p>Each chargeback row records which tier was used in the <code>allocation_detail</code> field.
 Common values:</p>
 <table>
@@ -2037,15 +2026,14 @@ Common values:</p>
 <h3 id="composite-allocation-cku-model">Composite allocation (CKU model)<a class="headerlink" href="#composite-allocation-cku-model" title="Permanent link">&para;</a></h3>
 <p>Some costs use a hybrid model that splits the cost into portions before allocating.
 The Kafka CKU model is the primary example:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>Total CKU cost: $100.00
-<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>    ├── 70% ($70.00) → Usage ratio chain (bytes in + bytes out)
-<a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a>    │   ├── Tier 0: proportional by bytes → USAGE rows
-<a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a>    │   ├── Tier 1: even split (active) → SHARED rows
-<a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a>    │   └── ...
-<a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a>    └── 30% ($30.00) → Shared chain (even split)
-<a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a>        ├── Tier 0: even split (active) → SHARED rows
-<a id="__codelineno-12-8" name="__codelineno-12-8" href="#__codelineno-12-8"></a>        └── ...
-</code></pre></div>
+<p><code>Total CKU cost: $100.00
+    ├── 70% ($70.00) → Usage ratio chain (bytes in + bytes out)
+    │   ├── Tier 0: proportional by bytes → USAGE rows
+    │   ├── Tier 1: even split (active) → SHARED rows
+    │   └── ...
+    └── 30% ($30.00) → Shared chain (even split)
+        ├── Tier 0: even split (active) → SHARED rows
+        └── ...</code></p>
 <p>The ratios are configurable via <code>allocator_params.kafka_cku_usage_ratio</code> and
 <code>kafka_cku_shared_ratio</code>. Each portion runs its own fallback chain independently.</p>
 <p><strong>Example output</strong> (3 identities, $100 CKU cost, 70/30 split):</p>
@@ -2114,9 +2102,8 @@ chargeback rows.</p>
 only active for part of the billing window (e.g., it was created mid-day or
 deleted mid-day), the engine computes an <code>active_fraction</code> and adjusts the
 cost proportionally.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>active_fraction = active_hours ÷ billing_window_hours
-<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>split_amount    = total_cost × active_fraction
-</code></pre></div>
+<p><code>active_fraction = active_hours ÷ billing_window_hours
+split_amount    = total_cost × active_fraction</code></p>
 <p>A resource created at noon on a daily billing window has <code>active_fraction = 0.5</code>,
 so only half the daily cost is allocated. The remaining half stays with the
 billing line (it was incurred but not attributable to this resource for the
