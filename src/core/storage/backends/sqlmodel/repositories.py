@@ -1958,9 +1958,9 @@ class TopicAttributionRepository:
         if end is not None:
             optional.append(col(TopicAttributionFactTable.timestamp) < end)
         if cluster_resource_id is not None:
-            optional.append(col(TopicAttributionDimensionTable.cluster_resource_id) == cluster_resource_id)
+            optional.append(col(TopicAttributionDimensionTable.cluster_resource_id).contains(cluster_resource_id))
         if topic_name is not None:
-            optional.append(col(TopicAttributionDimensionTable.topic_name) == topic_name)
+            optional.append(col(TopicAttributionDimensionTable.topic_name).contains(topic_name))
         if product_type is not None:
             optional.append(col(TopicAttributionDimensionTable.product_type) == product_type)
         if attribution_method is not None:
@@ -2089,9 +2089,9 @@ class TopicAttributionRepository:
         if end is not None:
             where.append(col(TopicAttributionFactTable.timestamp) < end)
         if cluster_resource_id is not None:
-            where.append(col(TopicAttributionDimensionTable.cluster_resource_id) == cluster_resource_id)
+            where.append(col(TopicAttributionDimensionTable.cluster_resource_id).contains(cluster_resource_id))
         if topic_name is not None:
-            where.append(col(TopicAttributionDimensionTable.topic_name) == topic_name)
+            where.append(col(TopicAttributionDimensionTable.topic_name).contains(topic_name))
         if product_type is not None:
             where.append(col(TopicAttributionDimensionTable.product_type) == product_type)
 
