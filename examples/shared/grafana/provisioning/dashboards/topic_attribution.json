@@ -1,0 +1,1727 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 100,
+      "panels": [],
+      "title": "Overview",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "chargeback-sqlite"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "currencyUSD"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 1
+      },
+      "id": 1,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "chargeback-sqlite"
+          },
+          "queryText": "SELECT SUM(CAST(f.amount AS REAL)) AS \"Total Attributed Cost\"\nFROM topic_attribution_facts f\nJOIN topic_attribution_dimensions d ON d.dimension_id = f.dimension_id\nWHERE d.ecosystem = '${ecosystem}'\n  AND d.tenant_id IN (${tenant_id:sqlstring})\n  AND ('${cluster}' = '$__all' OR d.cluster_resource_id IN (${cluster:sqlstring}))\n  AND ('${topic}' = '$__all' OR d.topic_name IN (${topic:sqlstring}))\n  AND ('${product_type}' = '$__all' OR d.product_type IN (${product_type:sqlstring}))\n  AND f.timestamp BETWEEN datetime($__from/1000, 'unixepoch')\n                      AND datetime($__to/1000, 'unixepoch')",
+          "queryType": "table",
+          "rawQueryText": "SELECT SUM(CAST(f.amount AS REAL)) AS \"Total Attributed Cost\"\nFROM topic_attribution_facts f\nJOIN topic_attribution_dimensions d ON d.dimension_id = f.dimension_id\nWHERE d.ecosystem = '${ecosystem}'\n  AND d.tenant_id IN (${tenant_id:sqlstring})\n  AND ('${cluster}' = '$__all' OR d.cluster_resource_id IN (${cluster:sqlstring}))\n  AND ('${topic}' = '$__all' OR d.topic_name IN (${topic:sqlstring}))\n  AND ('${product_type}' = '$__all' OR d.product_type IN (${product_type:sqlstring}))\n  AND f.timestamp BETWEEN datetime($__from/1000, 'unixepoch')\n                      AND datetime($__to/1000, 'unixepoch')",
+          "refId": "A",
+          "timeColumns": [
+            "time",
+            "ts"
+          ]
+        }
+      ],
+      "title": "Total Attributed Cost",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "chargeback-sqlite"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 1
+      },
+      "id": 2,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "chargeback-sqlite"
+          },
+          "queryText": "SELECT COUNT(DISTINCT d.topic_name) AS \"Topics\"\nFROM topic_attribution_facts f\nJOIN topic_attribution_dimensions d ON d.dimension_id = f.dimension_id\nWHERE d.ecosystem = '${ecosystem}'\n  AND d.tenant_id IN (${tenant_id:sqlstring})\n  AND d.topic_name != ''\n  AND ('${cluster}' = '$__all' OR d.cluster_resource_id IN (${cluster:sqlstring}))\n  AND ('${topic}' = '$__all' OR d.topic_name IN (${topic:sqlstring}))\n  AND ('${product_type}' = '$__all' OR d.product_type IN (${product_type:sqlstring}))\n  AND f.timestamp BETWEEN datetime($__from/1000, 'unixepoch')\n                      AND datetime($__to/1000, 'unixepoch')",
+          "queryType": "table",
+          "rawQueryText": "SELECT COUNT(DISTINCT d.topic_name) AS \"Topics\"\nFROM topic_attribution_facts f\nJOIN topic_attribution_dimensions d ON d.dimension_id = f.dimension_id\nWHERE d.ecosystem = '${ecosystem}'\n  AND d.tenant_id IN (${tenant_id:sqlstring})\n  AND d.topic_name != ''\n  AND ('${cluster}' = '$__all' OR d.cluster_resource_id IN (${cluster:sqlstring}))\n  AND ('${topic}' = '$__all' OR d.topic_name IN (${topic:sqlstring}))\n  AND ('${product_type}' = '$__all' OR d.product_type IN (${product_type:sqlstring}))\n  AND f.timestamp BETWEEN datetime($__from/1000, 'unixepoch')\n                      AND datetime($__to/1000, 'unixepoch')",
+          "refId": "A",
+          "timeColumns": [
+            "time",
+            "ts"
+          ]
+        }
+      ],
+      "title": "Unique Topics",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "chargeback-sqlite"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "purple",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 12,
+        "y": 1
+      },
+      "id": 3,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "chargeback-sqlite"
+          },
+          "queryText": "SELECT COUNT(DISTINCT d.cluster_resource_id) AS \"Clusters\"\nFROM topic_attribution_facts f\nJOIN topic_attribution_dimensions d ON d.dimension_id = f.dimension_id\nWHERE d.ecosystem = '${ecosystem}'\n  AND d.tenant_id IN (${tenant_id:sqlstring})\n  AND d.cluster_resource_id != ''\n  AND ('${cluster}' = '$__all' OR d.cluster_resource_id IN (${cluster:sqlstring}))\n  AND ('${topic}' = '$__all' OR d.topic_name IN (${topic:sqlstring}))\n  AND ('${product_type}' = '$__all' OR d.product_type IN (${product_type:sqlstring}))\n  AND f.timestamp BETWEEN datetime($__from/1000, 'unixepoch')\n                      AND datetime($__to/1000, 'unixepoch')",
+          "queryType": "table",
+          "rawQueryText": "SELECT COUNT(DISTINCT d.cluster_resource_id) AS \"Clusters\"\nFROM topic_attribution_facts f\nJOIN topic_attribution_dimensions d ON d.dimension_id = f.dimension_id\nWHERE d.ecosystem = '${ecosystem}'\n  AND d.tenant_id IN (${tenant_id:sqlstring})\n  AND d.cluster_resource_id != ''\n  AND ('${cluster}' = '$__all' OR d.cluster_resource_id IN (${cluster:sqlstring}))\n  AND ('${topic}' = '$__all' OR d.topic_name IN (${topic:sqlstring}))\n  AND ('${product_type}' = '$__all' OR d.product_type IN (${product_type:sqlstring}))\n  AND f.timestamp BETWEEN datetime($__from/1000, 'unixepoch')\n                      AND datetime($__to/1000, 'unixepoch')",
+          "refId": "A",
+          "timeColumns": [
+            "time",
+            "ts"
+          ]
+        }
+      ],
+      "title": "Unique Clusters",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "chargeback-sqlite"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "orange",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 1
+      },
+      "id": 4,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "chargeback-sqlite"
+          },
+          "queryText": "SELECT COUNT(DISTINCT d.env_id) AS \"Environments\"\nFROM topic_attribution_facts f\nJOIN topic_attribution_dimensions d ON d.dimension_id = f.dimension_id\nWHERE d.ecosystem = '${ecosystem}'\n  AND d.tenant_id IN (${tenant_id:sqlstring})\n  AND d.env_id != ''\n  AND ('${cluster}' = '$__all' OR d.cluster_resource_id IN (${cluster:sqlstring}))\n  AND ('${topic}' = '$__all' OR d.topic_name IN (${topic:sqlstring}))\n  AND ('${product_type}' = '$__all' OR d.product_type IN (${product_type:sqlstring}))\n  AND f.timestamp BETWEEN datetime($__from/1000, 'unixepoch')\n                      AND datetime($__to/1000, 'unixepoch')",
+          "queryType": "table",
+          "rawQueryText": "SELECT COUNT(DISTINCT d.env_id) AS \"Environments\"\nFROM topic_attribution_facts f\nJOIN topic_attribution_dimensions d ON d.dimension_id = f.dimension_id\nWHERE d.ecosystem = '${ecosystem}'\n  AND d.tenant_id IN (${tenant_id:sqlstring})\n  AND d.env_id != ''\n  AND ('${cluster}' = '$__all' OR d.cluster_resource_id IN (${cluster:sqlstring}))\n  AND ('${topic}' = '$__all' OR d.topic_name IN (${topic:sqlstring}))\n  AND ('${product_type}' = '$__all' OR d.product_type IN (${product_type:sqlstring}))\n  AND f.timestamp BETWEEN datetime($__from/1000, 'unixepoch')\n                      AND datetime($__to/1000, 'unixepoch')",
+          "refId": "A",
+          "timeColumns": [
+            "time",
+            "ts"
+          ]
+        }
+      ],
+      "title": "Unique Environments",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "chargeback-sqlite"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "continuous-GrYlRd"
+          },
+          "mappings": [],
+          "unit": "currencyUSD"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 12,
+        "w": 24,
+        "x": 0,
+        "y": 5
+      },
+      "id": 5,
+      "options": {
+        "tiling": "treemapSquarify"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "chargeback-sqlite"
+          },
+          "queryText": "SELECT\n  d.topic_name AS \"Topic\",\n  SUM(CAST(f.amount AS REAL)) AS \"Cost\"\nFROM topic_attribution_facts f\nJOIN topic_attribution_dimensions d ON d.dimension_id = f.dimension_id\nWHERE d.ecosystem = '${ecosystem}'\n  AND d.tenant_id IN (${tenant_id:sqlstring})\n  AND d.topic_name != ''\n  AND ('${cluster}' = '$__all' OR d.cluster_resource_id IN (${cluster:sqlstring}))\n  AND ('${topic}' = '$__all' OR d.topic_name IN (${topic:sqlstring}))\n  AND ('${product_type}' = '$__all' OR d.product_type IN (${product_type:sqlstring}))\n  AND f.timestamp BETWEEN datetime($__from/1000, 'unixepoch')\n                      AND datetime($__to/1000, 'unixepoch')\nGROUP BY d.topic_name\nORDER BY \"Cost\" DESC",
+          "queryType": "table",
+          "rawQueryText": "SELECT\n  d.topic_name AS \"Topic\",\n  SUM(CAST(f.amount AS REAL)) AS \"Cost\"\nFROM topic_attribution_facts f\nJOIN topic_attribution_dimensions d ON d.dimension_id = f.dimension_id\nWHERE d.ecosystem = '${ecosystem}'\n  AND d.tenant_id IN (${tenant_id:sqlstring})\n  AND d.topic_name != ''\n  AND ('${cluster}' = '$__all' OR d.cluster_resource_id IN (${cluster:sqlstring}))\n  AND ('${topic}' = '$__all' OR d.topic_name IN (${topic:sqlstring}))\n  AND ('${product_type}' = '$__all' OR d.product_type IN (${product_type:sqlstring}))\n  AND f.timestamp BETWEEN datetime($__from/1000, 'unixepoch')\n                      AND datetime($__to/1000, 'unixepoch')\nGROUP BY d.topic_name\nORDER BY \"Cost\" DESC",
+          "refId": "A",
+          "timeColumns": [
+            "time",
+            "ts"
+          ]
+        }
+      ],
+      "title": "Top Topics by Cost",
+      "type": "marcusolsson-treemap-panel"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 17
+      },
+      "id": 101,
+      "panels": [],
+      "title": "Cost Over Time",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "chargeback-sqlite"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineWidth": 1,
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            }
+          },
+          "mappings": [],
+          "unit": "currencyUSD"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 18
+      },
+      "id": 6,
+      "options": {
+        "barRadius": 0,
+        "barWidth": 0.9,
+        "fullHighlight": false,
+        "groupWidth": 0.7,
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "orientation": "auto",
+        "stacking": "normal",
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        },
+        "xTickLabelRotation": -45,
+        "xTickLabelSpacing": 100
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "chargeback-sqlite"
+          },
+          "queryText": "SELECT\n  date(f.timestamp) AS day,\n  d.product_type AS product_type,\n  SUM(CAST(f.amount AS REAL)) AS cost\nFROM topic_attribution_facts f\nJOIN topic_attribution_dimensions d ON d.dimension_id = f.dimension_id\nWHERE d.ecosystem = '${ecosystem}'\n  AND d.tenant_id IN (${tenant_id:sqlstring})\n  AND d.product_type != ''\n  AND ('${cluster}' = '$__all' OR d.cluster_resource_id IN (${cluster:sqlstring}))\n  AND ('${topic}' = '$__all' OR d.topic_name IN (${topic:sqlstring}))\n  AND f.timestamp BETWEEN datetime($__from/1000, 'unixepoch')\n                      AND datetime($__to/1000, 'unixepoch')\nGROUP BY day, d.product_type\nORDER BY day, cost DESC",
+          "queryType": "table",
+          "rawQueryText": "SELECT\n  date(f.timestamp) AS day,\n  d.product_type AS product_type,\n  SUM(CAST(f.amount AS REAL)) AS cost\nFROM topic_attribution_facts f\nJOIN topic_attribution_dimensions d ON d.dimension_id = f.dimension_id\nWHERE d.ecosystem = '${ecosystem}'\n  AND d.tenant_id IN (${tenant_id:sqlstring})\n  AND d.product_type != ''\n  AND ('${cluster}' = '$__all' OR d.cluster_resource_id IN (${cluster:sqlstring}))\n  AND ('${topic}' = '$__all' OR d.topic_name IN (${topic:sqlstring}))\n  AND f.timestamp BETWEEN datetime($__from/1000, 'unixepoch')\n                      AND datetime($__to/1000, 'unixepoch')\nGROUP BY day, d.product_type\nORDER BY day, cost DESC",
+          "refId": "A",
+          "timeColumns": [
+            "time",
+            "ts"
+          ]
+        }
+      ],
+      "title": "Cost Composition by Product Type",
+      "type": "barchart",
+      "transformations": [
+        {
+          "id": "groupingToMatrix",
+          "options": {
+            "columnField": "product_type",
+            "rowField": "day",
+            "valueField": "cost"
+          }
+        }
+      ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 28
+      },
+      "id": 102,
+      "panels": [],
+      "title": "Breakdown by Dimension",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "chargeback-sqlite"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineWidth": 1,
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            }
+          },
+          "mappings": [],
+          "unit": "currencyUSD"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 0,
+        "y": 29
+      },
+      "id": 8,
+      "options": {
+        "barRadius": 0,
+        "barWidth": 0.9,
+        "fullHighlight": false,
+        "groupWidth": 0.7,
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "orientation": "horizontal",
+        "stacking": "normal",
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        },
+        "xTickLabelRotation": 0,
+        "xTickLabelSpacing": 0
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "chargeback-sqlite"
+          },
+          "queryText": "WITH top_envs AS (\n  SELECT d.env_id, SUM(CAST(f.amount AS REAL)) AS env_total\n  FROM topic_attribution_facts f\n  JOIN topic_attribution_dimensions d ON d.dimension_id = f.dimension_id\n  WHERE d.ecosystem = '${ecosystem}'\n    AND d.tenant_id IN (${tenant_id:sqlstring})\n    AND ('${cluster}' = '$__all' OR d.cluster_resource_id IN (${cluster:sqlstring}))\n    AND ('${topic}' = '$__all' OR d.topic_name IN (${topic:sqlstring}))\n    AND ('${product_type}' = '$__all' OR d.product_type IN (${product_type:sqlstring}))\n    AND f.timestamp BETWEEN datetime($__from/1000, 'unixepoch')\n                        AND datetime($__to/1000, 'unixepoch')\n  GROUP BY d.env_id\n  ORDER BY env_total DESC\n  LIMIT 10\n),\ntop_topics AS (\n  SELECT d.topic_name\n  FROM topic_attribution_facts f\n  JOIN topic_attribution_dimensions d ON d.dimension_id = f.dimension_id\n  WHERE d.ecosystem = '${ecosystem}'\n    AND d.tenant_id IN (${tenant_id:sqlstring})\n    AND d.topic_name != ''\n    AND ('${cluster}' = '$__all' OR d.cluster_resource_id IN (${cluster:sqlstring}))\n    AND ('${topic}' = '$__all' OR d.topic_name IN (${topic:sqlstring}))\n    AND ('${product_type}' = '$__all' OR d.product_type IN (${product_type:sqlstring}))\n    AND f.timestamp BETWEEN datetime($__from/1000, 'unixepoch')\n                        AND datetime($__to/1000, 'unixepoch')\n  GROUP BY d.topic_name\n  ORDER BY SUM(CAST(f.amount AS REAL)) DESC\n  LIMIT 5\n)\nSELECT\n  CASE WHEN d.env_id = '' THEN 'Org-level' ELSE d.env_id END AS environment,\n  CASE WHEN d.topic_name IN (SELECT topic_name FROM top_topics) THEN d.topic_name ELSE 'Other' END AS topic,\n  SUM(CAST(f.amount AS REAL)) AS cost\nFROM topic_attribution_facts f\nJOIN topic_attribution_dimensions d ON d.dimension_id = f.dimension_id\nWHERE d.ecosystem = '${ecosystem}'\n  AND d.tenant_id IN (${tenant_id:sqlstring})\n  AND d.env_id IN (SELECT env_id FROM top_envs)\n  AND ('${cluster}' = '$__all' OR d.cluster_resource_id IN (${cluster:sqlstring}))\n  AND ('${topic}' = '$__all' OR d.topic_name IN (${topic:sqlstring}))\n  AND ('${product_type}' = '$__all' OR d.product_type IN (${product_type:sqlstring}))\n  AND f.timestamp BETWEEN datetime($__from/1000, 'unixepoch')\n                      AND datetime($__to/1000, 'unixepoch')\nGROUP BY environment, topic\nORDER BY (SELECT env_total FROM top_envs te WHERE te.env_id = d.env_id) ASC, cost DESC",
+          "queryType": "table",
+          "rawQueryText": "WITH top_envs AS (\n  SELECT d.env_id, SUM(CAST(f.amount AS REAL)) AS env_total\n  FROM topic_attribution_facts f\n  JOIN topic_attribution_dimensions d ON d.dimension_id = f.dimension_id\n  WHERE d.ecosystem = '${ecosystem}'\n    AND d.tenant_id IN (${tenant_id:sqlstring})\n    AND ('${cluster}' = '$__all' OR d.cluster_resource_id IN (${cluster:sqlstring}))\n    AND ('${topic}' = '$__all' OR d.topic_name IN (${topic:sqlstring}))\n    AND ('${product_type}' = '$__all' OR d.product_type IN (${product_type:sqlstring}))\n    AND f.timestamp BETWEEN datetime($__from/1000, 'unixepoch')\n                        AND datetime($__to/1000, 'unixepoch')\n  GROUP BY d.env_id\n  ORDER BY env_total DESC\n  LIMIT 10\n),\ntop_topics AS (\n  SELECT d.topic_name\n  FROM topic_attribution_facts f\n  JOIN topic_attribution_dimensions d ON d.dimension_id = f.dimension_id\n  WHERE d.ecosystem = '${ecosystem}'\n    AND d.tenant_id IN (${tenant_id:sqlstring})\n    AND d.topic_name != ''\n    AND ('${cluster}' = '$__all' OR d.cluster_resource_id IN (${cluster:sqlstring}))\n    AND ('${topic}' = '$__all' OR d.topic_name IN (${topic:sqlstring}))\n    AND ('${product_type}' = '$__all' OR d.product_type IN (${product_type:sqlstring}))\n    AND f.timestamp BETWEEN datetime($__from/1000, 'unixepoch')\n                        AND datetime($__to/1000, 'unixepoch')\n  GROUP BY d.topic_name\n  ORDER BY SUM(CAST(f.amount AS REAL)) DESC\n  LIMIT 5\n)\nSELECT\n  CASE WHEN d.env_id = '' THEN 'Org-level' ELSE d.env_id END AS environment,\n  CASE WHEN d.topic_name IN (SELECT topic_name FROM top_topics) THEN d.topic_name ELSE 'Other' END AS topic,\n  SUM(CAST(f.amount AS REAL)) AS cost\nFROM topic_attribution_facts f\nJOIN topic_attribution_dimensions d ON d.dimension_id = f.dimension_id\nWHERE d.ecosystem = '${ecosystem}'\n  AND d.tenant_id IN (${tenant_id:sqlstring})\n  AND d.env_id IN (SELECT env_id FROM top_envs)\n  AND ('${cluster}' = '$__all' OR d.cluster_resource_id IN (${cluster:sqlstring}))\n  AND ('${topic}' = '$__all' OR d.topic_name IN (${topic:sqlstring}))\n  AND ('${product_type}' = '$__all' OR d.product_type IN (${product_type:sqlstring}))\n  AND f.timestamp BETWEEN datetime($__from/1000, 'unixepoch')\n                      AND datetime($__to/1000, 'unixepoch')\nGROUP BY environment, topic\nORDER BY (SELECT env_total FROM top_envs te WHERE te.env_id = d.env_id) ASC, cost DESC",
+          "refId": "A",
+          "timeColumns": [
+            "time",
+            "ts"
+          ]
+        }
+      ],
+      "title": "Cost by Environment",
+      "type": "barchart",
+      "transformations": [
+        {
+          "id": "groupingToMatrix",
+          "options": {
+            "columnField": "topic",
+            "rowField": "environment",
+            "valueField": "cost"
+          }
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "chargeback-sqlite"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineWidth": 1,
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            }
+          },
+          "mappings": [],
+          "unit": "currencyUSD"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 12,
+        "y": 29
+      },
+      "id": 9,
+      "options": {
+        "barRadius": 0,
+        "barWidth": 0.9,
+        "fullHighlight": false,
+        "groupWidth": 0.7,
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "orientation": "horizontal",
+        "stacking": "normal",
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        },
+        "xTickLabelRotation": 0,
+        "xTickLabelSpacing": 0
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "chargeback-sqlite"
+          },
+          "queryText": "WITH top_clusters AS (\n  SELECT d.cluster_resource_id, SUM(CAST(f.amount AS REAL)) AS cluster_total\n  FROM topic_attribution_facts f\n  JOIN topic_attribution_dimensions d ON d.dimension_id = f.dimension_id\n  WHERE d.ecosystem = '${ecosystem}'\n    AND d.tenant_id IN (${tenant_id:sqlstring})\n    AND d.cluster_resource_id != ''\n    AND ('${cluster}' = '$__all' OR d.cluster_resource_id IN (${cluster:sqlstring}))\n    AND ('${topic}' = '$__all' OR d.topic_name IN (${topic:sqlstring}))\n    AND ('${product_type}' = '$__all' OR d.product_type IN (${product_type:sqlstring}))\n    AND f.timestamp BETWEEN datetime($__from/1000, 'unixepoch')\n                        AND datetime($__to/1000, 'unixepoch')\n  GROUP BY d.cluster_resource_id\n  ORDER BY cluster_total DESC\n  LIMIT 10\n),\ntop_topics AS (\n  SELECT d.topic_name\n  FROM topic_attribution_facts f\n  JOIN topic_attribution_dimensions d ON d.dimension_id = f.dimension_id\n  WHERE d.ecosystem = '${ecosystem}'\n    AND d.tenant_id IN (${tenant_id:sqlstring})\n    AND d.topic_name != ''\n    AND ('${cluster}' = '$__all' OR d.cluster_resource_id IN (${cluster:sqlstring}))\n    AND ('${topic}' = '$__all' OR d.topic_name IN (${topic:sqlstring}))\n    AND ('${product_type}' = '$__all' OR d.product_type IN (${product_type:sqlstring}))\n    AND f.timestamp BETWEEN datetime($__from/1000, 'unixepoch')\n                        AND datetime($__to/1000, 'unixepoch')\n  GROUP BY d.topic_name\n  ORDER BY SUM(CAST(f.amount AS REAL)) DESC\n  LIMIT 5\n)\nSELECT\n  d.cluster_resource_id AS cluster,\n  CASE WHEN d.topic_name IN (SELECT topic_name FROM top_topics) THEN d.topic_name ELSE 'Other' END AS topic,\n  SUM(CAST(f.amount AS REAL)) AS cost\nFROM topic_attribution_facts f\nJOIN topic_attribution_dimensions d ON d.dimension_id = f.dimension_id\nWHERE d.ecosystem = '${ecosystem}'\n  AND d.tenant_id IN (${tenant_id:sqlstring})\n  AND d.cluster_resource_id IN (SELECT cluster_resource_id FROM top_clusters)\n  AND ('${cluster}' = '$__all' OR d.cluster_resource_id IN (${cluster:sqlstring}))\n  AND ('${topic}' = '$__all' OR d.topic_name IN (${topic:sqlstring}))\n  AND ('${product_type}' = '$__all' OR d.product_type IN (${product_type:sqlstring}))\n  AND f.timestamp BETWEEN datetime($__from/1000, 'unixepoch')\n                      AND datetime($__to/1000, 'unixepoch')\nGROUP BY cluster, topic\nORDER BY (SELECT cluster_total FROM top_clusters tc WHERE tc.cluster_resource_id = d.cluster_resource_id) ASC, cost DESC",
+          "queryType": "table",
+          "rawQueryText": "WITH top_clusters AS (\n  SELECT d.cluster_resource_id, SUM(CAST(f.amount AS REAL)) AS cluster_total\n  FROM topic_attribution_facts f\n  JOIN topic_attribution_dimensions d ON d.dimension_id = f.dimension_id\n  WHERE d.ecosystem = '${ecosystem}'\n    AND d.tenant_id IN (${tenant_id:sqlstring})\n    AND d.cluster_resource_id != ''\n    AND ('${cluster}' = '$__all' OR d.cluster_resource_id IN (${cluster:sqlstring}))\n    AND ('${topic}' = '$__all' OR d.topic_name IN (${topic:sqlstring}))\n    AND ('${product_type}' = '$__all' OR d.product_type IN (${product_type:sqlstring}))\n    AND f.timestamp BETWEEN datetime($__from/1000, 'unixepoch')\n                        AND datetime($__to/1000, 'unixepoch')\n  GROUP BY d.cluster_resource_id\n  ORDER BY cluster_total DESC\n  LIMIT 10\n),\ntop_topics AS (\n  SELECT d.topic_name\n  FROM topic_attribution_facts f\n  JOIN topic_attribution_dimensions d ON d.dimension_id = f.dimension_id\n  WHERE d.ecosystem = '${ecosystem}'\n    AND d.tenant_id IN (${tenant_id:sqlstring})\n    AND d.topic_name != ''\n    AND ('${cluster}' = '$__all' OR d.cluster_resource_id IN (${cluster:sqlstring}))\n    AND ('${topic}' = '$__all' OR d.topic_name IN (${topic:sqlstring}))\n    AND ('${product_type}' = '$__all' OR d.product_type IN (${product_type:sqlstring}))\n    AND f.timestamp BETWEEN datetime($__from/1000, 'unixepoch')\n                        AND datetime($__to/1000, 'unixepoch')\n  GROUP BY d.topic_name\n  ORDER BY SUM(CAST(f.amount AS REAL)) DESC\n  LIMIT 5\n)\nSELECT\n  d.cluster_resource_id AS cluster,\n  CASE WHEN d.topic_name IN (SELECT topic_name FROM top_topics) THEN d.topic_name ELSE 'Other' END AS topic,\n  SUM(CAST(f.amount AS REAL)) AS cost\nFROM topic_attribution_facts f\nJOIN topic_attribution_dimensions d ON d.dimension_id = f.dimension_id\nWHERE d.ecosystem = '${ecosystem}'\n  AND d.tenant_id IN (${tenant_id:sqlstring})\n  AND d.cluster_resource_id IN (SELECT cluster_resource_id FROM top_clusters)\n  AND ('${cluster}' = '$__all' OR d.cluster_resource_id IN (${cluster:sqlstring}))\n  AND ('${topic}' = '$__all' OR d.topic_name IN (${topic:sqlstring}))\n  AND ('${product_type}' = '$__all' OR d.product_type IN (${product_type:sqlstring}))\n  AND f.timestamp BETWEEN datetime($__from/1000, 'unixepoch')\n                      AND datetime($__to/1000, 'unixepoch')\nGROUP BY cluster, topic\nORDER BY (SELECT cluster_total FROM top_clusters tc WHERE tc.cluster_resource_id = d.cluster_resource_id) ASC, cost DESC",
+          "refId": "A",
+          "timeColumns": [
+            "time",
+            "ts"
+          ]
+        }
+      ],
+      "title": "Top Clusters by Cost",
+      "type": "barchart",
+      "transformations": [
+        {
+          "id": "groupingToMatrix",
+          "options": {
+            "columnField": "topic",
+            "rowField": "cluster",
+            "valueField": "cost"
+          }
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "chargeback-sqlite"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "max": 100,
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 50
+              },
+              {
+                "color": "red",
+                "value": 75
+              }
+            ]
+          },
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 39
+      },
+      "id": 10,
+      "options": {
+        "displayMode": "gradient",
+        "maxVizHeight": 300,
+        "minVizHeight": 16,
+        "minVizWidth": 8,
+        "namePlacement": "auto",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": true
+        },
+        "showUnfilled": true,
+        "sizing": "auto",
+        "valueMode": "color"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "chargeback-sqlite"
+          },
+          "queryText": "SELECT\n  cluster_resource_id AS metric,\n  ROUND(CAST(max_topic_cost AS REAL) / CAST(total_cost AS REAL) * 100, 1) AS value\nFROM (\n  SELECT\n    cluster_resource_id,\n    COUNT(DISTINCT topic_name) AS num_topics,\n    SUM(topic_cost) AS total_cost,\n    MAX(topic_cost) AS max_topic_cost\n  FROM (\n    SELECT\n      d.cluster_resource_id,\n      d.topic_name,\n      SUM(CAST(f.amount AS REAL)) AS topic_cost\n    FROM topic_attribution_facts f\n    JOIN topic_attribution_dimensions d ON d.dimension_id = f.dimension_id\n    WHERE d.ecosystem = '${ecosystem}'\n      AND d.tenant_id IN (${tenant_id:sqlstring})\n      AND d.cluster_resource_id != ''\n      AND d.topic_name != ''\n      AND ('${cluster}' = '$__all' OR d.cluster_resource_id IN (${cluster:sqlstring}))\n      AND ('${topic}' = '$__all' OR d.topic_name IN (${topic:sqlstring}))\n      AND ('${product_type}' = '$__all' OR d.product_type IN (${product_type:sqlstring}))\n      AND f.timestamp BETWEEN datetime($__from/1000, 'unixepoch')\n                          AND datetime($__to/1000, 'unixepoch')\n    GROUP BY d.cluster_resource_id, d.topic_name\n  )\n  GROUP BY cluster_resource_id\n  HAVING total_cost > 0 AND num_topics > 1\n)\nORDER BY value DESC\nLIMIT 10",
+          "queryType": "table",
+          "rawQueryText": "SELECT\n  cluster_resource_id AS metric,\n  ROUND(CAST(max_topic_cost AS REAL) / CAST(total_cost AS REAL) * 100, 1) AS value\nFROM (\n  SELECT\n    cluster_resource_id,\n    COUNT(DISTINCT topic_name) AS num_topics,\n    SUM(topic_cost) AS total_cost,\n    MAX(topic_cost) AS max_topic_cost\n  FROM (\n    SELECT\n      d.cluster_resource_id,\n      d.topic_name,\n      SUM(CAST(f.amount AS REAL)) AS topic_cost\n    FROM topic_attribution_facts f\n    JOIN topic_attribution_dimensions d ON d.dimension_id = f.dimension_id\n    WHERE d.ecosystem = '${ecosystem}'\n      AND d.tenant_id IN (${tenant_id:sqlstring})\n      AND d.cluster_resource_id != ''\n      AND d.topic_name != ''\n      AND ('${cluster}' = '$__all' OR d.cluster_resource_id IN (${cluster:sqlstring}))\n      AND ('${topic}' = '$__all' OR d.topic_name IN (${topic:sqlstring}))\n      AND ('${product_type}' = '$__all' OR d.product_type IN (${product_type:sqlstring}))\n      AND f.timestamp BETWEEN datetime($__from/1000, 'unixepoch')\n                          AND datetime($__to/1000, 'unixepoch')\n    GROUP BY d.cluster_resource_id, d.topic_name\n  )\n  GROUP BY cluster_resource_id\n  HAVING total_cost > 0 AND num_topics > 1\n)\nORDER BY value DESC\nLIMIT 10",
+          "refId": "A",
+          "timeColumns": [
+            "time",
+            "ts"
+          ]
+        }
+      ],
+      "title": "Cluster Concentration Risk",
+      "description": "Percentage of cluster cost concentrated in a single topic (clusters with 2+ topics only). Green <50%, Yellow 50-75%, Red >=75%.",
+      "type": "bargauge"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 49
+      },
+      "id": 103,
+      "panels": [],
+      "title": "Product Type Analysis",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "chargeback-sqlite"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineWidth": 1,
+            "stacking": {
+              "group": "A",
+              "mode": "percent"
+            }
+          },
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 50
+      },
+      "id": 12,
+      "options": {
+        "barRadius": 0,
+        "barWidth": 0.97,
+        "fullHighlight": false,
+        "groupWidth": 0.7,
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "orientation": "auto",
+        "stacking": "percent",
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        },
+        "xTickLabelRotation": -45,
+        "xTickLabelSpacing": 0
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "chargeback-sqlite"
+          },
+          "queryText": "SELECT\n  date(f.timestamp) AS day,\n  d.product_type,\n  SUM(CAST(f.amount AS REAL)) AS cost\nFROM topic_attribution_facts f\nJOIN topic_attribution_dimensions d ON d.dimension_id = f.dimension_id\nWHERE d.ecosystem = '${ecosystem}'\n  AND d.tenant_id IN (${tenant_id:sqlstring})\n  AND d.product_type != ''\n  AND ('${cluster}' = '$__all' OR d.cluster_resource_id IN (${cluster:sqlstring}))\n  AND ('${topic}' = '$__all' OR d.topic_name IN (${topic:sqlstring}))\n  AND f.timestamp BETWEEN datetime($__from/1000, 'unixepoch')\n                      AND datetime($__to/1000, 'unixepoch')\nGROUP BY day, d.product_type\nORDER BY day",
+          "queryType": "table",
+          "rawQueryText": "SELECT\n  date(f.timestamp) AS day,\n  d.product_type,\n  SUM(CAST(f.amount AS REAL)) AS cost\nFROM topic_attribution_facts f\nJOIN topic_attribution_dimensions d ON d.dimension_id = f.dimension_id\nWHERE d.ecosystem = '${ecosystem}'\n  AND d.tenant_id IN (${tenant_id:sqlstring})\n  AND d.product_type != ''\n  AND ('${cluster}' = '$__all' OR d.cluster_resource_id IN (${cluster:sqlstring}))\n  AND ('${topic}' = '$__all' OR d.topic_name IN (${topic:sqlstring}))\n  AND f.timestamp BETWEEN datetime($__from/1000, 'unixepoch')\n                      AND datetime($__to/1000, 'unixepoch')\nGROUP BY day, d.product_type\nORDER BY day",
+          "refId": "A",
+          "timeColumns": [
+            "time",
+            "ts"
+          ]
+        }
+      ],
+      "title": "Product Type Mix Over Time",
+      "description": "Normalized 100% stacked area showing the relative proportion of each product type over time.",
+      "type": "barchart",
+      "transformations": [
+        {
+          "id": "groupingToMatrix",
+          "options": {
+            "columnField": "product_type",
+            "rowField": "day",
+            "valueField": "cost"
+          }
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "chargeback-sqlite"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            }
+          },
+          "mappings": [],
+          "unit": "currencyUSD"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 60
+      },
+      "id": 13,
+      "options": {
+        "displayLabels": [
+          "name"
+        ],
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "values": [
+            "value",
+            "percent"
+          ]
+        },
+        "pieType": "pie",
+        "reduceOptions": {
+          "calcs": [
+            "sum"
+          ],
+          "fields": "/^value$/",
+          "limit": 10,
+          "values": true
+        },
+        "sort": "desc",
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "chargeback-sqlite"
+          },
+          "queryText": "SELECT\n  d.product_type AS type,\n  SUM(CAST(f.amount AS REAL)) AS value\nFROM topic_attribution_facts f\nJOIN topic_attribution_dimensions d ON d.dimension_id = f.dimension_id\nWHERE d.ecosystem = '${ecosystem}'\n  AND d.tenant_id IN (${tenant_id:sqlstring})\n  AND d.product_type != ''\n  AND ('${cluster}' = '$__all' OR d.cluster_resource_id IN (${cluster:sqlstring}))\n  AND ('${topic}' = '$__all' OR d.topic_name IN (${topic:sqlstring}))\n  AND f.timestamp BETWEEN datetime($__from/1000, 'unixepoch')\n                      AND datetime($__to/1000, 'unixepoch')\nGROUP BY d.product_type\nORDER BY value DESC",
+          "queryType": "table",
+          "rawQueryText": "SELECT\n  d.product_type AS type,\n  SUM(CAST(f.amount AS REAL)) AS value\nFROM topic_attribution_facts f\nJOIN topic_attribution_dimensions d ON d.dimension_id = f.dimension_id\nWHERE d.ecosystem = '${ecosystem}'\n  AND d.tenant_id IN (${tenant_id:sqlstring})\n  AND d.product_type != ''\n  AND ('${cluster}' = '$__all' OR d.cluster_resource_id IN (${cluster:sqlstring}))\n  AND ('${topic}' = '$__all' OR d.topic_name IN (${topic:sqlstring}))\n  AND f.timestamp BETWEEN datetime($__from/1000, 'unixepoch')\n                      AND datetime($__to/1000, 'unixepoch')\nGROUP BY d.product_type\nORDER BY value DESC",
+          "refId": "A",
+          "timeColumns": [
+            "time",
+            "ts"
+          ]
+        }
+      ],
+      "title": "Cost by Product Type",
+      "type": "piechart"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 70
+      },
+      "id": 105,
+      "panels": [],
+      "title": "Topic Trends",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "chargeback-sqlite"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineWidth": 1,
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            }
+          },
+          "mappings": [],
+          "unit": "currencyUSD"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 71
+      },
+      "id": 106,
+      "options": {
+        "barRadius": 0,
+        "barWidth": 0.97,
+        "fullHighlight": false,
+        "groupWidth": 0.7,
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "orientation": "auto",
+        "stacking": "normal",
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        },
+        "xTickLabelRotation": -45,
+        "xTickLabelSpacing": 0
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "chargeback-sqlite"
+          },
+          "queryText": "WITH top_topics AS (\n  SELECT d.topic_name\n  FROM topic_attribution_facts f\n  JOIN topic_attribution_dimensions d ON d.dimension_id = f.dimension_id\n  WHERE d.ecosystem = '${ecosystem}'\n    AND d.tenant_id IN (${tenant_id:sqlstring})\n    AND d.topic_name != ''\n    AND ('${cluster}' = '$__all' OR d.cluster_resource_id IN (${cluster:sqlstring}))\n    AND ('${topic}' = '$__all' OR d.topic_name IN (${topic:sqlstring}))\n    AND ('${product_type}' = '$__all' OR d.product_type IN (${product_type:sqlstring}))\n    AND f.timestamp BETWEEN datetime($__from/1000, 'unixepoch')\n                        AND datetime($__to/1000, 'unixepoch')\n  GROUP BY d.topic_name\n  ORDER BY SUM(CAST(f.amount AS REAL)) DESC\n  LIMIT 10\n)\nSELECT\n  date(f.timestamp) AS day,\n  CASE WHEN d.topic_name IN (SELECT topic_name FROM top_topics) THEN d.topic_name ELSE 'Other' END AS topic,\n  SUM(CAST(f.amount AS REAL)) AS cost\nFROM topic_attribution_facts f\nJOIN topic_attribution_dimensions d ON d.dimension_id = f.dimension_id\nWHERE d.ecosystem = '${ecosystem}'\n  AND d.tenant_id IN (${tenant_id:sqlstring})\n  AND d.topic_name != ''\n  AND ('${cluster}' = '$__all' OR d.cluster_resource_id IN (${cluster:sqlstring}))\n  AND ('${topic}' = '$__all' OR d.topic_name IN (${topic:sqlstring}))\n  AND ('${product_type}' = '$__all' OR d.product_type IN (${product_type:sqlstring}))\n  AND f.timestamp BETWEEN datetime($__from/1000, 'unixepoch')\n                      AND datetime($__to/1000, 'unixepoch')\nGROUP BY day, topic\nORDER BY day",
+          "rawQueryText": "WITH top_topics AS (\n  SELECT d.topic_name\n  FROM topic_attribution_facts f\n  JOIN topic_attribution_dimensions d ON d.dimension_id = f.dimension_id\n  WHERE d.ecosystem = '${ecosystem}'\n    AND d.tenant_id IN (${tenant_id:sqlstring})\n    AND d.topic_name != ''\n    AND ('${cluster}' = '$__all' OR d.cluster_resource_id IN (${cluster:sqlstring}))\n    AND ('${topic}' = '$__all' OR d.topic_name IN (${topic:sqlstring}))\n    AND ('${product_type}' = '$__all' OR d.product_type IN (${product_type:sqlstring}))\n    AND f.timestamp BETWEEN datetime($__from/1000, 'unixepoch')\n                        AND datetime($__to/1000, 'unixepoch')\n  GROUP BY d.topic_name\n  ORDER BY SUM(CAST(f.amount AS REAL)) DESC\n  LIMIT 10\n)\nSELECT\n  date(f.timestamp) AS day,\n  CASE WHEN d.topic_name IN (SELECT topic_name FROM top_topics) THEN d.topic_name ELSE 'Other' END AS topic,\n  SUM(CAST(f.amount AS REAL)) AS cost\nFROM topic_attribution_facts f\nJOIN topic_attribution_dimensions d ON d.dimension_id = f.dimension_id\nWHERE d.ecosystem = '${ecosystem}'\n  AND d.tenant_id IN (${tenant_id:sqlstring})\n  AND d.topic_name != ''\n  AND ('${cluster}' = '$__all' OR d.cluster_resource_id IN (${cluster:sqlstring}))\n  AND ('${topic}' = '$__all' OR d.topic_name IN (${topic:sqlstring}))\n  AND ('${product_type}' = '$__all' OR d.product_type IN (${product_type:sqlstring}))\n  AND f.timestamp BETWEEN datetime($__from/1000, 'unixepoch')\n                      AND datetime($__to/1000, 'unixepoch')\nGROUP BY day, topic\nORDER BY day",
+          "queryType": "table",
+          "refId": "A",
+          "timeColumns": [
+            "time",
+            "ts"
+          ]
+        }
+      ],
+      "transformations": [
+        {
+          "id": "groupingToMatrix",
+          "options": {
+            "columnField": "topic",
+            "rowField": "day",
+            "valueField": "cost"
+          }
+        }
+      ],
+      "title": "Top Topics Over Time",
+      "type": "barchart"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "chargeback-sqlite"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 15,
+            "gradientMode": "opacity",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            }
+          },
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 81
+      },
+      "id": 107,
+      "options": {
+        "legend": {
+          "calcs": [
+            "min",
+            "max",
+            "mean"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "chargeback-sqlite"
+          },
+          "queryText": "SELECT\n  CAST(strftime('%s', date(f.timestamp)) AS INTEGER) AS time,\n  COUNT(DISTINCT d.topic_name) AS \"Active Topics\"\nFROM topic_attribution_facts f\nJOIN topic_attribution_dimensions d ON d.dimension_id = f.dimension_id\nWHERE d.ecosystem = '${ecosystem}'\n  AND d.tenant_id IN (${tenant_id:sqlstring})\n  AND d.topic_name != ''\n  AND ('${cluster}' = '$__all' OR d.cluster_resource_id IN (${cluster:sqlstring}))\n  AND ('${topic}' = '$__all' OR d.topic_name IN (${topic:sqlstring}))\n  AND ('${product_type}' = '$__all' OR d.product_type IN (${product_type:sqlstring}))\n  AND f.timestamp BETWEEN datetime($__from/1000, 'unixepoch')\n                      AND datetime($__to/1000, 'unixepoch')\nGROUP BY date(f.timestamp)\nORDER BY time",
+          "rawQueryText": "SELECT\n  CAST(strftime('%s', date(f.timestamp)) AS INTEGER) AS time,\n  COUNT(DISTINCT d.topic_name) AS \"Active Topics\"\nFROM topic_attribution_facts f\nJOIN topic_attribution_dimensions d ON d.dimension_id = f.dimension_id\nWHERE d.ecosystem = '${ecosystem}'\n  AND d.tenant_id IN (${tenant_id:sqlstring})\n  AND d.topic_name != ''\n  AND ('${cluster}' = '$__all' OR d.cluster_resource_id IN (${cluster:sqlstring}))\n  AND ('${topic}' = '$__all' OR d.topic_name IN (${topic:sqlstring}))\n  AND ('${product_type}' = '$__all' OR d.product_type IN (${product_type:sqlstring}))\n  AND f.timestamp BETWEEN datetime($__from/1000, 'unixepoch')\n                      AND datetime($__to/1000, 'unixepoch')\nGROUP BY date(f.timestamp)\nORDER BY time",
+          "queryType": "timeseries",
+          "refId": "A",
+          "timeColumns": [
+            "time",
+            "ts"
+          ]
+        }
+      ],
+      "title": "Active Topic Count Over Time",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 89
+      },
+      "id": 108,
+      "panels": [],
+      "title": "Attribution Coverage",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "chargeback-sqlite"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 50
+              },
+              {
+                "color": "green",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 0,
+        "y": 90
+      },
+      "id": 109,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "chargeback-sqlite"
+          },
+          "queryText": "SELECT\n  ROUND(\n    CAST(attributed AS REAL) / CASE WHEN total_kafka = 0 THEN 1 ELSE total_kafka END * 100, 1\n  ) AS \"Attribution Coverage %\"\nFROM (\n  SELECT\n    (SELECT SUM(CAST(f.amount AS REAL))\n     FROM topic_attribution_facts f\n     JOIN topic_attribution_dimensions d ON d.dimension_id = f.dimension_id\n     WHERE d.ecosystem = '${ecosystem}'\n       AND d.tenant_id IN (${tenant_id:sqlstring})\n       AND f.timestamp BETWEEN datetime($__from/1000, 'unixepoch')\n                           AND datetime($__to/1000, 'unixepoch')\n    ) AS attributed,\n    (SELECT SUM(CAST(f.amount AS REAL))\n     FROM chargeback_facts f\n     JOIN chargeback_dimensions d ON d.dimension_id = f.dimension_id\n     WHERE d.ecosystem = '${ecosystem}'\n       AND d.tenant_id IN (${tenant_id:sqlstring})\n       AND d.product_category = 'KAFKA'\n       AND f.timestamp BETWEEN datetime($__from/1000, 'unixepoch')\n                           AND datetime($__to/1000, 'unixepoch')\n    ) AS total_kafka\n)",
+          "rawQueryText": "SELECT\n  ROUND(\n    CAST(attributed AS REAL) / CASE WHEN total_kafka = 0 THEN 1 ELSE total_kafka END * 100, 1\n  ) AS \"Attribution Coverage %\"\nFROM (\n  SELECT\n    (SELECT SUM(CAST(f.amount AS REAL))\n     FROM topic_attribution_facts f\n     JOIN topic_attribution_dimensions d ON d.dimension_id = f.dimension_id\n     WHERE d.ecosystem = '${ecosystem}'\n       AND d.tenant_id IN (${tenant_id:sqlstring})\n       AND f.timestamp BETWEEN datetime($__from/1000, 'unixepoch')\n                           AND datetime($__to/1000, 'unixepoch')\n    ) AS attributed,\n    (SELECT SUM(CAST(f.amount AS REAL))\n     FROM chargeback_facts f\n     JOIN chargeback_dimensions d ON d.dimension_id = f.dimension_id\n     WHERE d.ecosystem = '${ecosystem}'\n       AND d.tenant_id IN (${tenant_id:sqlstring})\n       AND d.product_category = 'KAFKA'\n       AND f.timestamp BETWEEN datetime($__from/1000, 'unixepoch')\n                           AND datetime($__to/1000, 'unixepoch')\n    ) AS total_kafka\n)",
+          "queryType": "table",
+          "refId": "A",
+          "timeColumns": [
+            "time",
+            "ts"
+          ]
+        }
+      ],
+      "title": "Attribution Coverage",
+      "description": "Percentage of total Kafka chargeback cost that has been attributed to specific topics.",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "chargeback-sqlite"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "bars",
+            "fillOpacity": 50,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 0,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            }
+          },
+          "mappings": [],
+          "unit": "currencyUSD"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Total Kafka"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "semi-dark-blue",
+                  "mode": "fixed"
+                }
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 40
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Attributed"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "semi-dark-green",
+                  "mode": "fixed"
+                }
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 70
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 12,
+        "w": 18,
+        "x": 6,
+        "y": 90
+      },
+      "id": 110,
+      "options": {
+        "legend": {
+          "calcs": [
+            "sum"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "chargeback-sqlite"
+          },
+          "queryText": "SELECT\n  CAST(strftime('%s', date(f.timestamp)) AS INTEGER) AS time,\n  SUM(CAST(f.amount AS REAL)) AS \"Total Kafka\"\nFROM chargeback_facts f\nJOIN chargeback_dimensions d ON d.dimension_id = f.dimension_id\nWHERE d.ecosystem = '${ecosystem}'\n  AND d.tenant_id IN (${tenant_id:sqlstring})\n  AND d.product_category = 'KAFKA'\n  AND f.timestamp BETWEEN datetime($__from/1000, 'unixepoch')\n                      AND datetime($__to/1000, 'unixepoch')\nGROUP BY date(f.timestamp)\nORDER BY time",
+          "rawQueryText": "SELECT\n  CAST(strftime('%s', date(f.timestamp)) AS INTEGER) AS time,\n  SUM(CAST(f.amount AS REAL)) AS \"Total Kafka\"\nFROM chargeback_facts f\nJOIN chargeback_dimensions d ON d.dimension_id = f.dimension_id\nWHERE d.ecosystem = '${ecosystem}'\n  AND d.tenant_id IN (${tenant_id:sqlstring})\n  AND d.product_category = 'KAFKA'\n  AND f.timestamp BETWEEN datetime($__from/1000, 'unixepoch')\n                      AND datetime($__to/1000, 'unixepoch')\nGROUP BY date(f.timestamp)\nORDER BY time",
+          "queryType": "timeseries",
+          "refId": "A",
+          "timeColumns": [
+            "time",
+            "ts"
+          ]
+        },
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "chargeback-sqlite"
+          },
+          "queryText": "SELECT\n  CAST(strftime('%s', date(f.timestamp)) AS INTEGER) AS time,\n  SUM(CAST(f.amount AS REAL)) AS \"Attributed\"\nFROM topic_attribution_facts f\nJOIN topic_attribution_dimensions d ON d.dimension_id = f.dimension_id\nWHERE d.ecosystem = '${ecosystem}'\n  AND d.tenant_id IN (${tenant_id:sqlstring})\n  AND f.timestamp BETWEEN datetime($__from/1000, 'unixepoch')\n                      AND datetime($__to/1000, 'unixepoch')\nGROUP BY date(f.timestamp)\nORDER BY time",
+          "rawQueryText": "SELECT\n  CAST(strftime('%s', date(f.timestamp)) AS INTEGER) AS time,\n  SUM(CAST(f.amount AS REAL)) AS \"Attributed\"\nFROM topic_attribution_facts f\nJOIN topic_attribution_dimensions d ON d.dimension_id = f.dimension_id\nWHERE d.ecosystem = '${ecosystem}'\n  AND d.tenant_id IN (${tenant_id:sqlstring})\n  AND f.timestamp BETWEEN datetime($__from/1000, 'unixepoch')\n                      AND datetime($__to/1000, 'unixepoch')\nGROUP BY date(f.timestamp)\nORDER BY time",
+          "queryType": "timeseries",
+          "refId": "B",
+          "timeColumns": [
+            "time",
+            "ts"
+          ]
+        }
+      ],
+      "transformations": [],
+      "title": "Attributed vs Total Kafka Cost",
+      "description": "Compares total Kafka chargeback cost with cost attributed to specific topics. The gap represents unattributed cost.",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 101
+      },
+      "id": 104,
+      "panels": [],
+      "title": "Detail Tables",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "chargeback-sqlite"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "footer": {
+              "reducers": []
+            },
+            "hideFrom": {
+              "viz": false
+            },
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "total_cost"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "currencyUSD"
+              },
+              {
+                "id": "custom.width",
+                "value": 120
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "write_cost"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "currencyUSD"
+              },
+              {
+                "id": "custom.width",
+                "value": 110
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "read_cost"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "currencyUSD"
+              },
+              {
+                "id": "custom.width",
+                "value": 110
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "storage_cost"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "currencyUSD"
+              },
+              {
+                "id": "custom.width",
+                "value": 110
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "other_cost"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "currencyUSD"
+              },
+              {
+                "id": "custom.width",
+                "value": 110
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 12,
+        "w": 24,
+        "x": 0,
+        "y": 102
+      },
+      "id": 15,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": true
+        },
+        "showHeader": true,
+        "sortBy": [
+          {
+            "desc": true,
+            "displayName": "total_cost"
+          }
+        ]
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "chargeback-sqlite"
+          },
+          "queryText": "SELECT\n  d.topic_name,\n  SUM(CAST(f.amount AS REAL)) AS total_cost,\n  SUM(CASE WHEN d.product_type LIKE '%Write%' THEN CAST(f.amount AS REAL) ELSE 0 END) AS write_cost,\n  SUM(CASE WHEN d.product_type LIKE '%Read%' THEN CAST(f.amount AS REAL) ELSE 0 END) AS read_cost,\n  SUM(CASE WHEN d.product_type LIKE '%Storage%' THEN CAST(f.amount AS REAL) ELSE 0 END) AS storage_cost,\n  SUM(CASE WHEN d.product_type NOT LIKE '%Write%'\n           AND d.product_type NOT LIKE '%Read%'\n           AND d.product_type NOT LIKE '%Storage%'\n       THEN CAST(f.amount AS REAL) ELSE 0 END) AS other_cost\nFROM topic_attribution_facts f\nJOIN topic_attribution_dimensions d ON d.dimension_id = f.dimension_id\nWHERE d.ecosystem = '${ecosystem}'\n  AND d.tenant_id IN (${tenant_id:sqlstring})\n  AND d.topic_name != ''\n  AND ('${cluster}' = '$__all' OR d.cluster_resource_id IN (${cluster:sqlstring}))\n  AND ('${topic}' = '$__all' OR d.topic_name IN (${topic:sqlstring}))\n  AND ('${product_type}' = '$__all' OR d.product_type IN (${product_type:sqlstring}))\n  AND f.timestamp BETWEEN datetime($__from/1000, 'unixepoch')\n                      AND datetime($__to/1000, 'unixepoch')\nGROUP BY d.topic_name\nORDER BY total_cost DESC",
+          "queryType": "table",
+          "rawQueryText": "SELECT\n  d.topic_name,\n  SUM(CAST(f.amount AS REAL)) AS total_cost,\n  SUM(CASE WHEN d.product_type LIKE '%Write%' THEN CAST(f.amount AS REAL) ELSE 0 END) AS write_cost,\n  SUM(CASE WHEN d.product_type LIKE '%Read%' THEN CAST(f.amount AS REAL) ELSE 0 END) AS read_cost,\n  SUM(CASE WHEN d.product_type LIKE '%Storage%' THEN CAST(f.amount AS REAL) ELSE 0 END) AS storage_cost,\n  SUM(CASE WHEN d.product_type NOT LIKE '%Write%'\n           AND d.product_type NOT LIKE '%Read%'\n           AND d.product_type NOT LIKE '%Storage%'\n       THEN CAST(f.amount AS REAL) ELSE 0 END) AS other_cost\nFROM topic_attribution_facts f\nJOIN topic_attribution_dimensions d ON d.dimension_id = f.dimension_id\nWHERE d.ecosystem = '${ecosystem}'\n  AND d.tenant_id IN (${tenant_id:sqlstring})\n  AND d.topic_name != ''\n  AND ('${cluster}' = '$__all' OR d.cluster_resource_id IN (${cluster:sqlstring}))\n  AND ('${topic}' = '$__all' OR d.topic_name IN (${topic:sqlstring}))\n  AND ('${product_type}' = '$__all' OR d.product_type IN (${product_type:sqlstring}))\n  AND f.timestamp BETWEEN datetime($__from/1000, 'unixepoch')\n                      AND datetime($__to/1000, 'unixepoch')\nGROUP BY d.topic_name\nORDER BY total_cost DESC",
+          "refId": "A",
+          "timeColumns": [
+            "time",
+            "ts"
+          ]
+        }
+      ],
+      "title": "Cost Breakdown by Topic",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "chargeback-sqlite"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "footer": {
+              "reducers": []
+            },
+            "hideFrom": {
+              "viz": false
+            },
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "storage_cost"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "currencyUSD"
+              },
+              {
+                "id": "custom.width",
+                "value": 120
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "network_read"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "currencyUSD"
+              },
+              {
+                "id": "custom.width",
+                "value": 120
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "network_write"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "currencyUSD"
+              },
+              {
+                "id": "custom.width",
+                "value": 120
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "total_network"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "currencyUSD"
+              },
+              {
+                "id": "custom.width",
+                "value": 120
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 12,
+        "w": 24,
+        "x": 0,
+        "y": 114
+      },
+      "id": 16,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": true
+        },
+        "showHeader": true,
+        "sortBy": [
+          {
+            "desc": true,
+            "displayName": "storage_cost"
+          }
+        ]
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "chargeback-sqlite"
+          },
+          "queryText": "SELECT\n  d.topic_name,\n  SUM(CASE WHEN d.product_type LIKE '%Storage%' THEN CAST(f.amount AS REAL) ELSE 0 END) AS storage_cost,\n  SUM(CASE WHEN d.product_type LIKE '%Read%' THEN CAST(f.amount AS REAL) ELSE 0 END) AS network_read,\n  SUM(CASE WHEN d.product_type LIKE '%Write%' THEN CAST(f.amount AS REAL) ELSE 0 END) AS network_write,\n  SUM(CASE WHEN d.product_type LIKE '%Read%' OR d.product_type LIKE '%Write%'\n       THEN CAST(f.amount AS REAL) ELSE 0 END) AS total_network\nFROM topic_attribution_facts f\nJOIN topic_attribution_dimensions d ON d.dimension_id = f.dimension_id\nWHERE d.ecosystem = '${ecosystem}'\n  AND d.tenant_id IN (${tenant_id:sqlstring})\n  AND d.topic_name != ''\n  AND ('${cluster}' = '$__all' OR d.cluster_resource_id IN (${cluster:sqlstring}))\n  AND ('${topic}' = '$__all' OR d.topic_name IN (${topic:sqlstring}))\n  AND f.timestamp BETWEEN datetime($__from/1000, 'unixepoch')\n                      AND datetime($__to/1000, 'unixepoch')\nGROUP BY d.topic_name\nHAVING storage_cost > 0\n   AND total_network < 0.01\nORDER BY storage_cost DESC",
+          "queryType": "table",
+          "rawQueryText": "SELECT\n  d.topic_name,\n  SUM(CASE WHEN d.product_type LIKE '%Storage%' THEN CAST(f.amount AS REAL) ELSE 0 END) AS storage_cost,\n  SUM(CASE WHEN d.product_type LIKE '%Read%' THEN CAST(f.amount AS REAL) ELSE 0 END) AS network_read,\n  SUM(CASE WHEN d.product_type LIKE '%Write%' THEN CAST(f.amount AS REAL) ELSE 0 END) AS network_write,\n  SUM(CASE WHEN d.product_type LIKE '%Read%' OR d.product_type LIKE '%Write%'\n       THEN CAST(f.amount AS REAL) ELSE 0 END) AS total_network\nFROM topic_attribution_facts f\nJOIN topic_attribution_dimensions d ON d.dimension_id = f.dimension_id\nWHERE d.ecosystem = '${ecosystem}'\n  AND d.tenant_id IN (${tenant_id:sqlstring})\n  AND d.topic_name != ''\n  AND ('${cluster}' = '$__all' OR d.cluster_resource_id IN (${cluster:sqlstring}))\n  AND ('${topic}' = '$__all' OR d.topic_name IN (${topic:sqlstring}))\n  AND f.timestamp BETWEEN datetime($__from/1000, 'unixepoch')\n                      AND datetime($__to/1000, 'unixepoch')\nGROUP BY d.topic_name\nHAVING storage_cost > 0\n   AND total_network < 0.01\nORDER BY storage_cost DESC",
+          "refId": "A",
+          "timeColumns": [
+            "time",
+            "ts"
+          ]
+        }
+      ],
+      "title": "Zombie Topics (High Storage, Low Network)",
+      "description": "Topics with storage cost > $0 but total network (read + write) cost < $0.01. These may be candidates for cleanup.",
+      "type": "table"
+    }
+  ],
+  "preload": false,
+  "refresh": "auto",
+  "schemaVersion": 39,
+  "tags": [
+    "topic-attribution"
+  ],
+  "templating": {
+    "list": [
+      {
+        "datasource": {
+          "type": "frser-sqlite-datasource",
+          "uid": "chargeback-sqlite"
+        },
+        "allowCustomValue": false,
+        "current": {},
+        "definition": "SELECT DISTINCT ecosystem FROM topic_attribution_dimensions",
+        "description": "Ecosystem filter (required)",
+        "includeAll": false,
+        "multi": false,
+        "name": "ecosystem",
+        "options": [],
+        "query": "SELECT DISTINCT ecosystem FROM topic_attribution_dimensions",
+        "refresh": 2,
+        "regex": "",
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "datasource": {
+          "type": "frser-sqlite-datasource",
+          "uid": "chargeback-sqlite"
+        },
+        "allowCustomValue": false,
+        "current": {
+          "text": "All",
+          "value": [
+            "$__all"
+          ]
+        },
+        "definition": "SELECT DISTINCT tenant_id FROM topic_attribution_dimensions WHERE ecosystem = '${ecosystem}'",
+        "description": "Tenant filter (cascades from ecosystem)",
+        "includeAll": true,
+        "multi": true,
+        "name": "tenant_id",
+        "options": [],
+        "query": "SELECT DISTINCT tenant_id FROM topic_attribution_dimensions WHERE ecosystem = '${ecosystem}'",
+        "refresh": 2,
+        "regex": "",
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "datasource": {
+          "type": "frser-sqlite-datasource",
+          "uid": "chargeback-sqlite"
+        },
+        "allowCustomValue": false,
+        "current": {
+          "text": "All",
+          "value": [
+            "$__all"
+          ]
+        },
+        "definition": "SELECT DISTINCT cluster_resource_id\nFROM topic_attribution_dimensions\nWHERE ecosystem = '${ecosystem}'\n  AND tenant_id IN (${tenant_id:sqlstring})\n  AND cluster_resource_id != ''",
+        "description": "Cluster filter (cascades from tenant)",
+        "includeAll": true,
+        "multi": true,
+        "name": "cluster",
+        "options": [],
+        "query": "SELECT DISTINCT cluster_resource_id\nFROM topic_attribution_dimensions\nWHERE ecosystem = '${ecosystem}'\n  AND tenant_id IN (${tenant_id:sqlstring})\n  AND cluster_resource_id != ''",
+        "refresh": 2,
+        "regex": "",
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "datasource": {
+          "type": "frser-sqlite-datasource",
+          "uid": "chargeback-sqlite"
+        },
+        "allowCustomValue": false,
+        "current": {
+          "text": "All",
+          "value": [
+            "$__all"
+          ]
+        },
+        "definition": "SELECT DISTINCT topic_name\nFROM topic_attribution_dimensions\nWHERE ecosystem = '${ecosystem}'\n  AND tenant_id IN (${tenant_id:sqlstring})\n  AND topic_name != ''\n  AND ('${cluster}' = '$__all' OR cluster_resource_id IN (${cluster:sqlstring}))",
+        "description": "Topic filter (cascades from cluster)",
+        "includeAll": true,
+        "multi": true,
+        "name": "topic",
+        "options": [],
+        "query": "SELECT DISTINCT topic_name\nFROM topic_attribution_dimensions\nWHERE ecosystem = '${ecosystem}'\n  AND tenant_id IN (${tenant_id:sqlstring})\n  AND topic_name != ''\n  AND ('${cluster}' = '$__all' OR cluster_resource_id IN (${cluster:sqlstring}))",
+        "refresh": 2,
+        "regex": "",
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "datasource": {
+          "type": "frser-sqlite-datasource",
+          "uid": "chargeback-sqlite"
+        },
+        "allowCustomValue": false,
+        "current": {
+          "text": "All",
+          "value": [
+            "$__all"
+          ]
+        },
+        "definition": "SELECT DISTINCT product_type\nFROM topic_attribution_dimensions\nWHERE ecosystem = '${ecosystem}'\n  AND tenant_id IN (${tenant_id:sqlstring})\n  AND product_type != ''\n  AND ('${cluster}' = '$__all' OR cluster_resource_id IN (${cluster:sqlstring}))",
+        "description": "Product type filter (cascades from cluster)",
+        "includeAll": true,
+        "multi": true,
+        "name": "product_type",
+        "options": [],
+        "query": "SELECT DISTINCT product_type\nFROM topic_attribution_dimensions\nWHERE ecosystem = '${ecosystem}'\n  AND tenant_id IN (${tenant_id:sqlstring})\n  AND product_type != ''\n  AND ('${cluster}' = '$__all' OR cluster_resource_id IN (${cluster:sqlstring}))",
+        "refresh": 2,
+        "regex": "",
+        "sort": 1,
+        "type": "query"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-6M",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Topic Attribution",
+  "uid": "topic-attribution",
+  "version": 1
+}
