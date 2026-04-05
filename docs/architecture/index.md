@@ -10,6 +10,7 @@ graph TD
     B --> C[ChargebackOrchestrator]
     C --> GP[GatherPhase]
     C --> CP[CalculatePhase]
+    C --> TOP[TopicOverlay — optional]
     C --> EP[EmitPhase]
     C --> D[EcosystemPlugin]
     D --> E[ServiceHandler×N]
@@ -21,7 +22,7 @@ graph TD
     C --> J[Emitter×N]
 ```
 
-The orchestrator delegates to three internal phase classes: `GatherPhase` (billing + resources + identities + deletion detection), `CalculatePhase` (metrics + identity resolution + allocation), and `EmitPhase` (commit + emitters). When topic attribution is enabled (CCloud + Prometheus), an optional **Topic Overlay** stage runs between Calculate and Emit to attribute Kafka cluster costs to individual topics.
+The orchestrator delegates to three internal phase classes: `GatherPhase` (billing + resources + identities + deletion detection), `CalculatePhase` (metrics + identity resolution + allocation), and `EmitPhase` (commit + emitters). When topic attribution is enabled (CCloud + Prometheus), an optional **TopicOverlay** stage runs between Calculate and Emit to attribute Kafka cluster costs to individual topics.
 
 ## Layers
 
