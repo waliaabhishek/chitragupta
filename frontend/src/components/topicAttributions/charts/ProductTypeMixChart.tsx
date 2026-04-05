@@ -76,5 +76,5 @@ export function ProductTypeMixChart({ data, height = 300 }: ProductTypeMixChartP
     series,
   };
 
-  return <ReactECharts option={option} style={{ height }} />;
+  return <ReactECharts option={option} notMerge style={{ height }} />;
 }

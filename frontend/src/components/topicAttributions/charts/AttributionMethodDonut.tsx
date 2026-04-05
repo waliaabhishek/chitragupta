@@ -99,7 +99,7 @@ export function AttributionMethodDonut({
         </div>
         <div style={subtitleStyle}>of cost attributed with metrics data</div>
       </div>
-      <ReactECharts option={option} style={{ height }} />
+      <ReactECharts option={option} notMerge style={{ height }} />
     </div>
   );
 }

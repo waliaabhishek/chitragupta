@@ -75,7 +75,7 @@ export function TopTopicsChart({
         <Radio.Button value="Treemap">Treemap</Radio.Button>
         <Radio.Button value="Bar">Bar</Radio.Button>
       </Radio.Group>
-      <ReactECharts option={option} style={{ height }} />
+      <ReactECharts option={option} notMerge style={{ height }} />
     </div>
   );
 }

@@ -5,7 +5,6 @@ import { ChartCard } from "../charts/ChartCard";
 import { TopTopicsChart } from "./charts/TopTopicsChart";
 import { CostCompositionChart } from "./charts/CostCompositionChart";
 import { CostVelocityChart } from "./charts/CostVelocityChart";
-import { AttributionMethodDonut } from "./charts/AttributionMethodDonut";
 import { ZombieTopicsTable } from "./charts/ZombieTopicsTable";
 import { EnvironmentCostChart } from "./charts/EnvironmentCostChart";
 import { TopClustersCostChart } from "./charts/TopClustersCostChart";
@@ -44,10 +43,6 @@ export function TopicAttributionAnalytics({
   const compositionData = useTopicAttributionAggregation({
     ...sharedParams,
     groupBy: ["topic_name", "product_type"],
-  });
-  const methodData = useTopicAttributionAggregation({
-    ...sharedParams,
-    groupBy: ["attribution_method"],
   });
   const envData = useTopicAttributionAggregation({
     ...sharedParams,
@@ -105,16 +100,6 @@ export function TopicAttributionAnalytics({
             onRetry={topTopicsData.refetch}
           >
             <CostVelocityChart data={topTopicsData.data?.buckets ?? []} />
-          </ChartCard>
-        </Col>
-        <Col xs={24} lg={12}>
-          <ChartCard
-            title="Attribution Confidence"
-            loading={methodData.isLoading}
-            error={methodData.error}
-            onRetry={methodData.refetch}
-          >
-            <AttributionMethodDonut data={methodData.data?.buckets ?? []} />
           </ChartCard>
         </Col>
         <Col xs={24} lg={12}>

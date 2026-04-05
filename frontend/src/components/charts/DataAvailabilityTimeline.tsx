@@ -67,6 +67,6 @@ export function DataAvailabilityTimeline({
   }, [dates, startDate, endDate]);
 
   return (
-    <ReactECharts option={option} style={{ height }} showLoading={loading} />
+    <ReactECharts option={option} notMerge style={{ height }} showLoading={loading} />
   );
 }

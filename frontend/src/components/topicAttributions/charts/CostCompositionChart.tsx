@@ -59,5 +59,5 @@ export function CostCompositionChart({ data, height = 300 }: CostCompositionChar
     })),
   };
 
-  return <ReactECharts option={option} style={{ height }} />;
+  return <ReactECharts option={option} notMerge style={{ height }} />;
 }

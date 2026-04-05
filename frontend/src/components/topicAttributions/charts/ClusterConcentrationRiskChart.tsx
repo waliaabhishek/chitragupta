@@ -60,5 +60,5 @@ export function ClusterConcentrationRiskChart({
     ],
   };
 
-  return <ReactECharts option={option} style={{ height }} />;
+  return <ReactECharts option={option} notMerge style={{ height }} />;
 }

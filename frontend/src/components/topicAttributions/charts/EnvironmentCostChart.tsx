@@ -88,5 +88,5 @@ export function EnvironmentCostChart({
     series,
   };
 
-  return <ReactECharts option={option} style={{ height }} />;
+  return <ReactECharts option={option} notMerge style={{ height }} />;
 }
