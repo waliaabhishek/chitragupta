@@ -35,7 +35,7 @@ jobs:
           enable-cache: true
 
       - name: Install documentation dependencies
-        run: uv sync --group docs
+        run: uv sync --frozen --group docs
 
       - name: Generate changelog
         run: |
