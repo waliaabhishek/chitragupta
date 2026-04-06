@@ -85,7 +85,7 @@ Each tenant maps to one ecosystem plugin. The orchestrator runs a per-tenant, pe
 
 ## Documentation
 
-Full documentation is linked in the website.
+Full documentation is available [here](https://waliaabhishek.github.io/chitragupta/latest/).
 
 ## Development
 
