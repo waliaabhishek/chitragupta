@@ -191,7 +191,14 @@ describe("exportTopicAttributions", () => {
       start_date: "2026-01-01",
       end_date: "2026-01-31",
     });
-    expect(blob).toBeInstanceOf(Blob);
+    // Verify the returned object is functionally a Blob. Avoid `instanceof Blob`
+    // because jsdom installs its own Blob while undici's fetch returns Node's
+    // native Blob — the two classes are not identity-equal across realms, and
+    // the exact behavior varies between Node versions (passes on 25, fails on
+    // 22). Checking shape + content is Node-version-independent.
+    expect(blob.type).toBe("text/csv");
+    expect(blob.size).toBeGreaterThan(0);
+    expect(await blob.text()).toContain("date,amount");
   });
 
   it("uses POST method with query params on URL — no request body", async () => {
