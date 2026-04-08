@@ -36,14 +36,16 @@ function makeBucket(
 }
 
 describe("TopClustersCostChart", () => {
-  it("renders horizontal stacked bars with 6 series for 20-cluster dataset", () => {
+  it("renders horizontal stacked bars with 7 series for 20-cluster × 6-topic dataset", () => {
+    // Per-cluster top-5 topics are unioned across top-10 clusters; with 1 topic
+    // per cluster and 6 unique topics, the union is 6 topics + "Other" = 7 series.
     const data = Array.from({ length: 20 }, (_, i) =>
       makeBucket(`lkc-cluster-${i}`, `topic-${i % 6}`, String((i + 1) * 10)),
     );
     render(<TopClustersCostChart data={data} />);
     const chart = screen.getByTestId("echarts");
     expect(chart.getAttribute("data-series-type")).toBe("bar");
-    expect(Number(chart.getAttribute("data-series-count"))).toBe(6);
+    expect(Number(chart.getAttribute("data-series-count"))).toBe(7);
   });
 
   it("top-10 filter: y-axis has exactly 10 entries for 15-cluster input", () => {
