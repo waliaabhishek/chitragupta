@@ -1406,8 +1406,28 @@ and zombie topics table. (<a href="https://github.com/waliaabhishek/chitragupta/
 </ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
-<li>Fix: Add frontend lint/typecheck/test/build to CI workflow</li>
+<li>Fix: Replace brittle instanceof Blob check with functional assertions</li>
 </ul>
+<p>The "exportTopicAttributions returns a Blob on success" test asserted
+<code>expect(blob).toBeInstanceOf(Blob)</code>, which compares against jsdom's
+Blob class (installed as globalThis.Blob in the custom vitest
+environment). The object returned by response.blob() is undici's
+native Blob from Node's fetch implementation — a different class
+identity than jsdom's. The instanceof check is therefore fragile
+across Node versions: it passes on Node 25 (local) but fails on
+Node 22 (CI), because the two class identities happen to interop in
+newer Node but not in 22.</p>
+<p>This was a latent failure hidden by the absence of a frontend CI job.
+After adding Frontend quality to ci.yml in the previous commit, the
+first run on main surfaced it immediately.</p>
+<p>Fix: replace the brittle class-identity check with functional
+assertions on the Blob's observable properties — type, size, and
+content. These use only the public Blob interface, which is stable
+across Node versions and works regardless of which realm produced
+the object. The test still verifies exportTopicAttributions returns
+a blob-shaped thing with the expected MIME type and body.</p>
+<p>All 594 frontend tests pass locally with this change. (<a href="https://github.com/waliaabhishek/chitragupta/commit/e5868ec17b7344d0cea595fac8a159f0b62b8f62">e5868ec</a>)
+- Fix: Add frontend lint/typecheck/test/build to CI workflow</p>
 <p>Prior to this change ci.yml only ran Python quality checks (ruff, mypy,
 pytest). Frontend code had zero CI coverage: eslint and vitest were
 never executed, and tsc only ran indirectly via <code>vite build</code> inside the
