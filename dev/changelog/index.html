@@ -1406,8 +1406,26 @@ and zombie topics table. (<a href="https://github.com/waliaabhishek/chitragupta/
 </ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
-<li>Fix: Sync topic attribution chart tests with post-redesign component behavior</li>
+<li>Fix: Add frontend lint/typecheck/test/build to CI workflow</li>
 </ul>
+<p>Prior to this change ci.yml only ran Python quality checks (ruff, mypy,
+pytest). Frontend code had zero CI coverage: eslint and vitest were
+never executed, and tsc only ran indirectly via <code>vite build</code> inside the
+release Dockerfile — so type errors were caught at release time but
+lint and test regressions were invisible.</p>
+<p>This is the root cause of how commit 2ac9c71 could land on main with
+13 failing vitest tests: the tests simply were not part of any CI run.</p>
+<p>Adds a parallel <code>frontend</code> job that runs on the same triggers as
+<code>quality</code> (push to main + PRs) and executes npm ci → lint → typecheck
+→ test → build. Uses Node 22 to match the frontend Dockerfile and
+caches npm via setup-node's built-in lockfile-aware cache.</p>
+<p>Also renames the existing Python job to "Backend quality" for symmetry
+and introduces a <code>ci-success</code> aggregator that depends on both quality
+jobs. This gives branch protection a single required status check that
+atomically reflects the workflow outcome — if either stack's checks
+fail, CI Success fails, and neither quality job can be bypassed by
+skipping the other. (<a href="https://github.com/waliaabhishek/chitragupta/commit/da4dfd3a78aee3e6980f9e961adf06846c3d9eab">da4dfd3</a>)
+- Fix: Sync topic attribution chart tests with post-redesign component behavior</p>
 <p>Commit 2ac9c71 redesigned EnvironmentCostChart and TopClustersCostChart
 to horizontal stacked bars with per-entity topic stacking but did not
 update the associated test files, leaving 13 failing tests on main
