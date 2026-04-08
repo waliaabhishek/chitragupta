@@ -1406,8 +1406,38 @@ and zombie topics table. (<a href="https://github.com/waliaabhishek/chitragupta/
 </ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
-<li>Fix: Update documentation link in README</li>
+<li>Fix: Sync topic attribution chart tests with post-redesign component behavior</li>
 </ul>
+<p>Commit 2ac9c71 redesigned EnvironmentCostChart and TopClustersCostChart
+to horizontal stacked bars with per-entity topic stacking but did not
+update the associated test files, leaving 13 failing tests on main
+(12 in EnvironmentCostChart, 1 in TopClustersCostChart).</p>
+<p>EnvironmentCostChart.test.tsx — full rewrite:
+- Series are now stacked topics per environment (union of per-env top-5
+  topics + Other), not one series per env_id.
+- yAxis is category with env IDs (not topic names); xAxis is value with
+  currency formatter. Updated assertions accordingly.
+- Default height is 300 (was 350 in the pre-redesign layout).
+- Tooltip uses a custom HTML formatter, not valueFormatter — added direct
+  tests for the formatter including zero-value filtering and currency
+  output (preserving the TASK-203 floating-point concern).
+- Added yAxis truncation assertions in place of the obsolete TASK-200
+  xAxis label truncation and dataZoom slider tests.</p>
+<p>TopClustersCostChart.test.tsx — one assertion updated:
+- For the 20-cluster × 6-unique-topic dataset, the per-entity top-5 union
+  produces 6 topics + "Other" = 7 series, not 6. Renamed the test and
+  added a comment explaining the math.</p>
+<p>All 594 frontend tests pass after this change. (<a href="https://github.com/waliaabhishek/chitragupta/commit/48cae4d081fd42be2332ad83f31ddca3a082836c">48cae4d</a>)
+- Fix: Resolve Dependabot security alerts for vite (bump 8.0.0 → 8.0.7)</p>
+<p>Closes three open Dependabot alerts on vite 8.0.0 — two high-severity
+(dev server fs.deny bypass CVE-2026-39364, arbitrary file read via dev
+server WebSocket CVE-2026-39363) and one medium-severity (path traversal
+in optimized deps sourcemap handling CVE-2026-39365). All three are
+patched in 8.0.5; bumping to latest 8.x (8.0.7).</p>
+<p>Impact is limited to the dev server — production builds are unaffected
+— but patching promptly given two highs. Verified build still succeeds
+and npm audit reports 0 vulnerabilities. (<a href="https://github.com/waliaabhishek/chitragupta/commit/dfc3bfd37fba26f0b83386e3a5e67ef32c9df994">dfc3bfd</a>)
+- Fix: Update documentation link in README</p>
 <p>Updated documentation link to point to the latest version. (<a href="https://github.com/waliaabhishek/chitragupta/commit/ce1da52147f3cd8037cdec59cf873197c3953bcc">ce1da52</a>)
 - Fix: Resolve Dependabot security alerts for lodash, lodash-es, and pygments</p>
 <p>Add npm overrides for lodash and lodash-es (^4.18.0) to patch prototype
