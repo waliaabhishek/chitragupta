@@ -1,0 +1,2078 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Multi-ecosystem chargeback engine — allocate infrastructure costs to tenants and teams">
+      
+      
+      
+      
+        <link rel="prev" href="../guide/">
+      
+      
+        <link rel="next" href="../self-managed-reference/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.5">
+    
+    
+      
+        <title>Confluent Cloud - Chitragupta</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+  
+  
+  
+  
+  <style>:root{--md-annotation-icon:url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%3E%3Cpath%20d%3D%22M17%2013h-4v4h-2v-4H7v-2h4V7h2v4h4m-5-9A10%2010%200%200%200%202%2012a10%2010%200%200%200%2010%2010%2010%2010%200%200%200%2010-10A10%2010%200%200%200%2012%202%22/%3E%3C/svg%3E');}</style>
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="deep-purple" data-md-color-accent="purple">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#confluent-cloud-configuration-reference" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="Chitragupta" class="md-header__button md-logo" aria-label="Chitragupta" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Chitragupta
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Confluent Cloud
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="deep-purple" data-md-color-accent="purple"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="purple"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/waliaabhishek/chitragupta" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    chitragupta
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="Chitragupta" class="md-nav__button md-logo" aria-label="Chitragupta" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Chitragupta
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/waliaabhishek/chitragupta" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    chitragupta
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../getting-started/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_2" id="__nav_2_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/prerequisites/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Prerequisites
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/first-run/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    First Run
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration Reference
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Configuration Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Confluent Cloud
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Confluent Cloud
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#ecosystem-key" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ecosystem key
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#full-example" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Full example
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tenantconfig-fields" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        TenantConfig fields
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#plugin_settings-fields-ccloud" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        plugin_settings fields (CCloud)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#handled-product-types" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Handled product types
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#allocator-params" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Allocator params
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#topic-attribution" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Topic attribution
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Topic attribution">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#topic_attribution-fields" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        topic_attribution fields
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#default-cost-mappings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Default cost mappings
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#topic-attribution-retry-behavior" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Topic attribution retry behavior
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#emitters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Emitters
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../self-managed-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Self-Managed Kafka
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../generic-metrics-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Generic Metrics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../advanced-scenarios/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Advanced Scenarios
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../architecture/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/plugin-system/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Plugin System
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/data-flow/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data Flow
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/cost-model/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    How Costs Work
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/identity-resolution/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Identity Resolution
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../operations/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Operations
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Operations
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operations/deployment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deployment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operations/monitoring/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Monitoring
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operations/troubleshooting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Troubleshooting
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operations/data-retention/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data Retention
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operations/upgrading/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Upgrading
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../changelog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changelog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#ecosystem-key" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ecosystem key
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#full-example" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Full example
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tenantconfig-fields" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        TenantConfig fields
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#plugin_settings-fields-ccloud" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        plugin_settings fields (CCloud)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#handled-product-types" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Handled product types
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#allocator-params" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Allocator params
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#topic-attribution" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Topic attribution
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Topic attribution">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#topic_attribution-fields" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        topic_attribution fields
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#default-cost-mappings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Default cost mappings
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#topic-attribution-retry-behavior" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Topic attribution retry behavior
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#emitters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Emitters
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="confluent-cloud-configuration-reference">Confluent Cloud Configuration Reference<a class="headerlink" href="#confluent-cloud-configuration-reference" title="Permanent link">&para;</a></h1>
+<div class="admonition tip">
+<p class="admonition-title">New to Confluent Cloud configuration?</p>
+<p>Read the <a href="../guide/#configuring-confluent-cloud">Configuration Guide</a> first
+for a walkthrough of the decisions you'll make, then come back here for the
+full field reference.</p>
+</div>
+<h2 id="ecosystem-key">ecosystem key<a class="headerlink" href="#ecosystem-key" title="Permanent link">&para;</a></h2>
+<p><code>yaml
+ecosystem: confluent_cloud</code></p>
+<h2 id="full-example">Full example<a class="headerlink" href="#full-example" title="Permanent link">&para;</a></h2>
+<p><code>yaml
+tenants:
+  my-ccloud-org:
+    ecosystem: confluent_cloud
+    tenant_id: my-ccloud-org       # internal partition key (not the CCloud org ID)
+    lookback_days: 200
+    cutoff_days: 5
+    retention_days: 250
+    storage:
+      connection_string: "sqlite:///data/ccloud.db"
+    plugin_settings:
+      ccloud_api:
+        key: ${CCLOUD_API_KEY}
+        secret: ${CCLOUD_API_SECRET}
+      billing_api:
+        days_per_query: 15
+      metrics:
+        type: prometheus
+        url: https://api.telemetry.confluent.cloud
+        auth_type: basic
+        username: ${METRICS_API_KEY}
+        password: ${METRICS_API_SECRET}
+      flink:
+        - region_id: us-east-1
+          key: ${FLINK_API_KEY}
+          secret: ${FLINK_API_SECRET}
+      emitters:
+        - type: csv
+          aggregation: daily
+          params:
+            output_dir: ./output
+      chargeback_granularity: daily
+      topic_attribution:
+        enabled: true
+        exclude_topic_patterns:
+          - "__consumer_offsets"
+          - "_schemas"
+          - "_confluent-*"
+        missing_metrics_behavior: even_split
+        retention_days: 90</code></p>
+<h2 id="tenantconfig-fields">TenantConfig fields<a class="headerlink" href="#tenantconfig-fields" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ecosystem</code></td>
+<td>string</td>
+<td>required</td>
+<td>Must be <code>confluent_cloud</code></td>
+</tr>
+<tr>
+<td><code>tenant_id</code></td>
+<td>string</td>
+<td>required</td>
+<td>Unique partition key for DB records. Can be any string (e.g. <code>prod</code>, <code>acme-corp</code>). This is <strong>not</strong> your Confluent Cloud Organization ID — it is an internal label used to isolate data across tenants in the database.</td>
+</tr>
+<tr>
+<td><code>lookback_days</code></td>
+<td>int</td>
+<td>200</td>
+<td>Days of billing history to fetch (max 364). Must be &gt; <code>cutoff_days</code>.</td>
+</tr>
+<tr>
+<td><code>cutoff_days</code></td>
+<td>int</td>
+<td>5</td>
+<td>Skip dates within this many days of today (billing lag, max 30)</td>
+</tr>
+<tr>
+<td><code>retention_days</code></td>
+<td>int</td>
+<td>250</td>
+<td>Delete data older than this (max 730)</td>
+</tr>
+<tr>
+<td><code>allocation_retry_limit</code></td>
+<td>int</td>
+<td>3</td>
+<td>Max identity resolution retries before fallback (max 10)</td>
+</tr>
+<tr>
+<td><code>topic_attribution_retry_limit</code></td>
+<td>int</td>
+<td>3</td>
+<td>Max Prometheus fetch retries per cluster before producing sentinel rows (1–10). See <a href="#topic-attribution-retry-behavior">Topic attribution retry behavior</a>.</td>
+</tr>
+<tr>
+<td><code>gather_failure_threshold</code></td>
+<td>int</td>
+<td>5</td>
+<td>Consecutive gather failures before tenant suspension</td>
+</tr>
+<tr>
+<td><code>tenant_execution_timeout_seconds</code></td>
+<td>int</td>
+<td>3600</td>
+<td>Per-tenant run timeout (0 = no timeout)</td>
+</tr>
+<tr>
+<td><code>metrics_prefetch_workers</code></td>
+<td>int</td>
+<td>4</td>
+<td>Parallel metrics query threads (1–20)</td>
+</tr>
+<tr>
+<td><code>zero_gather_deletion_threshold</code></td>
+<td>int</td>
+<td>-1</td>
+<td>Mark resources deleted after N zero-gather cycles (-1 = disabled)</td>
+</tr>
+</tbody>
+</table>
+<h2 id="plugin_settings-fields-ccloud">plugin_settings fields (CCloud)<a class="headerlink" href="#plugin_settings-fields-ccloud" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ccloud_api.key</code></td>
+<td>string</td>
+<td>required</td>
+<td>CCloud API key</td>
+</tr>
+<tr>
+<td><code>ccloud_api.secret</code></td>
+<td>secret</td>
+<td>required</td>
+<td>CCloud API secret</td>
+</tr>
+<tr>
+<td><code>billing_api.days_per_query</code></td>
+<td>int</td>
+<td>15</td>
+<td>Days per billing API request (max 30)</td>
+</tr>
+<tr>
+<td><code>metrics.url</code></td>
+<td>string</td>
+<td>optional</td>
+<td>Prometheus/Telemetry API URL</td>
+</tr>
+<tr>
+<td><code>metrics.auth_type</code></td>
+<td>enum</td>
+<td><code>none</code></td>
+<td><code>basic</code>, <code>bearer</code>, or <code>none</code></td>
+</tr>
+<tr>
+<td><code>metrics.username</code></td>
+<td>string</td>
+<td>optional</td>
+<td>For <code>auth_type: basic</code></td>
+</tr>
+<tr>
+<td><code>metrics.password</code></td>
+<td>secret</td>
+<td>optional</td>
+<td>For <code>auth_type: basic</code></td>
+</tr>
+<tr>
+<td><code>metrics.bearer_token</code></td>
+<td>secret</td>
+<td>optional</td>
+<td>For <code>auth_type: bearer</code></td>
+</tr>
+<tr>
+<td><code>flink</code></td>
+<td>list</td>
+<td>optional</td>
+<td>Per-region Flink API credentials</td>
+</tr>
+<tr>
+<td><code>chargeback_granularity</code></td>
+<td>enum</td>
+<td><code>daily</code></td>
+<td><code>hourly</code>, <code>daily</code>, or <code>monthly</code></td>
+</tr>
+<tr>
+<td><code>metrics_step_seconds</code></td>
+<td>int</td>
+<td>3600</td>
+<td>Prometheus query step (lower = finer granularity)</td>
+</tr>
+<tr>
+<td><code>min_refresh_gap_seconds</code></td>
+<td>int</td>
+<td>1800</td>
+<td>Minimum time between pipeline runs for this tenant</td>
+</tr>
+</tbody>
+</table>
+<h2 id="handled-product-types">Handled product types<a class="headerlink" href="#handled-product-types" title="Permanent link">&para;</a></h2>
+<p>Each product type from the CCloud billing API is routed to a handler that knows
+how to resolve identities and allocate costs for that service. The allocation
+strategy reflects the nature of the cost — usage-driven costs are split by
+measured consumption, shared costs are split evenly.</p>
+<table>
+<thead>
+<tr>
+<th>Handler</th>
+<th>Product types</th>
+<th>Allocation strategy</th>
+<th>Why</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>kafka</code></td>
+<td><code>KAFKA_NUM_CKU</code>, <code>KAFKA_NUM_CKUS</code></td>
+<td>Hybrid: 70% usage ratio (bytes), 30% even split</td>
+<td>CKUs are the main Kafka compute cost. Part of the cost is driven by traffic volume (usage), part is base infrastructure overhead (shared). The 70/30 default is configurable via <code>allocator_params</code>.</td>
+</tr>
+<tr>
+<td><code>kafka</code></td>
+<td><code>KAFKA_NETWORK_READ</code>, <code>KAFKA_NETWORK_WRITE</code></td>
+<td>Usage ratio (bytes in/out per principal)</td>
+<td>Network transfer is directly attributable to the principal that produced or consumed the data. Requires Telemetry API metrics.</td>
+</tr>
+<tr>
+<td><code>kafka</code></td>
+<td><code>KAFKA_BASE</code>, <code>KAFKA_PARTITION</code>, <code>KAFKA_STORAGE</code></td>
+<td>Even split</td>
+<td>Base fees, partition counts, and storage are cluster-level costs with no per-principal usage metric.</td>
+</tr>
+<tr>
+<td><code>schema_registry</code></td>
+<td><code>SCHEMA_REGISTRY</code>, <code>GOVERNANCE_BASE</code>, <code>NUM_RULES</code></td>
+<td>Even split</td>
+<td>Schema Registry is a shared service — all principals benefit equally from schema validation.</td>
+</tr>
+<tr>
+<td><code>connector</code></td>
+<td><code>CONNECT_CAPACITY</code>, <code>CONNECT_NUM_TASKS</code>, <code>CONNECT_THROUGHPUT</code>, <code>CUSTOM_CONNECT_*</code></td>
+<td>Even split per connector</td>
+<td>Connectors are typically owned by teams. Costs are split among identities active on the connector's resource.</td>
+</tr>
+<tr>
+<td><code>ksqldb</code></td>
+<td><code>KSQL_NUM_CSU</code>, <code>KSQL_NUM_CSUS</code></td>
+<td>Even split</td>
+<td>ksqlDB compute units are application-level — split across active identities.</td>
+</tr>
+<tr>
+<td><code>flink</code></td>
+<td><code>FLINK_NUM_CFU</code>, <code>FLINK_NUM_CFUS</code></td>
+<td>Usage ratio by statement owner CFU consumption</td>
+<td>Flink CFU costs are directly traceable to the user who created the SQL statement. Uses a 4-tier chain: statement owner → active identities → period identities → resource.</td>
+</tr>
+<tr>
+<td><code>org_wide</code></td>
+<td><code>AUDIT_LOG_READ</code>, <code>SUPPORT</code></td>
+<td>Even split across tenant, then to UNALLOCATED</td>
+<td>Org-wide costs have no resource or principal — they apply to the whole organization.</td>
+</tr>
+<tr>
+<td><code>default</code></td>
+<td><code>TABLEFLOW_*</code></td>
+<td>Shared (to resource)</td>
+<td>New product types without a dedicated handler fall back to resource-level allocation.</td>
+</tr>
+<tr>
+<td><code>default</code></td>
+<td><code>CLUSTER_LINKING_*</code></td>
+<td>Usage (to resource)</td>
+<td>Cluster linking costs are attributed to the linked resource.</td>
+</tr>
+</tbody>
+</table>
+<p>Unknown product types are allocated to UNALLOCATED. Check the <code>allocation_detail</code>
+field on chargeback rows to understand which fallback tier was used.</p>
+<p>See <a href="../../architecture/cost-model/">How Costs Work</a> for the complete allocation
+model including the fallback chain and composite CKU allocation.</p>
+<h2 id="allocator-params">Allocator params<a class="headerlink" href="#allocator-params" title="Permanent link">&para;</a></h2>
+<p>Override default allocation ratios for Kafka CKU costs:</p>
+<p><code>yaml
+allocator_params:
+  kafka_cku_usage_ratio: 0.70   # fraction allocated by bytes (default 0.70)
+  kafka_cku_shared_ratio: 0.30  # fraction allocated evenly (default 0.30)</code></p>
+<p><code>kafka_cku_usage_ratio</code> + <code>kafka_cku_shared_ratio</code> must sum to 1.0 (tolerance: 0.0001). Startup fails if they don't.</p>
+<div class="admonition note">
+<p class="admonition-title">How to think about the ratio</p>
+<p>The usage portion is allocated proportionally to <code>bytes_in + bytes_out</code> per
+principal. The shared portion is split evenly across all active identities.</p>
+<ul>
+<li><strong>High usage ratio (0.90/0.10):</strong> Heavy producers/consumers pay proportionally
+  more. Good when your cluster is right-sized and traffic volume drives cost.</li>
+<li><strong>Balanced (0.70/0.30):</strong> Default. Acknowledges that the cluster has a base
+  cost regardless of traffic.</li>
+<li><strong>High shared ratio (0.50/0.50):</strong> Spreads cost more evenly. Good when the
+  cluster is over-provisioned and most cost is fixed overhead.</li>
+</ul>
+<p>If metrics are unavailable for a billing window, the usage portion falls back
+to even-split anyway — so at 1.0/0.0, you effectively get even-split when
+Telemetry API data is missing. See <a href="../../architecture/cost-model/#composite-allocation-cku-model">How Costs Work</a>
+for a worked example.</p>
+</div>
+<h2 id="topic-attribution">Topic attribution<a class="headerlink" href="#topic-attribution" title="Permanent link">&para;</a></h2>
+<p>Topic attribution is an optional overlay stage that breaks Kafka cluster costs
+down to individual topics using Prometheus metrics. It runs after chargeback
+calculation and writes results to a separate star-schema table.</p>
+<p><strong>Prerequisite:</strong> Topic-level CCloud metrics (<code>received_bytes</code>, <code>sent_bytes</code>,
+<code>retained_bytes</code> per topic) must be scraped into the Prometheus instance
+configured under <code>plugin_settings.metrics</code>.</p>
+<p><code>yaml
+topic_attribution:
+  enabled: true                           # off by default
+  exclude_topic_patterns:
+    - "__consumer_offsets"                # default exclusions
+    - "_schemas"
+    - "_confluent-*"
+  missing_metrics_behavior: even_split   # even_split | skip
+  retention_days: 90                     # 1–365, independent of tenant retention_days
+  cost_mapping_overrides:                # override per product type
+    KAFKA_PARTITION: even_split
+    KAFKA_BASE: disabled
+  metric_name_overrides:                 # override Prometheus metric names
+    topic_bytes_in: custom_received_bytes
+  emitters: []                           # same format as top-level emitters</code></p>
+<div class="admonition warning">
+<p class="admonition-title">Requires <code>metrics</code> to be configured</p>
+<p><code>topic_attribution.enabled: true</code> requires a <code>metrics</code> section in <code>plugin_settings</code>.
+Config validation rejects the combination of <code>enabled: true</code> and no <code>metrics</code> source — startup
+fails with a <code>ValidationError</code> rather than silently producing even-split attribution from zero data.</p>
+<p>When Chitragupta starts in API mode without full plugin validation (e.g., using a raw config that
+hasn't been fully parsed as <code>CCloudPluginConfig</code>), this misconfiguration is surfaced at API query
+time instead of startup. In that case, <code>GET /api/v1/tenants</code> and <code>GET /api/v1/readiness</code> return
+<code>topic_attribution_status: "config_error"</code> with a human-readable <code>topic_attribution_error</code> message.
+The frontend displays a red "Config error" badge in the sidebar and a red alert on the Topic
+Attribution page. Correct the config and restart to resolve.</p>
+</div>
+<h3 id="topic_attribution-fields"><code>topic_attribution</code> fields<a class="headerlink" href="#topic_attribution-fields" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>enabled</code></td>
+<td>bool</td>
+<td><code>false</code></td>
+<td>Enable the topic overlay stage</td>
+</tr>
+<tr>
+<td><code>exclude_topic_patterns</code></td>
+<td>list[string]</td>
+<td><code>["__consumer_offsets", "_schemas", "_confluent-*"]</code></td>
+<td>Glob patterns for topics to skip. Matched with <code>fnmatch</code>.</td>
+</tr>
+<tr>
+<td><code>missing_metrics_behavior</code></td>
+<td>enum</td>
+<td><code>even_split</code></td>
+<td>What to do when metrics are all-zero or unavailable: <code>even_split</code> distributes evenly; <code>skip</code> omits the cluster from output.</td>
+</tr>
+<tr>
+<td><code>retention_days</code></td>
+<td>int</td>
+<td><code>90</code></td>
+<td>Days to keep topic attribution rows (1–365). Independent of the tenant-level <code>retention_days</code>.</td>
+</tr>
+<tr>
+<td><code>cost_mapping_overrides</code></td>
+<td>dict[string, string]</td>
+<td><code>{}</code></td>
+<td>Override the attribution method per CCloud product type. Valid methods: <code>bytes_ratio</code>, <code>retained_bytes_ratio</code>, <code>even_split</code>, <code>disabled</code>.</td>
+</tr>
+<tr>
+<td><code>metric_name_overrides</code></td>
+<td>dict[string, string]</td>
+<td><code>{}</code></td>
+<td>Override Prometheus metric names. Valid keys: <code>topic_bytes_in</code>, <code>topic_bytes_out</code>, <code>topic_retained_bytes</code>.</td>
+</tr>
+<tr>
+<td><code>emitters</code></td>
+<td>list</td>
+<td><code>[]</code></td>
+<td>Emitter specs for topic attribution output. Same format as top-level <code>emitters</code>. For <code>type: csv</code>, <code>output_dir</code> defaults to <code>/tmp/topic_attribution</code> and <code>filename_template</code> defaults to <code>topic_attr_{tenant_id}_{date}.csv</code> — both are overridable per-spec.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="default-cost-mappings">Default cost mappings<a class="headerlink" href="#default-cost-mappings" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Product type</th>
+<th>Attribution method</th>
+<th>Metric used</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>KAFKA_NETWORK_WRITE</code></td>
+<td>bytes_ratio</td>
+<td><code>topic_bytes_in</code></td>
+</tr>
+<tr>
+<td><code>KAFKA_NETWORK_READ</code></td>
+<td>bytes_ratio</td>
+<td><code>topic_bytes_out</code></td>
+</tr>
+<tr>
+<td><code>KAFKA_STORAGE</code></td>
+<td>retained_bytes_ratio</td>
+<td><code>topic_retained_bytes</code></td>
+</tr>
+<tr>
+<td><code>KAFKA_PARTITION</code></td>
+<td>even_split</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>KAFKA_BASE</code></td>
+<td>even_split</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>KAFKA_NUM_CKU</code> / <code>KAFKA_NUM_CKUS</code></td>
+<td>bytes_ratio</td>
+<td><code>topic_bytes_in</code> + <code>topic_bytes_out</code></td>
+</tr>
+</tbody>
+</table>
+<p>For bytes_ratio product types, if Prometheus returns all-zero values, the
+<code>missing_metrics_behavior</code> setting determines the fallback.</p>
+<h3 id="topic-attribution-retry-behavior">Topic attribution retry behavior<a class="headerlink" href="#topic-attribution-retry-behavior" title="Permanent link">&para;</a></h3>
+<p>When Prometheus is unreachable for a cluster, the pipeline leaves that date pending and retries on the next run. The per-billing-line attempt count is stored in <code>billing.topic_attribution_attempts</code> (migration 016).</p>
+<p>Once all billing lines for a cluster reach <code>topic_attribution_retry_limit</code> attempts without a successful metrics fetch, the pipeline produces sentinel rows instead of retrying indefinitely:</p>
+<ul>
+<li><code>topic_name</code>: <code>__UNATTRIBUTED__</code></li>
+<li><code>attribution_method</code>: <code>ATTRIBUTION_FAILED</code></li>
+<li><code>amount</code>: full cluster cost (no money is silently lost)</li>
+</ul>
+<p>The date is marked calculated only when every cluster is resolved — either with real attribution rows, empty metrics, or sentinel rows. Clusters still below the retry limit return pending and do not block other clusters from being marked.</p>
+<p>To identify sentinel rows in the database or API:</p>
+<p><code>sql
+SELECT * FROM topic_attribution_facts
+JOIN topic_attribution_dimensions USING (dimension_id)
+WHERE attribution_method = 'ATTRIBUTION_FAILED';</code></p>
+<h2 id="emitters">Emitters<a class="headerlink" href="#emitters" title="Permanent link">&para;</a></h2>
+<p><code>yaml
+emitters:
+  - type: csv
+    aggregation: daily       # rows aggregated to daily before writing
+    params:
+      output_dir: /data/csv
+      filename_template: "{tenant_id}_{date}.csv"</code></p>
+<p><code>aggregation</code> options: <code>null</code> (as-is), <code>hourly</code>, <code>daily</code>, <code>monthly</code>.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.sections", "navigation.top", "navigation.indexes", "navigation.expand", "search.suggest", "search.highlight", "content.code.copy"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+        <script src="../../javascripts/external-links.js"></script>
+      
+    
+  </body>
+</html>
