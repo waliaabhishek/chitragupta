@@ -148,7 +148,7 @@ export function AppLayout({
         >
           {!collapsed && (
             <Title level={5} style={{ margin: 0, color: "#1677ff" }}>
-              Chargeback
+              Chitragupta
             </Title>
           )}
         </div>
