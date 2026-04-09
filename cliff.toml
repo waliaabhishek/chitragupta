@@ -19,7 +19,7 @@ body = """
 {% for group, commits in commits | group_by(attribute="group") %}
 ### {{ group | upper_first }}
 {% for commit in commits %}\
-- {{ commit.message | upper_first | trim }} \
+- {{ commit.message | split(pat="\n") | first | upper_first | trim }} \
 ([{{ commit.id | truncate(length=7, end="") }}](https://github.com/waliaabhishek/chitragupta/commit/{{ commit.id }}))\
 {% if commit.breaking %} **BREAKING**{% endif %}
 {% endfor %}
@@ -31,6 +31,10 @@ footer = ""
 [git]
 conventional_commits = false
 filter_unconventional = false
+# Collapse RC tags into the next final release. Matches both `-rc` (current
+# convention) and the historical one-off `.rc` separator. Commits made during
+# the RC cycle roll forward into the final release section.
+ignore_tags = "v.*[.-]rc[0-9]+"
 commit_parsers = [
   { message = "^[Ff]eat[:(]", group = "Added" },
   { message = "^[Aa]dd[:(]", group = "Added" },
