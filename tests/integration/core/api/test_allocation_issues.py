@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from fastapi.testclient import TestClient  # noqa: TC002
 from sqlmodel import Session  # noqa: TC002
@@ -14,6 +14,8 @@ from core.storage.backends.sqlmodel.tables import (
 )
 from core.storage.backends.sqlmodel.unit_of_work import SQLModelBackend  # noqa: TC001
 
+_RECENT_TS = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=1)
+
 
 def _insert_row(
     session: Session,
@@ -25,7 +27,7 @@ def _insert_row(
     identity_id: str = "sa-1",
     cost_type: str = CostType.USAGE.value,
     allocation_detail: str | None,
-    timestamp: datetime = datetime(2026, 3, 10, tzinfo=UTC),
+    timestamp: datetime = _RECENT_TS,
     amount: str = "10.00",
 ) -> None:
     from sqlmodel import col, select
@@ -136,7 +138,7 @@ class TestAllocationIssuesRoute:
                 uow._session,  # type: ignore[attr-defined]
                 identity_id="sa-fail",
                 allocation_detail=AllocationDetail.NO_IDENTITIES_LOCATED.value,
-                timestamp=datetime(2026, 3, 9, tzinfo=UTC),
+                timestamp=_RECENT_TS - timedelta(days=1),
                 amount="50.00",
             )
             uow.commit()

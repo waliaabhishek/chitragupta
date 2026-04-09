@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from fastapi.testclient import TestClient  # noqa: TC002
 from sqlmodel import Session  # noqa: TC002
@@ -9,7 +9,7 @@ from core.models.chargeback import AllocationDetail, CostType
 from core.storage.backends.sqlmodel.tables import ChargebackDimensionTable, ChargebackFactTable
 from core.storage.backends.sqlmodel.unit_of_work import SQLModelBackend  # noqa: TC001
 
-_TS = datetime(2026, 3, 10, tzinfo=UTC)
+_TS = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=1)
 
 
 def _insert_dimension_with_env(
@@ -108,7 +108,7 @@ class TestAllocationIssuesEnvId:
             _insert_dimension_with_env(
                 uow._session,  # type: ignore[attr-defined]
                 env_id="env-beta",
-                timestamp=datetime(2026, 3, 11, tzinfo=UTC),
+                timestamp=_TS + timedelta(hours=1),
                 **shared_kwargs,
             )
             uow.commit()
