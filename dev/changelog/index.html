@@ -1234,45 +1234,6 @@
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="[Unreleased]">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#changed" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Changed
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#documentation" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Documentation
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#fixed" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Fixed
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
 </li>
       
     </ul>
@@ -1318,45 +1279,6 @@
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="[Unreleased]">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#changed" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Changed
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#documentation" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Documentation
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#fixed" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Fixed
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
 </li>
       
     </ul>
@@ -1384,108 +1306,6 @@
 <p>The format is based on <a href="https://keepachangelog.com/en/1.0.0/">Keep a Changelog</a>,
 and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semantic Versioning</a>.</p>
 <h2 id="unreleased">[Unreleased]<a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
-<h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
-<ul>
-<li>Add Grafana Topic Attribution dashboard with 17 panels</li>
-</ul>
-<p>New provisioned dashboard querying topic_attribution_facts/dimensions
-tables via SQLite, mirroring the Chitragupta UI topic attribution
-analytics. Includes cascading template variables (ecosystem, tenant,
-cluster, topic, product_type) and groupingToMatrix transformations
-for stacked bar charts.</p>
-<p>Panels: stat cards (total cost, topics, clusters, environments),
-treemap (top topics), cost composition by product type, environment
-and cluster breakdowns stacked by top 5 topics, concentration risk
-bar gauge, product type mix (100% stacked), cost by product type pie,
-top topics over time, active topic count, attribution coverage stat
-with attributed vs total Kafka cost overlay, cost breakdown table,
-and zombie topics table. (<a href="https://github.com/waliaabhishek/chitragupta/commit/e696f9baaf8b91574a5ae41cbede7e8eef3fc36e">e696f9b</a>)</p>
-<h3 id="documentation">Documentation<a class="headerlink" href="#documentation" title="Permanent link">&para;</a></h3>
-<ul>
-<li>Docs: Add TopicOverlay stage to architecture mermaid diagram (<a href="https://github.com/waliaabhishek/chitragupta/commit/cdcccc77a5e63d571a0ad1da13c6ea0764fbc014">cdcccc7</a>)</li>
-</ul>
-<h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
-<ul>
-<li>Fix: Replace brittle instanceof Blob check with functional assertions</li>
-</ul>
-<p>The "exportTopicAttributions returns a Blob on success" test asserted
-<code>expect(blob).toBeInstanceOf(Blob)</code>, which compares against jsdom's
-Blob class (installed as globalThis.Blob in the custom vitest
-environment). The object returned by response.blob() is undici's
-native Blob from Node's fetch implementation — a different class
-identity than jsdom's. The instanceof check is therefore fragile
-across Node versions: it passes on Node 25 (local) but fails on
-Node 22 (CI), because the two class identities happen to interop in
-newer Node but not in 22.</p>
-<p>This was a latent failure hidden by the absence of a frontend CI job.
-After adding Frontend quality to ci.yml in the previous commit, the
-first run on main surfaced it immediately.</p>
-<p>Fix: replace the brittle class-identity check with functional
-assertions on the Blob's observable properties — type, size, and
-content. These use only the public Blob interface, which is stable
-across Node versions and works regardless of which realm produced
-the object. The test still verifies exportTopicAttributions returns
-a blob-shaped thing with the expected MIME type and body.</p>
-<p>All 594 frontend tests pass locally with this change. (<a href="https://github.com/waliaabhishek/chitragupta/commit/e5868ec17b7344d0cea595fac8a159f0b62b8f62">e5868ec</a>)
-- Fix: Add frontend lint/typecheck/test/build to CI workflow</p>
-<p>Prior to this change ci.yml only ran Python quality checks (ruff, mypy,
-pytest). Frontend code had zero CI coverage: eslint and vitest were
-never executed, and tsc only ran indirectly via <code>vite build</code> inside the
-release Dockerfile — so type errors were caught at release time but
-lint and test regressions were invisible.</p>
-<p>This is the root cause of how commit 2ac9c71 could land on main with
-13 failing vitest tests: the tests simply were not part of any CI run.</p>
-<p>Adds a parallel <code>frontend</code> job that runs on the same triggers as
-<code>quality</code> (push to main + PRs) and executes npm ci → lint → typecheck
-→ test → build. Uses Node 22 to match the frontend Dockerfile and
-caches npm via setup-node's built-in lockfile-aware cache.</p>
-<p>Also renames the existing Python job to "Backend quality" for symmetry
-and introduces a <code>ci-success</code> aggregator that depends on both quality
-jobs. This gives branch protection a single required status check that
-atomically reflects the workflow outcome — if either stack's checks
-fail, CI Success fails, and neither quality job can be bypassed by
-skipping the other. (<a href="https://github.com/waliaabhishek/chitragupta/commit/da4dfd3a78aee3e6980f9e961adf06846c3d9eab">da4dfd3</a>)
-- Fix: Sync topic attribution chart tests with post-redesign component behavior</p>
-<p>Commit 2ac9c71 redesigned EnvironmentCostChart and TopClustersCostChart
-to horizontal stacked bars with per-entity topic stacking but did not
-update the associated test files, leaving 13 failing tests on main
-(12 in EnvironmentCostChart, 1 in TopClustersCostChart).</p>
-<p>EnvironmentCostChart.test.tsx — full rewrite:
-- Series are now stacked topics per environment (union of per-env top-5
-  topics + Other), not one series per env_id.
-- yAxis is category with env IDs (not topic names); xAxis is value with
-  currency formatter. Updated assertions accordingly.
-- Default height is 300 (was 350 in the pre-redesign layout).
-- Tooltip uses a custom HTML formatter, not valueFormatter — added direct
-  tests for the formatter including zero-value filtering and currency
-  output (preserving the TASK-203 floating-point concern).
-- Added yAxis truncation assertions in place of the obsolete TASK-200
-  xAxis label truncation and dataZoom slider tests.</p>
-<p>TopClustersCostChart.test.tsx — one assertion updated:
-- For the 20-cluster × 6-unique-topic dataset, the per-entity top-5 union
-  produces 6 topics + "Other" = 7 series, not 6. Renamed the test and
-  added a comment explaining the math.</p>
-<p>All 594 frontend tests pass after this change. (<a href="https://github.com/waliaabhishek/chitragupta/commit/48cae4d081fd42be2332ad83f31ddca3a082836c">48cae4d</a>)
-- Fix: Resolve Dependabot security alerts for vite (bump 8.0.0 → 8.0.7)</p>
-<p>Closes three open Dependabot alerts on vite 8.0.0 — two high-severity
-(dev server fs.deny bypass CVE-2026-39364, arbitrary file read via dev
-server WebSocket CVE-2026-39363) and one medium-severity (path traversal
-in optimized deps sourcemap handling CVE-2026-39365). All three are
-patched in 8.0.5; bumping to latest 8.x (8.0.7).</p>
-<p>Impact is limited to the dev server — production builds are unaffected
-— but patching promptly given two highs. Verified build still succeeds
-and npm audit reports 0 vulnerabilities. (<a href="https://github.com/waliaabhishek/chitragupta/commit/dfc3bfd37fba26f0b83386e3a5e67ef32c9df994">dfc3bfd</a>)
-- Fix: Update documentation link in README</p>
-<p>Updated documentation link to point to the latest version. (<a href="https://github.com/waliaabhishek/chitragupta/commit/ce1da52147f3cd8037cdec59cf873197c3953bcc">ce1da52</a>)
-- Fix: Resolve Dependabot security alerts for lodash, lodash-es, and pygments</p>
-<p>Add npm overrides for lodash and lodash-es (^4.18.0) to patch prototype
-pollution and code injection vulnerabilities. Upgrade pygments to 2.20.0
-to fix ReDoS vulnerability. (<a href="https://github.com/waliaabhishek/chitragupta/commit/6cae7bc26a11462d0386dd209849d10bc9f217e3">6cae7bc</a>)
-- Fix: Add node_modules/ to .gitignore</p>
-<p>Prevents frontend dependencies from being tracked in version control. (<a href="https://github.com/waliaabhishek/chitragupta/commit/835d6a4ff8206297cb9fab1fc9e74de476c1daa6">835d6a4</a>)
-- Fix: Add --frozen to uv sync in CI, release, and docs workflows</p>
-<p>Prevents CI from silently resolving new dependency versions when
-uv.lock is out of sync with pyproject.toml. (<a href="https://github.com/waliaabhishek/chitragupta/commit/6ff3c1b80244a38fc6625d3de3f925bc6a9f6438">6ff3c1b</a>)</p>
 
 
 
