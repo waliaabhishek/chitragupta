@@ -17,8 +17,8 @@ services:
       context: ../../
       dockerfile: Dockerfile
     volumes:
-      - ./config.yaml:/app/config/config.yaml:ro
-      - chitragupta-data:/app/data:rw
+      - ./config.dev.yaml:/app/config/config.yaml:ro
+      - ./data:/app/data:rw
     env_file:
       - .env
     command: ["--config-file", "/app/config/config.yaml", "--mode", "both"]
@@ -43,7 +43,7 @@ services:
       GF_INSTALL_PLUGINS: frser-sqlite-datasource,marcusolsson-treemap-panel
     volumes:
       - ../shared/grafana/provisioning:/etc/grafana/provisioning:ro
-      - chitragupta-data:/var/lib/grafana/data/chargeback:ro
+      - ./data:/var/lib/grafana/data/chargeback:ro
     restart: unless-stopped
     depends_on:
       chitragupta:
