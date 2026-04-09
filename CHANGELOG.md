@@ -5,159 +5,444 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.1.0] - 2026-04-09
 
-### Added
-- **TASK-197**: Added informative Ant Design tooltip to the Links toggle switch in the app header, explaining the deep links feature, unsupported resource types (connectors, identity pools), and deleted resource exclusion.
+### Fixed
+- Fix: Updating the config.yaml to config.dev.yaml and using local repo so that SQLite file is readily accessible. ([9c23a2a](https://github.com/waliaabhishek/chitragupta/commit/9c23a2ae0e3317b15ab5fff2c7f3e84b59370c18))
+- Fix: Sidebar title shows Chitragupta instead of Chargeback ([c322f03](https://github.com/waliaabhishek/chitragupta/commit/c322f0338768cc207a05eef1357252db37ffeffc))
+
+
+## [2.1.0-rc2] - 2026-04-09
 
 ### Changed
-- **TASK-194** ⚠️ Breaking API change: `GET /api/v1/tenants`, `GET /api/v1/tenants/{tenant}/status`, and `GET /api/v1/readiness` no longer return `topic_attribution_enabled: boolean`. They now return two fields:
-  - `topic_attribution_status`: `"disabled"` | `"enabled"` | `"config_error"`
-  - `topic_attribution_error`: string or null
+- Add Grafana Topic Attribution dashboard with 17 panels
 
-  The `config_error` state surfaces Confluent Cloud plugin validation failures (e.g., `topic_attribution.enabled: true` set without a `metrics` source). Previously these silently appeared as `topic_attribution_enabled: false`, indistinguishable from intentionally disabled. The frontend now shows a red "Config error" badge in the sidebar nav and a red alert on the Topic Attribution page when this state is present.
+New provisioned dashboard querying topic_attribution_facts/dimensions
+tables via SQLite, mirroring the Chitragupta UI topic attribution
+analytics. Includes cascading template variables (ecosystem, tenant,
+cluster, topic, product_type) and groupingToMatrix transformations
+for stacked bar charts.
 
-- **Attribution Confidence chart redesign** — Replaced misleading "Attribution Method Confidence" donut with a confidence-framed chart showing a headline metric (percentage of cost attributed via metrics-based methods) and semantic color-coded tiers (High/Medium/Low Confidence mapped to bytes_ratio/retained_bytes_ratio/even_split). (TASK-201)
+Panels: stat cards (total cost, topics, clusters, environments),
+treemap (top topics), cost composition by product type, environment
+and cluster breakdowns stacked by top 5 topics, concentration risk
+bar gauge, product type mix (100% stacked), cost by product type pie,
+top topics over time, active topic count, attribution coverage stat
+with attributed vs total Kafka cost overlay, cost breakdown table,
+and zombie topics table. ([e696f9b](https://github.com/waliaabhishek/chitragupta/commit/e696f9baaf8b91574a5ae41cbede7e8eef3fc36e))
 
-- **TASK-199**: Redesigned "Cluster Concentration" chart into two focused charts: "Top Clusters by Cost" (horizontal stacked bar showing top 10 clusters by total spend, stacked by top 5 topics + Other) and "Cluster Concentration Risk" (horizontal bar showing concentration percentage per cluster, color-coded green/yellow/red by risk threshold). Replaces the unreadable 71-cluster vertical bar chart. No new API calls — both charts reuse the existing cluster aggregation data.
 
-- **TASK-202**: Improved Cost Velocity (Top Movers) chart clarity — tooltip now shows directional labels (+$X increase / -$X decrease / $0.00 no change) instead of raw signed values, chart displays top 10 topics instead of 5, and a subtitle explains the selection criteria.
+### Documentation
+- Docs: Add TopicOverlay stage to architecture mermaid diagram ([cdcccc7](https://github.com/waliaabhishek/chitragupta/commit/cdcccc77a5e63d571a0ad1da13c6ea0764fbc014))
 
-- **TASK-193**: Pipeline status API (`GET /tenants/{tenant_name}/status`) now defaults to `[today - lookback_days, today]` when no date range is provided, instead of returning all historical records. This scopes the frontend pipeline status table to only show dates the pipeline actively manages, removing stale rows from outside the active processing window.
 
 ### Fixed
-- **Fix:** Environment Cost chart x-axis label overflow — labels now truncated to 20 chars with ellipsis, horizontal scroll via dataZoom slider shows 5-6 topics at a time, chart height bumped to 350px (TASK-200)
+- Fix: Replace hardcoded timestamps with dynamic dates in time-windowed API tests
 
-- **Fix:** Raw floating-point values in ECharts tooltips — CostCompositionChart, EnvironmentCostChart, and TopTopicsChart (bar view) now format tooltip values as currency ($X,XXX.XX) using `valueFormatter`, matching the existing pattern in TopClustersCostChart (TASK-203)
+test_allocation_issues.py and test_gap123_env_id.py hardcoded datetime(2026, 3, 9/10/11)
+for rows inserted before calls to /chargebacks/allocation-issues, which applies a default
+30-day window via resolve_date_range. As the clock advanced past 2026-04-09 UTC, the
+2026-03-09 row fell out of the window and the test started failing in CI.
 
-- **Fix:** Confluent Cloud console deep links for connectors and identity pools disabled — both URL patterns do not resolve to valid pages. `resolveUrl` now returns `null` for these resource types, rendering plain text instead of broken hyperlinks. The `pool-*` prefix fallback is also removed. Temporary measure until correct URL patterns are determined. (TASK-196)
+Replace with the project's existing `datetime.now(UTC) - timedelta(days=N)` convention
+(already used in test_chargebacks.py, test_tags.py, sample_chargeback fixture) so the
+timestamps stay relative to run time. ([66c98c8](https://github.com/waliaabhishek/chitragupta/commit/66c98c8069124b4faf885b4a163f6365101e1e70))
+- Fix: Replace brittle instanceof Blob check with functional assertions
 
-- **Fix:** Retry counters (`allocation_attempts`, `topic_attribution_attempts`) now reset to 0 when a date is re-queued via the recalculation window, preventing permanently stuck sentinel rows after transient infrastructure failures. (TASK-184)
+The "exportTopicAttributions returns a Blob on success" test asserted
+`expect(blob).toBeInstanceOf(Blob)`, which compares against jsdom's
+Blob class (installed as globalThis.Blob in the custom vitest
+environment). The object returned by response.blob() is undici's
+native Blob from Node's fetch implementation — a different class
+identity than jsdom's. The instanceof check is therefore fragile
+across Node versions: it passes on Node 25 (local) but fails on
+Node 22 (CI), because the two class identities happen to interop in
+newer Node but not in 22.
 
-- **Fix:** Topic discovery returning zero topics no longer leaves pipeline dates permanently stuck. `mark_topic_overlay_gathered` is now called unconditionally after a successful gather, regardless of whether any topic resources were returned. Previously, an empty topic list silently skipped the mark, causing the date to remain pending and retry forever. (TASK-183)
+This was a latent failure hidden by the absence of a frontend CI job.
+After adding Frontend quality to ci.yml in the previous commit, the
+first run on main surfaced it immediately.
 
-- **TASK-182**: Resource type filtering is now mandatory on all resource repository read methods. This fixes three bugs: (1) topic resources being falsely marked as deleted during pipeline runs, (2) topic resources inflating Prometheus `chitragupta_resource_active` metric cardinality, (3) topic resources unnecessarily loaded into the chargeback resource cache.
+Fix: replace the brittle class-identity check with functional
+assertions on the Blob's observable properties — type, size, and
+content. These use only the public Blob interface, which is stable
+across Node versions and works regardless of which realm produced
+the object. The test still verifies exportTopicAttributions returns
+a blob-shaped thing with the expected MIME type and body.
 
-- **Fix:** Poison-pill dates with permanently unavailable Prometheus metrics no longer retry forever after TASK-177. Topic attribution now tracks per-billing-line attempt counts (`topic_attribution_attempts` column, migration 016) and caps retries at `topic_attribution_retry_limit` (default 3, range 1–10). When all billing lines for a cluster exhaust the limit, sentinel `TopicAttributionRow` entries are produced (`topic_name=__UNATTRIBUTED__`, `attribution_method=ATTRIBUTION_FAILED`) preserving full cost. The date is marked calculated only when every cluster is resolved (success, empty, or sentinel). Clusters still below the limit return `None`, leaving the date pending for the next run. (TASK-181)
+All 594 frontend tests pass locally with this change. ([e5868ec](https://github.com/waliaabhishek/chitragupta/commit/e5868ec17b7344d0cea595fac8a159f0b62b8f62))
+- Fix: Add frontend lint/typecheck/test/build to CI workflow
 
-- **Fix:** Topic attribution no longer filters Prometheus metric data through the resources table. `_attribute_cluster` now computes the union of resources-table topics and metrics-discovered topics before constructing `TopicAttributionContext`. Topics that Prometheus reports as active during the billing window but that are absent from the resources table (never discovered by gather, or deleted before gather ran) are now correctly included in cost attribution instead of being silently discarded. (TASK-180)
+Prior to this change ci.yml only ran Python quality checks (ruff, mypy,
+pytest). Frontend code had zero CI coverage: eslint and vitest were
+never executed, and tsc only ran indirectly via `vite build` inside the
+release Dockerfile — so type errors were caught at release time but
+lint and test regressions were invisible.
 
-- **Fix:** Topic attribution now uses point-in-time topic membership for historical billing periods instead of current topic inventory. `_get_cluster_topics` queries `find_by_period` with the billing window `[b_start, b_end)` and `parent_id` filtering, so deleted topics that had traffic during the billing period are correctly included, and topics created after the billing period are excluded. `ResourceRepository.find_by_period` gains an optional `parent_id` parameter. (TASK-179)
+This is the root cause of how commit 2ac9c71 could land on main with
+13 failing vitest tests: the tests simply were not part of any CI run.
 
-- **Fix:** Recalculation window now deletes stale topic attribution facts before recompute. Previously, only chargeback rows were deleted, so topics removed between runs could cause silent double-accounting on the next calculation. (TASK-178)
+Adds a parallel `frontend` job that runs on the same triggers as
+`quality` (push to main + PRs) and executes npm ci → lint → typecheck
+→ test → build. Uses Node 22 to match the frontend Dockerfile and
+caches npm via setup-node's built-in lockfile-aware cache.
 
-- **Fix:** Transient Prometheus outages during topic attribution no longer permanently mark affected dates as calculated. `_attribute_cluster` now returns `None` (instead of `[]`) on infrastructure failure, and `run()` skips `mark_topic_attribution_calculated` when any cluster experienced a metrics fetch failure — leaving the date pending for retry on the next pipeline run. (TASK-177)
+Also renames the existing Python job to "Backend quality" for symmetry
+and introduces a `ci-success` aggregator that depends on both quality
+jobs. This gives branch protection a single required status check that
+atomically reflects the workflow outcome — if either stack's checks
+fail, CI Success fails, and neither quality job can be bypassed by
+skipping the other. ([da4dfd3](https://github.com/waliaabhishek/chitragupta/commit/da4dfd3a78aee3e6980f9e961adf06846c3d9eab))
+- Fix: Sync topic attribution chart tests with post-redesign component behavior
 
-- **Chore:** Unified emitter system — one generic `CsvEmitter` and one generic `PrometheusEmitter` now serve all pipelines. Row types (`ChargebackRow`, `TopicAttributionRow`, `BillingEmitRow`, `ResourceEmitRow`, `IdentityEmitRow`) declare `__csv_fields__` and `__prometheus_metrics__` ClassVars; emitters read these at emit time. `PrometheusEmitter` no longer takes `storage_backend` — billing, resource, and identity Prometheus metrics are now emitted via separate `EmitterRunner` instances with dedicated row fetchers (`BillingRowFetcher`, `ResourceRowFetcher`, `IdentityRowFetcher`). `TopicAttributionConfig` now auto-injects `output_dir="/tmp/topic_attribution"` and `filename_template="topic_attr_{tenant_id}_{date}.csv"` for CSV emitter specs under `topic_attribution.emitters` (overridable per-spec). `TopicAttributionEmitterBuilder` and `TopicAttributionCsvEmitter` removed. (TASK-176)
+Commit 2ac9c71 redesigned EnvironmentCostChart and TopClustersCostChart
+to horizontal stacked bars with per-entity topic stacking but did not
+update the associated test files, leaving 13 failing tests on main
+(12 in EnvironmentCostChart, 1 in TopClustersCostChart).
 
-- **Chore:** Replaced runtime `getattr` config probing for topic attribution with typed `OverlayConfig`/`OverlayPlugin` protocols in `src/core/plugin/protocols.py`. Core code (`orchestrator.py`, `workflow_runner.py`) now accesses overlay config via `plugin.get_overlay_config("topic_attribution")` instead of `getattr(getattr(config, "plugin_settings", None), "topic_attribution", None)`. No behavioral change — same config values reached via typed protocol instead of runtime attribute probing. (TASK-175)
-- **Chore:** Removed dead `metrics_available` field from `TopicAttributionContext` and unreachable guard in `TopicUsageRatioModel.attribute()`. The field was always `True` — infra failure is handled at the phase level before context construction. No behavioral change. (TASK-174)
-- **Fix:** Topic attribution CSV export (`POST /topic-attributions/export`) no longer silently truncates results at 100,000 rows or materializes the full result set into memory. The endpoint now uses `iter_by_filters` for true streaming with bounded memory, matching the chargeback export pattern fixed in TASK-026. (TASK-173)
-- **Fix:** Added missing `attribution_method` label to the `chitragupta_topic_attribution_amount` Prometheus gauge. Without this label, topic attribution rows with the same topic but different attribution methods (e.g. `bytes_ratio` vs `even_split`) silently overwrote each other. The Prometheus emitter now matches the CSV emitter's output dimensions. Also fixed test fixture cleanup for `_topic_attribution_col`. (TASK-172)
-- **Fix:** Removed `server_default=""` from `topic_attribution_facts.amount` column — the database now rejects inserts with missing amount values instead of silently storing empty strings, matching the `chargeback_facts` schema pattern. New migration 015 removes the default for existing installs. (TASK-171)
+EnvironmentCostChart.test.tsx — full rewrite:
+- Series are now stacked topics per environment (union of per-env top-5
+  topics + Other), not one series per env_id.
+- yAxis is category with env IDs (not topic names); xAxis is value with
+  currency formatter. Updated assertions accordingly.
+- Default height is 300 (was 350 in the pre-redesign layout).
+- Tooltip uses a custom HTML formatter, not valueFormatter — added direct
+  tests for the formatter including zero-value filtering and currency
+  output (preserving the TASK-203 floating-point concern).
+- Added yAxis truncation assertions in place of the obsolete TASK-200
+  xAxis label truncation and dataZoom slider tests.
+
+TopClustersCostChart.test.tsx — one assertion updated:
+- For the 20-cluster × 6-unique-topic dataset, the per-entity top-5 union
+  produces 6 topics + "Other" = 7 series, not 6. Renamed the test and
+  added a comment explaining the math.
+
+All 594 frontend tests pass after this change. ([48cae4d](https://github.com/waliaabhishek/chitragupta/commit/48cae4d081fd42be2332ad83f31ddca3a082836c))
+- Fix: Resolve Dependabot security alerts for vite (bump 8.0.0 → 8.0.7)
+
+Closes three open Dependabot alerts on vite 8.0.0 — two high-severity
+(dev server fs.deny bypass CVE-2026-39364, arbitrary file read via dev
+server WebSocket CVE-2026-39363) and one medium-severity (path traversal
+in optimized deps sourcemap handling CVE-2026-39365). All three are
+patched in 8.0.5; bumping to latest 8.x (8.0.7).
+
+Impact is limited to the dev server — production builds are unaffected
+— but patching promptly given two highs. Verified build still succeeds
+and npm audit reports 0 vulnerabilities. ([dfc3bfd](https://github.com/waliaabhishek/chitragupta/commit/dfc3bfd37fba26f0b83386e3a5e67ef32c9df994))
+- Fix: Update documentation link in README
+
+Updated documentation link to point to the latest version. ([ce1da52](https://github.com/waliaabhishek/chitragupta/commit/ce1da52147f3cd8037cdec59cf873197c3953bcc))
+- Fix: Resolve Dependabot security alerts for lodash, lodash-es, and pygments
+
+Add npm overrides for lodash and lodash-es (^4.18.0) to patch prototype
+pollution and code injection vulnerabilities. Upgrade pygments to 2.20.0
+to fix ReDoS vulnerability. ([6cae7bc](https://github.com/waliaabhishek/chitragupta/commit/6cae7bc26a11462d0386dd209849d10bc9f217e3))
+- Fix: Add node_modules/ to .gitignore
+
+Prevents frontend dependencies from being tracked in version control. ([835d6a4](https://github.com/waliaabhishek/chitragupta/commit/835d6a4ff8206297cb9fab1fc9e74de476c1daa6))
+- Fix: Add --frozen to uv sync in CI, release, and docs workflows
+
+Prevents CI from silently resolving new dependency versions when
+uv.lock is out of sync with pyproject.toml. ([6ff3c1b](https://github.com/waliaabhishek/chitragupta/commit/6ff3c1b80244a38fc6625d3de3f925bc6a9f6438))
+
+
+## [2.1.0-rc1] - 2026-04-05
 
 ### Added
-- **Feat:** TASK-187 — Show topic attribution as "not configured" when feature is disabled
+- Feat: Change cluster and topic name filters to substring match
 
-  Backend API responses (`GET /api/v1/tenants`, `GET /api/v1/tenants/{tenant}/status`, `GET /api/v1/readiness`) now include `topic_attribution_status` and `topic_attribution_error` fields derived from the tenant's plugin config (superseded from `topic_attribution_enabled` by TASK-194). Frontend uses this signal to:
-  - Show the Topic Attribution pipeline stage as grayed out / "Not configured" in the stepper when disabled
-  - Hide topic overlay columns from the per-date processing table when disabled
-  - Display a "Not configured" badge on the Topic Attribution sidebar nav item when disabled
-  - Show a feature discovery landing page at `/topic-attributions` explaining how to enable it
+Use SQL LIKE (contains) instead of exact equality for cluster_resource_id
+and topic_name filters in both list and aggregation queries. ([2992595](https://github.com/waliaabhishek/chitragupta/commit/29925957097798ceb422a6cde9592fb4bdcf1fc3))
+- Feat: TASK-202 — Improve Cost Velocity chart clarity with descriptive labels, top 10, and subtitle
 
-- **Feat:** TASK-164 — Topic Attribution frontend page and pipeline status update
+Tooltip now shows directional labels (+$X increase / -$X decrease / $0.00 no change)
+instead of raw signed values. Chart displays top 10 topics instead of 5. ChartCard
+gains optional subtitle prop; Cost Velocity card shows selection criteria subtitle. ([3067254](https://github.com/waliaabhishek/chitragupta/commit/30672548424a7470b81f5ed05f284be7044648af))
+- Feat: TASK-201 — Redesign Attribution Method donut into confidence-framed chart
 
-  New `/topic-attributions` page with two tabs:
-  - **Table tab**: Paginated AG Grid of topic attribution rows with filtering by cluster, date range, product type, attribution method, and timezone. CSV export via POST endpoint.
-  - **Analytics tab**: 9 visualization components — Top Topics (treemap/bar toggle), Cost Composition (stacked bar), Cost Velocity (line), Attribution Method Confidence (donut), Zombie Topic Candidates (table), Environment Cost Comparison (grouped bar), Cluster Concentration (stacked bar), Product Type Mix (normalized area), and Pivoted Cost Breakdown (table).
+Replace misleading "Attribution Method Confidence" donut with a
+confidence-framed chart: headline metric showing percentage of cost
+attributed via metrics-based methods, semantic color-coded tiers
+(High/Medium/Low Confidence), and custom tooltip with tier name,
+method, dollar amount, and percentage. ([5d3d1e0](https://github.com/waliaabhishek/chitragupta/commit/5d3d1e03bdc96080a99c9f2ce1ec86b17be74771))
+- Feat: TASK-199 — Redesign Cluster Concentration into two charts
 
-  Pipeline status page extended with `topic_overlay` as a 4th stage in the workflow stepper, plus `Topic Overlay Gathered` and `Topic Attribution Calculated` columns in the per-date processing grid.
+Replace the unreadable 71-cluster vertical bar chart with two focused
+horizontal bar charts: "Top Clusters by Cost" (top 10 clusters stacked
+by top 5 topics + Other) and "Cluster Concentration Risk" (concentration
+percentage per cluster, color-coded green/yellow/red by risk threshold).
+Both charts reuse the existing clusterData aggregation — no new API calls. ([3912266](https://github.com/waliaabhishek/chitragupta/commit/39122663ef0c58c22702f2514aa88be10142cdfa))
+- Feat: TASK-197 — Add informative tooltip to Links toggle switch in app header
 
-- **Feat:** TASK-186 — Confluent Cloud console deep-link rendering
+Wrap the Links Switch in Layout.tsx with an Ant Design Tooltip explaining
+the deep links feature, unsupported resource types (connectors, identity
+pools), and deleted resource exclusion. Removes the basic HTML title
+attribute in favor of the richer Tooltip overlay. ([672a377](https://github.com/waliaabhishek/chitragupta/commit/672a377f0b5a74b7eabad55058c4c4ce2fea6288))
+- Feat: TASK-195 — Fix and expand Confluent Cloud console deep links
 
-  Resource identifiers (environment IDs, cluster IDs, topic names, service account IDs) across all UI views now render as clickable hyperlinks to the corresponding Confluent Cloud console page. Links open in a new tab. A "Links" toggle in the header enables/disables deep-links (off by default, persisted via localStorage). Deleted resources are excluded from link resolution. Covers: resources, billing, chargebacks, topic attribution, allocation issues, identities grids and detail drawers.
+Fix 2 wrong URLs (service account, schema registry) and add 6 missing
+deep link types (user, identity provider, identity pool, API key,
+Flink compute pool, ksqlDB cluster). Expand ResourceLinkContext to
+fetch identities from /identities API for prefix-less API key resolution.
+ResourceEntry now includes metadata for ksqlDB kafka_cluster_id lookup. ([06a53c1](https://github.com/waliaabhishek/chitragupta/commit/06a53c1b9a1c36c143e12135ffdbe446cdbd4994))
+- Feat: TASK-194 — Replace topic_attribution_enabled bool with rich status signal
 
-- Feat: TASK-168 — Generalize `EmitterRunner` for pipeline-agnostic emission tracking
+Replace the boolean topic_attribution_enabled field across API schemas
+with topic_attribution_status (disabled|enabled|config_error) and
+topic_attribution_error (string|null). This surfaces config validation
+errors (e.g., topic attribution enabled without metrics source) through
+the API instead of silently returning false. Frontend now shows distinct
+UI states: disabled (gray badge), config_error (red badge + error alert),
+and enabled (data page).
 
-  `EmitterRunner` is now pipeline-agnostic via constructor-injected protocols:
-  `PipelineDateSource`, `PipelineRowFetcher` / `PipelineAggregatedRowFetcher`,
-  and `PipelineEmitterBuilder`. The `pipeline` parameter acts as a discriminator
-  so chargeback and topic attribution emission records coexist without collision.
+Breaking API change: /tenants, /tenants/{name}/status, and /readiness
+endpoints return new fields instead of topic_attribution_enabled. ([7f735a6](https://github.com/waliaabhishek/chitragupta/commit/7f735a6fe387da72ebaeedfba8181957e8e6ab20))
+- Feat: TASK-193 — Pipeline status API defaults to lookback window when no date range provided
 
-  Changes:
-  - `EmitterRunner.__init__` now accepts `date_source`, `row_fetcher`,
-    `emitter_builder`, and `pipeline` in place of direct storage coupling
-  - `EmissionRecord` gains a `pipeline` field; `emission_records` table gains
-    a `pipeline` column (migration 014, default `"chargeback"`)
-  - `get_emitted_dates` / `get_failed_dates` are now pipeline-scoped
-  - `ChargebackDateSource`, `ChargebackRowFetcher`, and `RegistryEmitterBuilder`
-    in `core/emitters/sources.py` provide the concrete chargeback implementations
-  - Topic attribution emission now uses the same idempotency loop: skips
-    already-emitted dates, retries failed dates, and respects `lookback_days`
-  - `TopicAttributionEmitterRunner` deleted — superseded by the generalized runner
+Default range for GET /tenants/{tenant_name}/status changed from
+[2000-01-01, 9999-12-31] to [today - lookback_days, today] when no
+start_date/end_date query params are given. Explicit date params
+are unaffected. Test fixtures updated to use dynamic dates. ([7bdf693](https://github.com/waliaabhishek/chitragupta/commit/7bdf693809fa83f174000be2e194f0e176fc003a))
+- Feat: TASK-187 — Show topic attribution as "not configured" when feature is disabled
 
-- Feat: TASK-165 — Topic attribution overlay for Confluent Cloud
+Expose topic_attribution_enabled boolean in API responses so frontend
+can render topic attribution as discoverable-but-unconfigured rather
+than appearing stuck/broken for tenants without the feature enabled. ([68e639b](https://github.com/waliaabhishek/chitragupta/commit/68e639b33ca5c8c37e7c5da651338ec70265423c))
+- Feat: TASK-186 — Confluent Cloud console deep-link rendering
 
-  Adds a new optional pipeline stage (`topic_overlay`) that attributes Kafka
-  cluster billing costs down to individual topics using Prometheus metrics.
-  Enabled via `plugin_settings.topic_attribution.enabled: true` in CCloud
-  tenant config.
+Resource identifiers (environment IDs, cluster IDs, topic names, service
+account IDs) across all UI views now render as clickable hyperlinks to
+the corresponding Confluent Cloud console page. Links open in a new tab.
+A "Links" toggle in the header enables/disables deep-links (off by
+default, persisted via localStorage). Deleted resources are excluded from
+link resolution. Covers: resources, billing, chargebacks, topic
+attribution, allocation issues, identities grids and detail drawers. ([89cd317](https://github.com/waliaabhishek/chitragupta/commit/89cd317d58e03d1d2791486206565393d3ba7f7f))
+- Feat: TASK-164 — Topic Attribution frontend page and pipeline status update
 
-  New features:
-  - `TopicAttributionPhase`: computes per-topic cost rows for each Kafka
-    billing line using a configurable chain model (bytes_ratio →
-    even_split fallback)
-  - Default cost mappings for `KAFKA_NETWORK_WRITE`, `KAFKA_NETWORK_READ`,
-    `KAFKA_STORAGE`, `KAFKA_PARTITION`, `KAFKA_BASE`, `KAFKA_NUM_CKU/CKUS`
-  - `topic_attribution` config block with `exclude_topic_patterns`,
-    `missing_metrics_behavior`, `cost_mapping_overrides`,
-    `metric_name_overrides`, `retention_days`, and `emitters`
-  - 4 new API endpoints under `/api/v1/tenants/{name}/topic-attributions`:
-    list, aggregate, dates, and CSV export
-  - Database migration 012 adds `topic_attribution_dimensions` and
-    `topic_attribution_facts` star-schema tables
-  - `TopicAttributionConfigProtocol` in `core/` keeps plugin config decoupled
-    from core attribution models (DIP-compliant)
+New /topic-attributions page with Table tab (paginated AG Grid with
+filters, CSV export) and Analytics tab (9 visualization components:
+Top Topics, Cost Composition, Cost Velocity, Attribution Method
+Confidence, Zombie Topics, Environment Cost Comparison, Cluster
+Concentration, Product Type Mix, Pivoted Cost Breakdown).
+
+Pipeline status page extended with topic_overlay as 4th workflow
+stepper stage plus Topic Overlay Gathered and Topic Attribution
+Calculated columns in per-date processing grid.
+
+Also fixes pre-existing eslint-disable placement in filter hooks
+and adds coverage tests for previously untested hooks. ([eca7365](https://github.com/waliaabhishek/chitragupta/commit/eca73653074b22a852452988eba6e57562317ad2))
+- Feat: TASK-165 — Backend topic attribution overlay for CCloud Kafka
+
+Add topic attribution as an analytical overlay that distributes
+cluster-level Kafka billing costs to individual topics using
+Prometheus topic-level metrics (received_bytes, sent_bytes,
+retained_bytes). Runs as an optional post-chargeback pipeline
+stage with its own star schema, composable attribution models
+(usage ratio, even split, chain fallback), 4 API endpoints,
+and configurable retention. ([919cc42](https://github.com/waliaabhishek/chitragupta/commit/919cc42a68b78773389577ce74c3f43c17544869))
+
+
+### Documentation
+- Docs: TASK-192 — Fill topic attribution documentation gaps across repository
+
+Add topic attribution mentions to 14 doc files and 3 example configs that
+previously had no coverage, closing the discovery gap for CCloud users. ([4b87a56](https://github.com/waliaabhishek/chitragupta/commit/4b87a5686408bd711ab6bb2e802e7fe12f35dd70))
+
 
 ### Fixed
-- Fix: TASK-170 — Topic discovery queries now respect `metric_name_overrides`
+- Fix: Redesign Environment Cost and Top Clusters charts with per-entity topic stacking
 
-  Topic discovery (`gather_topic_resources`) was querying hardcoded Confluent metric names,
-  silently ignoring any `topic_attribution.metric_name_overrides` configured by the user.
-  Discovery and attribution were resolving different metric names, so overrides only took
-  effect for attribution — not for discovering which topics exist.
+Environment Cost chart was a grouped bar with one series per environment per topic,
+causing thin illegible bars and tooltip overflow. Redesigned as horizontal stacked bar
+grouped by environment, with per-env top 5 topics stacked. Same per-entity topic
+selection applied to Top Clusters chart. Both tooltips now filter zero-value entries. ([2ac9c71](https://github.com/waliaabhishek/chitragupta/commit/2ac9c71eba168a6fdfa15ddc3a547ad39fb812bb))
+- Fix: Add notMerge to all ECharts instances and remove misleading Attribution Confidence chart
 
-  `build_discovery_queries` now delegates to `build_metric_queries` (the single source of
-  truth for `_DEFAULT_METRIC_NAMES` and `_QUERY_TEMPLATES`) and renames keys with a `disc_`
-  prefix. Both phases now use the same resolved metric names.
+ECharts merge-updates were accumulating stale series across re-renders,
+causing duplicate tooltip entries (e.g. PNR-DLQ appearing 8x). Adding
+notMerge ensures full option replacement on each render.
 
-- Fix: TASK-169 — Config validation rejects `topic_attribution.enabled: true` without a `metrics` source
+Also removes the Attribution Confidence donut — it incorrectly marks
+intentional even_split product types (KAFKA_BASE, KAFKA_PARTITION) as
+low confidence, inflating the red slice. Needs backend work to
+distinguish designed vs fallback even_split before re-enabling. ([738e06a](https://github.com/waliaabhishek/chitragupta/commit/738e06a10a65fbc3639cfc36016884feb5b77d03))
+- Fix: Environment Cost legend overflow and remove misleading Other from Top Topics
 
-  Previously, enabling topic attribution without a configured Prometheus metrics source was silently
-  accepted. `TopicAttributionPhase._fetch_topic_metrics()` returned `{}` (empty), which the caller
-  treated as "healthy but no data" and proceeded to produce even-split attribution rows based on zero
-  metric data — indistinguishable from a legitimate empty cluster.
+Use scrollable legend in Environment Cost chart to prevent dozens of
+environment entries from burying the chart. Filter out the Other bucket
+from Top Topics treemap/bar since it aggregates all remaining topics
+and always dominates the view. ([30a1b4d](https://github.com/waliaabhishek/chitragupta/commit/30a1b4d83aac9ff9e185f01796b008f550f6814e))
+- Fix: TASK-203 — Fix raw floating-point values in ECharts tooltips across topic attribution charts
 
-  A new `@model_validator` on `CCloudPluginConfig` now raises `ValidationError` at load time when
-  `topic_attribution.enabled=True` and `metrics` is `None`. `_fetch_topic_metrics()` also raises
-  `RuntimeError` if somehow called without a metrics source, making the invariant violation loud
-  rather than silent.
+Add valueFormatter to tooltip configs in CostCompositionChart, EnvironmentCostChart,
+and TopTopicsChart (bar view) so tooltips display formatted currency ($X,XXX.XX)
+instead of raw JavaScript floats. Matches the existing pattern in TopClustersCostChart. ([3fb7b8f](https://github.com/waliaabhishek/chitragupta/commit/3fb7b8f59f5880e9f18a4340770a8a93f8fe4ae0))
+- Fix: TASK-200 — Fix Environment Cost chart label overflow with scrollable x-axis
 
-- Fix: TASK-167 — Remove duplicated `_distribute_remainder` from `topic_attribution_models.py`
+Truncate x-axis labels to 20 chars with ellipsis, add ECharts dataZoom
+slider showing 5-6 topics at a time, bump default height to 350px, and
+adjust legend/grid spacing to prevent overlap. ([d5588d5](https://github.com/waliaabhishek/chitragupta/commit/d5588d55f836b65ad91cad72433592fbaa16bcc3))
+- Fix: TASK-198 — Fix Topic Attribution table not displaying data (AG Grid 0px height)
 
-  The local copy used an unbounded `while diff != 0` loop, which could hang forever on
-  sub-cent precision edge cases. Now imports the bounded version from `helpers.py`
-  (fixed in TASK-120), which raises `RuntimeError` after `len(amounts) * 2` iterations.
+Replace Ant Design <Tabs> layout wrapper with <Segmented> switcher and
+conditional rendering so TopicAttributionGrid and TopicAttributionAnalytics
+are direct flex children of the page container — matching the pattern used
+by every other grid page. The <Tabs> component injected display:block
+wrapper divs that broke the flex chain, causing AG Grid to render at 0px. ([6f4da56](https://github.com/waliaabhishek/chitragupta/commit/6f4da561667b7c3f2b1747f1c84aeb8a860b9a80))
+- Fix: TASK-196 — Disable broken Confluent Cloud deep links for connectors and identity pools
 
-- Fix: TASK-166 — Fix `attribution_method` nullable constraint in topic attribution schema
+Connector and identity pool URLs do not resolve to valid Confluent Cloud
+console pages. Remove the three code paths that generated these broken
+links so resolveUrl returns null, rendering plain text instead of broken
+hyperlinks. Temporary measure until correct URL patterns are determined. ([6c6999e](https://github.com/waliaabhishek/chitragupta/commit/6c6999e3697947359ad51053e9e78139e7cc0f31))
+- Fix: TASK-184 — Retry counters reset when dates re-enter processing queue via recalculation window
 
-  The `attribution_method` column in `topic_attribution_dimensions` was
-  `nullable=True`, making the unique constraint `uq_topic_attribution_dimensions`
-  ineffective on PostgreSQL (NULL != NULL). Changed to `NOT NULL DEFAULT ''`
-  across ORM, baseline migration 012, and new migration 013. Removes the
-  defensive `or ""` guard in the repository read path.
+Allocation and topic attribution attempt counters now reset to 0 when
+_apply_recalculation_window re-queues a date, preventing permanently
+stuck sentinel rows after transient infrastructure failures. ([a86aed0](https://github.com/waliaabhishek/chitragupta/commit/a86aed0179b63421f0e369187e21969477014855))
+- Fix: TASK-183 — Zero-topic discovery no longer leaves pipeline dates permanently stuck
 
----
+Remove the `if topic_resources:` guard so mark_topic_overlay_gathered runs
+unconditionally after successful discovery. Empty list is a valid outcome,
+not a failure — dates now correctly enter the attribution queue. ([1a8ac87](https://github.com/waliaabhishek/chitragupta/commit/1a8ac8765f0662316df10e6493b638f226e7b0b3))
+- Fix: TASK-182 — Resource type filtering now mandatory on resource repository read methods
+
+Makes resource_type a required parameter (str | Sequence[str]) on find_active_at,
+find_by_period, find_paginated, and find_by_parent. Fixes three bugs: (1) deletion
+detection falsely marking topic resources as deleted, (2) topics inflating Prometheus
+chitragupta_resource_active metric cardinality, (3) topics loaded into chargeback
+resource cache unnecessarily. Adds gathered_resource_types to ServiceHandler protocol,
+billing_resource_types to EcosystemBundle, and _apply_resource_type_filter SQL helper
+with literal(False) safety for empty sequences. ([afc40a4](https://github.com/waliaabhishek/chitragupta/commit/afc40a4f3a19b113da27914d39f4cc8e61db6c30))
+- Fix: TASK-181 — Topic attribution retry cap prevents poison-pill infinite retries
+
+Adds per-billing-line retry tracking (topic_attribution_attempts column) and
+configurable topic_attribution_retry_limit (default 3). When retries are
+exhausted, sentinel TopicAttributionRow entries (ATTRIBUTION_FAILED) preserve
+full cost instead of silently dropping data. Dates are only marked calculated
+when all clusters are resolved. ([0d9bce1](https://github.com/waliaabhishek/chitragupta/commit/0d9bce189a91d68a8634f1e3b09f7d830f571df0))
+- Fix: TASK-180 — Topic attribution no longer filters Prometheus metrics through resources table
+
+_attribute_cluster now computes the union of resources-table topics and
+metrics-discovered topics before constructing TopicAttributionContext.
+Topics that Prometheus reports as active during the billing window but
+absent from the resources table are correctly included in cost attribution
+instead of being silently discarded. ([7c0fcde](https://github.com/waliaabhishek/chitragupta/commit/7c0fcdee105ce083bec7ff18943d66378b259b61))
+- Fix: TASK-179 — Topic attribution uses point-in-time topic membership instead of current inventory
+
+_get_cluster_topics now queries find_by_period with billing window [b_start, b_end)
+and parent_id filtering, so deleted topics with historical traffic are included and
+topics created after the billing period are excluded. ResourceRepository.find_by_period
+gains an optional parent_id parameter. ([cdbb830](https://github.com/waliaabhishek/chitragupta/commit/cdbb830416baf1be8f832d3c95eead4f614a2e79))
+- Fix: TASK-178 — Recalculation window now deletes stale topic attribution facts before recompute
+
+Previously, _apply_recalculation_window() deleted chargeback rows but not
+topic attribution facts. Rows for deleted topics survived indefinitely,
+causing silent double-accounting in queries and exports. ([b0f708f](https://github.com/waliaabhishek/chitragupta/commit/b0f708fc8cd4b4dd6900f39f4769d93ff9aa4d62))
+- Fix: TASK-177 — Transient topic-attribution failures no longer silently marked as calculated
+
+_attribute_cluster now returns None (instead of []) when _fetch_topic_metrics
+reports infrastructure failure, and run() skips mark_topic_attribution_calculated
+when any cluster returned None — leaving the date pending for retry. ([771322a](https://github.com/waliaabhishek/chitragupta/commit/771322a34b591e3fbb609a81458f8819ecac59db))
+- Fix: TASK-176 — Unify emitter plugins to be row-type-agnostic across all pipelines
+
+Row types now declare __csv_fields__ and __prometheus_metrics__ ClassVars.
+One generic CsvEmitter and one generic PrometheusEmitter serve all pipelines
+(chargeback, topic attribution, future stages) without per-pipeline subclasses.
+
+PrometheusEmitter no longer queries storage_backend internally — billing,
+resource, and identity metrics are decomposed into separate EmitterRunner
+streams with dedicated row fetchers (BillingRowFetcher, ResourceRowFetcher,
+IdentityRowFetcher). TopicAttributionEmitterBuilder and
+TopicAttributionCsvEmitter deleted; all pipelines use RegistryEmitterBuilder.
+
+Adding a new pipeline now requires only a row dataclass with descriptors +
+a DateSource + a RowFetcher — zero emitter code changes. ([cf04688](https://github.com/waliaabhishek/chitragupta/commit/cf046889ab6a7381d3d75766bf41ba11cfff2f37))
+- Fix: TASK-175 — Replace getattr config probing with typed overlay config protocol
+
+Add OverlayConfig and OverlayPlugin protocols to core/plugin/protocols.py,
+following the TopicDiscoveryPlugin pattern. ConfluentCloudPlugin implements
+get_overlay_config returning TopicAttributionConfig for "topic_attribution".
+All 3 getattr chains removed from orchestrator.py and workflow_runner.py —
+core code now accesses overlay config via isinstance(plugin, OverlayPlugin)
+checks. No behavioral change. ([516aeb0](https://github.com/waliaabhishek/chitragupta/commit/516aeb0f23d2a1939da5c33af103a626729a1828))
+- Fix: TASK-174 — Remove metrics_available dead code from topic attribution
+
+Remove the always-True metrics_available field from TopicAttributionContext
+and the unreachable guard in TopicUsageRatioModel.attribute(). Infra failure
+is handled at the phase level before context construction, making this field
+impossible to be False. No behavioral change. ([d61a174](https://github.com/waliaabhishek/chitragupta/commit/d61a17424cfae8e4aeb383a37063d23c61a42e19))
+- Fix: TASK-173 — Topic attribution export uses true streaming with iter_by_filters
+
+Replace find_by_filters(limit=100_000) with iter_by_filters() in the topic
+attribution CSV export endpoint, eliminating silent truncation and memory
+spikes. Adds iter_by_filters to the TopicAttributionRepository protocol and
+SQLModel implementation using yield_per/partitions pattern. Extracts shared
+_build_ta_where helper to DRY filter logic across find_by_filters and
+iter_by_filters. ([5609a1f](https://github.com/waliaabhishek/chitragupta/commit/5609a1f128a3407ebc79ef61652b56305d829ac8))
+- Fix: TASK-172 — Add attribution_method label to Prometheus topic attribution gauge
+
+The chitragupta_topic_attribution_amount gauge was missing the
+attribution_method label, causing rows with different attribution
+methods (bytes_ratio, even_split) to silently overwrite each other.
+Added the label to the gauge definition and sample construction,
+matching the CSV emitter's output dimensions. Fixed test fixture
+cleanup for _topic_attribution_col. ([d3b6e16](https://github.com/waliaabhishek/chitragupta/commit/d3b6e16aa5862b7a86c2b8a29968f9cc9fdb00c1))
+- Fix: TASK-171 — Remove server_default from topic_attribution_facts.amount column
+
+Removes server_default="" from the amount column in migration 012 and adds
+migration 015 to drop the default for existing installs, aligning with the
+chargeback_facts schema pattern where missing amounts cause NOT NULL violations
+instead of silently storing empty strings. ([c0db7c4](https://github.com/waliaabhishek/chitragupta/commit/c0db7c44b6f13aabdf202cfb5fb812e7638942ab))
+- Fix: TASK-170 — Topic discovery queries now respect metric_name_overrides
+
+Discovery was querying hardcoded Confluent metric names, silently ignoring
+metric_name_overrides config. Both discovery and attribution now resolve
+metric names through the same build_metric_queries function. ([7cff7d0](https://github.com/waliaabhishek/chitragupta/commit/7cff7d0dd7b25e077d88d61d8afbd6b4070b0057))
+- Fix: TASK-169 — Fail config validation when topic attribution enabled without Prometheus
+
+Add cross-field model_validator on CCloudPluginConfig that rejects
+topic_attribution.enabled=True without a configured metrics source,
+preventing silent even-split attribution from zero data. Replace the
+dead return {} path in _fetch_topic_metrics() with RuntimeError for
+defense-in-depth. ([ebb0982](https://github.com/waliaabhishek/chitragupta/commit/ebb0982748f7fa4f4ceba5a54dbb6f23c092e3af))
+- Fix: TASK-168 — Generalize EmitterRunner for pipeline-agnostic emission tracking
+
+Generalize EmitterRunner to accept pluggable date-source, row-fetcher, and
+emitter-builder protocols instead of hardcoding chargeback repository calls.
+Add pipeline discriminator column to EmissionRecord so chargeback and topic
+attribution emissions don't collide. Topic attribution now gets idempotent
+emission tracking (skip already-emitted dates, retry failed, lookback_days).
+Delete TopicAttributionEmitterRunner. Migration 014 adds pipeline column. ([e1b6bb4](https://github.com/waliaabhishek/chitragupta/commit/e1b6bb4c7c543605f3ec9cdfc24f85838e501b95))
+- Fix: TASK-167 — Remove duplicated _distribute_remainder from topic attribution models
+
+Delete local _distribute_remainder (unbounded while loop) and _CENT constant
+from topic_attribution_models.py; import the bounded version from helpers.py
+that raises RuntimeError on non-convergence (fixed in TASK-120). ([90de49d](https://github.com/waliaabhishek/chitragupta/commit/90de49da3278f333dbc1f8f756f3a3281fa69eff))
+- Fix: TASK-166 — Fix attribution_method nullable constraint in topic attribution schema
+
+attribution_method was nullable=True in migration 012 and str | None in the
+ORM, making uq_topic_attribution_dimensions ineffective on PostgreSQL
+(NULL != NULL). Changed to NOT NULL DEFAULT '' across ORM (tables.py),
+baseline migration 012, and new migration 013 (with SQLite table-copy /
+PostgreSQL ALTER COLUMN). Removed defensive or "" guard in repository
+read path. Adds 3 new schema tests. ([0bc3994](https://github.com/waliaabhishek/chitragupta/commit/0bc399407ff30068c038ba9a9597284f5358c3de))
+- Fix: TASK-165 — Add missing emitters, retention wiring, and pipeline status schema
+
+Complete the topic attribution implementation:
+- AC-10: TopicAttributionCsvEmitter, TopicAttributionEmitterRunner
+  with registry-based dispatch, PrometheusEmitter.emit_topic_attributions()
+- AC-12: Wire topic attribution retention cleanup in _cleanup_retention()
+  using separate topic_attribution.retention_days (default 90)
+- AC-7: Expose topic_overlay_gathered and topic_attribution_calculated
+  in PipelineStateResponse schema for frontend pipeline status page
+- Add E2E integration tests, emitter tests, retention tests ([402db30](https://github.com/waliaabhishek/chitragupta/commit/402db30bd1a5b902b17389b44f765ab0e9c23579))
+- Fix: Resolve Dependabot alerts for path-to-regexp and brace-expansion
+
+Override path-to-regexp to 8.4.0 to fix CVE-2026-4926 (High) and
+CVE-2026-4923 (Medium). Bump brace-expansion via lockfile to patched
+versions (1.1.13, 2.0.3, 5.0.5). ([a650b7e](https://github.com/waliaabhishek/chitragupta/commit/a650b7e9725684b8f7c443af11d73abc0b8a1aff))
+
 
 ## [2.0.0] - 2026-03-27
 
