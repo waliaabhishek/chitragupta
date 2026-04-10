@@ -370,6 +370,8 @@ class ChargebackRepository(Protocol):
         resource_id: str | None = None,
         cost_type: str | None = None,
         limit: int | None = None,
+        tag_group_by: list[str] | None = None,  # tag keys to group by
+        tag_filters: dict[str, list[str]] | None = None,  # {tag_key: [values]} ANDed
     ) -> list[AggregationRow]:
         """Server-side aggregation with GROUP BY. Returns pre-aggregated buckets."""
         ...

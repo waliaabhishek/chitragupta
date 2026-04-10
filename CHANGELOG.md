@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Add `resource_id` column to `topic_attribution_dimensions` table (migration 017). Backfills existing rows as `cluster_resource_id || ':topic:' || topic_name` and populates on new writes via `_get_or_create_dimension`. Enables symmetric tag-based joins with `entity_tags` for the upcoming ownership-pivot feature (TASK-214/215).
+- Add tag-based GROUP BY to chargeback aggregate endpoint (TASK-214). `group_by=tag:{key}` groups results by an entity tag value; rows with no matching tag land in an `UNTAGGED` bucket. Multiple `tag:` group_by values produce tuple buckets. Tag dimensions appear in `AggregationRow.dimensions` as `{"tag:owner": "team-commerce"}`. Resource tag takes precedence over identity tag on key collision, matching existing list-endpoint behavior.
+- Add tag-based WHERE filtering to chargeback aggregate endpoint (TASK-214). Dynamic `tag:{key}={value}` query params filter rows by tag value before aggregation. Comma-separated values in a single param are OR-matched within one key; multiple tag params are AND-matched across keys. Untagged rows are excluded from filtered results.
+- Add `src/core/utils/tag_validation.py` — layer-neutral `is_valid_tag_key()` utility used by the route layer for tag key validation. Tag keys must match `^[a-zA-Z0-9][a-zA-Z0-9_-]{0,62}$`.
+- Add `src/core/storage/backends/sqlmodel/tag_joins.py` — `TagJoinSpec` dataclass and `build_tag_join_specs()` helper that builds aliased LEFT JOIN pairs for each tag key. Designed for reuse by TASK-215 (topic attribution aggregate) via `identity_id_col=None` for resource-only entities.
 
 
 ## [2.1.0] - 2026-04-09

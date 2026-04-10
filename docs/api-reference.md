@@ -155,7 +155,7 @@ Multi-dimensional aggregation with time bucketing. Returns up to 10,000 buckets.
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `group_by` | list[string] | `["identity_id"]` | Columns to group by (repeatable) |
+| `group_by` | list[string] | `["identity_id"]` | Columns or tag keys to group by (repeatable). Use `tag:{key}` for tag-based grouping. |
 | `time_bucket` | string | `day` | `hour`, `day`, `week`, or `month` |
 | `start_date` | date | no | Filter start |
 | `end_date` | date | no | Filter end |
@@ -164,8 +164,30 @@ Multi-dimensional aggregation with time bucketing. Returns up to 10,000 buckets.
 | `product_type` | string | no | Filter by product type |
 | `resource_id` | string | no | Filter by resource |
 | `cost_type` | string | no | Filter by cost type |
+| `tag:{key}` | string | no | Filter to rows where the tag `{key}` matches the given value. Repeatable for AND semantics. Comma-separated values in a single param are OR-matched. |
 
 **Valid `group_by` columns:** `identity_id`, `resource_id`, `product_type`, `product_category`, `cost_type`, `allocation_method`, `environment_id`.
+
+**Tag-based grouping (`group_by=tag:{key}`):**
+
+Use `tag:` prefix to group by an entity tag key instead of a dimension column. Examples:
+
+- `group_by=tag:owner` — group by the `owner` tag; rows with no `owner` tag land in an `UNTAGGED` bucket.
+- `group_by=tag:owner&group_by=tag:department` — group by two tag keys; each bucket has both keys in `dimensions`.
+- `group_by=tag:owner&group_by=product_type` — mix tag and dimension grouping in one query.
+
+Tag values are resolved by joining the `entity_tags` table. When a resource and its linked identity both carry the same tag key, the **resource tag wins** (mirrors the behavior on the list endpoint).
+
+**Tag-based filtering (`tag:{key}={value}`):**
+
+Dynamic query parameters prefixed `tag:` are treated as tag filters and are independent of `group_by`.
+
+- `tag:department=eng` — only rows where `department` tag equals `eng`.
+- `tag:team=platform,commerce` — `team` IN (`platform`, `commerce`) — comma-separated values are OR-matched within one key.
+- `tag:owner=alice&tag:department=eng` — multiple tag params are AND-matched across keys.
+- Untagged rows (no matching tag key) are excluded from filtered results.
+
+Tag key format: must start with an alphanumeric character, then alphanumeric, `_`, or `-`, up to 63 characters total. Invalid keys return HTTP 400.
 
 **Response:**
 
@@ -173,22 +195,30 @@ Multi-dimensional aggregation with time bucketing. Returns up to 10,000 buckets.
 {
   "buckets": [
     {
-      "dimensions": {"identity_id": "sa-12345"},
+      "dimensions": {"tag:owner": "team-commerce", "product_type": "kafka"},
       "time_bucket": "2026-01-01",
       "total_amount": "150.00",
       "usage_amount": "120.00",
       "shared_amount": "30.00",
       "row_count": 42
+    },
+    {
+      "dimensions": {"tag:owner": "UNTAGGED", "product_type": "kafka"},
+      "time_bucket": "2026-01-01",
+      "total_amount": "30.00",
+      "usage_amount": "30.00",
+      "shared_amount": "0.00",
+      "row_count": 8
     }
   ],
-  "total_amount": "150.00",
-  "usage_amount": "120.00",
+  "total_amount": "180.00",
+  "usage_amount": "150.00",
   "shared_amount": "30.00",
-  "total_rows": 42
+  "total_rows": 50
 }
 ```
 
-`usage_amount` is cost attributed by actual usage metrics. `shared_amount` is cost split evenly.
+Tag dimensions appear in `dimensions` with the `tag:` prefix (e.g. `"tag:owner": "team-commerce"`). `usage_amount` is cost attributed by actual usage metrics. `shared_amount` is cost split evenly.
 
 ---
 
