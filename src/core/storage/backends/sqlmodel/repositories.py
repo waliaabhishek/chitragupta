@@ -1846,6 +1846,7 @@ class TopicAttributionRepository:
             env_id=row.env_id,
             cluster_resource_id=row.cluster_resource_id,
             topic_name=row.topic_name,
+            resource_id=f"{row.cluster_resource_id}:topic:{row.topic_name}",
             product_category=row.product_category,
             product_type=row.product_type,
             attribution_method=row.attribution_method,

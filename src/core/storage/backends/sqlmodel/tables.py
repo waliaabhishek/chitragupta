@@ -91,6 +91,9 @@ class TopicAttributionDimensionTable(SQLModel, table=True):
     env_id: str = Field(default="")
     cluster_resource_id: str = Field(index=True)
     topic_name: str = ""
+    resource_id: str = Field(
+        default="", index=True
+    )  # Derived: f'{cluster_resource_id}:topic:{topic_name}' — set in _get_or_create_dimension
     product_category: str = ""
     product_type: str = Field(default="", index=True)
     attribution_method: str = ""
