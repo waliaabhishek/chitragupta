@@ -20,6 +20,8 @@ const FILTER_KEYS: (keyof TopicAttributionFilters)[] = [
   "product_type",
   "attribution_method",
   "timezone",
+  "tag_key",
+  "tag_value",
 ];
 
 const DATE_STORAGE_KEY = "topic_attribution_date_range";
@@ -65,6 +67,8 @@ export function useTopicAttributionFilters(): UseTopicAttributionFiltersReturn {
       attribution_method: searchParams.get("attribution_method"),
       timezone:
         searchParams.get("timezone") ?? storedTimezone ?? BROWSER_TIMEZONE,
+      tag_key: searchParams.get("tag_key"),
+      tag_value: searchParams.get("tag_value"),
     }),
     [
       searchParams,

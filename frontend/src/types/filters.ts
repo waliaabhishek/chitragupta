@@ -18,6 +18,8 @@ export interface TopicAttributionFilters {
   product_type: string | null;
   attribution_method: string | null;
   timezone: string | null;
+  tag_key: string | null;
+  tag_value: string | null;
 }
 
 export interface BillingFilters {

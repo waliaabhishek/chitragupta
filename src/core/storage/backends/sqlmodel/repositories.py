@@ -2008,6 +2008,8 @@ class TopicAttributionRepository:
         topic_name: str | None = None,
         product_type: str | None = None,
         attribution_method: str | None = None,
+        tag_key: str | None = None,
+        tag_value: str | None = None,
     ) -> tuple[list[Any], Any]:
         """Build WHERE clauses and join condition for topic attribution queries."""
         _base_where = [
@@ -2027,6 +2029,16 @@ class TopicAttributionRepository:
             optional.append(col(TopicAttributionDimensionTable.product_type) == product_type)
         if attribution_method is not None:
             optional.append(col(TopicAttributionDimensionTable.attribution_method) == attribution_method)
+        if tag_key is not None:
+            tag_where: list[Any] = [
+                col(EntityTagTable.tenant_id) == tenant_id,
+                col(EntityTagTable.tag_key) == tag_key,
+                col(EntityTagTable.entity_type) == "resource",
+            ]
+            if tag_value is not None:
+                tag_where.append(col(EntityTagTable.tag_value) == tag_value)
+            resource_sub = select(EntityTagTable.entity_id).where(*tag_where).scalar_subquery()
+            optional.append(col(TopicAttributionDimensionTable.resource_id).in_(resource_sub))
         join_cond = col(TopicAttributionFactTable.dimension_id) == col(TopicAttributionDimensionTable.dimension_id)
         return [*_base_where, *optional], join_cond
 
@@ -2042,15 +2054,25 @@ class TopicAttributionRepository:
         attribution_method: str | None = None,
         limit: int = 1000,
         offset: int = 0,
+        tag_key: str | None = None,
+        tag_value: str | None = None,
+        tags_repo: EntityTagRepository | None = None,
     ) -> tuple[list[TopicAttributionRow], int]:
         """Returns (items, total_count). All filters applied at SQL level."""
-        from sqlalchemy import func as sa_func
-
         where, join_cond = self._build_ta_where(
-            ecosystem, tenant_id, start, end, cluster_resource_id, topic_name, product_type, attribution_method
+            ecosystem,
+            tenant_id,
+            start,
+            end,
+            cluster_resource_id,
+            topic_name,
+            product_type,
+            attribution_method,
+            tag_key,
+            tag_value,
         )
         count_stmt = (
-            select(sa_func.count())
+            select(func.count())
             .select_from(TopicAttributionFactTable)
             .join(TopicAttributionDimensionTable, join_cond)
             .where(*where)
@@ -2078,10 +2100,22 @@ class TopicAttributionRepository:
         product_type: str | None = None,
         attribution_method: str | None = None,
         batch_size: int = 5000,
+        tag_key: str | None = None,
+        tag_value: str | None = None,
+        tags_repo: EntityTagRepository | None = None,
     ) -> Iterator[TopicAttributionRow]:
         """Yield TopicAttributionRow objects in batches. Memory bounded to batch_size rows."""
         where, join_cond = self._build_ta_where(
-            ecosystem, tenant_id, start, end, cluster_resource_id, topic_name, product_type, attribution_method
+            ecosystem,
+            tenant_id,
+            start,
+            end,
+            cluster_resource_id,
+            topic_name,
+            product_type,
+            attribution_method,
+            tag_key,
+            tag_value,
         )
         stmt = (
             select(TopicAttributionDimensionTable, TopicAttributionFactTable)

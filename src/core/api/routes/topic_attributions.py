@@ -44,6 +44,8 @@ async def list_topic_attributions(
     topic_name: Annotated[str | None, Query()] = None,
     product_type: Annotated[str | None, Query()] = None,
     attribution_method: Annotated[str | None, Query()] = None,
+    tag_key: Annotated[str | None, Query(description="Filter by tag key")] = None,
+    tag_value: Annotated[str | None, Query(description="Filter by tag value (requires tag_key)")] = None,
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=1000)] = 100,
 ) -> PaginatedResponse[TopicAttributionResponse]:
@@ -60,6 +62,9 @@ async def list_topic_attributions(
         attribution_method=attribution_method,
         limit=page_size,
         offset=offset,
+        tag_key=tag_key,
+        tag_value=tag_value,
+        tags_repo=uow.tags,
     )
     pages = math.ceil(total / page_size) if total > 0 else 0
     return PaginatedResponse[TopicAttributionResponse](

@@ -477,6 +477,8 @@ List topic attribution rows. Paginated.
 | `topic_name` | string | no | Filter by topic name |
 | `product_type` | string | no | Filter by product type |
 | `attribution_method` | string | no | Filter by method (`bytes_ratio`, `retained_bytes_ratio`, `even_split`) |
+| `tag_key` | string | no | Filter by tag key (exact match) |
+| `tag_value` | string | no | Filter by tag value (requires tag_key, exact match) |
 | `page` | int | no | Page number (default 1) |
 | `page_size` | int | no | Page size 1–1000 (default 100) |
 

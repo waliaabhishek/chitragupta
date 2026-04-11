@@ -140,6 +140,22 @@ export function TopicAttributionFilterPanel({
           options={TIMEZONE_OPTIONS}
         />
       </Form.Item>
+      <Form.Item label="Tag Key">
+        <Input
+          placeholder="e.g. cost_center"
+          value={filters.tag_key ?? ""}
+          onChange={(e) => onChange("tag_key", e.target.value || null)}
+          style={{ width: 160 }}
+        />
+      </Form.Item>
+      <Form.Item label="Tag Value">
+        <Input
+          placeholder="e.g. engineering"
+          value={filters.tag_value ?? ""}
+          onChange={(e) => onChange("tag_value", e.target.value || null)}
+          style={{ width: 160 }}
+        />
+      </Form.Item>
       <Form.Item>
         <Space>
           <Button icon={<FilterOutlined />} onClick={onReset}>

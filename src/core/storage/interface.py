@@ -443,8 +443,13 @@ class TopicAttributionRepository(Protocol):
         attribution_method: str | None = None,
         limit: int = 1000,
         offset: int = 0,
+        tag_key: str | None = None,
+        tag_value: str | None = None,
+        tags_repo: EntityTagRepository | None = None,
     ) -> tuple[list[TopicAttributionRow], int]:
-        """Returns (items, total_count). All filters applied at SQL level."""
+        """Returns (items, total_count). All filters applied at SQL level.
+        tag_key/tag_value filter rows to those whose resource_id has the matching tag.
+        """
         ...
 
     def iter_by_filters(
@@ -458,6 +463,9 @@ class TopicAttributionRepository(Protocol):
         product_type: str | None = None,
         attribution_method: str | None = None,
         batch_size: int = 5000,
+        tag_key: str | None = None,
+        tag_value: str | None = None,
+        tags_repo: EntityTagRepository | None = None,
     ) -> Iterator[TopicAttributionRow]:
         """Yield rows matching filters in batches. No limit cap; bounded memory."""
         ...

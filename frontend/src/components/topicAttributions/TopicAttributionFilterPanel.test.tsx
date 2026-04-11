@@ -51,6 +51,8 @@ const defaultFilters: TopicAttributionFilters = {
   product_type: null,
   attribution_method: null,
   timezone: "UTC",
+  tag_key: null,
+  tag_value: null,
 };
 
 beforeEach(() => {
