@@ -1753,6 +1753,35 @@ class SQLModelEntityTagRepository:
         self._session.flush()
         return created, updated, skipped
 
+    def get_distinct_keys(
+        self,
+        tenant_id: str,
+        entity_type: str | None = None,
+    ) -> list[str]:
+        where: list[Any] = [col(EntityTagTable.tenant_id) == tenant_id]
+        if entity_type is not None:
+            where.append(col(EntityTagTable.entity_type) == entity_type)
+        stmt = select(col(EntityTagTable.tag_key)).where(*where).distinct().order_by(col(EntityTagTable.tag_key))
+        return list(self._session.exec(stmt).all())
+
+    def get_distinct_values(
+        self,
+        tenant_id: str,
+        tag_key: str,
+        entity_type: str | None = None,
+        q: str | None = None,
+    ) -> list[str]:
+        where: list[Any] = [
+            col(EntityTagTable.tenant_id) == tenant_id,
+            col(EntityTagTable.tag_key) == tag_key,
+        ]
+        if entity_type is not None:
+            where.append(col(EntityTagTable.entity_type) == entity_type)
+        if q is not None:
+            where.append(col(EntityTagTable.tag_value).ilike(f"{q}%"))
+        stmt = select(col(EntityTagTable.tag_value)).where(*where).distinct().order_by(col(EntityTagTable.tag_value))
+        return list(self._session.exec(stmt).all())
+
 
 class SQLModelEmissionRepository:
     """SQLModel implementation of EmissionRepository."""

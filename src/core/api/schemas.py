@@ -220,6 +220,14 @@ class BulkTagByFilterResponse(BaseModel):
     errors: list[str] = Field(default_factory=list)
 
 
+class TagKeysResponse(BaseModel):
+    keys: list[str]
+
+
+class TagValuesResponse(BaseModel):
+    values: list[str]
+
+
 # --- Pipeline ---
 
 

@@ -604,6 +604,26 @@ class EntityTagRepository(Protocol):
         """Create/update tags in bulk. Returns (created_count, updated_count, skipped_count)."""
         ...
 
+    def get_distinct_keys(
+        self,
+        tenant_id: str,
+        entity_type: str | None = None,
+    ) -> list[str]:
+        """Return alphabetically sorted distinct tag_key values for the tenant.
+        Optionally filtered by entity_type."""
+        ...
+
+    def get_distinct_values(
+        self,
+        tenant_id: str,
+        tag_key: str,
+        entity_type: str | None = None,
+        q: str | None = None,
+    ) -> list[str]:
+        """Return alphabetically sorted distinct tag_value values for the given key.
+        Optional entity_type filter. Optional case-insensitive prefix filter via q."""
+        ...
+
 
 @runtime_checkable
 class PipelineRunRepository(Protocol):

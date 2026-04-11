@@ -17,9 +17,12 @@ from core.api.schemas import (
     EntityTagResponse,
     EntityTagUpdateRequest,
     PaginatedResponse,
+    TagKeysResponse,
+    TagValuesResponse,
 )
 from core.config.models import TenantConfig  # noqa: TC001
 from core.storage.interface import ReadOnlyUnitOfWork, UnitOfWork  # noqa: TC001
+from core.utils.tag_validation import is_valid_tag_key
 
 logger = logging.getLogger(__name__)
 
@@ -181,6 +184,48 @@ async def list_tags_for_tenant(
         page_size=page_size,
         pages=pages,
     )
+
+
+@router.get(
+    "/tenants/{tenant_name}/tags/keys",
+    response_model=TagKeysResponse,
+)
+async def list_distinct_tag_keys(
+    tenant_config: Annotated[TenantConfig, Depends(get_tenant_config)],
+    uow: Annotated[ReadOnlyUnitOfWork, Depends(get_unit_of_work)],
+    entity_type: Annotated[str | None, Query()] = None,
+) -> TagKeysResponse:
+    if entity_type is not None:
+        _validate_entity_type(entity_type)
+    keys = uow.tags.get_distinct_keys(
+        tenant_id=tenant_config.tenant_id,
+        entity_type=entity_type,
+    )
+    return TagKeysResponse(keys=keys)
+
+
+@router.get(
+    "/tenants/{tenant_name}/tags/keys/{tag_key}/values",
+    response_model=TagValuesResponse,
+)
+async def list_distinct_tag_values(
+    tenant_config: Annotated[TenantConfig, Depends(get_tenant_config)],
+    uow: Annotated[ReadOnlyUnitOfWork, Depends(get_unit_of_work)],
+    tag_key: Annotated[str, Path()],
+    entity_type: Annotated[str | None, Query()] = None,
+    q: Annotated[str | None, Query()] = None,
+) -> TagValuesResponse:
+    if not is_valid_tag_key(tag_key):
+        raise HTTPException(status_code=400, detail=f"Invalid tag_key format: '{tag_key}'")
+    if entity_type is not None:
+        _validate_entity_type(entity_type)
+    values = uow.tags.get_distinct_values(
+        tenant_id=tenant_config.tenant_id,
+        tag_key=tag_key,
+        entity_type=entity_type,
+        q=q,
+    )
+    return TagValuesResponse(values=values)
 
 
 @router.post(

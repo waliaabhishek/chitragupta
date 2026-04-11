@@ -320,6 +320,27 @@ List all tags for a tenant. Paginated.
 
 **Response:** `{"items": [...], "total": N, "page": 1, "page_size": 100, "pages": N}`
 
+### `GET /api/v1/tenants/{tenant_name}/tags/keys`
+
+List distinct tag keys for a tenant, sorted alphabetically.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `entity_type` | string | Filter by entity type (`"resource"` or `"identity"`) |
+
+**Response:** `{"keys": ["env", "team", "owner"]}`
+
+### `GET /api/v1/tenants/{tenant_name}/tags/keys/{tag_key}/values`
+
+List distinct values for a tag key, sorted alphabetically. Returns 400 if `tag_key` format is invalid.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `entity_type` | string | Filter by entity type (`"resource"` or `"identity"`) |
+| `q` | string | Prefix filter for autocomplete (case-insensitive) |
+
+**Response:** `{"values": ["prod", "staging"]}`
+
 ### `POST /api/v1/tenants/{tenant_name}/tags/bulk`
 
 Bulk create/update tags on explicit entity IDs.
