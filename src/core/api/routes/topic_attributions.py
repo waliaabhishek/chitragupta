@@ -8,7 +8,7 @@ from collections.abc import Iterator
 from datetime import date
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
 from core.api.dependencies import get_tenant_config, get_unit_of_work, resolve_date_range
@@ -23,6 +23,7 @@ from core.api.schemas import (
 )
 from core.config.models import TenantConfig  # noqa: TC001
 from core.storage.interface import ReadOnlyUnitOfWork  # noqa: TC001
+from core.utils.tag_validation import is_valid_tag_key
 
 logger = logging.getLogger(__name__)
 
@@ -90,9 +91,10 @@ async def list_topic_attributions(
     response_model=TopicAttributionAggregationResponse,
 )
 async def aggregate_topic_attributions(
+    request: Request,
     tenant_config: Annotated[TenantConfig, Depends(get_tenant_config)],
     uow: Annotated[ReadOnlyUnitOfWork, Depends(get_unit_of_work)],
-    group_by: Annotated[list[str] | None, Query()] = None,
+    group_by: Annotated[list[str] | None, Query(description="Dimension columns or tag:{key} to group by")] = None,
     time_bucket: Annotated[str, Query()] = "day",
     start_date: Annotated[date | None, Query()] = None,
     end_date: Annotated[date | None, Query()] = None,
@@ -102,18 +104,45 @@ async def aggregate_topic_attributions(
     product_type: Annotated[str | None, Query()] = None,
 ) -> TopicAttributionAggregationResponse:
     start_dt, end_dt = resolve_date_range(start_date, end_date, timezone=timezone)
+
+    # Parse tag filters from raw query params
+    tag_filters: dict[str, list[str]] = {}
+    for param_name, param_value in request.query_params.multi_items():
+        if param_name.startswith("tag:"):
+            tag_key = param_name[4:]
+            if not is_valid_tag_key(tag_key):
+                raise HTTPException(status_code=400, detail=f"Invalid tag key format: {tag_key!r}")
+            values = [v.strip() for v in param_value.split(",") if v.strip()]
+            if values:
+                tag_filters.setdefault(tag_key, []).extend(values)
+
+    # Split group_by into dimension keys and tag keys
     if group_by is None:
         group_by = ["topic_name"]
+
+    dim_group_by: list[str] = []
+    tag_group_by: list[str] = []
+    for gb in group_by:
+        if gb.startswith("tag:"):
+            key = gb[4:]
+            if not is_valid_tag_key(key):
+                raise HTTPException(status_code=400, detail=f"Invalid tag key format in group_by: {key!r}")
+            tag_group_by.append(key)
+        else:
+            dim_group_by.append(gb)  # invalid dim names silently filtered by repo (preserves existing behavior)
+
     result = uow.topic_attributions.aggregate(
         ecosystem=tenant_config.ecosystem,
         tenant_id=tenant_config.tenant_id,
-        group_by=group_by,
+        group_by=dim_group_by,
         time_bucket=time_bucket,
         start=start_dt,
         end=end_dt,
         cluster_resource_id=cluster_resource_id,
         topic_name=topic_name,
         product_type=product_type,
+        tag_group_by=tag_group_by or None,
+        tag_filters=tag_filters or None,
     )
     return TopicAttributionAggregationResponse(
         buckets=[

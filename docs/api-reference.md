@@ -467,7 +467,7 @@ Multi-dimensional aggregation of topic attribution rows.
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `group_by` | list[string] | `["topic_name"]` | Columns to group by (repeatable) |
+| `group_by` | list[string] | `["topic_name"]` | Columns or tag keys to group by (repeatable). Use `tag:{key}` for tag-based grouping. |
 | `time_bucket` | string | `day` | `hour`, `day`, `week`, or `month` |
 | `start_date` | date | no | Filter start |
 | `end_date` | date | no | Filter end |
@@ -475,8 +475,30 @@ Multi-dimensional aggregation of topic attribution rows.
 | `cluster_resource_id` | string | no | Filter by cluster |
 | `topic_name` | string | no | Filter by topic |
 | `product_type` | string | no | Filter by product type |
+| `tag:{key}` | string | no | Filter to rows where the tag `{key}` matches the given value. Repeatable for AND semantics. Comma-separated values in a single param are OR-matched. |
 
-**Valid `group_by` columns:** `topic_name`, `cluster_resource_id`, `env_id`, `product_type`, `product_category`, `attribution_method`.
+**Valid `group_by` columns:** `topic_name`, `cluster_resource_id`, `env_id`, `product_type`, `product_category`, `attribution_method`. Invalid dimension names are silently dropped (no 400).
+
+**Tag-based grouping (`group_by=tag:{key}`):**
+
+Use `tag:` prefix to group by a resource tag key instead of a dimension column. Examples:
+
+- `group_by=tag:owner` — group by the `owner` tag; rows with no `owner` tag land in an `UNTAGGED` bucket.
+- `group_by=tag:owner&group_by=tag:department` — group by two tag keys; each bucket has both keys in `dimensions`.
+- `group_by=tag:owner&group_by=topic_name` — mix tag and dimension grouping in one query.
+
+Topic attribution is resource-only — tags are resolved from the resource entity (`cluster_resource_id:topic:topic_name`) only. There is no identity join and no resource/identity precedence rule.
+
+**Tag-based filtering (`tag:{key}={value}`):**
+
+Dynamic query parameters prefixed `tag:` are treated as tag filters and are independent of `group_by`.
+
+- `tag:department=eng` — only rows where the resource's `department` tag equals `eng`.
+- `tag:team=platform,commerce` — `team` IN (`platform`, `commerce`) — comma-separated values are OR-matched within one key.
+- `tag:owner=alice&tag:department=eng` — multiple tag params are AND-matched across keys.
+- Untagged rows (no matching tag key on the resource) are excluded from filtered results.
+
+Tag key format: must start with an alphanumeric character, then alphanumeric, `_`, or `-`, up to 63 characters total. Invalid keys return HTTP 400.
 
 **Response:**
 
@@ -484,16 +506,24 @@ Multi-dimensional aggregation of topic attribution rows.
 {
   "buckets": [
     {
-      "dimensions": {"topic_name": "orders"},
+      "dimensions": {"tag:owner": "alice", "topic_name": "payments-events"},
       "time_bucket": "2026-01-01",
-      "total_amount": "42.50",
-      "row_count": 3
+      "total_amount": "10.00",
+      "row_count": 1
+    },
+    {
+      "dimensions": {"tag:owner": "UNTAGGED", "topic_name": "untagged-events"},
+      "time_bucket": "2026-01-01",
+      "total_amount": "25.00",
+      "row_count": 1
     }
   ],
-  "total_amount": "42.50",
-  "total_rows": 3
+  "total_amount": "35.00",
+  "total_rows": 2
 }
 ```
+
+Tag dimensions appear in `dimensions` with the `tag:` prefix (e.g. `"tag:owner": "alice"`). Rows with no matching tag appear under `"UNTAGGED"`.
 
 ### `GET /api/v1/tenants/{tenant_name}/topic-attributions/dates`
 

@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add tag-based WHERE filtering to chargeback aggregate endpoint (TASK-214). Dynamic `tag:{key}={value}` query params filter rows by tag value before aggregation. Comma-separated values in a single param are OR-matched within one key; multiple tag params are AND-matched across keys. Untagged rows are excluded from filtered results.
 - Add `src/core/utils/tag_validation.py` — layer-neutral `is_valid_tag_key()` utility used by the route layer for tag key validation. Tag keys must match `^[a-zA-Z0-9][a-zA-Z0-9_-]{0,62}$`.
 - Add `src/core/storage/backends/sqlmodel/tag_joins.py` — `TagJoinSpec` dataclass and `build_tag_join_specs()` helper that builds aliased LEFT JOIN pairs for each tag key. Designed for reuse by TASK-215 (topic attribution aggregate) via `identity_id_col=None` for resource-only entities.
+- Add tag-based GROUP BY to topic attribution aggregate endpoint (TASK-215). `group_by=tag:{key}` groups results by a resource entity tag value; rows with no matching tag land in an `UNTAGGED` bucket. Multiple `tag:` group_by values produce tuple buckets. Tag dimensions appear in bucket `dimensions` as `{"tag:owner": "alice"}`. Topic attribution is resource-only — joins `entity_tags` on `resource_id` only; exercises the `identity_id_col=None` path in `build_tag_join_specs()` (`tag_joins.py:75-76`).
+- Add tag-based WHERE filtering to topic attribution aggregate endpoint (TASK-215). Dynamic `tag:{key}={value}` query params filter rows by resource tag value before aggregation. Comma-separated values in a single param are OR-matched within one key; multiple tag params are AND-matched across keys. Untagged rows are excluded from filtered results.
 
 
 ## [2.1.0] - 2026-04-09

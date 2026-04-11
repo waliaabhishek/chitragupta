@@ -473,6 +473,8 @@ class TopicAttributionRepository(Protocol):
         cluster_resource_id: str | None = None,
         topic_name: str | None = None,
         product_type: str | None = None,
+        tag_group_by: list[str] | None = None,
+        tag_filters: dict[str, list[str]] | None = None,
     ) -> TopicAttributionAggregationResult:
         """SQL GROUP BY aggregation. Returns domain type."""
         ...

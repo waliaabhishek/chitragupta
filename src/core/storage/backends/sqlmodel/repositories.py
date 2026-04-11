@@ -2074,11 +2074,14 @@ class TopicAttributionRepository:
         cluster_resource_id: str | None = None,
         topic_name: str | None = None,
         product_type: str | None = None,
+        tag_group_by: list[str] | None = None,
+        tag_filters: dict[str, list[str]] | None = None,
     ) -> TopicAttributionAggregationResult:
         """SQL GROUP BY aggregation. Returns domain type."""
         from sqlalchemy import Numeric
         from sqlalchemy import cast as sa_cast
         from sqlalchemy import func as sa_func
+        from sqlalchemy import select as sa_select
 
         from core.models.topic_attribution import (
             TopicAttributionAggregationBucket,
@@ -2095,6 +2098,19 @@ class TopicAttributionRepository:
         }
         valid_group_by = [f for f in group_by if f in valid_group_fields]
 
+        # Collect all unique tag keys across group_by and filters
+        all_tag_keys: list[str] = list(dict.fromkeys([*(tag_group_by or []), *(tag_filters or {})]))
+
+        tag_specs: dict[str, TagJoinSpec] = {}
+        if all_tag_keys:
+            specs = build_tag_join_specs(
+                tag_keys=all_tag_keys,
+                tenant_id=tenant_id,
+                resource_id_col=col(TopicAttributionDimensionTable.resource_id),
+                identity_id_col=None,  # topic attribution: resource entity only
+            )
+            tag_specs = {s.tag_key: s for s in specs}
+
         dim_table = TopicAttributionDimensionTable
         group_cols: list[Any] = []
         group_labels: list[str] = []
@@ -2102,6 +2118,15 @@ class TopicAttributionRepository:
             col_ref = getattr(dim_table, gb)
             group_cols.append(col(col_ref).label(f"dim_{gb}"))
             group_labels.append(f"dim_{gb}")
+
+        tag_group_labels: list[tuple[str, str]] = []  # [(tag_key, sql_label), ...]
+        for key in tag_group_by or []:
+            spec = tag_specs[key]
+            group_cols.append(spec.group_expr.label(spec.label))
+            group_labels.append(spec.label)
+            tag_group_labels.append((key, spec.label))
+
+        group_by_labels = [*group_labels, "time_bucket"]
 
         bucket_formats: dict[str, str] = {
             "hour": "%Y-%m-%dT%H:00:00",
@@ -2130,23 +2155,33 @@ class TopicAttributionRepository:
 
         amount_sum = sa_func.sum(sa_cast(col(TopicAttributionFactTable.amount), Numeric)).label("total_amount")
         row_count_expr = sa_func.count().label("row_count")
-        group_by_labels = [*group_labels, "time_bucket"]
-
-        from sqlalchemy import select as sa_select
 
         stmt = (
             sa_select(*group_cols, time_expr.label("time_bucket"), amount_sum, row_count_expr)
             .select_from(TopicAttributionDimensionTable)
             .join(TopicAttributionFactTable, join_clause)
-            .where(*where)
-            .group_by(*group_by_labels)
-            .order_by("time_bucket", *group_labels)
         )
+
+        # Apply one LEFT JOIN per tag key (resource-only; identity_id_col=None → no identity alias)
+        for spec in tag_specs.values():
+            stmt = stmt.join(spec.resource_alias, spec.resource_join_cond, isouter=True)
+            if spec.identity_alias is not None:
+                stmt = stmt.join(spec.identity_alias, spec.identity_join_cond, isouter=True)
+
+        # Tag WHERE filters: intra-tag OR (IN), inter-tag AND (chained .where())
+        for key, values in (tag_filters or {}).items():
+            spec = tag_specs[key]
+            stmt = stmt.where(spec.resolved_expr.in_(values))
+
+        stmt = stmt.where(*where).group_by(*group_by_labels).order_by("time_bucket", *group_labels)
 
         results = self._session.execute(stmt).all()
         result_buckets = [
             TopicAttributionAggregationBucket(
-                dimensions={gb: str(getattr(r, f"dim_{gb}", "") or "") for gb in valid_group_by},
+                dimensions={
+                    **{gb: str(getattr(r, f"dim_{gb}", "") or "") for gb in valid_group_by},
+                    **{f"tag:{key}": str(getattr(r, label) or "") for key, label in tag_group_labels},
+                },
                 time_bucket=str(r.time_bucket),
                 total_amount=Decimal(str(r.total_amount or 0)),
                 row_count=int(r.row_count),
