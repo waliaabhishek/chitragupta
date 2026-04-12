@@ -3,6 +3,7 @@ export interface BucketLike {
   dimensions: Record<string, string>;
   time_bucket: string;
   total_amount: string;
+  row_count?: number;
 }
 
 /** Aggregate buckets by time_bucket: sum all dimension amounts per time period. */
@@ -55,4 +56,15 @@ export function formatCurrency(amount: number): string {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}`;
+}
+
+export function appendTagFilters(
+  qs: URLSearchParams,
+  tagFilters: Record<string, string[]>,
+): void {
+  for (const [key, values] of Object.entries(tagFilters)) {
+    for (const val of values) {
+      qs.append(`tag:${key}`, val);
+    }
+  }
 }

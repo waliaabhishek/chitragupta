@@ -813,7 +813,9 @@ describe("AC-7 (TASK-164): 4-stage stepper", () => {
     );
     expect(screen.getByTestId("step-2").textContent).not.toContain("_");
     // Human-readable label: "Topic Attribution Stage"
-    expect(screen.getByTestId("step-2").textContent).toContain("Topic Attribution");
+    expect(screen.getByTestId("step-2").textContent).toContain(
+      "Topic Attribution",
+    );
   });
 
   it("test 23: pipeline_stage=gathering still works with 4-step stepper", () => {
@@ -917,7 +919,10 @@ describe("TASK-187: Topic Attribution Enabled Flag", () => {
     setupDefaultQueries();
     render(<PipelineStatusPage />);
 
-    expect(screen.getByTestId("step-2")).toHaveAttribute("data-status", "finish");
+    expect(screen.getByTestId("step-2")).toHaveAttribute(
+      "data-status",
+      "finish",
+    );
   });
 
   it("test 28: topic_attribution_status=disabled → grid hides Topic Overlay and Topic Attribution columns", () => {
@@ -963,7 +968,10 @@ describe("TASK-187: Topic Attribution Enabled Flag", () => {
     setupDefaultQueries();
     render(<PipelineStatusPage />);
 
-    expect(screen.getByTestId("step-2")).toHaveAttribute("data-status", "error");
+    expect(screen.getByTestId("step-2")).toHaveAttribute(
+      "data-status",
+      "error",
+    );
     expect(screen.getByTestId("step-2")).toHaveAttribute(
       "data-description",
       "Config error",

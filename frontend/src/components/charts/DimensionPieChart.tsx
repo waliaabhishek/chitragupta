@@ -51,6 +51,11 @@ export function DimensionPieChart({
   }, [data, dimension, topN]);
 
   return (
-    <ReactECharts option={option} notMerge style={{ height }} showLoading={loading} />
+    <ReactECharts
+      option={option}
+      notMerge
+      style={{ height }}
+      showLoading={loading}
+    />
   );
 }

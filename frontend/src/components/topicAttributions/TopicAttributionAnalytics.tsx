@@ -1,5 +1,5 @@
 import type React from "react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Col, Radio, Row } from "antd";
 import { ChartCard } from "../charts/ChartCard";
 import { TopTopicsChart } from "./charts/TopTopicsChart";
@@ -13,6 +13,7 @@ import { ProductTypeMixChart } from "./charts/ProductTypeMixChart";
 import { PivotedCostBreakdown } from "./charts/PivotedCostBreakdown";
 import { useTopicAttributionAggregation } from "../../hooks/useTopicAttributionAggregation";
 import type { TopicAttributionFilters } from "../../types/filters";
+import { TagPivotPanel } from "../pivotPanel/TagPivotPanel";
 
 interface TopicAttributionAnalyticsProps {
   tenantName: string;
@@ -24,17 +25,22 @@ export function TopicAttributionAnalytics({
   filters,
 }: TopicAttributionAnalyticsProps): React.JSX.Element {
   const [timeBucket, setTimeBucket] = useState<"day" | "week" | "month">("day");
+  const [ownerTagKey, setOwnerTagKey] = useState("owner");
+  const [ownerTagFilters, setOwnerTagFilters] = useState<string[]>([]);
 
-  const sharedParams = {
-    tenantName,
-    timeBucket,
-    startDate: filters.start_date ?? "",
-    endDate: filters.end_date ?? "",
-    clusterResourceId: filters.cluster_resource_id,
-    topicName: filters.topic_name,
-    productType: filters.product_type,
-    timezone: filters.timezone,
-  };
+  const sharedParams = useMemo(
+    () => ({
+      tenantName,
+      timeBucket,
+      startDate: filters.start_date ?? "",
+      endDate: filters.end_date ?? "",
+      clusterResourceId: filters.cluster_resource_id,
+      topicName: filters.topic_name,
+      productType: filters.product_type,
+      timezone: filters.timezone,
+    }),
+    [tenantName, timeBucket, filters],
+  );
 
   const topTopicsData = useTopicAttributionAggregation({
     ...sharedParams,
@@ -55,6 +61,14 @@ export function TopicAttributionAnalytics({
   const mixData = useTopicAttributionAggregation({
     ...sharedParams,
     groupBy: ["product_type"],
+  });
+  const ownerData = useTopicAttributionAggregation({
+    ...sharedParams,
+    groupBy: [`tag:${ownerTagKey}`, "product_type"],
+    tagFilters:
+      ownerTagFilters.length > 0
+        ? { [ownerTagKey]: ownerTagFilters }
+        : undefined,
   });
 
   return (
@@ -163,6 +177,26 @@ export function TopicAttributionAnalytics({
           >
             <PivotedCostBreakdown data={compositionData.data?.buckets ?? []} />
           </ChartCard>
+        </Col>
+        <Col span={24}>
+          <TagPivotPanel
+            title="Topic Cost by Owner"
+            tenantName={tenantName}
+            buckets={ownerData.data?.buckets ?? []}
+            isLoading={ownerData.isLoading}
+            error={ownerData.error}
+            onRefetch={ownerData.refetch}
+            selectedTagKey={ownerTagKey}
+            onTagKeyChange={(key) => {
+              setOwnerTagKey(key);
+              setOwnerTagFilters([]);
+            }}
+            activeTagFilters={ownerTagFilters}
+            onFilterAdd={(v) => setOwnerTagFilters((prev) => [...prev, v])}
+            onFilterRemove={(v) =>
+              setOwnerTagFilters((prev) => prev.filter((f) => f !== v))
+            }
+          />
         </Col>
       </Row>
     </div>

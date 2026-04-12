@@ -29,7 +29,10 @@ function buildStackedBarData(buckets: TopicAttributionAggregationBucket[]): {
   return { productTypes, times, ptTimeMap };
 }
 
-export function CostCompositionChart({ data, height = 300 }: CostCompositionChartProps): React.JSX.Element {
+export function CostCompositionChart({
+  data,
+  height = 300,
+}: CostCompositionChartProps): React.JSX.Element {
   const { productTypes, times, ptTimeMap } = useMemo(
     () => buildStackedBarData(data),
     [data],

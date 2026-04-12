@@ -59,6 +59,11 @@ export function CostTrendChart({
   }, [data, timeBucket]);
 
   return (
-    <ReactECharts option={option} notMerge style={{ height }} showLoading={loading} />
+    <ReactECharts
+      option={option}
+      notMerge
+      style={{ height }}
+      showLoading={loading}
+    />
   );
 }

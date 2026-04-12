@@ -1,7 +1,10 @@
 import type React from "react";
 import { useMemo } from "react";
 import ReactECharts from "echarts-for-react";
-import type { EChartsOption, DefaultLabelFormatterCallbackParams } from "echarts";
+import type {
+  EChartsOption,
+  DefaultLabelFormatterCallbackParams,
+} from "echarts";
 import type { TopicAttributionAggregationBucket } from "../../../types/api";
 import { formatCurrency } from "../../../utils/aggregation";
 
@@ -77,7 +80,8 @@ export function CostVelocityChart({
             (p) =>
               `${p.marker ?? ""} ${p.seriesName ?? ""}: ${formatDelta(p.value as number)}`,
           );
-          const axisValue = (items[0] as { axisValue?: string }).axisValue ?? "";
+          const axisValue =
+            (items[0] as { axisValue?: string }).axisValue ?? "";
           return `<strong>${axisValue}</strong><br/>${lines.join("<br/>")}`;
         },
       },

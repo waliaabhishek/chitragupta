@@ -1,5 +1,5 @@
 import type React from "react";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { MemoryRouter } from "react-router";
@@ -125,6 +125,10 @@ vi.mock("../../components/dashboard/AllocationIssuesTable", () => ({
   )),
 }));
 
+vi.mock("../../components/pivotPanel/TagPivotPanel", () => ({
+  TagPivotPanel: vi.fn(() => <div data-testid="tag-pivot-panel" />),
+}));
+
 // Mock antd
 vi.mock("antd", () => ({
   Typography: {
@@ -188,7 +192,7 @@ const mockTenant = {
   dates_calculated: 10,
   last_calculated_date: null,
   topic_attribution_status: "disabled" as const,
-      topic_attribution_error: null,
+  topic_attribution_error: null,
 };
 
 vi.mock("../../providers/TenantContext", () => ({
@@ -282,9 +286,10 @@ describe("CostDashboardPage", () => {
     // GAP-100 verification item 8: title must be "Cost by Product Category" not Sub-Type.
     // FAILS in red state: dashboard/index.tsx still uses "Cost by Product Sub-Type".
     expect(screen.getByText("Cost by Product Category")).toBeInTheDocument();
+    expect(screen.getByTestId("tag-pivot-panel")).toBeInTheDocument();
   });
 
-  it("makes 5 useAggregation calls with environment_id and product_category groupBy", async () => {
+  it("makes 6 useAggregation calls with tag:owner, environment_id, and product_category groupBy", async () => {
     const { useTenant } = await import("../../providers/TenantContext");
     vi.mocked(useTenant).mockReturnValue({
       currentTenant: mockTenant,
@@ -305,7 +310,7 @@ describe("CostDashboardPage", () => {
       expect(screen.getByTestId("filter-panel")).toBeInTheDocument();
     });
 
-    expect(mockUseAggregation).toHaveBeenCalledTimes(5);
+    expect(mockUseAggregation).toHaveBeenCalledTimes(6);
 
     const groupByValues = mockUseAggregation.mock.calls.map(
       (call) => call[0].groupBy,
@@ -314,6 +319,90 @@ describe("CostDashboardPage", () => {
     // GAP-100 verification item 9: must use product_category, not product_sub_type.
     // FAILS in red state: dashboard/index.tsx still calls useAggregation with product_sub_type.
     expect(groupByValues.flat()).toContain("product_category");
+    // TASK-216: must include tag:owner groupBy for TagPivotPanel
+    expect(groupByValues).toContainEqual(["tag:owner", "product_type"]);
+  });
+
+  it("renders tag-pivot-panel and passes buckets from ownerData", async () => {
+    const { useTenant } = await import("../../providers/TenantContext");
+    vi.mocked(useTenant).mockReturnValue({
+      currentTenant: mockTenant,
+      tenants: [mockTenant],
+      setCurrentTenant: vi.fn(),
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+      isReadOnly: false,
+    });
+
+    const { useAggregation } = await import("../../hooks/useAggregation");
+    const mockUseAggregation = vi.mocked(useAggregation);
+
+    const { TagPivotPanel } = await import(
+      "../../components/pivotPanel/TagPivotPanel"
+    );
+    const mockTagPivotPanel = vi.mocked(TagPivotPanel);
+
+    render(<CostDashboardPage />, { wrapper });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("tag-pivot-panel")).toBeInTheDocument();
+    });
+
+    // One useAggregation call must use tag:owner + product_type groupBy
+    const groupByValues = mockUseAggregation.mock.calls.map(
+      (call) => call[0].groupBy,
+    );
+    expect(groupByValues).toContainEqual(["tag:owner", "product_type"]);
+
+    // TagPivotPanel must receive buckets prop (empty array since mock returns null data)
+    expect(mockTagPivotPanel.mock.lastCall![0].buckets).toEqual([]);
+  });
+
+  it("resets activeTagFilters to [] when onTagKeyChange is called", async () => {
+    const { useTenant } = await import("../../providers/TenantContext");
+    vi.mocked(useTenant).mockReturnValue({
+      currentTenant: mockTenant,
+      tenants: [mockTenant],
+      setCurrentTenant: vi.fn(),
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+      isReadOnly: false,
+    });
+
+    const { TagPivotPanel } = await import(
+      "../../components/pivotPanel/TagPivotPanel"
+    );
+    const mockTagPivotPanel = vi.mocked(TagPivotPanel);
+
+    render(<CostDashboardPage />, { wrapper });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("tag-pivot-panel")).toBeInTheDocument();
+    });
+
+    // Add a filter via the onFilterAdd prop
+    const { onFilterAdd } = mockTagPivotPanel.mock.lastCall![0];
+    act(() => {
+      onFilterAdd("alice");
+    });
+
+    await waitFor(() => {
+      expect(mockTagPivotPanel.mock.lastCall![0].activeTagFilters).toContain(
+        "alice",
+      );
+    });
+
+    // Change tag key — should reset activeTagFilters to []
+    const { onTagKeyChange } = mockTagPivotPanel.mock.lastCall![0];
+    act(() => {
+      onTagKeyChange("team");
+    });
+
+    await waitFor(() => {
+      expect(mockTagPivotPanel.mock.lastCall![0].activeTagFilters).toEqual([]);
+    });
   });
 
   it("forwards explicit date filters to useAggregation", async () => {

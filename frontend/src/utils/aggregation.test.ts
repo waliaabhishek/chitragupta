@@ -3,6 +3,7 @@ import type { AggregationBucket } from "../types/api";
 import {
   aggregateByDimension,
   aggregateByTime,
+  appendTagFilters,
   formatCurrency,
   topNWithOther,
 } from "./aggregation";
@@ -199,5 +200,40 @@ describe("BucketLike structural interface (TASK-164)", () => {
     expect(result).toHaveLength(2);
     const topicA = result.find((r) => r.key === "topic-a");
     expect(topicA?.amount).toBeCloseTo(30.0);
+  });
+});
+
+// TASK-216: appendTagFilters tests
+describe("appendTagFilters", () => {
+  it("appends a single tag key with single value", () => {
+    const qs = new URLSearchParams();
+    appendTagFilters(qs, { owner: ["alice"] });
+    const entries = [...qs.entries()];
+    expect(entries).toContainEqual(["tag:owner", "alice"]);
+    expect(entries).toHaveLength(1);
+  });
+
+  it("appends a single tag key with multiple values as repeated params", () => {
+    const qs = new URLSearchParams();
+    appendTagFilters(qs, { owner: ["alice", "bob"] });
+    const entries = [...qs.entries()];
+    expect(entries).toContainEqual(["tag:owner", "alice"]);
+    expect(entries).toContainEqual(["tag:owner", "bob"]);
+    expect(entries).toHaveLength(2);
+  });
+
+  it("appends multiple tag keys", () => {
+    const qs = new URLSearchParams();
+    appendTagFilters(qs, { owner: ["alice"], team: ["payments"] });
+    const entries = [...qs.entries()];
+    expect(entries).toContainEqual(["tag:owner", "alice"]);
+    expect(entries).toContainEqual(["tag:team", "payments"]);
+    expect(entries).toHaveLength(2);
+  });
+
+  it("does nothing for empty object", () => {
+    const qs = new URLSearchParams();
+    appendTagFilters(qs, {});
+    expect(qs.toString()).toBe("");
   });
 });

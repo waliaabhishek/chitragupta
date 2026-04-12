@@ -25,13 +25,20 @@ export function TopClustersCostChart({
       trigger: "axis",
       axisPointer: { type: "shadow" },
       formatter: (params: unknown) => {
-        const list = params as { seriesName: string; value: number; marker: string }[];
+        const list = params as {
+          seriesName: string;
+          value: number;
+          marker: string;
+        }[];
         const nonZero = list.filter((p) => p.value > 0);
         if (!nonZero.length) return "";
-        const header = (list[0] as { axisValueLabel?: string }).axisValueLabel ?? "";
+        const header =
+          (list[0] as { axisValueLabel?: string }).axisValueLabel ?? "";
         return [
           `<b>${header}</b>`,
-          ...nonZero.map((p) => `${p.marker} ${p.seriesName}: ${formatCurrency(p.value)}`),
+          ...nonZero.map(
+            (p) => `${p.marker} ${p.seriesName}: ${formatCurrency(p.value)}`,
+          ),
         ].join("<br/>");
       },
     },

@@ -1,4 +1,5 @@
 import { API_URL } from "../config";
+import { appendTagFilters } from "../utils/aggregation";
 import type {
   PaginatedResponse,
   TopicAttributionResponse,
@@ -28,6 +29,7 @@ export interface FetchTopicAttributionAggregationParams {
   cluster_resource_id?: string;
   topic_name?: string;
   product_type?: string;
+  tag_filters?: Record<string, string[]>;
 }
 
 export interface ExportTopicAttributionsParams {
@@ -91,6 +93,7 @@ export async function fetchTopicAttributionAggregation(
     qs.set("cluster_resource_id", params.cluster_resource_id);
   if (params.topic_name) qs.set("topic_name", params.topic_name);
   if (params.product_type) qs.set("product_type", params.product_type);
+  if (params.tag_filters) appendTagFilters(qs, params.tag_filters);
 
   const response = await fetch(
     `${API_URL}/tenants/${tenantName}/topic-attributions/aggregate?${qs.toString()}`,

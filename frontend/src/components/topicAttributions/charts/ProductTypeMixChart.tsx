@@ -54,8 +54,14 @@ function buildNormalizedAreaData(
   };
 }
 
-export function ProductTypeMixChart({ data, height = 300 }: ProductTypeMixChartProps): React.JSX.Element {
-  const { times, series } = useMemo(() => buildNormalizedAreaData(data), [data]);
+export function ProductTypeMixChart({
+  data,
+  height = 300,
+}: ProductTypeMixChartProps): React.JSX.Element {
+  const { times, series } = useMemo(
+    () => buildNormalizedAreaData(data),
+    [data],
+  );
 
   const option: EChartsOption = {
     tooltip: {

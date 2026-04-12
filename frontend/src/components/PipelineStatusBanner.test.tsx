@@ -29,7 +29,7 @@ function makeTenant(overrides: Partial<TenantReadiness> = {}): TenantReadiness {
     last_run_at: null,
     permanent_failure: null,
     topic_attribution_status: "disabled",
-      topic_attribution_error: null,
+    topic_attribution_error: null,
     ...overrides,
   };
 }
@@ -116,7 +116,7 @@ describe("PipelineStatusBanner — per-tenant permanent_failure", () => {
         dates_calculated: 10,
         last_calculated_date: null,
         topic_attribution_status: "disabled",
-      topic_attribution_error: null,
+        topic_attribution_error: null,
       },
     });
     mockUseReadiness.mockReturnValue({
@@ -195,7 +195,7 @@ describe("PipelineStatusBanner — pipeline running stage text (GAP-100 verifica
         dates_calculated: 10,
         last_calculated_date: null,
         topic_attribution_status: "disabled",
-      topic_attribution_error: null,
+        topic_attribution_error: null,
       },
     });
     mockUseReadiness.mockReturnValue({

@@ -117,9 +117,7 @@ export function TopicAttributionFilterPanel({
       <Form.Item label="Attribution Method">
         <Tooltip
           title={
-            activeTab === "analytics"
-              ? "Applies to table view only"
-              : undefined
+            activeTab === "analytics" ? "Applies to table view only" : undefined
           }
         >
           <Select

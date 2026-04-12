@@ -200,9 +200,7 @@ describe("TASK-197: Links toggle tooltip", () => {
     );
 
     await userEvent.hover(screen.getByRole("switch"));
-    expect(
-      await screen.findByText(/Confluent Cloud console/i),
-    ).toBeTruthy();
+    expect(await screen.findByText(/Confluent Cloud console/i)).toBeTruthy();
   });
 
   it("tooltip text mentions connectors and identity pools not supported", async () => {
@@ -228,9 +226,7 @@ describe("TASK-197: Links toggle tooltip", () => {
     );
 
     await userEvent.hover(screen.getByRole("switch"));
-    expect(
-      await screen.findByText(/Deleted resources/i),
-    ).toBeTruthy();
+    expect(await screen.findByText(/Deleted resources/i)).toBeTruthy();
   });
 
   it("Switch does not have title attribute", () => {

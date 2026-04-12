@@ -165,4 +165,68 @@ describe("useTopicAttributionAggregation", () => {
     expect(result.current.isLoading).toBe(false);
     expect(result.current.data).toBeNull();
   });
+
+  // TASK-216: tag filter serialization tests
+  it("appends tag:owner=alice when tagFilters has single value", async () => {
+    let capturedUrl = "";
+    server.use(
+      http.get(
+        "/api/v1/tenants/acme/topic-attributions/aggregate",
+        ({ request }) => {
+          capturedUrl = request.url;
+          return HttpResponse.json({
+            buckets: [],
+            total_amount: "0",
+            total_rows: 0,
+          });
+        },
+      ),
+    );
+
+    const { result } = renderHook(
+      () =>
+        useTopicAttributionAggregation({
+          ...BASE_PARAMS,
+          tagFilters: { owner: ["alice"] },
+        }),
+      { wrapper: createWrapper() },
+    );
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    const url = new URL(capturedUrl);
+    expect(url.searchParams.getAll("tag:owner")).toEqual(["alice"]);
+  });
+
+  it("appends tag:owner=alice&tag:owner=bob when tagFilters has multiple values", async () => {
+    let capturedUrl = "";
+    server.use(
+      http.get(
+        "/api/v1/tenants/acme/topic-attributions/aggregate",
+        ({ request }) => {
+          capturedUrl = request.url;
+          return HttpResponse.json({
+            buckets: [],
+            total_amount: "0",
+            total_rows: 0,
+          });
+        },
+      ),
+    );
+
+    const { result } = renderHook(
+      () =>
+        useTopicAttributionAggregation({
+          ...BASE_PARAMS,
+          tagFilters: { owner: ["alice", "bob"] },
+        }),
+      { wrapper: createWrapper() },
+    );
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    const url = new URL(capturedUrl);
+    const tagValues = url.searchParams.getAll("tag:owner");
+    expect(tagValues).toContain("alice");
+    expect(tagValues).toContain("bob");
+    expect(tagValues).toHaveLength(2);
+  });
 });

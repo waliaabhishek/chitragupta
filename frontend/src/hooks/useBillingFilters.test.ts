@@ -128,9 +128,7 @@ describe("useBillingFilters — setFilters date persistence", () => {
         end_date: "2026-01-31",
       });
     });
-    const stored = JSON.parse(
-      localStorage.getItem("billing_date_range")!,
-    );
+    const stored = JSON.parse(localStorage.getItem("billing_date_range")!);
     expect(stored.start_date).toBe("2026-01-01");
     expect(stored.end_date).toBe("2026-01-31");
   });

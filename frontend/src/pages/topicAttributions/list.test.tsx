@@ -10,29 +10,36 @@ import type { TenantStatusSummary } from "../../types/api";
 // ---------------------------------------------------------------------------
 
 vi.mock("../../components/topicAttributions/TopicAttributionGrid", () => ({
-  TopicAttributionGrid: ({
-    filters,
-  }: {
-    filters: Record<string, string>;
-  }) => (
+  TopicAttributionGrid: ({ filters }: { filters: Record<string, string> }) => (
     <div data-testid="ag-grid" data-filters={JSON.stringify(filters)} />
   ),
 }));
 
-vi.mock("../../components/topicAttributions/TopicAttributionFilterPanel", () => ({
-  TopicAttributionFilterPanel: ({ onRefresh, activeTab }: { onRefresh?: () => void; activeTab: string; [key: string]: unknown }) => (
-    <div data-testid="filter-panel" data-active-tab={activeTab}>
-      {onRefresh && <button data-testid="refresh-btn" onClick={onRefresh}>Refresh</button>}
-    </div>
-  ),
-}));
-
 vi.mock(
-  "../../components/topicAttributions/TopicAttributionAnalytics",
+  "../../components/topicAttributions/TopicAttributionFilterPanel",
   () => ({
-    TopicAttributionAnalytics: () => <div data-testid="analytics-view" />,
+    TopicAttributionFilterPanel: ({
+      onRefresh,
+      activeTab,
+    }: {
+      onRefresh?: () => void;
+      activeTab: string;
+      [key: string]: unknown;
+    }) => (
+      <div data-testid="filter-panel" data-active-tab={activeTab}>
+        {onRefresh && (
+          <button data-testid="refresh-btn" onClick={onRefresh}>
+            Refresh
+          </button>
+        )}
+      </div>
+    ),
   }),
 );
+
+vi.mock("../../components/topicAttributions/TopicAttributionAnalytics", () => ({
+  TopicAttributionAnalytics: () => <div data-testid="analytics-view" />,
+}));
 
 // ---------------------------------------------------------------------------
 // Mock ag-grid-react (needed by other components rendered in analytics tab)

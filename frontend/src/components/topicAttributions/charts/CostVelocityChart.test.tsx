@@ -82,9 +82,16 @@ describe("CostVelocityChart", () => {
       makeBucket("topic-a", "250.75", "2026-01-02"),
     ];
     render(<CostVelocityChart data={data} />);
-    const tooltip = capturedOption.tooltip as { formatter: (params: unknown) => string };
+    const tooltip = capturedOption.tooltip as {
+      formatter: (params: unknown) => string;
+    };
     const result = tooltip.formatter([
-      { value: 150.75, seriesName: "topic-a", marker: "", axisValue: "2026-01-02" },
+      {
+        value: 150.75,
+        seriesName: "topic-a",
+        marker: "",
+        axisValue: "2026-01-02",
+      },
     ]);
     expect(result).toContain("+$150.75 increase");
   });
@@ -95,9 +102,16 @@ describe("CostVelocityChart", () => {
       makeBucket("topic-a", "57.50", "2026-01-02"),
     ];
     render(<CostVelocityChart data={data} />);
-    const tooltip = capturedOption.tooltip as { formatter: (params: unknown) => string };
+    const tooltip = capturedOption.tooltip as {
+      formatter: (params: unknown) => string;
+    };
     const result = tooltip.formatter([
-      { value: -42.50, seriesName: "topic-a", marker: "", axisValue: "2026-01-02" },
+      {
+        value: -42.5,
+        seriesName: "topic-a",
+        marker: "",
+        axisValue: "2026-01-02",
+      },
     ]);
     expect(result).toContain("-$42.50 decrease");
   });
@@ -108,7 +122,9 @@ describe("CostVelocityChart", () => {
       makeBucket("topic-a", "100.00", "2026-01-02"),
     ];
     render(<CostVelocityChart data={data} />);
-    const tooltip = capturedOption.tooltip as { formatter: (params: unknown) => string };
+    const tooltip = capturedOption.tooltip as {
+      formatter: (params: unknown) => string;
+    };
     const result = tooltip.formatter([
       { value: 0, seriesName: "topic-a", marker: "", axisValue: "2026-01-02" },
     ]);
@@ -121,7 +137,9 @@ describe("CostVelocityChart", () => {
       makeBucket("topic-a", "200.00", "2026-01-02"),
     ];
     render(<CostVelocityChart data={data} />);
-    const yAxis = capturedOption.yAxis as { axisLabel: { formatter: (v: number) => string } };
+    const yAxis = capturedOption.yAxis as {
+      axisLabel: { formatter: (v: number) => string };
+    };
     expect(yAxis.axisLabel.formatter(1234.56)).toBe("$1,234.56");
   });
 });

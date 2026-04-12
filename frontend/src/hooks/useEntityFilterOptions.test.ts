@@ -20,9 +20,7 @@ vi.mock("./useInventorySummary", () => ({
 
 describe("useIdentityFilterOptions", () => {
   it("returns identity type options derived from inventory data", () => {
-    const { result } = renderHook(() =>
-      useIdentityFilterOptions("acme"),
-    );
+    const { result } = renderHook(() => useIdentityFilterOptions("acme"));
     expect(result.current.identityTypeOptions).toHaveLength(2);
     expect(result.current.identityTypeOptions.map((o) => o.value)).toContain(
       "service_account",
@@ -33,9 +31,7 @@ describe("useIdentityFilterOptions", () => {
 
 describe("useResourceFilterOptions", () => {
   it("returns resource type options and fixed status options", () => {
-    const { result } = renderHook(() =>
-      useResourceFilterOptions("acme"),
-    );
+    const { result } = renderHook(() => useResourceFilterOptions("acme"));
     expect(result.current.resourceTypeOptions).toHaveLength(2);
     expect(result.current.resourceStatusOptions.map((o) => o.value)).toContain(
       "active",

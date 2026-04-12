@@ -442,15 +442,29 @@ describe("ResourceLinkContext — resolveUrl index lookups", () => {
       http.get(RESOURCE_API, () =>
         HttpResponse.json(
           makeResourcesResponse([
-            { resource_id: "env-abc123", resource_type: "environment", parent_id: null },
-            { resource_id: "lkc-def456", resource_type: "kafka_cluster", parent_id: "env-abc123" },
-            { resource_id: "lcc-conn01", resource_type: "connector", parent_id: "lkc-def456" },
+            {
+              resource_id: "env-abc123",
+              resource_type: "environment",
+              parent_id: null,
+            },
+            {
+              resource_id: "lkc-def456",
+              resource_type: "kafka_cluster",
+              parent_id: "env-abc123",
+            },
+            {
+              resource_id: "lcc-conn01",
+              resource_type: "connector",
+              parent_id: "lkc-def456",
+            },
           ]),
         ),
       ),
     );
 
-    const { result } = renderHook(() => useResourceLinks(), { wrapper: makeWrapper() });
+    const { result } = renderHook(() => useResourceLinks(), {
+      wrapper: makeWrapper(),
+    });
 
     // Wait for resource index to load. Must use lkc- (no prefix fallback) not env- (has prefix fallback line 245).
     await waitFor(() => {
@@ -1051,7 +1065,10 @@ describe("ResourceLinkContext — identity index", () => {
       http.get(IDENTITY_API, () =>
         HttpResponse.json(
           makeIdentitiesResponse([
-            { identity_id: "mock-sa-via-identity", identity_type: "service_account" },
+            {
+              identity_id: "mock-sa-via-identity",
+              identity_type: "service_account",
+            },
           ]),
         ),
       ),
@@ -1098,7 +1115,10 @@ describe("ResourceLinkContext — identity index", () => {
       http.get(IDENTITY_API, () =>
         HttpResponse.json(
           makeIdentitiesResponse([
-            { identity_id: "mock-op-via-identity", identity_type: "identity_provider" },
+            {
+              identity_id: "mock-op-via-identity",
+              identity_type: "identity_provider",
+            },
           ]),
         ),
       ),
@@ -1120,14 +1140,19 @@ describe("ResourceLinkContext — identity index", () => {
       http.get(IDENTITY_API, () =>
         HttpResponse.json(
           makeIdentitiesResponse([
-            { identity_id: "mock-pool-via-identity", identity_type: "identity_pool" },
+            {
+              identity_id: "mock-pool-via-identity",
+              identity_type: "identity_pool",
+            },
             { identity_id: "mock-gate-pool", identity_type: "api_key" },
           ]),
         ),
       ),
     );
 
-    const { result } = renderHook(() => useResourceLinks(), { wrapper: makeWrapper() });
+    const { result } = renderHook(() => useResourceLinks(), {
+      wrapper: makeWrapper(),
+    });
 
     // Wait for identity index to load. Must use api_key (no prefix fallback) not sa- (has prefix fallback line 244).
     await waitFor(() => {

@@ -21,6 +21,7 @@ import { CostByResourceChart } from "../../components/charts/CostByResourceChart
 import { ProductChartTypeToggle } from "../../components/charts/ProductChartTypeToggle";
 import { DimensionPieChart } from "../../components/charts/DimensionPieChart";
 import type { ChargebackFilters } from "../../types/filters";
+import { TagPivotPanel } from "../../components/pivotPanel/TagPivotPanel";
 
 const { Title, Text } = Typography;
 
@@ -41,6 +42,8 @@ function DashboardContent({
   const [productChartType, setProductChartType] = useState<"pie" | "treemap">(
     "pie",
   );
+  const [ownerTagKey, setOwnerTagKey] = useState("owner");
+  const [ownerTagFilters, setOwnerTagFilters] = useState<string[]>([]);
 
   const sharedParams: Omit<UseAggregationParams, "groupBy"> = useMemo(
     () => ({
@@ -76,6 +79,14 @@ function DashboardContent({
   const productCategoryData = useAggregation({
     ...sharedParams,
     groupBy: ["product_category"],
+  });
+  const ownerData = useAggregation({
+    ...sharedParams,
+    groupBy: [`tag:${ownerTagKey}`, "product_type"],
+    tagFilters:
+      ownerTagFilters.length > 0
+        ? { [ownerTagKey]: ownerTagFilters }
+        : undefined,
   });
   const availabilityData = useDataAvailability({
     tenantName: tenant.tenant_name,
@@ -197,6 +208,27 @@ function DashboardContent({
             dimension="product_category"
           />
         </ChartCard>
+      </Col>
+
+      <Col span={24}>
+        <TagPivotPanel
+          title="Cost by Owner"
+          tenantName={tenant.tenant_name}
+          buckets={ownerData.data?.buckets ?? []}
+          isLoading={ownerData.isLoading}
+          error={ownerData.error}
+          onRefetch={ownerData.refetch}
+          selectedTagKey={ownerTagKey}
+          onTagKeyChange={(key) => {
+            setOwnerTagKey(key);
+            setOwnerTagFilters([]);
+          }}
+          activeTagFilters={ownerTagFilters}
+          onFilterAdd={(v) => setOwnerTagFilters((prev) => [...prev, v])}
+          onFilterRemove={(v) =>
+            setOwnerTagFilters((prev) => prev.filter((f) => f !== v))
+          }
+        />
       </Col>
 
       <Col span={24}>

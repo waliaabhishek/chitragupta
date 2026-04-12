@@ -7,7 +7,12 @@ vi.mock("echarts-for-react", () => ({
   default: ({ option }: { option: Record<string, unknown> }) => {
     const series = option.series as Array<{
       type: string;
-      data: Array<{ name: string; value: number; itemStyle: { color: string }; methodKey: string }>;
+      data: Array<{
+        name: string;
+        value: number;
+        itemStyle: { color: string };
+        methodKey: string;
+      }>;
     }>;
     return (
       <div
@@ -75,9 +80,15 @@ describe("AttributionMethodDonut", () => {
     const slices = JSON.parse(
       chart.getAttribute("data-slice-values") ?? "[]",
     ) as Array<{ name: string; value: number; itemStyle: { color: string } }>;
-    expect(slices.find((s) => s.name === "High Confidence")?.itemStyle.color).toBe("#52c41a");
-    expect(slices.find((s) => s.name === "Medium Confidence")?.itemStyle.color).toBe("#faad14");
-    expect(slices.find((s) => s.name === "Low Confidence")?.itemStyle.color).toBe("#f5222d");
+    expect(
+      slices.find((s) => s.name === "High Confidence")?.itemStyle.color,
+    ).toBe("#52c41a");
+    expect(
+      slices.find((s) => s.name === "Medium Confidence")?.itemStyle.color,
+    ).toBe("#faad14");
+    expect(
+      slices.find((s) => s.name === "Low Confidence")?.itemStyle.color,
+    ).toBe("#f5222d");
   });
 
   it("shows correct headline confidence percentage", () => {
@@ -104,8 +115,12 @@ describe("AttributionMethodDonut", () => {
   });
 
   it("renders subtitle text", () => {
-    render(<AttributionMethodDonut data={[makeBucket("bytes_ratio", "100.00")]} />);
-    expect(screen.getByText("of cost attributed with metrics data")).toBeTruthy();
+    render(
+      <AttributionMethodDonut data={[makeBucket("bytes_ratio", "100.00")]} />,
+    );
+    expect(
+      screen.getByText("of cost attributed with metrics data"),
+    ).toBeTruthy();
   });
 
   it("falls back to Low Confidence for unknown attribution methods", () => {

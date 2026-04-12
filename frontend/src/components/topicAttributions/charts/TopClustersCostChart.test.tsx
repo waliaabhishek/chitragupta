@@ -1,10 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { TopClustersCostChart } from "./TopClustersCostChart";
-import {
-  buildTopClustersCostData,
-  aggregateByCluster,
-} from "./clusterUtils";
+import { buildTopClustersCostData, aggregateByCluster } from "./clusterUtils";
 import type { TopicAttributionAggregationBucket } from "../../../types/api";
 
 vi.mock("echarts-for-react", () => ({

@@ -77,7 +77,7 @@ const mockTenant = {
   dates_calculated: 10,
   last_calculated_date: null,
   topic_attribution_status: "disabled" as const,
-      topic_attribution_error: null,
+  topic_attribution_error: null,
 };
 
 function wrapper({ children }: { children: ReactNode }): React.JSX.Element {

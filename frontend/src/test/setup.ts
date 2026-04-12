@@ -59,5 +59,10 @@ function makeLocalStorageMock(): Storage {
 vi.stubGlobal("localStorage", makeLocalStorageMock());
 
 beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
-afterEach(() => server.resetHandlers());
+afterEach(() => {
+  server.resetHandlers();
+  // Restore real timers after each test to prevent fake-timer leakage from
+  // tests that call vi.useFakeTimers() but time out before calling useRealTimers().
+  vi.useRealTimers();
+});
 afterAll(() => server.close());

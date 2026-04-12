@@ -162,17 +162,44 @@ function BoolIconRenderer(params: ICellRendererParams): React.JSX.Element {
   );
 }
 
-function getStateColumnDefs(topicAttributionStatus: "disabled" | "enabled" | "config_error"): ColDef[] {
+function getStateColumnDefs(
+  topicAttributionStatus: "disabled" | "enabled" | "config_error",
+): ColDef[] {
   const cols: ColDef[] = [
     { field: "tracking_date", headerName: "Date", sort: "desc", flex: 1 },
-    { field: "billing_gathered", headerName: "Billing Gathered", cellRenderer: BoolIconRenderer, width: 160 },
-    { field: "resources_gathered", headerName: "Resources Gathered", cellRenderer: BoolIconRenderer, width: 170 },
-    { field: "chargeback_calculated", headerName: "Chargeback Calculated", cellRenderer: BoolIconRenderer, width: 190 },
+    {
+      field: "billing_gathered",
+      headerName: "Billing Gathered",
+      cellRenderer: BoolIconRenderer,
+      width: 160,
+    },
+    {
+      field: "resources_gathered",
+      headerName: "Resources Gathered",
+      cellRenderer: BoolIconRenderer,
+      width: 170,
+    },
+    {
+      field: "chargeback_calculated",
+      headerName: "Chargeback Calculated",
+      cellRenderer: BoolIconRenderer,
+      width: 190,
+    },
   ];
   if (topicAttributionStatus === "enabled") {
     cols.push(
-      { field: "topic_overlay_gathered", headerName: "Topic Metrics Gathered", cellRenderer: BoolIconRenderer, width: 180 },
-      { field: "topic_attribution_calculated", headerName: "Topic Attribution", cellRenderer: BoolIconRenderer, width: 160 },
+      {
+        field: "topic_overlay_gathered",
+        headerName: "Topic Metrics Gathered",
+        cellRenderer: BoolIconRenderer,
+        width: 180,
+      },
+      {
+        field: "topic_attribution_calculated",
+        headerName: "Topic Attribution",
+        cellRenderer: BoolIconRenderer,
+        width: 160,
+      },
     );
   }
   return cols;
@@ -203,7 +230,8 @@ function PipelineStatusContent({
   );
   const pipelineRunning = tenantReadiness?.pipeline_running ?? false;
   const isApiOnly = readiness?.mode === "api";
-  const topicAttributionStatus = tenantReadiness?.topic_attribution_status ?? "disabled";
+  const topicAttributionStatus =
+    tenantReadiness?.topic_attribution_status ?? "disabled";
 
   // AC-3: Last Run Summary — refetch faster while running
   const statusQuery = useQuery<PipelineStatusResponse>({

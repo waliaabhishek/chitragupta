@@ -99,6 +99,10 @@ vi.mock("../../../components/dashboard/InventoryCounters", () => ({
   InventoryCounters: () => <div data-testid="inventory-counters" />,
 }));
 
+vi.mock("../../../components/pivotPanel/TagPivotPanel", () => ({
+  TagPivotPanel: () => null,
+}));
+
 vi.mock("../../../components/charts/DataAvailabilityTimeline", () => ({
   DataAvailabilityTimeline: () => (
     <div data-testid="data-availability-timeline" />

@@ -8,6 +8,16 @@ export default defineConfig({
     environment: "./src/test/vitest-env-jsdom-compat.ts",
     setupFiles: ["./src/test/setup.ts"],
     dangerouslyForceExit: true,
+    // React 19's async act() uses setTimeout(resolve, 0) internally.
+    // Without shouldAdvanceTime, vi.useFakeTimers() prevents that timeout
+    // from ever firing, causing await userEvent.click/type to hang.
+    // advanceTimeDelta:5 advances fake time 5ms per 5ms real time (1:1),
+    // so React's internal 0ms timeouts fire within ~5ms of real time,
+    // while the 300ms debounce timer still requires explicit advance.
+    fakeTimers: {
+      shouldAdvanceTime: true,
+      advanceTimeDelta: 5,
+    },
     coverage: {
       provider: "v8",
       reporter: ["text", "json", "html"],

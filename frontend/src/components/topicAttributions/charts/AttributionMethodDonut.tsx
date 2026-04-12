@@ -1,9 +1,15 @@
 import type React from "react";
 import { useMemo } from "react";
 import ReactECharts from "echarts-for-react";
-import type { TooltipComponentFormatterCallbackParams, EChartsOption } from "echarts";
+import type {
+  TooltipComponentFormatterCallbackParams,
+  EChartsOption,
+} from "echarts";
 import type { TopicAttributionAggregationBucket } from "../../../types/api";
-import { aggregateByDimension, formatCurrency } from "../../../utils/aggregation";
+import {
+  aggregateByDimension,
+  formatCurrency,
+} from "../../../utils/aggregation";
 
 interface AttributionMethodDonutProps {
   data: TopicAttributionAggregationBucket[];

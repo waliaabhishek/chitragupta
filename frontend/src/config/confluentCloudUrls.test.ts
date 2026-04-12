@@ -171,13 +171,17 @@ describe("confluentCloudUrls", () => {
 
   describe("ksqldbClusterUrl", () => {
     it("generates correct URL for a ksqlDB cluster", () => {
-      expect(ksqldbClusterUrl("env-abc123", "lkc-def456", "lksqlc-ghi789")).toBe(
+      expect(
+        ksqldbClusterUrl("env-abc123", "lkc-def456", "lksqlc-ghi789"),
+      ).toBe(
         "https://confluent.cloud/environments/env-abc123/clusters/lkc-def456/ksql/lksqlc-ghi789/editor",
       );
     });
 
     it("generates correct URL for another ksqlDB cluster", () => {
-      expect(ksqldbClusterUrl("env-xyz999", "lkc-abc123", "lksqlc-def456")).toBe(
+      expect(
+        ksqldbClusterUrl("env-xyz999", "lkc-abc123", "lksqlc-def456"),
+      ).toBe(
         "https://confluent.cloud/environments/env-xyz999/clusters/lkc-abc123/ksql/lksqlc-def456/editor",
       );
     });

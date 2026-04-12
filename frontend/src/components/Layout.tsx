@@ -74,27 +74,42 @@ export function AppLayout({
       key: "/topic-attributions",
       icon: (
         <LineChartOutlined
-          style={!tenantRequired && !topicAttributionEnabled ? { color: "#bfbfbf" } : undefined}
+          style={
+            !tenantRequired && !topicAttributionEnabled
+              ? { color: "#bfbfbf" }
+              : undefined
+          }
         />
       ),
-      label: !tenantRequired && !topicAttributionEnabled ? (
-        <span>
-          Topic Attribution{" "}
-          {topicAttributionConfigError ? (
-            <Badge
-              count="Config error"
-              style={{ backgroundColor: "#fff1f0", color: "#cf1322", fontSize: 10, boxShadow: "none" }}
-            />
-          ) : (
-            <Badge
-              count="Not configured"
-              style={{ backgroundColor: "#f0f0f0", color: "#8c8c8c", fontSize: 10, boxShadow: "none" }}
-            />
-          )}
-        </span>
-      ) : (
-        "Topic Attribution"
-      ),
+      label:
+        !tenantRequired && !topicAttributionEnabled ? (
+          <span>
+            Topic Attribution{" "}
+            {topicAttributionConfigError ? (
+              <Badge
+                count="Config error"
+                style={{
+                  backgroundColor: "#fff1f0",
+                  color: "#cf1322",
+                  fontSize: 10,
+                  boxShadow: "none",
+                }}
+              />
+            ) : (
+              <Badge
+                count="Not configured"
+                style={{
+                  backgroundColor: "#f0f0f0",
+                  color: "#8c8c8c",
+                  fontSize: 10,
+                  boxShadow: "none",
+                }}
+              />
+            )}
+          </span>
+        ) : (
+          "Topic Attribution"
+        ),
       disabled: tenantRequired,
     },
     {
@@ -176,9 +191,7 @@ export function AppLayout({
             onClick={onToggleTheme}
             title={isDark ? "Switch to light mode" : "Switch to dark mode"}
           />
-          <Tooltip
-            title="Toggles clickable deep links from resource and identity IDs to their Confluent Cloud console pages. Connectors and identity pools are not supported — Confluent does not expose stable URLs for these. Deleted resources and identities will not have clickable links as they are excluded from the lookup index."
-          >
+          <Tooltip title="Toggles clickable deep links from resource and identity IDs to their Confluent Cloud console pages. Connectors and identity pools are not supported — Confluent does not expose stable URLs for these. Deleted resources and identities will not have clickable links as they are excluded from the lookup index.">
             <Switch
               checked={deepLinksEnabled}
               onChange={setDeepLinksEnabled}

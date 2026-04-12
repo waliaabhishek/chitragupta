@@ -60,6 +60,11 @@ export function CostByIdentityChart({
   }, [data, topN]);
 
   return (
-    <ReactECharts option={option} notMerge style={{ height }} showLoading={loading} />
+    <ReactECharts
+      option={option}
+      notMerge
+      style={{ height }}
+      showLoading={loading}
+    />
   );
 }

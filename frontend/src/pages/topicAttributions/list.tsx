@@ -40,7 +40,10 @@ export function TopicAttributionPage(): React.JSX.Element {
           type="error"
           showIcon
           message="Topic Attribution configuration error"
-          description={currentTenant.topic_attribution_error ?? "Configuration validation failed."}
+          description={
+            currentTenant.topic_attribution_error ??
+            "Configuration validation failed."
+          }
         />
       </div>
     );
@@ -56,10 +59,13 @@ export function TopicAttributionPage(): React.JSX.Element {
           message="Topic Attribution is not configured"
           description={
             <span>
-              Topic Attribution overlays Kafka topic-level cost attribution on top of chargeback data,
-              enabling per-topic cost breakdowns across your Confluent Cloud environment.
-              To enable it, add <code>topic_attribution.enabled: true</code> under your tenant&apos;s
-              <code>plugin_settings</code> in the YAML config and restart the service.
+              Topic Attribution overlays Kafka topic-level cost attribution on
+              top of chargeback data, enabling per-topic cost breakdowns across
+              your Confluent Cloud environment. To enable it, add{" "}
+              <code>topic_attribution.enabled: true</code> under your
+              tenant&apos;s
+              <code>plugin_settings</code> in the YAML config and restart the
+              service.
             </span>
           }
         />

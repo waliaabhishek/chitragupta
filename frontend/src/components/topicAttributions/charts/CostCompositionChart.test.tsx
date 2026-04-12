@@ -69,20 +69,26 @@ describe("CostCompositionChart", () => {
 
 describe("TASK-203: tooltip valueFormatter", () => {
   it("CostCompositionChart — valueFormatter present", () => {
-    render(<CostCompositionChart data={[makeBucket("KAFKA_STORAGE", "100.00")]} />);
+    render(
+      <CostCompositionChart data={[makeBucket("KAFKA_STORAGE", "100.00")]} />,
+    );
     const tooltip = lastOption.tooltip as Record<string, unknown>;
     expect(typeof tooltip?.valueFormatter).toBe("function");
   });
 
   it("CostCompositionChart — valueFormatter output", () => {
-    render(<CostCompositionChart data={[makeBucket("KAFKA_STORAGE", "100.00")]} />);
+    render(
+      <CostCompositionChart data={[makeBucket("KAFKA_STORAGE", "100.00")]} />,
+    );
     const tooltip = lastOption.tooltip as Record<string, unknown>;
     const valueFormatter = tooltip?.valueFormatter as (v: number) => string;
     expect(valueFormatter(1996.9649999999929)).toBe("$1,996.96");
   });
 
   it("CostCompositionChart — axisLabel formatter unchanged", () => {
-    render(<CostCompositionChart data={[makeBucket("KAFKA_STORAGE", "100.00")]} />);
+    render(
+      <CostCompositionChart data={[makeBucket("KAFKA_STORAGE", "100.00")]} />,
+    );
     type YAxis = { axisLabel?: { formatter?: (v: number) => string } };
     const yAxis = lastOption.yAxis as YAxis;
     const formatter = yAxis?.axisLabel?.formatter;

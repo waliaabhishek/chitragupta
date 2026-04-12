@@ -109,6 +109,10 @@ vi.mock("../../components/dashboard/AllocationIssuesTable", () => ({
   )),
 }));
 
+vi.mock("../../components/pivotPanel/TagPivotPanel", () => ({
+  TagPivotPanel: vi.fn(() => null),
+}));
+
 // Partial antd mock — includes all components used by InventoryCounters
 vi.mock("antd", () => ({
   Card: ({ children }: { children: ReactNode }) => (

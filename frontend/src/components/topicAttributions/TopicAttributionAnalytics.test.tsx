@@ -65,6 +65,10 @@ vi.mock("./charts/PivotedCostBreakdown", () => ({
   PivotedCostBreakdown: () => null,
 }));
 
+vi.mock("../pivotPanel/TagPivotPanel", () => ({
+  TagPivotPanel: () => null,
+}));
+
 vi.mock("../../hooks/useTopicAttributionAggregation", () => ({
   useTopicAttributionAggregation: () => ({
     data: { buckets: [] },

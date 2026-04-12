@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { API_URL } from "../config";
 import type { AggregationResponse } from "../types/api";
+import { appendTagFilters } from "../utils/aggregation";
 
 export interface UseAggregationParams {
   tenantName: string;
@@ -13,6 +14,7 @@ export interface UseAggregationParams {
   resourceId?: string | null;
   costType?: string | null;
   timezone?: string | null;
+  tagFilters?: Record<string, string[]>;
 }
 
 export interface UseAggregationResult {
@@ -36,6 +38,7 @@ export function useAggregation(
     resourceId,
     costType,
     timezone,
+    tagFilters,
   } = params;
 
   const groupByKey = groupBy.join(",");
@@ -53,6 +56,7 @@ export function useAggregation(
       resourceId ?? null,
       costType ?? null,
       timezone ?? null,
+      JSON.stringify(tagFilters ?? null),
     ],
     queryFn: async ({ signal }) => {
       const qs = new URLSearchParams();
@@ -67,6 +71,7 @@ export function useAggregation(
       if (resourceId) qs.set("resource_id", resourceId);
       if (costType) qs.set("cost_type", costType);
       if (timezone) qs.set("timezone", timezone);
+      if (tagFilters) appendTagFilters(qs, tagFilters);
 
       const url = `${API_URL}/tenants/${tenantName}/chargebacks/aggregate?${qs.toString()}`;
       const response = await fetch(url, { signal });

@@ -43,7 +43,9 @@ function makeBucket(
 describe("EnvironmentCostChart", () => {
   it("renders an ECharts bar chart", () => {
     render(
-      <EnvironmentCostChart data={[makeBucket("topic-a", "env-1", "100.00")]} />,
+      <EnvironmentCostChart
+        data={[makeBucket("topic-a", "env-1", "100.00")]}
+      />,
     );
     const chart = screen.getByTestId("echarts");
     expect(chart).toBeTruthy();
@@ -109,7 +111,9 @@ describe("EnvironmentCostChart", () => {
 describe("EnvironmentCostChart axis configuration", () => {
   it("xAxis is numeric with currency formatter", () => {
     render(
-      <EnvironmentCostChart data={[makeBucket("topic-a", "env-1", "100.00")]} />,
+      <EnvironmentCostChart
+        data={[makeBucket("topic-a", "env-1", "100.00")]}
+      />,
     );
     type XAxis = {
       type?: string;
@@ -143,7 +147,9 @@ describe("EnvironmentCostChart tooltip", () => {
 
   it("formatter renders non-zero series with currency values and env header", () => {
     render(
-      <EnvironmentCostChart data={[makeBucket("topic-a", "env-1", "100.00")]} />,
+      <EnvironmentCostChart
+        data={[makeBucket("topic-a", "env-1", "100.00")]}
+      />,
     );
     type Tooltip = { formatter?: (params: unknown) => string };
     const tooltip = lastOption.tooltip as Tooltip;
