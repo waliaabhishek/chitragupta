@@ -1597,6 +1597,28 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#get-apiv1tenantstenant_nametagskeys" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/v1/tenants/{tenant_name}/tags/keys
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-apiv1tenantstenant_nametagskeystag_keyvalues" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/v1/tenants/{tenant_name}/tags/keys/{tag_key}/values
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#post-apiv1tenantstenant_nametagsbulk" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2209,6 +2231,28 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#get-apiv1tenantstenant_nametagskeys" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/v1/tenants/{tenant_name}/tags/keys
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-apiv1tenantstenant_nametagskeystag_keyvalues" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/v1/tenants/{tenant_name}/tags/keys/{tag_key}/values
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#post-apiv1tenantstenant_nametagsbulk" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2669,7 +2713,7 @@
 <td><code>group_by</code></td>
 <td>list[string]</td>
 <td><code>["identity_id"]</code></td>
-<td>Columns to group by (repeatable)</td>
+<td>Columns or tag keys to group by (repeatable). Use <code>tag:{key}</code> for tag-based grouping.</td>
 </tr>
 <tr>
 <td><code>time_bucket</code></td>
@@ -2719,28 +2763,59 @@
 <td>no</td>
 <td>Filter by cost type</td>
 </tr>
+<tr>
+<td><code>tag:{key}</code></td>
+<td>string</td>
+<td>no</td>
+<td>Filter to rows where the tag <code>{key}</code> matches the given value. Repeatable for AND semantics. Comma-separated values in a single param are OR-matched.</td>
+</tr>
 </tbody>
 </table>
 <p><strong>Valid <code>group_by</code> columns:</strong> <code>identity_id</code>, <code>resource_id</code>, <code>product_type</code>, <code>product_category</code>, <code>cost_type</code>, <code>allocation_method</code>, <code>environment_id</code>.</p>
+<p><strong>Tag-based grouping (<code>group_by=tag:{key}</code>):</strong></p>
+<p>Use <code>tag:</code> prefix to group by an entity tag key instead of a dimension column. Examples:</p>
+<ul>
+<li><code>group_by=tag:owner</code> — group by the <code>owner</code> tag; rows with no <code>owner</code> tag land in an <code>UNTAGGED</code> bucket.</li>
+<li><code>group_by=tag:owner&amp;group_by=tag:department</code> — group by two tag keys; each bucket has both keys in <code>dimensions</code>.</li>
+<li><code>group_by=tag:owner&amp;group_by=product_type</code> — mix tag and dimension grouping in one query.</li>
+</ul>
+<p>Tag values are resolved by joining the <code>entity_tags</code> table. When a resource and its linked identity both carry the same tag key, the <strong>resource tag wins</strong> (mirrors the behavior on the list endpoint).</p>
+<p><strong>Tag-based filtering (<code>tag:{key}={value}</code>):</strong></p>
+<p>Dynamic query parameters prefixed <code>tag:</code> are treated as tag filters and are independent of <code>group_by</code>.</p>
+<ul>
+<li><code>tag:department=eng</code> — only rows where <code>department</code> tag equals <code>eng</code>.</li>
+<li><code>tag:team=platform,commerce</code> — <code>team</code> IN (<code>platform</code>, <code>commerce</code>) — comma-separated values are OR-matched within one key.</li>
+<li><code>tag:owner=alice&amp;tag:department=eng</code> — multiple tag params are AND-matched across keys.</li>
+<li>Untagged rows (no matching tag key) are excluded from filtered results.</li>
+</ul>
+<p>Tag key format: must start with an alphanumeric character, then alphanumeric, <code>_</code>, or <code>-</code>, up to 63 characters total. Invalid keys return HTTP 400.</p>
 <p><strong>Response:</strong></p>
 <p><code>json
 {
   "buckets": [
     {
-      "dimensions": {"identity_id": "sa-12345"},
+      "dimensions": {"tag:owner": "team-commerce", "product_type": "kafka"},
       "time_bucket": "2026-01-01",
       "total_amount": "150.00",
       "usage_amount": "120.00",
       "shared_amount": "30.00",
       "row_count": 42
+    },
+    {
+      "dimensions": {"tag:owner": "UNTAGGED", "product_type": "kafka"},
+      "time_bucket": "2026-01-01",
+      "total_amount": "30.00",
+      "usage_amount": "30.00",
+      "shared_amount": "0.00",
+      "row_count": 8
     }
   ],
-  "total_amount": "150.00",
-  "usage_amount": "120.00",
+  "total_amount": "180.00",
+  "usage_amount": "150.00",
   "shared_amount": "30.00",
-  "total_rows": 42
+  "total_rows": 50
 }</code></p>
-<p><code>usage_amount</code> is cost attributed by actual usage metrics. <code>shared_amount</code> is cost split evenly.</p>
+<p>Tag dimensions appear in <code>dimensions</code> with the <code>tag:</code> prefix (e.g. <code>"tag:owner": "team-commerce"</code>). <code>usage_amount</code> is cost attributed by actual usage metrics. <code>shared_amount</code> is cost split evenly.</p>
 <hr />
 <h2 id="resources">Resources<a class="headerlink" href="#resources" title="Permanent link">&para;</a></h2>
 <h3 id="get-apiv1tenantstenant_nameresources"><code>GET /api/v1/tenants/{tenant_name}/resources</code><a class="headerlink" href="#get-apiv1tenantstenant_nameresources" title="Permanent link">&para;</a></h3>
@@ -2933,6 +3008,49 @@
 </tbody>
 </table>
 <p><strong>Response:</strong> <code>{"items": [...], "total": N, "page": 1, "page_size": 100, "pages": N}</code></p>
+<h3 id="get-apiv1tenantstenant_nametagskeys"><code>GET /api/v1/tenants/{tenant_name}/tags/keys</code><a class="headerlink" href="#get-apiv1tenantstenant_nametagskeys" title="Permanent link">&para;</a></h3>
+<p>List distinct tag keys for a tenant, sorted alphabetically.</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Type</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>entity_type</code></td>
+<td>string</td>
+<td>Filter by entity type (<code>"resource"</code> or <code>"identity"</code>)</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Response:</strong> <code>{"keys": ["env", "team", "owner"]}</code></p>
+<h3 id="get-apiv1tenantstenant_nametagskeystag_keyvalues"><code>GET /api/v1/tenants/{tenant_name}/tags/keys/{tag_key}/values</code><a class="headerlink" href="#get-apiv1tenantstenant_nametagskeystag_keyvalues" title="Permanent link">&para;</a></h3>
+<p>List distinct values for a tag key, sorted alphabetically. Returns 400 if <code>tag_key</code> format is invalid.</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Type</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>entity_type</code></td>
+<td>string</td>
+<td>Filter by entity type (<code>"resource"</code> or <code>"identity"</code>)</td>
+</tr>
+<tr>
+<td><code>q</code></td>
+<td>string</td>
+<td>Prefix filter for autocomplete (case-insensitive)</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Response:</strong> <code>{"values": ["prod", "staging"]}</code></p>
 <h3 id="post-apiv1tenantstenant_nametagsbulk"><code>POST /api/v1/tenants/{tenant_name}/tags/bulk</code><a class="headerlink" href="#post-apiv1tenantstenant_nametagsbulk" title="Permanent link">&para;</a></h3>
 <p>Bulk create/update tags on explicit entity IDs.</p>
 <p><strong>Body:</strong></p>
@@ -3107,6 +3225,18 @@ in plugin settings.</p>
 <td>Filter by method (<code>bytes_ratio</code>, <code>retained_bytes_ratio</code>, <code>even_split</code>)</td>
 </tr>
 <tr>
+<td><code>tag_key</code></td>
+<td>string</td>
+<td>no</td>
+<td>Filter by tag key (exact match)</td>
+</tr>
+<tr>
+<td><code>tag_value</code></td>
+<td>string</td>
+<td>no</td>
+<td>Filter by tag value (requires tag_key, exact match)</td>
+</tr>
+<tr>
 <td><code>page</code></td>
 <td>int</td>
 <td>no</td>
@@ -3137,7 +3267,7 @@ in plugin settings.</p>
 <td><code>group_by</code></td>
 <td>list[string]</td>
 <td><code>["topic_name"]</code></td>
-<td>Columns to group by (repeatable)</td>
+<td>Columns or tag keys to group by (repeatable). Use <code>tag:{key}</code> for tag-based grouping.</td>
 </tr>
 <tr>
 <td><code>time_bucket</code></td>
@@ -3181,23 +3311,53 @@ in plugin settings.</p>
 <td>no</td>
 <td>Filter by product type</td>
 </tr>
+<tr>
+<td><code>tag:{key}</code></td>
+<td>string</td>
+<td>no</td>
+<td>Filter to rows where the tag <code>{key}</code> matches the given value. Repeatable for AND semantics. Comma-separated values in a single param are OR-matched.</td>
+</tr>
 </tbody>
 </table>
-<p><strong>Valid <code>group_by</code> columns:</strong> <code>topic_name</code>, <code>cluster_resource_id</code>, <code>env_id</code>, <code>product_type</code>, <code>product_category</code>, <code>attribution_method</code>.</p>
+<p><strong>Valid <code>group_by</code> columns:</strong> <code>topic_name</code>, <code>cluster_resource_id</code>, <code>env_id</code>, <code>product_type</code>, <code>product_category</code>, <code>attribution_method</code>. Invalid dimension names are silently dropped (no 400).</p>
+<p><strong>Tag-based grouping (<code>group_by=tag:{key}</code>):</strong></p>
+<p>Use <code>tag:</code> prefix to group by a resource tag key instead of a dimension column. Examples:</p>
+<ul>
+<li><code>group_by=tag:owner</code> — group by the <code>owner</code> tag; rows with no <code>owner</code> tag land in an <code>UNTAGGED</code> bucket.</li>
+<li><code>group_by=tag:owner&amp;group_by=tag:department</code> — group by two tag keys; each bucket has both keys in <code>dimensions</code>.</li>
+<li><code>group_by=tag:owner&amp;group_by=topic_name</code> — mix tag and dimension grouping in one query.</li>
+</ul>
+<p>Topic attribution is resource-only — tags are resolved from the resource entity (<code>cluster_resource_id:topic:topic_name</code>) only. There is no identity join and no resource/identity precedence rule.</p>
+<p><strong>Tag-based filtering (<code>tag:{key}={value}</code>):</strong></p>
+<p>Dynamic query parameters prefixed <code>tag:</code> are treated as tag filters and are independent of <code>group_by</code>.</p>
+<ul>
+<li><code>tag:department=eng</code> — only rows where the resource's <code>department</code> tag equals <code>eng</code>.</li>
+<li><code>tag:team=platform,commerce</code> — <code>team</code> IN (<code>platform</code>, <code>commerce</code>) — comma-separated values are OR-matched within one key.</li>
+<li><code>tag:owner=alice&amp;tag:department=eng</code> — multiple tag params are AND-matched across keys.</li>
+<li>Untagged rows (no matching tag key on the resource) are excluded from filtered results.</li>
+</ul>
+<p>Tag key format: must start with an alphanumeric character, then alphanumeric, <code>_</code>, or <code>-</code>, up to 63 characters total. Invalid keys return HTTP 400.</p>
 <p><strong>Response:</strong></p>
 <p><code>json
 {
   "buckets": [
     {
-      "dimensions": {"topic_name": "orders"},
+      "dimensions": {"tag:owner": "alice", "topic_name": "payments-events"},
       "time_bucket": "2026-01-01",
-      "total_amount": "42.50",
-      "row_count": 3
+      "total_amount": "10.00",
+      "row_count": 1
+    },
+    {
+      "dimensions": {"tag:owner": "UNTAGGED", "topic_name": "untagged-events"},
+      "time_bucket": "2026-01-01",
+      "total_amount": "25.00",
+      "row_count": 1
     }
   ],
-  "total_amount": "42.50",
-  "total_rows": 3
+  "total_amount": "35.00",
+  "total_rows": 2
 }</code></p>
+<p>Tag dimensions appear in <code>dimensions</code> with the <code>tag:</code> prefix (e.g. <code>"tag:owner": "alice"</code>). Rows with no matching tag appear under <code>"UNTAGGED"</code>.</p>
 <h3 id="get-apiv1tenantstenant_nametopic-attributionsdates"><code>GET /api/v1/tenants/{tenant_name}/topic-attributions/dates</code><a class="headerlink" href="#get-apiv1tenantstenant_nametopic-attributionsdates" title="Permanent link">&para;</a></h3>
 <p>List distinct dates for which topic attribution rows exist.</p>
 <p><strong>Response:</strong> <code>{"dates": ["2026-01-01", "2026-01-02", ...]}</code></p>
