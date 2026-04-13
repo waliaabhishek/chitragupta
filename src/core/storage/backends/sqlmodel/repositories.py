@@ -13,7 +13,15 @@ from sqlmodel import Session, col, select
 
 from core.models.chargeback import AggregationRow, AllocationDetail, AllocationIssueRow, CostType
 from core.models.counts import TypeStatusCounts
-from core.models.graph import EdgeType, GraphEdgeData, GraphNeighborhood, GraphNodeData
+from core.models.graph import (
+    EdgeType,
+    GraphDiffNodeData,
+    GraphEdgeData,
+    GraphNeighborhood,
+    GraphNodeData,
+    GraphSearchResultData,
+    GraphTimelineData,
+)
 
 if TYPE_CHECKING:
     from core.emitters.models import EmissionRecord
@@ -2700,3 +2708,265 @@ class SQLModelGraphRepository:
             .group_by(dim_col)
         )
         return {row[0]: Decimal(row[1] or "0") for row in self._session.exec(stmt).all() if row[0] is not None}
+
+    def search_entities(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        query: str,
+    ) -> list[GraphSearchResultData]:
+        """Search resources and identities by partial name/id match. Returns ≤20 results."""
+        pattern = f"%{query}%"
+
+        resource_where = [
+            col(ResourceTable.ecosystem) == ecosystem,
+            col(ResourceTable.tenant_id) == tenant_id,
+            or_(
+                col(ResourceTable.resource_id).ilike(pattern),
+                col(ResourceTable.display_name).ilike(pattern),
+            ),
+        ]
+        resource_rows = self._session.exec(select(ResourceTable).where(*resource_where).limit(200)).all()
+
+        identity_where = [
+            col(IdentityTable.ecosystem) == ecosystem,
+            col(IdentityTable.tenant_id) == tenant_id,
+            or_(
+                col(IdentityTable.identity_id).ilike(pattern),
+                col(IdentityTable.display_name).ilike(pattern),
+            ),
+        ]
+        identity_rows = self._session.exec(select(IdentityTable).where(*identity_where).limit(200)).all()
+
+        results: list[tuple[int, GraphSearchResultData]] = []
+
+        for res in resource_rows:
+            results.append(
+                (
+                    _relevance_score(res.resource_id, res.display_name, query),
+                    GraphSearchResultData(
+                        id=res.resource_id,
+                        resource_type=res.resource_type,
+                        display_name=res.display_name,
+                        parent_id=res.parent_id,
+                        status=res.status,
+                    ),
+                )
+            )
+
+        for idt in identity_rows:
+            results.append(
+                (
+                    _relevance_score(idt.identity_id, idt.display_name, query),
+                    GraphSearchResultData(
+                        id=idt.identity_id,
+                        resource_type=idt.identity_type,
+                        display_name=idt.display_name,
+                        parent_id=None,
+                        status="active" if idt.deleted_at is None else "deleted",
+                    ),
+                )
+            )
+
+        results.sort(key=lambda x: x[0])
+        return [item for _, item in results[:20]]
+
+    def diff_neighborhood(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        focus_id: str | None,
+        depth: int,
+        from_start: datetime,
+        from_end: datetime,
+        to_start: datetime,
+        to_end: datetime,
+    ) -> list[GraphDiffNodeData]:
+        """Reuses find_neighborhood for both windows, merges by entity ID."""
+        before = self.find_neighborhood(
+            ecosystem=ecosystem,
+            tenant_id=tenant_id,
+            focus_id=focus_id,
+            depth=depth,
+            at=from_end,
+            period_start=from_start,
+            period_end=from_end,
+        )
+        after = self.find_neighborhood(
+            ecosystem=ecosystem,
+            tenant_id=tenant_id,
+            focus_id=focus_id,
+            depth=depth,
+            at=to_end,
+            period_start=to_start,
+            period_end=to_end,
+        )
+
+        before_map: dict[str, GraphNodeData] = {n.id: n for n in before.nodes}
+        after_map: dict[str, GraphNodeData] = {n.id: n for n in after.nodes}
+        all_ids = set(before_map) | set(after_map)
+
+        diff: list[GraphDiffNodeData] = []
+        for eid in all_ids:
+            b = before_map.get(eid)
+            a = after_map.get(eid)
+            cost_before = b.cost if b else Decimal("0")
+            cost_after = a.cost if a else Decimal("0")
+            cost_delta = cost_after - cost_before
+
+            if b and a:
+                status = "unchanged" if cost_delta == Decimal("0") else "changed"
+                pct_change = (cost_delta / cost_before * 100) if cost_before != Decimal("0") else None
+            elif a:
+                status = "new"
+                pct_change = None
+            else:
+                status = "deleted"
+                pct_change = None
+
+            representative = before_map.get(eid) or after_map[eid]
+            diff.append(
+                GraphDiffNodeData(
+                    id=eid,
+                    resource_type=representative.resource_type,
+                    display_name=representative.display_name,
+                    parent_id=representative.parent_id,
+                    cost_before=cost_before,
+                    cost_after=cost_after,
+                    cost_delta=cost_delta,
+                    pct_change=pct_change,
+                    status=status,
+                )
+            )
+
+        return diff
+
+    def get_timeline(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        entity_id: str,
+        start: datetime,
+        end: datetime,
+    ) -> list[GraphTimelineData]:
+        """Daily cost series with gap filling for missing dates."""
+        resource_row = self._session.get(ResourceTable, (ecosystem, tenant_id, entity_id))
+        if resource_row is not None:
+            if resource_row.resource_type == "topic":
+                raw = self._timeline_topic_attribution(ecosystem, tenant_id, entity_id, start, end)
+            elif resource_row.resource_type == "environment":
+                raw = self._timeline_chargeback(ecosystem, tenant_id, entity_id, start, end, group_by="env_id")
+            else:
+                raw = self._timeline_chargeback(ecosystem, tenant_id, entity_id, start, end, group_by="resource_id")
+        else:
+            id_where = [
+                col(IdentityTable.ecosystem) == ecosystem,
+                col(IdentityTable.tenant_id) == tenant_id,
+                col(IdentityTable.identity_id) == entity_id,
+            ]
+            identity_row = self._session.exec(select(IdentityTable).where(*id_where)).first()
+            if identity_row is None:
+                raise KeyError(f"Entity {entity_id!r} not found for tenant {tenant_id!r}")
+            raw = self._timeline_chargeback(ecosystem, tenant_id, entity_id, start, end, group_by="identity_id")
+
+        return self._fill_timeline_gaps(raw, start, end)
+
+    def _timeline_chargeback(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        entity_id: str,
+        start: datetime,
+        end: datetime,
+        *,
+        group_by: Literal["env_id", "resource_id", "identity_id"],
+    ) -> dict[date, Decimal]:
+        from core.storage.backends.sqlmodel.tables import ChargebackDimensionTable, ChargebackFactTable
+
+        if group_by == "identity_id":
+            dim_col = col(ChargebackDimensionTable.identity_id)
+        elif group_by == "env_id":
+            dim_col = col(ChargebackDimensionTable.env_id)
+        else:
+            dim_col = col(ChargebackDimensionTable.resource_id)  # type: ignore[arg-type]  # resource_id is nullable in schema but never NULL in practice for resource-grouped rows
+
+        date_expr = func.date(ChargebackFactTable.timestamp).label("day")
+        stmt = (
+            select(date_expr, func.sum(cast(ChargebackFactTable.amount, String)).label("total"))
+            .select_from(ChargebackDimensionTable)
+            .join(
+                ChargebackFactTable, col(ChargebackFactTable.dimension_id) == col(ChargebackDimensionTable.dimension_id)
+            )
+            .where(
+                col(ChargebackDimensionTable.ecosystem) == ecosystem,
+                col(ChargebackDimensionTable.tenant_id) == tenant_id,
+                dim_col == entity_id,
+                col(ChargebackFactTable.timestamp) >= start,
+                col(ChargebackFactTable.timestamp) < end,
+            )
+            .group_by(date_expr)
+        )
+        return {
+            date.fromisoformat(row[0]) if isinstance(row[0], str) else row[0]: Decimal(row[1] or "0")
+            for row in self._session.exec(stmt).all()
+        }
+
+    def _timeline_topic_attribution(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        entity_id: str,
+        start: datetime,
+        end: datetime,
+    ) -> dict[date, Decimal]:
+        from core.storage.backends.sqlmodel.tables import TopicAttributionDimensionTable, TopicAttributionFactTable
+
+        date_expr = func.date(TopicAttributionFactTable.timestamp).label("day")
+        stmt = (
+            select(date_expr, func.sum(cast(TopicAttributionFactTable.amount, String)).label("total"))
+            .select_from(TopicAttributionDimensionTable)
+            .join(
+                TopicAttributionFactTable,
+                col(TopicAttributionFactTable.dimension_id) == col(TopicAttributionDimensionTable.dimension_id),
+            )
+            .where(
+                col(TopicAttributionDimensionTable.ecosystem) == ecosystem,
+                col(TopicAttributionDimensionTable.tenant_id) == tenant_id,
+                col(TopicAttributionDimensionTable.resource_id) == entity_id,
+                col(TopicAttributionFactTable.timestamp) >= start,
+                col(TopicAttributionFactTable.timestamp) < end,
+            )
+            .group_by(date_expr)
+        )
+        return {
+            date.fromisoformat(row[0]) if isinstance(row[0], str) else row[0]: Decimal(row[1] or "0")
+            for row in self._session.exec(stmt).all()
+        }
+
+    def _fill_timeline_gaps(
+        self,
+        raw: dict[date, Decimal],
+        start: datetime,
+        end: datetime,
+    ) -> list[GraphTimelineData]:
+        """Generate one entry per calendar day in [start.date(), end.date()).
+        Days with no billing data receive cost=0.
+        """
+        start_date = start.date()
+        return [
+            GraphTimelineData(date=d, cost=raw.get(d, Decimal("0")))
+            for i in range((end.date() - start_date).days)
+            for d in (start_date + timedelta(days=i),)
+        ]
+
+
+def _relevance_score(primary: str, display: str | None, query: str) -> int:
+    """Score a search candidate: 0=exact, 1=prefix, 2=substring (case-insensitive)."""
+    q = query.lower()
+    p = primary.lower()
+    d = (display or "").lower()
+    if p == q or d == q:
+        return 0
+    if p.startswith(q) or d.startswith(q):
+        return 1
+    return 2

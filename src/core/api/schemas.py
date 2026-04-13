@@ -457,3 +457,53 @@ class GraphResponse(BaseModel):
     edges: list[GraphEdge]
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class GraphSearchResult(BaseModel):
+    id: str
+    resource_type: str
+    display_name: str | None
+    parent_id: str | None
+    status: str
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class GraphSearchResponse(BaseModel):
+    results: list[GraphSearchResult]
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class GraphDiffNode(BaseModel):
+    id: str
+    resource_type: str
+    display_name: str | None
+    parent_id: str | None
+    cost_before: Decimal
+    cost_after: Decimal
+    cost_delta: Decimal
+    pct_change: Decimal | None
+    status: str  # "new" | "deleted" | "changed" | "unchanged"
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class GraphDiffResponse(BaseModel):
+    nodes: list[GraphDiffNode]
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class GraphTimelinePoint(BaseModel):
+    date: date
+    cost: Decimal
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class GraphTimelineResponse(BaseModel):
+    entity_id: str
+    points: list[GraphTimelinePoint]
+
+    model_config = ConfigDict(from_attributes=True)

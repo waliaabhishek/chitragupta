@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     )
     from core.models.counts import TypeStatusCounts
     from core.models.entity_tag import EntityTag
-    from core.models.graph import GraphNeighborhood
+    from core.models.graph import GraphDiffNodeData, GraphNeighborhood, GraphSearchResultData, GraphTimelineData
     from core.models.identity import Identity
     from core.models.pipeline import PipelineRun, PipelineState
     from core.models.resource import Resource
@@ -683,6 +683,76 @@ class GraphRepository(Protocol):
         Tags are resolved internally via the EntityTagRepository injected at construction time.
 
         Raises KeyError if focus_id is provided but not found in resources (route converts to 404).
+        """
+        ...
+
+    def search_entities(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        query: str,
+    ) -> list[GraphSearchResultData]:
+        """Search resources and identities by partial name match.
+
+        Queries ResourceTable (resource_id, display_name) and IdentityTable
+        (identity_id, display_name) with case-insensitive partial match.
+
+        Results ordered by relevance: exact match (0) → prefix (1) → substring (2).
+        Returns at most 20 results. Returns empty list (never raises) for no matches.
+
+        No temporal filter — returns all entities (active and deleted) with a status field.
+        Tenant isolation enforced via ecosystem + tenant_id predicates.
+        """
+        ...
+
+    def diff_neighborhood(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        focus_id: str | None,
+        depth: int,
+        from_start: datetime,
+        from_end: datetime,
+        to_start: datetime,
+        to_end: datetime,
+    ) -> list[GraphDiffNodeData]:
+        """Compare costs between two time windows for a neighborhood.
+
+        Internally calls find_neighborhood twice:
+          before = find_neighborhood(at=from_end, period_start=from_start, period_end=from_end)
+          after  = find_neighborhood(at=to_end,   period_start=to_start,   period_end=to_end)
+
+        Merges by entity ID:
+          both windows → status "changed" or "unchanged"
+          only in after  → status "new",     cost_before=0, pct_change=None
+          only in before → status "deleted",  cost_after=0,  pct_change=None
+
+        pct_change = None when cost_before == 0.
+
+        Raises KeyError if focus_id is provided but not found (route converts to 404).
+        """
+        ...
+
+    def get_timeline(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        entity_id: str,
+        start: datetime,
+        end: datetime,
+    ) -> list[GraphTimelineData]:
+        """Return daily cost series for an entity between start (inclusive) and end (exclusive).
+
+        Entity type routing:
+          resource_type == "topic"       → topic_attribution_facts grouped by date
+          resource_type == "environment" → chargeback_facts grouped by env_id then date
+          other resource               → chargeback_facts grouped by resource_id then date
+          identity                     → chargeback_facts filtered by identity_id, grouped by date
+
+        Gap filling: every calendar day in [start.date(), end.date()) is present.
+        Days with no billing data are returned with cost=0.
+
+        Raises KeyError if entity_id is not found in resources or identities.
         """
         ...
 

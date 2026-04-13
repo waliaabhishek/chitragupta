@@ -646,3 +646,128 @@ Return a neighborhood of nodes and directed edges centred on a focus entity.
 **Edge `relationship_type` values:** `parent` (hierarchy), `charge` (identity charged to cluster).
 
 **Error codes:** 400 (tz-naive `at` value), 404 (unknown tenant or unknown `focus` entity), 422 (unparseable parameters).
+
+### `GET /api/v1/tenants/{tenant_name}/graph/search`
+
+Search resources and identities by partial name or ID match. Intended for the jump-to-entity feature in the cost explorer graph frontend.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `q` | string | yes | Case-insensitive partial match against `resource_id`, `display_name`, and `identity_id`. Minimum length 1. |
+
+Results are ordered by relevance: exact match first, then prefix match, then substring match. Returns at most 20 results. Returns an empty list when no entities match (never 404).
+
+**Response:** `GraphSearchResponse`
+
+```json
+{
+  "results": [
+    {
+      "id": "lkc-abc123",
+      "resource_type": "kafka_cluster",
+      "display_name": "Production Cluster",
+      "parent_id": "env-abc",
+      "status": "active"
+    }
+  ]
+}
+```
+
+**Result fields:**
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | string | Entity ID (`resource_id` for resources, `identity_id` for identities) |
+| `resource_type` | string | `resource_type` for resources; `identity_type` for identities (e.g. `service_account`) |
+| `display_name` | string\|null | Human-readable name |
+| `parent_id` | string\|null | Parent entity ID. Always `null` for identity results (identities have no parent in the graph model) |
+| `status` | string | `active` or `deleted` |
+
+**Error codes:** 404 (unknown tenant), 422 (missing or empty `q`).
+
+### `GET /api/v1/tenants/{tenant_name}/graph/diff`
+
+Compare costs between two time periods for a neighborhood. Returns a flat list of nodes annotated with before/after costs and a diff status, enabling the "what changed?" view in the cost explorer.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `from_start` | date | yes | Start of the "before" period (inclusive). |
+| `from_end` | date | yes | End of the "before" period (inclusive). |
+| `to_start` | date | yes | Start of the "after" period (inclusive). |
+| `to_end` | date | yes | End of the "after" period (inclusive). |
+| `focus` | string | no | Entity ID to focus on. Omit for root (tenant/environment) view. |
+| `depth` | int | no (default 1) | Hierarchy hops from focus (1–3). |
+| `timezone` | string | no | IANA timezone for date boundaries. Defaults to UTC. |
+
+**Response:** `GraphDiffResponse`
+
+```json
+{
+  "nodes": [
+    {
+      "id": "lkc-abc123",
+      "resource_type": "kafka_cluster",
+      "display_name": "Production Cluster",
+      "parent_id": "env-abc",
+      "cost_before": "100.00",
+      "cost_after": "150.00",
+      "cost_delta": "50.00",
+      "pct_change": "50.00",
+      "status": "changed"
+    }
+  ]
+}
+```
+
+**Node fields:**
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | string | Entity ID |
+| `resource_type` | string | Entity type |
+| `display_name` | string\|null | Human-readable name |
+| `parent_id` | string\|null | Parent entity ID |
+| `cost_before` | decimal string | Total cost in the "before" window. `"0"` for new entities. |
+| `cost_after` | decimal string | Total cost in the "after" window. `"0"` for deleted entities. |
+| `cost_delta` | decimal string | `cost_after - cost_before`. Negative means cost decreased. |
+| `pct_change` | decimal string\|null | Percentage change: `(cost_delta / cost_before) * 100`. `null` when `cost_before == 0`. |
+| `status` | string | `new` (only in after), `deleted` (only in before), `changed` (in both, cost differs), `unchanged` (in both, cost equal) |
+
+**Error codes:** 404 (unknown tenant or unknown `focus` entity), 422 (missing date parameters).
+
+### `GET /api/v1/tenants/{tenant_name}/graph/timeline`
+
+Return a daily cost time series for a single entity. Enables sparklines and cost-over-time drill-down in the cost explorer graph frontend without leaving the graph view.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `entity_id` | string | yes | `resource_id` or `identity_id` of the entity. |
+| `start` | date | yes | Start date (inclusive). |
+| `end` | date | yes | End date (inclusive). |
+| `timezone` | string | no | IANA timezone for date boundaries. Defaults to UTC. |
+
+Entity type routing: topics use `topic_attribution_facts`; environments use `chargeback_facts` grouped by `env_id`; all other resources use `chargeback_facts` grouped by `resource_id`; identities use `chargeback_facts` filtered by `identity_id`.
+
+Every calendar day in `[start, end]` is present in the response. Days with no billing data are returned with `cost: "0"` (gap filling).
+
+**Response:** `GraphTimelineResponse`
+
+```json
+{
+  "entity_id": "lkc-abc123",
+  "points": [
+    {"date": "2026-04-01", "cost": "12.34"},
+    {"date": "2026-04-02", "cost": "0"},
+    {"date": "2026-04-03", "cost": "15.00"}
+  ]
+}
+```
+
+**Point fields:**
+
+| Field | Type | Description |
+|---|---|---|
+| `date` | date string | Calendar date in `YYYY-MM-DD` format |
+| `cost` | decimal string | Total cost on that day. `"0"` for days with no billing data. |
+
+**Error codes:** 404 (unknown tenant or `entity_id` not found in resources or identities), 422 (missing required parameters).
