@@ -424,3 +424,36 @@ class TopicAttributionAggregationResponse(BaseModel):
 
 class TopicAttributionDatesResponse(BaseModel):
     dates: list[date]
+
+
+class GraphNode(BaseModel):
+    id: str
+    resource_type: str
+    display_name: str | None
+    cost: Decimal
+    created_at: datetime | None
+    deleted_at: datetime | None
+    tags: dict[str, str]
+    parent_id: str | None
+    cloud: str | None
+    region: str | None
+    status: str
+    cross_references: list[str]
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class GraphEdge(BaseModel):
+    source: str
+    target: str
+    relationship_type: str  # EdgeType.value — "parent" | "charge" | "attribution"
+    cost: Decimal | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class GraphResponse(BaseModel):
+    nodes: list[GraphNode]
+    edges: list[GraphEdge]
+
+    model_config = ConfigDict(from_attributes=True)

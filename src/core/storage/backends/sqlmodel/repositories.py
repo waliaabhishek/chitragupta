@@ -4,7 +4,7 @@ import logging
 from collections.abc import Iterator, Sequence
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from cachetools import TTLCache
 from sqlalchemy import case, cast, delete, func, literal, or_, update
@@ -13,6 +13,7 @@ from sqlmodel import Session, col, select
 
 from core.models.chargeback import AggregationRow, AllocationDetail, AllocationIssueRow, CostType
 from core.models.counts import TypeStatusCounts
+from core.models.graph import EdgeType, GraphEdgeData, GraphNeighborhood, GraphNodeData
 
 if TYPE_CHECKING:
     from core.emitters.models import EmissionRecord
@@ -2334,3 +2335,368 @@ def _ta_to_domain(
         amount=Decimal(fact.amount) if fact.amount else Decimal(0),
         dimension_id=dim.dimension_id,
     )
+
+
+class SQLModelGraphRepository:
+    def __init__(self, session: Session, tags_repo: EntityTagRepository) -> None:
+        self._session = session
+        self._tags = tags_repo
+
+    def find_neighborhood(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        focus_id: str | None,
+        depth: int,
+        at: datetime,
+        period_start: datetime,
+        period_end: datetime,
+    ) -> GraphNeighborhood:
+        if focus_id is None:
+            return self._root_view(ecosystem, tenant_id, at, period_start, period_end)
+
+        # Resolve the focus entity
+        focus_row = self._session.get(ResourceTable, (ecosystem, tenant_id, focus_id))
+        if focus_row is None:
+            raise KeyError(f"Entity {focus_id!r} not found for tenant {tenant_id!r}")
+
+        resource_type = focus_row.resource_type
+        # Cluster-type nodes always include identity charge relationships
+        if resource_type in {"kafka_cluster", "dedicated_cluster", "cluster"}:
+            return self._cluster_view(focus_row, ecosystem, tenant_id, at, period_start, period_end)
+        else:
+            return self._resource_view(focus_row, ecosystem, tenant_id, depth, at, period_start, period_end)
+
+    # --- Root view ---
+
+    def _root_view(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        at: datetime,
+        period_start: datetime,
+        period_end: datetime,
+    ) -> GraphNeighborhood:
+        """Return all environments as nodes with a synthetic tenant→env edge per environment."""
+        where = _temporal_active_at_filter(ResourceTable, ecosystem, tenant_id, at)
+        where.append(col(ResourceTable.resource_type) == "environment")
+        env_rows = self._session.exec(select(ResourceTable).where(*where)).all()
+
+        env_ids = [r.resource_id for r in env_rows]
+        # Environments are billed via env_id on chargeback_dimensions, not resource_id
+        cost_map = self._aggregate_costs(
+            ecosystem, tenant_id, env_ids, period_start, period_end, group_by_column="env_id"
+        )
+        tags_map = self._tags.find_tags_for_entities(tenant_id, "resource", env_ids)
+
+        nodes = [
+            GraphNodeData(
+                id=r.resource_id,
+                resource_type=r.resource_type,
+                display_name=r.display_name,
+                cost=cost_map.get(r.resource_id, Decimal("0")),
+                created_at=r.created_at,
+                deleted_at=r.deleted_at,
+                tags={t.tag_key: t.tag_value for t in tags_map.get(r.resource_id, [])},
+                parent_id=r.parent_id,
+                cloud=r.cloud,
+                region=r.region,
+                status=r.status,
+            )
+            for r in env_rows
+        ]
+        # Synthetic tenant node (no DB row — tenant is config-only)
+        tenant_node = GraphNodeData(
+            id=tenant_id,
+            resource_type="tenant",
+            display_name=tenant_id,
+            cost=sum((n.cost for n in nodes), Decimal("0")),
+            created_at=None,
+            deleted_at=None,
+            tags={},
+            parent_id=None,
+            cloud=None,
+            region=None,
+            status="active",
+        )
+        # All parent edges: parent (tenant) → child (env)
+        edges = [
+            GraphEdgeData(source=tenant_id, target=r.resource_id, relationship_type=EdgeType.parent) for r in env_rows
+        ]
+        return GraphNeighborhood(nodes=[tenant_node, *nodes], edges=edges)
+
+    # --- Resource view (environment or other non-cluster focus) ---
+
+    def _resource_view(
+        self,
+        focus_row: ResourceTable,
+        ecosystem: str,
+        tenant_id: str,
+        depth: int,
+        at: datetime,
+        period_start: datetime,
+        period_end: datetime,
+    ) -> GraphNeighborhood:
+        """Return focus node + children up to `depth` hops via parent_id relationships."""
+        all_resource_rows: list[ResourceTable] = [focus_row]
+        # BFS by parent_id for `depth` hops (depth=1 covers direct children)
+        current_level = [focus_row.resource_id]
+        for _ in range(depth):
+            if not current_level:
+                break
+            where = _temporal_active_at_filter(ResourceTable, ecosystem, tenant_id, at)
+            where.append(col(ResourceTable.parent_id).in_(current_level))
+            children = self._session.exec(select(ResourceTable).where(*where)).all()
+            all_resource_rows.extend(children)
+            current_level = [c.resource_id for c in children]
+
+        resource_ids = [r.resource_id for r in all_resource_rows]
+        # Children always group by resource_id; only environments aggregate via env_id.
+        cost_map = self._aggregate_costs(
+            ecosystem, tenant_id, resource_ids, period_start, period_end, group_by_column="resource_id"
+        )
+        tags_map = self._tags.find_tags_for_entities(tenant_id, "resource", resource_ids)
+
+        # Environment costs are billed via chargeback_dimensions.env_id, not resource_id.
+        # A resource_id-grouped query returns $0 for environment nodes even when charges exist.
+        # Detect the environment case and issue a separate env_id-grouped query for the focus node.
+        if focus_row.resource_type == "environment":
+            focus_cost = self._aggregate_costs(
+                ecosystem,
+                tenant_id,
+                [focus_row.resource_id],
+                period_start,
+                period_end,
+                group_by_column="env_id",
+            ).get(focus_row.resource_id, Decimal("0"))
+        else:
+            focus_cost = cost_map.get(focus_row.resource_id, Decimal("0"))
+
+        nodes = [
+            GraphNodeData(
+                id=r.resource_id,
+                resource_type=r.resource_type,
+                display_name=r.display_name,
+                cost=focus_cost
+                if r.resource_id == focus_row.resource_id
+                else cost_map.get(r.resource_id, Decimal("0")),
+                created_at=r.created_at,
+                deleted_at=r.deleted_at,
+                tags={t.tag_key: t.tag_value for t in tags_map.get(r.resource_id, [])},
+                parent_id=r.parent_id,
+                cloud=r.cloud,
+                region=r.region,
+                status=r.status,
+            )
+            for r in all_resource_rows
+        ]
+        focus_id = focus_row.resource_id
+        # Parent edges: parent → child direction (source=parent, target=child)
+        edges = [
+            GraphEdgeData(
+                source=r.parent_id or focus_id,
+                target=r.resource_id,
+                relationship_type=EdgeType.parent,
+            )
+            for r in all_resource_rows
+            if r.resource_id != focus_id
+        ]
+        return GraphNeighborhood(nodes=nodes, edges=edges)
+
+    # --- Cluster view ---
+
+    def _cluster_view(
+        self,
+        focus_row: ResourceTable,
+        ecosystem: str,
+        tenant_id: str,
+        at: datetime,
+        period_start: datetime,
+        period_end: datetime,
+    ) -> GraphNeighborhood:
+        """Return cluster + child topics + identities charged to cluster + charge edges."""
+        cluster_id = focus_row.resource_id
+
+        # Child resources (topics, connectors, etc.) — temporal filter
+        child_where = _temporal_active_at_filter(ResourceTable, ecosystem, tenant_id, at)
+        child_where.append(col(ResourceTable.parent_id) == cluster_id)
+        child_rows = self._session.exec(select(ResourceTable).where(*child_where)).all()
+
+        # Identities charged to this cluster — look in chargeback_dimensions
+        dim_stmt = (
+            select(ChargebackDimensionTable.identity_id)
+            .where(
+                col(ChargebackDimensionTable.ecosystem) == ecosystem,
+                col(ChargebackDimensionTable.tenant_id) == tenant_id,
+                col(ChargebackDimensionTable.resource_id) == cluster_id,
+                col(ChargebackDimensionTable.identity_id) != "",
+            )
+            .distinct()
+        )
+        identity_ids = list(self._session.exec(dim_stmt).all())
+
+        # Identity records with temporal filter
+        identity_rows: list[IdentityTable] = []
+        if identity_ids:
+            id_where = _temporal_active_at_filter(IdentityTable, ecosystem, tenant_id, at)
+            id_where.append(col(IdentityTable.identity_id).in_(identity_ids))
+            identity_rows = list(self._session.exec(select(IdentityTable).where(*id_where)).all())
+
+        # Cost aggregation for resources (cluster + topics)
+        all_resource_ids = [cluster_id] + [c.resource_id for c in child_rows]
+        resource_cost_map = self._aggregate_costs(
+            ecosystem, tenant_id, all_resource_ids, period_start, period_end, group_by_column="resource_id"
+        )
+
+        # Charge cost per identity for this cluster (scoped to billing period)
+        identity_cost_map: dict[str, Decimal] = {}
+        if identity_ids:
+            cost_stmt = (
+                select(
+                    ChargebackDimensionTable.identity_id,
+                    func.sum(cast(ChargebackFactTable.amount, String)).label("total"),
+                )
+                .join(
+                    ChargebackFactTable,
+                    col(ChargebackFactTable.dimension_id) == col(ChargebackDimensionTable.dimension_id),
+                )
+                .where(
+                    col(ChargebackDimensionTable.ecosystem) == ecosystem,
+                    col(ChargebackDimensionTable.tenant_id) == tenant_id,
+                    col(ChargebackDimensionTable.resource_id) == cluster_id,
+                    col(ChargebackDimensionTable.identity_id).in_(identity_ids),
+                    col(ChargebackFactTable.timestamp) >= period_start,
+                    col(ChargebackFactTable.timestamp) < period_end,
+                )
+                .group_by(col(ChargebackDimensionTable.identity_id))
+            )
+            for row in self._session.exec(cost_stmt).all():
+                identity_cost_map[row[0]] = Decimal(row[1] or "0")
+
+        # Cross-references: other resource_ids each identity is charged in (excluding this cluster).
+        cross_ref_map: dict[str, list[str]] = {iid: [] for iid in identity_ids}
+        if identity_ids:
+            xref_stmt = (
+                select(
+                    ChargebackDimensionTable.identity_id,
+                    ChargebackDimensionTable.resource_id,
+                )
+                .where(
+                    col(ChargebackDimensionTable.ecosystem) == ecosystem,
+                    col(ChargebackDimensionTable.tenant_id) == tenant_id,
+                    col(ChargebackDimensionTable.identity_id).in_(identity_ids),
+                    col(ChargebackDimensionTable.resource_id) != cluster_id,
+                    col(ChargebackDimensionTable.resource_id).is_not(None),
+                )
+                .distinct()
+            )
+            for iid, rid in self._session.exec(xref_stmt).all():
+                if rid is not None:  # SQL WHERE filters NULLs but Python type is str | None
+                    cross_ref_map[iid].append(rid)  # pre-initialized dict — no setdefault needed
+
+        # Tag resolution
+        resource_tags = self._tags.find_tags_for_entities(tenant_id, "resource", all_resource_ids)
+        identity_tags = self._tags.find_tags_for_entities(tenant_id, "identity", [r.identity_id for r in identity_rows])
+
+        # Build nodes
+        resource_nodes = [
+            GraphNodeData(
+                id=r.resource_id,
+                resource_type=r.resource_type,
+                display_name=r.display_name,
+                cost=resource_cost_map.get(r.resource_id, Decimal("0")),
+                created_at=r.created_at,
+                deleted_at=r.deleted_at,
+                tags={t.tag_key: t.tag_value for t in resource_tags.get(r.resource_id, [])},
+                parent_id=r.parent_id,
+                cloud=r.cloud,
+                region=r.region,
+                status=r.status,
+            )
+            for r in [focus_row, *child_rows]
+        ]
+        identity_nodes = [
+            GraphNodeData(
+                id=r.identity_id,
+                resource_type=r.identity_type,
+                display_name=r.display_name,
+                cost=identity_cost_map.get(r.identity_id, Decimal("0")),
+                created_at=r.created_at,
+                deleted_at=r.deleted_at,
+                tags={t.tag_key: t.tag_value for t in identity_tags.get(r.identity_id, [])},
+                parent_id=None,
+                cloud=None,
+                region=None,
+                status="active" if r.deleted_at is None else "deleted",
+                cross_references=cross_ref_map.get(r.identity_id, []),
+            )
+            for r in identity_rows
+        ]
+
+        # Build edges — all parent edges: parent → child direction
+        parent_edges = [
+            GraphEdgeData(
+                source=r.parent_id or cluster_id,
+                target=r.resource_id,
+                relationship_type=EdgeType.parent,
+            )
+            for r in child_rows
+        ]
+        charge_edges = [
+            GraphEdgeData(
+                source=cluster_id,
+                target=r.identity_id,
+                relationship_type=EdgeType.charge,
+                cost=identity_cost_map.get(r.identity_id),
+            )
+            for r in identity_rows
+        ]
+
+        return GraphNeighborhood(
+            nodes=[*resource_nodes, *identity_nodes],
+            edges=[*parent_edges, *charge_edges],
+        )
+
+    # --- Cost aggregation helper ---
+
+    def _aggregate_costs(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        ids: list[str],
+        period_start: datetime,
+        period_end: datetime,
+        *,
+        group_by_column: Literal["env_id", "resource_id"],
+    ) -> dict[str, Decimal]:
+        """Sum chargeback_facts.amount grouped by the specified dimension column.
+
+        group_by_column="env_id"      → used by _root_view (environments billed via env_id)
+        group_by_column="resource_id" → used by _resource_view and _cluster_view
+        """
+        if not ids:
+            return {}
+        dim_col = (
+            col(ChargebackDimensionTable.env_id)
+            if group_by_column == "env_id"
+            else col(ChargebackDimensionTable.resource_id)  # type: ignore[arg-type]  # resource_id is str | None; col() handles nullable columns at runtime
+        )
+        stmt = (
+            select(
+                dim_col,
+                func.sum(cast(ChargebackFactTable.amount, String)).label("total"),
+            )
+            .join(
+                ChargebackFactTable,
+                col(ChargebackFactTable.dimension_id) == col(ChargebackDimensionTable.dimension_id),
+            )
+            .where(
+                col(ChargebackDimensionTable.ecosystem) == ecosystem,
+                col(ChargebackDimensionTable.tenant_id) == tenant_id,
+                dim_col.in_(ids),
+                col(ChargebackFactTable.timestamp) >= period_start,
+                col(ChargebackFactTable.timestamp) < period_end,
+            )
+            .group_by(dim_col)
+        )
+        return {row[0]: Decimal(row[1] or "0") for row in self._session.exec(stmt).all() if row[0] is not None}

@@ -9,6 +9,7 @@ from core.storage.backends.sqlmodel.engine import get_or_create_engine, get_or_c
 from core.storage.backends.sqlmodel.repositories import (
     SQLModelEmissionRepository,
     SQLModelEntityTagRepository,
+    SQLModelGraphRepository,
     SQLModelPipelineRunRepository,
     SQLModelPipelineStateRepository,
 )
@@ -23,6 +24,7 @@ if TYPE_CHECKING:
         BillingRepository,
         ChargebackRepository,
         EntityTagRepository,
+        GraphRepository,
         IdentityRepository,
         PipelineRunRepository,
         PipelineStateRepository,
@@ -51,6 +53,7 @@ class SQLModelUnitOfWork:
         self.pipeline_runs: PipelineRunRepository = None  # type: ignore[assignment]
         self.tags: EntityTagRepository = None  # type: ignore[assignment]
         self.emissions: EmissionRepository = None  # type: ignore[assignment]
+        self.graph: GraphRepository = None  # type: ignore[assignment]
         self._topic_attributions: TopicAttributionRepositoryImpl | None = None
 
     def __enter__(self) -> Self:
@@ -64,6 +67,7 @@ class SQLModelUnitOfWork:
         self.pipeline_state = SQLModelPipelineStateRepository(self._session)
         self.pipeline_runs = SQLModelPipelineRunRepository(self._session)
         self.tags = SQLModelEntityTagRepository(self._session)
+        self.graph = SQLModelGraphRepository(self._session, self.tags)
         self.emissions = SQLModelEmissionRepository(self._session)
         return self
 

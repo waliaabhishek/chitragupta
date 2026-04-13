@@ -566,3 +566,83 @@ Stream topic attribution data as CSV. Returns `text/csv` with
 | `timezone` | string | no | IANA timezone for date boundaries. Defaults to UTC. |
 
 **CSV columns:** `ecosystem`, `tenant_id`, `timestamp`, `env_id`, `cluster_resource_id`, `topic_name`, `product_category`, `product_type`, `attribution_method`, `amount`.
+
+
+---
+
+## Graph
+
+Returns cost topology as a graph (nodes + edges) for use by the cost explorer graph frontend. One endpoint covers three views depending on the `focus` parameter.
+
+### `GET /api/v1/tenants/{tenant_name}/graph`
+
+Return a neighborhood of nodes and directed edges centred on a focus entity.
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `focus` | string | — | Entity ID to focus on. Omit for root (tenant) view. |
+| `depth` | int | 1 | Hierarchy hops from focus (1–3). |
+| `at` | datetime | now | Point-in-time lifecycle filter (ISO 8601 with timezone, e.g. `2026-03-15T00:00:00Z`). |
+| `start_date` | date | — | Cost period start date. Overrides `at`-derived month when provided. |
+| `end_date` | date | — | Cost period end date. Overrides `at`-derived month when provided. |
+| `timezone` | string | UTC | IANA timezone for `start_date`/`end_date` boundaries. |
+
+**Views:**
+
+- **Root view** (`focus` omitted): returns a synthetic tenant node plus one environment node per active environment. Edges are `parent` type, directed tenant → environment.
+- **Environment focus** (`focus=env-abc`): returns the environment node plus all direct child resources up to `depth` hops (clusters, connectors, flink pools, schema registries). Edges are `parent` type, directed parent → child.
+- **Cluster focus** (`focus=lkc-abc`): returns the cluster node, its child topic nodes, and any identity (service account / pool) nodes charged to the cluster via chargeback. Edges are `parent` (cluster → topic) and `charge` (cluster → identity).
+
+**Billing period:** when `start_date`/`end_date` are omitted, the cost window defaults to the full calendar month containing `at` (e.g. `at=2026-03-15` → March 1–April 1).
+
+**Response:** `GraphResponse`
+
+```json
+{
+  "nodes": [
+    {
+      "id": "env-abc",
+      "resource_type": "environment",
+      "display_name": "Production",
+      "cost": "1234.56",
+      "created_at": "2025-01-01T00:00:00Z",
+      "deleted_at": null,
+      "tags": {"team": "platform"},
+      "parent_id": null,
+      "cloud": "aws",
+      "region": "us-east-1",
+      "status": "active",
+      "cross_references": []
+    }
+  ],
+  "edges": [
+    {
+      "source": "org-123",
+      "target": "env-abc",
+      "relationship_type": "parent",
+      "cost": null
+    }
+  ]
+}
+```
+
+**Node fields:**
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | string | Entity ID (`resource_id` or `identity_id`) |
+| `resource_type` | string | Entity type: `tenant`, `environment`, `kafka_cluster`, `kafka_topic`, `service_account`, etc. |
+| `display_name` | string\|null | Human-readable name |
+| `cost` | decimal string | Aggregated cost for the billing period |
+| `created_at` | datetime\|null | Lifecycle start |
+| `deleted_at` | datetime\|null | Lifecycle end (null = still active) |
+| `tags` | object | Tag key→value dict resolved from `entity_tags` |
+| `parent_id` | string\|null | Parent entity ID |
+| `cloud` | string\|null | Cloud provider |
+| `region` | string\|null | Cloud region |
+| `status` | string | `active` or `deleted` |
+| `cross_references` | list[string] | For identity nodes: other cluster IDs this identity is charged in (excluding the focus cluster) |
+
+**Edge `relationship_type` values:** `parent` (hierarchy), `charge` (identity charged to cluster).
+
+**Error codes:** 400 (tz-naive `at` value), 404 (unknown tenant or unknown `focus` entity), 422 (unparseable parameters).

@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     )
     from core.models.counts import TypeStatusCounts
     from core.models.entity_tag import EntityTag
+    from core.models.graph import GraphNeighborhood
     from core.models.identity import Identity
     from core.models.pipeline import PipelineRun, PipelineState
     from core.models.resource import Resource
@@ -657,6 +658,36 @@ class PipelineRunRepository(Protocol):
 
 
 @runtime_checkable
+class GraphRepository(Protocol):
+    """Read-only repository for graph neighborhood queries."""
+
+    def find_neighborhood(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        focus_id: str | None,
+        depth: int,
+        at: datetime,
+        period_start: datetime,
+        period_end: datetime,
+    ) -> GraphNeighborhood:
+        """Return graph neighborhood for a focused entity at a point in time.
+
+        focus_id=None  → root view: environment nodes with tenant→env edges
+        focus_id=env   → env + child resources (depth hops) + parent→child edges
+        focus_id=cluster → cluster + child topics + identities charged to cluster + charge edges
+
+        at: entity lifecycle filter — created_at <= at AND (deleted_at IS NULL OR deleted_at > at)
+        period_start/period_end: cost aggregation window from chargeback_facts
+
+        Tags are resolved internally via the EntityTagRepository injected at construction time.
+
+        Raises KeyError if focus_id is provided but not found in resources (route converts to 404).
+        """
+        ...
+
+
+@runtime_checkable
 class ReadOnlyUnitOfWork(Protocol):
     """Read-only transaction coordinator. No commit/rollback."""
 
@@ -669,6 +700,7 @@ class ReadOnlyUnitOfWork(Protocol):
     tags: EntityTagRepository
     emissions: EmissionRepository  # NEW
     topic_attributions: TopicAttributionRepository  # lazy; only active when TA enabled
+    graph: GraphRepository
 
     def __enter__(self) -> Self: ...
     def __exit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: object) -> None: ...
