@@ -229,8 +229,7 @@ describe("ExplorerPage", () => {
 
   it("renders breadcrumb trail", () => {
     renderExplorerPage();
-    // BreadcrumbTrail always renders a Home button
-    expect(document.querySelector("button")).not.toBeNull();
+    expect(document.querySelector("[data-testid='breadcrumb-trail']")).not.toBeNull();
   });
 });
 

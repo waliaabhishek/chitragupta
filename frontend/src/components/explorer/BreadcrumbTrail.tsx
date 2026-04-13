@@ -1,6 +1,5 @@
 import type React from "react";
 import { Button, Space } from "antd";
-import { HomeOutlined } from "@ant-design/icons";
 
 interface Breadcrumb {
   id: string;
@@ -23,6 +22,7 @@ export function BreadcrumbTrail({
 }: BreadcrumbTrailProps): React.JSX.Element {
   return (
     <div
+      data-testid="breadcrumb-trail"
       style={{
         padding: "8px 12px",
         display: "flex",
@@ -37,25 +37,38 @@ export function BreadcrumbTrail({
         <Button
           type="text"
           size="small"
-          icon={<HomeOutlined />}
           onClick={onGoToRoot}
           style={{ padding: "0 4px" }}
-        />
+        >
+          Tenant
+        </Button>
         {breadcrumbs.map((crumb, i) => (
           <span key={crumb.id} style={{ display: "flex", alignItems: "center", gap: 4 }}>
             <span style={{ opacity: 0.4 }}>/</span>
-            <Button
-              type="text"
-              size="small"
-              onClick={() => onNavigate(i)}
-              style={{
-                padding: "0 4px",
-                fontWeight: i === breadcrumbs.length - 1 ? 600 : 400,
-                opacity: i === breadcrumbs.length - 1 ? 1 : 0.7,
-              }}
-            >
-              {crumb.label}
-            </Button>
+            {i === breadcrumbs.length - 1 ? (
+              <span
+                style={{
+                  padding: "0 4px",
+                  fontWeight: 600,
+                  fontSize: 14,
+                }}
+              >
+                {crumb.label}
+              </span>
+            ) : (
+              <Button
+                type="text"
+                size="small"
+                onClick={() => onNavigate(i)}
+                style={{
+                  padding: "0 4px",
+                  fontWeight: 400,
+                  opacity: 0.7,
+                }}
+              >
+                {crumb.label}
+              </Button>
+            )}
           </span>
         ))}
       </Space>

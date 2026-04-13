@@ -132,6 +132,21 @@ describe("useGraphNavigation", () => {
     expect(result.current.state.breadcrumbs).toHaveLength(2);
   });
 
+  it("goBack() from depth-1 stack returns to root (focusId=null)", () => {
+    const { result } = renderHook(() => useGraphNavigation());
+
+    act(() => {
+      result.current.navigate("env-abc", "environment", "my-env");
+    });
+
+    act(() => {
+      result.current.goBack();
+    });
+
+    expect(result.current.state.focusId).toBeNull();
+    expect(result.current.state.breadcrumbs).toHaveLength(0);
+  });
+
   it("goBack() from depth-2 stack restores depth-1 state", () => {
     const { result } = renderHook(() => useGraphNavigation());
 

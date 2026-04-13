@@ -80,12 +80,21 @@ export function ExplorerPage(): React.JSX.Element {
     };
   }, []);
 
-  const rawNodes = data?.nodes ?? [];
-  const rawEdges = data?.edges ?? [];
+  const typedNodes = (data?.nodes ?? []).map((n) => ({
+    ...n,
+    cost: typeof n.cost === "string" ? parseFloat(n.cost) : n.cost,
+  }));
+  const typedEdges = (data?.edges ?? []).map((e) => ({
+    ...e,
+    cost:
+      e.cost != null && typeof e.cost === "string"
+        ? parseFloat(e.cost as unknown as string)
+        : e.cost,
+  }));
 
   const { nodes: enrichedNodes, edges: enrichedEdges } = enrichWithPhantomNodes(
-    rawNodes,
-    rawEdges,
+    typedNodes,
+    typedEdges,
   );
 
   const fadedNodeIds = new Set<string>();
