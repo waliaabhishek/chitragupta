@@ -1,5 +1,6 @@
 import type React from "react";
 import {
+  ApartmentOutlined,
   BarChartOutlined,
   BulbFilled,
   BulbOutlined,
@@ -35,14 +36,25 @@ interface AppLayoutProps {
   children: React.ReactNode;
   isDark: boolean;
   onToggleTheme: () => void;
+  collapsed?: boolean;
+  onCollapsedChange?: (v: boolean) => void;
 }
 
 export function AppLayout({
   children,
   isDark,
   onToggleTheme,
+  collapsed: externalCollapsed,
+  onCollapsedChange,
 }: AppLayoutProps): React.JSX.Element {
-  const [collapsed, setCollapsed] = useState(false);
+  const [internalCollapsed, setInternalCollapsed] = useState(false);
+  const collapsed =
+    externalCollapsed !== undefined ? externalCollapsed : internalCollapsed;
+
+  function handleCollapsedChange(v: boolean) {
+    setInternalCollapsed(v);
+    onCollapsedChange?.(v);
+  }
   const navigate = useNavigate();
   const location = useLocation();
   const { currentTenant } = useTenant();
@@ -68,6 +80,12 @@ export function AppLayout({
       key: "/chargebacks",
       icon: <DollarOutlined />,
       label: "Chargebacks",
+      disabled: tenantRequired,
+    },
+    {
+      key: "/explorer",
+      icon: <ApartmentOutlined />,
+      label: "Cost Explorer",
       disabled: tenantRequired,
     },
     {
@@ -149,7 +167,7 @@ export function AppLayout({
       <Sider
         collapsible
         collapsed={collapsed}
-        onCollapse={setCollapsed}
+        onCollapse={handleCollapsedChange}
         style={{ background: colorBgContainer }}
       >
         <div

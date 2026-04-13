@@ -673,16 +673,17 @@ class GraphRepository(Protocol):
     ) -> GraphNeighborhood:
         """Return graph neighborhood for a focused entity at a point in time.
 
-        focus_id=None  → root view: environment nodes with tenant→env edges
-        focus_id=env   → env + child resources (depth hops) + parent→child edges
-        focus_id=cluster → cluster + child topics + identities charged to cluster + charge edges
+        focus_id=None     → root view: environment nodes with tenant→env edges
+        focus_id=env      → env + child resources (depth hops) + parent→child edges
+        focus_id=cluster  → cluster + child topics + identities + charge edges
+        focus_id=identity → identity + all clusters it's charged in + charge edges
 
         at: entity lifecycle filter — created_at <= at AND (deleted_at IS NULL OR deleted_at > at)
         period_start/period_end: cost aggregation window from chargeback_facts
 
         Tags are resolved internally via the EntityTagRepository injected at construction time.
 
-        Raises KeyError if focus_id is provided but not found in resources (route converts to 404).
+        Raises KeyError if focus_id is provided but not found in resources or identities (route converts to 404).
         """
         ...
 

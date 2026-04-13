@@ -2363,17 +2363,22 @@ class SQLModelGraphRepository:
         if focus_id is None:
             return self._root_view(ecosystem, tenant_id, at, period_start, period_end)
 
-        # Resolve the focus entity
+        # Resolve the focus entity — try resource first, then identity
         focus_row = self._session.get(ResourceTable, (ecosystem, tenant_id, focus_id))
-        if focus_row is None:
-            raise KeyError(f"Entity {focus_id!r} not found for tenant {tenant_id!r}")
+        if focus_row is not None:
+            resource_type = focus_row.resource_type
+            # Cluster-type nodes always include identity charge relationships
+            if resource_type in {"kafka_cluster", "dedicated_cluster", "cluster"}:
+                return self._cluster_view(focus_row, ecosystem, tenant_id, at, period_start, period_end)
+            else:
+                return self._resource_view(focus_row, ecosystem, tenant_id, depth, at, period_start, period_end)
 
-        resource_type = focus_row.resource_type
-        # Cluster-type nodes always include identity charge relationships
-        if resource_type in {"kafka_cluster", "dedicated_cluster", "cluster"}:
-            return self._cluster_view(focus_row, ecosystem, tenant_id, at, period_start, period_end)
-        else:
-            return self._resource_view(focus_row, ecosystem, tenant_id, depth, at, period_start, period_end)
+        # Fall back to identity
+        identity_row = self._session.get(IdentityTable, (ecosystem, tenant_id, focus_id))
+        if identity_row is not None:
+            return self._identity_view(identity_row, ecosystem, tenant_id, at, period_start, period_end)
+
+        raise KeyError(f"Entity {focus_id!r} not found for tenant {tenant_id!r}")
 
     # --- Root view ---
 
@@ -2606,13 +2611,36 @@ class SQLModelGraphRepository:
         resource_tags = self._tags.find_tags_for_entities(tenant_id, "resource", all_resource_ids)
         identity_tags = self._tags.find_tags_for_entities(tenant_id, "identity", [r.identity_id for r in identity_rows])
 
+        # Topic attribution costs — built before resource_nodes so costs inject directly
+        ta_cost_stmt = (
+            select(
+                TopicAttributionDimensionTable.resource_id,
+                func.sum(cast(TopicAttributionFactTable.amount, String)).label("total"),
+            )
+            .join(
+                TopicAttributionFactTable,
+                col(TopicAttributionFactTable.dimension_id) == col(TopicAttributionDimensionTable.dimension_id),
+            )
+            .where(
+                col(TopicAttributionDimensionTable.ecosystem) == ecosystem,
+                col(TopicAttributionDimensionTable.tenant_id) == tenant_id,
+                col(TopicAttributionDimensionTable.cluster_resource_id) == cluster_id,
+                col(TopicAttributionFactTable.timestamp) >= period_start,
+                col(TopicAttributionFactTable.timestamp) < period_end,
+            )
+            .group_by(col(TopicAttributionDimensionTable.resource_id))
+        )
+        ta_cost_map: dict[str, Decimal] = {}
+        for row in self._session.exec(ta_cost_stmt).all():
+            ta_cost_map[row[0]] = Decimal(row[1] or "0")
+
         # Build nodes
         resource_nodes = [
             GraphNodeData(
                 id=r.resource_id,
                 resource_type=r.resource_type,
                 display_name=r.display_name,
-                cost=resource_cost_map.get(r.resource_id, Decimal("0")),
+                cost=ta_cost_map.get(r.resource_id, resource_cost_map.get(r.resource_id, Decimal("0"))),
                 created_at=r.created_at,
                 deleted_at=r.deleted_at,
                 tags={t.tag_key: t.tag_value for t in resource_tags.get(r.resource_id, [])},
@@ -2660,10 +2688,136 @@ class SQLModelGraphRepository:
             for r in identity_rows
         ]
 
+        # Attribution edges: cluster → topic (only for topics present in resource_nodes)
+        resource_node_ids = {n.id for n in resource_nodes}
+        attribution_edges = [
+            GraphEdgeData(
+                source=cluster_id,
+                target=topic_id,
+                relationship_type=EdgeType.attribution,
+                cost=cost,
+            )
+            for topic_id, cost in ta_cost_map.items()
+            if topic_id in resource_node_ids
+        ]
+
         return GraphNeighborhood(
             nodes=[*resource_nodes, *identity_nodes],
-            edges=[*parent_edges, *charge_edges],
+            edges=[*parent_edges, *charge_edges, *attribution_edges],
         )
+
+    # --- Identity view ---
+
+    def _identity_view(
+        self,
+        focus_row: IdentityTable,
+        ecosystem: str,
+        tenant_id: str,
+        at: datetime,
+        period_start: datetime,
+        period_end: datetime,
+    ) -> GraphNeighborhood:
+        """Return identity node at center + all clusters it's charged in + charge edges."""
+        identity_id = focus_row.identity_id
+
+        # All resource_ids this identity is charged in (from chargeback_dimensions)
+        cluster_stmt = (
+            select(ChargebackDimensionTable.resource_id)
+            .where(
+                col(ChargebackDimensionTable.ecosystem) == ecosystem,
+                col(ChargebackDimensionTable.tenant_id) == tenant_id,
+                col(ChargebackDimensionTable.identity_id) == identity_id,
+                col(ChargebackDimensionTable.resource_id).is_not(None),
+                col(ChargebackDimensionTable.resource_id) != "",
+            )
+            .distinct()
+        )
+        cluster_ids = list(self._session.exec(cluster_stmt).all())
+
+        # Fetch resource rows for those clusters (with temporal filter)
+        cluster_rows: list[ResourceTable] = []
+        if cluster_ids:
+            where = _temporal_active_at_filter(ResourceTable, ecosystem, tenant_id, at)
+            where.append(col(ResourceTable.resource_id).in_(cluster_ids))
+            cluster_rows = list(self._session.exec(select(ResourceTable).where(*where)).all())
+
+        # Cost per cluster for this identity
+        identity_cost_per_cluster: dict[str, Decimal] = {}
+        if cluster_ids:
+            cost_stmt = (
+                select(
+                    ChargebackDimensionTable.resource_id,
+                    func.sum(cast(ChargebackFactTable.amount, String)).label("total"),
+                )
+                .join(
+                    ChargebackFactTable,
+                    col(ChargebackFactTable.dimension_id) == col(ChargebackDimensionTable.dimension_id),
+                )
+                .where(
+                    col(ChargebackDimensionTable.ecosystem) == ecosystem,
+                    col(ChargebackDimensionTable.tenant_id) == tenant_id,
+                    col(ChargebackDimensionTable.identity_id) == identity_id,
+                    col(ChargebackDimensionTable.resource_id).in_(cluster_ids),
+                    col(ChargebackFactTable.timestamp) >= period_start,
+                    col(ChargebackFactTable.timestamp) < period_end,
+                )
+                .group_by(col(ChargebackDimensionTable.resource_id))
+            )
+            for row in self._session.exec(cost_stmt).all():
+                if row[0] is not None:
+                    identity_cost_per_cluster[row[0]] = Decimal(row[1] or "0")
+
+        # Tag resolution
+        identity_tags = self._tags.find_tags_for_entities(tenant_id, "identity", [identity_id])
+        cluster_resource_ids = [r.resource_id for r in cluster_rows]
+        resource_tags = self._tags.find_tags_for_entities(tenant_id, "resource", cluster_resource_ids)
+
+        # Build identity center node
+        total_cost = sum(identity_cost_per_cluster.values(), Decimal("0"))
+        identity_node = GraphNodeData(
+            id=identity_id,
+            resource_type=focus_row.identity_type,
+            display_name=focus_row.display_name,
+            cost=total_cost,
+            created_at=focus_row.created_at,
+            deleted_at=focus_row.deleted_at,
+            tags={t.tag_key: t.tag_value for t in identity_tags.get(identity_id, [])},
+            parent_id=None,
+            cloud=None,
+            region=None,
+            status="active" if focus_row.deleted_at is None else "deleted",
+        )
+
+        # Cluster nodes
+        cluster_nodes = [
+            GraphNodeData(
+                id=r.resource_id,
+                resource_type=r.resource_type,
+                display_name=r.display_name,
+                cost=identity_cost_per_cluster.get(r.resource_id, Decimal("0")),
+                created_at=r.created_at,
+                deleted_at=r.deleted_at,
+                tags={t.tag_key: t.tag_value for t in resource_tags.get(r.resource_id, [])},
+                parent_id=r.parent_id,
+                cloud=r.cloud,
+                region=r.region,
+                status=r.status,
+            )
+            for r in cluster_rows
+        ]
+
+        # Charge edges: cluster → identity (same direction as _cluster_view)
+        charge_edges = [
+            GraphEdgeData(
+                source=r.resource_id,
+                target=identity_id,
+                relationship_type=EdgeType.charge,
+                cost=identity_cost_per_cluster.get(r.resource_id),
+            )
+            for r in cluster_rows
+        ]
+
+        return GraphNeighborhood(nodes=[identity_node, *cluster_nodes], edges=charge_edges)
 
     # --- Cost aggregation helper ---
 

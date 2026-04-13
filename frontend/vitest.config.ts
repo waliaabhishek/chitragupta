@@ -36,6 +36,7 @@ export default defineConfig({
         "src/pages/identities/**/*.{ts,tsx}",
         "src/pages/tags/**/*.{ts,tsx}",
         "src/utils/aggregation.ts",
+        "src/components/explorer/**/*.{ts,tsx}",
       ],
       thresholds: {
         lines: 85,

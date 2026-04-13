@@ -10,7 +10,12 @@ from sqlmodel import Session, SQLModel, create_engine
 
 from core.storage.backends.sqlmodel.base_tables import IdentityTable, ResourceTable
 from core.storage.backends.sqlmodel.repositories import SQLModelEntityTagRepository, SQLModelGraphRepository
-from core.storage.backends.sqlmodel.tables import ChargebackDimensionTable, ChargebackFactTable
+from core.storage.backends.sqlmodel.tables import (
+    ChargebackDimensionTable,
+    ChargebackFactTable,
+    TopicAttributionDimensionTable,
+    TopicAttributionFactTable,
+)
 
 ECOSYSTEM = "confluent_cloud"
 TENANT_ID = "org-test"
@@ -493,3 +498,226 @@ class TestGraphRepositoryBFSDepth:
         node_ids = {n.id for n in result.nodes}
         assert "env-abc" in node_ids
         assert "lkc-abc" in node_ids
+
+
+# ---------------------------------------------------------------------------
+# Helpers for Gap A / Gap B tests
+# ---------------------------------------------------------------------------
+
+
+def _topic_dim(
+    dimension_id: int,
+    resource_id: str,
+    cluster_id: str,
+    topic_name: str,
+) -> TopicAttributionDimensionTable:
+    return TopicAttributionDimensionTable(
+        dimension_id=dimension_id,
+        ecosystem=ECOSYSTEM,
+        tenant_id=TENANT_ID,
+        env_id="env-abc",
+        cluster_resource_id=cluster_id,
+        topic_name=topic_name,
+        resource_id=resource_id,
+        product_category="KAFKA",
+        product_type="KAFKA_TOPIC",
+        attribution_method="proportional",
+    )
+
+
+def _topic_fact(
+    dimension_id: int,
+    amount: str,
+    ts: datetime | None = None,
+) -> TopicAttributionFactTable:
+    return TopicAttributionFactTable(
+        timestamp=ts or datetime(2026, 3, 10, tzinfo=UTC),
+        dimension_id=dimension_id,
+        amount=amount,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Gap A — Identity Focus (_identity_view)
+# ---------------------------------------------------------------------------
+
+
+class TestGraphRepositoryIdentityFocus:
+    def test_identity_focus_returns_identity_node_and_charged_clusters(
+        self, session: Session, repo: SQLModelGraphRepository
+    ) -> None:
+        """Gap A: identity focus returns identity node + clusters it's charged in."""
+        session.add(_resource("env-abc", "environment"))
+        session.add(_resource("lkc-abc", "kafka_cluster", parent_id="env-abc"))
+        session.add(_identity("sa-001"))
+        session.add(_dim(100, resource_id="lkc-abc", env_id="env-abc", identity_id="sa-001"))
+        session.add(_fact(100, "50.00"))
+        session.commit()
+
+        result = repo.find_neighborhood(ECOSYSTEM, TENANT_ID, "sa-001", 1, AT, PERIOD_START, PERIOD_END)
+
+        node_ids = {n.id for n in result.nodes}
+        assert "sa-001" in node_ids
+        assert "lkc-abc" in node_ids
+
+    def test_identity_focus_charge_edges_have_per_cluster_costs(
+        self, session: Session, repo: SQLModelGraphRepository
+    ) -> None:
+        """Gap A: charge edges carry per-cluster cost from chargeback_facts."""
+        session.add(_resource("env-abc", "environment"))
+        session.add(_resource("lkc-1", "kafka_cluster", parent_id="env-abc"))
+        session.add(_resource("lkc-2", "kafka_cluster", parent_id="env-abc"))
+        session.add(_identity("sa-001"))
+        session.add(_dim(101, resource_id="lkc-1", env_id="env-abc", identity_id="sa-001"))
+        session.add(_dim(102, resource_id="lkc-2", env_id="env-abc", identity_id="sa-001"))
+        session.add(_fact(101, "30.00"))
+        session.add(_fact(102, "70.00"))
+        session.commit()
+
+        result = repo.find_neighborhood(ECOSYSTEM, TENANT_ID, "sa-001", 1, AT, PERIOD_START, PERIOD_END)
+
+        charge_edges = [e for e in result.edges if e.relationship_type.value == "charge"]
+        costs_by_cluster = {e.source: e.cost for e in charge_edges}
+        assert costs_by_cluster["lkc-1"] == Decimal("30.00")
+        assert costs_by_cluster["lkc-2"] == Decimal("70.00")
+
+    def test_identity_focus_with_no_chargeback_data_returns_identity_node_only(
+        self, session: Session, repo: SQLModelGraphRepository
+    ) -> None:
+        """Gap A: identity with no chargeback_dimension rows → identity node only, no cluster nodes."""
+        session.add(_identity("sa-lonely"))
+        session.commit()
+
+        result = repo.find_neighborhood(ECOSYSTEM, TENANT_ID, "sa-lonely", 1, AT, PERIOD_START, PERIOD_END)
+
+        node_ids = {n.id for n in result.nodes}
+        assert "sa-lonely" in node_ids
+        assert len(node_ids) == 1
+        assert result.edges == []
+
+    def test_identity_focus_unknown_identity_raises_key_error(
+        self, session: Session, repo: SQLModelGraphRepository
+    ) -> None:
+        """Gap A: focus_id not in ResourceTable or IdentityTable → KeyError (404)."""
+        with pytest.raises(KeyError, match="sa-ghost"):
+            repo.find_neighborhood(ECOSYSTEM, TENANT_ID, "sa-ghost", 1, AT, PERIOD_START, PERIOD_END)
+
+    def test_identity_focus_deleted_identity_has_deleted_status(
+        self, session: Session, repo: SQLModelGraphRepository
+    ) -> None:
+        """Gap A: identity with deleted_at set → identity node status='deleted'."""
+        deleted_at = datetime(2026, 2, 1, tzinfo=UTC)
+        session.add(_identity("sa-old", deleted_at=deleted_at))
+        session.add(_resource("env-abc", "environment"))
+        session.add(_resource("lkc-abc", "kafka_cluster", parent_id="env-abc"))
+        session.add(_dim(103, resource_id="lkc-abc", env_id="env-abc", identity_id="sa-old"))
+        session.add(_fact(103, "25.00"))
+        session.commit()
+
+        result = repo.find_neighborhood(ECOSYSTEM, TENANT_ID, "sa-old", 1, AT, PERIOD_START, PERIOD_END)
+
+        identity_node = next(n for n in result.nodes if n.id == "sa-old")
+        assert identity_node.status == "deleted"
+
+
+# ---------------------------------------------------------------------------
+# Gap B — Topic Attribution Edges in _cluster_view
+# ---------------------------------------------------------------------------
+
+
+class TestGraphRepositoryTopicAttributionEdges:
+    def test_cluster_view_includes_attribution_edges_when_ta_facts_exist(
+        self, session: Session, repo: SQLModelGraphRepository
+    ) -> None:
+        """Gap B: cluster view emits EdgeType.attribution edges when topic_attribution_facts exist."""
+        session.add(_resource("env-abc", "environment"))
+        session.add(_resource("lkc-abc", "kafka_cluster", parent_id="env-abc"))
+        topic_id = "lkc-abc/topic/orders"
+        session.add(_resource(topic_id, "kafka_topic", parent_id="lkc-abc"))
+        session.add(_topic_dim(200, resource_id=topic_id, cluster_id="lkc-abc", topic_name="orders"))
+        session.add(_topic_fact(200, "40.00"))
+        session.commit()
+
+        result = repo.find_neighborhood(ECOSYSTEM, TENANT_ID, "lkc-abc", 1, AT, PERIOD_START, PERIOD_END)
+
+        attribution_edges = [e for e in result.edges if e.relationship_type.value == "attribution"]
+        assert len(attribution_edges) == 1
+        assert attribution_edges[0].source == "lkc-abc"
+        assert attribution_edges[0].target == topic_id
+
+    def test_attribution_edge_costs_match_aggregated_ta_facts(
+        self, session: Session, repo: SQLModelGraphRepository
+    ) -> None:
+        """Gap B: attribution edge cost = sum of topic_attribution_facts for that topic."""
+        session.add(_resource("env-abc", "environment"))
+        session.add(_resource("lkc-abc", "kafka_cluster", parent_id="env-abc"))
+        topic_id = "lkc-abc/topic/payments"
+        session.add(_resource(topic_id, "kafka_topic", parent_id="lkc-abc"))
+        session.add(_topic_dim(201, resource_id=topic_id, cluster_id="lkc-abc", topic_name="payments"))
+        session.add(_topic_fact(201, "15.00"))
+        session.add(_topic_fact(201, "25.00", ts=datetime(2026, 3, 11, tzinfo=UTC)))
+        session.commit()
+
+        result = repo.find_neighborhood(ECOSYSTEM, TENANT_ID, "lkc-abc", 1, AT, PERIOD_START, PERIOD_END)
+
+        attribution_edges = [e for e in result.edges if e.relationship_type.value == "attribution"]
+        assert len(attribution_edges) == 1
+        assert attribution_edges[0].cost == Decimal("40.00")
+
+    def test_topic_node_cost_updated_from_attribution_data(
+        self, session: Session, repo: SQLModelGraphRepository
+    ) -> None:
+        """Gap B: topic node cost comes from ta_cost_map, not chargeback (which gives 0)."""
+        session.add(_resource("env-abc", "environment"))
+        session.add(_resource("lkc-abc", "kafka_cluster", parent_id="env-abc"))
+        topic_id = "lkc-abc/topic/events"
+        session.add(_resource(topic_id, "kafka_topic", parent_id="lkc-abc"))
+        session.add(_topic_dim(202, resource_id=topic_id, cluster_id="lkc-abc", topic_name="events"))
+        session.add(_topic_fact(202, "55.00"))
+        session.commit()
+
+        result = repo.find_neighborhood(ECOSYSTEM, TENANT_ID, "lkc-abc", 1, AT, PERIOD_START, PERIOD_END)
+
+        topic_node = next(n for n in result.nodes if n.id == topic_id)
+        assert topic_node.cost == Decimal("55.00")
+
+    def test_cluster_view_with_no_ta_data_has_no_attribution_edges_and_topic_cost_zero(
+        self, session: Session, repo: SQLModelGraphRepository
+    ) -> None:
+        """Gap B: no topic_attribution_facts → no attribution edges, topic node cost=0."""
+        session.add(_resource("env-abc", "environment"))
+        session.add(_resource("lkc-abc", "kafka_cluster", parent_id="env-abc"))
+        topic_id = "lkc-abc/topic/logs"
+        session.add(_resource(topic_id, "kafka_topic", parent_id="lkc-abc"))
+        # No topic attribution dimension or fact rows
+        session.commit()
+
+        result = repo.find_neighborhood(ECOSYSTEM, TENANT_ID, "lkc-abc", 1, AT, PERIOD_START, PERIOD_END)
+
+        attribution_edges = [e for e in result.edges if e.relationship_type.value == "attribution"]
+        assert attribution_edges == []
+
+        topic_node = next(n for n in result.nodes if n.id == topic_id)
+        assert topic_node.cost == Decimal("0")
+
+    def test_attribution_edges_only_emitted_for_topics_in_resources_table(
+        self, session: Session, repo: SQLModelGraphRepository
+    ) -> None:
+        """Gap B: ta_cost_map entry for a topic not in resource_nodes → no attribution edge emitted."""
+        session.add(_resource("env-abc", "environment"))
+        session.add(_resource("lkc-abc", "kafka_cluster", parent_id="env-abc"))
+        real_topic_id = "lkc-abc/topic/real"
+        session.add(_resource(real_topic_id, "kafka_topic", parent_id="lkc-abc"))
+        ghost_topic_id = "lkc-abc/topic/ghost"
+        session.add(_topic_dim(203, resource_id=real_topic_id, cluster_id="lkc-abc", topic_name="real"))
+        session.add(_topic_dim(204, resource_id=ghost_topic_id, cluster_id="lkc-abc", topic_name="ghost"))
+        session.add(_topic_fact(203, "10.00"))
+        session.add(_topic_fact(204, "20.00"))
+        session.commit()
+
+        result = repo.find_neighborhood(ECOSYSTEM, TENANT_ID, "lkc-abc", 1, AT, PERIOD_START, PERIOD_END)
+
+        attribution_edges = [e for e in result.edges if e.relationship_type.value == "attribution"]
+        edge_targets = {e.target for e in attribution_edges}
+        assert real_topic_id in edge_targets
+        assert ghost_topic_id not in edge_targets
