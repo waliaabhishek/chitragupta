@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, date, datetime
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
@@ -36,6 +36,10 @@ async def get_graph_neighborhood(
     start_date: Annotated[date | None, Query(description="Cost period start date")] = None,
     end_date: Annotated[date | None, Query(description="Cost period end date")] = None,
     timezone: Annotated[str | None, Query(description="IANA timezone for date boundaries")] = None,
+    expand: Annotated[
+        Literal["topics", "identities"] | None,
+        Query(description='Expand a cluster group: "topics" or "identities"'),
+    ] = None,
 ) -> GraphResponse:
     at_dt = validate_datetime_param(at, "at")
     if at_dt is None:
@@ -71,6 +75,7 @@ async def get_graph_neighborhood(
             at=at_dt,
             period_start=period_start,
             period_end=period_end,
+            expand=expand,
         )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -90,6 +95,8 @@ async def get_graph_neighborhood(
                 region=n.region,
                 status=n.status,
                 cross_references=n.cross_references,
+                child_count=n.child_count,
+                child_total_cost=n.child_total_cost,
             )
             for n in neighborhood.nodes
         ],

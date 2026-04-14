@@ -670,6 +670,7 @@ class GraphRepository(Protocol):
         at: datetime,
         period_start: datetime,
         period_end: datetime,
+        expand: Literal["topics", "identities"] | None = None,
     ) -> GraphNeighborhood:
         """Return graph neighborhood for a focused entity at a point in time.
 
@@ -682,6 +683,11 @@ class GraphRepository(Protocol):
         period_start/period_end: cost aggregation window from chargeback_facts
 
         Tags are resolved internally via the EntityTagRepository injected at construction time.
+
+        expand: only meaningful for cluster focus. "topics" returns all child topics
+        (up to _CLUSTER_EXPAND_CAP) sorted by cost desc with zero-cost ones collapsed into
+        a summary node; identities shown as a group node only. "identities" is the mirror.
+        None (default) uses grouped summary mode when group sizes exceed _CLUSTER_GROUP_THRESHOLD.
 
         Raises KeyError if focus_id is provided but not found in resources or identities (route converts to 404).
         """

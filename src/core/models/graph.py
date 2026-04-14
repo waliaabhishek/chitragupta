@@ -29,6 +29,8 @@ class GraphNodeData:
     region: str | None
     status: str
     cross_references: list[str] = field(default_factory=list)  # other resource_ids this identity is charged in
+    child_count: int | None = None  # populated only for group-type nodes
+    child_total_cost: Decimal | None = None  # populated only for group-type nodes
 
 
 @dataclass

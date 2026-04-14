@@ -67,6 +67,11 @@ logger = logging.getLogger(__name__)
 # See also: _BULK_CHUNK_SIZE in tags.py — same rationale, separate constant for API layer.
 _CHUNK_SIZE = 500
 
+# Cluster view grouping thresholds — applied per-group independently.
+_CLUSTER_GROUP_THRESHOLD = 20  # per-group: if len(group) > this, use grouped mode
+_CLUSTER_TOP_N = 5  # entities surfaced individually in grouped mode
+_CLUSTER_EXPAND_CAP = 200  # max individual nodes returned in expand mode
+
 # Allowlists for sort_by parameter — prevents arbitrary column injection.
 # Fallback to primary-key column when sort_by is absent or invalid.
 _IDENTITY_SORT_COLS: dict[str, Any] = {
@@ -2359,6 +2364,8 @@ class SQLModelGraphRepository:
         at: datetime,
         period_start: datetime,
         period_end: datetime,
+        expand: Literal["topics", "identities"] | None = None,
+        _force_full: bool = False,
     ) -> GraphNeighborhood:
         if focus_id is None:
             return self._root_view(ecosystem, tenant_id, at, period_start, period_end)
@@ -2369,7 +2376,16 @@ class SQLModelGraphRepository:
             resource_type = focus_row.resource_type
             # Cluster-type nodes always include identity charge relationships
             if resource_type in {"kafka_cluster", "dedicated_cluster", "cluster"}:
-                return self._cluster_view(focus_row, ecosystem, tenant_id, at, period_start, period_end)
+                return self._cluster_view(
+                    focus_row,
+                    ecosystem,
+                    tenant_id,
+                    at,
+                    period_start,
+                    period_end,
+                    expand=expand,
+                    _force_full=_force_full,
+                )
             else:
                 return self._resource_view(focus_row, ecosystem, tenant_id, depth, at, period_start, period_end)
 
@@ -2518,7 +2534,679 @@ class SQLModelGraphRepository:
 
     # --- Cluster view ---
 
-    def _cluster_view(
+    def _aggregate_identity_costs(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        cluster_id: str,
+        identity_ids: list[str],
+        period_start: datetime,
+        period_end: datetime,
+    ) -> dict[str, Decimal]:
+        """Sum chargeback_facts.amount per identity_id for this cluster."""
+        if not identity_ids:
+            return {}
+        cost_stmt = (
+            select(
+                ChargebackDimensionTable.identity_id,
+                func.sum(cast(ChargebackFactTable.amount, String)).label("total"),
+            )
+            .join(
+                ChargebackFactTable,
+                col(ChargebackFactTable.dimension_id) == col(ChargebackDimensionTable.dimension_id),
+            )
+            .where(
+                col(ChargebackDimensionTable.ecosystem) == ecosystem,
+                col(ChargebackDimensionTable.tenant_id) == tenant_id,
+                col(ChargebackDimensionTable.resource_id) == cluster_id,
+                col(ChargebackDimensionTable.identity_id).in_(identity_ids),
+                col(ChargebackFactTable.timestamp) >= period_start,
+                col(ChargebackFactTable.timestamp) < period_end,
+            )
+            .group_by(col(ChargebackDimensionTable.identity_id))
+        )
+        result: dict[str, Decimal] = {}
+        for row in self._session.exec(cost_stmt).all():
+            result[row[0]] = Decimal(row[1] or "0")
+        return result
+
+    def _aggregate_topic_attribution_costs(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        cluster_id: str,
+        period_start: datetime,
+        period_end: datetime,
+    ) -> dict[str, Decimal]:
+        """Sum topic_attribution_facts.amount per resource_id for this cluster."""
+        ta_cost_stmt = (
+            select(
+                TopicAttributionDimensionTable.resource_id,
+                func.sum(cast(TopicAttributionFactTable.amount, String)).label("total"),
+            )
+            .join(
+                TopicAttributionFactTable,
+                col(TopicAttributionFactTable.dimension_id) == col(TopicAttributionDimensionTable.dimension_id),
+            )
+            .where(
+                col(TopicAttributionDimensionTable.ecosystem) == ecosystem,
+                col(TopicAttributionDimensionTable.tenant_id) == tenant_id,
+                col(TopicAttributionDimensionTable.cluster_resource_id) == cluster_id,
+                col(TopicAttributionFactTable.timestamp) >= period_start,
+                col(TopicAttributionFactTable.timestamp) < period_end,
+            )
+            .group_by(col(TopicAttributionDimensionTable.resource_id))
+        )
+        result: dict[str, Decimal] = {}
+        for row in self._session.exec(ta_cost_stmt).all():
+            result[row[0]] = Decimal(row[1] or "0")
+        return result
+
+    def _fetch_cross_references(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        identity_ids: list[str],
+        cluster_id: str,
+    ) -> dict[str, list[str]]:
+        """Return {identity_id: [other_resource_ids]} each identity is charged in (excluding cluster_id)."""
+        xref_map: dict[str, list[str]] = {iid: [] for iid in identity_ids}
+        if not identity_ids:
+            return xref_map
+        xref_stmt = (
+            select(ChargebackDimensionTable.identity_id, ChargebackDimensionTable.resource_id)
+            .where(
+                col(ChargebackDimensionTable.ecosystem) == ecosystem,
+                col(ChargebackDimensionTable.tenant_id) == tenant_id,
+                col(ChargebackDimensionTable.identity_id).in_(identity_ids),
+                col(ChargebackDimensionTable.resource_id) != cluster_id,
+                col(ChargebackDimensionTable.resource_id).is_not(None),
+            )
+            .distinct()
+        )
+        for iid, rid in self._session.exec(xref_stmt).all():
+            if rid is not None:
+                xref_map[iid].append(rid)
+        return xref_map
+
+    def _cluster_view(  # noqa: C901  # dispatcher — complexity is branching, not nesting
+        self,
+        focus_row: ResourceTable,
+        ecosystem: str,
+        tenant_id: str,
+        at: datetime,
+        period_start: datetime,
+        period_end: datetime,
+        expand: Literal["topics", "identities"] | None = None,
+        _force_full: bool = False,
+    ) -> GraphNeighborhood:
+        """Dispatcher: grouped summary (default), expand, or full (_force_full / small clusters)."""
+        cluster_id = focus_row.resource_id
+
+        if _force_full:
+            return self._cluster_view_full(focus_row, ecosystem, tenant_id, at, period_start, period_end)
+
+        # Fetch all child rows and identity_ids (needed for threshold checks + ranking)
+        child_where = _temporal_active_at_filter(ResourceTable, ecosystem, tenant_id, at)
+        child_where.append(col(ResourceTable.parent_id) == cluster_id)
+        child_rows = list(self._session.exec(select(ResourceTable).where(*child_where)).all())
+
+        dim_stmt = (
+            select(ChargebackDimensionTable.identity_id)
+            .where(
+                col(ChargebackDimensionTable.ecosystem) == ecosystem,
+                col(ChargebackDimensionTable.tenant_id) == tenant_id,
+                col(ChargebackDimensionTable.resource_id) == cluster_id,
+                col(ChargebackDimensionTable.identity_id) != "",
+            )
+            .distinct()
+        )
+        identity_ids = list(self._session.exec(dim_stmt).all())
+
+        topics_oversized = len(child_rows) > _CLUSTER_GROUP_THRESHOLD
+        identities_oversized = len(identity_ids) > _CLUSTER_GROUP_THRESHOLD
+
+        # Neither group oversized and no explicit expand → full unfiltered path
+        if expand is None and not topics_oversized and not identities_oversized:
+            return self._cluster_view_full(focus_row, ecosystem, tenant_id, at, period_start, period_end)
+
+        # Compute costs for all entities (needed for ranking and totals)
+        all_resource_ids = [cluster_id] + [c.resource_id for c in child_rows]
+        resource_cost_map = self._aggregate_costs(
+            ecosystem, tenant_id, all_resource_ids, period_start, period_end, group_by_column="resource_id"
+        )
+        ta_cost_map = self._aggregate_topic_attribution_costs(
+            ecosystem, tenant_id, cluster_id, period_start, period_end
+        )
+        identity_cost_map = self._aggregate_identity_costs(
+            ecosystem, tenant_id, cluster_id, identity_ids, period_start, period_end
+        )
+
+        def _topic_cost(r: ResourceTable) -> Decimal:
+            return ta_cost_map.get(r.resource_id, resource_cost_map.get(r.resource_id, Decimal("0")))
+
+        # Cluster node (always included)
+        cluster_tags = self._tags.find_tags_for_entities(tenant_id, "resource", [cluster_id])
+        cluster_node = GraphNodeData(
+            id=cluster_id,
+            resource_type=focus_row.resource_type,
+            display_name=focus_row.display_name,
+            cost=resource_cost_map.get(cluster_id, Decimal("0")),
+            created_at=focus_row.created_at,
+            deleted_at=focus_row.deleted_at,
+            tags={t.tag_key: t.tag_value for t in cluster_tags.get(cluster_id, [])},
+            parent_id=focus_row.parent_id,
+            cloud=focus_row.cloud,
+            region=focus_row.region,
+            status=focus_row.status,
+        )
+
+        nodes: list[GraphNodeData] = [cluster_node]
+        edges: list[GraphEdgeData] = []
+
+        if expand == "topics":
+            # All non-zero topics individually (up to cap), zero collapsed, identities as group
+            sorted_topics = sorted(child_rows, key=_topic_cost, reverse=True)
+            nonzero_topics = [r for r in sorted_topics if _topic_cost(r) > Decimal("0")]
+            zero_topics = [r for r in sorted_topics if _topic_cost(r) == Decimal("0")]
+
+            included_topics = nonzero_topics[:_CLUSTER_EXPAND_CAP]
+            overflow_topics = nonzero_topics[_CLUSTER_EXPAND_CAP:]
+
+            included_topic_ids = [r.resource_id for r in included_topics]
+            topic_tags = (
+                self._tags.find_tags_for_entities(tenant_id, "resource", included_topic_ids)
+                if included_topic_ids
+                else {}
+            )
+
+            for r in included_topics:
+                nodes.append(
+                    GraphNodeData(
+                        id=r.resource_id,
+                        resource_type=r.resource_type,
+                        display_name=r.display_name,
+                        cost=_topic_cost(r),
+                        created_at=r.created_at,
+                        deleted_at=r.deleted_at,
+                        tags={t.tag_key: t.tag_value for t in topic_tags.get(r.resource_id, [])},
+                        parent_id=r.parent_id,
+                        cloud=r.cloud,
+                        region=r.region,
+                        status=r.status,
+                    )
+                )
+                edges.append(
+                    GraphEdgeData(
+                        source=r.parent_id or cluster_id,
+                        target=r.resource_id,
+                        relationship_type=EdgeType.parent,
+                    )
+                )
+
+            included_topic_id_set = {r.resource_id for r in included_topics}
+            for topic_id, cost in ta_cost_map.items():
+                if topic_id in included_topic_id_set:
+                    edges.append(
+                        GraphEdgeData(
+                            source=cluster_id,
+                            target=topic_id,
+                            relationship_type=EdgeType.attribution,
+                            cost=cost,
+                        )
+                    )
+
+            if overflow_topics:
+                overflow_count = len(overflow_topics)
+                overflow_cost = sum((_topic_cost(r) for r in overflow_topics), Decimal("0"))
+                nodes.append(
+                    GraphNodeData(
+                        id=f"{cluster_id}:capped_topics",
+                        resource_type="capped_summary",
+                        display_name=f"{overflow_count} more topics",
+                        cost=overflow_cost,
+                        created_at=None,
+                        deleted_at=None,
+                        tags={},
+                        parent_id=cluster_id,
+                        cloud=None,
+                        region=None,
+                        status="active",
+                        child_count=overflow_count,
+                        child_total_cost=overflow_cost,
+                    )
+                )
+                edges.append(
+                    GraphEdgeData(
+                        source=cluster_id,
+                        target=f"{cluster_id}:capped_topics",
+                        relationship_type=EdgeType.parent,
+                    )
+                )
+
+            if zero_topics:
+                zero_count = len(zero_topics)
+                display_name = f"{zero_count} others at $0" if nonzero_topics else f"{zero_count} topics ($0)"
+                nodes.append(
+                    GraphNodeData(
+                        id=f"{cluster_id}:zero_cost_topics",
+                        resource_type="zero_cost_summary",
+                        display_name=display_name,
+                        cost=Decimal("0"),
+                        created_at=None,
+                        deleted_at=None,
+                        tags={},
+                        parent_id=cluster_id,
+                        cloud=None,
+                        region=None,
+                        status="active",
+                        child_count=zero_count,
+                        child_total_cost=Decimal("0"),
+                    )
+                )
+                edges.append(
+                    GraphEdgeData(
+                        source=cluster_id,
+                        target=f"{cluster_id}:zero_cost_topics",
+                        relationship_type=EdgeType.parent,
+                    )
+                )
+
+            if identity_ids:
+                id_total = sum(identity_cost_map.values(), Decimal("0"))
+                nodes.append(
+                    GraphNodeData(
+                        id=f"{cluster_id}:identity_group",
+                        resource_type="identity_group",
+                        display_name=f"{len(identity_ids)} identities",
+                        cost=Decimal("0"),
+                        created_at=None,
+                        deleted_at=None,
+                        tags={},
+                        parent_id=cluster_id,
+                        cloud=None,
+                        region=None,
+                        status="active",
+                        child_count=len(identity_ids),
+                        child_total_cost=id_total,
+                    )
+                )
+                edges.append(
+                    GraphEdgeData(
+                        source=cluster_id,
+                        target=f"{cluster_id}:identity_group",
+                        relationship_type=EdgeType.charge,
+                    )
+                )
+
+        elif expand == "identities":
+            # Topics as group, non-zero identities individually (up to cap), zero collapsed
+            if child_rows:
+                topic_total = sum((_topic_cost(r) for r in child_rows), Decimal("0"))
+                nodes.append(
+                    GraphNodeData(
+                        id=f"{cluster_id}:topic_group",
+                        resource_type="topic_group",
+                        display_name=f"{len(child_rows)} topics",
+                        cost=Decimal("0"),
+                        created_at=None,
+                        deleted_at=None,
+                        tags={},
+                        parent_id=cluster_id,
+                        cloud=None,
+                        region=None,
+                        status="active",
+                        child_count=len(child_rows),
+                        child_total_cost=topic_total,
+                    )
+                )
+                edges.append(
+                    GraphEdgeData(
+                        source=cluster_id,
+                        target=f"{cluster_id}:topic_group",
+                        relationship_type=EdgeType.parent,
+                    )
+                )
+
+            sorted_ids = sorted(
+                identity_ids,
+                key=lambda iid: identity_cost_map.get(iid, Decimal("0")),
+                reverse=True,
+            )
+            nonzero_ids = [iid for iid in sorted_ids if identity_cost_map.get(iid, Decimal("0")) > Decimal("0")]
+            zero_ids = [iid for iid in sorted_ids if identity_cost_map.get(iid, Decimal("0")) == Decimal("0")]
+
+            included_ids = nonzero_ids[:_CLUSTER_EXPAND_CAP]
+            overflow_ids = nonzero_ids[_CLUSTER_EXPAND_CAP:]
+
+            id_rows: list[IdentityTable] = []
+            if included_ids:
+                id_where = _temporal_active_at_filter(IdentityTable, ecosystem, tenant_id, at)
+                id_where.append(col(IdentityTable.identity_id).in_(included_ids))
+                id_rows = list(self._session.exec(select(IdentityTable).where(*id_where)).all())
+
+            id_tags = (
+                self._tags.find_tags_for_entities(tenant_id, "identity", [r.identity_id for r in id_rows])
+                if id_rows
+                else {}
+            )
+            cross_ref_map = self._fetch_cross_references(ecosystem, tenant_id, included_ids, cluster_id)
+
+            for identity_row in id_rows:
+                nodes.append(
+                    GraphNodeData(
+                        id=identity_row.identity_id,
+                        resource_type=identity_row.identity_type,
+                        display_name=identity_row.display_name,
+                        cost=identity_cost_map.get(identity_row.identity_id, Decimal("0")),
+                        created_at=identity_row.created_at,
+                        deleted_at=identity_row.deleted_at,
+                        tags={t.tag_key: t.tag_value for t in id_tags.get(identity_row.identity_id, [])},
+                        parent_id=None,
+                        cloud=None,
+                        region=None,
+                        status="active" if identity_row.deleted_at is None else "deleted",
+                        cross_references=cross_ref_map.get(identity_row.identity_id, []),
+                    )
+                )
+                edges.append(
+                    GraphEdgeData(
+                        source=cluster_id,
+                        target=identity_row.identity_id,
+                        relationship_type=EdgeType.charge,
+                        cost=identity_cost_map.get(identity_row.identity_id),
+                    )
+                )
+
+            if overflow_ids:
+                overflow_count = len(overflow_ids)
+                overflow_cost = sum((identity_cost_map.get(iid, Decimal("0")) for iid in overflow_ids), Decimal("0"))
+                nodes.append(
+                    GraphNodeData(
+                        id=f"{cluster_id}:capped_identities",
+                        resource_type="capped_summary",
+                        display_name=f"{overflow_count} more identities",
+                        cost=overflow_cost,
+                        created_at=None,
+                        deleted_at=None,
+                        tags={},
+                        parent_id=cluster_id,
+                        cloud=None,
+                        region=None,
+                        status="active",
+                        child_count=overflow_count,
+                        child_total_cost=overflow_cost,
+                    )
+                )
+                edges.append(
+                    GraphEdgeData(
+                        source=cluster_id,
+                        target=f"{cluster_id}:capped_identities",
+                        relationship_type=EdgeType.charge,
+                    )
+                )
+
+            if zero_ids:
+                zero_count = len(zero_ids)
+                display_name = f"{zero_count} others at $0" if nonzero_ids else f"{zero_count} identities ($0)"
+                nodes.append(
+                    GraphNodeData(
+                        id=f"{cluster_id}:zero_cost_identities",
+                        resource_type="zero_cost_summary",
+                        display_name=display_name,
+                        cost=Decimal("0"),
+                        created_at=None,
+                        deleted_at=None,
+                        tags={},
+                        parent_id=cluster_id,
+                        cloud=None,
+                        region=None,
+                        status="active",
+                        child_count=zero_count,
+                        child_total_cost=Decimal("0"),
+                    )
+                )
+                edges.append(
+                    GraphEdgeData(
+                        source=cluster_id,
+                        target=f"{cluster_id}:zero_cost_identities",
+                        relationship_type=EdgeType.charge,
+                    )
+                )
+
+        else:
+            # expand=None, at least one group oversized → grouped mode (per-group independent)
+            if topics_oversized:
+                sorted_topics = sorted(child_rows, key=_topic_cost, reverse=True)
+                included_topics = sorted_topics[:_CLUSTER_TOP_N]
+                topic_total = sum((_topic_cost(r) for r in child_rows), Decimal("0"))
+
+                nodes.append(
+                    GraphNodeData(
+                        id=f"{cluster_id}:topic_group",
+                        resource_type="topic_group",
+                        display_name=f"{len(child_rows)} topics",
+                        cost=Decimal("0"),
+                        created_at=None,
+                        deleted_at=None,
+                        tags={},
+                        parent_id=cluster_id,
+                        cloud=None,
+                        region=None,
+                        status="active",
+                        child_count=len(child_rows),
+                        child_total_cost=topic_total,
+                    )
+                )
+                edges.append(
+                    GraphEdgeData(
+                        source=cluster_id,
+                        target=f"{cluster_id}:topic_group",
+                        relationship_type=EdgeType.parent,
+                    )
+                )
+
+                included_topic_ids = [r.resource_id for r in included_topics]
+                topic_tags = (
+                    self._tags.find_tags_for_entities(tenant_id, "resource", included_topic_ids)
+                    if included_topic_ids
+                    else {}
+                )
+                grouped_topic_id_set: set[str] = set(included_topic_ids)
+
+                for r in included_topics:
+                    nodes.append(
+                        GraphNodeData(
+                            id=r.resource_id,
+                            resource_type=r.resource_type,
+                            display_name=r.display_name,
+                            cost=_topic_cost(r),
+                            created_at=r.created_at,
+                            deleted_at=r.deleted_at,
+                            tags={t.tag_key: t.tag_value for t in topic_tags.get(r.resource_id, [])},
+                            parent_id=r.parent_id,
+                            cloud=r.cloud,
+                            region=r.region,
+                            status=r.status,
+                        )
+                    )
+                    edges.append(
+                        GraphEdgeData(
+                            source=r.parent_id or cluster_id,
+                            target=r.resource_id,
+                            relationship_type=EdgeType.parent,
+                        )
+                    )
+
+                for topic_id, cost in ta_cost_map.items():
+                    if topic_id in grouped_topic_id_set:
+                        edges.append(
+                            GraphEdgeData(
+                                source=cluster_id,
+                                target=topic_id,
+                                relationship_type=EdgeType.attribution,
+                                cost=cost,
+                            )
+                        )
+            else:
+                # Topics not oversized → return all individually using cached cost data
+                all_child_ids = [r.resource_id for r in child_rows]
+                topic_tags_all = (
+                    self._tags.find_tags_for_entities(tenant_id, "resource", all_child_ids) if all_child_ids else {}
+                )
+                all_child_id_set = set(all_child_ids)
+
+                for r in child_rows:
+                    nodes.append(
+                        GraphNodeData(
+                            id=r.resource_id,
+                            resource_type=r.resource_type,
+                            display_name=r.display_name,
+                            cost=_topic_cost(r),
+                            created_at=r.created_at,
+                            deleted_at=r.deleted_at,
+                            tags={t.tag_key: t.tag_value for t in topic_tags_all.get(r.resource_id, [])},
+                            parent_id=r.parent_id,
+                            cloud=r.cloud,
+                            region=r.region,
+                            status=r.status,
+                        )
+                    )
+                    edges.append(
+                        GraphEdgeData(
+                            source=r.parent_id or cluster_id,
+                            target=r.resource_id,
+                            relationship_type=EdgeType.parent,
+                        )
+                    )
+
+                for topic_id, cost in ta_cost_map.items():
+                    if topic_id in all_child_id_set:
+                        edges.append(
+                            GraphEdgeData(
+                                source=cluster_id,
+                                target=topic_id,
+                                relationship_type=EdgeType.attribution,
+                                cost=cost,
+                            )
+                        )
+
+            if identities_oversized:
+                sorted_ids = sorted(
+                    identity_ids,
+                    key=lambda iid: identity_cost_map.get(iid, Decimal("0")),
+                    reverse=True,
+                )
+                included_ids = sorted_ids[:_CLUSTER_TOP_N]
+                id_total = sum(identity_cost_map.values(), Decimal("0"))
+
+                nodes.append(
+                    GraphNodeData(
+                        id=f"{cluster_id}:identity_group",
+                        resource_type="identity_group",
+                        display_name=f"{len(identity_ids)} identities",
+                        cost=Decimal("0"),
+                        created_at=None,
+                        deleted_at=None,
+                        tags={},
+                        parent_id=cluster_id,
+                        cloud=None,
+                        region=None,
+                        status="active",
+                        child_count=len(identity_ids),
+                        child_total_cost=id_total,
+                    )
+                )
+                edges.append(
+                    GraphEdgeData(
+                        source=cluster_id,
+                        target=f"{cluster_id}:identity_group",
+                        relationship_type=EdgeType.charge,
+                    )
+                )
+
+                id_rows_top: list[IdentityTable] = []
+                if included_ids:
+                    id_where = _temporal_active_at_filter(IdentityTable, ecosystem, tenant_id, at)
+                    id_where.append(col(IdentityTable.identity_id).in_(included_ids))
+                    id_rows_top = list(self._session.exec(select(IdentityTable).where(*id_where)).all())
+
+                id_tags_top = (
+                    self._tags.find_tags_for_entities(tenant_id, "identity", [r.identity_id for r in id_rows_top])
+                    if id_rows_top
+                    else {}
+                )
+                xref_top = self._fetch_cross_references(ecosystem, tenant_id, included_ids, cluster_id)
+
+                for identity_row in id_rows_top:
+                    nodes.append(
+                        GraphNodeData(
+                            id=identity_row.identity_id,
+                            resource_type=identity_row.identity_type,
+                            display_name=identity_row.display_name,
+                            cost=identity_cost_map.get(identity_row.identity_id, Decimal("0")),
+                            created_at=identity_row.created_at,
+                            deleted_at=identity_row.deleted_at,
+                            tags={t.tag_key: t.tag_value for t in id_tags_top.get(identity_row.identity_id, [])},
+                            parent_id=None,
+                            cloud=None,
+                            region=None,
+                            status="active" if identity_row.deleted_at is None else "deleted",
+                            cross_references=xref_top.get(identity_row.identity_id, []),
+                        )
+                    )
+                    edges.append(
+                        GraphEdgeData(
+                            source=cluster_id,
+                            target=identity_row.identity_id,
+                            relationship_type=EdgeType.charge,
+                            cost=identity_cost_map.get(identity_row.identity_id),
+                        )
+                    )
+            else:
+                # Identities not oversized → return all individually using cached cost data
+                id_rows_all: list[IdentityTable] = []
+                if identity_ids:
+                    id_where2 = _temporal_active_at_filter(IdentityTable, ecosystem, tenant_id, at)
+                    id_where2.append(col(IdentityTable.identity_id).in_(identity_ids))
+                    id_rows_all = list(self._session.exec(select(IdentityTable).where(*id_where2)).all())
+
+                id_tags_all = (
+                    self._tags.find_tags_for_entities(tenant_id, "identity", [r.identity_id for r in id_rows_all])
+                    if id_rows_all
+                    else {}
+                )
+                xref_all = self._fetch_cross_references(ecosystem, tenant_id, identity_ids, cluster_id)
+
+                for identity_row in id_rows_all:
+                    nodes.append(
+                        GraphNodeData(
+                            id=identity_row.identity_id,
+                            resource_type=identity_row.identity_type,
+                            display_name=identity_row.display_name,
+                            cost=identity_cost_map.get(identity_row.identity_id, Decimal("0")),
+                            created_at=identity_row.created_at,
+                            deleted_at=identity_row.deleted_at,
+                            tags={t.tag_key: t.tag_value for t in id_tags_all.get(identity_row.identity_id, [])},
+                            parent_id=None,
+                            cloud=None,
+                            region=None,
+                            status="active" if identity_row.deleted_at is None else "deleted",
+                            cross_references=xref_all.get(identity_row.identity_id, []),
+                        )
+                    )
+                    edges.append(
+                        GraphEdgeData(
+                            source=cluster_id,
+                            target=identity_row.identity_id,
+                            relationship_type=EdgeType.charge,
+                            cost=identity_cost_map.get(identity_row.identity_id),
+                        )
+                    )
+
+        return GraphNeighborhood(nodes=nodes, edges=edges)
+
+    def _cluster_view_full(
         self,
         focus_row: ResourceTable,
         ecosystem: str,
@@ -2527,7 +3215,7 @@ class SQLModelGraphRepository:
         period_start: datetime,
         period_end: datetime,
     ) -> GraphNeighborhood:
-        """Return cluster + child topics + identities charged to cluster + charge edges."""
+        """Return cluster + child topics + identities charged to cluster + charge edges (unfiltered)."""
         cluster_id = focus_row.resource_id
 
         # Child resources (topics, connectors, etc.) — temporal filter
@@ -2562,77 +3250,21 @@ class SQLModelGraphRepository:
         )
 
         # Charge cost per identity for this cluster (scoped to billing period)
-        identity_cost_map: dict[str, Decimal] = {}
-        if identity_ids:
-            cost_stmt = (
-                select(
-                    ChargebackDimensionTable.identity_id,
-                    func.sum(cast(ChargebackFactTable.amount, String)).label("total"),
-                )
-                .join(
-                    ChargebackFactTable,
-                    col(ChargebackFactTable.dimension_id) == col(ChargebackDimensionTable.dimension_id),
-                )
-                .where(
-                    col(ChargebackDimensionTable.ecosystem) == ecosystem,
-                    col(ChargebackDimensionTable.tenant_id) == tenant_id,
-                    col(ChargebackDimensionTable.resource_id) == cluster_id,
-                    col(ChargebackDimensionTable.identity_id).in_(identity_ids),
-                    col(ChargebackFactTable.timestamp) >= period_start,
-                    col(ChargebackFactTable.timestamp) < period_end,
-                )
-                .group_by(col(ChargebackDimensionTable.identity_id))
-            )
-            for row in self._session.exec(cost_stmt).all():
-                identity_cost_map[row[0]] = Decimal(row[1] or "0")
+        identity_cost_map = self._aggregate_identity_costs(
+            ecosystem, tenant_id, cluster_id, identity_ids, period_start, period_end
+        )
 
         # Cross-references: other resource_ids each identity is charged in (excluding this cluster).
-        cross_ref_map: dict[str, list[str]] = {iid: [] for iid in identity_ids}
-        if identity_ids:
-            xref_stmt = (
-                select(
-                    ChargebackDimensionTable.identity_id,
-                    ChargebackDimensionTable.resource_id,
-                )
-                .where(
-                    col(ChargebackDimensionTable.ecosystem) == ecosystem,
-                    col(ChargebackDimensionTable.tenant_id) == tenant_id,
-                    col(ChargebackDimensionTable.identity_id).in_(identity_ids),
-                    col(ChargebackDimensionTable.resource_id) != cluster_id,
-                    col(ChargebackDimensionTable.resource_id).is_not(None),
-                )
-                .distinct()
-            )
-            for iid, rid in self._session.exec(xref_stmt).all():
-                if rid is not None:  # SQL WHERE filters NULLs but Python type is str | None
-                    cross_ref_map[iid].append(rid)  # pre-initialized dict — no setdefault needed
+        cross_ref_map = self._fetch_cross_references(ecosystem, tenant_id, identity_ids, cluster_id)
 
         # Tag resolution
         resource_tags = self._tags.find_tags_for_entities(tenant_id, "resource", all_resource_ids)
         identity_tags = self._tags.find_tags_for_entities(tenant_id, "identity", [r.identity_id for r in identity_rows])
 
         # Topic attribution costs — built before resource_nodes so costs inject directly
-        ta_cost_stmt = (
-            select(
-                TopicAttributionDimensionTable.resource_id,
-                func.sum(cast(TopicAttributionFactTable.amount, String)).label("total"),
-            )
-            .join(
-                TopicAttributionFactTable,
-                col(TopicAttributionFactTable.dimension_id) == col(TopicAttributionDimensionTable.dimension_id),
-            )
-            .where(
-                col(TopicAttributionDimensionTable.ecosystem) == ecosystem,
-                col(TopicAttributionDimensionTable.tenant_id) == tenant_id,
-                col(TopicAttributionDimensionTable.cluster_resource_id) == cluster_id,
-                col(TopicAttributionFactTable.timestamp) >= period_start,
-                col(TopicAttributionFactTable.timestamp) < period_end,
-            )
-            .group_by(col(TopicAttributionDimensionTable.resource_id))
+        ta_cost_map = self._aggregate_topic_attribution_costs(
+            ecosystem, tenant_id, cluster_id, period_start, period_end
         )
-        ta_cost_map: dict[str, Decimal] = {}
-        for row in self._session.exec(ta_cost_stmt).all():
-            ta_cost_map[row[0]] = Decimal(row[1] or "0")
 
         # Build nodes
         resource_nodes = [
@@ -2959,6 +3591,7 @@ class SQLModelGraphRepository:
             at=from_end,
             period_start=from_start,
             period_end=from_end,
+            _force_full=True,
         )
         after = self.find_neighborhood(
             ecosystem=ecosystem,
@@ -2968,6 +3601,7 @@ class SQLModelGraphRepository:
             at=to_end,
             period_start=to_start,
             period_end=to_end,
+            _force_full=True,
         )
 
         before_map: dict[str, GraphNodeData] = {n.id: n for n in before.nodes}

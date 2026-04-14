@@ -439,6 +439,8 @@ class GraphNode(BaseModel):
     region: str | None
     status: str
     cross_references: list[str]
+    child_count: int | None = None
+    child_total_cost: Decimal | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
