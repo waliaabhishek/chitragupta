@@ -13,7 +13,8 @@ function baseStylesheet(): cytoscape.StylesheetStyle[] {
         width: "data(size)" as unknown as number,
         height: "data(size)" as unknown as number,
         "border-width": 2,
-        "transition-property": "width, height, opacity" as unknown as string,
+        "transition-property":
+          "width, height, opacity, border-width, border-color" as unknown as string,
         "transition-duration": 300,
       },
     },
@@ -69,12 +70,39 @@ function baseStylesheet(): cytoscape.StylesheetStyle[] {
         opacity: 0.15,
       },
     },
+    {
+      selector: "node.diff-increase",
+      style: {
+        "border-width": 4,
+        "border-color": "#ff4d4f",
+      },
+    },
+    {
+      selector: "node.diff-decrease",
+      style: {
+        "border-width": 4,
+        "border-color": "#52c41a",
+      },
+    },
+    {
+      selector: "node.diff-new",
+      style: {
+        "border-width": 3,
+        "border-color": "#1890ff",
+      },
+    },
+    {
+      selector: "node.diff-deleted",
+      style: {
+        opacity: 0.35,
+        "border-style": "dashed" as const,
+        "border-color": "#8c8c8c",
+      },
+    },
   ];
 }
 
-export function getStylesheet(
-  isDark: boolean,
-): cytoscape.StylesheetStyle[] {
+export function getStylesheet(isDark: boolean): cytoscape.StylesheetStyle[] {
   const base = baseStylesheet();
   if (isDark) {
     return [

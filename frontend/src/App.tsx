@@ -98,10 +98,7 @@ export function App(): React.JSX.Element {
                           element={<PipelineStatusPage />}
                         />
                         <Route path="/tags" element={<TagManagementPage />} />
-                        <Route
-                          path="/explorer"
-                          element={<ExplorerPage />}
-                        />
+                        <Route path="/explorer" element={<ExplorerPage />} />
                       </Routes>
                     </AppLayout>
                   </AppShellContext.Provider>

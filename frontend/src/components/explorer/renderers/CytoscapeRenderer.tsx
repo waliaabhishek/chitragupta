@@ -1,5 +1,5 @@
 import type React from "react";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import cytoscape from "cytoscape";
 import coseBilkent from "cytoscape-cose-bilkent";
 import type { GraphRendererProps } from "./types";
@@ -9,19 +9,26 @@ import { getNodeShape, costToSize } from "./nodeShapes";
 // Register layout extension once at module load time — idempotent.
 cytoscape.use(coseBilkent);
 
+interface PulseOverlay {
+  id: string;
+  x: number;
+  y: number;
+  size: number;
+}
+
 export function CytoscapeRenderer({
   nodes,
   edges,
   fadedNodeIds,
   onNodeClick,
   onNodeHover,
-  isLoading,
   isDark,
   width,
   height,
 }: GraphRendererProps): React.JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null);
   const cyRef = useRef<cytoscape.Core | null>(null);
+  const [pulseOverlays, setPulseOverlays] = useState<PulseOverlay[]>([]);
 
   // Stable refs for callbacks — prevent stale closures in mount-once useEffect
   const onClickRef = useRef(onNodeClick);
@@ -36,6 +43,9 @@ export function CytoscapeRenderer({
 
   // Track edge IDs for manual management
   const edgeIdsRef = useRef<Set<string>>(new Set());
+
+  // Ref to clean up exiting-node timeout on unmount
+  const exitTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Mount once — create cy instance
   useEffect(() => {
@@ -68,6 +78,10 @@ export function CytoscapeRenderer({
     cyInstance.on("mouseout", "node", () => onHoverRef.current(null));
 
     return () => {
+      if (exitTimeoutRef.current !== null) {
+        clearTimeout(exitTimeoutRef.current);
+        exitTimeoutRef.current = null;
+      }
       cyInstance.destroy();
       cyRef.current = null;
     };
@@ -106,11 +120,14 @@ export function CytoscapeRenderer({
 
     if (exiting.length > 0) {
       const exitingEles = cy.nodes().filter((n) => exitingSet.has(n.id()));
-      exitingEles.animate(
-        { style: { opacity: 0 } },
-        { duration: 300 },
-      );
-      setTimeout(() => exitingEles.remove(), 320);
+      exitingEles.animate({ style: { opacity: 0 } }, { duration: 300 });
+      if (exitTimeoutRef.current !== null) {
+        clearTimeout(exitTimeoutRef.current);
+      }
+      exitTimeoutRef.current = setTimeout(() => {
+        exitingEles.remove();
+        exitTimeoutRef.current = null;
+      }, 320);
     }
 
     for (const node of persisting) {
@@ -164,8 +181,28 @@ export function CytoscapeRenderer({
         .addClass("faded");
     }
 
+    // Apply diff classes from node data
+    cy.nodes().removeClass("diff-increase diff-decrease diff-new diff-deleted");
+    for (const node of [...persisting, ...entering]) {
+      const cyNode = cy.getElementById(node.id);
+      const diffStatus = node.diff?.diff_status;
+      if (!diffStatus || diffStatus === "unchanged") continue;
+      if (diffStatus === "changed") {
+        cyNode.addClass(
+          node.diff!.cost_delta > 0 ? "diff-increase" : "diff-decrease",
+        );
+      } else if (diffStatus === "new") {
+        cyNode.addClass("diff-new");
+      } else if (diffStatus === "deleted") {
+        cyNode.addClass("diff-deleted");
+      }
+    }
+
+    // Clear old pulse overlays before layout runs
+    setPulseOverlays([]);
+
     if (nodes.length > 0) {
-      cy.layout({
+      const layout = cy.layout({
         name: "cose-bilkent",
         animate: true,
         animationDuration: 500,
@@ -173,30 +210,59 @@ export function CytoscapeRenderer({
         padding: 40,
         nodeRepulsion: 8000,
         idealEdgeLength: 120,
-      } as Parameters<typeof cy.layout>[0]).run();
+      } as Parameters<typeof cy.layout>[0]);
+
+      // After layout completes, compute pulse overlay positions for diff-new nodes
+      // Runtime guard needed: test mock cy does not implement .one()
+      if (typeof cy.one === "function") {
+        cy.one("layoutstop", () => {
+          const newNodes = cy.nodes(".diff-new");
+          const overlays: PulseOverlay[] = [];
+          newNodes.forEach((n) => {
+            const pos = n.renderedPosition();
+            const size = n.renderedStyle("width") as unknown as number;
+            overlays.push({
+              id: n.id(),
+              x: pos.x,
+              y: pos.y,
+              size: typeof size === "number" ? size : 30,
+            });
+          });
+          setPulseOverlays(overlays);
+        });
+      }
+
+      layout.run();
     }
   }, [nodes, edges]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div style={{ position: "relative", width, height }}>
       <div ref={containerRef} style={{ width: "100%", height: "100%" }} />
-      {isLoading && (
+      {pulseOverlays.map((o) => (
         <div
-          data-testid="graph-loading"
+          key={o.id}
           style={{
             position: "absolute",
-            inset: 0,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            background: "rgba(0,0,0,0.2)",
+            left: o.x,
+            top: o.y,
+            width: o.size,
+            height: o.size,
+            borderRadius: "50%",
+            border: "2px solid #1890ff",
+            transform: "translate(-50%, -50%)",
+            pointerEvents: "none",
+            animation: "diff-new-pulse 1.2s ease-out infinite",
           }}
-        >
-          <div role="progressbar" style={{ fontSize: 24 }}>
-            ⟳
-          </div>
-        </div>
-      )}
+        />
+      ))}
+      <style>{`
+        @keyframes diff-new-pulse {
+          0% { transform: translate(-50%, -50%) scale(1); opacity: 0.8; }
+          70% { transform: translate(-50%, -50%) scale(1.15); opacity: 0.3; }
+          100% { transform: translate(-50%, -50%) scale(1); opacity: 0; }
+        }
+      `}</style>
     </div>
   );
 }

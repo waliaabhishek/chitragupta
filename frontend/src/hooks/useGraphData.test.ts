@@ -16,7 +16,11 @@ function createTestQueryClient() {
 function createWrapper() {
   const queryClient = createTestQueryClient();
   return function Wrapper({ children }: { children: ReactNode }) {
-    return createElement(QueryClientProvider, { client: queryClient }, children);
+    return createElement(
+      QueryClientProvider,
+      { client: queryClient },
+      children,
+    );
   };
 }
 

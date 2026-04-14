@@ -20,14 +20,27 @@ export interface GraphEdge {
   cost: number | null;
 }
 
+/** Diff overlay data merged onto a GraphNode */
+export interface DiffOverlay {
+  cost_before: number;
+  cost_after: number;
+  cost_delta: number;
+  pct_change: number | null;
+  diff_status: "new" | "deleted" | "changed" | "unchanged";
+}
+
+/** GraphNode extended with optional diff data */
+export interface GraphNodeWithDiff extends GraphNode {
+  diff?: DiffOverlay;
+}
+
 export interface GraphRendererProps {
-  nodes: GraphNode[];
+  nodes: GraphNodeWithDiff[];
   edges: GraphEdge[];
   focusId: string | null;
   fadedNodeIds: Set<string>;
   onNodeClick: (nodeId: string, resourceType: string) => void;
   onNodeHover: (nodeId: string | null) => void;
-  isLoading: boolean;
   isDark: boolean;
   width: number;
   height: number;

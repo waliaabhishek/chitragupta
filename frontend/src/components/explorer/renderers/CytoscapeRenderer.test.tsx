@@ -7,7 +7,12 @@ import type { GraphNode, GraphEdge } from "./types";
 const { cytoscapeMock, mockCyInstance, state } = vi.hoisted(() => {
   // Shared mutable state — reset in beforeEach between tests.
   const state = {
-    onHandlers: {} as Record<string, (evt: { target: { id: () => string; data: (k: string) => string } }) => void>,
+    onHandlers: {} as Record<
+      string,
+      (evt: {
+        target: { id: () => string; data: (k: string) => string };
+      }) => void
+    >,
     addCalls: [] as unknown[],
     destroyCalled: false,
     fadedClassApplied: false,
@@ -18,7 +23,9 @@ const { cytoscapeMock, mockCyInstance, state } = vi.hoisted(() => {
       (
         event: string,
         selector: string,
-        handler: (evt: { target: { id: () => string; data: (k: string) => string } }) => void,
+        handler: (evt: {
+          target: { id: () => string; data: (k: string) => string };
+        }) => void,
       ) => {
         state.onHandlers[`${event}:${selector}`] = handler;
       },
@@ -119,7 +126,11 @@ describe("CytoscapeRenderer", () => {
   });
 
   it("renders correct number of nodes from props", async () => {
-    const nodes = [makeNode({ id: "n1" }), makeNode({ id: "n2" }), makeNode({ id: "n3" })];
+    const nodes = [
+      makeNode({ id: "n1" }),
+      makeNode({ id: "n2" }),
+      makeNode({ id: "n3" }),
+    ];
     render(<CytoscapeRenderer {...DEFAULT_PROPS} nodes={nodes} />);
     await waitFor(() => {
       const nodeAdds = state.addCalls.filter(
@@ -132,7 +143,9 @@ describe("CytoscapeRenderer", () => {
   it("renders correct number of edges from props", async () => {
     const nodes = [makeNode({ id: "n1" }), makeNode({ id: "n2" })];
     const edges = [makeEdge({ source: "n1", target: "n2" })];
-    render(<CytoscapeRenderer {...DEFAULT_PROPS} nodes={nodes} edges={edges} />);
+    render(
+      <CytoscapeRenderer {...DEFAULT_PROPS} nodes={nodes} edges={edges} />,
+    );
     await waitFor(() => {
       const edgeAdds = state.addCalls.filter(
         (el) => (el as { group?: string }).group === "edges",
@@ -170,7 +183,10 @@ describe("CytoscapeRenderer", () => {
   });
 
   it("applies correct shape per resource_type", async () => {
-    const clusterNode = makeNode({ id: "lkc-abc", resource_type: "kafka_cluster" });
+    const clusterNode = makeNode({
+      id: "lkc-abc",
+      resource_type: "kafka_cluster",
+    });
     render(<CytoscapeRenderer {...DEFAULT_PROPS} nodes={[clusterNode]} />);
     await waitFor(() => {
       const nodeAdds = state.addCalls.filter(

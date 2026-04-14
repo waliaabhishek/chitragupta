@@ -338,9 +338,8 @@ describe("CostDashboardPage", () => {
     const { useAggregation } = await import("../../hooks/useAggregation");
     const mockUseAggregation = vi.mocked(useAggregation);
 
-    const { TagPivotPanel } = await import(
-      "../../components/pivotPanel/TagPivotPanel"
-    );
+    const { TagPivotPanel } =
+      await import("../../components/pivotPanel/TagPivotPanel");
     const mockTagPivotPanel = vi.mocked(TagPivotPanel);
 
     render(<CostDashboardPage />, { wrapper });
@@ -371,9 +370,8 @@ describe("CostDashboardPage", () => {
       isReadOnly: false,
     });
 
-    const { TagPivotPanel } = await import(
-      "../../components/pivotPanel/TagPivotPanel"
-    );
+    const { TagPivotPanel } =
+      await import("../../components/pivotPanel/TagPivotPanel");
     const mockTagPivotPanel = vi.mocked(TagPivotPanel);
 
     render(<CostDashboardPage />, { wrapper });

@@ -1,6 +1,9 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, keepPreviousData } from "@tanstack/react-query";
 import { API_URL } from "../config";
-import type { GraphNode, GraphEdge } from "../components/explorer/renderers/types";
+import type {
+  GraphNode,
+  GraphEdge,
+} from "../components/explorer/renderers/types";
 
 interface GraphResponse {
   nodes: GraphNode[];
@@ -25,8 +28,7 @@ export interface UseGraphDataResult {
 }
 
 export function useGraphData(params: UseGraphDataParams): UseGraphDataResult {
-  const { tenantName, focus, depth, at, startDate, endDate, timezone } =
-    params;
+  const { tenantName, focus, depth, at, startDate, endDate, timezone } = params;
 
   const query = useQuery({
     queryKey: [
@@ -37,6 +39,7 @@ export function useGraphData(params: UseGraphDataParams): UseGraphDataResult {
       at ?? null,
       startDate ?? null,
       endDate ?? null,
+      timezone ?? null,
     ],
     queryFn: async ({ signal }) => {
       const qs = new URLSearchParams();
@@ -55,6 +58,7 @@ export function useGraphData(params: UseGraphDataParams): UseGraphDataResult {
       return response.json() as Promise<GraphResponse>;
     },
     enabled: !!tenantName,
+    placeholderData: keepPreviousData,
   });
 
   return {

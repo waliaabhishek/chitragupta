@@ -43,7 +43,10 @@ export function BreadcrumbTrail({
           Tenant
         </Button>
         {breadcrumbs.map((crumb, i) => (
-          <span key={crumb.id} style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          <span
+            key={crumb.id}
+            style={{ display: "flex", alignItems: "center", gap: 4 }}
+          >
             <span style={{ opacity: 0.4 }}>/</span>
             {i === breadcrumbs.length - 1 ? (
               <span
