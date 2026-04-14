@@ -25,6 +25,8 @@ export function CytoscapeRenderer({
   isDark,
   width,
   height,
+  activeTagKey,
+  tagSelectedValue,
 }: GraphRendererProps): React.JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null);
   const cyRef = useRef<cytoscape.Core | null>(null);
@@ -100,6 +102,48 @@ export function CytoscapeRenderer({
     if (!cy || typeof cy.resize !== "function") return;
     cy.resize();
   }, [width, height]);
+
+  // Constrained re-layout when tag value selection changes
+  const isFirstTagEffect = useRef(true);
+  useEffect(() => {
+    if (isFirstTagEffect.current) {
+      isFirstTagEffect.current = false;
+      return;
+    }
+    const cy = cyRef.current;
+    if (!cy || cy.nodes().length === 0) return;
+
+    if (!activeTagKey || !tagSelectedValue) {
+      cy.layout({
+        name: "cose-bilkent",
+        animate: true,
+        animationDuration: 400,
+        fit: true,
+        padding: 40,
+        nodeRepulsion: 8000,
+        idealEdgeLength: 120,
+      } as Parameters<typeof cy.layout>[0]).run();
+      return;
+    }
+
+    cy.layout({
+      name: "cose",
+      animate: true,
+      animationDuration: 500,
+      fit: true,
+      padding: 40,
+      nodeRepulsion: () => 6000,
+      idealEdgeLength: (edge: cytoscape.EdgeSingular) => {
+        const srcTags = (edge.source().data("tags") as Record<string, string>) ?? {};
+        const tgtTags = (edge.target().data("tags") as Record<string, string>) ?? {};
+        const srcMatch = srcTags[activeTagKey] === tagSelectedValue;
+        const tgtMatch = tgtTags[activeTagKey] === tagSelectedValue;
+        if (srcMatch && tgtMatch) return 50;
+        if (!srcMatch && !tgtMatch) return 200;
+        return 120;
+      },
+    } as Parameters<typeof cy.layout>[0]).run();
+  }, [activeTagKey, tagSelectedValue]); // scalars — reference-stable, no spurious re-runs
 
   // Data diffing — animate transitions on node/edge changes
   useEffect(() => {

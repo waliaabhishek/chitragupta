@@ -12,6 +12,7 @@ interface BreadcrumbTrailProps {
   onNavigate: (index: number) => void;
   onGoBack: () => void;
   onGoToRoot: () => void;
+  copyLinkButton?: React.ReactNode;
 }
 
 export function BreadcrumbTrail({
@@ -19,6 +20,7 @@ export function BreadcrumbTrail({
   onNavigate,
   onGoBack,
   onGoToRoot,
+  copyLinkButton,
 }: BreadcrumbTrailProps): React.JSX.Element {
   return (
     <div
@@ -75,16 +77,19 @@ export function BreadcrumbTrail({
           </span>
         ))}
       </Space>
-      {breadcrumbs.length > 0 && (
-        <Button
-          type="text"
-          size="small"
-          onClick={onGoBack}
-          style={{ marginLeft: "auto", opacity: 0.6 }}
-        >
-          ← Back
-        </Button>
-      )}
+      <div style={{ marginLeft: "auto", display: "flex", gap: 4 }}>
+        {copyLinkButton}
+        {breadcrumbs.length > 0 && (
+          <Button
+            type="text"
+            size="small"
+            onClick={onGoBack}
+            style={{ opacity: 0.6 }}
+          >
+            ← Back
+          </Button>
+        )}
+      </div>
     </div>
   );
 }

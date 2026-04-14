@@ -121,6 +121,12 @@ export function getStylesheet(isDark: boolean): cytoscape.StylesheetStyle[] {
           "active-bg-color": "#444",
         },
       } as cytoscape.StylesheetStyle,
+      {
+        selector: "node[tagColor]",
+        style: {
+          "background-color": "data(tagColor)" as unknown as string,
+        },
+      },
     ];
   }
   return [
@@ -131,6 +137,12 @@ export function getStylesheet(isDark: boolean): cytoscape.StylesheetStyle[] {
         color: "#262626",
         "border-color": "#d9d9d9",
         "background-color": "#e6f4ff",
+      },
+    },
+    {
+      selector: "node[tagColor]",
+      style: {
+        "background-color": "data(tagColor)" as unknown as string,
       },
     },
   ];

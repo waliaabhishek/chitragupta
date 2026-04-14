@@ -10,6 +10,8 @@ import { useDateRange } from "../../hooks/useDateRange";
 import { usePlayback } from "../../hooks/usePlayback";
 import { useDebouncedValue } from "../../hooks/useDebouncedValue";
 import { useGraphDiff } from "../../hooks/useGraphDiff";
+import { useGraphNavigation } from "../../hooks/useGraphNavigation";
+import { useTagOverlay } from "../../hooks/useTagOverlay";
 import { ExplorerPage } from "./ExplorerPage";
 
 // ---------------------------------------------------------------------------
@@ -65,6 +67,14 @@ vi.mock("../../hooks/useGraphNavigation", () => ({
   })),
 }));
 
+vi.mock("../../hooks/useTagOverlay", () => ({
+  useTagOverlay: vi.fn(() => ({
+    availableKeys: [],
+    isLoadingKeys: false,
+    colorMap: {},
+  })),
+}));
+
 vi.mock("../../hooks/useDateRange", () => ({
   useDateRange: vi.fn(() => ({
     minDate: null,
@@ -111,16 +121,19 @@ vi.mock("../../hooks/useGraphTimeline", () => ({
 }));
 
 // GraphContainer mock — renders data-testid + per-node data attributes so tests
-// can observe enriched nodes (including phantom nodes and diff overlays).
+// can observe enriched nodes (including phantom nodes, diff overlays, and faded state).
 vi.mock("./GraphContainer", () => ({
   GraphContainer: ({
     nodes,
+    fadedNodeIds = new Set<string>(),
   }: {
     nodes: Array<{
       id: string;
       status: string;
+      tagColor?: string;
       diff?: { diff_status: string; cost_delta: number };
     }>;
+    fadedNodeIds?: Set<string>;
   }) => (
     <div data-testid="graph-container">
       {nodes.map((n) => (
@@ -130,6 +143,8 @@ vi.mock("./GraphContainer", () => ({
           data-node-status={n.status}
           data-diff-status={n.diff?.diff_status ?? ""}
           data-cost-delta={n.diff != null ? String(n.diff.cost_delta) : ""}
+          data-faded={fadedNodeIds.has(n.id) ? "true" : "false"}
+          data-tag-color={n.tagColor ?? ""}
         />
       ))}
     </div>
@@ -991,5 +1006,236 @@ describe("ExplorerPage — all-unchanged diff state", () => {
     fireEvent.click(screen.getByRole("button", { name: /diff|compare/i }));
 
     expect(screen.queryByText(/no cost changes detected/i)).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TASK-223: URL-driven state, tag overlay fadedNodeIds, search navigation
+// These tests FAIL until ExplorerPage wires useExplorerParams + useTagOverlay.
+// ---------------------------------------------------------------------------
+
+function renderExplorerPageWithUrl(search: string) {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false, gcTime: 0 } },
+  });
+  return render(
+    <MemoryRouter initialEntries={[`/explorer${search}`]}>
+      <QueryClientProvider client={queryClient}>
+        <ExplorerPage />
+      </QueryClientProvider>
+    </MemoryRouter>,
+  );
+}
+
+describe("ExplorerPage — URL state (TASK-223)", () => {
+  beforeEach(() => {
+    resetTenantMock();
+    resetGraphDataMock();
+    vi.mocked(useGraphNavigation).mockReturnValue({
+      state: { focusId: null, focusType: null, breadcrumbs: [] },
+      navigate: vi.fn(),
+      goBack: vi.fn(),
+      goToRoot: vi.fn(),
+      goToBreadcrumb: vi.fn(),
+    });
+  });
+
+  it("passes focusFromUrl from ?focus URL param to useGraphNavigation", () => {
+    renderExplorerPageWithUrl("?focus=lkc-abc");
+
+    expect(vi.mocked(useGraphNavigation)).toHaveBeenCalledWith(
+      expect.objectContaining({ focusFromUrl: "lkc-abc" }),
+    );
+  });
+
+  it("passes focusFromUrl=null to useGraphNavigation when ?focus absent", () => {
+    renderExplorerPageWithUrl("");
+
+    expect(vi.mocked(useGraphNavigation)).toHaveBeenCalledWith(
+      expect.objectContaining({ focusFromUrl: null }),
+    );
+  });
+
+  it("tag overlay computes non-empty fadedNodeIds for non-matching nodes when tag_value set", () => {
+    vi.mocked(useGraphData).mockReturnValue({
+      data: {
+        nodes: [
+          makeApiNode({ id: "n1", tags: { team: "platform" } }),
+          makeApiNode({ id: "n2", tags: { team: "data" } }), // should be faded
+        ] as never,
+        edges: [],
+      },
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderExplorerPageWithUrl("?tag=team&tag_value=platform");
+
+    // n2 (team=data) should be faded; n1 (team=platform) should not
+    const n2el = document.querySelector("[data-node-id='n2']") as HTMLElement | null;
+    expect(n2el).not.toBeNull();
+    expect(n2el!.dataset.faded).toBe("true");
+
+    const n1el = document.querySelector("[data-node-id='n1']") as HTMLElement | null;
+    expect(n1el).not.toBeNull();
+    expect(n1el!.dataset.faded).toBe("false");
+  });
+
+  it("phantom nodes are excluded from fadedNodeIds even when tag_value set", () => {
+    vi.mocked(useGraphData).mockReturnValue({
+      data: {
+        nodes: [
+          makeApiNode({ id: "sa-001", cross_references: ["lkc-phantom"], tags: { team: "data" } }),
+          makeApiNode({ id: "n-real", tags: { team: "data" } }), // non-phantom, should be faded
+        ] as never,
+        edges: [],
+      },
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderExplorerPageWithUrl("?tag=team&tag_value=platform");
+
+    // Real node with mismatched tag should be faded
+    const realEl = document.querySelector("[data-node-id='n-real']") as HTMLElement | null;
+    expect(realEl).not.toBeNull();
+    expect(realEl!.dataset.faded).toBe("true");
+
+    // Phantom node should NOT be faded regardless of tag mismatch
+    const phantomEl = document.querySelector("[data-node-id='lkc-phantom']") as HTMLElement | null;
+    expect(phantomEl).not.toBeNull();
+    expect(phantomEl!.dataset.faded).toBe("false");
+  });
+
+  it("diff=true URL param activates diff mode (DiffModePanel shows as active)", () => {
+    renderExplorerPageWithUrl("?diff=true");
+
+    // DiffModePanel should render in active state — check for diff-related UI
+    expect(
+      document.querySelector("[data-testid='diff-mode-panel']"),
+    ).not.toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GIT-004 — enrichWithTagColor unit tests (TASK-223)
+// Tests the private enrichWithTagColor function via ExplorerPage rendering.
+// GraphContainer mock exposes data-tag-color per node.
+// ---------------------------------------------------------------------------
+
+describe("ExplorerPage — enrichWithTagColor (GIT-004)", () => {
+  beforeEach(() => {
+    resetTenantMock();
+    resetGraphDataMock();
+    vi.mocked(useTagOverlay).mockReturnValue({
+      availableKeys: [],
+      isLoadingKeys: false,
+      colorMap: {},
+    });
+  });
+
+  it("node gets tagColor from colorMap for its tag value when activeTagKey is set", () => {
+    vi.mocked(useGraphData).mockReturnValue({
+      data: {
+        nodes: [makeApiNode({ id: "n1", tags: { team: "platform" } })] as never,
+        edges: [],
+      },
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+    vi.mocked(useTagOverlay).mockReturnValue({
+      availableKeys: ["team"],
+      isLoadingKeys: false,
+      colorMap: { platform: "#1677ff", UNTAGGED: "#d9d9d9" },
+    });
+
+    renderExplorerPageWithUrl("?tag=team");
+
+    const el = document.querySelector("[data-node-id='n1']") as HTMLElement | null;
+    expect(el).not.toBeNull();
+    expect(el!.dataset.tagColor).toBe("#1677ff");
+  });
+
+  it("node with no matching tag value gets UNTAGGED fallback color (#d9d9d9)", () => {
+    vi.mocked(useGraphData).mockReturnValue({
+      data: {
+        nodes: [makeApiNode({ id: "n1", tags: {} })] as never, // no 'team' key
+        edges: [],
+      },
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+    vi.mocked(useTagOverlay).mockReturnValue({
+      availableKeys: ["team"],
+      isLoadingKeys: false,
+      colorMap: { platform: "#1677ff", UNTAGGED: "#d9d9d9" },
+    });
+
+    renderExplorerPageWithUrl("?tag=team");
+
+    const el = document.querySelector("[data-node-id='n1']") as HTMLElement | null;
+    expect(el).not.toBeNull();
+    // tags["team"] is undefined → key "UNTAGGED" → colorMap["UNTAGGED"] = "#d9d9d9"
+    expect(el!.dataset.tagColor).toBe("#d9d9d9");
+  });
+
+  it("phantom node gets no tagColor (tagColor=undefined → empty string in DOM)", () => {
+    vi.mocked(useGraphData).mockReturnValue({
+      data: {
+        nodes: [
+          makeApiNode({
+            id: "sa-001",
+            cross_references: ["lkc-phantom"],
+            tags: { team: "platform" },
+          }),
+        ] as never,
+        edges: [],
+      },
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+    vi.mocked(useTagOverlay).mockReturnValue({
+      availableKeys: ["team"],
+      isLoadingKeys: false,
+      colorMap: { platform: "#1677ff", UNTAGGED: "#d9d9d9" },
+    });
+
+    renderExplorerPageWithUrl("?tag=team");
+
+    const phantomEl = document.querySelector(
+      "[data-node-id='lkc-phantom']",
+    ) as HTMLElement | null;
+    expect(phantomEl).not.toBeNull();
+    // phantom nodes: enrichWithTagColor sets tagColor=undefined → data-tag-color=""
+    expect(phantomEl!.dataset.tagColor).toBe("");
+  });
+
+  it("no tagColor assigned when activeTagKey (params.tag) is null", () => {
+    vi.mocked(useGraphData).mockReturnValue({
+      data: {
+        nodes: [makeApiNode({ id: "n1", tags: { team: "platform" } })] as never,
+        edges: [],
+      },
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+    vi.mocked(useTagOverlay).mockReturnValue({
+      availableKeys: ["team"],
+      isLoadingKeys: false,
+      colorMap: { platform: "#1677ff", UNTAGGED: "#d9d9d9" },
+    });
+
+    // No ?tag param → params.tag = null → enrichWithTagColor no-op
+    renderExplorerPageWithUrl("");
+
+    const el = document.querySelector("[data-node-id='n1']") as HTMLElement | null;
+    expect(el).not.toBeNull();
+    expect(el!.dataset.tagColor).toBe("");
   });
 });

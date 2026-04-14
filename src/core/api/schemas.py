@@ -464,6 +464,7 @@ class GraphSearchResult(BaseModel):
     resource_type: str
     display_name: str | None
     parent_id: str | None
+    parent_display_name: str | None
     status: str
 
     model_config = ConfigDict(from_attributes=True)

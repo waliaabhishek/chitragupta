@@ -2882,6 +2882,19 @@ class SQLModelGraphRepository:
         ]
         resource_rows = self._session.exec(select(ResourceTable).where(*resource_where).limit(200)).all()
 
+        # Batch-resolve parent display names for resource results
+        parent_ids = [res.parent_id for res in resource_rows if res.parent_id is not None]
+        parent_names: dict[str, str | None] = {}
+        if parent_ids:
+            parent_rows = self._session.exec(
+                select(col(ResourceTable.resource_id), col(ResourceTable.display_name)).where(
+                    col(ResourceTable.ecosystem) == ecosystem,
+                    col(ResourceTable.tenant_id) == tenant_id,
+                    col(ResourceTable.resource_id).in_(parent_ids),
+                )
+            ).all()
+            parent_names = {row[0]: row[1] for row in parent_rows}
+
         identity_where = [
             col(IdentityTable.ecosystem) == ecosystem,
             col(IdentityTable.tenant_id) == tenant_id,
@@ -2904,6 +2917,7 @@ class SQLModelGraphRepository:
                         display_name=res.display_name,
                         parent_id=res.parent_id,
                         status=res.status,
+                        parent_display_name=parent_names.get(res.parent_id) if res.parent_id else None,
                     ),
                 )
             )

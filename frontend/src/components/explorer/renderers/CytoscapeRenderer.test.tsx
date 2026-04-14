@@ -103,6 +103,8 @@ const DEFAULT_PROPS = {
   isDark: false,
   width: 800,
   height: 600,
+  activeTagKey: null as string | null,
+  tagSelectedValue: null as string | null,
 };
 
 describe("CytoscapeRenderer", () => {
@@ -216,5 +218,149 @@ describe("CytoscapeRenderer", () => {
     expect(() =>
       render(<CytoscapeRenderer {...DEFAULT_PROPS} nodes={[]} edges={[]} />),
     ).not.toThrow();
+  });
+
+  // ---------------------------------------------------------------------------
+  // GIT-003 — Constrained re-layout on tag value selection
+  // ---------------------------------------------------------------------------
+
+  describe("constrained layout — tag selection (GIT-003)", () => {
+    it("layout effect skips on initial mount (isFirstTagEffect guard)", async () => {
+      const nodes = [makeNode({ id: "n1" })];
+      render(
+        <CytoscapeRenderer
+          {...DEFAULT_PROPS}
+          nodes={nodes}
+          activeTagKey="team"
+          tagSelectedValue="platform"
+        />,
+      );
+
+      await waitFor(() => expect(cytoscapeMock).toHaveBeenCalledTimes(1));
+
+      // Tag effect skips on first render — no "cose" call should exist
+      const coseCalls = (mockCyInstance.layout.mock.calls as unknown[][]).filter(
+        (args) => (args[0] as { name: string }).name === "cose",
+      );
+      expect(coseCalls).toHaveLength(0);
+    });
+
+    it("fires 'cose' layout when tagSelectedValue changes to a string", async () => {
+      const nodes = [makeNode({ id: "n1" })];
+      const { rerender } = render(
+        <CytoscapeRenderer
+          {...DEFAULT_PROPS}
+          nodes={nodes}
+          activeTagKey="team"
+          tagSelectedValue={null}
+        />,
+      );
+
+      // Wait for initial mount effects to settle (clears isFirstTagEffect guard)
+      await waitFor(() => expect(cytoscapeMock).toHaveBeenCalledTimes(1));
+      mockCyInstance.layout.mockClear();
+
+      // Change tagSelectedValue → triggers tag effect with cose
+      rerender(
+        <CytoscapeRenderer
+          {...DEFAULT_PROPS}
+          nodes={nodes}
+          activeTagKey="team"
+          tagSelectedValue="platform"
+        />,
+      );
+
+      await waitFor(() => {
+        const coseCalls = (mockCyInstance.layout.mock.calls as unknown[][]).filter(
+          (args) => (args[0] as { name: string }).name === "cose",
+        );
+        expect(coseCalls).toHaveLength(1);
+      });
+    });
+
+    it("fires 'cose-bilkent' layout when tagSelectedValue changes to null (deselect/restore)", async () => {
+      const nodes = [makeNode({ id: "n1" })];
+      const { rerender } = render(
+        <CytoscapeRenderer
+          {...DEFAULT_PROPS}
+          nodes={nodes}
+          activeTagKey="team"
+          tagSelectedValue="platform"
+        />,
+      );
+
+      await waitFor(() => expect(cytoscapeMock).toHaveBeenCalledTimes(1));
+      mockCyInstance.layout.mockClear();
+
+      // Deselect tag value → should restore standard layout
+      rerender(
+        <CytoscapeRenderer
+          {...DEFAULT_PROPS}
+          nodes={nodes}
+          activeTagKey="team"
+          tagSelectedValue={null}
+        />,
+      );
+
+      await waitFor(() => {
+        const bilkentCalls = (mockCyInstance.layout.mock.calls as unknown[][]).filter(
+          (args) => (args[0] as { name: string }).name === "cose-bilkent",
+        );
+        expect(bilkentCalls.length).toBeGreaterThanOrEqual(1);
+      });
+    });
+
+    it("idealEdgeLength returns 50 for matching, 120 for mixed, 200 for non-matching", async () => {
+      const nodes = [makeNode({ id: "n1" })];
+      const { rerender } = render(
+        <CytoscapeRenderer
+          {...DEFAULT_PROPS}
+          nodes={nodes}
+          activeTagKey="team"
+          tagSelectedValue={null}
+        />,
+      );
+
+      await waitFor(() => expect(cytoscapeMock).toHaveBeenCalledTimes(1));
+      mockCyInstance.layout.mockClear();
+
+      // Trigger cose layout to capture the idealEdgeLength function
+      rerender(
+        <CytoscapeRenderer
+          {...DEFAULT_PROPS}
+          nodes={nodes}
+          activeTagKey="team"
+          tagSelectedValue="platform"
+        />,
+      );
+
+      await waitFor(() => {
+        const coseCalls = (mockCyInstance.layout.mock.calls as unknown[][]).filter(
+          (args) => (args[0] as { name: string }).name === "cose",
+        );
+        expect(coseCalls).toHaveLength(1);
+      });
+
+      const coseArgs = (mockCyInstance.layout.mock.calls as unknown[][]).find(
+        (args) => (args[0] as { name: string }).name === "cose",
+      )!;
+      const idealEdgeLength = (
+        coseArgs[0] as { idealEdgeLength: (edge: unknown) => number }
+      ).idealEdgeLength;
+
+      function mockEdge(srcTags: Record<string, string>, tgtTags: Record<string, string>) {
+        return {
+          source: () => ({ data: (k: string) => (k === "tags" ? srcTags : undefined) }),
+          target: () => ({ data: (k: string) => (k === "tags" ? tgtTags : undefined) }),
+        };
+      }
+
+      // Both match "platform" → pull together (50)
+      expect(idealEdgeLength(mockEdge({ team: "platform" }, { team: "platform" }))).toBe(50);
+      // Neither matches → push apart (200)
+      expect(idealEdgeLength(mockEdge({ team: "data" }, { team: "infra" }))).toBe(200);
+      // Mixed (one matches, one doesn't) → standard (120)
+      expect(idealEdgeLength(mockEdge({ team: "platform" }, { team: "data" }))).toBe(120);
+    });
   });
 });

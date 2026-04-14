@@ -667,6 +667,7 @@ Results are ordered by relevance: exact match first, then prefix match, then sub
       "resource_type": "kafka_cluster",
       "display_name": "Production Cluster",
       "parent_id": "env-abc",
+      "parent_display_name": "Production Environment",
       "status": "active"
     }
   ]
@@ -681,6 +682,7 @@ Results are ordered by relevance: exact match first, then prefix match, then sub
 | `resource_type` | string | `resource_type` for resources; `identity_type` for identities (e.g. `service_account`) |
 | `display_name` | string\|null | Human-readable name |
 | `parent_id` | string\|null | Parent entity ID. Always `null` for identity results (identities have no parent in the graph model) |
+| `parent_display_name` | string\|null | Human-readable name of the parent entity. `null` when parent has no display name or result has no parent |
 | `status` | string | `active` or `deleted` |
 
 **Error codes:** 404 (unknown tenant), 422 (missing or empty `q`).

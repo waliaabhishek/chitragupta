@@ -1,6 +1,7 @@
 import { act, renderHook } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { useGraphNavigation } from "./useGraphNavigation";
+import type { GraphNode } from "../components/explorer/renderers/types";
 
 describe("useGraphNavigation", () => {
   it("starts with focusId=null and empty breadcrumbs", () => {
@@ -163,5 +164,155 @@ describe("useGraphNavigation", () => {
     expect(result.current.state.focusType).toBe("environment");
     expect(result.current.state.breadcrumbs).toHaveLength(1);
     expect(result.current.state.breadcrumbs[0].id).toBe("env-abc");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests for refactored URL-driven useGraphNavigation (TASK-223)
+// These tests require the hook to accept UseGraphNavigationParams and call
+// setFocus on navigate/goBack/goToRoot. They FAIL until implementation is done.
+// ---------------------------------------------------------------------------
+
+function makeNode(overrides: Partial<GraphNode> = {}): GraphNode {
+  return {
+    id: "node-1",
+    resource_type: "environment",
+    display_name: "my-env",
+    cost: 100,
+    created_at: "2026-01-01T00:00:00Z",
+    deleted_at: null,
+    tags: {},
+    parent_id: null,
+    cloud: null,
+    region: null,
+    status: "active",
+    cross_references: [],
+    ...overrides,
+  };
+}
+
+describe("useGraphNavigation (URL-driven refactor)", () => {
+  it("focusId in returned state equals focusFromUrl param", () => {
+    const setFocus = vi.fn();
+    const { result } = renderHook(() =>
+      useGraphNavigation({
+        focusFromUrl: "env-abc",
+        setFocus,
+        currentNodes: null,
+      }),
+    );
+
+    expect(result.current.state.focusId).toBe("env-abc");
+  });
+
+  it("navigate() calls setFocus with the new nodeId", () => {
+    const setFocus = vi.fn();
+    const { result } = renderHook(() =>
+      useGraphNavigation({
+        focusFromUrl: null,
+        setFocus,
+        currentNodes: null,
+      }),
+    );
+
+    act(() => {
+      result.current.navigate("env-abc", "environment", "my-env");
+    });
+
+    expect(setFocus).toHaveBeenCalledWith("env-abc");
+  });
+
+  it("goBack() calls setFocus with the previous focusId", () => {
+    const setFocus = vi.fn();
+    const { result } = renderHook(() =>
+      useGraphNavigation({
+        focusFromUrl: null,
+        setFocus,
+        currentNodes: null,
+      }),
+    );
+
+    act(() => {
+      result.current.navigate("env-abc", "environment", "my-env");
+      result.current.navigate("lkc-abc", "kafka_cluster", "my-cluster");
+    });
+
+    setFocus.mockClear();
+
+    act(() => {
+      result.current.goBack();
+    });
+
+    expect(setFocus).toHaveBeenCalledWith("env-abc");
+  });
+
+  it("goToRoot() calls setFocus(null)", () => {
+    const setFocus = vi.fn();
+    const { result } = renderHook(() =>
+      useGraphNavigation({
+        focusFromUrl: null,
+        setFocus,
+        currentNodes: null,
+      }),
+    );
+
+    act(() => {
+      result.current.navigate("env-abc", "environment", "my-env");
+    });
+
+    setFocus.mockClear();
+
+    act(() => {
+      result.current.goToRoot();
+    });
+
+    expect(setFocus).toHaveBeenCalledWith(null);
+  });
+
+  it("breadcrumb reconstruction fires when focusFromUrl set and breadcrumbs empty and nodes loaded", async () => {
+    const parentNode = makeNode({ id: "env-abc", resource_type: "environment", display_name: "my-env", parent_id: null });
+    const focusedNode = makeNode({ id: "lkc-abc", resource_type: "kafka_cluster", display_name: "my-cluster", parent_id: "env-abc" });
+
+    const setFocus = vi.fn();
+    const { result } = renderHook(() =>
+      useGraphNavigation({
+        focusFromUrl: "lkc-abc",
+        setFocus,
+        currentNodes: [parentNode, focusedNode],
+      }),
+    );
+
+    // After mount with nodes loaded, breadcrumb chain should be reconstructed
+    // Expected: [env-abc (parent), lkc-abc (focused)]
+    await new Promise((r) => setTimeout(r, 50));
+    expect(result.current.state.breadcrumbs.length).toBeGreaterThan(0);
+    expect(
+      result.current.state.breadcrumbs.some((b) => b.id === "lkc-abc"),
+    ).toBe(true);
+  });
+
+  it("breadcrumb reconstruction handles missing parent gracefully (no crash)", async () => {
+    const focusedNode = makeNode({
+      id: "lkc-abc",
+      resource_type: "kafka_cluster",
+      display_name: "my-cluster",
+      parent_id: "env-missing",
+    });
+
+    const setFocus = vi.fn();
+    const { result } = renderHook(() =>
+      useGraphNavigation({
+        focusFromUrl: "lkc-abc",
+        setFocus,
+        currentNodes: [focusedNode],
+      }),
+    );
+
+    await new Promise((r) => setTimeout(r, 50));
+    // Graceful degradation — only focused node in breadcrumbs, no crash
+    expect(result.current.state.breadcrumbs).toBeDefined();
+    expect(
+      result.current.state.breadcrumbs.some((b) => b.id === "lkc-abc"),
+    ).toBe(true);
   });
 });

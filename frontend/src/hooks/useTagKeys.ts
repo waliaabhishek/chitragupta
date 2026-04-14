@@ -7,12 +7,12 @@ export interface UseTagKeysResult {
   error: string | null;
 }
 
-export function useTagKeys(tenantName: string): UseTagKeysResult {
+export function useTagKeys(tenantName: string | null): UseTagKeysResult {
   const query = useQuery({
     queryKey: ["tag-keys", tenantName],
     queryFn: async ({ signal }) => {
       const response = await fetch(
-        `${API_URL}/tenants/${tenantName}/tags/keys`,
+        `${API_URL}/tenants/${tenantName!}/tags/keys`,
         { signal },
       );
       if (!response.ok)

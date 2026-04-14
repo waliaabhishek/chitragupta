@@ -26,6 +26,8 @@ const DEFAULT_PROPS = {
   onNodeHover: vi.fn(),
   isLoading: false,
   isDark: false,
+  activeTagKey: null as string | null,
+  tagSelectedValue: null as string | null,
 };
 
 describe("GraphContainer", () => {

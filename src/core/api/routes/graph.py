@@ -129,6 +129,7 @@ async def search_graph(
                 resource_type=r.resource_type,
                 display_name=r.display_name,
                 parent_id=r.parent_id,
+                parent_display_name=r.parent_display_name,
                 status=r.status,
             )
             for r in results

@@ -52,6 +52,7 @@ class GraphSearchResultData:
     display_name: str | None
     parent_id: str | None  # None for identities (no parent_id on IdentityTable)
     status: str  # "active" | "deleted"
+    parent_display_name: str | None = None
 
 
 @dataclass

@@ -32,6 +32,7 @@ export interface DiffOverlay {
 /** GraphNode extended with optional diff data */
 export interface GraphNodeWithDiff extends GraphNode {
   diff?: DiffOverlay;
+  tagColor?: string;
 }
 
 export interface GraphRendererProps {
@@ -44,4 +45,6 @@ export interface GraphRendererProps {
   isDark: boolean;
   width: number;
   height: number;
+  activeTagKey: string | null;
+  tagSelectedValue: string | null;
 }

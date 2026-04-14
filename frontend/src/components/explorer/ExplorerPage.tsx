@@ -1,5 +1,5 @@
 import type React from "react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Typography } from "antd";
 import { API_URL } from "../../config";
@@ -8,16 +8,21 @@ import { useTenant } from "../../providers/TenantContext";
 import { useAppShell } from "../../contexts/AppShellContext";
 import { useGraphData } from "../../hooks/useGraphData";
 import { useGraphNavigation } from "../../hooks/useGraphNavigation";
+import { useExplorerParams } from "../../hooks/useExplorerParams";
 import { useDateRange } from "../../hooks/useDateRange";
 import { usePlayback } from "../../hooks/usePlayback";
 import { useDebouncedValue } from "../../hooks/useDebouncedValue";
 import { useGraphDiff } from "../../hooks/useGraphDiff";
 import { useGraphTimeline } from "../../hooks/useGraphTimeline";
+import { useTagOverlay } from "../../hooks/useTagOverlay";
 import { GraphContainer } from "./GraphContainer";
 import { GraphTooltip } from "./GraphTooltip";
 import { BreadcrumbTrail } from "./BreadcrumbTrail";
 import { TimelineScrubber } from "./TimelineScrubber";
 import { DiffModePanel } from "./DiffModePanel";
+import { SearchBar } from "./SearchBar";
+import { TagOverlayPanel } from "./TagOverlayPanel";
+import { CopyLinkButton } from "./CopyLinkButton";
 import type {
   GraphNode,
   GraphEdge,
@@ -93,25 +98,59 @@ function synthesizeDiffGhostNodes(
     }));
 }
 
+function enrichWithTagColor(
+  nodes: GraphNodeWithDiff[],
+  activeKey: string | null,
+  colorMap: Record<string, string>,
+): GraphNodeWithDiff[] {
+  if (!activeKey) return nodes;
+  return nodes.map((n) => ({
+    ...n,
+    tagColor:
+      n.status === "phantom"
+        ? undefined
+        : (colorMap[n.tags[activeKey] ?? "UNTAGGED"] ?? "#d9d9d9"),
+  }));
+}
+
 export function ExplorerPage(): React.JSX.Element {
   const { currentTenant } = useTenant();
   const { isDark, setSidebarCollapsed } = useAppShell();
-  const { state, navigate, goBack, goToRoot, goToBreadcrumb } =
-    useGraphNavigation();
+  const { params, pushParam, pushParams, replaceParam } = useExplorerParams();
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
-  const [diffMode, setDiffMode] = useState(false);
-  const [fromRange, setFromRange] = useState<[string, string] | null>(null);
-  const [toRange, setToRange] = useState<[string, string] | null>(null);
+  const fromRange: [string, string] | null =
+    params.from_start && params.from_end
+      ? [params.from_start, params.from_end]
+      : null;
+  const toRange: [string, string] | null =
+    params.to_start && params.to_end
+      ? [params.to_start, params.to_end]
+      : null;
 
   const tenantName = currentTenant?.tenant_name ?? null;
   const queryClient = useQueryClient();
+
+  const setFocus = useCallback((id: string | null) => pushParam("focus", id), [pushParam]);
 
   // Date bounds from root topology
   const { minDate, maxDate } = useDateRange({ tenantName });
 
   // Playback state machine
-  const playback = usePlayback({ minDate, maxDate });
+  const playback = usePlayback({ minDate, maxDate, initialDate: params.at ?? undefined });
+
+  // Sync scrubber position to URL on pause (replace — no history entry).
+  // Skip initial mount so a pre-populated currentDate does not clobber the URL.
+  const isFirstScrubberEffect = useRef(true);
+  useEffect(() => {
+    if (isFirstScrubberEffect.current) {
+      isFirstScrubberEffect.current = false;
+      return;
+    }
+    if (!playback.state.isPlaying && playback.state.currentDate) {
+      replaceParam("at", playback.state.currentDate);
+    }
+  }, [playback.state.isPlaying, playback.state.currentDate, replaceParam]);
 
   // Debounce scrubber position before firing API calls
   const debouncedDate = useDebouncedValue(playback.state.currentDate, 200);
@@ -121,7 +160,7 @@ export function ExplorerPage(): React.JSX.Element {
   // - scrubber mode: use debouncedDate
   // - neither: null (no temporal filter)
   const atParam: string | null =
-    diffMode && toRange
+    params.diff && toRange
       ? `${toRange[1]}T12:00:00Z`
       : debouncedDate
         ? `${debouncedDate}T12:00:00Z`
@@ -129,18 +168,18 @@ export function ExplorerPage(): React.JSX.Element {
 
   const { data, isLoading, error } = useGraphData({
     tenantName,
-    focus: state.focusId,
+    focus: params.focus,
     at: atParam,
   });
 
   // Diff data — only when diff mode active and both ranges selected
   const { data: diffData } = useGraphDiff({
     tenantName,
-    fromStart: diffMode ? (fromRange?.[0] ?? null) : null,
-    fromEnd: diffMode ? (fromRange?.[1] ?? null) : null,
-    toStart: diffMode ? (toRange?.[0] ?? null) : null,
-    toEnd: diffMode ? (toRange?.[1] ?? null) : null,
-    focus: state.focusId,
+    fromStart: params.diff ? (fromRange?.[0] ?? null) : null,
+    fromEnd: params.diff ? (fromRange?.[1] ?? null) : null,
+    toStart: params.diff ? (toRange?.[0] ?? null) : null,
+    toEnd: params.diff ? (toRange?.[1] ?? null) : null,
+    focus: params.focus,
   });
 
   // Timeline data for scrubber tooltip — only when node is selected
@@ -174,14 +213,14 @@ export function ExplorerPage(): React.JSX.Element {
       const d = addDays(playbackDate, i);
       if (maxDate && d > maxDate) break;
       const qs = new URLSearchParams();
-      if (state.focusId) qs.set("focus", state.focusId);
+      if (params.focus) qs.set("focus", params.focus);
       qs.set("depth", "1");
       qs.set("at", `${d}T12:00:00Z`);
       queryClient.prefetchQuery({
         queryKey: [
           "graph",
           tenantName,
-          state.focusId ?? null,
+          params.focus ?? null,
           1,
           `${d}T12:00:00Z`,
           null,
@@ -198,53 +237,94 @@ export function ExplorerPage(): React.JSX.Element {
         },
       });
     }
-  }, [isPlaying, playbackDate, stepDays, tenantName, maxDate, state.focusId, queryClient]);
+  }, [isPlaying, playbackDate, stepDays, tenantName, maxDate, params.focus, queryClient]);
 
-  const typedNodes = (data?.nodes ?? []).map((n) => ({
-    ...n,
-    cost: typeof n.cost === "string" ? parseFloat(n.cost) : n.cost,
-  }));
-  const typedEdges = (data?.edges ?? []).map((e) => ({
-    ...e,
-    cost:
-      e.cost != null && typeof e.cost === "string"
-        ? parseFloat(e.cost as unknown as string)
-        : e.cost,
-  }));
-
-  const { nodes: enrichedNodes, edges: enrichedEdges } = enrichWithPhantomNodes(
-    typedNodes,
-    typedEdges,
+  const typedNodes = useMemo(
+    () =>
+      (data?.nodes ?? []).map((n) => ({
+        ...n,
+        cost: typeof n.cost === "string" ? parseFloat(n.cost) : n.cost,
+      })),
+    [data?.nodes],
+  );
+  const typedEdges = useMemo(
+    () =>
+      (data?.edges ?? []).map((e) => ({
+        ...e,
+        cost:
+          e.cost != null && typeof e.cost === "string"
+            ? parseFloat(e.cost as unknown as string)
+            : e.cost,
+      })),
+    [data?.edges],
   );
 
+  const { nodes: enrichedNodes, edges: enrichedEdges } = useMemo(
+    () => enrichWithPhantomNodes(typedNodes, typedEdges),
+    [typedNodes, typedEdges],
+  );
+
+  // URL-driven navigation — called after enrichedNodes so currentNodes can be passed
+  const { state, navigate, goBack, goToRoot, goToBreadcrumb } = useGraphNavigation({
+    focusFromUrl: params.focus,
+    setFocus,
+    currentNodes: enrichedNodes.length > 0 ? enrichedNodes : null,
+  });
+
+  // Tag overlay — stable clear callback, then overlay hook
+  const onClearTagValue = useCallback(() => pushParam("tag_value", null), [pushParam]);
+  const tagOverlay = useTagOverlay({
+    tenantName,
+    nodes: enrichedNodes,
+    activeKey: params.tag,
+    onClearValue: onClearTagValue,
+  });
+
   // Merge diff overlay onto topology nodes
-  const ghostNodes =
-    diffMode && diffData
-      ? synthesizeDiffGhostNodes(diffData, enrichedNodes)
-      : [];
+  const ghostNodes = useMemo(
+    () =>
+      params.diff && diffData ? synthesizeDiffGhostNodes(diffData, enrichedNodes) : [],
+    [params.diff, diffData, enrichedNodes],
+  );
 
-  const nodesWithDiff: GraphNodeWithDiff[] =
-    diffMode && diffData
-      ? (() => {
-          const diffMap = new Map<string, GraphDiffNode>(
-            diffData.map((d) => [d.id, d]),
-          );
-          return [...enrichedNodes, ...ghostNodes].map((node) => {
-            const diffNode = diffMap.get(node.id);
-            if (!diffNode) return node;
-            const overlay: DiffOverlay = {
-              cost_before: diffNode.cost_before,
-              cost_after: diffNode.cost_after,
-              cost_delta: diffNode.cost_delta,
-              pct_change: diffNode.pct_change,
-              diff_status: diffNode.status,
-            };
-            return { ...node, diff: overlay };
-          });
-        })()
-      : enrichedNodes;
+  const nodesWithDiff: GraphNodeWithDiff[] = useMemo(() => {
+    if (params.diff && diffData) {
+      const diffMap = new Map<string, GraphDiffNode>(
+        diffData.map((d) => [d.id, d]),
+      );
+      return [...enrichedNodes, ...ghostNodes].map((node) => {
+        const diffNode = diffMap.get(node.id);
+        if (!diffNode) return node;
+        const overlay: DiffOverlay = {
+          cost_before: diffNode.cost_before,
+          cost_after: diffNode.cost_after,
+          cost_delta: diffNode.cost_delta,
+          pct_change: diffNode.pct_change,
+          diff_status: diffNode.status,
+        };
+        return { ...node, diff: overlay };
+      });
+    }
+    return enrichedNodes;
+  }, [params.diff, diffData, enrichedNodes, ghostNodes]);
 
-  const fadedNodeIds = new Set<string>();
+  const fadedNodeIds = useMemo(() => {
+    if (!params.tag || !params.tag_value) return new Set<string>();
+    const result = new Set<string>();
+    for (const node of nodesWithDiff) {
+      if (node.status === "phantom") continue;
+      const tags = node.tags as Record<string, string>;
+      const val = tags[params.tag] ?? "UNTAGGED";
+      if (val !== params.tag_value) result.add(node.id);
+    }
+    return result;
+  }, [nodesWithDiff, params.tag, params.tag_value]);
+
+  const nodesForRenderer = useMemo(
+    () => enrichWithTagColor(nodesWithDiff, params.tag, tagOverlay.colorMap),
+    [nodesWithDiff, params.tag, tagOverlay.colorMap],
+  );
+
   const scrubberActive = minDate !== null;
 
   function handleNodeClick(nodeId: string, resourceType: string) {
@@ -281,6 +361,7 @@ export function ExplorerPage(): React.JSX.Element {
         onNavigate={goToBreadcrumb}
         onGoBack={goBack}
         onGoToRoot={goToRoot}
+        copyLinkButton={<CopyLinkButton isDark={isDark} />}
       />
       {/* Graph area */}
       <div
@@ -302,31 +383,72 @@ export function ExplorerPage(): React.JSX.Element {
           />
         )}
         <GraphContainer
-          nodes={nodesWithDiff}
+          nodes={nodesForRenderer}
           edges={enrichedEdges}
-          focusId={state.focusId}
+          focusId={params.focus}
           fadedNodeIds={fadedNodeIds}
           onNodeClick={handleNodeClick}
           onNodeHover={setHoveredNodeId}
           isDark={isDark}
+          activeTagKey={params.tag}
+          tagSelectedValue={params.tag_value}
         />
         <GraphTooltip hoveredNodeId={hoveredNodeId} nodes={nodesWithDiff} />
         {/* Diff mode panel — always rendered so toggle button is always visible */}
         <div style={{ position: "absolute", top: 8, left: 8, zIndex: 150 }}>
           <DiffModePanel
-            isActive={diffMode}
+            isActive={params.diff}
             onToggle={() => {
-              if (!diffMode && playback.state.isPlaying) playback.pause();
-              setDiffMode((v) => !v);
+              if (!params.diff && playback.state.isPlaying) playback.pause();
+              if (params.diff) {
+                pushParams({
+                  diff: false,
+                  from_start: null,
+                  from_end: null,
+                  to_start: null,
+                  to_end: null,
+                });
+              } else {
+                pushParam("diff", true);
+              }
             }}
             fromRange={fromRange}
             toRange={toRange}
             onRangesChange={(f, t) => {
-              setFromRange(f);
-              setToRange(t);
+              pushParams({
+                from_start: f?.[0] ?? null,
+                from_end: f?.[1] ?? null,
+                to_start: t?.[0] ?? null,
+                to_end: t?.[1] ?? null,
+              });
             }}
             minDate={minDate}
             maxDate={maxDate}
+            isDark={isDark}
+          />
+        </div>
+        {/* Search bar — top-right */}
+        <div style={{ position: "absolute", top: 8, right: 8, zIndex: 150 }}>
+          <SearchBar
+            tenantName={tenantName}
+            onSelect={(entityId, resourceType, displayName) => {
+              if (playback.state.isPlaying) playback.pause();
+              setSelectedNodeId(entityId);
+              navigate(entityId, resourceType, displayName);
+            }}
+            isDark={isDark}
+          />
+        </div>
+        {/* Tag overlay panel — below search bar */}
+        <div style={{ position: "absolute", top: 48, right: 8, zIndex: 149 }}>
+          <TagOverlayPanel
+            availableKeys={tagOverlay.availableKeys}
+            isLoadingKeys={tagOverlay.isLoadingKeys}
+            activeKey={params.tag}
+            onKeyChange={(key) => pushParam("tag", key)}
+            colorMap={tagOverlay.colorMap}
+            selectedValue={params.tag_value}
+            onValueClick={(value) => pushParam("tag_value", value)}
             isDark={isDark}
           />
         </div>
@@ -394,7 +516,7 @@ export function ExplorerPage(): React.JSX.Element {
             </Text>
           </div>
         )}
-        {diffMode &&
+        {params.diff &&
           diffData !== null &&
           diffData.length > 0 &&
           diffData.every((d) => d.status === "unchanged") && (
@@ -429,7 +551,7 @@ export function ExplorerPage(): React.JSX.Element {
           onStepChange={playback.setStepDays}
           timelineData={timelineData ?? null}
           isLoading={isLoading}
-          disabled={diffMode}
+          disabled={params.diff}
           isDark={isDark}
         />
       )}
