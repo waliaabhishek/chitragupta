@@ -37,6 +37,7 @@ export function TagOverlayPanel({
       <Select
         value={activeKey}
         onChange={onKeyChange}
+        allowClear
         disabled={noKeys || isLoadingKeys}
         placeholder={noKeys ? "No tags available" : "Select tag key"}
         options={availableKeys.map((k) => ({ label: k, value: k }))}

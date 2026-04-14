@@ -20,31 +20,31 @@ describe("usePlayback", () => {
     expect(result.current.state.currentDate).toBeNull();
   });
 
-  it("currentDate initializes to minDate when minDate transitions from null to a value", () => {
+  it("currentDate initializes to maxDate when maxDate transitions from null to a value", () => {
     const { result, rerender } = renderHook(
-      ({ minDate }: { minDate: string | null }) =>
-        usePlayback({ minDate, maxDate: "2026-12-31" }),
-      { initialProps: { minDate: null as string | null } },
+      ({ maxDate }: { maxDate: string | null }) =>
+        usePlayback({ minDate: "2026-01-01", maxDate }),
+      { initialProps: { maxDate: null as string | null } },
     );
 
     expect(result.current.state.currentDate).toBeNull();
 
     act(() => {
-      rerender({ minDate: "2026-01-01" });
+      rerender({ maxDate: "2026-12-31" });
     });
 
-    expect(result.current.state.currentDate).toBe("2026-01-01");
+    expect(result.current.state.currentDate).toBe("2026-12-31");
   });
 
-  it("currentDate stays null when minDate remains null", () => {
+  it("currentDate stays null when maxDate remains null", () => {
     const { result, rerender } = renderHook(
-      ({ minDate }: { minDate: string | null }) =>
-        usePlayback({ minDate, maxDate: "2026-12-31" }),
-      { initialProps: { minDate: null as string | null } },
+      ({ maxDate }: { maxDate: string | null }) =>
+        usePlayback({ minDate: "2026-01-01", maxDate }),
+      { initialProps: { maxDate: null as string | null } },
     );
 
     act(() => {
-      rerender({ minDate: null });
+      rerender({ maxDate: null });
     });
 
     expect(result.current.state.currentDate).toBeNull();
@@ -66,6 +66,10 @@ describe("usePlayback", () => {
     );
 
     act(() => {
+      result.current.setDate("2026-01-01");
+    });
+
+    act(() => {
       result.current.play();
     });
 
@@ -76,6 +80,10 @@ describe("usePlayback", () => {
     const { result } = renderHook(() =>
       usePlayback({ minDate: "2026-01-01", maxDate: "2026-12-31" }),
     );
+
+    act(() => {
+      result.current.setDate("2026-01-01");
+    });
 
     act(() => {
       result.current.play();
@@ -94,6 +102,10 @@ describe("usePlayback", () => {
     );
 
     act(() => {
+      result.current.setDate("2026-01-01");
+    });
+
+    act(() => {
       result.current.play();
     });
 
@@ -108,6 +120,10 @@ describe("usePlayback", () => {
     const { result } = renderHook(() =>
       usePlayback({ minDate: "2026-01-01", maxDate: "2026-12-31" }),
     );
+
+    act(() => {
+      result.current.setDate("2026-01-01");
+    });
 
     act(() => {
       result.current.play();
@@ -137,6 +153,10 @@ describe("usePlayback", () => {
     );
 
     act(() => {
+      result.current.setDate("2026-01-01");
+    });
+
+    act(() => {
       result.current.setSpeed(2);
       result.current.play();
     });
@@ -154,6 +174,10 @@ describe("usePlayback", () => {
     const { result } = renderHook(() =>
       usePlayback({ minDate: "2026-01-01", maxDate: "2026-12-31" }),
     );
+
+    act(() => {
+      result.current.setDate("2026-01-01");
+    });
 
     act(() => {
       result.current.setStepDays(1);
@@ -174,6 +198,10 @@ describe("usePlayback", () => {
     );
 
     act(() => {
+      result.current.setDate("2026-01-01");
+    });
+
+    act(() => {
       result.current.play();
     });
 
@@ -190,6 +218,10 @@ describe("usePlayback", () => {
     const { result } = renderHook(() =>
       usePlayback({ minDate: "2026-01-01", maxDate: "2026-12-31" }),
     );
+
+    act(() => {
+      result.current.setDate("2026-06-15");
+    });
 
     expect(result.current.isAtEnd).toBe(false);
   });
@@ -210,6 +242,10 @@ describe("usePlayback", () => {
     const { result } = renderHook(() =>
       usePlayback({ minDate: "2026-01-01", maxDate: "2026-12-31" }),
     );
+
+    act(() => {
+      result.current.setDate("2026-01-01");
+    });
 
     act(() => {
       result.current.play();
@@ -244,6 +280,10 @@ describe("usePlayback", () => {
     );
 
     act(() => {
+      result.current.setDate("2026-01-01");
+    });
+
+    act(() => {
       result.current.play();
     });
 
@@ -266,7 +306,7 @@ describe("usePlayback", () => {
     expect(result.current.state.currentDate).toBe("2026-06-01");
   });
 
-  it("initialDate takes precedence over minDate on mount", () => {
+  it("initialDate takes precedence over maxDate on mount", () => {
     const { result } = renderHook(() =>
       usePlayback({
         minDate: "2026-01-01",
@@ -276,10 +316,10 @@ describe("usePlayback", () => {
     );
 
     expect(result.current.state.currentDate).toBe("2026-03-15");
-    expect(result.current.state.currentDate).not.toBe("2026-01-01");
+    expect(result.current.state.currentDate).not.toBe("2026-12-31");
   });
 
-  it("initialDate=null falls back to minDate initialization", () => {
+  it("initialDate=undefined falls back to maxDate initialization", () => {
     const { result } = renderHook(() =>
       usePlayback({
         minDate: "2026-01-01",
@@ -288,7 +328,7 @@ describe("usePlayback", () => {
       }),
     );
 
-    expect(result.current.state.currentDate).toBe("2026-01-01");
+    expect(result.current.state.currentDate).toBe("2026-12-31");
   });
 
   // GIT-005: single-day range edge case
@@ -318,10 +358,10 @@ describe("usePlayback", () => {
   // This covers the right side of the `||` guard: `!prev.currentDate === true`.
   it("interval tick with null currentDate is a no-op — state unchanged", () => {
     const { result } = renderHook(() =>
-      usePlayback({ minDate: null, maxDate: "2026-12-31" }),
+      usePlayback({ minDate: null, maxDate: null }),
     );
 
-    // minDate=null means currentDate stays null (initialization effect skips)
+    // Both null means currentDate stays null (initialization effect skips)
     expect(result.current.state.currentDate).toBeNull();
 
     act(() => {
@@ -348,6 +388,10 @@ describe("usePlayback", () => {
     const { result } = renderHook(() =>
       usePlayback({ minDate: "2026-01-01", maxDate: "2026-12-31" }),
     );
+
+    act(() => {
+      result.current.setDate("2026-01-01");
+    });
 
     act(() => {
       result.current.play();

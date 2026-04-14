@@ -203,7 +203,7 @@ export function CytoscapeRenderer({
     edgeIdsRef.current = new Set();
 
     for (const edge of edges) {
-      const edgeId = `edge-${edge.source}-${edge.target}`;
+      const edgeId = `edge-${edge.source}-${edge.target}-${edge.relationship_type}`;
       cy.add({
         group: "edges",
         data: {

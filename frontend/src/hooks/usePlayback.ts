@@ -25,7 +25,6 @@ export interface UsePlaybackResult {
 }
 
 export function usePlayback({
-  minDate,
   maxDate,
   initialDate,
 }: UsePlaybackParams): UsePlaybackResult {
@@ -38,12 +37,12 @@ export function usePlayback({
 
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Initialize currentDate when minDate becomes available (GAR-001)
+  // Initialize currentDate to latest date when bounds become available
   useEffect(() => {
-    if (minDate && state.currentDate === null) {
-      setState((prev) => ({ ...prev, currentDate: minDate }));
+    if (maxDate && state.currentDate === null) {
+      setState((prev) => ({ ...prev, currentDate: maxDate }));
     }
-  }, [minDate]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [maxDate]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Interval management — restart when isPlaying or speed changes
   useEffect(() => {

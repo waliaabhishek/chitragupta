@@ -36,7 +36,7 @@ export function GraphTooltip({
         borderRadius: 6,
         fontSize: 12,
         maxWidth: 240,
-        zIndex: 100,
+        zIndex: 300,
         pointerEvents: "none",
       }}
     >
