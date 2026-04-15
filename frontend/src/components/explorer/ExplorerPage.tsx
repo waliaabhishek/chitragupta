@@ -24,6 +24,86 @@ import { SearchBar } from "./SearchBar";
 import { TagOverlayPanel } from "./TagOverlayPanel";
 import { CopyLinkButton } from "./CopyLinkButton";
 import { isExpandableGroup, isGroupNode } from "./renderers/nodeShapes";
+
+const NEAR_ZERO_THRESHOLD = 0.005;
+
+/**
+ * Fold nodes that display as "$0.00" into the zero_cost_summary node.
+ * Runs on the typed API response before phantom enrichment.
+ */
+function collapseNearZeroNodes(
+  nodes: GraphNode[],
+  edges: GraphEdge[],
+  focusId: string | null,
+): { nodes: GraphNode[]; edges: GraphEdge[] } {
+  const nearZeroIds = new Set<string>();
+  for (const n of nodes) {
+    if (n.id === focusId) continue;
+    if (isGroupNode(n.resource_type)) continue;
+    if (n.status === "phantom") continue;
+    if (n.cost < NEAR_ZERO_THRESHOLD) nearZeroIds.add(n.id);
+  }
+  if (nearZeroIds.size === 0) return { nodes, edges };
+
+  // Find existing zero_cost_summary node
+  let summary = nodes.find((n) => n.resource_type === "zero_cost_summary") ?? null;
+  const existingCount = summary?.child_count ?? 0;
+  const newCount = existingCount + nearZeroIds.size;
+
+  if (summary) {
+    // Update existing summary
+    summary = {
+      ...summary,
+      child_count: newCount,
+      display_name: `${newCount} others at $0`,
+    };
+  } else {
+    // Determine edge target from one of the near-zero nodes' edges
+    const sampleEdge = edges.find(
+      (e) => nearZeroIds.has(e.source) || nearZeroIds.has(e.target),
+    );
+    const target = sampleEdge
+      ? nearZeroIds.has(sampleEdge.source)
+        ? sampleEdge.target
+        : sampleEdge.source
+      : focusId;
+    const summaryId = `${target}:zero_cost_ui`;
+    summary = {
+      id: summaryId,
+      resource_type: "zero_cost_summary",
+      display_name: `${newCount} others at $0`,
+      cost: 0,
+      created_at: null,
+      deleted_at: null,
+      tags: {},
+      parent_id: null,
+      cloud: null,
+      region: null,
+      status: "active",
+      cross_references: [],
+      child_count: newCount,
+      child_total_cost: 0,
+    };
+    edges = [
+      ...edges,
+      {
+        source: summaryId,
+        target: target!,
+        relationship_type: "charge",
+        cost: null,
+      },
+    ];
+  }
+
+  const outNodes = nodes
+    .filter((n) => !nearZeroIds.has(n.id) && n.resource_type !== "zero_cost_summary")
+    .concat(summary);
+  const outEdges = edges.filter(
+    (e) => !nearZeroIds.has(e.source) && !nearZeroIds.has(e.target),
+  );
+
+  return { nodes: outNodes, edges: outEdges };
+}
 import type {
   GraphNode,
   GraphEdge,
@@ -211,6 +291,8 @@ export function ExplorerPage(): React.JSX.Element {
     tenantName,
     focus: params.focus,
     at: atParam,
+    startDate: debouncedDate ?? undefined,
+    endDate: debouncedDate ?? undefined,
     expand: params.expand,
   });
 
@@ -303,9 +385,14 @@ export function ExplorerPage(): React.JSX.Element {
     [data?.edges],
   );
 
+  const { nodes: collapsedNodes, edges: collapsedEdges } = useMemo(
+    () => collapseNearZeroNodes(typedNodes, typedEdges, params.focus),
+    [typedNodes, typedEdges, params.focus],
+  );
+
   const { nodes: enrichedNodes, edges: enrichedEdges } = useMemo(
-    () => enrichWithPhantomNodes(typedNodes, typedEdges),
-    [typedNodes, typedEdges],
+    () => enrichWithPhantomNodes(collapsedNodes, collapsedEdges),
+    [collapsedNodes, collapsedEdges],
   );
 
   // URL-driven navigation — called after enrichedNodes so currentNodes can be passed
@@ -373,6 +460,9 @@ export function ExplorerPage(): React.JSX.Element {
 
   function handleNodeClick(nodeId: string, resourceType: string) {
     if (playback.state.isPlaying) playback.pause();
+
+    // Already focused on this node — don't duplicate breadcrumb
+    if (nodeId === params.focus) return;
 
     // Non-interactive summary nodes: no-op
     if (isGroupNode(resourceType) && !isExpandableGroup(resourceType)) return;

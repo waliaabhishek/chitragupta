@@ -17,10 +17,14 @@ interface ApiNode {
   [key: string]: unknown;
 }
 
+interface ChargebackDatesResponse {
+  dates: string[];
+}
+
 export function useDateRange({
   tenantName,
 }: UseDateRangeParams): UseDateRangeResult {
-  const query = useQuery({
+  const graphQuery = useQuery({
     queryKey: ["date-range", tenantName],
     queryFn: async ({ signal }) => {
       const url = `${API_URL}/tenants/${tenantName}/graph`;
@@ -32,11 +36,23 @@ export function useDateRange({
     enabled: !!tenantName,
   });
 
-  if (!query.data) {
-    return { minDate: null, maxDate: null, isLoading: query.isLoading };
+  const datesQuery = useQuery({
+    queryKey: ["chargeback-dates", tenantName],
+    queryFn: async ({ signal }) => {
+      const url = `${API_URL}/tenants/${tenantName}/chargebacks/dates`;
+      const response = await fetch(url, { signal });
+      if (!response.ok)
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      return response.json() as Promise<ChargebackDatesResponse>;
+    },
+    enabled: !!tenantName,
+  });
+
+  if (!graphQuery.data || !datesQuery.data) {
+    return { minDate: null, maxDate: null, isLoading: graphQuery.isLoading || datesQuery.isLoading };
   }
 
-  const nodes = query.data.nodes;
+  const nodes = graphQuery.data.nodes;
   const createdDates = nodes
     .filter((n) => n.created_at !== null)
     .map((n) => n.created_at!.split("T")[0]);
@@ -47,12 +63,10 @@ export function useDateRange({
 
   const minDate = createdDates.reduce((a, b) => (a < b ? a : b));
 
-  const today = new Date().toISOString().split("T")[0];
-  const deletedDates = nodes
-    .filter((n) => n.deleted_at !== null)
-    .map((n) => n.deleted_at!.split("T")[0]);
-
-  const maxDate = [today, ...deletedDates].reduce((a, b) => (a > b ? a : b));
+  const chargebackDates = datesQuery.data.dates;
+  const maxDate = chargebackDates.length > 0
+    ? chargebackDates[chargebackDates.length - 1]
+    : minDate;
 
   return { minDate, maxDate, isLoading: false };
 }

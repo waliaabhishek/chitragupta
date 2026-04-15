@@ -704,7 +704,11 @@ describe("ExplorerPage — timeline scrubber", () => {
     renderExplorerPage();
 
     expect(vi.mocked(useGraphData)).toHaveBeenCalledWith(
-      expect.objectContaining({ at: "2026-02-15T12:00:00Z" }),
+      expect.objectContaining({
+        at: "2026-02-15T12:00:00Z",
+        startDate: "2026-02-15",
+        endDate: "2026-02-15",
+      }),
     );
   });
 
@@ -728,7 +732,7 @@ describe("ExplorerPage — timeline scrubber", () => {
     renderExplorerPage();
 
     expect(vi.mocked(useGraphData)).toHaveBeenCalledWith(
-      expect.objectContaining({ at: null }),
+      expect.objectContaining({ at: null, startDate: undefined, endDate: undefined }),
     );
   });
 
@@ -776,6 +780,8 @@ describe("ExplorerPage — timeline scrubber", () => {
     });
 
     expect(capturedUrl).toContain("2026-02-15");
+    expect(capturedUrl).toContain("start_date=2026-02-15");
+    expect(capturedUrl).toContain("end_date=2026-02-15");
   });
 });
 
@@ -1793,8 +1799,8 @@ describe("ExplorerPage — breadcrumb navigation clears expand (TASK-244)", () =
 
     expect(screen.getByRole("button", { name: /collapse/i })).toBeInTheDocument();
 
-    // ← Back button appears when breadcrumbs.length > 0
-    const backBtn = screen.getByRole("button", { name: /back/i });
+    // ← button appears when breadcrumbs.length > 0
+    const backBtn = screen.getByRole("button", { name: "←" });
     fireEvent.click(backBtn);
 
     expect(screen.queryByRole("button", { name: /collapse/i })).toBeNull();

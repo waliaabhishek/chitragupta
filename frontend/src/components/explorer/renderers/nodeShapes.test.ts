@@ -35,21 +35,11 @@ describe("nodeShapes — getNodeShape (group types)", () => {
 });
 
 describe("nodeShapes — getNodeSize", () => {
-  it("returns fixed 100 for topic_group regardless of cost", () => {
-    expect(getNodeSize("topic_group", 0, 0, 1000)).toBe(100);
-    expect(getNodeSize("topic_group", 999, 0, 1000)).toBe(100);
-  });
-
-  it("returns fixed 100 for identity_group", () => {
-    expect(getNodeSize("identity_group", 0, 0, 1000)).toBe(100);
-  });
-
-  it("returns fixed 100 for zero_cost_summary", () => {
-    expect(getNodeSize("zero_cost_summary", 0, 0, 1000)).toBe(100);
-  });
-
-  it("returns fixed 100 for capped_summary", () => {
-    expect(getNodeSize("capped_summary", 0, 0, 1000)).toBe(100);
+  it("scales group nodes via costToSize like regular nodes", () => {
+    expect(getNodeSize("topic_group", 50, 0, 1000)).toBe(costToSize(50, 0, 1000));
+    expect(getNodeSize("identity_group", 200, 0, 1000)).toBe(costToSize(200, 0, 1000));
+    expect(getNodeSize("zero_cost_summary", 0, 0, 1000)).toBe(costToSize(0, 0, 1000));
+    expect(getNodeSize("capped_summary", 0, 0, 1000)).toBe(costToSize(0, 0, 1000));
   });
 
   it("delegates to costToSize for kafka_topic", () => {

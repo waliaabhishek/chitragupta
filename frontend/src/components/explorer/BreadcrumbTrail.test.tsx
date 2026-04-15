@@ -84,7 +84,7 @@ describe("BreadcrumbTrail", () => {
     const { queryByText } = render(
       <BreadcrumbTrail breadcrumbs={[]} {...DEFAULT_HANDLERS} />,
     );
-    expect(queryByText("← Back")).toBeNull();
+    expect(queryByText("←")).toBeNull();
   });
 
   it("shows Back button when there are breadcrumbs", () => {
@@ -94,7 +94,7 @@ describe("BreadcrumbTrail", () => {
     const { getByText } = render(
       <BreadcrumbTrail breadcrumbs={breadcrumbs} {...DEFAULT_HANDLERS} />,
     );
-    expect(getByText("← Back")).toBeInTheDocument();
+    expect(getByText("←")).toBeInTheDocument();
   });
 
   it("calls onGoBack when Back button is clicked", () => {
@@ -110,7 +110,7 @@ describe("BreadcrumbTrail", () => {
         onGoToRoot={vi.fn()}
       />,
     );
-    fireEvent.click(getByText("← Back"));
+    fireEvent.click(getByText("←"));
     expect(onGoBack).toHaveBeenCalledTimes(1);
   });
 });

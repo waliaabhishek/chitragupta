@@ -49,19 +49,16 @@ const GROUP_TYPES = new Set([
   "xref_group",
 ]);
 
-const GROUP_NODE_SIZE = 100;
-
 export function getNodeShape(resourceType: string): string {
   return SHAPE_MAP[resourceType] ?? "ellipse";
 }
 
 export function getNodeSize(
-  resourceType: string,
+  _resourceType: string,
   cost: number,
   minCost: number,
   maxCost: number,
 ): number {
-  if (GROUP_TYPES.has(resourceType)) return GROUP_NODE_SIZE;
   return costToSize(cost, minCost, maxCost);
 }
 

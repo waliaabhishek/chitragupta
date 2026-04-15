@@ -36,6 +36,16 @@ export function BreadcrumbTrail({
       }}
     >
       <Space size={4}>
+        {breadcrumbs.length > 0 && (
+          <Button
+            type="text"
+            size="small"
+            onClick={onGoBack}
+            style={{ padding: "0 4px", opacity: 0.6 }}
+          >
+            ←
+          </Button>
+        )}
         <Button
           type="text"
           size="small"
@@ -79,16 +89,6 @@ export function BreadcrumbTrail({
       </Space>
       <div style={{ marginLeft: "auto", display: "flex", gap: 4 }}>
         {copyLinkButton}
-        {breadcrumbs.length > 0 && (
-          <Button
-            type="text"
-            size="small"
-            onClick={onGoBack}
-            style={{ opacity: 0.6 }}
-          >
-            ← Back
-          </Button>
-        )}
       </div>
     </div>
   );

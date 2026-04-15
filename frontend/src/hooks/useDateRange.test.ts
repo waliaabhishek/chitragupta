@@ -24,9 +24,6 @@ function createWrapper() {
   };
 }
 
-// Today is 2026-04-13 per project context
-const TODAY = "2026-04-13";
-
 function makeApiNode(overrides: Record<string, unknown> = {}) {
   return {
     id: "env-abc",
@@ -45,9 +42,23 @@ function makeApiNode(overrides: Record<string, unknown> = {}) {
   };
 }
 
+/** Set up both MSW handlers needed by useDateRange. */
+function setupHandlers(
+  nodes: Record<string, unknown>[],
+  chargebackDates: string[],
+) {
+  server.use(
+    http.get("/api/v1/tenants/acme/graph", () =>
+      HttpResponse.json({ nodes, edges: [] }),
+    ),
+    http.get("/api/v1/tenants/acme/chargebacks/dates", () =>
+      HttpResponse.json({ dates: chargebackDates }),
+    ),
+  );
+}
+
 describe("useDateRange", () => {
   beforeEach(() => {
-    // Fix today's date for deterministic maxDate
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-04-13T00:00:00Z"));
   });
@@ -67,22 +78,13 @@ describe("useDateRange", () => {
   });
 
   it("extracts min(created_at) across all nodes as minDate", async () => {
-    server.use(
-      http.get("/api/v1/tenants/acme/graph", ({ request }) => {
-        const url = new URL(request.url);
-        // useDateRange calls root topology (no focus param)
-        if (!url.searchParams.has("focus")) {
-          return HttpResponse.json({
-            nodes: [
-              makeApiNode({ id: "env-1", created_at: "2026-02-01T00:00:00Z" }),
-              makeApiNode({ id: "env-2", created_at: "2026-01-15T00:00:00Z" }),
-              makeApiNode({ id: "env-3", created_at: "2026-03-01T00:00:00Z" }),
-            ],
-            edges: [],
-          });
-        }
-        return HttpResponse.json({ nodes: [], edges: [] });
-      }),
+    setupHandlers(
+      [
+        makeApiNode({ id: "env-1", created_at: "2026-02-01T00:00:00Z" }),
+        makeApiNode({ id: "env-2", created_at: "2026-01-15T00:00:00Z" }),
+        makeApiNode({ id: "env-3", created_at: "2026-03-01T00:00:00Z" }),
+      ],
+      ["2026-01-15", "2026-02-01", "2026-04-10"],
     );
 
     const { result } = renderHook(() => useDateRange({ tenantName: "acme" }), {
@@ -95,17 +97,13 @@ describe("useDateRange", () => {
   });
 
   it("skips nodes with null created_at when computing minDate", async () => {
-    server.use(
-      http.get("/api/v1/tenants/acme/graph", () =>
-        HttpResponse.json({
-          nodes: [
-            makeApiNode({ id: "env-1", created_at: null }),
-            makeApiNode({ id: "env-2", created_at: "2026-02-10T00:00:00Z" }),
-            makeApiNode({ id: "env-3", created_at: null }),
-          ],
-          edges: [],
-        }),
-      ),
+    setupHandlers(
+      [
+        makeApiNode({ id: "env-1", created_at: null }),
+        makeApiNode({ id: "env-2", created_at: "2026-02-10T00:00:00Z" }),
+        makeApiNode({ id: "env-3", created_at: null }),
+      ],
+      ["2026-02-10", "2026-03-15"],
     );
 
     const { result } = renderHook(() => useDateRange({ tenantName: "acme" }), {
@@ -118,16 +116,12 @@ describe("useDateRange", () => {
   });
 
   it("returns minDate=null when no nodes have created_at", async () => {
-    server.use(
-      http.get("/api/v1/tenants/acme/graph", () =>
-        HttpResponse.json({
-          nodes: [
-            makeApiNode({ id: "env-1", created_at: null }),
-            makeApiNode({ id: "env-2", created_at: null }),
-          ],
-          edges: [],
-        }),
-      ),
+    setupHandlers(
+      [
+        makeApiNode({ id: "env-1", created_at: null }),
+        makeApiNode({ id: "env-2", created_at: null }),
+      ],
+      ["2026-03-01"],
     );
 
     const { result } = renderHook(() => useDateRange({ tenantName: "acme" }), {
@@ -140,25 +134,12 @@ describe("useDateRange", () => {
     expect(result.current.maxDate).toBeNull();
   });
 
-  it("uses today as maxDate when no deleted_at exceeds today", async () => {
-    server.use(
-      http.get("/api/v1/tenants/acme/graph", () =>
-        HttpResponse.json({
-          nodes: [
-            makeApiNode({
-              id: "env-1",
-              created_at: "2026-01-01T00:00:00Z",
-              deleted_at: null,
-            }),
-            makeApiNode({
-              id: "env-2",
-              created_at: "2026-02-01T00:00:00Z",
-              deleted_at: "2026-03-01T00:00:00Z",
-            }),
-          ],
-          edges: [],
-        }),
-      ),
+  it("uses last chargeback date as maxDate", async () => {
+    setupHandlers(
+      [
+        makeApiNode({ id: "env-1", created_at: "2026-01-01T00:00:00Z" }),
+      ],
+      ["2026-01-01", "2026-02-15", "2026-04-10"],
     );
 
     const { result } = renderHook(() => useDateRange({ tenantName: "acme" }), {
@@ -167,24 +148,15 @@ describe("useDateRange", () => {
 
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
-    expect(result.current.maxDate).toBe(TODAY);
+    expect(result.current.maxDate).toBe("2026-04-10");
   });
 
-  it("uses max(deleted_at) as maxDate when it exceeds today", async () => {
-    const futureDate = "2026-12-31";
-    server.use(
-      http.get("/api/v1/tenants/acme/graph", () =>
-        HttpResponse.json({
-          nodes: [
-            makeApiNode({
-              id: "env-1",
-              created_at: "2026-01-01T00:00:00Z",
-              deleted_at: `${futureDate}T00:00:00Z`,
-            }),
-          ],
-          edges: [],
-        }),
-      ),
+  it("falls back to minDate when chargeback dates are empty", async () => {
+    setupHandlers(
+      [
+        makeApiNode({ id: "env-1", created_at: "2026-01-01T00:00:00Z" }),
+      ],
+      [],
     );
 
     const { result } = renderHook(() => useDateRange({ tenantName: "acme" }), {
@@ -193,7 +165,7 @@ describe("useDateRange", () => {
 
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
-    expect(result.current.maxDate).toBe(futureDate);
+    expect(result.current.maxDate).toBe("2026-01-01");
   });
 
   it("calls root topology endpoint (no focus param)", async () => {
@@ -206,6 +178,9 @@ describe("useDateRange", () => {
           edges: [],
         });
       }),
+      http.get("/api/v1/tenants/acme/chargebacks/dates", () =>
+        HttpResponse.json({ dates: ["2026-01-01"] }),
+      ),
     );
 
     const { result } = renderHook(() => useDateRange({ tenantName: "acme" }), {
@@ -219,19 +194,11 @@ describe("useDateRange", () => {
   });
 
   it("returns minDate and maxDate as ISO date strings (YYYY-MM-DD)", async () => {
-    server.use(
-      http.get("/api/v1/tenants/acme/graph", () =>
-        HttpResponse.json({
-          nodes: [
-            makeApiNode({
-              id: "env-1",
-              created_at: "2026-01-15T12:30:00Z",
-              deleted_at: null,
-            }),
-          ],
-          edges: [],
-        }),
-      ),
+    setupHandlers(
+      [
+        makeApiNode({ id: "env-1", created_at: "2026-01-15T12:30:00Z" }),
+      ],
+      ["2026-01-15", "2026-03-20"],
     );
 
     const { result } = renderHook(() => useDateRange({ tenantName: "acme" }), {
@@ -240,7 +207,6 @@ describe("useDateRange", () => {
 
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
-    // Should return date-only strings, not ISO datetimes
     expect(result.current.minDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     expect(result.current.maxDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });

@@ -221,7 +221,7 @@ describe("CytoscapeRenderer", () => {
   });
 
   // TASK-244: group node size and label
-  it("topic_group node uses fixed size 100 instead of cost-scaled size", async () => {
+  it("topic_group node uses cost-scaled size like regular nodes", async () => {
     const groupNode = makeNode({
       id: "group:topics:lkc-abc",
       resource_type: "topic_group",
@@ -236,7 +236,9 @@ describe("CytoscapeRenderer", () => {
       );
       expect(nodeAdds).toHaveLength(1);
       const addedData = (nodeAdds[0] as { data: { size: number } }).data;
-      expect(addedData.size).toBe(100);
+      // Group nodes now scale with cost like all other nodes
+      expect(addedData.size).toBeGreaterThanOrEqual(20);
+      expect(addedData.size).toBeLessThanOrEqual(80);
     });
   });
 
