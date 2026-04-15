@@ -102,6 +102,7 @@ def create_app(
         billing,
         chargebacks,
         export,
+        graph,
         health,
         identities,
         inventory,
@@ -128,5 +129,6 @@ def create_app(
     app.include_router(pipeline.router, prefix="/api/v1")
     app.include_router(export.router, prefix="/api/v1")
     app.include_router(topic_attributions.router, prefix="/api/v1")
+    app.include_router(graph.router, prefix="/api/v1")
 
     return app

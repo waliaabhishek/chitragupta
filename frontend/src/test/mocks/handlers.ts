@@ -341,6 +341,16 @@ export const handlers = [
     });
   }),
 
+  // Tag keys
+  http.get(`${BASE}/tenants/:tenant/tags/keys`, () => {
+    return HttpResponse.json({ keys: [] });
+  }),
+
+  // Entity search
+  http.get(`${BASE}/tenants/:tenant/graph/search`, () => {
+    return HttpResponse.json({ results: [] });
+  }),
+
   // Tenant status (per-date)
   http.get(`${BASE}/tenants/:tenant/status`, ({ params }) => {
     return HttpResponse.json<TenantStatusDetailResponse>({

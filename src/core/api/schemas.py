@@ -424,3 +424,106 @@ class TopicAttributionAggregationResponse(BaseModel):
 
 class TopicAttributionDatesResponse(BaseModel):
     dates: list[date]
+
+
+class CrossReferenceItemSchema(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    resource_type: str
+    display_name: str | None
+    cost: Decimal
+
+
+class CrossReferenceGroupSchema(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    resource_type: str
+    items: list[CrossReferenceItemSchema]
+    total_count: int
+
+
+class GraphNode(BaseModel):
+    id: str
+    resource_type: str
+    display_name: str | None
+    cost: Decimal
+    created_at: datetime | None
+    deleted_at: datetime | None
+    tags: dict[str, str]
+    parent_id: str | None
+    cloud: str | None
+    region: str | None
+    status: str
+    cross_references: list[CrossReferenceGroupSchema]
+    child_count: int | None = None
+    child_total_cost: Decimal | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class GraphEdge(BaseModel):
+    source: str
+    target: str
+    relationship_type: str  # EdgeType.value — "parent" | "charge" | "attribution"
+    cost: Decimal | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class GraphResponse(BaseModel):
+    nodes: list[GraphNode]
+    edges: list[GraphEdge]
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class GraphSearchResult(BaseModel):
+    id: str
+    resource_type: str
+    display_name: str | None
+    parent_id: str | None
+    parent_display_name: str | None
+    status: str
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class GraphSearchResponse(BaseModel):
+    results: list[GraphSearchResult]
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class GraphDiffNode(BaseModel):
+    id: str
+    resource_type: str
+    display_name: str | None
+    parent_id: str | None
+    cost_before: Decimal
+    cost_after: Decimal
+    cost_delta: Decimal
+    pct_change: Decimal | None
+    status: str  # "new" | "deleted" | "changed" | "unchanged"
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class GraphDiffResponse(BaseModel):
+    nodes: list[GraphDiffNode]
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class GraphTimelinePoint(BaseModel):
+    date: date
+    cost: Decimal
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class GraphTimelineResponse(BaseModel):
+    entity_id: str
+    points: list[GraphTimelinePoint]
+
+    model_config = ConfigDict(from_attributes=True)

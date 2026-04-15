@@ -1,0 +1,93 @@
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass, field
+from datetime import date, datetime
+from decimal import Decimal
+from enum import StrEnum
+
+logger = logging.getLogger(__name__)
+
+
+class EdgeType(StrEnum):
+    parent = "parent"
+    charge = "charge"
+    attribution = "attribution"  # reserved for TASK-221 topic attribution flow
+
+
+@dataclass
+class CrossReferenceItem:
+    id: str
+    resource_type: str
+    display_name: str | None
+    cost: Decimal
+
+
+@dataclass
+class CrossReferenceGroup:
+    resource_type: str  # "kafka_cluster", "flink_compute_pool", etc.
+    items: list[CrossReferenceItem]  # top N by cost descending
+    total_count: int  # total entities of this type (before cap)
+
+
+@dataclass
+class GraphNodeData:
+    id: str
+    resource_type: str  # "environment" | "kafka_cluster" | "kafka_topic" | "identity" | ...
+    display_name: str | None
+    cost: Decimal  # sum of chargeback_facts.amount in billing period
+    created_at: datetime | None
+    deleted_at: datetime | None
+    tags: dict[str, str]  # resolved from entity_tags
+    parent_id: str | None
+    cloud: str | None
+    region: str | None
+    status: str
+    cross_references: list[CrossReferenceGroup] = field(
+        default_factory=list
+    )  # other resources this identity is charged in
+    child_count: int | None = None  # populated only for group-type nodes
+    child_total_cost: Decimal | None = None  # populated only for group-type nodes
+
+
+@dataclass
+class GraphEdgeData:
+    source: str  # entity_id of source (parent) node
+    target: str  # entity_id of target (child) node
+    relationship_type: EdgeType
+    cost: Decimal | None = None  # populated for charge edges
+
+
+@dataclass
+class GraphNeighborhood:
+    nodes: list[GraphNodeData]
+    edges: list[GraphEdgeData]
+
+
+@dataclass
+class GraphSearchResultData:
+    id: str
+    resource_type: str  # resource_type for resources; identity_type for identities
+    display_name: str | None
+    parent_id: str | None  # None for identities (no parent_id on IdentityTable)
+    status: str  # "active" | "deleted"
+    parent_display_name: str | None = None
+
+
+@dataclass
+class GraphDiffNodeData:
+    id: str
+    resource_type: str
+    display_name: str | None
+    parent_id: str | None
+    cost_before: Decimal
+    cost_after: Decimal
+    cost_delta: Decimal
+    pct_change: Decimal | None  # None when cost_before == 0 (new entity)
+    status: str  # "new" | "deleted" | "changed" | "unchanged"
+
+
+@dataclass
+class GraphTimelineData:
+    date: date
+    cost: Decimal

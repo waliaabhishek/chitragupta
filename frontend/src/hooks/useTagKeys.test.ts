@@ -43,8 +43,9 @@ describe("useTagKeys", () => {
 
   it("returns error string when API returns 500", async () => {
     server.use(
-      http.get("/api/v1/tenants/acme/tags/keys", () =>
-        new HttpResponse(null, { status: 500 }),
+      http.get(
+        "/api/v1/tenants/acme/tags/keys",
+        () => new HttpResponse(null, { status: 500 }),
       ),
     );
 

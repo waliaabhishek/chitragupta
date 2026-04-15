@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     )
     from core.models.counts import TypeStatusCounts
     from core.models.entity_tag import EntityTag
+    from core.models.graph import GraphDiffNodeData, GraphNeighborhood, GraphSearchResultData, GraphTimelineData
     from core.models.identity import Identity
     from core.models.pipeline import PipelineRun, PipelineState
     from core.models.resource import Resource
@@ -657,6 +658,113 @@ class PipelineRunRepository(Protocol):
 
 
 @runtime_checkable
+class GraphRepository(Protocol):
+    """Read-only repository for graph neighborhood queries."""
+
+    def find_neighborhood(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        focus_id: str | None,
+        depth: int,
+        at: datetime,
+        period_start: datetime,
+        period_end: datetime,
+        expand: Literal["topics", "identities", "resources", "clusters"] | None = None,
+    ) -> GraphNeighborhood:
+        """Return graph neighborhood for a focused entity at a point in time.
+
+        focus_id=None     → root view: environment nodes with tenant→env edges
+        focus_id=env      → env + child resources (depth hops) + parent→child edges
+        focus_id=cluster  → cluster + child topics + identities + charge edges
+        focus_id=identity → identity + all clusters it's charged in + charge edges
+
+        at: entity lifecycle filter — created_at <= at AND (deleted_at IS NULL OR deleted_at > at)
+        period_start/period_end: cost aggregation window from chargeback_facts
+
+        Tags are resolved internally via the EntityTagRepository injected at construction time.
+
+        expand: only meaningful for cluster focus. "topics" returns all child topics
+        (up to _CLUSTER_EXPAND_CAP) sorted by cost desc with zero-cost ones collapsed into
+        a summary node; identities shown as a group node only. "identities" is the mirror.
+        None (default) uses grouped summary mode when group sizes exceed _CLUSTER_GROUP_THRESHOLD.
+
+        Raises KeyError if focus_id is provided but not found in resources or identities (route converts to 404).
+        """
+        ...
+
+    def search_entities(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        query: str,
+    ) -> list[GraphSearchResultData]:
+        """Search resources and identities by partial name match.
+
+        Queries ResourceTable (resource_id, display_name) and IdentityTable
+        (identity_id, display_name) with case-insensitive partial match.
+
+        Results ordered by relevance: exact match (0) → prefix (1) → substring (2).
+        Returns at most 20 results. Returns empty list (never raises) for no matches.
+
+        No temporal filter — returns all entities (active and deleted) with a status field.
+        Tenant isolation enforced via ecosystem + tenant_id predicates.
+        """
+        ...
+
+    def diff_neighborhood(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        focus_id: str | None,
+        depth: int,
+        from_start: datetime,
+        from_end: datetime,
+        to_start: datetime,
+        to_end: datetime,
+    ) -> list[GraphDiffNodeData]:
+        """Compare costs between two time windows for a neighborhood.
+
+        Internally calls find_neighborhood twice:
+          before = find_neighborhood(at=from_end, period_start=from_start, period_end=from_end)
+          after  = find_neighborhood(at=to_end,   period_start=to_start,   period_end=to_end)
+
+        Merges by entity ID:
+          both windows → status "changed" or "unchanged"
+          only in after  → status "new",     cost_before=0, pct_change=None
+          only in before → status "deleted",  cost_after=0,  pct_change=None
+
+        pct_change = None when cost_before == 0.
+
+        Raises KeyError if focus_id is provided but not found (route converts to 404).
+        """
+        ...
+
+    def get_timeline(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        entity_id: str,
+        start: datetime,
+        end: datetime,
+    ) -> list[GraphTimelineData]:
+        """Return daily cost series for an entity between start (inclusive) and end (exclusive).
+
+        Entity type routing:
+          resource_type == "topic"       → topic_attribution_facts grouped by date
+          resource_type == "environment" → chargeback_facts grouped by env_id then date
+          other resource               → chargeback_facts grouped by resource_id then date
+          identity                     → chargeback_facts filtered by identity_id, grouped by date
+
+        Gap filling: every calendar day in [start.date(), end.date()) is present.
+        Days with no billing data are returned with cost=0.
+
+        Raises KeyError if entity_id is not found in resources or identities.
+        """
+        ...
+
+
+@runtime_checkable
 class ReadOnlyUnitOfWork(Protocol):
     """Read-only transaction coordinator. No commit/rollback."""
 
@@ -669,6 +777,7 @@ class ReadOnlyUnitOfWork(Protocol):
     tags: EntityTagRepository
     emissions: EmissionRepository  # NEW
     topic_attributions: TopicAttributionRepository  # lazy; only active when TA enabled
+    graph: GraphRepository
 
     def __enter__(self) -> Self: ...
     def __exit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: object) -> None: ...
