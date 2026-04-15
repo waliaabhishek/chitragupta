@@ -470,7 +470,6 @@ export function ExplorerPage(): React.JSX.Element {
           activeTagKey={params.tag}
           tagSelectedValue={params.tag_value}
         />
-        <GraphTooltip hoveredNodeId={hoveredNodeId} nodes={nodesWithDiff} />
         {/* Diff mode panel — always rendered so toggle button is always visible */}
         <div style={{ position: "absolute", top: 8, left: 8, zIndex: 150 }}>
           <DiffModePanel
@@ -515,8 +514,8 @@ export function ExplorerPage(): React.JSX.Element {
             </Button>
           </div>
         )}
-        {/* Search bar — top-right */}
-        <div style={{ position: "absolute", top: 8, right: 8, zIndex: 150 }}>
+        {/* Right-side controls: search, tag overlay, tooltip */}
+        <div style={{ position: "absolute", top: 8, right: 8, zIndex: 150, display: "flex", flexDirection: "column", gap: 8, maxWidth: 240 }}>
           <SearchBar
             tenantName={tenantName}
             onSelect={(entityId, resourceType, displayName) => {
@@ -527,19 +526,24 @@ export function ExplorerPage(): React.JSX.Element {
             }}
             isDark={isDark}
           />
-        </div>
-        {/* Tag overlay panel — below search bar */}
-        <div style={{ position: "absolute", top: 48, right: 8, zIndex: 149 }}>
           <TagOverlayPanel
             availableKeys={tagOverlay.availableKeys}
             isLoadingKeys={tagOverlay.isLoadingKeys}
             activeKey={params.tag}
-            onKeyChange={(key) => pushParam("tag", key)}
+            onKeyChange={(key) => {
+              const k = key ?? null;
+              if (k === null) {
+                pushParams({ tag: null, tag_value: null });
+              } else {
+                pushParam("tag", k);
+              }
+            }}
             colorMap={tagOverlay.colorMap}
             selectedValue={params.tag_value}
-            onValueClick={(value) => pushParam("tag_value", value)}
+            onValueClick={(value) => pushParam("tag_value", value ?? null)}
             isDark={isDark}
           />
+          <GraphTooltip hoveredNodeId={hoveredNodeId} nodes={nodesWithDiff} />
         </div>
         {/* Full-screen loading overlay — only when scrubber NOT active */}
         {!scrubberActive && isLoading && (

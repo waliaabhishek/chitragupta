@@ -19,6 +19,18 @@ function baseStylesheet(): cytoscape.StylesheetStyle[] {
       },
     },
     {
+      selector: "node[icon]",
+      style: {
+        "background-image": "data(icon)" as unknown as string,
+        "background-fit": "none" as unknown as "none",
+        "background-clip": "node" as unknown as "none",
+        "background-width": "55%",
+        "background-height": "55%",
+        "background-position-x": "50%" as unknown as string,
+        "background-position-y": "50%" as unknown as string,
+      },
+    },
+    {
       selector: 'node[status = "phantom"]',
       style: {
         opacity: 0.15,

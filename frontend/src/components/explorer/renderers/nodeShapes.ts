@@ -15,18 +15,18 @@ export function costToSize(
 }
 
 const SHAPE_MAP: Record<string, string> = {
-  tenant: "round-rectangle",
-  environment: "hexagon",
+  tenant: "ellipse",
+  environment: "ellipse",
   kafka_cluster: "ellipse",
   dedicated_cluster: "ellipse",
   kafka_topic: "ellipse",
-  service_account: "diamond",
-  api_key: "diamond", // pragma: allowlist secret
-  identity: "diamond",
-  connector: "rectangle",
-  flink_compute_pool: "triangle",
-  schema_registry: "pentagon",
-  ksqldb_cluster: "round-rectangle",
+  service_account: "ellipse",
+  api_key: "ellipse", // pragma: allowlist secret
+  identity: "ellipse",
+  connector: "ellipse",
+  flink_compute_pool: "ellipse",
+  schema_registry: "ellipse",
+  ksqldb_cluster: "ellipse",
   // Synthetic group nodes (TASK-243)
   topic_group: "round-rectangle",
   identity_group: "round-rectangle",

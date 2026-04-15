@@ -27,16 +27,11 @@ export function GraphTooltip({
   return (
     <div
       style={{
-        position: "absolute",
-        top: 16,
-        right: 16,
         background: "rgba(0,0,0,0.8)",
         color: "#fff",
         padding: "8px 12px",
         borderRadius: 6,
         fontSize: 12,
-        maxWidth: 240,
-        zIndex: 300,
         pointerEvents: "none",
       }}
     >

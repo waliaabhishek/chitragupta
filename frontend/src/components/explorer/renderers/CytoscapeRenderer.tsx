@@ -5,6 +5,7 @@ import coseBilkent from "cytoscape-cose-bilkent";
 import type { GraphRendererProps } from "./types";
 import { getStylesheet } from "./graphStyles";
 import { getNodeShape, getNodeSize } from "./nodeShapes";
+import { getNodeIcon } from "./nodeIcons";
 
 // Register layout extension once at module load time — idempotent.
 cytoscape.use(coseBilkent);
@@ -56,6 +57,7 @@ interface PulseOverlay {
 export function CytoscapeRenderer({
   nodes,
   edges,
+  focusId,
   fadedNodeIds,
   onNodeClick,
   onNodeHover,
@@ -69,15 +71,19 @@ export function CytoscapeRenderer({
   const cyRef = useRef<cytoscape.Core | null>(null);
   const [pulseOverlays, setPulseOverlays] = useState<PulseOverlay[]>([]);
 
-  // Stable refs for callbacks — prevent stale closures in mount-once useEffect
+  // Stable refs for callbacks and focusId — prevent stale closures
   const onClickRef = useRef(onNodeClick);
   const onHoverRef = useRef(onNodeHover);
+  const focusIdRef = useRef(focusId);
 
   useEffect(() => {
     onClickRef.current = onNodeClick;
   });
   useEffect(() => {
     onHoverRef.current = onNodeHover;
+  });
+  useEffect(() => {
+    focusIdRef.current = focusId;
   });
 
   // Track edge IDs for manual management
@@ -218,6 +224,7 @@ export function CytoscapeRenderer({
         size: getNodeSize(node.resource_type, node.cost, minCost, maxCost),
         shape: getNodeShape(node.resource_type),
         label: computeNodeLabel(node),
+        icon: getNodeIcon(node.resource_type, isDark),
       });
     }
 
@@ -229,6 +236,7 @@ export function CytoscapeRenderer({
           size: getNodeSize(node.resource_type, node.cost, minCost, maxCost),
           shape: getNodeShape(node.resource_type),
           label: computeNodeLabel(node),
+          icon: getNodeIcon(node.resource_type, isDark),
         },
         position: { x: 0, y: 0 },
       });
@@ -295,10 +303,25 @@ export function CytoscapeRenderer({
         idealEdgeLength: 120,
       } as Parameters<typeof cy.layout>[0]);
 
-      // After layout completes, compute pulse overlay positions for diff-new nodes
+      // After layout completes, fit viewport around focused node and its neighbors.
       // Runtime guard needed: test mock cy does not implement .one()
       if (typeof cy.one === "function") {
         cy.one("layoutstop", () => {
+          // Fit viewport around focused node + its connected neighbors
+          const currentFocusId = focusIdRef.current;
+          if (currentFocusId) {
+            const focusNode = cy.getElementById(currentFocusId);
+            if (focusNode && focusNode.isNode()) {
+              const neighborhood = focusNode.neighborhood().add(focusNode);
+              cy.animate({
+                fit: { eles: neighborhood, padding: 60 },
+                duration: 400,
+                easing: "ease-out",
+              });
+            }
+          }
+
+          // Compute pulse overlay positions for diff-new nodes
           const newNodes = cy.nodes(".diff-new");
           const overlays: PulseOverlay[] = [];
           newNodes.forEach((n) => {
@@ -317,7 +340,7 @@ export function CytoscapeRenderer({
 
       layout.run();
     }
-  }, [nodes, edges]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [nodes, edges, isDark]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div style={{ position: "relative", width, height }}>
