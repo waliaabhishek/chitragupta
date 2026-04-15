@@ -250,7 +250,13 @@ export function ExplorerPage(): React.JSX.Element {
       : null;
 
   const tenantName = currentTenant?.tenant_name ?? null;
+  const tenantId = currentTenant?.tenant_id ?? null;
   const queryClient = useQueryClient();
+
+  // The tenant root node is synthetic (no DB row) — the API only serves it
+  // via the root view (focus=null).  Strip tenant-self-focus so that
+  // URL-driven loads like ?focus=ccloud-prod don't 404.
+  const effectiveFocus = params.focus === tenantId ? null : params.focus;
 
   const setFocus = useCallback((id: string | null) => pushParam("focus", id), [pushParam]);
 
@@ -289,7 +295,7 @@ export function ExplorerPage(): React.JSX.Element {
 
   const { data, isLoading, error } = useGraphData({
     tenantName,
-    focus: params.focus,
+    focus: effectiveFocus,
     at: atParam,
     startDate: debouncedDate ?? undefined,
     endDate: debouncedDate ?? undefined,
@@ -303,7 +309,7 @@ export function ExplorerPage(): React.JSX.Element {
     fromEnd: params.diff ? (fromRange?.[1] ?? null) : null,
     toStart: params.diff ? (toRange?.[0] ?? null) : null,
     toEnd: params.diff ? (toRange?.[1] ?? null) : null,
-    focus: params.focus,
+    focus: effectiveFocus,
   });
 
   // Timeline data for scrubber tooltip — only when node is selected
@@ -326,7 +332,7 @@ export function ExplorerPage(): React.JSX.Element {
       const d = addDays(playbackDate, i);
       if (maxDate && d > maxDate) break;
       const qs = new URLSearchParams();
-      if (params.focus) qs.set("focus", params.focus);
+      if (effectiveFocus) qs.set("focus", effectiveFocus);
       qs.set("depth", "1");
       qs.set("at", `${d}T12:00:00Z`);
       if (params.expand) qs.set("expand", params.expand);
@@ -334,7 +340,7 @@ export function ExplorerPage(): React.JSX.Element {
         queryKey: [
           "graph",
           tenantName,
-          params.focus ?? null,
+          effectiveFocus ?? null,
           1,
           `${d}T12:00:00Z`,
           null,
@@ -352,7 +358,7 @@ export function ExplorerPage(): React.JSX.Element {
         },
       });
     }
-  }, [isPlaying, playbackDate, stepDays, tenantName, maxDate, params.focus, params.expand, queryClient]);
+  }, [isPlaying, playbackDate, stepDays, tenantName, maxDate, effectiveFocus, params.expand, queryClient]);
 
   const typedNodes = useMemo(
     () =>
@@ -386,8 +392,8 @@ export function ExplorerPage(): React.JSX.Element {
   );
 
   const { nodes: collapsedNodes, edges: collapsedEdges } = useMemo(
-    () => collapseNearZeroNodes(typedNodes, typedEdges, params.focus),
-    [typedNodes, typedEdges, params.focus],
+    () => collapseNearZeroNodes(typedNodes, typedEdges, effectiveFocus),
+    [typedNodes, typedEdges, effectiveFocus],
   );
 
   const { nodes: enrichedNodes, edges: enrichedEdges } = useMemo(
@@ -397,7 +403,7 @@ export function ExplorerPage(): React.JSX.Element {
 
   // URL-driven navigation — called after enrichedNodes so currentNodes can be passed
   const { state, navigate, goBack, goToRoot, goToBreadcrumb } = useGraphNavigation({
-    focusFromUrl: params.focus,
+    focusFromUrl: effectiveFocus,
     setFocus,
     currentNodes: enrichedNodes.length > 0 ? enrichedNodes : null,
   });
@@ -474,6 +480,13 @@ export function ExplorerPage(): React.JSX.Element {
       return;
     }
 
+    // Tenant node: clicking the synthetic root is equivalent to "go to root"
+    if (resourceType === "tenant") {
+      goToRoot();
+      if (params.expand) replaceParam("expand", null);
+      return;
+    }
+
     // Regular nodes: navigate to focus, clear expand
     setSelectedNodeId(nodeId);
     const node = enrichedNodes.find((n) => n.id === nodeId);
@@ -541,7 +554,7 @@ export function ExplorerPage(): React.JSX.Element {
         <GraphContainer
           nodes={nodesForRenderer}
           edges={enrichedEdges}
-          focusId={params.focus}
+          focusId={effectiveFocus}
           fadedNodeIds={fadedNodeIds}
           onNodeClick={handleNodeClick}
           onNodeHover={setHoveredNodeId}

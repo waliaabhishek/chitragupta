@@ -76,8 +76,11 @@ interface D3Link {
 //   fit: false       → fitToFocus handles viewport after settle
 // ---------------------------------------------------------------------------
 
-/** Shared d3-force layout options for the standard (non-tag-filtered) view. */
-function standardLayoutOptions() {
+/** Shared d3-force layout options for the standard (non-tag-filtered) view.
+ *  cx/cy = viewport center — forceX/forceY must pull toward the same point
+ *  as forceCenter (w/2, h/2) to prevent steady drift from competing forces.
+ */
+function standardLayoutOptions(cx: number, ch: number) {
   return {
     name: "d3-force" as const,
     animate: true,
@@ -94,10 +97,12 @@ function standardLayoutOptions() {
     collideIterations: 1,
     alphaDecay: 0.0228,
     velocityDecay: 0.4,
-    // Kill the default forceX/forceY toward (0,0) — the adapter always creates
-    // them, and without explicit xX/yY they pull toward the top-left corner at
-    // strength 0.1, competing with forceCenter at (w/2,h/2) and biasing the
-    // layout into a semicircle.  Can't use 0 (falsy → default 0.1 stays).
+    // The adapter always creates forceX/forceY.  Without explicit xX/yY they
+    // default to (0,0), competing with forceCenter at (w/2,h/2) and causing
+    // steady NE drift with infinite: true.  Point them at viewport center so
+    // all centering forces agree.  Strength 0.001 (can't use 0 — falsy → 0.1).
+    xX: cx,
+    yY: ch,
     xStrength: 0.001,
     yStrength: 0.001,
   };
@@ -108,6 +113,8 @@ function tagFilteredLayoutOptions(
   activeTagKey: string,
   tagSelectedValue: string,
   cy: cytoscape.Core,
+  cx: number,
+  ch: number,
 ) {
   return {
     name: "d3-force" as const,
@@ -135,6 +142,8 @@ function tagFilteredLayoutOptions(
     collideIterations: 1,
     alphaDecay: 0.0228,
     velocityDecay: 0.4,
+    xX: cx,
+    yY: ch,
     xStrength: 0.001,
     yStrength: 0.001,
   };
@@ -296,9 +305,12 @@ export function CytoscapeRenderer({
       layoutRef.current.stop();
     }
 
+    const vcx = typeof cy.width === "function" ? cy.width() / 2 : 400;
+    const vch = typeof cy.height === "function" ? cy.height() / 2 : 300;
+
     if (!activeTagKey || !tagSelectedValue) {
       const layout = cy.layout(
-        standardLayoutOptions() as Parameters<typeof cy.layout>[0],
+        standardLayoutOptions(vcx, vch) as Parameters<typeof cy.layout>[0],
       );
       layoutRef.current = layout;
       layout.run();
@@ -306,7 +318,7 @@ export function CytoscapeRenderer({
     }
 
     const layout = cy.layout(
-      tagFilteredLayoutOptions(activeTagKey, tagSelectedValue, cy) as Parameters<
+      tagFilteredLayoutOptions(activeTagKey, tagSelectedValue, cy, vcx, vch) as Parameters<
         typeof cy.layout
       >[0],
     );
@@ -516,7 +528,7 @@ export function CytoscapeRenderer({
       if (layoutRef.current) layoutRef.current.stop();
       let settled = false;
       const opts = {
-        ...standardLayoutOptions(),
+        ...standardLayoutOptions(cx, ch),
         tick: (progress: number) => {
           if (settled || progress < 0.8) return;
           settled = true;
@@ -530,9 +542,11 @@ export function CytoscapeRenderer({
     } else if (topologyChanged) {
       // Partial topology change — positions already set (persisting + near-neighbor)
       if (layoutRef.current) layoutRef.current.stop();
+      const tcx = typeof cy.width === "function" ? cy.width() / 2 : 400;
+      const tch = typeof cy.height === "function" ? cy.height() / 2 : 300;
       let settled = false;
       const opts = {
-        ...standardLayoutOptions(),
+        ...standardLayoutOptions(tcx, tch),
         tick: (progress: number) => {
           if (settled || progress < 0.8) return;
           settled = true;
