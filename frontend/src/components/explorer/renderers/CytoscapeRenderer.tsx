@@ -1,14 +1,14 @@
 import type React from "react";
 import { useEffect, useRef, useState } from "react";
 import cytoscape from "cytoscape";
-import coseBilkent from "cytoscape-cose-bilkent";
+import d3Force from "cytoscape-d3-force";
 import type { GraphRendererProps } from "./types";
 import { getStylesheet } from "./graphStyles";
 import { getNodeShape, getNodeSize } from "./nodeShapes";
 import { getNodeIcon } from "./nodeIcons";
 
 // Register layout extension once at module load time — idempotent.
-cytoscape.use(coseBilkent);
+cytoscape.use(d3Force);
 
 function computeNodeLabel(node: GraphRendererProps["nodes"][number]): string {
   const { resource_type, child_count, child_total_cost, display_name, id } = node;
@@ -54,6 +54,98 @@ interface PulseOverlay {
   size: number;
 }
 
+// d3-force node type — after simulation init, source/target on links become
+// node objects with the cytoscape data merged in via Object.assign.
+interface D3Node {
+  id: string;
+  size?: number;
+}
+interface D3Link {
+  source: D3Node;
+  target: D3Node;
+}
+
+/** Radius for collision: half the node's visual size + padding for the label below. */
+function nodeCollideRadius(d: D3Node): number {
+  const radius = (d.size ?? 40) / 2;
+  // 14px extra for the label that sits below the node
+  return radius + 14;
+}
+
+/** Link distance: sum of both node radii + gap so edges don't compress nodes together. */
+function nodeLinkDistance(d: D3Link): number {
+  const srcR = (d.source.size ?? 40) / 2;
+  const tgtR = (d.target.size ?? 40) / 2;
+  return srcR + tgtR + 60;
+}
+
+/** Charge strength proportional to node area — big nodes repel more. */
+function nodeChargeStrength(d: D3Node): number {
+  const size = d.size ?? 40;
+  // Base repulsion scaled by area ratio vs a 40px reference node
+  return -300 * (size * size) / (40 * 40);
+}
+
+/** Shared d3-force layout options for the standard (non-tag-filtered) view. */
+function standardLayoutOptions() {
+  return {
+    name: "d3-force" as const,
+    animate: true,
+    infinite: true,
+    randomize: true,
+    fit: true,
+    padding: 40,
+    // d3-force simulation parameters
+    linkId: (d: D3Node) => d.id,
+    linkDistance: nodeLinkDistance,
+    linkStrength: 0.3,
+    manyBodyStrength: nodeChargeStrength,
+    manyBodyDistanceMax: 800,
+    collideRadius: nodeCollideRadius,
+    collideStrength: 1.0,
+    collideIterations: 3,
+    alphaDecay: 0.02,
+    velocityDecay: 0.3,
+  };
+}
+
+/** Tag-filtered layout: matching nodes pull together, non-matching push apart. */
+function tagFilteredLayoutOptions(
+  activeTagKey: string,
+  tagSelectedValue: string,
+  cy: cytoscape.Core,
+) {
+  return {
+    name: "d3-force" as const,
+    animate: true,
+    infinite: true,
+    randomize: false, // preserve positions from current layout, just re-arrange by tag forces
+    fit: true,
+    padding: 40,
+    linkId: (d: D3Node) => d.id,
+    linkDistance: (d: D3Link) => {
+      const srcNode = cy.getElementById(d.source.id ?? (d.source as unknown as string));
+      const tgtNode = cy.getElementById(d.target.id ?? (d.target as unknown as string));
+      const srcTags = (srcNode.data("tags") as Record<string, string>) ?? {};
+      const tgtTags = (tgtNode.data("tags") as Record<string, string>) ?? {};
+      const srcMatch = srcTags[activeTagKey] === tagSelectedValue;
+      const tgtMatch = tgtTags[activeTagKey] === tagSelectedValue;
+      // Tag-matched pairs pull tight, non-matching push far
+      if (srcMatch && tgtMatch) return 50;
+      if (!srcMatch && !tgtMatch) return 200;
+      return 120;
+    },
+    linkStrength: 0.4,
+    manyBodyStrength: nodeChargeStrength,
+    manyBodyDistanceMax: 800,
+    collideRadius: nodeCollideRadius,
+    collideStrength: 1.0,
+    collideIterations: 3,
+    alphaDecay: 0.02,
+    velocityDecay: 0.3,
+  };
+}
+
 export function CytoscapeRenderer({
   nodes,
   edges,
@@ -92,6 +184,9 @@ export function CytoscapeRenderer({
   // Ref to clean up exiting-node timeout on unmount
   const exitTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Track active layout so we can stop it before starting a new one
+  const layoutRef = useRef<cytoscape.Layouts | null>(null);
+
   // Mount once — create cy instance
   useEffect(() => {
     if (!containerRef.current) return;
@@ -127,6 +222,10 @@ export function CytoscapeRenderer({
         clearTimeout(exitTimeoutRef.current);
         exitTimeoutRef.current = null;
       }
+      if (layoutRef.current) {
+        layoutRef.current.stop();
+        layoutRef.current = null;
+      }
       cyInstance.destroy();
       cyRef.current = null;
     };
@@ -156,42 +255,38 @@ export function CytoscapeRenderer({
     const cy = cyRef.current;
     if (!cy || cy.nodes().length === 0) return;
 
+    // Stop any running simulation before starting a new one
+    if (layoutRef.current) {
+      layoutRef.current.stop();
+    }
+
     if (!activeTagKey || !tagSelectedValue) {
-      cy.layout({
-        name: "cose-bilkent",
-        animate: true,
-        animationDuration: 400,
-        fit: true,
-        padding: 40,
-        nodeRepulsion: 8000,
-        idealEdgeLength: 120,
-      } as Parameters<typeof cy.layout>[0]).run();
+      const layout = cy.layout(
+        standardLayoutOptions() as Parameters<typeof cy.layout>[0],
+      );
+      layoutRef.current = layout;
+      layout.run();
       return;
     }
 
-    cy.layout({
-      name: "cose",
-      animate: true,
-      animationDuration: 500,
-      fit: true,
-      padding: 40,
-      nodeRepulsion: () => 6000,
-      idealEdgeLength: (edge: cytoscape.EdgeSingular) => {
-        const srcTags = (edge.source().data("tags") as Record<string, string>) ?? {};
-        const tgtTags = (edge.target().data("tags") as Record<string, string>) ?? {};
-        const srcMatch = srcTags[activeTagKey] === tagSelectedValue;
-        const tgtMatch = tgtTags[activeTagKey] === tagSelectedValue;
-        if (srcMatch && tgtMatch) return 50;
-        if (!srcMatch && !tgtMatch) return 200;
-        return 120;
-      },
-    } as Parameters<typeof cy.layout>[0]).run();
+    const layout = cy.layout(
+      tagFilteredLayoutOptions(activeTagKey, tagSelectedValue, cy) as Parameters<
+        typeof cy.layout
+      >[0],
+    );
+    layoutRef.current = layout;
+    layout.run();
   }, [activeTagKey, tagSelectedValue]); // scalars — reference-stable, no spurious re-runs
 
   // Data diffing — animate transitions on node/edge changes
   useEffect(() => {
     const cy = cyRef.current;
     if (!cy) return;
+
+    // Stop any running simulation before re-laying out
+    if (layoutRef.current) {
+      layoutRef.current.stop();
+    }
 
     const costs = nodes.map((n) => n.cost);
     const minCost = Math.min(...costs, 0);
@@ -293,20 +388,16 @@ export function CytoscapeRenderer({
     setPulseOverlays([]);
 
     if (nodes.length > 0) {
-      const layout = cy.layout({
-        name: "cose-bilkent",
-        animate: true,
-        animationDuration: 500,
-        fit: true,
-        padding: 40,
-        nodeRepulsion: 8000,
-        idealEdgeLength: 120,
-      } as Parameters<typeof cy.layout>[0]);
+      // With infinite: true the simulation never emits layoutstop on its own.
+      // Use a one-shot tick callback to fit the viewport once the layout has
+      // largely settled (progress ≥ 0.8 means ~80% of alpha has decayed).
+      let settled = false;
+      const opts = {
+        ...standardLayoutOptions(),
+        tick: (progress: number) => {
+          if (settled || progress < 0.8) return;
+          settled = true;
 
-      // After layout completes, fit viewport around focused node and its neighbors.
-      // Runtime guard needed: test mock cy does not implement .one()
-      if (typeof cy.one === "function") {
-        cy.one("layoutstop", () => {
           // Fit viewport around focused node + its connected neighbors
           const currentFocusId = focusIdRef.current;
           if (currentFocusId) {
@@ -335,9 +426,11 @@ export function CytoscapeRenderer({
             });
           });
           setPulseOverlays(overlays);
-        });
-      }
+        },
+      };
 
+      const layout = cy.layout(opts as Parameters<typeof cy.layout>[0]);
+      layoutRef.current = layout;
       layout.run();
     }
   }, [nodes, edges, isDark]); // eslint-disable-line react-hooks/exhaustive-deps

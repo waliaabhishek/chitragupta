@@ -21,7 +21,7 @@
     "ag-grid-react": "^35.1.0",
     "antd": "^5.23.0",
     "cytoscape": "^3.33.2",
-    "cytoscape-cose-bilkent": "^4.1.0",
+    "cytoscape-d3-force": "^1.1.4",
     "echarts": "^6.0.0",
     "echarts-for-react": "^3.0.6",
     "lucide-react": "^1.8.0",

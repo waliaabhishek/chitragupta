@@ -156,7 +156,7 @@ function enrichWithTagColor(
 
 export function ExplorerPage(): React.JSX.Element {
   const { currentTenant } = useTenant();
-  const { isDark, setSidebarCollapsed } = useAppShell();
+  const { isDark } = useAppShell();
   const { params, pushParam, pushParams, replaceParam } = useExplorerParams();
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
@@ -232,17 +232,6 @@ export function ExplorerPage(): React.JSX.Element {
     endDate: maxDate,
   });
 
-  // Collapse sidebar on enter, restore on leave
-  const collapseRef = useRef(setSidebarCollapsed);
-  useEffect(() => {
-    collapseRef.current = setSidebarCollapsed;
-  });
-  useEffect(() => {
-    collapseRef.current(true);
-    return () => {
-      collapseRef.current(false);
-    };
-  }, []);
 
   // Destructure primitive values so ESLint exhaustive-deps sees stable scalars
   const { isPlaying, currentDate: playbackDate, stepDays } = playback.state;

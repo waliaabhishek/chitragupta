@@ -46,7 +46,7 @@ const { cytoscapeMock, mockCyInstance, state } = vi.hoisted(() => {
     add: vi.fn((el: unknown) => {
       state.addCalls.push(el);
     }),
-    layout: vi.fn(() => ({ run: vi.fn() })),
+    layout: vi.fn(() => ({ run: vi.fn(), stop: vi.fn() })),
     destroy: vi.fn(() => {
       state.destroyCalled = true;
     }),
@@ -60,7 +60,7 @@ const { cytoscapeMock, mockCyInstance, state } = vi.hoisted(() => {
 });
 
 vi.mock("cytoscape", () => ({ default: cytoscapeMock }));
-vi.mock("cytoscape-cose-bilkent", () => ({ default: vi.fn() }));
+vi.mock("cytoscape-d3-force", () => ({ default: vi.fn() }));
 
 import { CytoscapeRenderer } from "./CytoscapeRenderer";
 
@@ -373,14 +373,19 @@ describe("CytoscapeRenderer", () => {
 
       await waitFor(() => expect(cytoscapeMock).toHaveBeenCalledTimes(1));
 
-      // Tag effect skips on first render — no "cose" call should exist
-      const coseCalls = (mockCyInstance.layout.mock.calls as unknown[][]).filter(
-        (args) => (args[0] as { name: string }).name === "cose",
+      // Tag effect skips on first render — the only layout call should be
+      // the data-diff effect's d3-force, not the tag effect's d3-force.
+      // We verify the tag effect didn't fire by checking layout was called
+      // exactly once (from the data-diff effect only).
+      const allCalls = mockCyInstance.layout.mock.calls as unknown[][];
+      const d3Calls = allCalls.filter(
+        (args) => (args[0] as { name: string }).name === "d3-force",
       );
-      expect(coseCalls).toHaveLength(0);
+      // Only the data-diff effect should fire d3-force, not the tag effect
+      expect(d3Calls).toHaveLength(1);
     });
 
-    it("fires 'cose' layout when tagSelectedValue changes to a string", async () => {
+    it("fires d3-force layout when tagSelectedValue changes to a string", async () => {
       const nodes = [makeNode({ id: "n1" })];
       const { rerender } = render(
         <CytoscapeRenderer
@@ -395,7 +400,7 @@ describe("CytoscapeRenderer", () => {
       await waitFor(() => expect(cytoscapeMock).toHaveBeenCalledTimes(1));
       mockCyInstance.layout.mockClear();
 
-      // Change tagSelectedValue → triggers tag effect with cose
+      // Change tagSelectedValue → triggers tag effect with d3-force
       rerender(
         <CytoscapeRenderer
           {...DEFAULT_PROPS}
@@ -406,14 +411,14 @@ describe("CytoscapeRenderer", () => {
       );
 
       await waitFor(() => {
-        const coseCalls = (mockCyInstance.layout.mock.calls as unknown[][]).filter(
-          (args) => (args[0] as { name: string }).name === "cose",
+        const d3Calls = (mockCyInstance.layout.mock.calls as unknown[][]).filter(
+          (args) => (args[0] as { name: string }).name === "d3-force",
         );
-        expect(coseCalls).toHaveLength(1);
+        expect(d3Calls).toHaveLength(1);
       });
     });
 
-    it("fires 'cose-bilkent' layout when tagSelectedValue changes to null (deselect/restore)", async () => {
+    it("fires d3-force layout when tagSelectedValue changes to null (deselect/restore)", async () => {
       const nodes = [makeNode({ id: "n1" })];
       const { rerender } = render(
         <CytoscapeRenderer
@@ -438,14 +443,14 @@ describe("CytoscapeRenderer", () => {
       );
 
       await waitFor(() => {
-        const bilkentCalls = (mockCyInstance.layout.mock.calls as unknown[][]).filter(
-          (args) => (args[0] as { name: string }).name === "cose-bilkent",
+        const d3Calls = (mockCyInstance.layout.mock.calls as unknown[][]).filter(
+          (args) => (args[0] as { name: string }).name === "d3-force",
         );
-        expect(bilkentCalls.length).toBeGreaterThanOrEqual(1);
+        expect(d3Calls.length).toBeGreaterThanOrEqual(1);
       });
     });
 
-    it("idealEdgeLength returns 50 for matching, 120 for mixed, 200 for non-matching", async () => {
+    it("tag-filtered layout uses dynamic linkDistance: 50 for matching, 120 for mixed, 200 for non-matching", async () => {
       const nodes = [makeNode({ id: "n1" })];
       const { rerender } = render(
         <CytoscapeRenderer
@@ -459,7 +464,22 @@ describe("CytoscapeRenderer", () => {
       await waitFor(() => expect(cytoscapeMock).toHaveBeenCalledTimes(1));
       mockCyInstance.layout.mockClear();
 
-      // Trigger cose layout to capture the idealEdgeLength function
+      // Mock getElementById to return nodes with tags data
+      (mockCyInstance.getElementById as ReturnType<typeof vi.fn>).mockImplementation((id: string) => {
+        const tagMap: Record<string, Record<string, string>> = {
+          "src-match": { team: "platform" },
+          "tgt-match": { team: "platform" },
+          "src-other": { team: "data" },
+          "tgt-other": { team: "infra" },
+          "src-mixed": { team: "platform" },
+          "tgt-mixed": { team: "data" },
+        };
+        return {
+          data: (k: string) => (k === "tags" ? (tagMap[id] ?? {}) : undefined),
+        };
+      });
+
+      // Trigger tag-filtered layout
       rerender(
         <CytoscapeRenderer
           {...DEFAULT_PROPS}
@@ -470,32 +490,25 @@ describe("CytoscapeRenderer", () => {
       );
 
       await waitFor(() => {
-        const coseCalls = (mockCyInstance.layout.mock.calls as unknown[][]).filter(
-          (args) => (args[0] as { name: string }).name === "cose",
+        const d3Calls = (mockCyInstance.layout.mock.calls as unknown[][]).filter(
+          (args) => (args[0] as { name: string }).name === "d3-force",
         );
-        expect(coseCalls).toHaveLength(1);
+        expect(d3Calls).toHaveLength(1);
       });
 
-      const coseArgs = (mockCyInstance.layout.mock.calls as unknown[][]).find(
-        (args) => (args[0] as { name: string }).name === "cose",
+      const d3Args = (mockCyInstance.layout.mock.calls as unknown[][]).find(
+        (args) => (args[0] as { name: string }).name === "d3-force",
       )!;
-      const idealEdgeLength = (
-        coseArgs[0] as { idealEdgeLength: (edge: unknown) => number }
-      ).idealEdgeLength;
-
-      function mockEdge(srcTags: Record<string, string>, tgtTags: Record<string, string>) {
-        return {
-          source: () => ({ data: (k: string) => (k === "tags" ? srcTags : undefined) }),
-          target: () => ({ data: (k: string) => (k === "tags" ? tgtTags : undefined) }),
-        };
-      }
+      const linkDistance = (
+        d3Args[0] as { linkDistance: (d: { source: { id: string }; target: { id: string } }) => number }
+      ).linkDistance;
 
       // Both match "platform" → pull together (50)
-      expect(idealEdgeLength(mockEdge({ team: "platform" }, { team: "platform" }))).toBe(50);
+      expect(linkDistance({ source: { id: "src-match" }, target: { id: "tgt-match" } })).toBe(50);
       // Neither matches → push apart (200)
-      expect(idealEdgeLength(mockEdge({ team: "data" }, { team: "infra" }))).toBe(200);
+      expect(linkDistance({ source: { id: "src-other" }, target: { id: "tgt-other" } })).toBe(200);
       // Mixed (one matches, one doesn't) → standard (120)
-      expect(idealEdgeLength(mockEdge({ team: "platform" }, { team: "data" }))).toBe(120);
+      expect(linkDistance({ source: { id: "src-mixed" }, target: { id: "tgt-mixed" } })).toBe(120);
     });
   });
 });
