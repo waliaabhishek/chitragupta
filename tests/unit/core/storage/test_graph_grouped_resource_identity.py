@@ -224,9 +224,9 @@ class TestResourceViewGroupedMode:
         assert len(resource_group_nodes) == 1
 
         rg = resource_group_nodes[0]
-        assert rg.child_count == 25
-        # Costs: 1.00, 2.00, ..., 25.00 → sum = 325.00
-        assert rg.child_total_cost == Decimal("325.00")
+        assert rg.child_count == 20  # 25 total − 5 top-N shown individually
+        # Costs: 1..25, top-5 = 21..25 (sum 115). Remaining 20 = 325 − 115 = 210
+        assert rg.child_total_cost == Decimal("210.00")
 
         individual_children = [n for n in result.nodes if n.resource_type == "kafka_cluster"]
         assert len(individual_children) == _CLUSTER_TOP_N
@@ -322,9 +322,9 @@ class TestIdentityViewGroupedMode:
         assert len(cluster_group_nodes) == 1
 
         cg = cluster_group_nodes[0]
-        assert cg.child_count == 25
-        # Costs: 1.00, 2.00, ..., 25.00 → sum = 325.00
-        assert cg.child_total_cost == Decimal("325.00")
+        assert cg.child_count == 20  # 25 total − 5 top-N shown individually
+        # Costs: 1..25, top-5 = 21..25 (sum 115). Remaining 20 = 325 − 115 = 210
+        assert cg.child_total_cost == Decimal("210.00")
 
         individual_clusters = [n for n in result.nodes if n.resource_type == "kafka_cluster"]
         assert len(individual_clusters) == _CLUSTER_TOP_N
@@ -540,7 +540,7 @@ class TestThresholdBoundaryResourceView:
         assert len(result.nodes) == 21
 
     def test_resource_view_21_children_triggers_grouping(self, session: Session, repo: SQLModelGraphRepository) -> None:
-        """V11b: 21 child resources (> threshold) → resource_group node with child_count=21."""
+        """V11b: 21 child resources (> threshold) → resource_group node with child_count=16 (remaining)."""
         _add_environment_with_child_clusters(session, n_nonzero=21, base_dim_id=3700)
         session.commit()
 
@@ -548,7 +548,7 @@ class TestThresholdBoundaryResourceView:
 
         resource_group_nodes = [n for n in result.nodes if n.resource_type == "resource_group"]
         assert len(resource_group_nodes) == 1
-        assert resource_group_nodes[0].child_count == 21
+        assert resource_group_nodes[0].child_count == 16  # 21 total − 5 top-N
 
 
 class TestThresholdBoundaryIdentityView:
@@ -565,7 +565,7 @@ class TestThresholdBoundaryIdentityView:
         assert "cluster_group" not in node_types
 
     def test_identity_view_21_clusters_triggers_grouping(self, session: Session, repo: SQLModelGraphRepository) -> None:
-        """V11d: identity charged in 21 clusters (> threshold) → cluster_group with child_count=21."""
+        """V11d: identity charged in 21 clusters (> threshold) → cluster_group with child_count=16 (remaining)."""
         _add_identity_charged_across_clusters(session, IDENTITY_ID, n_nonzero=21, base_dim_id=4600)
         session.commit()
 
@@ -573,4 +573,4 @@ class TestThresholdBoundaryIdentityView:
 
         cluster_group_nodes = [n for n in result.nodes if n.resource_type == "cluster_group"]
         assert len(cluster_group_nodes) == 1
-        assert cluster_group_nodes[0].child_count == 21
+        assert cluster_group_nodes[0].child_count == 16  # 21 total − 5 top-N

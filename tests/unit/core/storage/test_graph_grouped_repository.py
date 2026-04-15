@@ -247,9 +247,9 @@ class TestTopicGroupOnlyActivates:
 
         topic_group_nodes = [n for n in result.nodes if n.resource_type == "topic_group"]
         assert len(topic_group_nodes) == 1
-        assert topic_group_nodes[0].child_count == 25
-        # Costs: 1.00, 2.00, ..., 25.00 → sum = 325.00 (GIT-001)
-        assert topic_group_nodes[0].child_total_cost == Decimal("325.00")
+        assert topic_group_nodes[0].child_count == 20  # 25 total − 5 top-N shown individually
+        # Costs: 1..25, top-5 = 21..25 (sum 115). Remaining 20 = 325 − 115 = 210 (GIT-001)
+        assert topic_group_nodes[0].child_total_cost == Decimal("210.00")
 
         individual_topics = [n for n in result.nodes if n.resource_type == "kafka_topic"]
         assert len(individual_topics) == _CLUSTER_TOP_N
@@ -285,9 +285,9 @@ class TestBothGroupsLarge:
 
         identity_group_nodes = [n for n in result.nodes if n.resource_type == "identity_group"]
         assert len(identity_group_nodes) == 1
-        assert identity_group_nodes[0].child_count == 25
-        # Costs: 1.00, 2.00, ..., 25.00 → sum = 325.00 (GIT-001)
-        assert identity_group_nodes[0].child_total_cost == Decimal("325.00")
+        assert identity_group_nodes[0].child_count == 20  # 25 total − 5 top-N shown individually
+        # Costs: 1..25, top-5 = 21..25 (sum 115). Remaining 20 = 325 − 115 = 210 (GIT-001)
+        assert identity_group_nodes[0].child_total_cost == Decimal("210.00")
 
         node_ids = {n.id for n in result.nodes}
         for edge in result.edges:
@@ -319,7 +319,7 @@ class TestThresholdBoundary:
     def test_threshold_boundary_21_topics_triggers_grouping(
         self, session: Session, repo: SQLModelGraphRepository
     ) -> None:
-        """GIT-003: 21 topics (> threshold) → topic_group node with child_count=21."""
+        """GIT-003: 21 topics (> threshold) → topic_group node with child_count=16 (remaining)."""
         _add_cluster(session)
         _add_topics(session, CLUSTER_ID, n_nonzero=21, base_dim_id=100)
         session.commit()
@@ -328,7 +328,7 @@ class TestThresholdBoundary:
 
         topic_group_nodes = [n for n in result.nodes if n.resource_type == "topic_group"]
         assert len(topic_group_nodes) == 1
-        assert topic_group_nodes[0].child_count == 21
+        assert topic_group_nodes[0].child_count == 16  # 21 total − 5 top-N
 
 
 # ---------------------------------------------------------------------------

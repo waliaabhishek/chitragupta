@@ -2642,14 +2642,17 @@ class SQLModelGraphRepository:
                 # Grouped mode: resource_group + top-N
                 sorted_children = sorted(child_rows, key=_child_cost, reverse=True)
                 included = sorted_children[:_CLUSTER_TOP_N]
-                child_total_cost = sum((_child_cost(r) for r in child_rows), Decimal("0"))
+                all_total = sum((_child_cost(r) for r in child_rows), Decimal("0"))
+                included_cost = sum((_child_cost(r) for r in included), Decimal("0"))
+                remaining_count = len(child_rows) - len(included)
+                remaining_cost = all_total - included_cost
 
                 nodes.append(
                     GraphNodeData(
                         id=f"{focus_id}:resource_group",
                         resource_type="resource_group",
-                        display_name=f"{len(child_rows)} resources",
-                        cost=Decimal("0"),
+                        display_name=f"{remaining_count} resources",
+                        cost=remaining_cost,
                         created_at=None,
                         deleted_at=None,
                         tags={},
@@ -2657,8 +2660,8 @@ class SQLModelGraphRepository:
                         cloud=None,
                         region=None,
                         status="active",
-                        child_count=len(child_rows),
-                        child_total_cost=child_total_cost,
+                        child_count=remaining_count,
+                        child_total_cost=remaining_cost,
                     )
                 )
                 edges.append(
@@ -3266,13 +3269,16 @@ class SQLModelGraphRepository:
                 sorted_topics = sorted(child_rows, key=_topic_cost, reverse=True)
                 included_topics = sorted_topics[:_CLUSTER_TOP_N]
                 topic_total = sum((_topic_cost(r) for r in child_rows), Decimal("0"))
+                included_topic_cost = sum((_topic_cost(r) for r in included_topics), Decimal("0"))
+                remaining_topic_count = len(child_rows) - len(included_topics)
+                remaining_topic_cost = topic_total - included_topic_cost
 
                 nodes.append(
                     GraphNodeData(
                         id=f"{cluster_id}:topic_group",
                         resource_type="topic_group",
-                        display_name=f"{len(child_rows)} topics",
-                        cost=Decimal("0"),
+                        display_name=f"{remaining_topic_count} topics",
+                        cost=remaining_topic_cost,
                         created_at=None,
                         deleted_at=None,
                         tags={},
@@ -3280,8 +3286,8 @@ class SQLModelGraphRepository:
                         cloud=None,
                         region=None,
                         status="active",
-                        child_count=len(child_rows),
-                        child_total_cost=topic_total,
+                        child_count=remaining_topic_count,
+                        child_total_cost=remaining_topic_cost,
                     )
                 )
                 edges.append(
@@ -3385,13 +3391,16 @@ class SQLModelGraphRepository:
                 )
                 included_ids = sorted_ids[:_CLUSTER_TOP_N]
                 id_total = sum(identity_cost_map.values(), Decimal("0"))
+                included_id_cost = sum((identity_cost_map.get(iid, Decimal("0")) for iid in included_ids), Decimal("0"))
+                remaining_id_count = len(identity_ids) - len(included_ids)
+                remaining_id_cost = id_total - included_id_cost
 
                 nodes.append(
                     GraphNodeData(
                         id=f"{cluster_id}:identity_group",
                         resource_type="identity_group",
-                        display_name=f"{len(identity_ids)} identities",
-                        cost=Decimal("0"),
+                        display_name=f"{remaining_id_count} identities",
+                        cost=remaining_id_cost,
                         created_at=None,
                         deleted_at=None,
                         tags={},
@@ -3399,8 +3408,8 @@ class SQLModelGraphRepository:
                         cloud=None,
                         region=None,
                         status="active",
-                        child_count=len(identity_ids),
-                        child_total_cost=id_total,
+                        child_count=remaining_id_count,
+                        child_total_cost=remaining_id_cost,
                     )
                 )
                 edges.append(
@@ -3667,9 +3676,11 @@ class SQLModelGraphRepository:
             where.append(col(ResourceTable.resource_id).in_(cluster_ids))
             cluster_rows = list(self._session.exec(select(ResourceTable).where(*where)).all())
 
-        # Cost per cluster for this identity
+        # Cost per cluster for this identity — scoped to temporally-active resources
+        # so the identity total matches the sum of visible children.
+        active_cluster_ids = [r.resource_id for r in cluster_rows]
         identity_cost_per_cluster: dict[str, Decimal] = {}
-        if cluster_ids:
+        if active_cluster_ids:
             cost_stmt = (
                 select(
                     ChargebackDimensionTable.resource_id,
@@ -3683,7 +3694,7 @@ class SQLModelGraphRepository:
                     col(ChargebackDimensionTable.ecosystem) == ecosystem,
                     col(ChargebackDimensionTable.tenant_id) == tenant_id,
                     col(ChargebackDimensionTable.identity_id) == identity_id,
-                    col(ChargebackDimensionTable.resource_id).in_(cluster_ids),
+                    col(ChargebackDimensionTable.resource_id).in_(active_cluster_ids),
                     col(ChargebackFactTable.timestamp) >= period_start,
                     col(ChargebackFactTable.timestamp) < period_end,
                 )
@@ -3819,14 +3830,17 @@ class SQLModelGraphRepository:
                 # Grouped mode: cluster_group + top-N
                 sorted_clusters = sorted(cluster_rows, key=_cluster_cost, reverse=True)
                 included = sorted_clusters[:_CLUSTER_TOP_N]
-                child_total_cost = sum((_cluster_cost(r) for r in cluster_rows), Decimal("0"))
+                all_cluster_cost = sum((_cluster_cost(r) for r in cluster_rows), Decimal("0"))
+                included_cost = sum((_cluster_cost(r) for r in included), Decimal("0"))
+                remaining_count = len(cluster_rows) - len(included)
+                remaining_cost = all_cluster_cost - included_cost
 
                 nodes.append(
                     GraphNodeData(
                         id=f"{identity_id}:cluster_group",
                         resource_type="cluster_group",
-                        display_name=f"{len(cluster_rows)} clusters",
-                        cost=Decimal("0"),
+                        display_name=f"{remaining_count} clusters",
+                        cost=remaining_cost,
                         created_at=None,
                         deleted_at=None,
                         tags={},
@@ -3834,8 +3848,8 @@ class SQLModelGraphRepository:
                         cloud=None,
                         region=None,
                         status="active",
-                        child_count=len(cluster_rows),
-                        child_total_cost=child_total_cost,
+                        child_count=remaining_count,
+                        child_total_cost=remaining_cost,
                     )
                 )
                 edges.append(
