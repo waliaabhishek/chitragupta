@@ -8,26 +8,16 @@ function baseStylesheet(): cytoscape.StylesheetStyle[] {
         label: "data(display_name)",
         "text-valign": "bottom",
         "text-halign": "center",
-        "font-size": 11,
+        "font-size": 9,
+        "text-wrap": "ellipsis" as const,
+        "text-max-width": "100px",
         shape: "data(shape)" as unknown as cytoscape.Css.NodeShape,
         width: "data(size)" as unknown as number,
         height: "data(size)" as unknown as number,
-        "border-width": 2,
+        "border-width": 1,
         "transition-property":
           "width, height, opacity, border-width, border-color" as unknown as string,
         "transition-duration": 300,
-      },
-    },
-    {
-      selector: "node[icon]",
-      style: {
-        "background-image": "data(icon)" as unknown as string,
-        "background-fit": "none" as unknown as "none",
-        "background-clip": "node" as unknown as "none",
-        "background-width": "55%",
-        "background-height": "55%",
-        "background-position-x": "50%" as unknown as string,
-        "background-position-y": "50%" as unknown as string,
       },
     },
     {
@@ -49,7 +39,7 @@ function baseStylesheet(): cytoscape.StylesheetStyle[] {
       style: {
         "curve-style": "bezier" as const,
         "target-arrow-shape": "triangle" as const,
-        width: 1.5,
+        width: 1,
       },
     },
     {
@@ -57,7 +47,7 @@ function baseStylesheet(): cytoscape.StylesheetStyle[] {
       style: {
         "line-style": "solid" as const,
         "line-color": "#8c8c8c",
-        width: 1.5,
+        width: 1,
       },
     },
     {
@@ -65,7 +55,7 @@ function baseStylesheet(): cytoscape.StylesheetStyle[] {
       style: {
         "line-style": "dashed" as const,
         "line-color": "#1890ff",
-        width: 2,
+        width: 1,
       },
     },
     {
@@ -73,7 +63,7 @@ function baseStylesheet(): cytoscape.StylesheetStyle[] {
       style: {
         "line-style": "dotted" as const,
         "line-color": "#52c41a",
-        width: 1.5,
+        width: 1,
       },
     },
     {
@@ -115,12 +105,12 @@ function baseStylesheet(): cytoscape.StylesheetStyle[] {
     {
       selector: 'node[resource_type = "topic_group"], node[resource_type = "identity_group"], node[resource_type = "resource_group"], node[resource_type = "cluster_group"]',
       style: {
-        "border-width": 3,
+        "border-width": 2,
         "border-style": "double" as const,
-        "font-size": 13,
+        "font-size": 9,
         "font-weight": "bold" as const,
         "text-wrap": "wrap" as const,
-        "text-max-width": "90px",
+        "text-max-width": "70px",
         label: "data(label)",
       },
     },

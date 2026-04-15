@@ -5,7 +5,6 @@ import d3Force from "cytoscape-d3-force";
 import type { GraphRendererProps } from "./types";
 import { getStylesheet } from "./graphStyles";
 import { getNodeShape, getNodeSize } from "./nodeShapes";
-import { getNodeIcon } from "./nodeIcons";
 
 // Register layout extension once at module load time — idempotent.
 cytoscape.use(d3Force);
@@ -65,26 +64,17 @@ interface D3Link {
   target: D3Node;
 }
 
-/** Radius for collision: half the node's visual size + padding for the label below. */
-function nodeCollideRadius(d: D3Node): number {
-  const radius = (d.size ?? 40) / 2;
-  // 14px extra for the label that sits below the node
-  return radius + 14;
-}
-
-/** Link distance: sum of both node radii + gap so edges don't compress nodes together. */
-function nodeLinkDistance(d: D3Link): number {
-  const srcR = (d.source.size ?? 40) / 2;
-  const tgtR = (d.target.size ?? 40) / 2;
-  return srcR + tgtR + 60;
-}
-
-/** Charge strength proportional to node area — big nodes repel more. */
-function nodeChargeStrength(d: D3Node): number {
-  const size = d.size ?? 40;
-  // Base repulsion scaled by area ratio vs a 40px reference node
-  return -300 * (size * size) / (40 * 40);
-}
+// ---------------------------------------------------------------------------
+// Force parameters — tuned for our hub-and-spoke topology (~10-20 nodes,
+// one focal node with radiating neighbors, cost-scaled 10-30px sizes).
+//
+//   linkDistance 150 → ring ~150px from focus, ~78px spacing per neighbor
+//   manyBody -120    → enough to spread 15 nodes with room for labels
+//   linkStrength 0.5 → moderate — keeps structure without rigid propagation
+//   no collision     → repel handles separation at this node count
+//   velocityDecay 0.4, alphaDecay 0.0228 → smooth ~300-iteration settle
+//   fit: false       → fitToFocus handles viewport after settle
+// ---------------------------------------------------------------------------
 
 /** Shared d3-force layout options for the standard (non-tag-filtered) view. */
 function standardLayoutOptions() {
@@ -92,20 +82,24 @@ function standardLayoutOptions() {
     name: "d3-force" as const,
     animate: true,
     infinite: true,
-    randomize: true,
-    fit: true,
+    randomize: false, // we always pre-position nodes (radial or preserved)
+    fit: false,
     padding: 40,
-    // d3-force simulation parameters
     linkId: (d: D3Node) => d.id,
-    linkDistance: nodeLinkDistance,
-    linkStrength: 0.3,
-    manyBodyStrength: nodeChargeStrength,
-    manyBodyDistanceMax: 800,
-    collideRadius: nodeCollideRadius,
-    collideStrength: 1.0,
-    collideIterations: 3,
-    alphaDecay: 0.02,
-    velocityDecay: 0.3,
+    linkDistance: 150,
+    linkStrength: 0.5,
+    manyBodyStrength: -120,
+    collideRadius: 1,
+    collideStrength: 0.001,
+    collideIterations: 1,
+    alphaDecay: 0.0228,
+    velocityDecay: 0.4,
+    // Kill the default forceX/forceY toward (0,0) — the adapter always creates
+    // them, and without explicit xX/yY they pull toward the top-left corner at
+    // strength 0.1, competing with forceCenter at (w/2,h/2) and biasing the
+    // layout into a semicircle.  Can't use 0 (falsy → default 0.1 stays).
+    xStrength: 0.001,
+    yStrength: 0.001,
   };
 }
 
@@ -119,8 +113,8 @@ function tagFilteredLayoutOptions(
     name: "d3-force" as const,
     animate: true,
     infinite: true,
-    randomize: false, // preserve positions from current layout, just re-arrange by tag forces
-    fit: true,
+    randomize: false,
+    fit: false,
     padding: 40,
     linkId: (d: D3Node) => d.id,
     linkDistance: (d: D3Link) => {
@@ -130,20 +124,58 @@ function tagFilteredLayoutOptions(
       const tgtTags = (tgtNode.data("tags") as Record<string, string>) ?? {};
       const srcMatch = srcTags[activeTagKey] === tagSelectedValue;
       const tgtMatch = tgtTags[activeTagKey] === tagSelectedValue;
-      // Tag-matched pairs pull tight, non-matching push far
-      if (srcMatch && tgtMatch) return 50;
-      if (!srcMatch && !tgtMatch) return 200;
-      return 120;
+      if (srcMatch && tgtMatch) return 80;
+      if (!srcMatch && !tgtMatch) return 280;
+      return 180;
     },
-    linkStrength: 0.4,
-    manyBodyStrength: nodeChargeStrength,
-    manyBodyDistanceMax: 800,
-    collideRadius: nodeCollideRadius,
-    collideStrength: 1.0,
-    collideIterations: 3,
-    alphaDecay: 0.02,
-    velocityDecay: 0.3,
+    linkStrength: 0.5,
+    manyBodyStrength: -120,
+    collideRadius: 1,
+    collideStrength: 0.001,
+    collideIterations: 1,
+    alphaDecay: 0.0228,
+    velocityDecay: 0.4,
+    xStrength: 0.001,
+    yStrength: 0.001,
   };
+}
+
+/** Smoothly fit all elements into view, centering on the focus node if present. */
+function fitToFocus(cy: cytoscape.Core, focusId: string | null) {
+  if (typeof cy.elements !== "function" || cy.nodes().length === 0) return;
+  cy.animate({
+    fit: { eles: cy.elements(), padding: 40 },
+    duration: 400,
+    easing: "ease-out",
+    complete: () => {
+      if (!focusId) return;
+      const focusNode = cy.getElementById(focusId);
+      if (focusNode && focusNode.isNode()) {
+        cy.animate({
+          center: { eles: focusNode },
+          duration: 200,
+          easing: "ease-out",
+        });
+      }
+    },
+  });
+}
+
+/** Compute pulse overlay positions for diff-new nodes. */
+function computePulseOverlays(cy: cytoscape.Core): PulseOverlay[] {
+  const newNodes = cy.nodes(".diff-new");
+  const overlays: PulseOverlay[] = [];
+  newNodes.forEach((n) => {
+    const pos = n.renderedPosition();
+    const size = n.renderedStyle("width") as unknown as number;
+    overlays.push({
+      id: n.id(),
+      x: pos.x,
+      y: pos.y,
+      size: typeof size === "number" ? size : 30,
+    });
+  });
+  return overlays;
 }
 
 export function CytoscapeRenderer({
@@ -186,6 +218,10 @@ export function CytoscapeRenderer({
 
   // Track active layout so we can stop it before starting a new one
   const layoutRef = useRef<cytoscape.Layouts | null>(null);
+
+  // Track whether initial layout has been performed — subsequent updates
+  // preserve positions instead of re-randomizing.
+  const hasInitialLayoutRef = useRef(false);
 
   // Mount once — create cy instance
   useEffect(() => {
@@ -278,15 +314,12 @@ export function CytoscapeRenderer({
     layout.run();
   }, [activeTagKey, tagSelectedValue]); // scalars — reference-stable, no spurious re-runs
 
-  // Data diffing — animate transitions on node/edge changes
+  // Data diffing — surgically update nodes/edges, only restart layout when
+  // the topology (set of node IDs) actually changes.  During timelapse or
+  // cost-only refreshes the simulation keeps running undisturbed.
   useEffect(() => {
     const cy = cyRef.current;
     if (!cy) return;
-
-    // Stop any running simulation before re-laying out
-    if (layoutRef.current) {
-      layoutRef.current.stop();
-    }
 
     const costs = nodes.map((n) => n.cost);
     const minCost = Math.min(...costs, 0);
@@ -300,6 +333,9 @@ export function CytoscapeRenderer({
     const entering = nodes.filter((n) => !prevIds.has(n.id));
     const persisting = nodes.filter((n) => prevIds.has(n.id));
 
+    const topologyChanged = entering.length > 0 || exiting.length > 0;
+
+    // --- Exiting nodes: fade out then remove ---
     if (exiting.length > 0) {
       const exitingEles = cy.nodes().filter((n) => exitingSet.has(n.id()));
       exitingEles.animate({ style: { opacity: 0 } }, { duration: 300 });
@@ -312,6 +348,7 @@ export function CytoscapeRenderer({
       }, 320);
     }
 
+    // --- Persisting nodes: update data in place ---
     for (const node of persisting) {
       const cyNode = cy.getElementById(node.id);
       cyNode.data({
@@ -319,25 +356,68 @@ export function CytoscapeRenderer({
         size: getNodeSize(node.resource_type, node.cost, minCost, maxCost),
         shape: getNodeShape(node.resource_type),
         label: computeNodeLabel(node),
-        icon: getNodeIcon(node.resource_type, isDark),
+
       });
     }
 
+    // --- Entering nodes: position near a connected neighbor, fade in ---
     for (const node of entering) {
-      cy.add({
+      let pos = { x: 0, y: 0 };
+
+      // Try to find a persisting neighbor to cluster near
+      const connectedEdge = edges.find(
+        (e) =>
+          (e.source === node.id &&
+            prevIds.has(e.target) &&
+            nextIds.has(e.target)) ||
+          (e.target === node.id &&
+            prevIds.has(e.source) &&
+            nextIds.has(e.source)),
+      );
+      if (connectedEdge) {
+        const neighborId =
+          connectedEdge.source === node.id
+            ? connectedEdge.target
+            : connectedEdge.source;
+        const neighborNode = cy.getElementById(neighborId);
+        if (neighborNode && neighborNode.isNode()) {
+          const np = neighborNode.position();
+          pos = {
+            x: np.x + (Math.random() - 0.5) * 80,
+            y: np.y + (Math.random() - 0.5) * 80,
+          };
+        }
+      } else if (focusIdRef.current) {
+        // Fallback: position near focused node
+        const focusNode = cy.getElementById(focusIdRef.current);
+        if (focusNode && focusNode.isNode()) {
+          const fp = focusNode.position();
+          pos = {
+            x: fp.x + (Math.random() - 0.5) * 120,
+            y: fp.y + (Math.random() - 0.5) * 120,
+          };
+        }
+      }
+
+      const cyNode = cy.add({
         group: "nodes",
         data: {
           ...node,
           size: getNodeSize(node.resource_type, node.cost, minCost, maxCost),
           shape: getNodeShape(node.resource_type),
           label: computeNodeLabel(node),
-          icon: getNodeIcon(node.resource_type, isDark),
+  
         },
-        position: { x: 0, y: 0 },
+        position: pos,
       });
+      // Fade in — guard for test environments where cy.add returns undefined
+      if (cyNode && typeof cyNode.style === "function") {
+        cyNode.style("opacity", 0);
+        cyNode.animate({ style: { opacity: 1 } }, { duration: 400 });
+      }
     }
 
-    // Remove old edges, add new ones
+    // --- Edges: remove old, add new ---
     for (const edgeId of edgeIdsRef.current) {
       const el = cy.getElementById(edgeId);
       if (el && typeof el.remove === "function") el.remove();
@@ -359,7 +439,7 @@ export function CytoscapeRenderer({
       edgeIdsRef.current.add(edgeId);
     }
 
-    // Apply fading
+    // --- Apply fading ---
     cy.nodes().removeClass("faded");
     if (fadedNodeIds.size > 0) {
       cy.nodes()
@@ -367,7 +447,7 @@ export function CytoscapeRenderer({
         .addClass("faded");
     }
 
-    // Apply diff classes from node data
+    // --- Apply diff classes ---
     cy.nodes().removeClass("diff-increase diff-decrease diff-new diff-deleted");
     for (const node of [...persisting, ...entering]) {
       const cyNode = cy.getElementById(node.id);
@@ -384,54 +464,90 @@ export function CytoscapeRenderer({
       }
     }
 
-    // Clear old pulse overlays before layout runs
     setPulseOverlays([]);
 
-    if (nodes.length > 0) {
-      // With infinite: true the simulation never emits layoutstop on its own.
-      // Use a one-shot tick callback to fit the viewport once the layout has
-      // largely settled (progress ≥ 0.8 means ~80% of alpha has decayed).
+    if (nodes.length === 0) return;
+
+    // --- Layout decision ---
+    const isFirstLayout = !hasInitialLayoutRef.current;
+    const isFullReset = isFirstLayout || persisting.length === 0;
+
+    if (isFullReset) {
+      // Pre-position nodes radially so the simulation starts from a meaningful
+      // layout.  With randomize: false the simulation uses these positions,
+      // letting us call fitToFocus immediately (no blank canvas).
+      const cx = typeof cy.width === "function" ? cy.width() / 2 : 400;
+      const ch = typeof cy.height === "function" ? cy.height() / 2 : 300;
+      const focusCyNode = focusIdRef.current
+        ? cy.getElementById(focusIdRef.current)
+        : null;
+      const hasFocus = focusCyNode && focusCyNode.isNode();
+      if (hasFocus) {
+        focusCyNode.position({ x: cx, y: ch });
+        const others = cy.nodes().filter((n) => n.id() !== focusIdRef.current);
+        const count = others.length;
+        if (count > 0) {
+          const radius = 150; // matches linkDistance
+          others.forEach((node, i) => {
+            const angle = (2 * Math.PI * i) / count - Math.PI / 2;
+            node.position({
+              x: cx + radius * Math.cos(angle),
+              y: ch + radius * Math.sin(angle),
+            });
+          });
+        }
+      } else {
+        // No focus — arrange all in a circle around center
+        const allCyNodes = cy.nodes();
+        const count = allCyNodes.length;
+        if (count > 0) {
+          const radius = 150;
+          allCyNodes.forEach((node, i) => {
+            const angle = (2 * Math.PI * i) / count - Math.PI / 2;
+            node.position({
+              x: cx + radius * Math.cos(angle),
+              y: ch + radius * Math.sin(angle),
+            });
+          });
+        }
+      }
+
+      hasInitialLayoutRef.current = true;
+      if (layoutRef.current) layoutRef.current.stop();
       let settled = false;
       const opts = {
         ...standardLayoutOptions(),
         tick: (progress: number) => {
           if (settled || progress < 0.8) return;
           settled = true;
-
-          // Fit viewport around focused node + its connected neighbors
-          const currentFocusId = focusIdRef.current;
-          if (currentFocusId) {
-            const focusNode = cy.getElementById(currentFocusId);
-            if (focusNode && focusNode.isNode()) {
-              const neighborhood = focusNode.neighborhood().add(focusNode);
-              cy.animate({
-                fit: { eles: neighborhood, padding: 60 },
-                duration: 400,
-                easing: "ease-out",
-              });
-            }
-          }
-
-          // Compute pulse overlay positions for diff-new nodes
-          const newNodes = cy.nodes(".diff-new");
-          const overlays: PulseOverlay[] = [];
-          newNodes.forEach((n) => {
-            const pos = n.renderedPosition();
-            const size = n.renderedStyle("width") as unknown as number;
-            overlays.push({
-              id: n.id(),
-              x: pos.x,
-              y: pos.y,
-              size: typeof size === "number" ? size : 30,
-            });
-          });
-          setPulseOverlays(overlays);
+          setPulseOverlays(computePulseOverlays(cy));
         },
       };
-
       const layout = cy.layout(opts as Parameters<typeof cy.layout>[0]);
       layoutRef.current = layout;
       layout.run();
+      fitToFocus(cy, focusIdRef.current);
+    } else if (topologyChanged) {
+      // Partial topology change — positions already set (persisting + near-neighbor)
+      if (layoutRef.current) layoutRef.current.stop();
+      let settled = false;
+      const opts = {
+        ...standardLayoutOptions(),
+        tick: (progress: number) => {
+          if (settled || progress < 0.8) return;
+          settled = true;
+          setPulseOverlays(computePulseOverlays(cy));
+        },
+      };
+      const layout = cy.layout(opts as Parameters<typeof cy.layout>[0]);
+      layoutRef.current = layout;
+      layout.run();
+      fitToFocus(cy, focusIdRef.current);
+    } else {
+      // Topology unchanged (timelapse cost update) — no layout restart,
+      // just re-center on the focused node.
+      fitToFocus(cy, focusIdRef.current);
+      setPulseOverlays(computePulseOverlays(cy));
     }
   }, [nodes, edges, isDark]); // eslint-disable-line react-hooks/exhaustive-deps
 

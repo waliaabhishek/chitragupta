@@ -237,8 +237,8 @@ describe("CytoscapeRenderer", () => {
       expect(nodeAdds).toHaveLength(1);
       const addedData = (nodeAdds[0] as { data: { size: number } }).data;
       // Group nodes now scale with cost like all other nodes
-      expect(addedData.size).toBeGreaterThanOrEqual(20);
-      expect(addedData.size).toBeLessThanOrEqual(80);
+      expect(addedData.size).toBeGreaterThanOrEqual(10);
+      expect(addedData.size).toBeLessThanOrEqual(30);
     });
   });
 
@@ -505,12 +505,12 @@ describe("CytoscapeRenderer", () => {
         d3Args[0] as { linkDistance: (d: { source: { id: string }; target: { id: string } }) => number }
       ).linkDistance;
 
-      // Both match "platform" → pull together (50)
-      expect(linkDistance({ source: { id: "src-match" }, target: { id: "tgt-match" } })).toBe(50);
-      // Neither matches → push apart (200)
-      expect(linkDistance({ source: { id: "src-other" }, target: { id: "tgt-other" } })).toBe(200);
-      // Mixed (one matches, one doesn't) → standard (120)
-      expect(linkDistance({ source: { id: "src-mixed" }, target: { id: "tgt-mixed" } })).toBe(120);
+      // Both match "platform" → pull together (80)
+      expect(linkDistance({ source: { id: "src-match" }, target: { id: "tgt-match" } })).toBe(80);
+      // Neither matches → push apart (280)
+      expect(linkDistance({ source: { id: "src-other" }, target: { id: "tgt-other" } })).toBe(280);
+      // Mixed (one matches, one doesn't) → standard (180)
+      expect(linkDistance({ source: { id: "src-mixed" }, target: { id: "tgt-mixed" } })).toBe(180);
     });
   });
 });

@@ -3,9 +3,9 @@ export function costToSize(
   minCost: number,
   maxCost: number,
 ): number {
-  if (maxCost <= minCost) return 40;
-  const MIN_SIZE = 20;
-  const MAX_SIZE = 80;
+  if (maxCost <= minCost) return 16;
+  const MIN_SIZE = 10;
+  const MAX_SIZE = 30;
   if (cost <= 0) return MIN_SIZE;
   const logMin = Math.log1p(minCost);
   const logMax = Math.log1p(maxCost);
