@@ -32,6 +32,9 @@ const SHAPE_MAP: Record<string, string> = {
   identity_group: "round-rectangle",
   zero_cost_summary: "round-rectangle",
   capped_summary: "round-rectangle",
+  // Synthetic group nodes (TASK-245)
+  resource_group: "round-rectangle",
+  cluster_group: "round-rectangle",
 };
 
 const GROUP_TYPES = new Set([
@@ -39,6 +42,8 @@ const GROUP_TYPES = new Set([
   "identity_group",
   "zero_cost_summary",
   "capped_summary",
+  "resource_group",
+  "cluster_group",
 ]);
 
 const GROUP_NODE_SIZE = 100;
@@ -62,5 +67,10 @@ export function isGroupNode(resourceType: string): boolean {
 }
 
 export function isExpandableGroup(resourceType: string): boolean {
-  return resourceType === "topic_group" || resourceType === "identity_group";
+  return (
+    resourceType === "topic_group" ||
+    resourceType === "identity_group" ||
+    resourceType === "resource_group" ||
+    resourceType === "cluster_group"
+  );
 }

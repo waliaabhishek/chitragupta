@@ -2364,7 +2364,7 @@ class SQLModelGraphRepository:
         at: datetime,
         period_start: datetime,
         period_end: datetime,
-        expand: Literal["topics", "identities"] | None = None,
+        expand: Literal["topics", "identities", "resources", "clusters"] | None = None,
         _force_full: bool = False,
     ) -> GraphNeighborhood:
         if focus_id is None:
@@ -2387,12 +2387,31 @@ class SQLModelGraphRepository:
                     _force_full=_force_full,
                 )
             else:
-                return self._resource_view(focus_row, ecosystem, tenant_id, depth, at, period_start, period_end)
+                return self._resource_view(
+                    focus_row,
+                    ecosystem,
+                    tenant_id,
+                    depth,
+                    at,
+                    period_start,
+                    period_end,
+                    expand=expand,
+                    _force_full=_force_full,
+                )
 
         # Fall back to identity
         identity_row = self._session.get(IdentityTable, (ecosystem, tenant_id, focus_id))
         if identity_row is not None:
-            return self._identity_view(identity_row, ecosystem, tenant_id, at, period_start, period_end)
+            return self._identity_view(
+                identity_row,
+                ecosystem,
+                tenant_id,
+                at,
+                period_start,
+                period_end,
+                expand=expand,
+                _force_full=_force_full,
+            )
 
         raise KeyError(f"Entity {focus_id!r} not found for tenant {tenant_id!r}")
 
@@ -2456,7 +2475,7 @@ class SQLModelGraphRepository:
 
     # --- Resource view (environment or other non-cluster focus) ---
 
-    def _resource_view(
+    def _resource_view(  # noqa: C901
         self,
         focus_row: ResourceTable,
         ecosystem: str,
@@ -2465,6 +2484,8 @@ class SQLModelGraphRepository:
         at: datetime,
         period_start: datetime,
         period_end: datetime,
+        expand: Literal["topics", "identities", "resources", "clusters"] | None = None,
+        _force_full: bool = False,
     ) -> GraphNeighborhood:
         """Return focus node + children up to `depth` hops via parent_id relationships."""
         all_resource_rows: list[ResourceTable] = [focus_row]
@@ -2479,6 +2500,203 @@ class SQLModelGraphRepository:
             all_resource_rows.extend(children)
             current_level = [c.resource_id for c in children]
 
+        focus_id = focus_row.resource_id
+        child_rows = all_resource_rows[1:]  # All except focus
+
+        # Grouping: apply when children exceed threshold (and not forced full)
+        if not _force_full and len(child_rows) > _CLUSTER_GROUP_THRESHOLD:
+            child_ids = [r.resource_id for r in child_rows]
+            child_cost_map = self._aggregate_costs(
+                ecosystem, tenant_id, child_ids, period_start, period_end, group_by_column="resource_id"
+            )
+
+            def _child_cost(r: ResourceTable) -> Decimal:
+                return child_cost_map.get(r.resource_id, Decimal("0"))
+
+            # Focus node cost
+            if focus_row.resource_type == "environment":
+                focus_cost = self._aggregate_costs(
+                    ecosystem, tenant_id, [focus_id], period_start, period_end, group_by_column="env_id"
+                ).get(focus_id, Decimal("0"))
+            else:
+                focus_cost = self._aggregate_costs(
+                    ecosystem, tenant_id, [focus_id], period_start, period_end, group_by_column="resource_id"
+                ).get(focus_id, Decimal("0"))
+
+            focus_tags = self._tags.find_tags_for_entities(tenant_id, "resource", [focus_id])
+            focus_node = GraphNodeData(
+                id=focus_id,
+                resource_type=focus_row.resource_type,
+                display_name=focus_row.display_name,
+                cost=focus_cost,
+                created_at=focus_row.created_at,
+                deleted_at=focus_row.deleted_at,
+                tags={t.tag_key: t.tag_value for t in focus_tags.get(focus_id, [])},
+                parent_id=focus_row.parent_id,
+                cloud=focus_row.cloud,
+                region=focus_row.region,
+                status=focus_row.status,
+            )
+
+            nodes: list[GraphNodeData] = [focus_node]
+            edges: list[GraphEdgeData] = []
+
+            if expand == "resources":
+                # Sort by cost DESC, show up to cap non-zero individually, collapse zero-cost
+                sorted_children = sorted(child_rows, key=_child_cost, reverse=True)
+                nonzero_children = [r for r in sorted_children if _child_cost(r) > Decimal("0")]
+                zero_children = [r for r in sorted_children if _child_cost(r) == Decimal("0")]
+
+                included = nonzero_children[:_CLUSTER_EXPAND_CAP]
+                overflow = nonzero_children[_CLUSTER_EXPAND_CAP:]
+
+                included_ids = [r.resource_id for r in included]
+                tags_map = (
+                    self._tags.find_tags_for_entities(tenant_id, "resource", included_ids) if included_ids else {}
+                )
+
+                for r in included:
+                    nodes.append(
+                        GraphNodeData(
+                            id=r.resource_id,
+                            resource_type=r.resource_type,
+                            display_name=r.display_name,
+                            cost=_child_cost(r),
+                            created_at=r.created_at,
+                            deleted_at=r.deleted_at,
+                            tags={t.tag_key: t.tag_value for t in tags_map.get(r.resource_id, [])},
+                            parent_id=r.parent_id,
+                            cloud=r.cloud,
+                            region=r.region,
+                            status=r.status,
+                        )
+                    )
+                    edges.append(
+                        GraphEdgeData(
+                            source=r.parent_id or focus_id,
+                            target=r.resource_id,
+                            relationship_type=EdgeType.parent,
+                        )
+                    )
+
+                if overflow:
+                    overflow_count = len(overflow)
+                    overflow_cost = sum((_child_cost(r) for r in overflow), Decimal("0"))
+                    nodes.append(
+                        GraphNodeData(
+                            id=f"{focus_id}:capped_resources",
+                            resource_type="capped_summary",
+                            display_name=f"{overflow_count} more resources",
+                            cost=overflow_cost,
+                            created_at=None,
+                            deleted_at=None,
+                            tags={},
+                            parent_id=focus_id,
+                            cloud=None,
+                            region=None,
+                            status="active",
+                            child_count=overflow_count,
+                            child_total_cost=overflow_cost,
+                        )
+                    )
+                    edges.append(
+                        GraphEdgeData(
+                            source=focus_id,
+                            target=f"{focus_id}:capped_resources",
+                            relationship_type=EdgeType.parent,
+                        )
+                    )
+
+                if zero_children:
+                    zero_count = len(zero_children)
+                    nodes.append(
+                        GraphNodeData(
+                            id=f"{focus_id}:zero_cost_resources",
+                            resource_type="zero_cost_summary",
+                            display_name=f"{zero_count} others at $0",
+                            cost=Decimal("0"),
+                            created_at=None,
+                            deleted_at=None,
+                            tags={},
+                            parent_id=focus_id,
+                            cloud=None,
+                            region=None,
+                            status="active",
+                            child_count=zero_count,
+                            child_total_cost=Decimal("0"),
+                        )
+                    )
+                    edges.append(
+                        GraphEdgeData(
+                            source=focus_id,
+                            target=f"{focus_id}:zero_cost_resources",
+                            relationship_type=EdgeType.parent,
+                        )
+                    )
+
+            else:
+                # Grouped mode: resource_group + top-N
+                sorted_children = sorted(child_rows, key=_child_cost, reverse=True)
+                included = sorted_children[:_CLUSTER_TOP_N]
+                child_total_cost = sum((_child_cost(r) for r in child_rows), Decimal("0"))
+
+                nodes.append(
+                    GraphNodeData(
+                        id=f"{focus_id}:resource_group",
+                        resource_type="resource_group",
+                        display_name=f"{len(child_rows)} resources",
+                        cost=Decimal("0"),
+                        created_at=None,
+                        deleted_at=None,
+                        tags={},
+                        parent_id=focus_id,
+                        cloud=None,
+                        region=None,
+                        status="active",
+                        child_count=len(child_rows),
+                        child_total_cost=child_total_cost,
+                    )
+                )
+                edges.append(
+                    GraphEdgeData(
+                        source=focus_id,
+                        target=f"{focus_id}:resource_group",
+                        relationship_type=EdgeType.parent,
+                    )
+                )
+
+                included_ids = [r.resource_id for r in included]
+                tags_map = (
+                    self._tags.find_tags_for_entities(tenant_id, "resource", included_ids) if included_ids else {}
+                )
+
+                for r in included:
+                    nodes.append(
+                        GraphNodeData(
+                            id=r.resource_id,
+                            resource_type=r.resource_type,
+                            display_name=r.display_name,
+                            cost=_child_cost(r),
+                            created_at=r.created_at,
+                            deleted_at=r.deleted_at,
+                            tags={t.tag_key: t.tag_value for t in tags_map.get(r.resource_id, [])},
+                            parent_id=r.parent_id,
+                            cloud=r.cloud,
+                            region=r.region,
+                            status=r.status,
+                        )
+                    )
+                    edges.append(
+                        GraphEdgeData(
+                            source=r.parent_id or focus_id,
+                            target=r.resource_id,
+                            relationship_type=EdgeType.parent,
+                        )
+                    )
+
+            return GraphNeighborhood(nodes=nodes, edges=edges)
+
+        # Passthrough: existing behavior (small count or _force_full)
         resource_ids = [r.resource_id for r in all_resource_rows]
         # Children always group by resource_id; only environments aggregate via env_id.
         cost_map = self._aggregate_costs(
@@ -2501,7 +2719,7 @@ class SQLModelGraphRepository:
         else:
             focus_cost = cost_map.get(focus_row.resource_id, Decimal("0"))
 
-        nodes = [
+        pt_nodes = [
             GraphNodeData(
                 id=r.resource_id,
                 resource_type=r.resource_type,
@@ -2519,9 +2737,8 @@ class SQLModelGraphRepository:
             )
             for r in all_resource_rows
         ]
-        focus_id = focus_row.resource_id
         # Parent edges: parent → child direction (source=parent, target=child)
-        edges = [
+        pt_edges = [
             GraphEdgeData(
                 source=r.parent_id or focus_id,
                 target=r.resource_id,
@@ -2530,7 +2747,7 @@ class SQLModelGraphRepository:
             for r in all_resource_rows
             if r.resource_id != focus_id
         ]
-        return GraphNeighborhood(nodes=nodes, edges=edges)
+        return GraphNeighborhood(nodes=pt_nodes, edges=pt_edges)
 
     # --- Cluster view ---
 
@@ -2637,7 +2854,7 @@ class SQLModelGraphRepository:
         at: datetime,
         period_start: datetime,
         period_end: datetime,
-        expand: Literal["topics", "identities"] | None = None,
+        expand: Literal["topics", "identities", "resources", "clusters"] | None = None,
         _force_full: bool = False,
     ) -> GraphNeighborhood:
         """Dispatcher: grouped summary (default), expand, or full (_force_full / small clusters)."""
@@ -3340,7 +3557,7 @@ class SQLModelGraphRepository:
 
     # --- Identity view ---
 
-    def _identity_view(
+    def _identity_view(  # noqa: C901
         self,
         focus_row: IdentityTable,
         ecosystem: str,
@@ -3348,6 +3565,8 @@ class SQLModelGraphRepository:
         at: datetime,
         period_start: datetime,
         period_end: datetime,
+        expand: Literal["topics", "identities", "resources", "clusters"] | None = None,
+        _force_full: bool = False,
     ) -> GraphNeighborhood:
         """Return identity node at center + all clusters it's charged in + charge edges."""
         identity_id = focus_row.identity_id
@@ -3399,10 +3618,8 @@ class SQLModelGraphRepository:
                 if row[0] is not None:
                     identity_cost_per_cluster[row[0]] = Decimal(row[1] or "0")
 
-        # Tag resolution
+        # Tag resolution for identity center node
         identity_tags = self._tags.find_tags_for_entities(tenant_id, "identity", [identity_id])
-        cluster_resource_ids = [r.resource_id for r in cluster_rows]
-        resource_tags = self._tags.find_tags_for_entities(tenant_id, "resource", cluster_resource_ids)
 
         # Build identity center node
         total_cost = sum(identity_cost_per_cluster.values(), Decimal("0"))
@@ -3419,6 +3636,176 @@ class SQLModelGraphRepository:
             region=None,
             status="active" if focus_row.deleted_at is None else "deleted",
         )
+
+        # Grouping: apply when cluster count exceeds threshold (and not forced full)
+        if not _force_full and len(cluster_rows) > _CLUSTER_GROUP_THRESHOLD:
+
+            def _cluster_cost(r: ResourceTable) -> Decimal:
+                return identity_cost_per_cluster.get(r.resource_id, Decimal("0"))
+
+            nodes: list[GraphNodeData] = [identity_node]
+            edges: list[GraphEdgeData] = []
+
+            if expand == "clusters":
+                # Sort by cost DESC, show up to cap non-zero individually, collapse zero-cost
+                sorted_clusters = sorted(cluster_rows, key=_cluster_cost, reverse=True)
+                nonzero_clusters = [r for r in sorted_clusters if _cluster_cost(r) > Decimal("0")]
+                zero_clusters = [r for r in sorted_clusters if _cluster_cost(r) == Decimal("0")]
+
+                included = nonzero_clusters[:_CLUSTER_EXPAND_CAP]
+                overflow = nonzero_clusters[_CLUSTER_EXPAND_CAP:]
+
+                included_ids = [r.resource_id for r in included]
+                resource_tags = (
+                    self._tags.find_tags_for_entities(tenant_id, "resource", included_ids) if included_ids else {}
+                )
+
+                for r in included:
+                    nodes.append(
+                        GraphNodeData(
+                            id=r.resource_id,
+                            resource_type=r.resource_type,
+                            display_name=r.display_name,
+                            cost=_cluster_cost(r),
+                            created_at=r.created_at,
+                            deleted_at=r.deleted_at,
+                            tags={t.tag_key: t.tag_value for t in resource_tags.get(r.resource_id, [])},
+                            parent_id=r.parent_id,
+                            cloud=r.cloud,
+                            region=r.region,
+                            status=r.status,
+                        )
+                    )
+                    edges.append(
+                        GraphEdgeData(
+                            source=r.resource_id,
+                            target=identity_id,
+                            relationship_type=EdgeType.charge,
+                            cost=_cluster_cost(r),
+                        )
+                    )
+
+                if overflow:
+                    overflow_count = len(overflow)
+                    overflow_cost = sum((_cluster_cost(r) for r in overflow), Decimal("0"))
+                    nodes.append(
+                        GraphNodeData(
+                            id=f"{identity_id}:capped_clusters",
+                            resource_type="capped_summary",
+                            display_name=f"{overflow_count} more clusters",
+                            cost=overflow_cost,
+                            created_at=None,
+                            deleted_at=None,
+                            tags={},
+                            parent_id=None,
+                            cloud=None,
+                            region=None,
+                            status="active",
+                            child_count=overflow_count,
+                            child_total_cost=overflow_cost,
+                        )
+                    )
+                    edges.append(
+                        GraphEdgeData(
+                            source=f"{identity_id}:capped_clusters",
+                            target=identity_id,
+                            relationship_type=EdgeType.charge,
+                        )
+                    )
+
+                if zero_clusters:
+                    zero_count = len(zero_clusters)
+                    nodes.append(
+                        GraphNodeData(
+                            id=f"{identity_id}:zero_cost_clusters",
+                            resource_type="zero_cost_summary",
+                            display_name=f"{zero_count} others at $0",
+                            cost=Decimal("0"),
+                            created_at=None,
+                            deleted_at=None,
+                            tags={},
+                            parent_id=None,
+                            cloud=None,
+                            region=None,
+                            status="active",
+                            child_count=zero_count,
+                            child_total_cost=Decimal("0"),
+                        )
+                    )
+                    edges.append(
+                        GraphEdgeData(
+                            source=f"{identity_id}:zero_cost_clusters",
+                            target=identity_id,
+                            relationship_type=EdgeType.charge,
+                        )
+                    )
+
+            else:
+                # Grouped mode: cluster_group + top-N
+                sorted_clusters = sorted(cluster_rows, key=_cluster_cost, reverse=True)
+                included = sorted_clusters[:_CLUSTER_TOP_N]
+                child_total_cost = sum((_cluster_cost(r) for r in cluster_rows), Decimal("0"))
+
+                nodes.append(
+                    GraphNodeData(
+                        id=f"{identity_id}:cluster_group",
+                        resource_type="cluster_group",
+                        display_name=f"{len(cluster_rows)} clusters",
+                        cost=Decimal("0"),
+                        created_at=None,
+                        deleted_at=None,
+                        tags={},
+                        parent_id=None,
+                        cloud=None,
+                        region=None,
+                        status="active",
+                        child_count=len(cluster_rows),
+                        child_total_cost=child_total_cost,
+                    )
+                )
+                edges.append(
+                    GraphEdgeData(
+                        source=f"{identity_id}:cluster_group",
+                        target=identity_id,
+                        relationship_type=EdgeType.charge,
+                    )
+                )
+
+                included_ids = [r.resource_id for r in included]
+                resource_tags = (
+                    self._tags.find_tags_for_entities(tenant_id, "resource", included_ids) if included_ids else {}
+                )
+
+                for r in included:
+                    nodes.append(
+                        GraphNodeData(
+                            id=r.resource_id,
+                            resource_type=r.resource_type,
+                            display_name=r.display_name,
+                            cost=_cluster_cost(r),
+                            created_at=r.created_at,
+                            deleted_at=r.deleted_at,
+                            tags={t.tag_key: t.tag_value for t in resource_tags.get(r.resource_id, [])},
+                            parent_id=r.parent_id,
+                            cloud=r.cloud,
+                            region=r.region,
+                            status=r.status,
+                        )
+                    )
+                    edges.append(
+                        GraphEdgeData(
+                            source=r.resource_id,
+                            target=identity_id,
+                            relationship_type=EdgeType.charge,
+                            cost=_cluster_cost(r),
+                        )
+                    )
+
+            return GraphNeighborhood(nodes=nodes, edges=edges)
+
+        # Passthrough: existing behavior (small count or _force_full)
+        cluster_resource_ids = [r.resource_id for r in cluster_rows]
+        resource_tags = self._tags.find_tags_for_entities(tenant_id, "resource", cluster_resource_ids)
 
         # Cluster nodes
         cluster_nodes = [

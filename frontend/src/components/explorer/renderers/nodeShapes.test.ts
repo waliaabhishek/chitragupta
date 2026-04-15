@@ -23,6 +23,15 @@ describe("nodeShapes — getNodeShape (group types)", () => {
   it("returns round-rectangle for capped_summary", () => {
     expect(getNodeShape("capped_summary")).toBe("round-rectangle");
   });
+
+  // TASK-245
+  it("returns round-rectangle for resource_group", () => {
+    expect(getNodeShape("resource_group")).toBe("round-rectangle");
+  });
+
+  it("returns round-rectangle for cluster_group", () => {
+    expect(getNodeShape("cluster_group")).toBe("round-rectangle");
+  });
 });
 
 describe("nodeShapes — getNodeSize", () => {
@@ -92,6 +101,15 @@ describe("nodeShapes — isGroupNode", () => {
   it("returns false for unknown type", () => {
     expect(isGroupNode("unknown_type")).toBe(false);
   });
+
+  // TASK-245
+  it("returns true for resource_group", () => {
+    expect(isGroupNode("resource_group")).toBe(true);
+  });
+
+  it("returns true for cluster_group", () => {
+    expect(isGroupNode("cluster_group")).toBe(true);
+  });
 });
 
 describe("nodeShapes — isExpandableGroup", () => {
@@ -121,5 +139,14 @@ describe("nodeShapes — isExpandableGroup", () => {
 
   it("returns false for unknown type", () => {
     expect(isExpandableGroup("unknown_resource")).toBe(false);
+  });
+
+  // TASK-245
+  it("returns true for resource_group", () => {
+    expect(isExpandableGroup("resource_group")).toBe(true);
+  });
+
+  it("returns true for cluster_group", () => {
+    expect(isExpandableGroup("cluster_group")).toBe(true);
   });
 });

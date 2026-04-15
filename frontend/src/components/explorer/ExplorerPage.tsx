@@ -38,6 +38,8 @@ const { Text } = Typography;
 const GROUP_EXPAND_MAP: Record<string, string> = {
   topic_group: "topics",
   identity_group: "identities",
+  resource_group: "resources",
+  cluster_group: "clusters",
 };
 
 function enrichWithPhantomNodes(

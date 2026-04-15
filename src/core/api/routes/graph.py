@@ -37,8 +37,8 @@ async def get_graph_neighborhood(
     end_date: Annotated[date | None, Query(description="Cost period end date")] = None,
     timezone: Annotated[str | None, Query(description="IANA timezone for date boundaries")] = None,
     expand: Annotated[
-        Literal["topics", "identities"] | None,
-        Query(description='Expand a cluster group: "topics" or "identities"'),
+        Literal["topics", "identities", "resources", "clusters"] | None,
+        Query(description='Expand a group: "topics", "identities", "resources", or "clusters"'),
     ] = None,
 ) -> GraphResponse:
     at_dt = validate_datetime_param(at, "at")

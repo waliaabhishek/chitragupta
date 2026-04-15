@@ -29,6 +29,16 @@ function computeNodeLabel(node: GraphRendererProps["nodes"][number]): string {
     const count = child_count ?? "?";
     return `${count} more (capped)`;
   }
+  if (resource_type === "resource_group") {
+    const count = child_count ?? "?";
+    const cost = child_total_cost != null ? `$${child_total_cost.toFixed(2)}` : "";
+    return cost ? `${count} resources\n${cost} total` : `${count} resources`;
+  }
+  if (resource_type === "cluster_group") {
+    const count = child_count ?? "?";
+    const cost = child_total_cost != null ? `$${child_total_cost.toFixed(2)}` : "";
+    return cost ? `${count} clusters\n${cost} total` : `${count} clusters`;
+  }
   return display_name ?? id;
 }
 

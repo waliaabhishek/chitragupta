@@ -101,7 +101,7 @@ function baseStylesheet(): cytoscape.StylesheetStyle[] {
     },
     // Group nodes — expandable aggregates (topic_group, identity_group)
     {
-      selector: 'node[resource_type = "topic_group"], node[resource_type = "identity_group"]',
+      selector: 'node[resource_type = "topic_group"], node[resource_type = "identity_group"], node[resource_type = "resource_group"], node[resource_type = "cluster_group"]',
       style: {
         "border-width": 3,
         "border-style": "double" as const,
@@ -150,7 +150,7 @@ export function getStylesheet(isDark: boolean): cytoscape.StylesheetStyle[] {
         },
       },
       {
-        selector: 'node[resource_type = "topic_group"], node[resource_type = "identity_group"]',
+        selector: 'node[resource_type = "topic_group"], node[resource_type = "identity_group"], node[resource_type = "resource_group"], node[resource_type = "cluster_group"]',
         style: {
           "background-color": "#2a3f6f",
           "border-color": "#1890ff",
@@ -176,7 +176,7 @@ export function getStylesheet(isDark: boolean): cytoscape.StylesheetStyle[] {
       },
     },
     {
-      selector: 'node[resource_type = "topic_group"], node[resource_type = "identity_group"]',
+      selector: 'node[resource_type = "topic_group"], node[resource_type = "identity_group"], node[resource_type = "resource_group"], node[resource_type = "cluster_group"]',
       style: {
         "background-color": "#bae0ff",
         "border-color": "#0958d9",

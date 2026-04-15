@@ -297,6 +297,45 @@ describe("CytoscapeRenderer", () => {
     });
   });
 
+  // TASK-245: resource_group and cluster_group labels
+  it("resource_group node has label with child_count and child_total_cost", async () => {
+    const groupNode = makeNode({
+      id: "env-abc:resource_group",
+      resource_type: "resource_group",
+      cost: 0,
+      child_count: 25,
+      child_total_cost: 500.0,
+    });
+    render(<CytoscapeRenderer {...DEFAULT_PROPS} nodes={[groupNode]} />);
+    await waitFor(() => {
+      const nodeAdds = state.addCalls.filter(
+        (el) => (el as { group?: string }).group === "nodes",
+      );
+      expect(nodeAdds).toHaveLength(1);
+      const addedData = (nodeAdds[0] as { data: { label: string } }).data;
+      expect(addedData.label).toBe("25 resources\n$500.00 total");
+    });
+  });
+
+  it("cluster_group node has label with child_count and child_total_cost", async () => {
+    const groupNode = makeNode({
+      id: "sa-abc:cluster_group",
+      resource_type: "cluster_group",
+      cost: 0,
+      child_count: 12,
+      child_total_cost: 99.5,
+    });
+    render(<CytoscapeRenderer {...DEFAULT_PROPS} nodes={[groupNode]} />);
+    await waitFor(() => {
+      const nodeAdds = state.addCalls.filter(
+        (el) => (el as { group?: string }).group === "nodes",
+      );
+      expect(nodeAdds).toHaveLength(1);
+      const addedData = (nodeAdds[0] as { data: { label: string } }).data;
+      expect(addedData.label).toBe("12 clusters\n$99.50 total");
+    });
+  });
+
   it("identity_group node has label with child_count and child_total_cost", async () => {
     const groupNode = makeNode({
       id: "group:identities:lkc-abc",

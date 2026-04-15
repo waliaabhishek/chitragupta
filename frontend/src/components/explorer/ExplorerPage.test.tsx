@@ -1400,6 +1400,63 @@ describe("ExplorerPage — group node click (TASK-244)", () => {
     expect(navigate).not.toHaveBeenCalled();
   });
 
+  // TASK-245: resource_group and cluster_group expand
+  it("clicking resource_group node: useGraphData called with expand=resources and collapse button appears", () => {
+    vi.mocked(useGraphData).mockReturnValue({
+      data: {
+        nodes: [
+          makeApiNode({ id: "env-abc:resource_group", status: "resource_group" }),
+        ] as never,
+        edges: [],
+      },
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderExplorerPageWithUrl("?focus=env-abc");
+    vi.mocked(useGraphData).mockClear();
+
+    const nodeEl = document.querySelector("[data-node-id='env-abc:resource_group']");
+    expect(nodeEl).not.toBeNull();
+    fireEvent.click(nodeEl!);
+
+    // URL changed → re-render → useGraphData called with expand=resources
+    expect(vi.mocked(useGraphData)).toHaveBeenCalledWith(
+      expect.objectContaining({ expand: "resources" }),
+    );
+    // Collapse button visible confirms expand is set in URL
+    expect(screen.getByRole("button", { name: /collapse/i })).toBeInTheDocument();
+  });
+
+  it("clicking cluster_group node: useGraphData called with expand=clusters and collapse button appears", () => {
+    vi.mocked(useGraphData).mockReturnValue({
+      data: {
+        nodes: [
+          makeApiNode({ id: "sa-abc:cluster_group", status: "cluster_group" }),
+        ] as never,
+        edges: [],
+      },
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderExplorerPageWithUrl("?focus=sa-abc");
+    vi.mocked(useGraphData).mockClear();
+
+    const nodeEl = document.querySelector("[data-node-id='sa-abc:cluster_group']");
+    expect(nodeEl).not.toBeNull();
+    fireEvent.click(nodeEl!);
+
+    // URL changed → re-render → useGraphData called with expand=clusters
+    expect(vi.mocked(useGraphData)).toHaveBeenCalledWith(
+      expect.objectContaining({ expand: "clusters" }),
+    );
+    // Collapse button visible confirms expand is set in URL
+    expect(screen.getByRole("button", { name: /collapse/i })).toBeInTheDocument();
+  });
+
   it("already-expanded guard: clicking topic_group when expand=topics does not call navigate or pushParam again", () => {
     vi.mocked(useGraphData).mockReturnValue({
       data: {

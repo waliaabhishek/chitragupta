@@ -101,3 +101,25 @@ class TestGraphRouteExpandValidation:
                 params={"focus": "lkc-abc", "expand": "foobar", "at": "2026-03-15T00:00:00Z"},
             )
         assert resp.status_code == 422
+
+    def test_route_accepts_expand_resources_with_200(self) -> None:
+        """TASK-245: expand=resources (added to Literal) → FastAPI accepts and returns 200."""
+        mock_uow = MagicMock()
+        mock_uow.graph.find_neighborhood.return_value = GraphNeighborhood(nodes=[], edges=[])
+        with _app_with_mock_uow(mock_uow) as client:
+            resp = client.get(
+                "/api/v1/tenants/prod/graph",
+                params={"focus": "env-abc", "expand": "resources", "at": "2026-03-15T00:00:00Z"},
+            )
+        assert resp.status_code == 200
+
+    def test_route_accepts_expand_clusters_with_200(self) -> None:
+        """TASK-245: expand=clusters (added to Literal) → FastAPI accepts and returns 200."""
+        mock_uow = MagicMock()
+        mock_uow.graph.find_neighborhood.return_value = GraphNeighborhood(nodes=[], edges=[])
+        with _app_with_mock_uow(mock_uow) as client:
+            resp = client.get(
+                "/api/v1/tenants/prod/graph",
+                params={"focus": "sa-abc", "expand": "clusters", "at": "2026-03-15T00:00:00Z"},
+            )
+        assert resp.status_code == 200

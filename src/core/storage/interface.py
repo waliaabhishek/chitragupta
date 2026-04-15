@@ -670,7 +670,7 @@ class GraphRepository(Protocol):
         at: datetime,
         period_start: datetime,
         period_end: datetime,
-        expand: Literal["topics", "identities"] | None = None,
+        expand: Literal["topics", "identities", "resources", "clusters"] | None = None,
     ) -> GraphNeighborhood:
         """Return graph neighborhood for a focused entity at a point in time.
 
