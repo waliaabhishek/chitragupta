@@ -1773,6 +1773,67 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#graph" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Graph
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Graph">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#get-apiv1tenantstenant_namegraph" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/v1/tenants/{tenant_name}/graph
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-apiv1tenantstenant_namegraphsearch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/v1/tenants/{tenant_name}/graph/search
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-apiv1tenantstenant_namegraphdiff" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/v1/tenants/{tenant_name}/graph/diff
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-apiv1tenantstenant_namegraphtimeline" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/v1/tenants/{tenant_name}/graph/timeline
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -2396,6 +2457,67 @@
     <span class="md-ellipsis">
       
         POST /api/v1/tenants/{tenant_name}/topic-attributions/export
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#graph" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Graph
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Graph">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#get-apiv1tenantstenant_namegraph" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/v1/tenants/{tenant_name}/graph
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-apiv1tenantstenant_namegraphsearch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/v1/tenants/{tenant_name}/graph/search
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-apiv1tenantstenant_namegraphdiff" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/v1/tenants/{tenant_name}/graph/diff
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-apiv1tenantstenant_namegraphtimeline" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/v1/tenants/{tenant_name}/graph/timeline
       
     </span>
   </a>
@@ -3395,6 +3517,450 @@ in plugin settings.</p>
 </tbody>
 </table>
 <p><strong>CSV columns:</strong> <code>ecosystem</code>, <code>tenant_id</code>, <code>timestamp</code>, <code>env_id</code>, <code>cluster_resource_id</code>, <code>topic_name</code>, <code>product_category</code>, <code>product_type</code>, <code>attribution_method</code>, <code>amount</code>.</p>
+<hr />
+<h2 id="graph">Graph<a class="headerlink" href="#graph" title="Permanent link">&para;</a></h2>
+<p>Returns cost topology as a graph (nodes + edges) for use by the cost explorer graph frontend. One endpoint covers three views depending on the <code>focus</code> parameter.</p>
+<h3 id="get-apiv1tenantstenant_namegraph"><code>GET /api/v1/tenants/{tenant_name}/graph</code><a class="headerlink" href="#get-apiv1tenantstenant_namegraph" title="Permanent link">&para;</a></h3>
+<p>Return a neighborhood of nodes and directed edges centred on a focus entity.</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>focus</code></td>
+<td>string</td>
+<td>—</td>
+<td>Entity ID to focus on. Omit for root (tenant) view.</td>
+</tr>
+<tr>
+<td><code>depth</code></td>
+<td>int</td>
+<td>1</td>
+<td>Hierarchy hops from focus (1–3).</td>
+</tr>
+<tr>
+<td><code>at</code></td>
+<td>datetime</td>
+<td>now</td>
+<td>Point-in-time lifecycle filter (ISO 8601 with timezone, e.g. <code>2026-03-15T00:00:00Z</code>).</td>
+</tr>
+<tr>
+<td><code>start_date</code></td>
+<td>date</td>
+<td>—</td>
+<td>Cost period start date. Overrides <code>at</code>-derived month when provided.</td>
+</tr>
+<tr>
+<td><code>end_date</code></td>
+<td>date</td>
+<td>—</td>
+<td>Cost period end date. Overrides <code>at</code>-derived month when provided.</td>
+</tr>
+<tr>
+<td><code>timezone</code></td>
+<td>string</td>
+<td>UTC</td>
+<td>IANA timezone for <code>start_date</code>/<code>end_date</code> boundaries.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Views:</strong></p>
+<ul>
+<li><strong>Root view</strong> (<code>focus</code> omitted): returns a synthetic tenant node plus one environment node per active environment. Edges are <code>parent</code> type, directed tenant → environment.</li>
+<li><strong>Environment focus</strong> (<code>focus=env-abc</code>): returns the environment node plus all direct child resources up to <code>depth</code> hops (clusters, connectors, flink pools, schema registries). Edges are <code>parent</code> type, directed parent → child.</li>
+<li><strong>Cluster focus</strong> (<code>focus=lkc-abc</code>): returns the cluster node, its child topic nodes, and any identity (service account / pool) nodes charged to the cluster via chargeback. Edges are <code>parent</code> (cluster → topic) and <code>charge</code> (cluster → identity).</li>
+</ul>
+<p><strong>Billing period:</strong> when <code>start_date</code>/<code>end_date</code> are omitted, the cost window defaults to the full calendar month containing <code>at</code> (e.g. <code>at=2026-03-15</code> → March 1–April 1).</p>
+<p><strong>Response:</strong> <code>GraphResponse</code></p>
+<p><code>json
+{
+  "nodes": [
+    {
+      "id": "env-abc",
+      "resource_type": "environment",
+      "display_name": "Production",
+      "cost": "1234.56",
+      "created_at": "2025-01-01T00:00:00Z",
+      "deleted_at": null,
+      "tags": {"team": "platform"},
+      "parent_id": null,
+      "cloud": "aws",
+      "region": "us-east-1",
+      "status": "active",
+      "cross_references": []
+    }
+  ],
+  "edges": [
+    {
+      "source": "org-123",
+      "target": "env-abc",
+      "relationship_type": "parent",
+      "cost": null
+    }
+  ]
+}</code></p>
+<p><strong>Node fields:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>id</code></td>
+<td>string</td>
+<td>Entity ID (<code>resource_id</code> or <code>identity_id</code>)</td>
+</tr>
+<tr>
+<td><code>resource_type</code></td>
+<td>string</td>
+<td>Entity type: <code>tenant</code>, <code>environment</code>, <code>kafka_cluster</code>, <code>kafka_topic</code>, <code>service_account</code>, etc.</td>
+</tr>
+<tr>
+<td><code>display_name</code></td>
+<td>string|null</td>
+<td>Human-readable name</td>
+</tr>
+<tr>
+<td><code>cost</code></td>
+<td>decimal string</td>
+<td>Aggregated cost for the billing period</td>
+</tr>
+<tr>
+<td><code>created_at</code></td>
+<td>datetime|null</td>
+<td>Lifecycle start</td>
+</tr>
+<tr>
+<td><code>deleted_at</code></td>
+<td>datetime|null</td>
+<td>Lifecycle end (null = still active)</td>
+</tr>
+<tr>
+<td><code>tags</code></td>
+<td>object</td>
+<td>Tag key→value dict resolved from <code>entity_tags</code></td>
+</tr>
+<tr>
+<td><code>parent_id</code></td>
+<td>string|null</td>
+<td>Parent entity ID</td>
+</tr>
+<tr>
+<td><code>cloud</code></td>
+<td>string|null</td>
+<td>Cloud provider</td>
+</tr>
+<tr>
+<td><code>region</code></td>
+<td>string|null</td>
+<td>Cloud region</td>
+</tr>
+<tr>
+<td><code>status</code></td>
+<td>string</td>
+<td><code>active</code> or <code>deleted</code></td>
+</tr>
+<tr>
+<td><code>cross_references</code></td>
+<td>list[CrossReferenceGroup]</td>
+<td>For identity nodes: other resources this identity is charged in (excluding the focus cluster), grouped by resource type. Each group has <code>resource_type</code> (string), <code>total_count</code> (int, full DB count before cap), and <code>items</code> (list of up to 5 <code>CrossReferenceItem</code> objects sorted by cost descending). Each item has <code>id</code>, <code>resource_type</code>, <code>display_name</code> (string|null), and <code>cost</code> (decimal string).</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Edge <code>relationship_type</code> values:</strong> <code>parent</code> (hierarchy), <code>charge</code> (identity charged to cluster).</p>
+<p><strong>Error codes:</strong> 400 (tz-naive <code>at</code> value), 404 (unknown tenant or unknown <code>focus</code> entity), 422 (unparseable parameters).</p>
+<h3 id="get-apiv1tenantstenant_namegraphsearch"><code>GET /api/v1/tenants/{tenant_name}/graph/search</code><a class="headerlink" href="#get-apiv1tenantstenant_namegraphsearch" title="Permanent link">&para;</a></h3>
+<p>Search resources and identities by partial name or ID match. Intended for the jump-to-entity feature in the cost explorer graph frontend.</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Type</th>
+<th>Required</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>q</code></td>
+<td>string</td>
+<td>yes</td>
+<td>Case-insensitive partial match against <code>resource_id</code>, <code>display_name</code>, and <code>identity_id</code>. Minimum length 1.</td>
+</tr>
+</tbody>
+</table>
+<p>Results are ordered by relevance: exact match first, then prefix match, then substring match. Returns at most 20 results. Returns an empty list when no entities match (never 404).</p>
+<p><strong>Response:</strong> <code>GraphSearchResponse</code></p>
+<p><code>json
+{
+  "results": [
+    {
+      "id": "lkc-abc123",
+      "resource_type": "kafka_cluster",
+      "display_name": "Production Cluster",
+      "parent_id": "env-abc",
+      "parent_display_name": "Production Environment",
+      "status": "active"
+    }
+  ]
+}</code></p>
+<p><strong>Result fields:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>id</code></td>
+<td>string</td>
+<td>Entity ID (<code>resource_id</code> for resources, <code>identity_id</code> for identities)</td>
+</tr>
+<tr>
+<td><code>resource_type</code></td>
+<td>string</td>
+<td><code>resource_type</code> for resources; <code>identity_type</code> for identities (e.g. <code>service_account</code>)</td>
+</tr>
+<tr>
+<td><code>display_name</code></td>
+<td>string|null</td>
+<td>Human-readable name</td>
+</tr>
+<tr>
+<td><code>parent_id</code></td>
+<td>string|null</td>
+<td>Parent entity ID. Always <code>null</code> for identity results (identities have no parent in the graph model)</td>
+</tr>
+<tr>
+<td><code>parent_display_name</code></td>
+<td>string|null</td>
+<td>Human-readable name of the parent entity. <code>null</code> when parent has no display name or result has no parent</td>
+</tr>
+<tr>
+<td><code>status</code></td>
+<td>string</td>
+<td><code>active</code> or <code>deleted</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Error codes:</strong> 404 (unknown tenant), 422 (missing or empty <code>q</code>).</p>
+<h3 id="get-apiv1tenantstenant_namegraphdiff"><code>GET /api/v1/tenants/{tenant_name}/graph/diff</code><a class="headerlink" href="#get-apiv1tenantstenant_namegraphdiff" title="Permanent link">&para;</a></h3>
+<p>Compare costs between two time periods for a neighborhood. Returns a flat list of nodes annotated with before/after costs and a diff status, enabling the "what changed?" view in the cost explorer.</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Type</th>
+<th>Required</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>from_start</code></td>
+<td>date</td>
+<td>yes</td>
+<td>Start of the "before" period (inclusive).</td>
+</tr>
+<tr>
+<td><code>from_end</code></td>
+<td>date</td>
+<td>yes</td>
+<td>End of the "before" period (inclusive).</td>
+</tr>
+<tr>
+<td><code>to_start</code></td>
+<td>date</td>
+<td>yes</td>
+<td>Start of the "after" period (inclusive).</td>
+</tr>
+<tr>
+<td><code>to_end</code></td>
+<td>date</td>
+<td>yes</td>
+<td>End of the "after" period (inclusive).</td>
+</tr>
+<tr>
+<td><code>focus</code></td>
+<td>string</td>
+<td>no</td>
+<td>Entity ID to focus on. Omit for root (tenant/environment) view.</td>
+</tr>
+<tr>
+<td><code>depth</code></td>
+<td>int</td>
+<td>no (default 1)</td>
+<td>Hierarchy hops from focus (1–3).</td>
+</tr>
+<tr>
+<td><code>timezone</code></td>
+<td>string</td>
+<td>no</td>
+<td>IANA timezone for date boundaries. Defaults to UTC.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Response:</strong> <code>GraphDiffResponse</code></p>
+<p><code>json
+{
+  "nodes": [
+    {
+      "id": "lkc-abc123",
+      "resource_type": "kafka_cluster",
+      "display_name": "Production Cluster",
+      "parent_id": "env-abc",
+      "cost_before": "100.00",
+      "cost_after": "150.00",
+      "cost_delta": "50.00",
+      "pct_change": "50.00",
+      "status": "changed"
+    }
+  ]
+}</code></p>
+<p><strong>Node fields:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>id</code></td>
+<td>string</td>
+<td>Entity ID</td>
+</tr>
+<tr>
+<td><code>resource_type</code></td>
+<td>string</td>
+<td>Entity type</td>
+</tr>
+<tr>
+<td><code>display_name</code></td>
+<td>string|null</td>
+<td>Human-readable name</td>
+</tr>
+<tr>
+<td><code>parent_id</code></td>
+<td>string|null</td>
+<td>Parent entity ID</td>
+</tr>
+<tr>
+<td><code>cost_before</code></td>
+<td>decimal string</td>
+<td>Total cost in the "before" window. <code>"0"</code> for new entities.</td>
+</tr>
+<tr>
+<td><code>cost_after</code></td>
+<td>decimal string</td>
+<td>Total cost in the "after" window. <code>"0"</code> for deleted entities.</td>
+</tr>
+<tr>
+<td><code>cost_delta</code></td>
+<td>decimal string</td>
+<td><code>cost_after - cost_before</code>. Negative means cost decreased.</td>
+</tr>
+<tr>
+<td><code>pct_change</code></td>
+<td>decimal string|null</td>
+<td>Percentage change: <code>(cost_delta / cost_before) * 100</code>. <code>null</code> when <code>cost_before == 0</code>.</td>
+</tr>
+<tr>
+<td><code>status</code></td>
+<td>string</td>
+<td><code>new</code> (only in after), <code>deleted</code> (only in before), <code>changed</code> (in both, cost differs), <code>unchanged</code> (in both, cost equal)</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Error codes:</strong> 404 (unknown tenant or unknown <code>focus</code> entity), 422 (missing date parameters).</p>
+<h3 id="get-apiv1tenantstenant_namegraphtimeline"><code>GET /api/v1/tenants/{tenant_name}/graph/timeline</code><a class="headerlink" href="#get-apiv1tenantstenant_namegraphtimeline" title="Permanent link">&para;</a></h3>
+<p>Return a daily cost time series for a single entity. Enables sparklines and cost-over-time drill-down in the cost explorer graph frontend without leaving the graph view.</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Type</th>
+<th>Required</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>entity_id</code></td>
+<td>string</td>
+<td>yes</td>
+<td><code>resource_id</code> or <code>identity_id</code> of the entity.</td>
+</tr>
+<tr>
+<td><code>start</code></td>
+<td>date</td>
+<td>yes</td>
+<td>Start date (inclusive).</td>
+</tr>
+<tr>
+<td><code>end</code></td>
+<td>date</td>
+<td>yes</td>
+<td>End date (inclusive).</td>
+</tr>
+<tr>
+<td><code>timezone</code></td>
+<td>string</td>
+<td>no</td>
+<td>IANA timezone for date boundaries. Defaults to UTC.</td>
+</tr>
+</tbody>
+</table>
+<p>Entity type routing: topics use <code>topic_attribution_facts</code>; environments use <code>chargeback_facts</code> grouped by <code>env_id</code>; all other resources use <code>chargeback_facts</code> grouped by <code>resource_id</code>; identities use <code>chargeback_facts</code> filtered by <code>identity_id</code>.</p>
+<p>Every calendar day in <code>[start, end]</code> is present in the response. Days with no billing data are returned with <code>cost: "0"</code> (gap filling).</p>
+<p><strong>Response:</strong> <code>GraphTimelineResponse</code></p>
+<p><code>json
+{
+  "entity_id": "lkc-abc123",
+  "points": [
+    {"date": "2026-04-01", "cost": "12.34"},
+    {"date": "2026-04-02", "cost": "0"},
+    {"date": "2026-04-03", "cost": "15.00"}
+  ]
+}</code></p>
+<p><strong>Point fields:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>date</code></td>
+<td>date string</td>
+<td>Calendar date in <code>YYYY-MM-DD</code> format</td>
+</tr>
+<tr>
+<td><code>cost</code></td>
+<td>decimal string</td>
+<td>Total cost on that day. <code>"0"</code> for days with no billing data.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Error codes:</strong> 404 (unknown tenant or <code>entity_id</code> not found in resources or identities), 422 (missing required parameters).</p>
 
 
 

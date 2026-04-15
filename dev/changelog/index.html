@@ -1238,6 +1238,28 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Added
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#changed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Changed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#documentation" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1311,6 +1333,28 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Added
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#changed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Changed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#documentation" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1362,12 +1406,39 @@
 <p>The format is based on <a href="https://keepachangelog.com/en/1.0.0/">Keep a Changelog</a>,
 and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semantic Versioning</a>.</p>
 <h2 id="unreleased">[Unreleased]<a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
+<h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Feat: Cost explorer Graph and drill down (<a href="https://github.com/waliaabhishek/chitragupta/commit/c9c0f7b7128a981862f64e5da259f00f968db30a">c9c0f7b</a>)</li>
+</ul>
+<h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Tests: Bring graph explorer branch coverage from 81% to 86% (<a href="https://github.com/waliaabhishek/chitragupta/commit/65ac1ebd65f70460e14d4af5a149972d810af6fb">65ac1eb</a>)</li>
+</ul>
 <h3 id="documentation">Documentation<a class="headerlink" href="#documentation" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Docs: Slim changelog template and collapse RC tags (<a href="https://github.com/waliaabhishek/chitragupta/commit/7105c1004732b57ae978273fa4d39b1075ce2e4e">7105c10</a>)</li>
 </ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
+<li>Fix: Remove unused eslint-disable directive in useGraphNavigation (<a href="https://github.com/waliaabhishek/chitragupta/commit/0cc2660ba1b10eb2d0220042ce6639d71423282b">0cc2660</a>)</li>
+<li>Fix: Graph explorer — tenant node 404 and focus node drift (<a href="https://github.com/waliaabhishek/chitragupta/commit/021bf44b470209e2fc524bb5b777511d4b7506dd">021bf44</a>)</li>
+<li>Fix: Graph explorer — smooth transitions, Obsidian-style layout, no semicircles (<a href="https://github.com/waliaabhishek/chitragupta/commit/0557c11e2c49c1afb35ada773693247ddc38b1bc">0557c11</a>)</li>
+<li>Fix: Graph explorer — scrubber now shows single-day cost, maxDate from chargeback data (<a href="https://github.com/waliaabhishek/chitragupta/commit/01c5ebc97d54f5631d78664952f867250a4e48f3">01c5ebc</a>)</li>
+<li>Fix: Graph explorer — group nodes double-count top-N, identity cost includes inactive resources (<a href="https://github.com/waliaabhishek/chitragupta/commit/685c51641c6d9747b52259044457786d4064b4c6">685c516</a>)</li>
+<li>Fix: Graph explorer — swap to d3-force for live physics simulation, stop sidebar auto-collapse (<a href="https://github.com/waliaabhishek/chitragupta/commit/3e1f8221244f316b545cc19233a8ac0945ddc0c6">3e1f822</a>)</li>
+<li>Fix: Graph explorer UX — tooltip overlap, node centering, icons, tag clear (<a href="https://github.com/waliaabhishek/chitragupta/commit/59cdd27867c33502bfc41e3ee5b96560645a6e73">59cdd27</a>)</li>
+<li>Fix: TASK-246 — Restore defensive guard for missing resource_meta entries (<a href="https://github.com/waliaabhishek/chitragupta/commit/7dbf4efcb32b2e2f42494fb4fcd61f6572d0ebc9">7dbf4ef</a>)</li>
+<li>Fix: TASK-246 — Restructure cross_references from flat list to grouped, capped structure (<a href="https://github.com/waliaabhishek/chitragupta/commit/750c16cc2fb6b65695fab5644bbbfd7aa322abfe">750c16c</a>)</li>
+<li>Fix: TASK-245 — Extend grouped views to resource and identity views (<a href="https://github.com/waliaabhishek/chitragupta/commit/b6a54ebc76e52f91788fac4da6f674877ed198fa">b6a54eb</a>)</li>
+<li>Fix: TASK-244 — Frontend progressive disclosure and group node rendering (<a href="https://github.com/waliaabhishek/chitragupta/commit/c9f2d57c7c9a60bfbe653da5b09c174bac20c3c1">c9f2d57</a>)</li>
+<li>Fix: TASK-243 — Grouped cluster view and expand API for graph explorer (<a href="https://github.com/waliaabhishek/chitragupta/commit/3b9fe282280e4ce082e9f6f15b8bc1e0dd59baa9">3b9fe28</a>)</li>
+<li>Fix: TASK-223 — Four cost explorer UX bugs (<a href="https://github.com/waliaabhishek/chitragupta/commit/f0ac330899a03cba4d66486d0bcae62097a75a0a">f0ac330</a>)</li>
+<li>Fix: TASK-223 — Tag overlay, entity search, and shareable URL state for graph explorer (<a href="https://github.com/waliaabhishek/chitragupta/commit/b486876fa1269e95f222523641eba15409bc9ab7">b486876</a>)</li>
+<li>Fix: TASK-222 — Timeline scrubber and cost diff mode for graph explorer (<a href="https://github.com/waliaabhishek/chitragupta/commit/cf7358a06c8110b3eff7c574b535ba55c03b567d">cf7358a</a>)</li>
+<li>Fix: TASK-221 — Resolve deferred review issues and test coverage gaps (<a href="https://github.com/waliaabhishek/chitragupta/commit/a28f5eb5d1ba7a6ca45e04ba863f01d9e212e3e4">a28f5eb</a>)</li>
+<li>Fix: TASK-221 — Full-screen graph explorer with force-directed renderer (<a href="https://github.com/waliaabhishek/chitragupta/commit/ec0a11638ddc701555d0fdb8ec49c32d23d0d8a0">ec0a116</a>)</li>
+<li>Fix: TASK-220 — Graph search, diff, and timeline endpoints (<a href="https://github.com/waliaabhishek/chitragupta/commit/ccb8cc37bfcf603073dfb652905050a9ff0aa21d">ccb8cc3</a>)</li>
+<li>Fix: TASK-219 — Graph Data API topology endpoint with temporal filtering (<a href="https://github.com/waliaabhishek/chitragupta/commit/6fde827a28b5b93880953e0656e2684d23f937ec">6fde827</a>)</li>
 <li>Fix: TASK-216 — Owner pivot panels on chargeback and topic attribution dashboards (<a href="https://github.com/waliaabhishek/chitragupta/commit/010d94636255ed1d5cdaabe5accbcf98c1e90efb">010d946</a>)</li>
 <li>Fix: TASK-218 — Add tag-based WHERE filtering to topic attribution list endpoint and filter panel (<a href="https://github.com/waliaabhishek/chitragupta/commit/0f9706cc710942111b7377513acb24556f271964">0f9706c</a>)</li>
 <li>Fix: TASK-217 — Add distinct tag keys and tag values API endpoints (<a href="https://github.com/waliaabhishek/chitragupta/commit/f1e42e7c64fee0e7ef71716703adc018cc373d4b">f1e42e7</a>)</li>
