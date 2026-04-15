@@ -11,6 +11,7 @@ interface ExplorerParams {
   from_end: string | null;
   to_start: string | null;
   to_end: string | null;
+  expand: string | null;
 }
 
 interface UseExplorerParamsResult {
@@ -32,6 +33,7 @@ function readParams(searchParams: URLSearchParams): ExplorerParams {
     from_end: searchParams.get("from_end"),
     to_start: searchParams.get("to_start"),
     to_end: searchParams.get("to_end"),
+    expand: searchParams.get("expand"),
   };
 }
 

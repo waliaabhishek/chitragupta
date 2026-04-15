@@ -1,7 +1,7 @@
 import type React from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Typography } from "antd";
+import { Button, Typography } from "antd";
 import { API_URL } from "../../config";
 import { addDays } from "../../utils/dateUtils";
 import { useTenant } from "../../providers/TenantContext";
@@ -23,6 +23,7 @@ import { DiffModePanel } from "./DiffModePanel";
 import { SearchBar } from "./SearchBar";
 import { TagOverlayPanel } from "./TagOverlayPanel";
 import { CopyLinkButton } from "./CopyLinkButton";
+import { isExpandableGroup, isGroupNode } from "./renderers/nodeShapes";
 import type {
   GraphNode,
   GraphEdge,
@@ -32,6 +33,12 @@ import type {
 import type { GraphDiffNode } from "../../hooks/useGraphDiff";
 
 const { Text } = Typography;
+
+// UI binding: maps expandable group types to the API expand= value
+const GROUP_EXPAND_MAP: Record<string, string> = {
+  topic_group: "topics",
+  identity_group: "identities",
+};
 
 function enrichWithPhantomNodes(
   nodes: GraphNode[],
@@ -170,6 +177,7 @@ export function ExplorerPage(): React.JSX.Element {
     tenantName,
     focus: params.focus,
     at: atParam,
+    expand: params.expand,
   });
 
   // Diff data — only when diff mode active and both ranges selected
@@ -216,6 +224,7 @@ export function ExplorerPage(): React.JSX.Element {
       if (params.focus) qs.set("focus", params.focus);
       qs.set("depth", "1");
       qs.set("at", `${d}T12:00:00Z`);
+      if (params.expand) qs.set("expand", params.expand);
       queryClient.prefetchQuery({
         queryKey: [
           "graph",
@@ -226,6 +235,7 @@ export function ExplorerPage(): React.JSX.Element {
           null,
           null,
           null,
+          params.expand ?? null,
         ],
         queryFn: async ({ signal }) => {
           const r = await fetch(
@@ -237,7 +247,7 @@ export function ExplorerPage(): React.JSX.Element {
         },
       });
     }
-  }, [isPlaying, playbackDate, stepDays, tenantName, maxDate, params.focus, queryClient]);
+  }, [isPlaying, playbackDate, stepDays, tenantName, maxDate, params.focus, params.expand, queryClient]);
 
   const typedNodes = useMemo(
     () =>
@@ -329,9 +339,22 @@ export function ExplorerPage(): React.JSX.Element {
 
   function handleNodeClick(nodeId: string, resourceType: string) {
     if (playback.state.isPlaying) playback.pause();
+
+    // Non-interactive summary nodes: no-op
+    if (isGroupNode(resourceType) && !isExpandableGroup(resourceType)) return;
+
+    // Expandable group nodes: set expand param, don't navigate
+    if (isExpandableGroup(resourceType)) {
+      const expandValue = GROUP_EXPAND_MAP[resourceType];
+      if (params.expand !== expandValue) pushParam("expand", expandValue);
+      return;
+    }
+
+    // Regular nodes: navigate to focus, clear expand
     setSelectedNodeId(nodeId);
     const node = enrichedNodes.find((n) => n.id === nodeId);
     navigate(nodeId, resourceType, node?.display_name ?? null);
+    if (params.expand) replaceParam("expand", null);
   }
 
   // Delegated click handler: catches clicks on data-node-id elements from mocked GraphContainer
@@ -358,9 +381,18 @@ export function ExplorerPage(): React.JSX.Element {
     >
       <BreadcrumbTrail
         breadcrumbs={state.breadcrumbs}
-        onNavigate={goToBreadcrumb}
-        onGoBack={goBack}
-        onGoToRoot={goToRoot}
+        onNavigate={(crumb) => {
+          goToBreadcrumb(crumb);
+          if (params.expand) replaceParam("expand", null);
+        }}
+        onGoBack={() => {
+          goBack();
+          if (params.expand) replaceParam("expand", null);
+        }}
+        onGoToRoot={() => {
+          goToRoot();
+          if (params.expand) replaceParam("expand", null);
+        }}
         copyLinkButton={<CopyLinkButton isDark={isDark} />}
       />
       {/* Graph area */}
@@ -427,6 +459,17 @@ export function ExplorerPage(): React.JSX.Element {
             isDark={isDark}
           />
         </div>
+        {/* Collapse button — visible when expand is active */}
+        {params.expand && (
+          <div style={{ position: "absolute", top: 48, left: 8, zIndex: 150 }}>
+            <Button
+              size="small"
+              onClick={() => pushParam("expand", null)}
+            >
+              Collapse {params.expand}
+            </Button>
+          </div>
+        )}
         {/* Search bar — top-right */}
         <div style={{ position: "absolute", top: 8, right: 8, zIndex: 150 }}>
           <SearchBar
@@ -435,6 +478,7 @@ export function ExplorerPage(): React.JSX.Element {
               if (playback.state.isPlaying) playback.pause();
               setSelectedNodeId(entityId);
               navigate(entityId, resourceType, displayName);
+              if (params.expand) replaceParam("expand", null);
             }}
             isDark={isDark}
           />

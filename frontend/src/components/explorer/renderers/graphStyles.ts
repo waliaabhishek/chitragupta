@@ -99,6 +99,28 @@ function baseStylesheet(): cytoscape.StylesheetStyle[] {
         "border-color": "#8c8c8c",
       },
     },
+    // Group nodes — expandable aggregates (topic_group, identity_group)
+    {
+      selector: 'node[resource_type = "topic_group"], node[resource_type = "identity_group"]',
+      style: {
+        "border-width": 3,
+        "border-style": "double" as const,
+        "font-size": 13,
+        "font-weight": "bold" as const,
+        "text-wrap": "wrap" as const,
+        "text-max-width": "90px",
+        label: "data(label)",
+      },
+    },
+    // Summary nodes — muted, not clickable
+    {
+      selector: 'node[resource_type = "zero_cost_summary"], node[resource_type = "capped_summary"]',
+      style: {
+        opacity: 0.45,
+        "font-size": 10,
+        label: "data(label)",
+      },
+    },
   ];
 }
 
@@ -127,6 +149,14 @@ export function getStylesheet(isDark: boolean): cytoscape.StylesheetStyle[] {
           "background-color": "data(tagColor)" as unknown as string,
         },
       },
+      {
+        selector: 'node[resource_type = "topic_group"], node[resource_type = "identity_group"]',
+        style: {
+          "background-color": "#2a3f6f",
+          "border-color": "#1890ff",
+          color: "#e0e0e0",
+        },
+      },
     ];
   }
   return [
@@ -143,6 +173,14 @@ export function getStylesheet(isDark: boolean): cytoscape.StylesheetStyle[] {
       selector: "node[tagColor]",
       style: {
         "background-color": "data(tagColor)" as unknown as string,
+      },
+    },
+    {
+      selector: 'node[resource_type = "topic_group"], node[resource_type = "identity_group"]',
+      style: {
+        "background-color": "#bae0ff",
+        "border-color": "#0958d9",
+        color: "#001d6c",
       },
     },
   ];

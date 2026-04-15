@@ -18,6 +18,7 @@ export interface UseGraphDataParams {
   startDate?: string | null;
   endDate?: string | null;
   timezone?: string | null;
+  expand?: string | null;
 }
 
 export interface UseGraphDataResult {
@@ -28,7 +29,7 @@ export interface UseGraphDataResult {
 }
 
 export function useGraphData(params: UseGraphDataParams): UseGraphDataResult {
-  const { tenantName, focus, depth, at, startDate, endDate, timezone } = params;
+  const { tenantName, focus, depth, at, startDate, endDate, timezone, expand } = params;
 
   const query = useQuery({
     queryKey: [
@@ -40,6 +41,7 @@ export function useGraphData(params: UseGraphDataParams): UseGraphDataResult {
       startDate ?? null,
       endDate ?? null,
       timezone ?? null,
+      expand ?? null,
     ],
     queryFn: async ({ signal }) => {
       const qs = new URLSearchParams();
@@ -49,6 +51,7 @@ export function useGraphData(params: UseGraphDataParams): UseGraphDataResult {
       if (startDate) qs.set("start_date", startDate);
       if (endDate) qs.set("end_date", endDate);
       if (timezone) qs.set("timezone", timezone);
+      if (expand) qs.set("expand", expand);
 
       const qsStr = qs.toString();
       const url = `${API_URL}/tenants/${tenantName}/graph${qsStr ? `?${qsStr}` : ""}`;

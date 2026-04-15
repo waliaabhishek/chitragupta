@@ -220,6 +220,102 @@ describe("CytoscapeRenderer", () => {
     ).not.toThrow();
   });
 
+  // TASK-244: group node size and label
+  it("topic_group node uses fixed size 100 instead of cost-scaled size", async () => {
+    const groupNode = makeNode({
+      id: "group:topics:lkc-abc",
+      resource_type: "topic_group",
+      cost: 0,
+      child_count: 42,
+      child_total_cost: 1234.56,
+    });
+    render(<CytoscapeRenderer {...DEFAULT_PROPS} nodes={[groupNode]} />);
+    await waitFor(() => {
+      const nodeAdds = state.addCalls.filter(
+        (el) => (el as { group?: string }).group === "nodes",
+      );
+      expect(nodeAdds).toHaveLength(1);
+      const addedData = (nodeAdds[0] as { data: { size: number } }).data;
+      expect(addedData.size).toBe(100);
+    });
+  });
+
+  it("topic_group node has label with child_count and child_total_cost", async () => {
+    const groupNode = makeNode({
+      id: "group:topics:lkc-abc",
+      resource_type: "topic_group",
+      cost: 0,
+      child_count: 42,
+      child_total_cost: 1234.56,
+    });
+    render(<CytoscapeRenderer {...DEFAULT_PROPS} nodes={[groupNode]} />);
+    await waitFor(() => {
+      const nodeAdds = state.addCalls.filter(
+        (el) => (el as { group?: string }).group === "nodes",
+      );
+      expect(nodeAdds).toHaveLength(1);
+      const addedData = (nodeAdds[0] as { data: { label: string } }).data;
+      expect(addedData.label).toBe("42 topics\n$1234.56 total");
+    });
+  });
+
+  it("zero_cost_summary node has label N others at $0", async () => {
+    const summaryNode = makeNode({
+      id: "group:zero:lkc-abc",
+      resource_type: "zero_cost_summary",
+      cost: 0,
+      child_count: 5,
+      child_total_cost: 0,
+    });
+    render(<CytoscapeRenderer {...DEFAULT_PROPS} nodes={[summaryNode]} />);
+    await waitFor(() => {
+      const nodeAdds = state.addCalls.filter(
+        (el) => (el as { group?: string }).group === "nodes",
+      );
+      expect(nodeAdds).toHaveLength(1);
+      const addedData = (nodeAdds[0] as { data: { label: string } }).data;
+      expect(addedData.label).toBe("5 others at $0");
+    });
+  });
+
+  it("capped_summary node has label N more (capped)", async () => {
+    const cappedNode = makeNode({
+      id: "group:capped:lkc-abc",
+      resource_type: "capped_summary",
+      cost: 0,
+      child_count: 10,
+      child_total_cost: null,
+    });
+    render(<CytoscapeRenderer {...DEFAULT_PROPS} nodes={[cappedNode]} />);
+    await waitFor(() => {
+      const nodeAdds = state.addCalls.filter(
+        (el) => (el as { group?: string }).group === "nodes",
+      );
+      expect(nodeAdds).toHaveLength(1);
+      const addedData = (nodeAdds[0] as { data: { label: string } }).data;
+      expect(addedData.label).toBe("10 more (capped)");
+    });
+  });
+
+  it("identity_group node has label with child_count and child_total_cost", async () => {
+    const groupNode = makeNode({
+      id: "group:identities:lkc-abc",
+      resource_type: "identity_group",
+      cost: 0,
+      child_count: 7,
+      child_total_cost: 89.5,
+    });
+    render(<CytoscapeRenderer {...DEFAULT_PROPS} nodes={[groupNode]} />);
+    await waitFor(() => {
+      const nodeAdds = state.addCalls.filter(
+        (el) => (el as { group?: string }).group === "nodes",
+      );
+      expect(nodeAdds).toHaveLength(1);
+      const addedData = (nodeAdds[0] as { data: { label: string } }).data;
+      expect(addedData.label).toBe("7 users\n$89.50 total");
+    });
+  });
+
   // ---------------------------------------------------------------------------
   // GIT-003 — Constrained re-layout on tag value selection
   // ---------------------------------------------------------------------------

@@ -27,8 +27,40 @@ const SHAPE_MAP: Record<string, string> = {
   flink_compute_pool: "triangle",
   schema_registry: "pentagon",
   ksqldb_cluster: "round-rectangle",
+  // Synthetic group nodes (TASK-243)
+  topic_group: "round-rectangle",
+  identity_group: "round-rectangle",
+  zero_cost_summary: "round-rectangle",
+  capped_summary: "round-rectangle",
 };
+
+const GROUP_TYPES = new Set([
+  "topic_group",
+  "identity_group",
+  "zero_cost_summary",
+  "capped_summary",
+]);
+
+const GROUP_NODE_SIZE = 100;
 
 export function getNodeShape(resourceType: string): string {
   return SHAPE_MAP[resourceType] ?? "ellipse";
+}
+
+export function getNodeSize(
+  resourceType: string,
+  cost: number,
+  minCost: number,
+  maxCost: number,
+): number {
+  if (GROUP_TYPES.has(resourceType)) return GROUP_NODE_SIZE;
+  return costToSize(cost, minCost, maxCost);
+}
+
+export function isGroupNode(resourceType: string): boolean {
+  return GROUP_TYPES.has(resourceType);
+}
+
+export function isExpandableGroup(resourceType: string): boolean {
+  return resourceType === "topic_group" || resourceType === "identity_group";
 }

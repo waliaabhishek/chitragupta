@@ -4,10 +4,33 @@ import cytoscape from "cytoscape";
 import coseBilkent from "cytoscape-cose-bilkent";
 import type { GraphRendererProps } from "./types";
 import { getStylesheet } from "./graphStyles";
-import { getNodeShape, costToSize } from "./nodeShapes";
+import { getNodeShape, getNodeSize } from "./nodeShapes";
 
 // Register layout extension once at module load time — idempotent.
 cytoscape.use(coseBilkent);
+
+function computeNodeLabel(node: GraphRendererProps["nodes"][number]): string {
+  const { resource_type, child_count, child_total_cost, display_name, id } = node;
+  if (resource_type === "topic_group") {
+    const count = child_count ?? "?";
+    const cost = child_total_cost != null ? `$${child_total_cost.toFixed(2)}` : "";
+    return cost ? `${count} topics\n${cost} total` : `${count} topics`;
+  }
+  if (resource_type === "identity_group") {
+    const count = child_count ?? "?";
+    const cost = child_total_cost != null ? `$${child_total_cost.toFixed(2)}` : "";
+    return cost ? `${count} users\n${cost} total` : `${count} users`;
+  }
+  if (resource_type === "zero_cost_summary") {
+    const count = child_count ?? "?";
+    return `${count} others at $0`;
+  }
+  if (resource_type === "capped_summary") {
+    const count = child_count ?? "?";
+    return `${count} more (capped)`;
+  }
+  return display_name ?? id;
+}
 
 interface PulseOverlay {
   id: string;
@@ -178,8 +201,9 @@ export function CytoscapeRenderer({
       const cyNode = cy.getElementById(node.id);
       cyNode.data({
         ...node,
-        size: costToSize(node.cost, minCost, maxCost),
+        size: getNodeSize(node.resource_type, node.cost, minCost, maxCost),
         shape: getNodeShape(node.resource_type),
+        label: computeNodeLabel(node),
       });
     }
 
@@ -188,8 +212,9 @@ export function CytoscapeRenderer({
         group: "nodes",
         data: {
           ...node,
-          size: costToSize(node.cost, minCost, maxCost),
+          size: getNodeSize(node.resource_type, node.cost, minCost, maxCost),
           shape: getNodeShape(node.resource_type),
+          label: computeNodeLabel(node),
         },
         position: { x: 0, y: 0 },
       });

@@ -140,6 +140,55 @@ describe("useExplorerParams", () => {
     expect(result.current.params.diff).toBe(false);
   });
 
+  // TASK-244: expand param
+  it("reads expand param from URL", () => {
+    const { result } = renderHook(() => useExplorerParams(), {
+      wrapper: makeWrapper("?focus=lkc-abc&expand=topics"),
+    });
+
+    expect(result.current.params.expand).toBe("topics");
+  });
+
+  it("expand param absent → null", () => {
+    const { result } = renderHook(() => useExplorerParams(), {
+      wrapper: makeWrapper(),
+    });
+
+    expect(result.current.params.expand).toBeNull();
+  });
+
+  it("pushParam sets expand param", () => {
+    const { result } = renderHook(() => useExplorerParams(), {
+      wrapper: makeWrapper(),
+    });
+
+    act(() => {
+      result.current.pushParam("expand", "topics");
+    });
+
+    expect(result.current.params.expand).toBe("topics");
+  });
+
+  it("pushParam with null clears expand param", () => {
+    const { result } = renderHook(() => useExplorerParams(), {
+      wrapper: makeWrapper("?expand=topics"),
+    });
+
+    act(() => {
+      result.current.pushParam("expand", null);
+    });
+
+    expect(result.current.params.expand).toBeNull();
+  });
+
+  it("reads expand=identities from URL", () => {
+    const { result } = renderHook(() => useExplorerParams(), {
+      wrapper: makeWrapper("?expand=identities"),
+    });
+
+    expect(result.current.params.expand).toBe("identities");
+  });
+
   it("setters are stable references (useCallback — no re-creation on re-render)", () => {
     const { result, rerender } = renderHook(() => useExplorerParams(), {
       wrapper: makeWrapper(),

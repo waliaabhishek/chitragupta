@@ -175,6 +175,68 @@ describe("useGraphData", () => {
     await waitFor(() => expect(callCount).toBeGreaterThan(firstCount));
   });
 
+  // TASK-244: expand param
+  it("includes expand param in URL when provided", async () => {
+    let capturedUrl = "";
+    server.use(
+      http.get("/api/v1/tenants/acme/graph", ({ request }) => {
+        capturedUrl = request.url;
+        return HttpResponse.json(GRAPH_RESPONSE);
+      }),
+    );
+
+    const { result } = renderHook(
+      () => useGraphData({ ...BASE_PARAMS, focus: "lkc-abc", expand: "topics" }),
+      { wrapper: createWrapper() },
+    );
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(capturedUrl).toContain("expand=topics");
+  });
+
+  it("omits expand from URL when null", async () => {
+    let capturedUrl = "";
+    server.use(
+      http.get("/api/v1/tenants/acme/graph", ({ request }) => {
+        capturedUrl = request.url;
+        return HttpResponse.json(GRAPH_RESPONSE);
+      }),
+    );
+
+    const { result } = renderHook(
+      () => useGraphData({ ...BASE_PARAMS, expand: null }),
+      { wrapper: createWrapper() },
+    );
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(capturedUrl).not.toContain("expand=");
+  });
+
+  it("re-fetches when expand param changes", async () => {
+    let callCount = 0;
+    server.use(
+      http.get("/api/v1/tenants/acme/graph", () => {
+        callCount++;
+        return HttpResponse.json(GRAPH_RESPONSE);
+      }),
+    );
+
+    const { result, rerender } = renderHook(
+      ({ expand }: { expand: string | null }) =>
+        useGraphData({ ...BASE_PARAMS, expand }),
+      {
+        wrapper: createWrapper(),
+        initialProps: { expand: null } as { expand: string | null },
+      },
+    );
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    const firstCount = callCount;
+
+    rerender({ expand: "topics" });
+    await waitFor(() => expect(callCount).toBeGreaterThan(firstCount));
+  });
+
   it("includes depth, at, startDate, endDate, timezone in URL when provided", async () => {
     let capturedUrl = "";
     server.use(

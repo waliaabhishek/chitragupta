@@ -120,6 +120,22 @@ vi.mock("../../hooks/useGraphTimeline", () => ({
   })),
 }));
 
+// SearchBar mock — exposes a trigger button that fires onSelect with a fixed entity.
+vi.mock("./SearchBar", () => ({
+  SearchBar: ({
+    onSelect,
+  }: {
+    onSelect: (id: string, type: string, name: string | null) => void;
+  }) => (
+    <button
+      data-testid="searchbar-select-trigger"
+      onClick={() => onSelect("env-xyz", "environment", "my-env")}
+    >
+      Search
+    </button>
+  ),
+}));
+
 // GraphContainer mock — renders data-testid + per-node data attributes so tests
 // can observe enriched nodes (including phantom nodes, diff overlays, and faded state).
 vi.mock("./GraphContainer", () => ({
@@ -1237,5 +1253,396 @@ describe("ExplorerPage — enrichWithTagColor (GIT-004)", () => {
     const el = document.querySelector("[data-node-id='n1']") as HTMLElement | null;
     expect(el).not.toBeNull();
     expect(el!.dataset.tagColor).toBe("");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TASK-244: progressive disclosure — group node click, collapse button,
+// expand URL param wired to useGraphData, search/breadcrumb clear expand
+// ---------------------------------------------------------------------------
+
+// The delegated click handler in ExplorerPage reads data-node-status as resourceType.
+// Group node tests set status to the group type string so the handler routes correctly.
+
+describe("ExplorerPage — group node click (TASK-244)", () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let navigate: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let goToRoot: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let goBack: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let goToBreadcrumb: any;
+
+  beforeEach(() => {
+    resetTenantMock();
+    navigate = vi.fn();
+    goToRoot = vi.fn();
+    goBack = vi.fn();
+    goToBreadcrumb = vi.fn();
+    vi.mocked(useGraphNavigation).mockReturnValue({
+      state: { focusId: null, focusType: null, breadcrumbs: [] },
+      navigate,
+      goBack,
+      goToRoot,
+      goToBreadcrumb,
+    });
+  });
+
+  it("clicking a topic_group node does NOT call navigate", () => {
+    vi.mocked(useGraphData).mockReturnValue({
+      data: {
+        nodes: [
+          // status="topic_group" so delegated handler passes resourceType="topic_group"
+          makeApiNode({ id: "group:topics:lkc-abc", status: "topic_group" }),
+        ] as never,
+        edges: [],
+      },
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderExplorerPageWithUrl("?focus=lkc-abc");
+
+    const nodeEl = document.querySelector("[data-node-id='group:topics:lkc-abc']");
+    expect(nodeEl).not.toBeNull();
+    fireEvent.click(nodeEl!);
+
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
+  it("clicking a topic_group node sets expand=topics in URL (collapse button appears)", () => {
+    vi.mocked(useGraphData).mockReturnValue({
+      data: {
+        nodes: [
+          makeApiNode({ id: "group:topics:lkc-abc", status: "topic_group" }),
+        ] as never,
+        edges: [],
+      },
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderExplorerPageWithUrl("?focus=lkc-abc");
+
+    const nodeEl = document.querySelector("[data-node-id='group:topics:lkc-abc']");
+    fireEvent.click(nodeEl!);
+
+    // After expand is set, collapse button should appear
+    expect(screen.getByRole("button", { name: /collapse/i })).toBeInTheDocument();
+  });
+
+  it("clicking a zero_cost_summary node is a no-op (navigate not called)", () => {
+    vi.mocked(useGraphData).mockReturnValue({
+      data: {
+        nodes: [
+          makeApiNode({ id: "group:zero:lkc-abc", status: "zero_cost_summary" }),
+        ] as never,
+        edges: [],
+      },
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderExplorerPageWithUrl("?focus=lkc-abc");
+
+    const nodeEl = document.querySelector("[data-node-id='group:zero:lkc-abc']");
+    expect(nodeEl).not.toBeNull();
+    fireEvent.click(nodeEl!);
+
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
+  it("clicking a capped_summary node is a no-op (navigate not called)", () => {
+    vi.mocked(useGraphData).mockReturnValue({
+      data: {
+        nodes: [
+          makeApiNode({ id: "group:capped:lkc-abc", status: "capped_summary" }),
+        ] as never,
+        edges: [],
+      },
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderExplorerPageWithUrl("?focus=lkc-abc");
+
+    const nodeEl = document.querySelector("[data-node-id='group:capped:lkc-abc']");
+    expect(nodeEl).not.toBeNull();
+    fireEvent.click(nodeEl!);
+
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
+  it("clicking identity_group node does NOT call navigate", () => {
+    vi.mocked(useGraphData).mockReturnValue({
+      data: {
+        nodes: [
+          makeApiNode({ id: "group:identities:lkc-abc", status: "identity_group" }),
+        ] as never,
+        edges: [],
+      },
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderExplorerPageWithUrl("?focus=lkc-abc");
+
+    const nodeEl = document.querySelector("[data-node-id='group:identities:lkc-abc']");
+    expect(nodeEl).not.toBeNull();
+    fireEvent.click(nodeEl!);
+
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
+  it("already-expanded guard: clicking topic_group when expand=topics does not call navigate or pushParam again", () => {
+    vi.mocked(useGraphData).mockReturnValue({
+      data: {
+        nodes: [
+          makeApiNode({ id: "group:topics:lkc-abc", status: "topic_group" }),
+        ] as never,
+        edges: [],
+      },
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    // Start with expand=topics already in URL
+    renderExplorerPageWithUrl("?focus=lkc-abc&expand=topics");
+
+    // Clear call counts after initial render
+    vi.mocked(useGraphData).mockClear();
+
+    const nodeEl = document.querySelector("[data-node-id='group:topics:lkc-abc']");
+    expect(nodeEl).not.toBeNull();
+    fireEvent.click(nodeEl!);
+
+    // Guard: expand already "topics" → pushParam not called → no re-render with new params
+    // navigate should not be called (this is a group node)
+    expect(navigate).not.toHaveBeenCalled();
+    // URL unchanged → useGraphData NOT called again with new params
+    const callsAfterClick = vi.mocked(useGraphData).mock.calls;
+    expect(callsAfterClick).toHaveLength(0);
+  });
+
+  it("regular node click clears expand from URL when expand is active", () => {
+    vi.mocked(useGraphData).mockReturnValue({
+      data: {
+        nodes: [
+          makeApiNode({ id: "lkc-abc", status: "active" }),
+        ] as never,
+        edges: [],
+      },
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    // Start with expand=topics in URL
+    renderExplorerPageWithUrl("?focus=env-abc&expand=topics");
+
+    // Collapse button visible before click
+    expect(screen.getByRole("button", { name: /collapse/i })).toBeInTheDocument();
+
+    const nodeEl = document.querySelector("[data-node-id='lkc-abc']");
+    expect(nodeEl).not.toBeNull();
+    fireEvent.click(nodeEl!);
+
+    // Regular node: navigate called and expand cleared
+    expect(navigate).toHaveBeenCalled();
+    // expand cleared → collapse button gone
+    expect(screen.queryByRole("button", { name: /collapse/i })).toBeNull();
+  });
+});
+
+describe("ExplorerPage — collapse button (TASK-244)", () => {
+  beforeEach(() => {
+    resetTenantMock();
+    resetGraphDataMock();
+    vi.mocked(useGraphNavigation).mockReturnValue({
+      state: { focusId: null, focusType: null, breadcrumbs: [] },
+      navigate: vi.fn(),
+      goBack: vi.fn(),
+      goToRoot: vi.fn(),
+      goToBreadcrumb: vi.fn(),
+    });
+  });
+
+  it("collapse button is rendered when expand=topics is in URL", () => {
+    renderExplorerPageWithUrl("?focus=lkc-abc&expand=topics");
+
+    expect(screen.getByRole("button", { name: /collapse/i })).toBeInTheDocument();
+  });
+
+  it("collapse button is NOT rendered when expand is absent from URL", () => {
+    renderExplorerPageWithUrl("?focus=lkc-abc");
+
+    expect(screen.queryByRole("button", { name: /collapse/i })).toBeNull();
+  });
+
+  it("clicking collapse button clears expand from URL (button disappears)", () => {
+    renderExplorerPageWithUrl("?focus=lkc-abc&expand=topics");
+
+    const collapseBtn = screen.getByRole("button", { name: /collapse/i });
+    fireEvent.click(collapseBtn);
+
+    expect(screen.queryByRole("button", { name: /collapse/i })).toBeNull();
+  });
+
+  it("useGraphData is called with expand from URL", () => {
+    vi.mocked(useGraphData).mockClear();
+    renderExplorerPageWithUrl("?focus=lkc-abc&expand=topics");
+
+    expect(vi.mocked(useGraphData)).toHaveBeenCalledWith(
+      expect.objectContaining({ expand: "topics" }),
+    );
+  });
+
+  it("useGraphData is called with expand=null when expand absent from URL", () => {
+    vi.mocked(useGraphData).mockClear();
+    renderExplorerPageWithUrl("?focus=lkc-abc");
+
+    expect(vi.mocked(useGraphData)).toHaveBeenCalledWith(
+      expect.objectContaining({ expand: null }),
+    );
+  });
+
+  // GIT-002: SearchBar onSelect clears expand
+  it("SearchBar onSelect clears expand from URL (collapse button disappears)", () => {
+    renderExplorerPageWithUrl("?focus=lkc-abc&expand=topics");
+
+    // Collapse button visible before search select
+    expect(screen.getByRole("button", { name: /collapse/i })).toBeInTheDocument();
+
+    // Trigger SearchBar.onSelect via the mock trigger button
+    const trigger = screen.getByTestId("searchbar-select-trigger");
+    fireEvent.click(trigger);
+
+    // expand should be cleared → collapse button gone
+    expect(screen.queryByRole("button", { name: /collapse/i })).toBeNull();
+  });
+
+  // GIT-004: prefetch query key has 9 elements with expand at position 8
+  it("prefetch query key has 9 elements and expand at position 8 when expand is set", async () => {
+    vi.mocked(useDateRange).mockReturnValue({
+      minDate: "2026-01-01",
+      maxDate: "2026-04-30",
+      isLoading: false,
+    });
+    vi.mocked(usePlayback).mockReturnValue({
+      state: { isPlaying: true, speed: 1, currentDate: "2026-01-15", stepDays: 1 },
+      play: vi.fn(),
+      pause: vi.fn(),
+      setSpeed: vi.fn(),
+      setStepDays: vi.fn(),
+      setDate: vi.fn(),
+      isAtEnd: false,
+    });
+    vi.mocked(useDebouncedValue).mockImplementation((v: unknown) => v);
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 } },
+    });
+    const prefetchSpy = vi
+      .spyOn(queryClient, "prefetchQuery")
+      .mockResolvedValue(undefined);
+
+    render(
+      <MemoryRouter initialEntries={["/explorer?focus=lkc-abc&expand=topics"]}>
+        <QueryClientProvider client={queryClient}>
+          <ExplorerPage />
+        </QueryClientProvider>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => expect(prefetchSpy).toHaveBeenCalled());
+
+    const queryKey = (
+      prefetchSpy.mock.calls[0][0] as { queryKey: unknown[] }
+    ).queryKey;
+    expect(queryKey).toHaveLength(9);
+    expect(queryKey[8]).toBe("topics");
+  });
+});
+
+describe("ExplorerPage — breadcrumb navigation clears expand (TASK-244)", () => {
+  beforeEach(() => {
+    resetTenantMock();
+    resetGraphDataMock();
+  });
+
+  it("clicking Tenant (goToRoot) clears expand from URL", () => {
+    vi.mocked(useGraphNavigation).mockReturnValue({
+      state: { focusId: null, focusType: null, breadcrumbs: [] },
+      navigate: vi.fn(),
+      goBack: vi.fn(),
+      goToRoot: vi.fn(),
+      goToBreadcrumb: vi.fn(),
+    });
+
+    renderExplorerPageWithUrl("?focus=lkc-abc&expand=topics");
+
+    expect(screen.getByRole("button", { name: /collapse/i })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /tenant/i }));
+
+    expect(screen.queryByRole("button", { name: /collapse/i })).toBeNull();
+  });
+
+  it("clicking ← Back (goBack) clears expand from URL", () => {
+    vi.mocked(useGraphNavigation).mockReturnValue({
+      state: {
+        focusId: "lkc-abc",
+        focusType: "kafka_cluster",
+        breadcrumbs: [{ id: "lkc-abc", label: "my-cluster", type: "kafka_cluster" }],
+      },
+      navigate: vi.fn(),
+      goBack: vi.fn(),
+      goToRoot: vi.fn(),
+      goToBreadcrumb: vi.fn(),
+    });
+
+    renderExplorerPageWithUrl("?focus=lkc-abc&expand=topics");
+
+    expect(screen.getByRole("button", { name: /collapse/i })).toBeInTheDocument();
+
+    // ← Back button appears when breadcrumbs.length > 0
+    const backBtn = screen.getByRole("button", { name: /back/i });
+    fireEvent.click(backBtn);
+
+    expect(screen.queryByRole("button", { name: /collapse/i })).toBeNull();
+  });
+
+  it("clicking a breadcrumb crumb (goToBreadcrumb) clears expand from URL", () => {
+    vi.mocked(useGraphNavigation).mockReturnValue({
+      state: {
+        focusId: "lkc-abc",
+        focusType: "kafka_cluster",
+        breadcrumbs: [
+          { id: "env-abc", label: "my-env", type: "environment" },
+          { id: "lkc-abc", label: "my-cluster", type: "kafka_cluster" },
+        ],
+      },
+      navigate: vi.fn(),
+      goBack: vi.fn(),
+      goToRoot: vi.fn(),
+      goToBreadcrumb: vi.fn(),
+    });
+
+    renderExplorerPageWithUrl("?focus=lkc-abc&expand=topics");
+
+    expect(screen.getByRole("button", { name: /collapse/i })).toBeInTheDocument();
+
+    // First crumb (env-abc / "my-env") is clickable — it's not the last crumb
+    const crumbBtn = screen.getByRole("button", { name: /my-env/i });
+    fireEvent.click(crumbBtn);
+
+    expect(screen.queryByRole("button", { name: /collapse/i })).toBeNull();
   });
 });

@@ -11,6 +11,9 @@ export interface GraphNode {
   region: string | null;
   status: string;
   cross_references: string[];
+  // Present on synthetic group nodes returned by TASK-243 backend
+  child_count?: number | null;
+  child_total_cost?: number | null;
 }
 
 export interface GraphEdge {
