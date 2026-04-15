@@ -134,4 +134,46 @@ describe("SearchBar", () => {
     // No change event — query stays empty
     expect(screen.queryByText(/Kafka Prod/)).toBeNull();
   });
+
+  it("renders in dark mode without error", () => {
+    render(<SearchBar tenantName="acme" onSelect={vi.fn()} isDark={true} />);
+    expect(screen.getByRole("textbox")).toBeTruthy();
+  });
+
+  it("shows loading state when search is loading", async () => {
+    vi.mocked(useGraphSearch).mockReturnValue({
+      results: [],
+      isLoading: true,
+      error: null,
+    });
+
+    render(<SearchBar tenantName="acme" onSelect={vi.fn()} isDark={false} />);
+    const input = screen.getByRole("textbox");
+    fireEvent.change(input, { target: { value: "test" } });
+
+    await waitFor(() => screen.getByText(/Loading…/i));
+  });
+
+  it("shows result without parent context when parent_display_name is absent", async () => {
+    vi.mocked(useGraphSearch).mockReturnValue({
+      results: [
+        {
+          id: "lkc-xyz",
+          resource_type: "kafka_cluster",
+          display_name: null,
+          parent_id: null,
+          parent_display_name: null,
+          status: "active",
+        },
+      ],
+      isLoading: false,
+      error: null,
+    });
+
+    render(<SearchBar tenantName="acme" onSelect={vi.fn()} isDark={true} />);
+    const input = screen.getByRole("textbox");
+    fireEvent.change(input, { target: { value: "lkc" } });
+
+    await waitFor(() => screen.getByText("lkc-xyz"));
+  });
 });

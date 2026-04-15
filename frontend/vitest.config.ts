@@ -38,6 +38,9 @@ export default defineConfig({
         "src/utils/aggregation.ts",
         "src/components/explorer/**/*.{ts,tsx}",
       ],
+      exclude: [
+        "src/components/explorer/renderers/types.ts",
+      ],
       thresholds: {
         lines: 85,
         functions: 85,

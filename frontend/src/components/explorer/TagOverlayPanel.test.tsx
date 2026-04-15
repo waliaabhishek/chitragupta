@@ -129,4 +129,28 @@ describe("TagOverlayPanel", () => {
     );
     expect(screen.queryByText("platform")).toBeNull();
   });
+
+  it("renders with dark mode styling", () => {
+    render(
+      <TagOverlayPanel
+        {...DEFAULT_PROPS}
+        isDark={true}
+        activeKey="team"
+        colorMap={{ platform: "#1677ff" }}
+        selectedValue="platform"
+      />,
+    );
+    expect(screen.getByText("platform")).toBeTruthy();
+  });
+
+  it("disables select when isLoadingKeys is true", () => {
+    render(
+      <TagOverlayPanel
+        {...DEFAULT_PROPS}
+        isLoadingKeys={true}
+      />,
+    );
+    const select = screen.getByTestId("tag-key-select");
+    expect((select as HTMLSelectElement).disabled).toBe(true);
+  });
 });

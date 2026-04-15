@@ -252,7 +252,11 @@ interface TestCrossReferenceGroup {
 function makeCrossRefGroup(
   id: string,
   resourceType: string,
-  opts: { displayName?: string | null; cost?: number; totalCount?: number } = {},
+  opts: {
+    displayName?: string | null;
+    cost?: number;
+    totalCount?: number;
+  } = {},
 ): TestCrossReferenceGroup {
   const item: TestCrossReferenceItem = {
     id,
@@ -362,6 +366,100 @@ describe("ExplorerPage", () => {
       document.querySelector("[data-testid='breadcrumb-trail']"),
     ).not.toBeNull();
   });
+
+  it("shows 'No resources found' when tenant exists, not loading, no error, and no nodes", () => {
+    vi.mocked(useGraphData).mockReturnValue({
+      data: { nodes: [], edges: [] },
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderExplorerPage();
+    expect(screen.getByText(/no resources found/i)).toBeInTheDocument();
+  });
+
+  it("shows thin loading bar (not full overlay) when scrubber is active and loading", () => {
+    vi.mocked(useDateRange).mockReturnValue({
+      minDate: "2026-01-01",
+      maxDate: "2026-04-01",
+      isLoading: false,
+    });
+    vi.mocked(useGraphData).mockReturnValue({
+      data: null,
+      isLoading: true,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderExplorerPage();
+    // Full loading overlay should NOT be present (scrubber active uses thin bar)
+    expect(screen.queryByTestId("graph-loading")).toBeNull();
+  });
+
+  it("clicking a non-interactive group node (zero_cost_summary) does nothing", () => {
+    const navigate = vi.fn();
+    vi.mocked(useGraphNavigation).mockReturnValue({
+      state: { focusId: null, focusType: null, breadcrumbs: [] },
+      navigate,
+      goBack: vi.fn(),
+      goToRoot: vi.fn(),
+      goToBreadcrumb: vi.fn(),
+    });
+    vi.mocked(useGraphData).mockReturnValue({
+      data: {
+        nodes: [
+          makeApiNode({
+            id: "summary-1",
+            resource_type: "zero_cost_summary",
+            status: "zero_cost_summary",
+          }),
+        ] as never,
+        edges: [],
+      },
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderExplorerPage();
+    const summaryNode = document.querySelector("[data-node-id='summary-1']");
+    expect(summaryNode).not.toBeNull();
+    fireEvent.click(summaryNode!);
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
+  it("clicking a tenant node calls goToRoot", () => {
+    const goToRoot = vi.fn();
+    vi.mocked(useGraphNavigation).mockReturnValue({
+      state: { focusId: null, focusType: null, breadcrumbs: [] },
+      navigate: vi.fn(),
+      goBack: vi.fn(),
+      goToRoot,
+      goToBreadcrumb: vi.fn(),
+    });
+    vi.mocked(useGraphData).mockReturnValue({
+      data: {
+        nodes: [
+          makeApiNode({
+            id: "acme-tenant",
+            resource_type: "tenant",
+            status: "tenant",
+          }),
+        ] as never,
+        edges: [],
+      },
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderExplorerPage();
+    const tenantNode = document.querySelector("[data-node-id='acme-tenant']");
+    expect(tenantNode).not.toBeNull();
+    fireEvent.click(tenantNode!);
+    expect(goToRoot).toHaveBeenCalled();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -380,8 +478,18 @@ describe("ExplorerPage — enrichWithPhantomNodes", () => {
     vi.mocked(useGraphData).mockReturnValue({
       data: {
         nodes: [
-          makeApiNode({ id: "sa-001", cross_references: [makeCrossRefGroup("lkc-phantom", "kafka_cluster")] }),
-          makeApiNode({ id: "sa-002", cross_references: [makeCrossRefGroup("lkc-phantom", "kafka_cluster")] }),
+          makeApiNode({
+            id: "sa-001",
+            cross_references: [
+              makeCrossRefGroup("lkc-phantom", "kafka_cluster"),
+            ],
+          }),
+          makeApiNode({
+            id: "sa-002",
+            cross_references: [
+              makeCrossRefGroup("lkc-phantom", "kafka_cluster"),
+            ],
+          }),
         ] as never,
         edges: [],
       },
@@ -403,7 +511,10 @@ describe("ExplorerPage — enrichWithPhantomNodes", () => {
     vi.mocked(useGraphData).mockReturnValue({
       data: {
         nodes: [
-          makeApiNode({ id: "sa-001", cross_references: [makeCrossRefGroup("lkc-real", "kafka_cluster")] }),
+          makeApiNode({
+            id: "sa-001",
+            cross_references: [makeCrossRefGroup("lkc-real", "kafka_cluster")],
+          }),
           makeApiNode({ id: "lkc-real" }),
         ] as never,
         edges: [],
@@ -443,7 +554,10 @@ describe("ExplorerPage — enrichWithPhantomNodes", () => {
     vi.mocked(useGraphData).mockReturnValue({
       data: {
         nodes: [
-          makeApiNode({ id: "sa-001", cross_references: [makeCrossRefGroup("lkc-ghost", "kafka_cluster")] }),
+          makeApiNode({
+            id: "sa-001",
+            cross_references: [makeCrossRefGroup("lkc-ghost", "kafka_cluster")],
+          }),
         ] as never,
         edges: [],
       },
@@ -468,7 +582,9 @@ describe("ExplorerPage — enrichWithPhantomNodes", () => {
         nodes: [
           makeApiNode({
             id: "sa-001",
-            cross_references: [makeCrossRefGroup("lfcp-001", "flink_compute_pool")],
+            cross_references: [
+              makeCrossRefGroup("lfcp-001", "flink_compute_pool"),
+            ],
           }),
         ] as never,
         edges: [],
@@ -492,14 +608,26 @@ describe("ExplorerPage — enrichWithPhantomNodes", () => {
     const group: TestCrossReferenceGroup = {
       resource_type: "kafka_cluster",
       items: [
-        { id: "lkc-a", resource_type: "kafka_cluster", display_name: null, cost: 100 },
-        { id: "lkc-b", resource_type: "kafka_cluster", display_name: null, cost: 50 },
+        {
+          id: "lkc-a",
+          resource_type: "kafka_cluster",
+          display_name: null,
+          cost: 100,
+        },
+        {
+          id: "lkc-b",
+          resource_type: "kafka_cluster",
+          display_name: null,
+          cost: 50,
+        },
       ],
       total_count: 2, // equals items.length → no overflow
     };
     vi.mocked(useGraphData).mockReturnValue({
       data: {
-        nodes: [makeApiNode({ id: "sa-001", cross_references: [group] })] as never,
+        nodes: [
+          makeApiNode({ id: "sa-001", cross_references: [group] }),
+        ] as never,
         edges: [],
       },
       isLoading: false,
@@ -523,14 +651,26 @@ describe("ExplorerPage — enrichWithPhantomNodes", () => {
     const group: TestCrossReferenceGroup = {
       resource_type: "flink_compute_pool",
       items: [
-        { id: "lfcp-1", resource_type: "flink_compute_pool", display_name: null, cost: 200 },
-        { id: "lfcp-2", resource_type: "flink_compute_pool", display_name: null, cost: 150 },
+        {
+          id: "lfcp-1",
+          resource_type: "flink_compute_pool",
+          display_name: null,
+          cost: 200,
+        },
+        {
+          id: "lfcp-2",
+          resource_type: "flink_compute_pool",
+          display_name: null,
+          cost: 150,
+        },
       ],
       total_count: 50, // 50 total, only 2 shown → summary node needed
     };
     vi.mocked(useGraphData).mockReturnValue({
       data: {
-        nodes: [makeApiNode({ id: "sa-001", cross_references: [group] })] as never,
+        nodes: [
+          makeApiNode({ id: "sa-001", cross_references: [group] }),
+        ] as never,
         edges: [],
       },
       isLoading: false,
@@ -548,7 +688,9 @@ describe("ExplorerPage — enrichWithPhantomNodes", () => {
       "[data-node-resource-type='xref_group']",
     ) as HTMLElement | null;
     expect(summaryEl).not.toBeNull();
-    expect(summaryEl!.dataset.nodeId).toBe("sa-001:xref_group:flink_compute_pool");
+    expect(summaryEl!.dataset.nodeId).toBe(
+      "sa-001:xref_group:flink_compute_pool",
+    );
   });
 });
 
@@ -583,7 +725,9 @@ describe("ExplorerPage — integration", () => {
             makeApiNode({
               id: "sa-001",
               resource_type: "service_account",
-              cross_references: [makeCrossRefGroup("lkc-phantom", "kafka_cluster")],
+              cross_references: [
+                makeCrossRefGroup("lkc-phantom", "kafka_cluster"),
+              ],
             }),
           ],
           edges: [],
@@ -732,7 +876,11 @@ describe("ExplorerPage — timeline scrubber", () => {
     renderExplorerPage();
 
     expect(vi.mocked(useGraphData)).toHaveBeenCalledWith(
-      expect.objectContaining({ at: null, startDate: undefined, endDate: undefined }),
+      expect.objectContaining({
+        at: null,
+        startDate: undefined,
+        endDate: undefined,
+      }),
     );
   });
 
@@ -1219,11 +1367,15 @@ describe("ExplorerPage — URL state (TASK-223)", () => {
     renderExplorerPageWithUrl("?tag=team&tag_value=platform");
 
     // n2 (team=data) should be faded; n1 (team=platform) should not
-    const n2el = document.querySelector("[data-node-id='n2']") as HTMLElement | null;
+    const n2el = document.querySelector(
+      "[data-node-id='n2']",
+    ) as HTMLElement | null;
     expect(n2el).not.toBeNull();
     expect(n2el!.dataset.faded).toBe("true");
 
-    const n1el = document.querySelector("[data-node-id='n1']") as HTMLElement | null;
+    const n1el = document.querySelector(
+      "[data-node-id='n1']",
+    ) as HTMLElement | null;
     expect(n1el).not.toBeNull();
     expect(n1el!.dataset.faded).toBe("false");
   });
@@ -1232,7 +1384,13 @@ describe("ExplorerPage — URL state (TASK-223)", () => {
     vi.mocked(useGraphData).mockReturnValue({
       data: {
         nodes: [
-          makeApiNode({ id: "sa-001", cross_references: [makeCrossRefGroup("lkc-phantom", "kafka_cluster")], tags: { team: "data" } }),
+          makeApiNode({
+            id: "sa-001",
+            cross_references: [
+              makeCrossRefGroup("lkc-phantom", "kafka_cluster"),
+            ],
+            tags: { team: "data" },
+          }),
           makeApiNode({ id: "n-real", tags: { team: "data" } }), // non-phantom, should be faded
         ] as never,
         edges: [],
@@ -1245,12 +1403,16 @@ describe("ExplorerPage — URL state (TASK-223)", () => {
     renderExplorerPageWithUrl("?tag=team&tag_value=platform");
 
     // Real node with mismatched tag should be faded
-    const realEl = document.querySelector("[data-node-id='n-real']") as HTMLElement | null;
+    const realEl = document.querySelector(
+      "[data-node-id='n-real']",
+    ) as HTMLElement | null;
     expect(realEl).not.toBeNull();
     expect(realEl!.dataset.faded).toBe("true");
 
     // Phantom node should NOT be faded regardless of tag mismatch
-    const phantomEl = document.querySelector("[data-node-id='lkc-phantom']") as HTMLElement | null;
+    const phantomEl = document.querySelector(
+      "[data-node-id='lkc-phantom']",
+    ) as HTMLElement | null;
     expect(phantomEl).not.toBeNull();
     expect(phantomEl!.dataset.faded).toBe("false");
   });
@@ -1300,7 +1462,9 @@ describe("ExplorerPage — enrichWithTagColor (GIT-004)", () => {
 
     renderExplorerPageWithUrl("?tag=team");
 
-    const el = document.querySelector("[data-node-id='n1']") as HTMLElement | null;
+    const el = document.querySelector(
+      "[data-node-id='n1']",
+    ) as HTMLElement | null;
     expect(el).not.toBeNull();
     expect(el!.dataset.tagColor).toBe("#1677ff");
   });
@@ -1323,7 +1487,9 @@ describe("ExplorerPage — enrichWithTagColor (GIT-004)", () => {
 
     renderExplorerPageWithUrl("?tag=team");
 
-    const el = document.querySelector("[data-node-id='n1']") as HTMLElement | null;
+    const el = document.querySelector(
+      "[data-node-id='n1']",
+    ) as HTMLElement | null;
     expect(el).not.toBeNull();
     // tags["team"] is undefined → key "UNTAGGED" → colorMap["UNTAGGED"] = "#d9d9d9"
     expect(el!.dataset.tagColor).toBe("#d9d9d9");
@@ -1335,7 +1501,9 @@ describe("ExplorerPage — enrichWithTagColor (GIT-004)", () => {
         nodes: [
           makeApiNode({
             id: "sa-001",
-            cross_references: [makeCrossRefGroup("lkc-phantom", "kafka_cluster")],
+            cross_references: [
+              makeCrossRefGroup("lkc-phantom", "kafka_cluster"),
+            ],
             tags: { team: "platform" },
           }),
         ] as never,
@@ -1380,7 +1548,9 @@ describe("ExplorerPage — enrichWithTagColor (GIT-004)", () => {
     // No ?tag param → params.tag = null → enrichWithTagColor no-op
     renderExplorerPageWithUrl("");
 
-    const el = document.querySelector("[data-node-id='n1']") as HTMLElement | null;
+    const el = document.querySelector(
+      "[data-node-id='n1']",
+    ) as HTMLElement | null;
     expect(el).not.toBeNull();
     expect(el!.dataset.tagColor).toBe("");
   });
@@ -1435,7 +1605,9 @@ describe("ExplorerPage — group node click (TASK-244)", () => {
 
     renderExplorerPageWithUrl("?focus=lkc-abc");
 
-    const nodeEl = document.querySelector("[data-node-id='group:topics:lkc-abc']");
+    const nodeEl = document.querySelector(
+      "[data-node-id='group:topics:lkc-abc']",
+    );
     expect(nodeEl).not.toBeNull();
     fireEvent.click(nodeEl!);
 
@@ -1457,18 +1629,25 @@ describe("ExplorerPage — group node click (TASK-244)", () => {
 
     renderExplorerPageWithUrl("?focus=lkc-abc");
 
-    const nodeEl = document.querySelector("[data-node-id='group:topics:lkc-abc']");
+    const nodeEl = document.querySelector(
+      "[data-node-id='group:topics:lkc-abc']",
+    );
     fireEvent.click(nodeEl!);
 
     // After expand is set, collapse button should appear
-    expect(screen.getByRole("button", { name: /collapse/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /collapse/i }),
+    ).toBeInTheDocument();
   });
 
   it("clicking a zero_cost_summary node is a no-op (navigate not called)", () => {
     vi.mocked(useGraphData).mockReturnValue({
       data: {
         nodes: [
-          makeApiNode({ id: "group:zero:lkc-abc", status: "zero_cost_summary" }),
+          makeApiNode({
+            id: "group:zero:lkc-abc",
+            status: "zero_cost_summary",
+          }),
         ] as never,
         edges: [],
       },
@@ -1479,7 +1658,9 @@ describe("ExplorerPage — group node click (TASK-244)", () => {
 
     renderExplorerPageWithUrl("?focus=lkc-abc");
 
-    const nodeEl = document.querySelector("[data-node-id='group:zero:lkc-abc']");
+    const nodeEl = document.querySelector(
+      "[data-node-id='group:zero:lkc-abc']",
+    );
     expect(nodeEl).not.toBeNull();
     fireEvent.click(nodeEl!);
 
@@ -1501,7 +1682,9 @@ describe("ExplorerPage — group node click (TASK-244)", () => {
 
     renderExplorerPageWithUrl("?focus=lkc-abc");
 
-    const nodeEl = document.querySelector("[data-node-id='group:capped:lkc-abc']");
+    const nodeEl = document.querySelector(
+      "[data-node-id='group:capped:lkc-abc']",
+    );
     expect(nodeEl).not.toBeNull();
     fireEvent.click(nodeEl!);
 
@@ -1512,7 +1695,10 @@ describe("ExplorerPage — group node click (TASK-244)", () => {
     vi.mocked(useGraphData).mockReturnValue({
       data: {
         nodes: [
-          makeApiNode({ id: "group:identities:lkc-abc", status: "identity_group" }),
+          makeApiNode({
+            id: "group:identities:lkc-abc",
+            status: "identity_group",
+          }),
         ] as never,
         edges: [],
       },
@@ -1523,7 +1709,9 @@ describe("ExplorerPage — group node click (TASK-244)", () => {
 
     renderExplorerPageWithUrl("?focus=lkc-abc");
 
-    const nodeEl = document.querySelector("[data-node-id='group:identities:lkc-abc']");
+    const nodeEl = document.querySelector(
+      "[data-node-id='group:identities:lkc-abc']",
+    );
     expect(nodeEl).not.toBeNull();
     fireEvent.click(nodeEl!);
 
@@ -1535,7 +1723,10 @@ describe("ExplorerPage — group node click (TASK-244)", () => {
     vi.mocked(useGraphData).mockReturnValue({
       data: {
         nodes: [
-          makeApiNode({ id: "env-abc:resource_group", status: "resource_group" }),
+          makeApiNode({
+            id: "env-abc:resource_group",
+            status: "resource_group",
+          }),
         ] as never,
         edges: [],
       },
@@ -1547,7 +1738,9 @@ describe("ExplorerPage — group node click (TASK-244)", () => {
     renderExplorerPageWithUrl("?focus=env-abc");
     vi.mocked(useGraphData).mockClear();
 
-    const nodeEl = document.querySelector("[data-node-id='env-abc:resource_group']");
+    const nodeEl = document.querySelector(
+      "[data-node-id='env-abc:resource_group']",
+    );
     expect(nodeEl).not.toBeNull();
     fireEvent.click(nodeEl!);
 
@@ -1556,7 +1749,9 @@ describe("ExplorerPage — group node click (TASK-244)", () => {
       expect.objectContaining({ expand: "resources" }),
     );
     // Collapse button visible confirms expand is set in URL
-    expect(screen.getByRole("button", { name: /collapse/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /collapse/i }),
+    ).toBeInTheDocument();
   });
 
   it("clicking cluster_group node: useGraphData called with expand=clusters and collapse button appears", () => {
@@ -1575,7 +1770,9 @@ describe("ExplorerPage — group node click (TASK-244)", () => {
     renderExplorerPageWithUrl("?focus=sa-abc");
     vi.mocked(useGraphData).mockClear();
 
-    const nodeEl = document.querySelector("[data-node-id='sa-abc:cluster_group']");
+    const nodeEl = document.querySelector(
+      "[data-node-id='sa-abc:cluster_group']",
+    );
     expect(nodeEl).not.toBeNull();
     fireEvent.click(nodeEl!);
 
@@ -1584,7 +1781,9 @@ describe("ExplorerPage — group node click (TASK-244)", () => {
       expect.objectContaining({ expand: "clusters" }),
     );
     // Collapse button visible confirms expand is set in URL
-    expect(screen.getByRole("button", { name: /collapse/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /collapse/i }),
+    ).toBeInTheDocument();
   });
 
   it("already-expanded guard: clicking topic_group when expand=topics does not call navigate or pushParam again", () => {
@@ -1606,7 +1805,9 @@ describe("ExplorerPage — group node click (TASK-244)", () => {
     // Clear call counts after initial render
     vi.mocked(useGraphData).mockClear();
 
-    const nodeEl = document.querySelector("[data-node-id='group:topics:lkc-abc']");
+    const nodeEl = document.querySelector(
+      "[data-node-id='group:topics:lkc-abc']",
+    );
     expect(nodeEl).not.toBeNull();
     fireEvent.click(nodeEl!);
 
@@ -1621,9 +1822,7 @@ describe("ExplorerPage — group node click (TASK-244)", () => {
   it("regular node click clears expand from URL when expand is active", () => {
     vi.mocked(useGraphData).mockReturnValue({
       data: {
-        nodes: [
-          makeApiNode({ id: "lkc-abc", status: "active" }),
-        ] as never,
+        nodes: [makeApiNode({ id: "lkc-abc", status: "active" })] as never,
         edges: [],
       },
       isLoading: false,
@@ -1635,7 +1834,9 @@ describe("ExplorerPage — group node click (TASK-244)", () => {
     renderExplorerPageWithUrl("?focus=env-abc&expand=topics");
 
     // Collapse button visible before click
-    expect(screen.getByRole("button", { name: /collapse/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /collapse/i }),
+    ).toBeInTheDocument();
 
     const nodeEl = document.querySelector("[data-node-id='lkc-abc']");
     expect(nodeEl).not.toBeNull();
@@ -1664,7 +1865,9 @@ describe("ExplorerPage — collapse button (TASK-244)", () => {
   it("collapse button is rendered when expand=topics is in URL", () => {
     renderExplorerPageWithUrl("?focus=lkc-abc&expand=topics");
 
-    expect(screen.getByRole("button", { name: /collapse/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /collapse/i }),
+    ).toBeInTheDocument();
   });
 
   it("collapse button is NOT rendered when expand is absent from URL", () => {
@@ -1705,7 +1908,9 @@ describe("ExplorerPage — collapse button (TASK-244)", () => {
     renderExplorerPageWithUrl("?focus=lkc-abc&expand=topics");
 
     // Collapse button visible before search select
-    expect(screen.getByRole("button", { name: /collapse/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /collapse/i }),
+    ).toBeInTheDocument();
 
     // Trigger SearchBar.onSelect via the mock trigger button
     const trigger = screen.getByTestId("searchbar-select-trigger");
@@ -1723,7 +1928,12 @@ describe("ExplorerPage — collapse button (TASK-244)", () => {
       isLoading: false,
     });
     vi.mocked(usePlayback).mockReturnValue({
-      state: { isPlaying: true, speed: 1, currentDate: "2026-01-15", stepDays: 1 },
+      state: {
+        isPlaying: true,
+        speed: 1,
+        currentDate: "2026-01-15",
+        stepDays: 1,
+      },
       play: vi.fn(),
       pause: vi.fn(),
       setSpeed: vi.fn(),
@@ -1750,11 +1960,468 @@ describe("ExplorerPage — collapse button (TASK-244)", () => {
 
     await waitFor(() => expect(prefetchSpy).toHaveBeenCalled());
 
-    const queryKey = (
-      prefetchSpy.mock.calls[0][0] as { queryKey: unknown[] }
-    ).queryKey;
+    const queryKey = (prefetchSpy.mock.calls[0][0] as { queryKey: unknown[] })
+      .queryKey;
     expect(queryKey).toHaveLength(9);
     expect(queryKey[8]).toBe("topics");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// collapseNearZeroNodes tests
+// ---------------------------------------------------------------------------
+
+describe("ExplorerPage — collapseNearZeroNodes", () => {
+  beforeEach(() => {
+    resetTenantMock();
+    resetGraphDataMock();
+    vi.mocked(useGraphNavigation).mockReturnValue({
+      state: { focusId: null, focusType: null, breadcrumbs: [] },
+      navigate: vi.fn(),
+      goBack: vi.fn(),
+      goToRoot: vi.fn(),
+      goToBreadcrumb: vi.fn(),
+    });
+  });
+
+  it("collapses near-zero-cost nodes into a zero_cost_summary node", () => {
+    vi.mocked(useGraphData).mockReturnValue({
+      data: {
+        nodes: [
+          makeApiNode({ id: "env-abc", cost: "100.00" }),
+          makeApiNode({
+            id: "topic-1",
+            cost: "0.001",
+            resource_type: "kafka_topic",
+          }),
+          makeApiNode({
+            id: "topic-2",
+            cost: "0.003",
+            resource_type: "kafka_topic",
+          }),
+        ] as never,
+        edges: [
+          {
+            source: "topic-1",
+            target: "env-abc",
+            relationship_type: "parent",
+            cost: null,
+          },
+          {
+            source: "topic-2",
+            target: "env-abc",
+            relationship_type: "parent",
+            cost: null,
+          },
+        ],
+      },
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderExplorerPage();
+
+    // Near-zero nodes are collapsed — individual topic nodes should NOT appear
+    expect(document.querySelector("[data-node-id='topic-1']")).toBeNull();
+    expect(document.querySelector("[data-node-id='topic-2']")).toBeNull();
+    // A zero_cost_summary node should appear instead
+    const summaryNode = document.querySelector(
+      "[data-node-resource-type='zero_cost_summary']",
+    );
+    expect(summaryNode).not.toBeNull();
+  });
+
+  it("merges near-zero nodes into existing zero_cost_summary from API", () => {
+    vi.mocked(useGraphData).mockReturnValue({
+      data: {
+        nodes: [
+          makeApiNode({ id: "env-abc", cost: "100.00" }),
+          makeApiNode({
+            id: "env-abc:zero_cost_ui",
+            resource_type: "zero_cost_summary",
+            cost: "0",
+            child_count: 3,
+          }),
+          makeApiNode({
+            id: "topic-new",
+            cost: "0.001",
+            resource_type: "kafka_topic",
+          }),
+        ] as never,
+        edges: [
+          {
+            source: "env-abc:zero_cost_ui",
+            target: "env-abc",
+            relationship_type: "charge",
+            cost: null,
+          },
+          {
+            source: "topic-new",
+            target: "env-abc",
+            relationship_type: "parent",
+            cost: null,
+          },
+        ],
+      },
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderExplorerPage();
+
+    // Only one summary node should exist (merged into existing, not duplicated)
+    const summaryNodes = document.querySelectorAll(
+      "[data-node-resource-type='zero_cost_summary']",
+    );
+    expect(summaryNodes).toHaveLength(1);
+    // The near-zero topic-new should not appear as its own node
+    expect(document.querySelector("[data-node-id='topic-new']")).toBeNull();
+  });
+
+  it("nodes at or above threshold are not collapsed", () => {
+    vi.mocked(useGraphData).mockReturnValue({
+      data: {
+        nodes: [
+          makeApiNode({ id: "env-abc", cost: "100.00" }),
+          makeApiNode({
+            id: "lkc-expensive",
+            cost: "50.00",
+            resource_type: "kafka_cluster",
+          }),
+          makeApiNode({
+            id: "lkc-cheap",
+            cost: "0.001",
+            resource_type: "kafka_cluster",
+          }),
+        ] as never,
+        edges: [
+          {
+            source: "lkc-expensive",
+            target: "env-abc",
+            relationship_type: "parent",
+            cost: null,
+          },
+          {
+            source: "lkc-cheap",
+            target: "env-abc",
+            relationship_type: "parent",
+            cost: null,
+          },
+        ],
+      },
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderExplorerPage();
+
+    // Above-threshold node should remain
+    expect(
+      document.querySelector("[data-node-id='lkc-expensive']"),
+    ).not.toBeNull();
+    // Below-threshold node should be collapsed
+    expect(document.querySelector("[data-node-id='lkc-cheap']")).toBeNull();
+    expect(
+      document.querySelector("[data-node-resource-type='zero_cost_summary']"),
+    ).not.toBeNull();
+  });
+
+  it("focus node is never collapsed even when cost < threshold", () => {
+    vi.mocked(useGraphData).mockReturnValue({
+      data: {
+        nodes: [
+          makeApiNode({ id: "env-abc", cost: "100.00" }),
+          // lkc-focus has near-zero cost but is the focus node — must not be collapsed
+          makeApiNode({
+            id: "lkc-focus",
+            cost: "0.001",
+            resource_type: "kafka_cluster",
+          }),
+        ] as never,
+        edges: [
+          {
+            source: "lkc-focus",
+            target: "env-abc",
+            relationship_type: "parent",
+            cost: null,
+          },
+        ],
+      },
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderExplorerPageWithUrl("?focus=lkc-focus");
+
+    // Focus node should remain even though its cost < threshold
+    expect(document.querySelector("[data-node-id='lkc-focus']")).not.toBeNull();
+    // No summary node because the only near-zero node is the focus
+    expect(
+      document.querySelector("[data-node-resource-type='zero_cost_summary']"),
+    ).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// synthesizeDiffGhostNodes tests
+// ---------------------------------------------------------------------------
+
+describe("ExplorerPage — synthesizeDiffGhostNodes", () => {
+  beforeEach(() => {
+    resetTenantMock();
+    vi.mocked(useDateRange).mockReturnValue({
+      minDate: "2026-01-01",
+      maxDate: "2026-04-13",
+      isLoading: false,
+    });
+    vi.mocked(usePlayback).mockReturnValue({
+      state: {
+        isPlaying: false,
+        speed: 1,
+        currentDate: "2026-01-01",
+        stepDays: 3,
+      },
+      play: vi.fn(),
+      pause: vi.fn(),
+      setSpeed: vi.fn(),
+      setStepDays: vi.fn(),
+      setDate: vi.fn(),
+      isAtEnd: false,
+    });
+    vi.mocked(useDebouncedValue).mockImplementation((value: unknown) => value);
+    vi.mocked(useGraphNavigation).mockReturnValue({
+      state: { focusId: null, focusType: null, breadcrumbs: [] },
+      navigate: vi.fn(),
+      goBack: vi.fn(),
+      goToRoot: vi.fn(),
+      goToBreadcrumb: vi.fn(),
+    });
+  });
+
+  it("synthesizes ghost nodes for deleted entities absent from topology in diff mode", () => {
+    vi.mocked(useGraphData).mockReturnValue({
+      data: {
+        nodes: [makeApiNode({ id: "env-abc", cost: "100.00" })] as never,
+        edges: [],
+      },
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    vi.mocked(useGraphDiff).mockReturnValue({
+      data: [
+        {
+          id: "topic-deleted",
+          resource_type: "kafka_topic",
+          display_name: "deleted-topic",
+          cost_before: 50,
+          cost_after: 0,
+          cost_delta: -50,
+          pct_change: -100,
+          status: "deleted",
+          parent_id: "env-abc",
+        },
+      ],
+      isLoading: false,
+      error: null,
+    });
+
+    // Render with diff=true in URL to activate diff mode
+    renderExplorerPageWithUrl("?diff=true");
+
+    // The deleted node not in topology should appear as a ghost (phantom) node
+    const ghostEl = document.querySelector(
+      "[data-node-id='topic-deleted']",
+    ) as HTMLElement | null;
+    expect(ghostEl).not.toBeNull();
+    expect(ghostEl!.dataset.nodeStatus).toBe("phantom");
+  });
+
+  it("deleted diff nodes already present in topology are not synthesized again", () => {
+    vi.mocked(useGraphData).mockReturnValue({
+      data: {
+        nodes: [
+          makeApiNode({ id: "env-abc", cost: "100.00" }),
+          // lkc-existing is already in topology (deleted from API perspective but still returned)
+          // cost must be >= 0.005 to avoid being collapsed by collapseNearZeroNodes
+          makeApiNode({
+            id: "lkc-existing",
+            cost: "10.00",
+            resource_type: "kafka_cluster",
+          }),
+        ] as never,
+        edges: [],
+      },
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    vi.mocked(useGraphDiff).mockReturnValue({
+      data: [
+        {
+          id: "lkc-existing",
+          resource_type: "kafka_cluster",
+          display_name: "existing-cluster",
+          cost_before: 100,
+          cost_after: 0,
+          cost_delta: -100,
+          pct_change: -100,
+          status: "deleted",
+          parent_id: "env-abc",
+        },
+      ],
+      isLoading: false,
+      error: null,
+    });
+
+    renderExplorerPageWithUrl("?diff=true");
+
+    // lkc-existing is in topology — only one node with that id should exist
+    const matchingNodes = document.querySelectorAll(
+      "[data-node-id='lkc-existing']",
+    );
+    expect(matchingNodes).toHaveLength(1);
+    // It came from topology, not synthesized — status is "active" not "phantom"
+    expect((matchingNodes[0] as HTMLElement).dataset.nodeStatus).toBe("active");
+  });
+
+  it("unchanged diff nodes do not produce ghost nodes", () => {
+    vi.mocked(useGraphData).mockReturnValue({
+      data: {
+        nodes: [makeApiNode({ id: "env-abc", cost: "100.00" })] as never,
+        edges: [],
+      },
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    vi.mocked(useGraphDiff).mockReturnValue({
+      data: [
+        {
+          id: "topic-unchanged",
+          resource_type: "kafka_topic",
+          display_name: "stable-topic",
+          cost_before: 50,
+          cost_after: 50,
+          cost_delta: 0,
+          pct_change: 0,
+          status: "unchanged",
+          parent_id: "env-abc",
+        },
+      ],
+      isLoading: false,
+      error: null,
+    });
+
+    renderExplorerPageWithUrl("?diff=true");
+
+    // unchanged status → synthesizeDiffGhostNodes skips it → no phantom node
+    expect(
+      document.querySelector("[data-node-id='topic-unchanged']"),
+    ).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Prefetch effect — stepDays branch coverage
+// ---------------------------------------------------------------------------
+
+describe("ExplorerPage — prefetch stepDays guard", () => {
+  beforeEach(() => {
+    resetTenantMock();
+    resetGraphDataMock();
+    vi.mocked(useDateRange).mockReturnValue({
+      minDate: "2026-01-01",
+      maxDate: "2026-04-30",
+      isLoading: false,
+    });
+    vi.mocked(useDebouncedValue).mockImplementation((v: unknown) => v);
+  });
+
+  it("does NOT prefetch when stepDays is 3 (not 1) even while playing", async () => {
+    vi.mocked(usePlayback).mockReturnValue({
+      state: {
+        isPlaying: true,
+        speed: 1,
+        currentDate: "2026-01-15",
+        stepDays: 3,
+      },
+      play: vi.fn(),
+      pause: vi.fn(),
+      setSpeed: vi.fn(),
+      setStepDays: vi.fn(),
+      setDate: vi.fn(),
+      isAtEnd: false,
+    });
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 } },
+    });
+    const prefetchSpy = vi
+      .spyOn(queryClient, "prefetchQuery")
+      .mockResolvedValue(undefined);
+
+    render(
+      <MemoryRouter>
+        <QueryClientProvider client={queryClient}>
+          <ExplorerPage />
+        </QueryClientProvider>
+      </MemoryRouter>,
+    );
+
+    // Wait a tick for effects to settle
+    await waitFor(() => {
+      expect(vi.mocked(usePlayback)).toHaveBeenCalled();
+    });
+
+    // stepDays=3 → prefetch guard returns early → prefetchQuery not called
+    expect(prefetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("does NOT prefetch when not playing even when stepDays is 1", async () => {
+    vi.mocked(usePlayback).mockReturnValue({
+      state: {
+        isPlaying: false,
+        speed: 1,
+        currentDate: "2026-01-15",
+        stepDays: 1,
+      },
+      play: vi.fn(),
+      pause: vi.fn(),
+      setSpeed: vi.fn(),
+      setStepDays: vi.fn(),
+      setDate: vi.fn(),
+      isAtEnd: false,
+    });
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 } },
+    });
+    const prefetchSpy = vi
+      .spyOn(queryClient, "prefetchQuery")
+      .mockResolvedValue(undefined);
+
+    render(
+      <MemoryRouter>
+        <QueryClientProvider client={queryClient}>
+          <ExplorerPage />
+        </QueryClientProvider>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(vi.mocked(usePlayback)).toHaveBeenCalled();
+    });
+
+    // isPlaying=false → effect returns early → prefetchQuery not called
+    expect(prefetchSpy).not.toHaveBeenCalled();
   });
 });
 
@@ -1775,7 +2442,9 @@ describe("ExplorerPage — breadcrumb navigation clears expand (TASK-244)", () =
 
     renderExplorerPageWithUrl("?focus=lkc-abc&expand=topics");
 
-    expect(screen.getByRole("button", { name: /collapse/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /collapse/i }),
+    ).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /tenant/i }));
 
@@ -1787,7 +2456,9 @@ describe("ExplorerPage — breadcrumb navigation clears expand (TASK-244)", () =
       state: {
         focusId: "lkc-abc",
         focusType: "kafka_cluster",
-        breadcrumbs: [{ id: "lkc-abc", label: "my-cluster", type: "kafka_cluster" }],
+        breadcrumbs: [
+          { id: "lkc-abc", label: "my-cluster", type: "kafka_cluster" },
+        ],
       },
       navigate: vi.fn(),
       goBack: vi.fn(),
@@ -1797,7 +2468,9 @@ describe("ExplorerPage — breadcrumb navigation clears expand (TASK-244)", () =
 
     renderExplorerPageWithUrl("?focus=lkc-abc&expand=topics");
 
-    expect(screen.getByRole("button", { name: /collapse/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /collapse/i }),
+    ).toBeInTheDocument();
 
     // ← button appears when breadcrumbs.length > 0
     const backBtn = screen.getByRole("button", { name: "←" });
@@ -1824,7 +2497,9 @@ describe("ExplorerPage — breadcrumb navigation clears expand (TASK-244)", () =
 
     renderExplorerPageWithUrl("?focus=lkc-abc&expand=topics");
 
-    expect(screen.getByRole("button", { name: /collapse/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /collapse/i }),
+    ).toBeInTheDocument();
 
     // First crumb (env-abc / "my-env") is clickable — it's not the last crumb
     const crumbBtn = screen.getByRole("button", { name: /my-env/i });

@@ -357,6 +357,209 @@ describe("CytoscapeRenderer", () => {
     });
   });
 
+  // ---------- computeNodeLabel uncovered branches ----------
+
+  it("topic_group without child_total_cost shows count only", async () => {
+    const groupNode = makeNode({
+      id: "group:topics:lkc-abc",
+      resource_type: "topic_group",
+      cost: 0,
+      child_count: 42,
+      child_total_cost: null,
+    });
+    render(<CytoscapeRenderer {...DEFAULT_PROPS} nodes={[groupNode]} />);
+    await waitFor(() => {
+      const nodeAdds = state.addCalls.filter(
+        (el) => (el as { group?: string }).group === "nodes",
+      );
+      expect(nodeAdds).toHaveLength(1);
+      const addedData = (nodeAdds[0] as { data: { label: string } }).data;
+      expect(addedData.label).toBe("42 topics");
+    });
+  });
+
+  it("identity_group without child_total_cost shows count only", async () => {
+    const groupNode = makeNode({
+      id: "group:ids:lkc-abc",
+      resource_type: "identity_group",
+      cost: 0,
+      child_count: 3,
+      child_total_cost: null,
+    });
+    render(<CytoscapeRenderer {...DEFAULT_PROPS} nodes={[groupNode]} />);
+    await waitFor(() => {
+      const nodeAdds = state.addCalls.filter(
+        (el) => (el as { group?: string }).group === "nodes",
+      );
+      expect(nodeAdds).toHaveLength(1);
+      const addedData = (nodeAdds[0] as { data: { label: string } }).data;
+      expect(addedData.label).toBe("3 users");
+    });
+  });
+
+  it("resource_group without child_total_cost shows count only", async () => {
+    const groupNode = makeNode({
+      id: "env-abc:resource_group",
+      resource_type: "resource_group",
+      cost: 0,
+      child_count: 8,
+      child_total_cost: null,
+    });
+    render(<CytoscapeRenderer {...DEFAULT_PROPS} nodes={[groupNode]} />);
+    await waitFor(() => {
+      const nodeAdds = state.addCalls.filter(
+        (el) => (el as { group?: string }).group === "nodes",
+      );
+      expect(nodeAdds).toHaveLength(1);
+      const addedData = (nodeAdds[0] as { data: { label: string } }).data;
+      expect(addedData.label).toBe("8 resources");
+    });
+  });
+
+  it("cluster_group without child_total_cost shows count only", async () => {
+    const groupNode = makeNode({
+      id: "sa-abc:cluster_group",
+      resource_type: "cluster_group",
+      cost: 0,
+      child_count: 4,
+      child_total_cost: null,
+    });
+    render(<CytoscapeRenderer {...DEFAULT_PROPS} nodes={[groupNode]} />);
+    await waitFor(() => {
+      const nodeAdds = state.addCalls.filter(
+        (el) => (el as { group?: string }).group === "nodes",
+      );
+      expect(nodeAdds).toHaveLength(1);
+      const addedData = (nodeAdds[0] as { data: { label: string } }).data;
+      expect(addedData.label).toBe("4 clusters");
+    });
+  });
+
+  it("xref_group node has label 'N more'", async () => {
+    const groupNode = makeNode({
+      id: "env-abc:xref_group:kafka_topic",
+      resource_type: "xref_group",
+      cost: 0,
+      child_count: 15,
+    });
+    render(<CytoscapeRenderer {...DEFAULT_PROPS} nodes={[groupNode]} />);
+    await waitFor(() => {
+      const nodeAdds = state.addCalls.filter(
+        (el) => (el as { group?: string }).group === "nodes",
+      );
+      expect(nodeAdds).toHaveLength(1);
+      const addedData = (nodeAdds[0] as { data: { label: string } }).data;
+      expect(addedData.label).toBe("15 more");
+    });
+  });
+
+  it("regular node without display_name falls back to id", async () => {
+    const node = makeNode({
+      id: "env-abc",
+      display_name: null,
+    });
+    render(<CytoscapeRenderer {...DEFAULT_PROPS} nodes={[node]} />);
+    await waitFor(() => {
+      const nodeAdds = state.addCalls.filter(
+        (el) => (el as { group?: string }).group === "nodes",
+      );
+      expect(nodeAdds).toHaveLength(1);
+      const addedData = (nodeAdds[0] as { data: { label: string } }).data;
+      expect(addedData.label).toBe("env-abc");
+    });
+  });
+
+  // ---------- Data diff effect — persisting nodes ----------
+
+  it("updates data in place for persisting nodes on rerender", async () => {
+    const node1 = makeNode({ id: "n1", cost: 100, display_name: "Node 1" });
+
+    // Track which IDs the mock should report as already in the graph
+    const prevNodeIds = new Set<string>();
+    mockCyInstance.nodes.mockImplementation(() => ({
+      map: (fn: (n: { id: () => string }) => string) =>
+        [...prevNodeIds].map((id) => fn({ id: () => id })),
+      filter: vi.fn(() => ({
+        animate: vi.fn(),
+        addClass: vi.fn((cls: string) => {
+          if (cls === "faded") state.fadedClassApplied = true;
+        }),
+        removeClass: vi.fn(),
+      })),
+      addClass: vi.fn(),
+      removeClass: vi.fn(),
+      forEach: vi.fn(),
+      length: prevNodeIds.size,
+    }));
+
+    const { rerender } = render(
+      <CytoscapeRenderer {...DEFAULT_PROPS} nodes={[node1]} />,
+    );
+
+    await waitFor(() => {
+      expect(state.addCalls.length).toBeGreaterThan(0);
+    });
+
+    // n1 now "exists" in the graph
+    prevNodeIds.add("n1");
+    state.addCalls = [];
+    (mockCyInstance.getElementById as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: vi.fn(),
+      isNode: () => true,
+      position: () => ({ x: 100, y: 100 }),
+      addClass: vi.fn(),
+      style: vi.fn(),
+      animate: vi.fn(),
+    });
+
+    // Rerender with updated cost — persisting path calls getElementById("n1").data()
+    const updated = makeNode({
+      id: "n1",
+      cost: 200,
+      display_name: "Node 1 Updated",
+    });
+    rerender(<CytoscapeRenderer {...DEFAULT_PROPS} nodes={[updated]} />);
+
+    await waitFor(() => {
+      expect(mockCyInstance.getElementById).toHaveBeenCalledWith("n1");
+    });
+  });
+
+  // ---------- Dark mode style update ----------
+
+  it("updates stylesheet when isDark changes", async () => {
+    const { rerender } = render(<CytoscapeRenderer {...DEFAULT_PROPS} />);
+    await waitFor(() => expect(cytoscapeMock).toHaveBeenCalledTimes(1));
+    mockCyInstance.style.mockClear();
+
+    rerender(<CytoscapeRenderer {...DEFAULT_PROPS} isDark={true} />);
+
+    await waitFor(() => {
+      expect(mockCyInstance.style).toHaveBeenCalled();
+    });
+  });
+
+  // ---------- Resize ----------
+
+  it("calls cy.resize() when width/height changes", async () => {
+    const resizeMock = vi.fn();
+    (mockCyInstance as Record<string, unknown>).resize = resizeMock;
+
+    const { rerender } = render(
+      <CytoscapeRenderer {...DEFAULT_PROPS} width={800} height={600} />,
+    );
+    await waitFor(() => expect(cytoscapeMock).toHaveBeenCalledTimes(1));
+
+    resizeMock.mockClear();
+    rerender(
+      <CytoscapeRenderer {...DEFAULT_PROPS} width={1000} height={700} />,
+    );
+
+    await waitFor(() => {
+      expect(resizeMock).toHaveBeenCalled();
+    });
+  });
+
   // ---------------------------------------------------------------------------
   // GIT-003 — Constrained re-layout on tag value selection
   // ---------------------------------------------------------------------------
@@ -413,9 +616,9 @@ describe("CytoscapeRenderer", () => {
       );
 
       await waitFor(() => {
-        const d3Calls = (mockCyInstance.layout.mock.calls as unknown[][]).filter(
-          (args) => (args[0] as { name: string }).name === "d3-force",
-        );
+        const d3Calls = (
+          mockCyInstance.layout.mock.calls as unknown[][]
+        ).filter((args) => (args[0] as { name: string }).name === "d3-force");
         expect(d3Calls).toHaveLength(1);
       });
     });
@@ -445,9 +648,9 @@ describe("CytoscapeRenderer", () => {
       );
 
       await waitFor(() => {
-        const d3Calls = (mockCyInstance.layout.mock.calls as unknown[][]).filter(
-          (args) => (args[0] as { name: string }).name === "d3-force",
-        );
+        const d3Calls = (
+          mockCyInstance.layout.mock.calls as unknown[][]
+        ).filter((args) => (args[0] as { name: string }).name === "d3-force");
         expect(d3Calls.length).toBeGreaterThanOrEqual(1);
       });
     });
@@ -467,7 +670,9 @@ describe("CytoscapeRenderer", () => {
       mockCyInstance.layout.mockClear();
 
       // Mock getElementById to return nodes with tags data
-      (mockCyInstance.getElementById as ReturnType<typeof vi.fn>).mockImplementation((id: string) => {
+      (
+        mockCyInstance.getElementById as ReturnType<typeof vi.fn>
+      ).mockImplementation((id: string) => {
         const tagMap: Record<string, Record<string, string>> = {
           "src-match": { team: "platform" },
           "tgt-match": { team: "platform" },
@@ -492,9 +697,9 @@ describe("CytoscapeRenderer", () => {
       );
 
       await waitFor(() => {
-        const d3Calls = (mockCyInstance.layout.mock.calls as unknown[][]).filter(
-          (args) => (args[0] as { name: string }).name === "d3-force",
-        );
+        const d3Calls = (
+          mockCyInstance.layout.mock.calls as unknown[][]
+        ).filter((args) => (args[0] as { name: string }).name === "d3-force");
         expect(d3Calls).toHaveLength(1);
       });
 
@@ -502,15 +707,167 @@ describe("CytoscapeRenderer", () => {
         (args) => (args[0] as { name: string }).name === "d3-force",
       )!;
       const linkDistance = (
-        d3Args[0] as { linkDistance: (d: { source: { id: string }; target: { id: string } }) => number }
+        d3Args[0] as {
+          linkDistance: (d: {
+            source: { id: string };
+            target: { id: string };
+          }) => number;
+        }
       ).linkDistance;
 
       // Both match "platform" → pull together (80)
-      expect(linkDistance({ source: { id: "src-match" }, target: { id: "tgt-match" } })).toBe(80);
+      expect(
+        linkDistance({
+          source: { id: "src-match" },
+          target: { id: "tgt-match" },
+        }),
+      ).toBe(80);
       // Neither matches → push apart (280)
-      expect(linkDistance({ source: { id: "src-other" }, target: { id: "tgt-other" } })).toBe(280);
+      expect(
+        linkDistance({
+          source: { id: "src-other" },
+          target: { id: "tgt-other" },
+        }),
+      ).toBe(280);
       // Mixed (one matches, one doesn't) → standard (180)
-      expect(linkDistance({ source: { id: "src-mixed" }, target: { id: "tgt-mixed" } })).toBe(180);
+      expect(
+        linkDistance({
+          source: { id: "src-mixed" },
+          target: { id: "tgt-mixed" },
+        }),
+      ).toBe(180);
+    });
+  });
+
+  // ---------- computeNodeLabel: null child_count shows '?' ----------
+
+  it("topic_group with null child_count shows '?' in label", async () => {
+    const groupNode = makeNode({
+      id: "group:topics:lkc-abc",
+      resource_type: "topic_group",
+      cost: 0,
+      child_count: null,
+      child_total_cost: 100.0,
+    });
+    render(<CytoscapeRenderer {...DEFAULT_PROPS} nodes={[groupNode]} />);
+    await waitFor(() => {
+      const nodeAdds = state.addCalls.filter(
+        (el) => (el as { group?: string }).group === "nodes",
+      );
+      expect(nodeAdds).toHaveLength(1);
+      const addedData = (nodeAdds[0] as { data: { label: string } }).data;
+      expect(addedData.label).toBe("? topics\n$100.00 total");
+    });
+  });
+
+  it("zero_cost_summary with null child_count shows '?' in label", async () => {
+    const summaryNode = makeNode({
+      id: "group:zero:lkc-abc",
+      resource_type: "zero_cost_summary",
+      cost: 0,
+      child_count: null,
+    });
+    render(<CytoscapeRenderer {...DEFAULT_PROPS} nodes={[summaryNode]} />);
+    await waitFor(() => {
+      const nodeAdds = state.addCalls.filter(
+        (el) => (el as { group?: string }).group === "nodes",
+      );
+      expect(nodeAdds).toHaveLength(1);
+      const addedData = (nodeAdds[0] as { data: { label: string } }).data;
+      expect(addedData.label).toBe("? others at $0");
+    });
+  });
+
+  it("capped_summary with null child_count shows '?' in label", async () => {
+    const cappedNode = makeNode({
+      id: "group:capped:lkc-abc",
+      resource_type: "capped_summary",
+      cost: 0,
+      child_count: null,
+    });
+    render(<CytoscapeRenderer {...DEFAULT_PROPS} nodes={[cappedNode]} />);
+    await waitFor(() => {
+      const nodeAdds = state.addCalls.filter(
+        (el) => (el as { group?: string }).group === "nodes",
+      );
+      expect(nodeAdds).toHaveLength(1);
+      const addedData = (nodeAdds[0] as { data: { label: string } }).data;
+      expect(addedData.label).toBe("? more (capped)");
+    });
+  });
+
+  it("xref_group with null child_count shows '?' in label", async () => {
+    const groupNode = makeNode({
+      id: "env-abc:xref_group:kafka_topic",
+      resource_type: "xref_group",
+      cost: 0,
+      child_count: null,
+    });
+    render(<CytoscapeRenderer {...DEFAULT_PROPS} nodes={[groupNode]} />);
+    await waitFor(() => {
+      const nodeAdds = state.addCalls.filter(
+        (el) => (el as { group?: string }).group === "nodes",
+      );
+      expect(nodeAdds).toHaveLength(1);
+      const addedData = (nodeAdds[0] as { data: { label: string } }).data;
+      expect(addedData.label).toBe("? more");
+    });
+  });
+
+  it("identity_group with null child_count shows '?' in label", async () => {
+    const groupNode = makeNode({
+      id: "group:ids:lkc-abc",
+      resource_type: "identity_group",
+      cost: 0,
+      child_count: null,
+      child_total_cost: 50.0,
+    });
+    render(<CytoscapeRenderer {...DEFAULT_PROPS} nodes={[groupNode]} />);
+    await waitFor(() => {
+      const nodeAdds = state.addCalls.filter(
+        (el) => (el as { group?: string }).group === "nodes",
+      );
+      expect(nodeAdds).toHaveLength(1);
+      const addedData = (nodeAdds[0] as { data: { label: string } }).data;
+      expect(addedData.label).toBe("? users\n$50.00 total");
+    });
+  });
+
+  it("resource_group with null child_count shows '?' in label", async () => {
+    const groupNode = makeNode({
+      id: "env-abc:resource_group",
+      resource_type: "resource_group",
+      cost: 0,
+      child_count: null,
+      child_total_cost: 200.0,
+    });
+    render(<CytoscapeRenderer {...DEFAULT_PROPS} nodes={[groupNode]} />);
+    await waitFor(() => {
+      const nodeAdds = state.addCalls.filter(
+        (el) => (el as { group?: string }).group === "nodes",
+      );
+      expect(nodeAdds).toHaveLength(1);
+      const addedData = (nodeAdds[0] as { data: { label: string } }).data;
+      expect(addedData.label).toBe("? resources\n$200.00 total");
+    });
+  });
+
+  it("cluster_group with null child_count shows '?' in label", async () => {
+    const groupNode = makeNode({
+      id: "sa-abc:cluster_group",
+      resource_type: "cluster_group",
+      cost: 0,
+      child_count: null,
+      child_total_cost: 75.0,
+    });
+    render(<CytoscapeRenderer {...DEFAULT_PROPS} nodes={[groupNode]} />);
+    await waitFor(() => {
+      const nodeAdds = state.addCalls.filter(
+        (el) => (el as { group?: string }).group === "nodes",
+      );
+      expect(nodeAdds).toHaveLength(1);
+      const addedData = (nodeAdds[0] as { data: { label: string } }).data;
+      expect(addedData.label).toBe("? clusters\n$75.00 total");
     });
   });
 });

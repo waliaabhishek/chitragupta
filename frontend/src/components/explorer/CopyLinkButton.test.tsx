@@ -45,4 +45,23 @@ describe("CopyLinkButton", () => {
     render(<CopyLinkButton isDark={false} />);
     expect(screen.getByRole("button")).toBeTruthy();
   });
+
+  it("shows 'Failed!' when clipboard.writeText rejects", async () => {
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: vi.fn(() => Promise.reject(new Error("denied"))) },
+      writable: true,
+      configurable: true,
+    });
+
+    render(<CopyLinkButton isDark={false} />);
+    fireEvent.click(screen.getByRole("button"));
+
+    await waitFor(() => screen.getByText(/Failed!/i));
+  });
+
+  it("renders with dark mode styling", () => {
+    render(<CopyLinkButton isDark={true} />);
+    const button = screen.getByRole("button");
+    expect(button).toBeTruthy();
+  });
 });
