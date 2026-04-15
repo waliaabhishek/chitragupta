@@ -94,7 +94,7 @@ async def get_graph_neighborhood(
                 cloud=n.cloud,
                 region=n.region,
                 status=n.status,
-                cross_references=n.cross_references,
+                cross_references=n.cross_references,  # type: ignore[arg-type]  # Pydantic v2 coerces dataclass→schema via from_attributes=True
                 child_count=n.child_count,
                 child_total_cost=n.child_total_cost,
             )

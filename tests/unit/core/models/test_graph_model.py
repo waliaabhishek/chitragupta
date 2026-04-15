@@ -3,7 +3,14 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from decimal import Decimal
 
-from core.models.graph import EdgeType, GraphEdgeData, GraphNeighborhood, GraphNodeData
+from core.models.graph import (
+    CrossReferenceGroup,
+    CrossReferenceItem,
+    EdgeType,
+    GraphEdgeData,
+    GraphNeighborhood,
+    GraphNodeData,
+)
 
 
 def _make_node(node_id: str = "node-1") -> GraphNodeData:
@@ -72,10 +79,27 @@ class TestGraphNodeData:
         """field(default_factory=list) gives each instance its own list."""
         n1 = _make_node("a")
         n2 = _make_node("b")
-        n1.cross_references.append("x")
+        group = CrossReferenceGroup(resource_type="kafka_cluster", items=[], total_count=0)
+        n1.cross_references.append(group)
         assert n2.cross_references == []
 
     def test_cross_references_explicit_value(self) -> None:
+        group1 = CrossReferenceGroup(
+            resource_type="kafka_cluster",
+            items=[
+                CrossReferenceItem(id="lkc-2", resource_type="kafka_cluster", display_name=None, cost=Decimal("20.00"))
+            ],
+            total_count=1,
+        )
+        group2 = CrossReferenceGroup(
+            resource_type="flink_compute_pool",
+            items=[
+                CrossReferenceItem(
+                    id="lfcp-1", resource_type="flink_compute_pool", display_name="pool-a", cost=Decimal("10.00")
+                )
+            ],
+            total_count=1,
+        )
         node = GraphNodeData(
             id="sa-1",
             resource_type="service_account",
@@ -88,9 +112,47 @@ class TestGraphNodeData:
             cloud=None,
             region=None,
             status="active",
-            cross_references=["lkc-2", "lkc-3"],
+            cross_references=[group1, group2],
         )
-        assert node.cross_references == ["lkc-2", "lkc-3"]
+        assert node.cross_references == [group1, group2]
+        assert node.cross_references[0].resource_type == "kafka_cluster"
+        assert node.cross_references[1].resource_type == "flink_compute_pool"
+
+
+class TestCrossReferenceDataclasses:
+    def test_cross_reference_item_construction(self) -> None:
+        item = CrossReferenceItem(
+            id="lkc-abc",
+            resource_type="kafka_cluster",
+            display_name="prod-cluster",
+            cost=Decimal("123.45"),
+        )
+        assert item.id == "lkc-abc"
+        assert item.resource_type == "kafka_cluster"
+        assert item.display_name == "prod-cluster"
+        assert item.cost == Decimal("123.45")
+
+    def test_cross_reference_item_display_name_nullable(self) -> None:
+        item = CrossReferenceItem(id="lfcp-1", resource_type="flink_compute_pool", display_name=None, cost=Decimal("0"))
+        assert item.display_name is None
+
+    def test_cross_reference_group_construction(self) -> None:
+        item = CrossReferenceItem(id="lkc-1", resource_type="kafka_cluster", display_name=None, cost=Decimal("50.00"))
+        group = CrossReferenceGroup(resource_type="kafka_cluster", items=[item], total_count=10)
+        assert group.resource_type == "kafka_cluster"
+        assert group.total_count == 10
+        assert len(group.items) == 1
+        assert group.items[0].id == "lkc-1"
+
+    def test_cross_reference_group_total_count_can_exceed_items_length(self) -> None:
+        """total_count reflects full DB count; items is capped at TOP_N."""
+        items = [
+            CrossReferenceItem(id=f"lkc-{i}", resource_type="kafka_cluster", display_name=None, cost=Decimal("10.00"))
+            for i in range(5)
+        ]
+        group = CrossReferenceGroup(resource_type="kafka_cluster", items=items, total_count=100)
+        assert group.total_count == 100
+        assert len(group.items) == 5
 
 
 class TestGraphEdgeData:

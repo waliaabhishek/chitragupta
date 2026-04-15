@@ -1,3 +1,16 @@
+export interface CrossReferenceItem {
+  id: string;
+  resource_type: string;
+  display_name: string | null;
+  cost: number;
+}
+
+export interface CrossReferenceGroup {
+  resource_type: string;
+  items: CrossReferenceItem[];
+  total_count: number;
+}
+
 export interface GraphNode {
   id: string;
   resource_type: string;
@@ -10,7 +23,7 @@ export interface GraphNode {
   cloud: string | null;
   region: string | null;
   status: string;
-  cross_references: string[];
+  cross_references: CrossReferenceGroup[];
   // Present on synthetic group nodes returned by TASK-243 backend
   child_count?: number | null;
   child_total_cost?: number | null;

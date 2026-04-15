@@ -10,8 +10,16 @@ from fastapi.testclient import TestClient
 
 from core.api.app import create_app
 from core.api.dependencies import get_unit_of_work
+from core.api.schemas import CrossReferenceGroupSchema
 from core.config.models import ApiConfig, AppSettings, LoggingConfig, StorageConfig, TenantConfig
-from core.models.graph import EdgeType, GraphEdgeData, GraphNeighborhood, GraphNodeData
+from core.models.graph import (
+    CrossReferenceGroup,
+    CrossReferenceItem,
+    EdgeType,
+    GraphEdgeData,
+    GraphNeighborhood,
+    GraphNodeData,
+)
 
 
 def _make_settings() -> AppSettings:
@@ -47,7 +55,7 @@ def _make_node(
     resource_type: str,
     cost: Decimal = Decimal("0"),
     parent_id: str | None = None,
-    cross_references: list[str] | None = None,
+    cross_references: list[CrossReferenceGroup] | None = None,
 ) -> GraphNodeData:
     return GraphNodeData(
         id=node_id,
@@ -328,3 +336,55 @@ class TestGraphRouteErrorHandling:
         kwargs = mock_uow.graph.find_neighborhood.call_args.kwargs
         assert kwargs["ecosystem"] == "eco"
         assert kwargs["tenant_id"] == "prod"
+
+
+# ---------------------------------------------------------------------------
+# V6: API route serializes CrossReferenceGroup correctly
+# ---------------------------------------------------------------------------
+
+
+class TestCrossReferenceGroupSerialization:
+    def test_cross_reference_group_schema_round_trips_from_dataclass(self) -> None:
+        """CrossReferenceGroupSchema(from_attributes=True) can be built from CrossReferenceGroup."""
+        item = CrossReferenceItem(
+            id="lkc-abc",
+            resource_type="kafka_cluster",
+            display_name="prod-cluster",
+            cost=Decimal("123.45"),
+        )
+        group = CrossReferenceGroup(resource_type="kafka_cluster", items=[item], total_count=10)
+        schema = CrossReferenceGroupSchema.model_validate(group)
+        assert schema.resource_type == "kafka_cluster"
+        assert schema.total_count == 10
+        assert len(schema.items) == 1
+        assert schema.items[0].id == "lkc-abc"
+        assert schema.items[0].display_name == "prod-cluster"
+        assert schema.items[0].cost == Decimal("123.45")
+
+    def test_api_response_cross_references_serialized_as_list_of_groups(self) -> None:
+        """GET /graph → cross_references in response is list[CrossReferenceGroup] JSON."""
+        item = CrossReferenceItem(
+            id="lfcp-001",
+            resource_type="flink_compute_pool",
+            display_name=None,
+            cost=Decimal("50.00"),
+        )
+        group = CrossReferenceGroup(resource_type="flink_compute_pool", items=[item], total_count=5)
+        sa_node = _make_node("sa-001", "service_account", cross_references=[group])
+        mock_uow = MagicMock()
+        mock_uow.graph.find_neighborhood.return_value = GraphNeighborhood(nodes=[sa_node], edges=[])
+        with _app_with_mock_uow(mock_uow) as client:
+            resp = client.get("/api/v1/tenants/prod/graph", params={"at": "2026-03-15T00:00:00Z"})
+
+        assert resp.status_code == 200
+        data = resp.json()
+        sa = next(n for n in data["nodes"] if n["id"] == "sa-001")
+        xrefs = sa["cross_references"]
+        assert isinstance(xrefs, list)
+        assert len(xrefs) == 1
+        xref = xrefs[0]
+        assert xref["resource_type"] == "flink_compute_pool"
+        assert xref["total_count"] == 5
+        assert len(xref["items"]) == 1
+        assert xref["items"][0]["id"] == "lfcp-001"
+        assert xref["items"][0]["display_name"] is None

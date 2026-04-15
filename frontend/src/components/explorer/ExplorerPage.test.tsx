@@ -145,6 +145,7 @@ vi.mock("./GraphContainer", () => ({
   }: {
     nodes: Array<{
       id: string;
+      resource_type?: string;
       status: string;
       tagColor?: string;
       diff?: { diff_status: string; cost_delta: number };
@@ -156,6 +157,7 @@ vi.mock("./GraphContainer", () => ({
         <div
           key={n.id}
           data-node-id={n.id}
+          data-node-resource-type={n.resource_type ?? ""}
           data-node-status={n.status}
           data-diff-status={n.diff?.diff_status ?? ""}
           data-cost-delta={n.diff != null ? String(n.diff.cost_delta) : ""}
@@ -233,6 +235,38 @@ function renderExplorerPageWithQueryClient() {
   );
 }
 
+// TASK-246: structured cross-reference types (replaces flat string[])
+interface TestCrossReferenceItem {
+  id: string;
+  resource_type: string;
+  display_name: string | null;
+  cost: number;
+}
+
+interface TestCrossReferenceGroup {
+  resource_type: string;
+  items: TestCrossReferenceItem[];
+  total_count: number;
+}
+
+function makeCrossRefGroup(
+  id: string,
+  resourceType: string,
+  opts: { displayName?: string | null; cost?: number; totalCount?: number } = {},
+): TestCrossReferenceGroup {
+  const item: TestCrossReferenceItem = {
+    id,
+    resource_type: resourceType,
+    display_name: opts.displayName ?? null,
+    cost: opts.cost ?? 100,
+  };
+  return {
+    resource_type: resourceType,
+    items: [item],
+    total_count: opts.totalCount ?? 1,
+  };
+}
+
 // A graph node as the API returns it (cost as string, cross_references as array).
 function makeApiNode(overrides: Record<string, unknown> = {}) {
   return {
@@ -247,7 +281,7 @@ function makeApiNode(overrides: Record<string, unknown> = {}) {
     cloud: null,
     region: null,
     status: "active",
-    cross_references: [] as string[],
+    cross_references: [] as TestCrossReferenceGroup[],
     ...overrides,
   };
 }
@@ -346,8 +380,8 @@ describe("ExplorerPage — enrichWithPhantomNodes", () => {
     vi.mocked(useGraphData).mockReturnValue({
       data: {
         nodes: [
-          makeApiNode({ id: "sa-001", cross_references: ["lkc-phantom"] }),
-          makeApiNode({ id: "sa-002", cross_references: ["lkc-phantom"] }),
+          makeApiNode({ id: "sa-001", cross_references: [makeCrossRefGroup("lkc-phantom", "kafka_cluster")] }),
+          makeApiNode({ id: "sa-002", cross_references: [makeCrossRefGroup("lkc-phantom", "kafka_cluster")] }),
         ] as never,
         edges: [],
       },
@@ -369,7 +403,7 @@ describe("ExplorerPage — enrichWithPhantomNodes", () => {
     vi.mocked(useGraphData).mockReturnValue({
       data: {
         nodes: [
-          makeApiNode({ id: "sa-001", cross_references: ["lkc-real"] }),
+          makeApiNode({ id: "sa-001", cross_references: [makeCrossRefGroup("lkc-real", "kafka_cluster")] }),
           makeApiNode({ id: "lkc-real" }),
         ] as never,
         edges: [],
@@ -409,7 +443,7 @@ describe("ExplorerPage — enrichWithPhantomNodes", () => {
     vi.mocked(useGraphData).mockReturnValue({
       data: {
         nodes: [
-          makeApiNode({ id: "sa-001", cross_references: ["lkc-ghost"] }),
+          makeApiNode({ id: "sa-001", cross_references: [makeCrossRefGroup("lkc-ghost", "kafka_cluster")] }),
         ] as never,
         edges: [],
       },
@@ -425,6 +459,96 @@ describe("ExplorerPage — enrichWithPhantomNodes", () => {
     ) as HTMLElement | null;
     expect(phantomEl).not.toBeNull();
     expect(phantomEl!.dataset.nodeStatus).toBe("phantom");
+  });
+
+  // TASK-246: phantom nodes have correct resource_type (not hardcoded kafka_cluster)
+  it("phantom node has resource_type from CrossReferenceItem (not hardcoded kafka_cluster)", () => {
+    vi.mocked(useGraphData).mockReturnValue({
+      data: {
+        nodes: [
+          makeApiNode({
+            id: "sa-001",
+            cross_references: [makeCrossRefGroup("lfcp-001", "flink_compute_pool")],
+          }),
+        ] as never,
+        edges: [],
+      },
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderExplorerPage();
+
+    const phantomEl = document.querySelector(
+      "[data-node-id='lfcp-001']",
+    ) as HTMLElement | null;
+    expect(phantomEl).not.toBeNull();
+    expect(phantomEl!.dataset.nodeResourceType).toBe("flink_compute_pool");
+  });
+
+  // TASK-246: when total_count equals items.length → no summary group node created
+  it("when total_count equals items.length → no xref_group summary node created", () => {
+    const group: TestCrossReferenceGroup = {
+      resource_type: "kafka_cluster",
+      items: [
+        { id: "lkc-a", resource_type: "kafka_cluster", display_name: null, cost: 100 },
+        { id: "lkc-b", resource_type: "kafka_cluster", display_name: null, cost: 50 },
+      ],
+      total_count: 2, // equals items.length → no overflow
+    };
+    vi.mocked(useGraphData).mockReturnValue({
+      data: {
+        nodes: [makeApiNode({ id: "sa-001", cross_references: [group] })] as never,
+        edges: [],
+      },
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderExplorerPage();
+
+    // Two real phantom nodes from items
+    expect(document.querySelector("[data-node-id='lkc-a']")).not.toBeNull();
+    expect(document.querySelector("[data-node-id='lkc-b']")).not.toBeNull();
+    // No xref_group summary node
+    expect(
+      document.querySelector("[data-node-resource-type='xref_group']"),
+    ).toBeNull();
+  });
+
+  // TASK-246: group summary nodes created when total_count > items.length
+  it("group summary node created when total_count exceeds items.length", () => {
+    const group: TestCrossReferenceGroup = {
+      resource_type: "flink_compute_pool",
+      items: [
+        { id: "lfcp-1", resource_type: "flink_compute_pool", display_name: null, cost: 200 },
+        { id: "lfcp-2", resource_type: "flink_compute_pool", display_name: null, cost: 150 },
+      ],
+      total_count: 50, // 50 total, only 2 shown → summary node needed
+    };
+    vi.mocked(useGraphData).mockReturnValue({
+      data: {
+        nodes: [makeApiNode({ id: "sa-001", cross_references: [group] })] as never,
+        edges: [],
+      },
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderExplorerPage();
+
+    // Individual phantom nodes from items
+    expect(document.querySelector("[data-node-id='lfcp-1']")).not.toBeNull();
+    expect(document.querySelector("[data-node-id='lfcp-2']")).not.toBeNull();
+    // Summary group node must exist
+    const summaryEl = document.querySelector(
+      "[data-node-resource-type='xref_group']",
+    ) as HTMLElement | null;
+    expect(summaryEl).not.toBeNull();
+    expect(summaryEl!.dataset.nodeId).toBe("sa-001:xref_group:flink_compute_pool");
   });
 });
 
@@ -459,7 +583,7 @@ describe("ExplorerPage — integration", () => {
             makeApiNode({
               id: "sa-001",
               resource_type: "service_account",
-              cross_references: ["lkc-phantom"],
+              cross_references: [makeCrossRefGroup("lkc-phantom", "kafka_cluster")],
             }),
           ],
           edges: [],
@@ -1102,7 +1226,7 @@ describe("ExplorerPage — URL state (TASK-223)", () => {
     vi.mocked(useGraphData).mockReturnValue({
       data: {
         nodes: [
-          makeApiNode({ id: "sa-001", cross_references: ["lkc-phantom"], tags: { team: "data" } }),
+          makeApiNode({ id: "sa-001", cross_references: [makeCrossRefGroup("lkc-phantom", "kafka_cluster")], tags: { team: "data" } }),
           makeApiNode({ id: "n-real", tags: { team: "data" } }), // non-phantom, should be faded
         ] as never,
         edges: [],
@@ -1205,7 +1329,7 @@ describe("ExplorerPage — enrichWithTagColor (GIT-004)", () => {
         nodes: [
           makeApiNode({
             id: "sa-001",
-            cross_references: ["lkc-phantom"],
+            cross_references: [makeCrossRefGroup("lkc-phantom", "kafka_cluster")],
             tags: { team: "platform" },
           }),
         ] as never,

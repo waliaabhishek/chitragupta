@@ -35,6 +35,8 @@ const SHAPE_MAP: Record<string, string> = {
   // Synthetic group nodes (TASK-245)
   resource_group: "round-rectangle",
   cluster_group: "round-rectangle",
+  // Synthetic cross-reference overflow nodes (TASK-246)
+  xref_group: "round-rectangle",
 };
 
 const GROUP_TYPES = new Set([
@@ -44,6 +46,7 @@ const GROUP_TYPES = new Set([
   "capped_summary",
   "resource_group",
   "cluster_group",
+  "xref_group",
 ]);
 
 const GROUP_NODE_SIZE = 100;

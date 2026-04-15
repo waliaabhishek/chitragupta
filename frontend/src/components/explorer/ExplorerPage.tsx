@@ -51,14 +51,16 @@ function enrichWithPhantomNodes(
   const phantomEdges: GraphEdge[] = [];
 
   for (const node of nodes) {
-    for (const refId of node.cross_references) {
-      if (!existingIds.has(refId)) {
-        existingIds.add(refId);
+    for (const group of node.cross_references) {
+      // Individual phantom nodes from top N items
+      for (const item of group.items) {
+        if (existingIds.has(item.id)) continue;
+        existingIds.add(item.id);
         phantomNodes.push({
-          id: refId,
-          resource_type: "kafka_cluster",
-          display_name: null,
-          cost: 0,
+          id: item.id,
+          resource_type: item.resource_type,
+          display_name: item.display_name,
+          cost: item.cost,
           created_at: null,
           deleted_at: null,
           tags: {},
@@ -69,11 +71,41 @@ function enrichWithPhantomNodes(
           cross_references: [],
         });
         phantomEdges.push({
-          source: refId,
+          source: item.id,
           target: node.id,
           relationship_type: "charge",
           cost: null,
         });
+      }
+
+      // Group summary node if there are more items than shown
+      const remaining = group.total_count - group.items.length;
+      if (remaining > 0) {
+        const groupId = `${node.id}:xref_group:${group.resource_type}`;
+        if (!existingIds.has(groupId)) {
+          existingIds.add(groupId);
+          phantomNodes.push({
+            id: groupId,
+            resource_type: "xref_group",
+            display_name: null,
+            cost: 0,
+            created_at: null,
+            deleted_at: null,
+            tags: {},
+            parent_id: null,
+            cloud: null,
+            region: null,
+            status: "phantom",
+            cross_references: [],
+            child_count: remaining,
+          });
+          phantomEdges.push({
+            source: groupId,
+            target: node.id,
+            relationship_type: "charge",
+            cost: null,
+          });
+        }
       }
     }
   }
@@ -256,6 +288,17 @@ export function ExplorerPage(): React.JSX.Element {
       (data?.nodes ?? []).map((n) => ({
         ...n,
         cost: typeof n.cost === "string" ? parseFloat(n.cost) : n.cost,
+        child_total_cost:
+          n.child_total_cost != null && typeof n.child_total_cost === "string"
+            ? parseFloat(n.child_total_cost as unknown as string)
+            : n.child_total_cost,
+        cross_references: (n.cross_references ?? []).map((g) => ({
+          ...g,
+          items: g.items.map((item) => ({
+            ...item,
+            cost: typeof item.cost === "string" ? parseFloat(item.cost) : item.cost,
+          })),
+        })),
       })),
     [data?.nodes],
   );

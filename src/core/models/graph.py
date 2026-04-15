@@ -16,6 +16,21 @@ class EdgeType(StrEnum):
 
 
 @dataclass
+class CrossReferenceItem:
+    id: str
+    resource_type: str
+    display_name: str | None
+    cost: Decimal
+
+
+@dataclass
+class CrossReferenceGroup:
+    resource_type: str  # "kafka_cluster", "flink_compute_pool", etc.
+    items: list[CrossReferenceItem]  # top N by cost descending
+    total_count: int  # total entities of this type (before cap)
+
+
+@dataclass
 class GraphNodeData:
     id: str
     resource_type: str  # "environment" | "kafka_cluster" | "kafka_topic" | "identity" | ...
@@ -28,7 +43,9 @@ class GraphNodeData:
     cloud: str | None
     region: str | None
     status: str
-    cross_references: list[str] = field(default_factory=list)  # other resource_ids this identity is charged in
+    cross_references: list[CrossReferenceGroup] = field(
+        default_factory=list
+    )  # other resources this identity is charged in
     child_count: int | None = None  # populated only for group-type nodes
     child_total_cost: Decimal | None = None  # populated only for group-type nodes
 

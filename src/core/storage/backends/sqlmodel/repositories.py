@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import heapq
 import logging
 from collections.abc import Iterator, Sequence
 from datetime import UTC, date, datetime, timedelta
@@ -14,6 +15,8 @@ from sqlmodel import Session, col, select
 from core.models.chargeback import AggregationRow, AllocationDetail, AllocationIssueRow, CostType
 from core.models.counts import TypeStatusCounts
 from core.models.graph import (
+    CrossReferenceGroup,
+    CrossReferenceItem,
     EdgeType,
     GraphDiffNodeData,
     GraphEdgeData,
@@ -71,6 +74,7 @@ _CHUNK_SIZE = 500
 _CLUSTER_GROUP_THRESHOLD = 20  # per-group: if len(group) > this, use grouped mode
 _CLUSTER_TOP_N = 5  # entities surfaced individually in grouped mode
 _CLUSTER_EXPAND_CAP = 200  # max individual nodes returned in expand mode
+TOP_N_CROSS_REFS = 5  # max items per resource_type group in cross_references
 
 # Allowlists for sort_by parameter — prevents arbitrary column injection.
 # Fallback to primary-key column when sort_by is absent or invalid.
@@ -2825,25 +2829,88 @@ class SQLModelGraphRepository:
         tenant_id: str,
         identity_ids: list[str],
         cluster_id: str,
-    ) -> dict[str, list[str]]:
-        """Return {identity_id: [other_resource_ids]} each identity is charged in (excluding cluster_id)."""
-        xref_map: dict[str, list[str]] = {iid: [] for iid in identity_ids}
+        period_start: datetime,
+        period_end: datetime,
+    ) -> dict[str, list[CrossReferenceGroup]]:
+        """Return {identity_id: [CrossReferenceGroup]} for resources each identity is charged in (excluding cluster_id).
+
+        Groups by resource_type, ranks by cost descending, caps at TOP_N_CROSS_REFS per type.
+        """
+        xref_map: dict[str, list[CrossReferenceGroup]] = {iid: [] for iid in identity_ids}
         if not identity_ids:
             return xref_map
-        xref_stmt = (
-            select(ChargebackDimensionTable.identity_id, ChargebackDimensionTable.resource_id)
+
+        # Query per-identity, per-resource cost within period
+        cost_stmt = (
+            select(
+                ChargebackDimensionTable.identity_id,
+                ChargebackDimensionTable.resource_id,
+                func.sum(cast(ChargebackFactTable.amount, String)).label("total_cost"),
+            )
+            .join(
+                ChargebackFactTable,
+                col(ChargebackFactTable.dimension_id) == col(ChargebackDimensionTable.dimension_id),
+            )
             .where(
                 col(ChargebackDimensionTable.ecosystem) == ecosystem,
                 col(ChargebackDimensionTable.tenant_id) == tenant_id,
                 col(ChargebackDimensionTable.identity_id).in_(identity_ids),
                 col(ChargebackDimensionTable.resource_id) != cluster_id,
                 col(ChargebackDimensionTable.resource_id).is_not(None),
+                col(ChargebackFactTable.timestamp) >= period_start,
+                col(ChargebackFactTable.timestamp) < period_end,
             )
-            .distinct()
+            .group_by(
+                col(ChargebackDimensionTable.identity_id),
+                col(ChargebackDimensionTable.resource_id),
+            )
         )
-        for iid, rid in self._session.exec(xref_stmt).all():
-            if rid is not None:
-                xref_map[iid].append(rid)
+        cost_rows = self._session.exec(cost_stmt).all()
+        if not cost_rows:
+            return xref_map
+
+        # Fetch resource_type and display_name for all referenced resource_ids
+        resource_ids = {rid for _, rid, _ in cost_rows if rid is not None}
+        resource_meta: dict[str, tuple[str, str | None]] = {}
+        if resource_ids:
+            resource_stmt = select(
+                ResourceTable.resource_id,
+                ResourceTable.resource_type,
+                ResourceTable.display_name,
+            ).where(
+                col(ResourceTable.ecosystem) == ecosystem,
+                col(ResourceTable.tenant_id) == tenant_id,
+                col(ResourceTable.resource_id).in_(list(resource_ids)),
+            )
+            for rid, rtype, dname in self._session.exec(resource_stmt).all():
+                resource_meta[rid] = (rtype, dname)
+
+        # Group by (identity_id, resource_type) in Python
+        by_type: dict[str, dict[str, list[tuple[str, str | None, Decimal]]]] = {iid: {} for iid in identity_ids}
+        for iid, rid, raw_cost in cost_rows:  # type: ignore[assignment]  # SQLModel types nullable FK columns as str|None; None rows filtered by guard below
+            if iid is None or rid is None:
+                continue
+            rtype, dname = resource_meta[rid]
+            cost = Decimal(str(raw_cost or "0"))
+            by_type[iid].setdefault(rtype, []).append((rid, dname, cost))
+
+        for iid in identity_ids:
+            groups: list[CrossReferenceGroup] = []
+            for rtype, items in by_type[iid].items():
+                total_count = len(items)
+                top_items = heapq.nlargest(TOP_N_CROSS_REFS, items, key=lambda x: x[2])
+                groups.append(
+                    CrossReferenceGroup(
+                        resource_type=rtype,
+                        items=[
+                            CrossReferenceItem(id=rid, resource_type=rtype, display_name=dname, cost=cost)
+                            for rid, dname, cost in top_items
+                        ],
+                        total_count=total_count,
+                    )
+                )
+            xref_map[iid] = groups
+
         return xref_map
 
     def _cluster_view(  # noqa: C901  # dispatcher — complexity is branching, not nesting
@@ -3107,7 +3174,9 @@ class SQLModelGraphRepository:
                 if id_rows
                 else {}
             )
-            cross_ref_map = self._fetch_cross_references(ecosystem, tenant_id, included_ids, cluster_id)
+            cross_ref_map = self._fetch_cross_references(
+                ecosystem, tenant_id, included_ids, cluster_id, period_start, period_end
+            )
 
             for identity_row in id_rows:
                 nodes.append(
@@ -3353,7 +3422,9 @@ class SQLModelGraphRepository:
                     if id_rows_top
                     else {}
                 )
-                xref_top = self._fetch_cross_references(ecosystem, tenant_id, included_ids, cluster_id)
+                xref_top = self._fetch_cross_references(
+                    ecosystem, tenant_id, included_ids, cluster_id, period_start, period_end
+                )
 
                 for identity_row in id_rows_top:
                     nodes.append(
@@ -3393,7 +3464,9 @@ class SQLModelGraphRepository:
                     if id_rows_all
                     else {}
                 )
-                xref_all = self._fetch_cross_references(ecosystem, tenant_id, identity_ids, cluster_id)
+                xref_all = self._fetch_cross_references(
+                    ecosystem, tenant_id, identity_ids, cluster_id, period_start, period_end
+                )
 
                 for identity_row in id_rows_all:
                     nodes.append(
@@ -3472,7 +3545,9 @@ class SQLModelGraphRepository:
         )
 
         # Cross-references: other resource_ids each identity is charged in (excluding this cluster).
-        cross_ref_map = self._fetch_cross_references(ecosystem, tenant_id, identity_ids, cluster_id)
+        cross_ref_map = self._fetch_cross_references(
+            ecosystem, tenant_id, identity_ids, cluster_id, period_start, period_end
+        )
 
         # Tag resolution
         resource_tags = self._tags.find_tags_for_entities(tenant_id, "resource", all_resource_ids)

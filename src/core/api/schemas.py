@@ -426,6 +426,23 @@ class TopicAttributionDatesResponse(BaseModel):
     dates: list[date]
 
 
+class CrossReferenceItemSchema(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    resource_type: str
+    display_name: str | None
+    cost: Decimal
+
+
+class CrossReferenceGroupSchema(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    resource_type: str
+    items: list[CrossReferenceItemSchema]
+    total_count: int
+
+
 class GraphNode(BaseModel):
     id: str
     resource_type: str
@@ -438,7 +455,7 @@ class GraphNode(BaseModel):
     cloud: str | None
     region: str | None
     status: str
-    cross_references: list[str]
+    cross_references: list[CrossReferenceGroupSchema]
     child_count: int | None = None
     child_total_cost: Decimal | None = None
 

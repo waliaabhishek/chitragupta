@@ -641,7 +641,7 @@ Return a neighborhood of nodes and directed edges centred on a focus entity.
 | `cloud` | string\|null | Cloud provider |
 | `region` | string\|null | Cloud region |
 | `status` | string | `active` or `deleted` |
-| `cross_references` | list[string] | For identity nodes: other cluster IDs this identity is charged in (excluding the focus cluster) |
+| `cross_references` | list[CrossReferenceGroup] | For identity nodes: other resources this identity is charged in (excluding the focus cluster), grouped by resource type. Each group has `resource_type` (string), `total_count` (int, full DB count before cap), and `items` (list of up to 5 `CrossReferenceItem` objects sorted by cost descending). Each item has `id`, `resource_type`, `display_name` (string\|null), and `cost` (decimal string). |
 
 **Edge `relationship_type` values:** `parent` (hierarchy), `charge` (identity charged to cluster).
 

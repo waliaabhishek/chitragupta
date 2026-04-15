@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 from sqlmodel import Session, SQLModel, create_engine
 
+from core.models.graph import CrossReferenceGroup
 from core.storage.backends.sqlmodel.base_tables import IdentityTable, ResourceTable
 from core.storage.backends.sqlmodel.repositories import SQLModelEntityTagRepository, SQLModelGraphRepository
 from core.storage.backends.sqlmodel.tables import (
@@ -374,7 +375,7 @@ class TestGraphRepositoryCrossReferences:
     def test_identity_charged_in_multiple_clusters_has_correct_cross_references(
         self, session: Session, repo: SQLModelGraphRepository
     ) -> None:
-        """Test 10: identity charged in 3 clusters → cross_references has 2 entries (not current)."""
+        """Test 10: identity charged in 3 clusters → cross_references is a list[CrossReferenceGroup] (not current)."""
         session.add(_resource("env-abc", "environment"))
         session.add(_resource("lkc-1", "kafka_cluster", parent_id="env-abc"))
         session.add(_resource("lkc-2", "kafka_cluster", parent_id="env-abc"))
@@ -391,10 +392,20 @@ class TestGraphRepositoryCrossReferences:
         result = repo.find_neighborhood(ECOSYSTEM, TENANT_ID, "lkc-1", 1, AT, PERIOD_START, PERIOD_END)
 
         identity_node = next(n for n in result.nodes if n.id == "sa-001")
-        assert len(identity_node.cross_references) == 2
-        assert "lkc-1" not in identity_node.cross_references
-        assert "lkc-2" in identity_node.cross_references
-        assert "lkc-3" in identity_node.cross_references
+        # Must return list[CrossReferenceGroup], not list[str]
+        assert len(identity_node.cross_references) == 1  # single group: kafka_cluster
+        group = identity_node.cross_references[0]
+        assert isinstance(group, CrossReferenceGroup)
+        assert group.resource_type == "kafka_cluster"
+        assert group.total_count == 2
+        assert len(group.items) == 2
+        # items sorted by cost descending: lkc-3 (30.00) first, lkc-2 (20.00) second
+        assert group.items[0].id == "lkc-3"
+        assert group.items[0].cost == Decimal("30.00")
+        assert group.items[1].id == "lkc-2"
+        assert group.items[1].cost == Decimal("20.00")
+        # current cluster excluded
+        assert not any(item.id == "lkc-1" for item in group.items)
 
     def test_identity_with_no_cross_refs_has_empty_list(self, session: Session, repo: SQLModelGraphRepository) -> None:
         """Test 10: pre-initialized cross_ref_map — identity with no other clusters gets []."""
@@ -409,6 +420,70 @@ class TestGraphRepositoryCrossReferences:
 
         identity_node = next(n for n in result.nodes if n.id == "sa-only")
         assert identity_node.cross_references == []
+
+    def test_fetch_cross_references_empty_identity_ids_returns_empty_dict(
+        self, session: Session, repo: SQLModelGraphRepository
+    ) -> None:
+        """_fetch_cross_references([]) → empty dict immediately, no DB query needed."""
+        result = repo._fetch_cross_references(ECOSYSTEM, TENANT_ID, [], "lkc-1", PERIOD_START, PERIOD_END)
+        assert result == {}
+
+    def test_cross_reference_items_sorted_by_cost_descending(
+        self, session: Session, repo: SQLModelGraphRepository
+    ) -> None:
+        """Items within a CrossReferenceGroup are ordered by cost DESC."""
+        session.add(_resource("env-x", "environment"))
+        session.add(_resource("lkc-focus", "kafka_cluster", parent_id="env-x"))
+        session.add(_resource("lkc-cheap", "kafka_cluster", parent_id="env-x"))
+        session.add(_resource("lkc-mid", "kafka_cluster", parent_id="env-x"))
+        session.add(_resource("lkc-expensive", "kafka_cluster", parent_id="env-x"))
+        session.add(_identity("sa-sorted"))
+        session.add(_dim(60, resource_id="lkc-focus", env_id="env-x", identity_id="sa-sorted"))
+        session.add(_dim(61, resource_id="lkc-cheap", env_id="env-x", identity_id="sa-sorted"))
+        session.add(_dim(62, resource_id="lkc-mid", env_id="env-x", identity_id="sa-sorted"))
+        session.add(_dim(63, resource_id="lkc-expensive", env_id="env-x", identity_id="sa-sorted"))
+        session.add(_fact(60, "5.00"))
+        session.add(_fact(61, "1.00"))
+        session.add(_fact(62, "50.00"))
+        session.add(_fact(63, "200.00"))
+        session.commit()
+
+        result = repo.find_neighborhood(ECOSYSTEM, TENANT_ID, "lkc-focus", 1, AT, PERIOD_START, PERIOD_END)
+
+        identity_node = next(n for n in result.nodes if n.id == "sa-sorted")
+        assert len(identity_node.cross_references) == 1
+        group = identity_node.cross_references[0]
+        assert isinstance(group, CrossReferenceGroup)
+        costs = [item.cost for item in group.items]
+        assert costs == sorted(costs, reverse=True)
+        assert group.items[0].id == "lkc-expensive"
+
+    def test_identity_with_single_resource_type_returns_single_group_with_no_overflow(
+        self, session: Session, repo: SQLModelGraphRepository
+    ) -> None:
+        """Identity cross-refs in 1 resource type, count ≤ 5 → single group, total_count == len(items)."""
+        session.add(_resource("env-y", "environment"))
+        session.add(_resource("lkc-main", "kafka_cluster", parent_id="env-y"))
+        session.add(_resource("lkc-a", "kafka_cluster", parent_id="env-y"))
+        session.add(_resource("lkc-b", "kafka_cluster", parent_id="env-y"))
+        session.add(_identity("sa-few"))
+        session.add(_dim(70, resource_id="lkc-main", env_id="env-y", identity_id="sa-few"))
+        session.add(_dim(71, resource_id="lkc-a", env_id="env-y", identity_id="sa-few"))
+        session.add(_dim(72, resource_id="lkc-b", env_id="env-y", identity_id="sa-few"))
+        session.add(_fact(70, "10.00"))
+        session.add(_fact(71, "20.00"))
+        session.add(_fact(72, "30.00"))
+        session.commit()
+
+        result = repo.find_neighborhood(ECOSYSTEM, TENANT_ID, "lkc-main", 1, AT, PERIOD_START, PERIOD_END)
+
+        identity_node = next(n for n in result.nodes if n.id == "sa-few")
+        assert len(identity_node.cross_references) == 1
+        group = identity_node.cross_references[0]
+        assert isinstance(group, CrossReferenceGroup)
+        # ≤ 5 items → total_count equals items.length (no overflow)
+        assert group.total_count == len(group.items)
+        assert group.total_count == 2  # lkc-a and lkc-b (lkc-main excluded)
 
 
 class TestGraphRepositoryTagResolution:

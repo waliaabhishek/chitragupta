@@ -39,6 +39,10 @@ function computeNodeLabel(node: GraphRendererProps["nodes"][number]): string {
     const cost = child_total_cost != null ? `$${child_total_cost.toFixed(2)}` : "";
     return cost ? `${count} clusters\n${cost} total` : `${count} clusters`;
   }
+  if (resource_type === "xref_group") {
+    const count = child_count ?? "?";
+    return `${count} more`;
+  }
   return display_name ?? id;
 }
 
