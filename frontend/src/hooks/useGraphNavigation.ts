@@ -77,7 +77,7 @@ export function useGraphNavigation(
     if (chain.length > 0) {
       setInternalState((prev) => ({ ...prev, breadcrumbs: chain }));
     }
-  }, [urlDriven, focusFromUrl, currentNodes]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [urlDriven, focusFromUrl, currentNodes]);
 
   function navigate(nodeId: string, resourceType: string, displayName: string | null) {
     if (urlDriven) {
