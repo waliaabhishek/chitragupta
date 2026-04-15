@@ -2888,7 +2888,7 @@ class SQLModelGraphRepository:
         # Group by (identity_id, resource_type) in Python
         by_type: dict[str, dict[str, list[tuple[str, str | None, Decimal]]]] = {iid: {} for iid in identity_ids}
         for iid, rid, raw_cost in cost_rows:  # type: ignore[assignment]  # SQLModel types nullable FK columns as str|None; None rows filtered by guard below
-            if iid is None or rid is None:
+            if iid is None or rid is None or rid not in resource_meta:
                 continue
             rtype, dname = resource_meta[rid]
             cost = Decimal(str(raw_cost or "0"))
