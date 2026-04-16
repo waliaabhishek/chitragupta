@@ -1616,21 +1616,22 @@
 </tbody>
 </table>
 <h2 id="systemd-unit-worker">Systemd unit (worker)<a class="headerlink" href="#systemd-unit-worker" title="Permanent link">&para;</a></h2>
-<p>```ini
-[Unit]
-Description=Chitragupta Worker
-After=network.target</p>
-<p>[Service]
-Type=simple
-WorkingDirectory=/opt/chitragupta
-ExecStart=uv run python src/main.py \
-    --config-file /etc/chargeback/config.yaml \
-    --mode worker
-Restart=on-failure
-RestartSec=30</p>
-<p>[Install]
-WantedBy=multi-user.target
-```</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="k">[Unit]</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="na">Description</span><span class="o">=</span><span class="s">Chitragupta Worker</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="na">After</span><span class="o">=</span><span class="s">network.target</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="k">[Service]</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="na">Type</span><span class="o">=</span><span class="s">simple</span>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="na">WorkingDirectory</span><span class="o">=</span><span class="s">/opt/chitragupta</span>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="na">ExecStart</span><span class="o">=</span><span class="s">uv run python src/main.py </span>\
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="w">    </span><span class="s">--config-file /etc/chargeback/config.yaml </span>\
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="w">    </span><span class="s">--mode worker</span>
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="na">Restart</span><span class="o">=</span><span class="s">on-failure</span>
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="na">RestartSec</span><span class="o">=</span><span class="s">30</span>
+<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>
+<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a><span class="k">[Install]</span>
+<a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a><span class="na">WantedBy</span><span class="o">=</span><span class="s">multi-user.target</span>
+</code></pre></div>
 <h2 id="docker">Docker<a class="headerlink" href="#docker" title="Permanent link">&para;</a></h2>
 <p>The project includes a multi-stage <code>Dockerfile</code> in the repo root (builder stage with <code>uv</code> for dependency resolution, slim runtime stage with non-root user).</p>
 <h3 id="docker-compose-recommended">Docker Compose (recommended)<a class="headerlink" href="#docker-compose-recommended" title="Permanent link">&para;</a></h3>
@@ -1662,59 +1663,59 @@ WantedBy=multi-user.target
 </tbody>
 </table>
 <p>Topic attribution (CCloud only) requires a configured Prometheus metrics source. See the <a href="../../configuration/ccloud-reference/#topic-attribution">CCloud configuration reference</a>.</p>
-<p><code>bash
-cd examples/ccloud-full        # or ccloud-grafana, self-managed-full
-cp .env.example .env
-vim .env                        # fill in credentials
-docker compose up -d</code></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nb">cd</span><span class="w"> </span>examples/ccloud-full<span class="w">        </span><span class="c1"># or ccloud-grafana, self-managed-full</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>cp<span class="w"> </span>.env.example<span class="w"> </span>.env
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>vim<span class="w"> </span>.env<span class="w">                        </span><span class="c1"># fill in credentials</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>docker<span class="w"> </span>compose<span class="w"> </span>up<span class="w"> </span>-d
+</code></pre></div>
 <p>See the <a href="../../getting-started/quickstart/">Quickstart</a> for a step-by-step walkthrough.</p>
 <h3 id="standalone-docker-no-compose">Standalone Docker (no Compose)<a class="headerlink" href="#standalone-docker-no-compose" title="Permanent link">&para;</a></h3>
 <p>Build and run directly if you don't need Grafana or the UI:</p>
-<p><code>bash
-docker build -t chitragupta .
-docker run -v ./config:/app/config:ro -v ./data:/app/data chitragupta \
-  --config-file /app/config/config.yaml --mode both</code></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>docker<span class="w"> </span>build<span class="w"> </span>-t<span class="w"> </span>chitragupta<span class="w"> </span>.
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>docker<span class="w"> </span>run<span class="w"> </span>-v<span class="w"> </span>./config:/app/config:ro<span class="w"> </span>-v<span class="w"> </span>./data:/app/data<span class="w"> </span>chitragupta<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">  </span>--config-file<span class="w"> </span>/app/config/config.yaml<span class="w"> </span>--mode<span class="w"> </span>both
+</code></pre></div>
 <h2 id="environment-variables">Environment variables<a class="headerlink" href="#environment-variables" title="Permanent link">&para;</a></h2>
 <p>Pass secrets via environment — never hardcode in YAML:</p>
-<p><code>bash
-docker run -e CCLOUD_API_KEY=... -e CCLOUD_API_SECRET=... chitragupta</code></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>docker<span class="w"> </span>run<span class="w"> </span>-e<span class="w"> </span><span class="nv">CCLOUD_API_KEY</span><span class="o">=</span>...<span class="w"> </span>-e<span class="w"> </span><span class="nv">CCLOUD_API_SECRET</span><span class="o">=</span>...<span class="w"> </span>chitragupta
+</code></pre></div>
 <h2 id="api-server">API server<a class="headerlink" href="#api-server" title="Permanent link">&para;</a></h2>
 <p>The REST API is a FastAPI application served by uvicorn.</p>
-<p><code>yaml
-api:
-  host: 0.0.0.0
-  port: 8080
-  enable_cors: true
-  cors_origins:
-    - "https://your-dashboard.example.com"</code></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nt">api</span><span class="p">:</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span><span class="nt">host</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.0.0.0</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">  </span><span class="nt">port</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">8080</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">  </span><span class="nt">enable_cors</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="w">  </span><span class="nt">cors_origins</span><span class="p">:</span>
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="s">&quot;https://your-dashboard.example.com&quot;</span>
+</code></pre></div>
 <p>Health endpoint: <code>GET /health</code> — returns <code>{"status": "ok", "version": "..."}</code></p>
 <h2 id="storage">Storage<a class="headerlink" href="#storage" title="Permanent link">&para;</a></h2>
 <h3 id="sqlite-default">SQLite (default)<a class="headerlink" href="#sqlite-default" title="Permanent link">&para;</a></h3>
 <p>SQLite works well for single-instance deployments with moderate volume:</p>
-<p><code>yaml
-storage:
-  backend: sqlmodel
-  connection_string: "sqlite:////app/data/tenant-name.db"</code></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="nt">storage</span><span class="p">:</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span><span class="nt">backend</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">sqlmodel</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">  </span><span class="nt">connection_string</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;sqlite:////app/data/tenant-name.db&quot;</span>
+</code></pre></div>
 <h3 id="postgresql">PostgreSQL<a class="headerlink" href="#postgresql" title="Permanent link">&para;</a></h3>
 <p>Use PostgreSQL for multi-instance deployments or high-volume/concurrent-access scenarios where SQLite's single-writer lock becomes a bottleneck.</p>
 <p><strong>Driver:</strong> Requires <code>psycopg2</code>. Install via <code>uv add psycopg2-binary</code> (or <code>psycopg2</code> if you prefer building from source with <code>libpq-dev</code>).</p>
 <p><strong>Connection string format:</strong></p>
-<p><code>yaml
-storage:
-  backend: sqlmodel
-  connection_string: "postgresql+psycopg2://user:pass@host:5432/dbname"</code></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="nt">storage</span><span class="p">:</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="w">  </span><span class="nt">backend</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">sqlmodel</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="w">  </span><span class="nt">connection_string</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;postgresql+psycopg2://user:pass@host:5432/dbname&quot;</span>
+</code></pre></div>
 <p>Pass credentials via environment variables to avoid hardcoding secrets:</p>
-<p><code>yaml
-  connection_string: "postgresql+psycopg2://${PG_USER}:${PG_PASS}@${PG_HOST}:5432/dbname"</code></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="w">  </span><span class="nt">connection_string</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;postgresql+psycopg2://${PG_USER}:${PG_PASS}@${PG_HOST}:5432/dbname&quot;</span>
+</code></pre></div>
 <p><strong>One database per tenant.</strong> Each tenant's <code>connection_string</code> must point to a separate PostgreSQL database. Tables are created automatically on first run — no manual migration needed.</p>
-<p><code>yaml
-tenants:
-  prod-org:
-    storage:
-      connection_string: "postgresql+psycopg2://${PG_USER}:${PG_PASS}@pg:5432/chargeback_prod_org"
-  staging-org:
-    storage:
-      connection_string: "postgresql+psycopg2://${PG_USER}:${PG_PASS}@pg:5432/chargeback_staging_org"</code></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="nt">tenants</span><span class="p">:</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="w">  </span><span class="nt">prod-org</span><span class="p">:</span>
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="w">    </span><span class="nt">storage</span><span class="p">:</span>
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="w">      </span><span class="nt">connection_string</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;postgresql+psycopg2://${PG_USER}:${PG_PASS}@pg:5432/chargeback_prod_org&quot;</span>
+<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="w">  </span><span class="nt">staging-org</span><span class="p">:</span>
+<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="w">    </span><span class="nt">storage</span><span class="p">:</span>
+<a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a><span class="w">      </span><span class="nt">connection_string</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;postgresql+psycopg2://${PG_USER}:${PG_PASS}@pg:5432/chargeback_staging_org&quot;</span>
+</code></pre></div>
 <h3 id="when-to-choose-postgresql-over-sqlite">When to choose PostgreSQL over SQLite<a class="headerlink" href="#when-to-choose-postgresql-over-sqlite" title="Permanent link">&para;</a></h3>
 <table>
 <thead>
@@ -1755,7 +1756,8 @@ tenants:
 <p><strong>Rule of thumb:</strong> Start with SQLite. Switch to PostgreSQL when you need multiple application instances or observe lock contention under write-heavy workloads.</p>
 <h2 id="prometheus-collector-script">Prometheus collector script<a class="headerlink" href="#prometheus-collector-script" title="Permanent link">&para;</a></h2>
 <p>When using the <a href="../../configuration/#prometheus-emitter">Prometheus emitter</a>, chargeback data is held in memory and served at <code>/metrics</code>. To persist it into a Prometheus TSDB (for long-term retention and historical queries), use the bundled collector script:</p>
-<p><code>examples/shared/scripts/collector.sh</code></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>examples/shared/scripts/collector.sh
+</code></pre></div>
 <p>The script scrapes <code>/metrics</code> in OpenMetrics format and writes TSDB blocks via <code>promtool tsdb create-blocks-from openmetrics</code>. It requires <code>promtool</code> on <code>PATH</code> (ships with the Prometheus distribution).</p>
 <p><strong>Required environment variables:</strong></p>
 <table>

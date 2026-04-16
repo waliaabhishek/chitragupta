@@ -751,6 +751,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Identity discovery via Prometheus">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#fallback-behavior" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fallback behavior
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
     </ul>
@@ -1391,6 +1408,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Identity discovery via Prometheus">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#fallback-behavior" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fallback behavior
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
     </ul>
@@ -1421,45 +1455,45 @@ for a walkthrough of the decisions you'll make, then come back here for the
 full field reference.</p>
 </div>
 <h2 id="ecosystem-key">ecosystem key<a class="headerlink" href="#ecosystem-key" title="Permanent link">&para;</a></h2>
-<p><code>yaml
-ecosystem: self_managed_kafka</code></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nt">ecosystem</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">self_managed_kafka</span>
+</code></pre></div>
 <h2 id="full-example">Full example<a class="headerlink" href="#full-example" title="Permanent link">&para;</a></h2>
-<p><code>yaml
-tenants:
-  my-kafka-cluster:
-    ecosystem: self_managed_kafka
-    tenant_id: kafka-prod
-    storage:
-      connection_string: "sqlite:///data/kafka-prod.db"
-    plugin_settings:
-      cluster_id: kafka-prod-cluster
-      broker_count: 3
-      region: us-east-1
-      cost_model:
-        compute_hourly_rate: "0.50"
-        storage_per_gib_hourly: "0.0001"
-        network_ingress_per_gib: "0.01"
-        network_egress_per_gib: "0.05"
-        region_overrides:
-          eu-west-1:
-            compute_hourly_rate: "0.60"
-      identity_source:
-        source: prometheus
-        principal_to_team:
-          "User:alice": team-data-eng
-          "User:bob": team-platform
-        default_team: UNASSIGNED
-      resource_source:
-        source: prometheus
-      metrics:
-        type: prometheus
-        url: http://prometheus:9090
-        auth_type: none
-      emitters:
-        - type: csv
-          aggregation: daily
-          params:
-            output_dir: ./output</code></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">tenants</span><span class="p">:</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">my-kafka-cluster</span><span class="p">:</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">    </span><span class="nt">ecosystem</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">self_managed_kafka</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">    </span><span class="nt">tenant_id</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">kafka-prod</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">    </span><span class="nt">storage</span><span class="p">:</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">      </span><span class="nt">connection_string</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;sqlite:///data/kafka-prod.db&quot;</span>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="w">    </span><span class="nt">plugin_settings</span><span class="p">:</span>
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="w">      </span><span class="nt">cluster_id</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">kafka-prod-cluster</span>
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="w">      </span><span class="nt">broker_count</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">3</span>
+<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="w">      </span><span class="nt">region</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">us-east-1</span>
+<a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="w">      </span><span class="nt">cost_model</span><span class="p">:</span>
+<a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="w">        </span><span class="nt">compute_hourly_rate</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;0.50&quot;</span>
+<a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="w">        </span><span class="nt">storage_per_gib_hourly</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;0.0001&quot;</span>
+<a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a><span class="w">        </span><span class="nt">network_ingress_per_gib</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;0.01&quot;</span>
+<a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a><span class="w">        </span><span class="nt">network_egress_per_gib</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;0.05&quot;</span>
+<a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a><span class="w">        </span><span class="nt">region_overrides</span><span class="p">:</span>
+<a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a><span class="w">          </span><span class="nt">eu-west-1</span><span class="p">:</span>
+<a id="__codelineno-1-18" name="__codelineno-1-18" href="#__codelineno-1-18"></a><span class="w">            </span><span class="nt">compute_hourly_rate</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;0.60&quot;</span>
+<a id="__codelineno-1-19" name="__codelineno-1-19" href="#__codelineno-1-19"></a><span class="w">      </span><span class="nt">identity_source</span><span class="p">:</span>
+<a id="__codelineno-1-20" name="__codelineno-1-20" href="#__codelineno-1-20"></a><span class="w">        </span><span class="nt">source</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">prometheus</span>
+<a id="__codelineno-1-21" name="__codelineno-1-21" href="#__codelineno-1-21"></a><span class="w">        </span><span class="nt">principal_to_team</span><span class="p">:</span>
+<a id="__codelineno-1-22" name="__codelineno-1-22" href="#__codelineno-1-22"></a><span class="w">          </span><span class="s">&quot;User:alice&quot;</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">team-data-eng</span>
+<a id="__codelineno-1-23" name="__codelineno-1-23" href="#__codelineno-1-23"></a><span class="w">          </span><span class="s">&quot;User:bob&quot;</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">team-platform</span>
+<a id="__codelineno-1-24" name="__codelineno-1-24" href="#__codelineno-1-24"></a><span class="w">        </span><span class="nt">default_team</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">UNASSIGNED</span>
+<a id="__codelineno-1-25" name="__codelineno-1-25" href="#__codelineno-1-25"></a><span class="w">      </span><span class="nt">resource_source</span><span class="p">:</span>
+<a id="__codelineno-1-26" name="__codelineno-1-26" href="#__codelineno-1-26"></a><span class="w">        </span><span class="nt">source</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">prometheus</span>
+<a id="__codelineno-1-27" name="__codelineno-1-27" href="#__codelineno-1-27"></a><span class="w">      </span><span class="nt">metrics</span><span class="p">:</span>
+<a id="__codelineno-1-28" name="__codelineno-1-28" href="#__codelineno-1-28"></a><span class="w">        </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">prometheus</span>
+<a id="__codelineno-1-29" name="__codelineno-1-29" href="#__codelineno-1-29"></a><span class="w">        </span><span class="nt">url</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">http://prometheus:9090</span>
+<a id="__codelineno-1-30" name="__codelineno-1-30" href="#__codelineno-1-30"></a><span class="w">        </span><span class="nt">auth_type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">none</span>
+<a id="__codelineno-1-31" name="__codelineno-1-31" href="#__codelineno-1-31"></a><span class="w">      </span><span class="nt">emitters</span><span class="p">:</span>
+<a id="__codelineno-1-32" name="__codelineno-1-32" href="#__codelineno-1-32"></a><span class="w">        </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">csv</span>
+<a id="__codelineno-1-33" name="__codelineno-1-33" href="#__codelineno-1-33"></a><span class="w">          </span><span class="nt">aggregation</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">daily</span>
+<a id="__codelineno-1-34" name="__codelineno-1-34" href="#__codelineno-1-34"></a><span class="w">          </span><span class="nt">params</span><span class="p">:</span>
+<a id="__codelineno-1-35" name="__codelineno-1-35" href="#__codelineno-1-35"></a><span class="w">            </span><span class="nt">output_dir</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">./output</span>
+</code></pre></div>
 <h2 id="plugin_settings-fields-self-managed-kafka">plugin_settings fields (self-managed Kafka)<a class="headerlink" href="#plugin_settings-fields-self-managed-kafka" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -1649,8 +1683,8 @@ day (since it's a point-in-time gauge, not a cumulative counter).</p>
 include this label, set <code>identity_source.source: static</code> and list identities
 manually.</p>
 <p>The engine runs a combined discovery query at gather time:
-<code>promql
-group by (broker, topic, principal) (kafka_server_brokertopicmetrics_bytesin_total{})</code>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="k">group</span><span class="w"> </span><span class="k">by</span><span class="w"> </span><span class="o">(</span><span class="nv">broker</span><span class="p">,</span><span class="w"> </span><span class="nv">topic</span><span class="p">,</span><span class="w"> </span><span class="nv">principal</span><span class="o">)</span><span class="w"> </span><span class="o">(</span><span class="nv">kafka_server_brokertopicmetrics_bytesin_total</span><span class="p">{}</span><span class="o">)</span>
+</code></pre></div>
 This single query extracts brokers, topics, and principals in one round-trip.</p>
 </div>
 <h2 id="produced-product-types">Produced product types<a class="headerlink" href="#produced-product-types" title="Permanent link">&para;</a></h2>
@@ -1695,12 +1729,12 @@ worked examples.</p>
 <h2 id="identity-discovery-via-prometheus">Identity discovery via Prometheus<a class="headerlink" href="#identity-discovery-via-prometheus" title="Permanent link">&para;</a></h2>
 <p>With <code>identity_source.source: prometheus</code>, principals are extracted from metric labels
 during the discovery phase and again during identity resolution for each billing window:</p>
-<p>```promql</p>
-<h1 id="discovery-gather-phase--find-all-principals-with-any-traffic">Discovery (gather phase) — find all principals with any traffic<a class="headerlink" href="#discovery-gather-phase--find-all-principals-with-any-traffic" title="Permanent link">&para;</a></h1>
-<p>group by (broker, topic, principal) (kafka_server_brokertopicmetrics_bytesin_total{})</p>
-<h1 id="billing-resolution-calculate-phase--per-principal-bytes-in-a-specific-window">Billing resolution (calculate phase) — per-principal bytes in a specific window<a class="headerlink" href="#billing-resolution-calculate-phase--per-principal-bytes-in-a-specific-window" title="Permanent link">&para;</a></h1>
-<p>sum by (principal) (increase(kafka_server_brokertopicmetrics_bytesin_total[1h]))
-```</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="c1"># Discovery (gather phase) — find all principals with any traffic</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="k">group</span><span class="w"> </span><span class="k">by</span><span class="w"> </span><span class="o">(</span><span class="nv">broker</span><span class="p">,</span><span class="w"> </span><span class="nv">topic</span><span class="p">,</span><span class="w"> </span><span class="nv">principal</span><span class="o">)</span><span class="w"> </span><span class="o">(</span><span class="nv">kafka_server_brokertopicmetrics_bytesin_total</span><span class="p">{}</span><span class="o">)</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="c1"># Billing resolution (calculate phase) — per-principal bytes in a specific window</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="k">sum</span><span class="w"> </span><span class="k">by</span><span class="w"> </span><span class="o">(</span><span class="nv">principal</span><span class="o">)</span><span class="w"> </span><span class="o">(</span><span class="kr">increase</span><span class="o">(</span><span class="nv">kafka_server_brokertopicmetrics_bytesin_total</span><span class="p">[</span><span class="s">1h</span><span class="p">]</span><span class="o">))</span>
+</code></pre></div>
 <p>The first query runs once per gather cycle and populates the resource and identity
 inventory. The second runs per billing window and determines which principals were
 active during that specific period (stored as <code>metrics_derived</code> identities).</p>

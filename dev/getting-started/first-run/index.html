@@ -539,6 +539,50 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#what-happens-on-first-run" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What happens on first run
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#--emit-once-flag" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        --emit-once flag
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#reading-logs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reading logs
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#common-first-run-issues" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Common first-run issues
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1305,6 +1349,50 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#what-happens-on-first-run" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What happens on first run
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#--emit-once-flag" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        --emit-once flag
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#reading-logs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reading logs
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#common-first-run-issues" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Common first-run issues
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1329,16 +1417,18 @@
 <h2 id="run-modes">Run modes<a class="headerlink" href="#run-modes" title="Permanent link">&para;</a></h2>
 <p>See <a href="../../operations/deployment/#run-modes">Run Modes</a> for full details.</p>
 <h2 id="example-invocations">Example invocations<a class="headerlink" href="#example-invocations" title="Permanent link">&para;</a></h2>
-<p>```bash</p>
-<h1 id="one-shot-run-worker-only">One-shot run, worker only:<a class="headerlink" href="#one-shot-run-worker-only" title="Permanent link">&para;</a></h1>
-<p>uv run python src/main.py --config-file config.yaml --run-once</p>
-<h1 id="continuous-loop">Continuous loop:<a class="headerlink" href="#continuous-loop" title="Permanent link">&para;</a></h1>
-<p>uv run python src/main.py --config-file config.yaml</p>
-<h1 id="api--worker">API + worker:<a class="headerlink" href="#api--worker" title="Permanent link">&para;</a></h1>
-<p>uv run python src/main.py --config-file config.yaml --mode both</p>
-<h1 id="re-run-emitters-only-no-pipeline-no-data-collection">Re-run emitters only (no pipeline, no data collection):<a class="headerlink" href="#re-run-emitters-only-no-pipeline-no-data-collection" title="Permanent link">&para;</a></h1>
-<p>uv run python src/main.py --config-file config.yaml --emit-once
-```</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="c1"># One-shot run, worker only:</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>src/main.py<span class="w"> </span>--config-file<span class="w"> </span>config.yaml<span class="w"> </span>--run-once
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="c1"># Continuous loop:</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>src/main.py<span class="w"> </span>--config-file<span class="w"> </span>config.yaml
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="c1"># API + worker:</span>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>src/main.py<span class="w"> </span>--config-file<span class="w"> </span>config.yaml<span class="w"> </span>--mode<span class="w"> </span>both
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="c1"># Re-run emitters only (no pipeline, no data collection):</span>
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>src/main.py<span class="w"> </span>--config-file<span class="w"> </span>config.yaml<span class="w"> </span>--emit-once
+</code></pre></div>
 <h2 id="what-happens-on-first-run">What happens on first run<a class="headerlink" href="#what-happens-on-first-run" title="Permanent link">&para;</a></h2>
 <ol>
 <li>Storage backend created (tables migrated via Alembic)</li>
@@ -1354,13 +1444,14 @@
 <h2 id="--emit-once-flag"><code>--emit-once</code> flag<a class="headerlink" href="#--emit-once-flag" title="Permanent link">&para;</a></h2>
 <p>Runs <code>EmitterRunner</code> for all configured tenants without triggering a pipeline
 run, then exits. Use this to replay emitters after a destination outage:</p>
-<p><code>bash
-uv run python src/main.py --config-file config.yaml --emit-once</code></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>src/main.py<span class="w"> </span>--config-file<span class="w"> </span>config.yaml<span class="w"> </span>--emit-once
+</code></pre></div>
 <p>The engine reads pending (not yet emitted or previously failed) dates from
 storage and dispatches them to each emitter. No billing data is fetched and no
 chargeback recalculation occurs.</p>
 <h2 id="reading-logs">Reading logs<a class="headerlink" href="#reading-logs" title="Permanent link">&para;</a></h2>
-<p><code>INFO  Tenant my-org: gathered=14, pending=0, calculated=14, rows=320</code></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>INFO  Tenant my-org: gathered=14, pending=0, calculated=14, rows=320
+</code></pre></div>
 <p><code>gathered</code> = billing dates fetched from source
 <code>calculated</code> = dates where allocation was computed
 <code>rows</code> = chargeback rows written to storage + emitters</p>
