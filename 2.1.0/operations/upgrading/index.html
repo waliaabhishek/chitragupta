@@ -1238,8 +1238,74 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#docker-standalone" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Docker (standalone)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#source-based-systemd" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Source-based (systemd)
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#database-migrations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Database migrations
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rollback" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Rollback
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#configuration-compatibility" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configuration compatibility
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#breaking-changes-policy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Breaking changes policy
+      
+    </span>
+  </a>
   
 </li>
       
@@ -1412,8 +1478,74 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#docker-standalone" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Docker (standalone)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#source-based-systemd" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Source-based (systemd)
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#database-migrations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Database migrations
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rollback" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Rollback
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#configuration-compatibility" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configuration compatibility
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#breaking-changes-policy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Breaking changes policy
+      
+    </span>
+  </a>
   
 </li>
       
@@ -1442,74 +1574,79 @@
 <p>Back up your data before every upgrade. The engine runs database migrations automatically on startup — there is no undo once the process starts.</p>
 <h3 id="sqlite">SQLite<a class="headerlink" href="#sqlite" title="Permanent link">&para;</a></h3>
 <p>Copy the database file and its sidecar files:</p>
-<p><code>bash
-cp data/chargeback.db data/chargeback.db.bak
-cp data/chargeback.db-wal data/chargeback.db-wal.bak 2&gt;/dev/null
-cp data/chargeback.db-shm data/chargeback.db-shm.bak 2&gt;/dev/null</code></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>cp<span class="w"> </span>data/chargeback.db<span class="w"> </span>data/chargeback.db.bak
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>cp<span class="w"> </span>data/chargeback.db-wal<span class="w"> </span>data/chargeback.db-wal.bak<span class="w"> </span><span class="m">2</span>&gt;/dev/null
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>cp<span class="w"> </span>data/chargeback.db-shm<span class="w"> </span>data/chargeback.db-shm.bak<span class="w"> </span><span class="m">2</span>&gt;/dev/null
+</code></pre></div>
 <p>If you have multiple tenants, back up each tenant's database.</p>
 <h3 id="postgresql">PostgreSQL<a class="headerlink" href="#postgresql" title="Permanent link">&para;</a></h3>
-<p><code>bash
-pg_dump -Fc -f chargeback_backup_$(date +%Y%m%d).dump dbname</code></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>pg_dump<span class="w"> </span>-Fc<span class="w"> </span>-f<span class="w"> </span>chargeback_backup_<span class="k">$(</span>date<span class="w"> </span>+%Y%m%d<span class="k">)</span>.dump<span class="w"> </span>dbname
+</code></pre></div>
 <h2 id="check-current-schema-version">Check current schema version<a class="headerlink" href="#check-current-schema-version" title="Permanent link">&para;</a></h2>
 <p>Before upgrading, note your current migration state so you can diagnose issues if the upgrade fails:</p>
-<p><code>bash
-uv run alembic -c src/core/storage/migrations/alembic.ini current
-uv run alembic -c src/core/storage/migrations/alembic.ini history</code></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>uv<span class="w"> </span>run<span class="w"> </span>alembic<span class="w"> </span>-c<span class="w"> </span>src/core/storage/migrations/alembic.ini<span class="w"> </span>current
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>uv<span class="w"> </span>run<span class="w"> </span>alembic<span class="w"> </span>-c<span class="w"> </span>src/core/storage/migrations/alembic.ini<span class="w"> </span><span class="nb">history</span>
+</code></pre></div>
 <p>For Docker deployments, run inside the container:</p>
-<p><code>bash
-docker exec chitragupta python -m alembic -c src/core/storage/migrations/alembic.ini current</code></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>docker<span class="w"> </span><span class="nb">exec</span><span class="w"> </span>chitragupta<span class="w"> </span>python<span class="w"> </span>-m<span class="w"> </span>alembic<span class="w"> </span>-c<span class="w"> </span>src/core/storage/migrations/alembic.ini<span class="w"> </span>current
+</code></pre></div>
 <h2 id="upgrade-procedure">Upgrade procedure<a class="headerlink" href="#upgrade-procedure" title="Permanent link">&para;</a></h2>
 <h3 id="docker-docker-compose">Docker (docker compose)<a class="headerlink" href="#docker-docker-compose" title="Permanent link">&para;</a></h3>
-<p>```bash</p>
-<h1 id="stop-the-running-stack">Stop the running stack<a class="headerlink" href="#stop-the-running-stack" title="Permanent link">&para;</a></h1>
-<p>docker compose down</p>
-<h1 id="pull-or-build-the-new-image">Pull or build the new image<a class="headerlink" href="#pull-or-build-the-new-image" title="Permanent link">&para;</a></h1>
-<p>docker compose pull        # if using a registry</p>
-<h1 id="or">OR<a class="headerlink" href="#or" title="Permanent link">&para;</a></h1>
-<p>docker compose build       # if building locally</p>
-<h1 id="start-with-new-version--migrations-run-automatically">Start with new version — migrations run automatically<a class="headerlink" href="#start-with-new-version--migrations-run-automatically" title="Permanent link">&para;</a></h1>
-<p>docker compose up -d</p>
-<h1 id="verify">Verify<a class="headerlink" href="#verify" title="Permanent link">&para;</a></h1>
-<p>docker compose logs -f chitragupta | head -50
-curl http://localhost:8080/health
-```</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="c1"># Stop the running stack</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>docker<span class="w"> </span>compose<span class="w"> </span>down
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="c1"># Pull or build the new image</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>docker<span class="w"> </span>compose<span class="w"> </span>pull<span class="w">        </span><span class="c1"># if using a registry</span>
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="c1"># OR</span>
+<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>docker<span class="w"> </span>compose<span class="w"> </span>build<span class="w">       </span><span class="c1"># if building locally</span>
+<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a>
+<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a><span class="c1"># Start with new version — migrations run automatically</span>
+<a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a>docker<span class="w"> </span>compose<span class="w"> </span>up<span class="w"> </span>-d
+<a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a>
+<a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a><span class="c1"># Verify</span>
+<a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a>docker<span class="w"> </span>compose<span class="w"> </span>logs<span class="w"> </span>-f<span class="w"> </span>chitragupta<span class="w"> </span><span class="p">|</span><span class="w"> </span>head<span class="w"> </span>-50
+<a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a>curl<span class="w"> </span>http://localhost:8080/health
+</code></pre></div>
 <h3 id="docker-standalone">Docker (standalone)<a class="headerlink" href="#docker-standalone" title="Permanent link">&para;</a></h3>
-<p><code>bash
-docker stop chitragupta
-docker rm chitragupta
-docker pull your-registry/chitragupta:new-version
-docker run -d --name chitragupta \
-  -v ./config:/app/config:ro \
-  -v ./data:/app/data:rw \
-  -e CCLOUD_API_KEY=... \
-  -e CCLOUD_API_SECRET=... \
-  your-registry/chitragupta:new-version \
-  --config-file /app/config/config.yaml --mode both</code></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>docker<span class="w"> </span>stop<span class="w"> </span>chitragupta
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>docker<span class="w"> </span>rm<span class="w"> </span>chitragupta
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>docker<span class="w"> </span>pull<span class="w"> </span>your-registry/chitragupta:new-version
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>docker<span class="w"> </span>run<span class="w"> </span>-d<span class="w"> </span>--name<span class="w"> </span>chitragupta<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">  </span>-v<span class="w"> </span>./config:/app/config:ro<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="w">  </span>-v<span class="w"> </span>./data:/app/data:rw<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="w">  </span>-e<span class="w"> </span><span class="nv">CCLOUD_API_KEY</span><span class="o">=</span>...<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="w">  </span>-e<span class="w"> </span><span class="nv">CCLOUD_API_SECRET</span><span class="o">=</span>...<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a><span class="w">  </span>your-registry/chitragupta:new-version<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a><span class="w">  </span>--config-file<span class="w"> </span>/app/config/config.yaml<span class="w"> </span>--mode<span class="w"> </span>both
+</code></pre></div>
 <h3 id="source-based-systemd">Source-based (systemd)<a class="headerlink" href="#source-based-systemd" title="Permanent link">&para;</a></h3>
-<p>```bash</p>
-<h1 id="stop-the-service">Stop the service<a class="headerlink" href="#stop-the-service" title="Permanent link">&para;</a></h1>
-<p>sudo systemctl stop chitragupta</p>
-<h1 id="update-the-code">Update the code<a class="headerlink" href="#update-the-code" title="Permanent link">&para;</a></h1>
-<p>cd /opt/chitragupta
-git pull origin main   # or checkout a specific tag</p>
-<h1 id="update-dependencies">Update dependencies<a class="headerlink" href="#update-dependencies" title="Permanent link">&para;</a></h1>
-<p>uv sync</p>
-<h1 id="start--migrations-run-automatically">Start — migrations run automatically<a class="headerlink" href="#start--migrations-run-automatically" title="Permanent link">&para;</a></h1>
-<p>sudo systemctl start chitragupta</p>
-<h1 id="verify_1">Verify<a class="headerlink" href="#verify_1" title="Permanent link">&para;</a></h1>
-<p>sudo journalctl -u chitragupta -f | head -50
-curl http://localhost:8080/health
-```</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="c1"># Stop the service</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>sudo<span class="w"> </span>systemctl<span class="w"> </span>stop<span class="w"> </span>chitragupta
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="c1"># Update the code</span>
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="nb">cd</span><span class="w"> </span>/opt/chitragupta
+<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>git<span class="w"> </span>pull<span class="w"> </span>origin<span class="w"> </span>main<span class="w">   </span><span class="c1"># or checkout a specific tag</span>
+<a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a>
+<a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a><span class="c1"># Update dependencies</span>
+<a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a>uv<span class="w"> </span>sync
+<a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a>
+<a id="__codelineno-6-11" name="__codelineno-6-11" href="#__codelineno-6-11"></a><span class="c1"># Start — migrations run automatically</span>
+<a id="__codelineno-6-12" name="__codelineno-6-12" href="#__codelineno-6-12"></a>sudo<span class="w"> </span>systemctl<span class="w"> </span>start<span class="w"> </span>chitragupta
+<a id="__codelineno-6-13" name="__codelineno-6-13" href="#__codelineno-6-13"></a>
+<a id="__codelineno-6-14" name="__codelineno-6-14" href="#__codelineno-6-14"></a><span class="c1"># Verify</span>
+<a id="__codelineno-6-15" name="__codelineno-6-15" href="#__codelineno-6-15"></a>sudo<span class="w"> </span>journalctl<span class="w"> </span>-u<span class="w"> </span>chitragupta<span class="w"> </span>-f<span class="w"> </span><span class="p">|</span><span class="w"> </span>head<span class="w"> </span>-50
+<a id="__codelineno-6-16" name="__codelineno-6-16" href="#__codelineno-6-16"></a>curl<span class="w"> </span>http://localhost:8080/health
+</code></pre></div>
 <h2 id="database-migrations">Database migrations<a class="headerlink" href="#database-migrations" title="Permanent link">&para;</a></h2>
 <p>Migrations run automatically on startup. When the engine calls <code>bootstrap_storage()</code>, it executes <code>alembic upgrade head</code> against each tenant's database. No manual migration step is needed.</p>
 <p>If you want to run migrations manually (e.g., to test before starting the engine):</p>
-<p><code>bash
-uv run alembic -c src/core/storage/migrations/alembic.ini upgrade head</code></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>uv<span class="w"> </span>run<span class="w"> </span>alembic<span class="w"> </span>-c<span class="w"> </span>src/core/storage/migrations/alembic.ini<span class="w"> </span>upgrade<span class="w"> </span>head
+</code></pre></div>
 <p>Set the database URL first if it differs from the default:</p>
-<p><code>bash
-uv run alembic -c src/core/storage/migrations/alembic.ini \
-  -x sqlalchemy.url="postgresql+psycopg2://user:pass@host/dbname" \
-  upgrade head</code></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>uv<span class="w"> </span>run<span class="w"> </span>alembic<span class="w"> </span>-c<span class="w"> </span>src/core/storage/migrations/alembic.ini<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="w">  </span>-x<span class="w"> </span>sqlalchemy.url<span class="o">=</span><span class="s2">&quot;postgresql+psycopg2://user:pass@host/dbname&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="w">  </span>upgrade<span class="w"> </span>head
+</code></pre></div>
 <h2 id="rollback">Rollback<a class="headerlink" href="#rollback" title="Permanent link">&para;</a></h2>
 <p>If an upgrade fails or the new version misbehaves:</p>
 <ol>
@@ -1521,13 +1658,13 @@ uv run alembic -c src/core/storage/migrations/alembic.ini \
 </li>
 </ol>
 <p>SQLite:
-   <code>bash
-   cp data/chargeback.db.bak data/chargeback.db
-   cp data/chargeback.db-wal.bak data/chargeback.db-wal 2&gt;/dev/null
-   cp data/chargeback.db-shm.bak data/chargeback.db-shm 2&gt;/dev/null</code></p>
+   <div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>cp<span class="w"> </span>data/chargeback.db.bak<span class="w"> </span>data/chargeback.db
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>cp<span class="w"> </span>data/chargeback.db-wal.bak<span class="w"> </span>data/chargeback.db-wal<span class="w"> </span><span class="m">2</span>&gt;/dev/null
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>cp<span class="w"> </span>data/chargeback.db-shm.bak<span class="w"> </span>data/chargeback.db-shm<span class="w"> </span><span class="m">2</span>&gt;/dev/null
+</code></pre></div></p>
 <p>PostgreSQL:
-   <code>bash
-   pg_restore -c -d dbname chargeback_backup_YYYYMMDD.dump</code></p>
+   <div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>pg_restore<span class="w"> </span>-c<span class="w"> </span>-d<span class="w"> </span>dbname<span class="w"> </span>chargeback_backup_YYYYMMDD.dump
+</code></pre></div></p>
 <ol>
 <li>
 <p><strong>Revert to the previous version</strong> of the engine (previous Docker image tag or git checkout).</p>

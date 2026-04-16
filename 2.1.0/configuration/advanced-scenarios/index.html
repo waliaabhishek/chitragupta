@@ -1660,36 +1660,36 @@
 <h1 id="advanced-scenarios">Advanced Scenarios<a class="headerlink" href="#advanced-scenarios" title="Permanent link">&para;</a></h1>
 <h2 id="multiple-tenants">Multiple tenants<a class="headerlink" href="#multiple-tenants" title="Permanent link">&para;</a></h2>
 <p>Each tenant must have a unique <code>storage.connection_string</code>. Shared databases are rejected at startup.</p>
-<p><code>yaml
-tenants:
-  team-alpha:
-    storage:
-      connection_string: "sqlite:///data/alpha.db"
-    ...
-  team-beta:
-    storage:
-      connection_string: "sqlite:///data/beta.db"
-    ...</code></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nt">tenants</span><span class="p">:</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="nt">team-alpha</span><span class="p">:</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">    </span><span class="nt">storage</span><span class="p">:</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">      </span><span class="nt">connection_string</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;sqlite:///data/alpha.db&quot;</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">    </span><span class="l l-Scalar l-Scalar-Plain">...</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="w">  </span><span class="nt">team-beta</span><span class="p">:</span>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="w">    </span><span class="nt">storage</span><span class="p">:</span>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="w">      </span><span class="nt">connection_string</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;sqlite:///data/beta.db&quot;</span>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="w">    </span><span class="l l-Scalar l-Scalar-Plain">...</span>
+</code></pre></div>
 <h2 id="custom-granularity-durations">Custom granularity durations<a class="headerlink" href="#custom-granularity-durations" title="Permanent link">&para;</a></h2>
 <p>Override chargeback period length (minimum 1 hour):</p>
-<p><code>yaml
-plugin_settings:
-  granularity_durations:
-    "4h": 4
-    "weekly": 168</code></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">plugin_settings</span><span class="p">:</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">granularity_durations</span><span class="p">:</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">    </span><span class="s">&quot;4h&quot;</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">4</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">    </span><span class="s">&quot;weekly&quot;</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">168</span>
+</code></pre></div>
 <h2 id="allocator-overrides">Allocator overrides<a class="headerlink" href="#allocator-overrides" title="Permanent link">&para;</a></h2>
 <p>Replace a built-in allocator for a specific product type:</p>
-<p><code>yaml
-plugin_settings:
-  allocator_overrides:
-    KAFKA_NETWORK_READ: mymodule.custom_allocator</code></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nt">plugin_settings</span><span class="p">:</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="nt">allocator_overrides</span><span class="p">:</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">    </span><span class="nt">KAFKA_NETWORK_READ</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">mymodule.custom_allocator</span>
+</code></pre></div>
 <p>The value is a dotted import path to a callable matching the <code>CostAllocator</code> protocol.</p>
 <h2 id="identity-resolution-overrides">Identity resolution overrides<a class="headerlink" href="#identity-resolution-overrides" title="Permanent link">&para;</a></h2>
 <p>Replace identity resolution for a specific product type:</p>
-<p><code>yaml
-plugin_settings:
-  identity_resolution_overrides:
-    KAFKA_NETWORK_READ: mymodule.custom_resolver</code></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nt">plugin_settings</span><span class="p">:</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span><span class="nt">identity_resolution_overrides</span><span class="p">:</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">    </span><span class="nt">KAFKA_NETWORK_READ</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">mymodule.custom_resolver</span>
+</code></pre></div>
 <h2 id="validation-constraints">Validation constraints<a class="headerlink" href="#validation-constraints" title="Permanent link">&para;</a></h2>
 <p>These cross-field constraints are enforced at startup:</p>
 <table>
@@ -1780,50 +1780,50 @@ when and how to adjust these.</p>
 <h2 id="topic-attribution-overrides">Topic attribution overrides<a class="headerlink" href="#topic-attribution-overrides" title="Permanent link">&para;</a></h2>
 <h3 id="cost-mapping-overrides">Cost mapping overrides<a class="headerlink" href="#cost-mapping-overrides" title="Permanent link">&para;</a></h3>
 <p>Override the attribution method for specific CCloud product types. Valid methods: <code>bytes_ratio</code>, <code>retained_bytes_ratio</code>, <code>even_split</code>, <code>disabled</code>.</p>
-<p><code>yaml
-topic_attribution:
-  enabled: true
-  cost_mapping_overrides:
-    KAFKA_PARTITION: even_split    # override: split partition costs evenly instead of by bytes
-    KAFKA_BASE: disabled           # exclude base costs from topic attribution entirely</code></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nt">topic_attribution</span><span class="p">:</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span><span class="nt">enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">  </span><span class="nt">cost_mapping_overrides</span><span class="p">:</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">    </span><span class="nt">KAFKA_PARTITION</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">even_split</span><span class="w">    </span><span class="c1"># override: split partition costs evenly instead of by bytes</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="w">    </span><span class="nt">KAFKA_BASE</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">disabled</span><span class="w">           </span><span class="c1"># exclude base costs from topic attribution entirely</span>
+</code></pre></div>
 <p>See the <a href="../ccloud-reference/#default-cost-mappings">default cost mappings</a> for the full list of product types and their default methods.</p>
 <h3 id="metric-name-overrides">Metric name overrides<a class="headerlink" href="#metric-name-overrides" title="Permanent link">&para;</a></h3>
 <p>If your Prometheus instance uses non-standard metric names for CCloud topic-level metrics:</p>
-<p><code>yaml
-topic_attribution:
-  enabled: true
-  metric_name_overrides:
-    topic_bytes_in: my_custom_received_bytes
-    topic_bytes_out: my_custom_sent_bytes
-    topic_retained_bytes: my_custom_retained_bytes</code></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="nt">topic_attribution</span><span class="p">:</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span><span class="nt">enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">  </span><span class="nt">metric_name_overrides</span><span class="p">:</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">    </span><span class="nt">topic_bytes_in</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">my_custom_received_bytes</span>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">    </span><span class="nt">topic_bytes_out</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">my_custom_sent_bytes</span>
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="w">    </span><span class="nt">topic_retained_bytes</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">my_custom_retained_bytes</span>
+</code></pre></div>
 <p>Valid keys: <code>topic_bytes_in</code>, <code>topic_bytes_out</code>, <code>topic_retained_bytes</code>.</p>
 <h2 id="api-server-configuration">API server configuration<a class="headerlink" href="#api-server-configuration" title="Permanent link">&para;</a></h2>
-<p><code>yaml
-api:
-  host: 0.0.0.0
-  port: 8080                    # 1–65535
-  request_timeout_seconds: 30   # 1–300, returns HTTP 504 on timeout
-  enable_cors: true
-  cors_origins:
-    - "https://your-dashboard.example.com"</code></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="nt">api</span><span class="p">:</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="w">  </span><span class="nt">host</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.0.0.0</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="w">  </span><span class="nt">port</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">8080</span><span class="w">                    </span><span class="c1"># 1–65535</span>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="w">  </span><span class="nt">request_timeout_seconds</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">30</span><span class="w">   </span><span class="c1"># 1–300, returns HTTP 504 on timeout</span>
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="w">  </span><span class="nt">enable_cors</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="w">  </span><span class="nt">cors_origins</span><span class="p">:</span>
+<a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="s">&quot;https://your-dashboard.example.com&quot;</span>
+</code></pre></div>
 <h2 id="metrics-authentication">Metrics authentication<a class="headerlink" href="#metrics-authentication" title="Permanent link">&para;</a></h2>
 <h3 id="basic-auth">Basic auth<a class="headerlink" href="#basic-auth" title="Permanent link">&para;</a></h3>
-<p><code>yaml
-metrics:
-  url: https://prometheus.example.com
-  auth_type: basic
-  username: ${PROM_USER}
-  password: ${PROM_PASS}</code></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="nt">metrics</span><span class="p">:</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="w">  </span><span class="nt">url</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">https://prometheus.example.com</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="w">  </span><span class="nt">auth_type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">basic</span>
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="w">  </span><span class="nt">username</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${PROM_USER}</span>
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="w">  </span><span class="nt">password</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${PROM_PASS}</span>
+</code></pre></div>
 <h3 id="bearer-token">Bearer token<a class="headerlink" href="#bearer-token" title="Permanent link">&para;</a></h3>
-<p><code>yaml
-metrics:
-  url: https://prometheus.example.com
-  auth_type: bearer
-  bearer_token: ${PROM_TOKEN}</code></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="nt">metrics</span><span class="p">:</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="w">  </span><span class="nt">url</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">https://prometheus.example.com</span>
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="w">  </span><span class="nt">auth_type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">bearer</span>
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="w">  </span><span class="nt">bearer_token</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${PROM_TOKEN}</span>
+</code></pre></div>
 <p><strong>Validation rules:</strong> <code>basic</code> requires both <code>username</code> and <code>password</code>. <code>bearer</code> requires <code>bearer_token</code>. <code>none</code> rejects any credentials — don't mix auth_type with unrelated credential fields.</p>
 <h2 id="custom-plugins-path">Custom plugins path<a class="headerlink" href="#custom-plugins-path" title="Permanent link">&para;</a></h2>
-<p><code>yaml
-plugins_path: /opt/custom_plugins</code></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="nt">plugins_path</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/opt/custom_plugins</span>
+</code></pre></div>
 <p>Path is resolved relative to CWD if relative, used as-is if absolute.
 Each subdirectory is treated as a plugin package. Requirements:</p>
 <ul>
@@ -1835,24 +1835,24 @@ Each subdirectory is treated as a plugin package. Requirements:</p>
 e.g. missing <code>__init__.py</code>) and the engine continues loading remaining plugins.</p>
 <h2 id="emitter-aggregation">Emitter aggregation<a class="headerlink" href="#emitter-aggregation" title="Permanent link">&para;</a></h2>
 <p>Emitters receive rows aggregated to the requested period:</p>
-<p><code>yaml
-emitters:
-  - type: csv
-    aggregation: monthly     # one file per month
-    params:
-      output_dir: ./monthly-output
-  - type: csv
-    aggregation: daily       # one file per day (same data, different granularity)
-    params:
-      output_dir: ./daily-output</code></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="nt">emitters</span><span class="p">:</span>
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">csv</span>
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="w">    </span><span class="nt">aggregation</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">monthly</span><span class="w">     </span><span class="c1"># one file per month</span>
+<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="w">    </span><span class="nt">params</span><span class="p">:</span>
+<a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a><span class="w">      </span><span class="nt">output_dir</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">./monthly-output</span>
+<a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">csv</span>
+<a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a><span class="w">    </span><span class="nt">aggregation</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">daily</span><span class="w">       </span><span class="c1"># one file per day (same data, different granularity)</span>
+<a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a><span class="w">    </span><span class="nt">params</span><span class="p">:</span>
+<a id="__codelineno-10-9" name="__codelineno-10-9" href="#__codelineno-10-9"></a><span class="w">      </span><span class="nt">output_dir</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">./daily-output</span>
+</code></pre></div>
 <p>Emitters may not request finer granularity than <code>chargeback_granularity</code> produces.</p>
 <h2 id="per-module-log-levels">Per-module log levels<a class="headerlink" href="#per-module-log-levels" title="Permanent link">&para;</a></h2>
-<p><code>yaml
-logging:
-  level: INFO     # CRITICAL | ERROR | WARNING | INFO | DEBUG
-  per_module_levels:
-    core.metrics.prometheus: DEBUG
-    plugins.confluent_cloud: DEBUG</code></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="nt">logging</span><span class="p">:</span>
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="w">  </span><span class="nt">level</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">INFO</span><span class="w">     </span><span class="c1"># CRITICAL | ERROR | WARNING | INFO | DEBUG</span>
+<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a><span class="w">  </span><span class="nt">per_module_levels</span><span class="p">:</span>
+<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="w">    </span><span class="nt">core.metrics.prometheus</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">DEBUG</span>
+<a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a><span class="w">    </span><span class="nt">plugins.confluent_cloud</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">DEBUG</span>
+</code></pre></div>
 
 
 

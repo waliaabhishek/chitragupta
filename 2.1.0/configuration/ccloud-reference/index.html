@@ -1543,49 +1543,49 @@ for a walkthrough of the decisions you'll make, then come back here for the
 full field reference.</p>
 </div>
 <h2 id="ecosystem-key">ecosystem key<a class="headerlink" href="#ecosystem-key" title="Permanent link">&para;</a></h2>
-<p><code>yaml
-ecosystem: confluent_cloud</code></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nt">ecosystem</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">confluent_cloud</span>
+</code></pre></div>
 <h2 id="full-example">Full example<a class="headerlink" href="#full-example" title="Permanent link">&para;</a></h2>
-<p><code>yaml
-tenants:
-  my-ccloud-org:
-    ecosystem: confluent_cloud
-    tenant_id: my-ccloud-org       # internal partition key (not the CCloud org ID)
-    lookback_days: 200
-    cutoff_days: 5
-    retention_days: 250
-    storage:
-      connection_string: "sqlite:///data/ccloud.db"
-    plugin_settings:
-      ccloud_api:
-        key: ${CCLOUD_API_KEY}
-        secret: ${CCLOUD_API_SECRET}
-      billing_api:
-        days_per_query: 15
-      metrics:
-        type: prometheus
-        url: https://api.telemetry.confluent.cloud
-        auth_type: basic
-        username: ${METRICS_API_KEY}
-        password: ${METRICS_API_SECRET}
-      flink:
-        - region_id: us-east-1
-          key: ${FLINK_API_KEY}
-          secret: ${FLINK_API_SECRET}
-      emitters:
-        - type: csv
-          aggregation: daily
-          params:
-            output_dir: ./output
-      chargeback_granularity: daily
-      topic_attribution:
-        enabled: true
-        exclude_topic_patterns:
-          - "__consumer_offsets"
-          - "_schemas"
-          - "_confluent-*"
-        missing_metrics_behavior: even_split
-        retention_days: 90</code></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">tenants</span><span class="p">:</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">my-ccloud-org</span><span class="p">:</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">    </span><span class="nt">ecosystem</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">confluent_cloud</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">    </span><span class="nt">tenant_id</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">my-ccloud-org</span><span class="w">       </span><span class="c1"># internal partition key (not the CCloud org ID)</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">    </span><span class="nt">lookback_days</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">200</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">    </span><span class="nt">cutoff_days</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">5</span>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="w">    </span><span class="nt">retention_days</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">250</span>
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="w">    </span><span class="nt">storage</span><span class="p">:</span>
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="w">      </span><span class="nt">connection_string</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;sqlite:///data/ccloud.db&quot;</span>
+<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="w">    </span><span class="nt">plugin_settings</span><span class="p">:</span>
+<a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="w">      </span><span class="nt">ccloud_api</span><span class="p">:</span>
+<a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="w">        </span><span class="nt">key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${CCLOUD_API_KEY}</span>
+<a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="w">        </span><span class="nt">secret</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${CCLOUD_API_SECRET}</span>
+<a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a><span class="w">      </span><span class="nt">billing_api</span><span class="p">:</span>
+<a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a><span class="w">        </span><span class="nt">days_per_query</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">15</span>
+<a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a><span class="w">      </span><span class="nt">metrics</span><span class="p">:</span>
+<a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a><span class="w">        </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">prometheus</span>
+<a id="__codelineno-1-18" name="__codelineno-1-18" href="#__codelineno-1-18"></a><span class="w">        </span><span class="nt">url</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">https://api.telemetry.confluent.cloud</span>
+<a id="__codelineno-1-19" name="__codelineno-1-19" href="#__codelineno-1-19"></a><span class="w">        </span><span class="nt">auth_type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">basic</span>
+<a id="__codelineno-1-20" name="__codelineno-1-20" href="#__codelineno-1-20"></a><span class="w">        </span><span class="nt">username</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${METRICS_API_KEY}</span>
+<a id="__codelineno-1-21" name="__codelineno-1-21" href="#__codelineno-1-21"></a><span class="w">        </span><span class="nt">password</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${METRICS_API_SECRET}</span>
+<a id="__codelineno-1-22" name="__codelineno-1-22" href="#__codelineno-1-22"></a><span class="w">      </span><span class="nt">flink</span><span class="p">:</span>
+<a id="__codelineno-1-23" name="__codelineno-1-23" href="#__codelineno-1-23"></a><span class="w">        </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">region_id</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">us-east-1</span>
+<a id="__codelineno-1-24" name="__codelineno-1-24" href="#__codelineno-1-24"></a><span class="w">          </span><span class="nt">key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${FLINK_API_KEY}</span>
+<a id="__codelineno-1-25" name="__codelineno-1-25" href="#__codelineno-1-25"></a><span class="w">          </span><span class="nt">secret</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${FLINK_API_SECRET}</span>
+<a id="__codelineno-1-26" name="__codelineno-1-26" href="#__codelineno-1-26"></a><span class="w">      </span><span class="nt">emitters</span><span class="p">:</span>
+<a id="__codelineno-1-27" name="__codelineno-1-27" href="#__codelineno-1-27"></a><span class="w">        </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">csv</span>
+<a id="__codelineno-1-28" name="__codelineno-1-28" href="#__codelineno-1-28"></a><span class="w">          </span><span class="nt">aggregation</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">daily</span>
+<a id="__codelineno-1-29" name="__codelineno-1-29" href="#__codelineno-1-29"></a><span class="w">          </span><span class="nt">params</span><span class="p">:</span>
+<a id="__codelineno-1-30" name="__codelineno-1-30" href="#__codelineno-1-30"></a><span class="w">            </span><span class="nt">output_dir</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">./output</span>
+<a id="__codelineno-1-31" name="__codelineno-1-31" href="#__codelineno-1-31"></a><span class="w">      </span><span class="nt">chargeback_granularity</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">daily</span>
+<a id="__codelineno-1-32" name="__codelineno-1-32" href="#__codelineno-1-32"></a><span class="w">      </span><span class="nt">topic_attribution</span><span class="p">:</span>
+<a id="__codelineno-1-33" name="__codelineno-1-33" href="#__codelineno-1-33"></a><span class="w">        </span><span class="nt">enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<a id="__codelineno-1-34" name="__codelineno-1-34" href="#__codelineno-1-34"></a><span class="w">        </span><span class="nt">exclude_topic_patterns</span><span class="p">:</span>
+<a id="__codelineno-1-35" name="__codelineno-1-35" href="#__codelineno-1-35"></a><span class="w">          </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="s">&quot;__consumer_offsets&quot;</span>
+<a id="__codelineno-1-36" name="__codelineno-1-36" href="#__codelineno-1-36"></a><span class="w">          </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="s">&quot;_schemas&quot;</span>
+<a id="__codelineno-1-37" name="__codelineno-1-37" href="#__codelineno-1-37"></a><span class="w">          </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="s">&quot;_confluent-*&quot;</span>
+<a id="__codelineno-1-38" name="__codelineno-1-38" href="#__codelineno-1-38"></a><span class="w">        </span><span class="nt">missing_metrics_behavior</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">even_split</span>
+<a id="__codelineno-1-39" name="__codelineno-1-39" href="#__codelineno-1-39"></a><span class="w">        </span><span class="nt">retention_days</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">90</span>
+</code></pre></div>
 <h2 id="tenantconfig-fields">TenantConfig fields<a class="headerlink" href="#tenantconfig-fields" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -1833,10 +1833,10 @@ field on chargeback rows to understand which fallback tier was used.</p>
 model including the fallback chain and composite CKU allocation.</p>
 <h2 id="allocator-params">Allocator params<a class="headerlink" href="#allocator-params" title="Permanent link">&para;</a></h2>
 <p>Override default allocation ratios for Kafka CKU costs:</p>
-<p><code>yaml
-allocator_params:
-  kafka_cku_usage_ratio: 0.70   # fraction allocated by bytes (default 0.70)
-  kafka_cku_shared_ratio: 0.30  # fraction allocated evenly (default 0.30)</code></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nt">allocator_params</span><span class="p">:</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="nt">kafka_cku_usage_ratio</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.70</span><span class="w">   </span><span class="c1"># fraction allocated by bytes (default 0.70)</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">  </span><span class="nt">kafka_cku_shared_ratio</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.30</span><span class="w">  </span><span class="c1"># fraction allocated evenly (default 0.30)</span>
+</code></pre></div>
 <p><code>kafka_cku_usage_ratio</code> + <code>kafka_cku_shared_ratio</code> must sum to 1.0 (tolerance: 0.0001). Startup fails if they don't.</p>
 <div class="admonition note">
 <p class="admonition-title">How to think about the ratio</p>
@@ -1862,21 +1862,21 @@ calculation and writes results to a separate star-schema table.</p>
 <p><strong>Prerequisite:</strong> Topic-level CCloud metrics (<code>received_bytes</code>, <code>sent_bytes</code>,
 <code>retained_bytes</code> per topic) must be scraped into the Prometheus instance
 configured under <code>plugin_settings.metrics</code>.</p>
-<p><code>yaml
-topic_attribution:
-  enabled: true                           # off by default
-  exclude_topic_patterns:
-    - "__consumer_offsets"                # default exclusions
-    - "_schemas"
-    - "_confluent-*"
-  missing_metrics_behavior: even_split   # even_split | skip
-  retention_days: 90                     # 1–365, independent of tenant retention_days
-  cost_mapping_overrides:                # override per product type
-    KAFKA_PARTITION: even_split
-    KAFKA_BASE: disabled
-  metric_name_overrides:                 # override Prometheus metric names
-    topic_bytes_in: custom_received_bytes
-  emitters: []                           # same format as top-level emitters</code></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nt">topic_attribution</span><span class="p">:</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span><span class="nt">enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span><span class="w">                           </span><span class="c1"># off by default</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span><span class="nt">exclude_topic_patterns</span><span class="p">:</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="s">&quot;__consumer_offsets&quot;</span><span class="w">                </span><span class="c1"># default exclusions</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="s">&quot;_schemas&quot;</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="s">&quot;_confluent-*&quot;</span>
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="w">  </span><span class="nt">missing_metrics_behavior</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">even_split</span><span class="w">   </span><span class="c1"># even_split | skip</span>
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="w">  </span><span class="nt">retention_days</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">90</span><span class="w">                     </span><span class="c1"># 1–365, independent of tenant retention_days</span>
+<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="w">  </span><span class="nt">cost_mapping_overrides</span><span class="p">:</span><span class="w">                </span><span class="c1"># override per product type</span>
+<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="w">    </span><span class="nt">KAFKA_PARTITION</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">even_split</span>
+<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="w">    </span><span class="nt">KAFKA_BASE</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">disabled</span>
+<a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a><span class="w">  </span><span class="nt">metric_name_overrides</span><span class="p">:</span><span class="w">                 </span><span class="c1"># override Prometheus metric names</span>
+<a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a><span class="w">    </span><span class="nt">topic_bytes_in</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">custom_received_bytes</span>
+<a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a><span class="w">  </span><span class="nt">emitters</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[]</span><span class="w">                           </span><span class="c1"># same format as top-level emitters</span>
+</code></pre></div>
 <div class="admonition warning">
 <p class="admonition-title">Requires <code>metrics</code> to be configured</p>
 <p><code>topic_attribution.enabled: true</code> requires a <code>metrics</code> section in <code>plugin_settings</code>.
@@ -1998,18 +1998,18 @@ Attribution page. Correct the config and restart to resolve.</p>
 </ul>
 <p>The date is marked calculated only when every cluster is resolved — either with real attribution rows, empty metrics, or sentinel rows. Clusters still below the retry limit return pending and do not block other clusters from being marked.</p>
 <p>To identify sentinel rows in the database or API:</p>
-<p><code>sql
-SELECT * FROM topic_attribution_facts
-JOIN topic_attribution_dimensions USING (dimension_id)
-WHERE attribution_method = 'ATTRIBUTION_FAILED';</code></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="k">SELECT</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="n">topic_attribution_facts</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="k">JOIN</span><span class="w"> </span><span class="n">topic_attribution_dimensions</span><span class="w"> </span><span class="k">USING</span><span class="w"> </span><span class="p">(</span><span class="n">dimension_id</span><span class="p">)</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="k">WHERE</span><span class="w"> </span><span class="n">attribution_method</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;ATTRIBUTION_FAILED&#39;</span><span class="p">;</span>
+</code></pre></div>
 <h2 id="emitters">Emitters<a class="headerlink" href="#emitters" title="Permanent link">&para;</a></h2>
-<p><code>yaml
-emitters:
-  - type: csv
-    aggregation: daily       # rows aggregated to daily before writing
-    params:
-      output_dir: /data/csv
-      filename_template: "{tenant_id}_{date}.csv"</code></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="nt">emitters</span><span class="p">:</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">csv</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">    </span><span class="nt">aggregation</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">daily</span><span class="w">       </span><span class="c1"># rows aggregated to daily before writing</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">    </span><span class="nt">params</span><span class="p">:</span>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">      </span><span class="nt">output_dir</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/data/csv</span>
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="w">      </span><span class="nt">filename_template</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;{tenant_id}_{date}.csv&quot;</span>
+</code></pre></div>
 <p><code>aggregation</code> options: <code>null</code> (as-is), <code>hourly</code>, <code>daily</code>, <code>monthly</code>.</p>
 
 
