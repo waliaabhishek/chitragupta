@@ -27,7 +27,7 @@
     "lucide-react": "^1.8.0",
     "react": "^19",
     "react-dom": "^19",
-    "react-router": "^7"
+    "react-router": "^7.17.0"
   },
   "overrides": {
     "path-to-regexp": "8.4.0",
