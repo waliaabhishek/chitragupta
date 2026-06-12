@@ -4,11 +4,15 @@
 # Do not use git add -f, do not remove these entries.
 backlog/
 .claude/
+.codex/
+.agents/
 memory/
 **/data/
 node_modules/
+graphify-out/
 
 CLAUDE.md
+AGENTS.md
 
 # MkDocs build output
 site/
