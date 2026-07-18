@@ -138,7 +138,7 @@ class TestBaselineMigration:
         inspector_d = sa_inspect(engine_d)
 
         # Plugin-specific tables created by migrations but not by CoreStorageModule
-        plugin_tables = {"ccloud_billing"}
+        plugin_tables = {"ccloud_billing", "ccloud_cost_source_records"}
 
         tables_m = set(inspector_m.get_table_names()) - {"alembic_version"} - plugin_tables
         tables_d = set(inspector_d.get_table_names())
@@ -571,3 +571,199 @@ class TestMigration015RemoveAmountServerDefault:
             assert "server_default" not in line, (
                 f"Migration 012 amount column must not have server_default, but found: {line.strip()!r}"
             )
+
+
+class TestMigration018CCloudCostSourceRecords:
+    @staticmethod
+    def _config(connection_string: str) -> Config:
+        import pathlib
+
+        from alembic.config import Config
+
+        migrations_dir = pathlib.Path(__file__).resolve().parents[4] / "src" / "core" / "storage" / "migrations"
+        config = Config(str(migrations_dir / "alembic.ini"))
+        config.set_main_option("script_location", str(migrations_dir))
+        config.set_main_option("sqlalchemy.url", connection_string)
+        return config
+
+    def test_upgrade_creates_source_table_primary_key_and_indexes(self, tmp_path) -> None:
+        from alembic import command
+        from sqlalchemy import create_engine
+
+        connection_string = f"sqlite:///{tmp_path / 'migration-018.db'}"
+        config = self._config(connection_string)
+        command.upgrade(config, "017")
+
+        command.upgrade(config, "018")
+
+        engine = create_engine(connection_string)
+        inspector = sa_inspect(engine)
+        assert "ccloud_cost_source_records" in inspector.get_table_names()
+        columns = {column["name"]: column for column in inspector.get_columns("ccloud_cost_source_records")}
+        assert set(columns) == {
+            "ecosystem",
+            "tenant_id",
+            "source_record_id",
+            "identity_scheme",
+            "provider_cost_id",
+            "source_period_start",
+            "source_period_end",
+            "collection_window_start",
+            "collection_window_end",
+            "evidence_scope_start",
+            "evidence_scope_end",
+            "allocation_timestamp",
+            "retention_timestamp",
+            "granularity",
+            "product",
+            "line_type",
+            "amount",
+            "original_amount",
+            "discount_amount",
+            "price",
+            "quantity",
+            "unit",
+            "description",
+            "network_access_type",
+            "resource_id",
+            "resource_name",
+            "environment_id",
+            "tier_dimensions_json",
+            "malformed",
+            "diagnostics_json",
+            "raw_payload_json",
+        }
+        assert inspector.get_pk_constraint("ccloud_cost_source_records")["constrained_columns"] == [
+            "ecosystem",
+            "tenant_id",
+            "source_record_id",
+            "evidence_scope_start",
+            "evidence_scope_end",
+        ]
+        indexes = {tuple(index["column_names"]) for index in inspector.get_indexes("ccloud_cost_source_records")}
+        assert indexes == {
+            ("ecosystem", "tenant_id", "allocation_timestamp"),
+            ("ecosystem", "tenant_id", "retention_timestamp"),
+            (
+                "ecosystem",
+                "tenant_id",
+                "source_period_start",
+                "evidence_scope_start",
+                "evidence_scope_end",
+            ),
+        }
+        engine.dispose()
+
+    def test_upgrade_does_not_fabricate_source_rows_and_preserves_existing_data(self, tmp_path) -> None:
+        from alembic import command
+        from sqlalchemy import create_engine, text
+
+        connection_string = f"sqlite:///{tmp_path / 'migration-018-preserve.db'}"
+        config = self._config(connection_string)
+        command.upgrade(config, "017")
+        engine = create_engine(connection_string)
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    """
+                    INSERT INTO ccloud_billing
+                        (ecosystem, tenant_id, timestamp, env_id, resource_id,
+                         product_type, product_category, quantity, unit_price,
+                         total_cost, currency, granularity, allocation_attempts,
+                         topic_attribution_attempts)
+                    VALUES
+                        ('confluent_cloud', 'org-1', '2026-07-01 00:00:00', 'env-1', 'lkc-1',
+                         'KAFKA_NUM_CKU', 'KAFKA', '1', '2', '2', 'USD', 'daily', 0, 0)
+                    """
+                )
+            )
+            connection.execute(
+                text(
+                    """
+                    INSERT INTO chargeback_dimensions
+                        (ecosystem, tenant_id, resource_id, product_category, product_type,
+                         identity_id, cost_type, allocation_method, allocation_detail, env_id)
+                    VALUES
+                        ('confluent_cloud', 'org-1', 'lkc-1', 'KAFKA', 'KAFKA_NUM_CKU',
+                         'user-1', 'usage', 'direct', NULL, 'env-1')
+                    """
+                )
+            )
+            dimension_id = connection.execute(
+                text("SELECT dimension_id FROM chargeback_dimensions WHERE tenant_id = 'org-1'")
+            ).scalar_one()
+            connection.execute(
+                text(
+                    "INSERT INTO chargeback_facts (timestamp, dimension_id, amount, tags_json) "
+                    "VALUES ('2026-07-01 00:00:00', :dimension_id, '2', '[]')"
+                ),
+                {"dimension_id": dimension_id},
+            )
+        command.upgrade(config, "018")
+
+        with engine.connect() as connection:
+            assert connection.execute(text("SELECT COUNT(*) FROM ccloud_cost_source_records")).scalar_one() == 0
+            assert connection.execute(text("SELECT total_cost FROM ccloud_billing")).scalar_one() == "2"
+            assert connection.execute(text("SELECT amount FROM chargeback_facts")).scalar_one() == "2"
+        engine.dispose()
+
+    def test_downgrade_removes_only_source_table(self, tmp_path) -> None:
+        from alembic import command
+        from sqlalchemy import create_engine, text
+
+        connection_string = f"sqlite:///{tmp_path / 'migration-018-downgrade.db'}"
+        config = self._config(connection_string)
+        command.upgrade(config, "017")
+        engine = create_engine(connection_string)
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    """
+                    INSERT INTO ccloud_billing
+                        (ecosystem, tenant_id, timestamp, env_id, resource_id,
+                         product_type, product_category, quantity, unit_price,
+                         total_cost, currency, granularity, allocation_attempts,
+                         topic_attribution_attempts)
+                    VALUES
+                        ('confluent_cloud', 'org-1', '2026-07-01 00:00:00', 'env-1', 'lkc-1',
+                         'KAFKA_NUM_CKU', 'KAFKA', '1', '2', '2', 'USD', 'daily', 0, 0)
+                    """
+                )
+            )
+            connection.execute(
+                text(
+                    """
+                    INSERT INTO chargeback_dimensions
+                        (ecosystem, tenant_id, resource_id, product_category, product_type,
+                         identity_id, cost_type, allocation_method, allocation_detail, env_id)
+                    VALUES
+                        ('confluent_cloud', 'org-1', 'lkc-1', 'KAFKA', 'KAFKA_NUM_CKU',
+                         'user-1', 'usage', 'direct', NULL, 'env-1')
+                    """
+                )
+            )
+            dimension_id = connection.execute(
+                text("SELECT dimension_id FROM chargeback_dimensions WHERE tenant_id = 'org-1'")
+            ).scalar_one()
+            connection.execute(
+                text(
+                    "INSERT INTO chargeback_facts (timestamp, dimension_id, amount, tags_json) "
+                    "VALUES ('2026-07-01 00:00:00', :dimension_id, '2', '[]')"
+                ),
+                {"dimension_id": dimension_id},
+            )
+
+        command.upgrade(config, "018")
+        with engine.connect() as connection:
+            assert connection.execute(text("SELECT COUNT(*) FROM chargeback_dimensions")).scalar_one() == 1
+            assert connection.execute(text("SELECT amount FROM chargeback_facts")).scalar_one() == "2"
+
+        command.downgrade(config, "017")
+
+        inspector = sa_inspect(engine)
+        assert "ccloud_cost_source_records" not in inspector.get_table_names()
+        with engine.connect() as connection:
+            assert connection.execute(text("SELECT total_cost FROM ccloud_billing")).scalar_one() == "2"
+            assert connection.execute(text("SELECT COUNT(*) FROM chargeback_dimensions")).scalar_one() == 1
+            assert connection.execute(text("SELECT amount FROM chargeback_facts")).scalar_one() == "2"
+        engine.dispose()

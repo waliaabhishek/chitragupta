@@ -1,12 +1,64 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class CCloudCostSourceRecord:
+    """One native Confluent Cost record before allocation aggregation."""
+
+    ecosystem: str
+    tenant_id: str
+    source_record_id: str
+    identity_scheme: str
+    provider_cost_id: str | None
+    source_period_start: datetime | None
+    source_period_end: datetime | None
+    collection_window_start: datetime
+    collection_window_end: datetime
+    evidence_scope_start: datetime
+    evidence_scope_end: datetime
+    allocation_timestamp: datetime
+    retention_timestamp: datetime
+    granularity: str | None
+    product: str | None
+    line_type: str | None
+    amount: Decimal | None
+    original_amount: Decimal | None
+    discount_amount: Decimal | None
+    price: Decimal | None
+    quantity: Decimal | None
+    unit: str | None
+    description: str | None
+    network_access_type: str | None
+    resource_id: str | None
+    resource_name: str | None
+    environment_id: str | None
+    tier_dimensions: dict[str, str]
+    malformed: bool
+    diagnostics: tuple[str, ...]
+    raw_payload: dict[str, Any]
+
+
+@runtime_checkable
+class CCloudSourceWindowWriter(Protocol):
+    """Production-consumed persistence seam for native Cost evidence."""
+
+    def replace_source_window(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        refresh_window_start: datetime,
+        refresh_window_end: datetime,
+        records: Sequence[CCloudCostSourceRecord],
+    ) -> None: ...
 
 
 @dataclass(frozen=True)

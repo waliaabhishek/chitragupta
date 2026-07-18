@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Add native Confluent Cost API source-evidence persistence alongside billing aggregates, with provider-backed IDs, deterministic composite/collision identities, tier-level addressability, malformed-row diagnostics, and rolling-window replacement and retention semantics (TASK-254.01).
 - Add `resource_id` column to `topic_attribution_dimensions` table (migration 017). Backfills existing rows as `cluster_resource_id || ':topic:' || topic_name` and populates on new writes via `_get_or_create_dimension`. Enables symmetric tag-based joins with `entity_tags` for the upcoming ownership-pivot feature (TASK-214/215).
 - Add tag-based GROUP BY to chargeback aggregate endpoint (TASK-214). `group_by=tag:{key}` groups results by an entity tag value; rows with no matching tag land in an `UNTAGGED` bucket. Multiple `tag:` group_by values produce tuple buckets. Tag dimensions appear in `AggregationRow.dimensions` as `{"tag:owner": "team-commerce"}`. Resource tag takes precedence over identity tag on key collision, matching existing list-endpoint behavior.
 - Add tag-based WHERE filtering to chargeback aggregate endpoint (TASK-214). Dynamic `tag:{key}={value}` query params filter rows by tag value before aggregation. Comma-separated values in a single param are OR-matched within one key; multiple tag params are AND-matched across keys. Untagged rows are excluded from filtered results.

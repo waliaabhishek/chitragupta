@@ -1,11 +1,270 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from collections.abc import Sequence
+from datetime import UTC, date, datetime
 from decimal import Decimal
+from typing import TYPE_CHECKING, Any, Self
 
 import httpx
+import pytest
 import respx
 from pydantic import SecretStr
+
+from core.emitters.repository import EmissionRepository
+from core.storage.backends.sqlmodel.unit_of_work import SQLModelBackend
+from core.storage.interface import (
+    BillingRepository,
+    ChargebackRepository,
+    EntityTagRepository,
+    GraphRepository,
+    IdentityRepository,
+    PipelineRunRepository,
+    PipelineStateRepository,
+    ResourceRepository,
+    TopicAttributionRepository,
+    UnitOfWork,
+)
+from plugins.confluent_cloud.models.billing import CCloudSourceWindowWriter
+from plugins.confluent_cloud.storage.module import CCloudStorageModule
+
+if TYPE_CHECKING:
+    from core.models.billing import BillingLineItem
+    from plugins.confluent_cloud.models.billing import CCloudCostSourceRecord
+
+
+class _BillingRepositoryProxy:
+    """Complete BillingRepository proxy bound to the real plugin repository."""
+
+    def __init__(self) -> None:
+        self._delegate: BillingRepository | None = None
+
+    def bind(self, delegate: BillingRepository) -> None:
+        self._delegate = delegate
+
+    def _repository(self) -> BillingRepository:
+        if self._delegate is None:
+            raise RuntimeError("Billing repository proxy is not bound")
+        return self._delegate
+
+    def upsert(self, line: BillingLineItem) -> BillingLineItem:
+        return self._repository().upsert(line)
+
+    def find_by_date(self, ecosystem: str, tenant_id: str, target_date: date) -> list[BillingLineItem]:
+        return self._repository().find_by_date(ecosystem, tenant_id, target_date)
+
+    def find_by_range(self, ecosystem: str, tenant_id: str, start: datetime, end: datetime) -> list[BillingLineItem]:
+        return self._repository().find_by_range(ecosystem, tenant_id, start, end)
+
+    def increment_allocation_attempts(self, line: BillingLineItem) -> int:
+        return self._repository().increment_allocation_attempts(line)
+
+    def increment_topic_attribution_attempts(self, line: BillingLineItem) -> int:
+        return self._repository().increment_topic_attribution_attempts(line)
+
+    def reset_allocation_attempts_by_date(self, ecosystem: str, tenant_id: str, tracking_date: date) -> int:
+        return self._repository().reset_allocation_attempts_by_date(ecosystem, tenant_id, tracking_date)
+
+    def reset_topic_attribution_attempts_by_date(self, ecosystem: str, tenant_id: str, tracking_date: date) -> int:
+        return self._repository().reset_topic_attribution_attempts_by_date(ecosystem, tenant_id, tracking_date)
+
+    def delete_before(self, ecosystem: str, tenant_id: str, before: datetime) -> int:
+        return self._repository().delete_before(ecosystem, tenant_id, before)
+
+    def find_by_filters(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        product_type: str | None = None,
+        resource_id: str | None = None,
+        limit: int = 1000,
+        offset: int = 0,
+    ) -> tuple[list[BillingLineItem], int]:
+        return self._repository().find_by_filters(
+            ecosystem,
+            tenant_id,
+            start,
+            end,
+            product_type,
+            resource_id,
+            limit,
+            offset,
+        )
+
+
+class _SourceWriter(_BillingRepositoryProxy):
+    """Complete billing repository proxy that records source-window writes."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.calls: list[tuple[str, str, datetime, datetime, tuple[CCloudCostSourceRecord, ...]]] = []
+
+    def replace_source_window(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        refresh_window_start: datetime,
+        refresh_window_end: datetime,
+        records: Sequence[CCloudCostSourceRecord],
+    ) -> None:
+        self.calls.append(
+            (
+                ecosystem,
+                tenant_id,
+                refresh_window_start,
+                refresh_window_end,
+                tuple(records),
+            )
+        )
+
+
+class _SourceUow:
+    """Real SQLModel transaction with a complete source-writer billing spy."""
+
+    resources: ResourceRepository
+    identities: IdentityRepository
+    billing: BillingRepository
+    chargebacks: ChargebackRepository
+    pipeline_state: PipelineStateRepository
+    pipeline_runs: PipelineRunRepository
+    tags: EntityTagRepository
+    emissions: EmissionRepository
+    topic_attributions: TopicAttributionRepository
+    graph: GraphRepository
+
+    def __init__(self, billing: _BillingRepositoryProxy | None = None) -> None:
+        self._backend = SQLModelBackend("sqlite://", CCloudStorageModule(), use_migrations=False)
+        self._backend.create_tables()
+        self._inner = self._backend.create_unit_of_work()
+        entered = self._inner.__enter__()
+        proxy = billing if billing is not None else _SourceWriter()
+        proxy.bind(entered.billing)
+        self.resources = entered.resources
+        self.identities = entered.identities
+        self.billing = proxy
+        self.chargebacks = entered.chargebacks
+        self.pipeline_state = entered.pipeline_state
+        self.pipeline_runs = entered.pipeline_runs
+        self.tags = entered.tags
+        self.emissions = entered.emissions
+        self.topic_attributions = entered.topic_attributions
+        self.graph = entered.graph
+        _OPEN_SOURCE_UOWS.append(self)
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: object,
+    ) -> None:
+        self._inner.__exit__(exc_type, exc_val, exc_tb)
+
+    def commit(self) -> None:
+        self._inner.commit()
+
+    def rollback(self) -> None:
+        self._inner.rollback()
+
+    def close(self) -> None:
+        self._inner.__exit__(None, None, None)
+        self._backend.dispose()
+
+
+_OPEN_SOURCE_UOWS: list[_SourceUow] = []
+
+
+@pytest.fixture(autouse=True)
+def close_source_uows() -> None:
+    yield
+    while _OPEN_SOURCE_UOWS:
+        _OPEN_SOURCE_UOWS.pop().close()
+
+
+def _requires_unit_of_work(uow: UnitOfWork) -> UnitOfWork:
+    """Static proof that the source test transaction satisfies UnitOfWork."""
+    return uow
+
+
+def test_source_uow_structurally_satisfies_unit_of_work() -> None:
+    uow = _SourceUow()
+    assert _requires_unit_of_work(uow) is uow
+    assert isinstance(uow, UnitOfWork)
+    assert isinstance(uow.resources, ResourceRepository)
+    assert isinstance(uow.identities, IdentityRepository)
+    assert isinstance(uow.billing, BillingRepository)
+    assert isinstance(uow.billing, CCloudSourceWindowWriter)
+    assert isinstance(uow.chargebacks, ChargebackRepository)
+    assert isinstance(uow.pipeline_state, PipelineStateRepository)
+    assert isinstance(uow.pipeline_runs, PipelineRunRepository)
+    assert isinstance(uow.tags, EntityTagRepository)
+    assert isinstance(uow.emissions, EmissionRepository)
+    assert isinstance(uow.topic_attributions, TopicAttributionRepository)
+    assert isinstance(uow.graph, GraphRepository)
+
+
+def _valid_cost(
+    source_id: str = "cost-1",
+    *,
+    start_date: str = "2026-07-01",
+    end_date: str = "2026-07-02",
+    **overrides: Any,
+) -> dict[str, Any]:
+    item: dict[str, Any] = {
+        "id": source_id,
+        "start_date": start_date,
+        "end_date": end_date,
+        "granularity": "DAILY",
+        "product": "KAFKA",
+        "line_type": "KAFKA_NUM_CKU",
+        "amount": "12.3400",
+        "original_amount": "15.0000",
+        "discount_amount": "2.6600",
+        "price": "1.2340",
+        "quantity": "10.0000",
+        "unit": "CKU_HOUR",
+        "description": "Kafka capacity",
+        "network_access_type": "PRIVATE",
+        "resource": {
+            "id": "lkc-1",
+            "display_name": "cluster-1",
+            "environment": {"id": "env-1"},
+        },
+        "tier_dimensions": {"tier_start": "0", "tier_end": "100"},
+    }
+    item.update(overrides)
+    return item
+
+
+def _cost_input(*, days_per_query: int = 15) -> Any:
+    from plugins.confluent_cloud.config import CCloudPluginConfig
+    from plugins.confluent_cloud.connections import CCloudConnection
+    from plugins.confluent_cloud.cost_input import CCloudBillingCostInput
+
+    connection = CCloudConnection(api_key="k", api_secret=SecretStr("s"), request_interval_seconds=0)
+    config = CCloudPluginConfig.from_plugin_settings(
+        {
+            "ccloud_api": {"key": "k", "secret": "s"},
+            "billing_api": {"days_per_query": days_per_query},
+        }
+    )
+    return CCloudBillingCostInput(connection, config)
+
+
+def _billing_response(data: list[dict[str, Any]]) -> httpx.Response:
+    return httpx.Response(200, json={"data": data, "metadata": {}})
+
+
+def _required_provider_fields(source_id: str, end_date: str, original_amount: Any = "0") -> dict[str, Any]:
+    return {
+        "id": source_id,
+        "end_date": end_date,
+        "unit": "TEST_UNIT",
+        "original_amount": original_amount,
+    }
 
 
 class TestDateWindowGenerator:
@@ -73,6 +332,7 @@ class TestBillingItemMapping:
 
         raw = {
             "start_date": "2024-01-15",
+            **_required_provider_fields("cost-standard", "2024-01-16", 3.50),
             "resource": {
                 "id": "lkc-abc123",
                 "display_name": "my-cluster",
@@ -107,6 +367,7 @@ class TestBillingItemMapping:
 
         raw = {
             "start_date": "2024-01-15",
+            **_required_provider_fields("cost-missing-resource-id", "2024-01-16"),
             "resource": {},
             "product": "KAFKA",
             "line_type": "KAFKA_NUM_CKU",
@@ -122,6 +383,7 @@ class TestBillingItemMapping:
 
         raw = {
             "start_date": "2024-01-15",
+            **_required_provider_fields("cost-zero", "2024-01-16"),
             "resource": {"id": "lkc-abc"},
             "product": "KAFKA",
             "line_type": "KAFKA_BASE",
@@ -138,6 +400,7 @@ class TestBillingItemMapping:
 
         raw = {
             "start_date": "2024-01-15",
+            **_required_provider_fields("cost-credit", "2024-01-16", -100),
             "resource": {"id": "lkc-abc"},
             "product": "KAFKA",
             "line_type": "KAFKA_CREDIT",
@@ -197,6 +460,7 @@ class TestCCloudBillingCostInput:
                     "data": [
                         {
                             "start_date": "2024-01-15",
+                            **_required_provider_fields("cost-single", "2024-01-16", 100),
                             "resource": {
                                 "id": "lkc-abc",
                                 "display_name": "cl",
@@ -223,7 +487,7 @@ class TestCCloudBillingCostInput:
                 "org-123",
                 datetime(2024, 1, 1, tzinfo=UTC),
                 datetime(2024, 1, 16, tzinfo=UTC),
-                uow=None,  # Not used by billing API CostInput
+                uow=_SourceUow(),
             )
         )
 
@@ -242,6 +506,7 @@ class TestCCloudBillingCostInput:
             "data": [
                 {
                     "start_date": "2024-01-01",
+                    **_required_provider_fields("cost-multi-window", "2024-01-02", 10),
                     "resource": {"id": "lkc-1"},
                     "product": "KAFKA",
                     "line_type": "KAFKA_BASE",
@@ -273,7 +538,7 @@ class TestCCloudBillingCostInput:
                 "org-123",
                 datetime(2024, 1, 1, tzinfo=UTC),
                 datetime(2024, 1, 13, tzinfo=UTC),
-                uow=None,
+                uow=_SourceUow(),
             )
         )
 
@@ -295,7 +560,7 @@ class TestCCloudBillingCostInput:
                 "org-123",
                 datetime(2024, 2, 1, tzinfo=UTC),
                 datetime(2024, 1, 1, tzinfo=UTC),  # start > end
-                uow=None,
+                uow=_SourceUow(),
             )
         )
 
@@ -318,6 +583,7 @@ class TestCCloudBillingCostInput:
                         # Valid item
                         {
                             "start_date": "2024-01-15",
+                            **_required_provider_fields("cost-good", "2024-01-16", 10),
                             "resource": {"id": "lkc-good"},
                             "product": "KAFKA",
                             "line_type": "KAFKA_BASE",
@@ -327,6 +593,7 @@ class TestCCloudBillingCostInput:
                         },
                         # Invalid item - missing start_date
                         {
+                            **_required_provider_fields("cost-bad", "2024-01-16", 10),
                             "resource": {"id": "lkc-bad"},
                             "product": "KAFKA",
                             "line_type": "KAFKA_BASE",
@@ -349,7 +616,7 @@ class TestCCloudBillingCostInput:
                 "org-123",
                 datetime(2024, 1, 1, tzinfo=UTC),
                 datetime(2024, 1, 16, tzinfo=UTC),  # 15 days = single window
-                uow=None,
+                uow=_SourceUow(),
             )
         )
 
@@ -416,6 +683,7 @@ class TestMalformedBillingHandling:
                     "data": [
                         {
                             # Missing start_date → malformed, idx=0
+                            **_required_provider_fields("cost-bad-1", "2024-01-16", 10),
                             "resource": {"id": "lkc-bad-1"},
                             "product": "KAFKA",
                             "line_type": "KAFKA_BASE",
@@ -425,6 +693,7 @@ class TestMalformedBillingHandling:
                         },
                         {
                             # Also missing start_date → malformed, idx=1
+                            **_required_provider_fields("cost-bad-2", "2024-01-16", 20),
                             "resource": {"id": "lkc-bad-2"},
                             "product": "KAFKA",
                             "line_type": "KAFKA_BASE",
@@ -447,7 +716,7 @@ class TestMalformedBillingHandling:
                 "org-123",
                 datetime(2024, 1, 1, tzinfo=UTC),
                 datetime(2024, 1, 16, tzinfo=UTC),
-                uow=None,
+                uow=_SourceUow(),
             )
         )
 
@@ -470,6 +739,7 @@ class TestMalformedBillingHandling:
                     "data": [
                         {
                             "start_date": "2024-01-15",
+                            **_required_provider_fields("cost-good", "2024-01-16", 50),
                             "resource": {"id": "lkc-good"},
                             "product": "KAFKA",
                             "line_type": "KAFKA_BASE",
@@ -479,6 +749,7 @@ class TestMalformedBillingHandling:
                         },
                         {
                             # Missing start_date → previously dropped, now preserved
+                            **_required_provider_fields("cost-no-date", "2024-01-16", 30),
                             "resource": {"id": "lkc-no-date"},
                             "product": "KAFKA",
                             "line_type": "KAFKA_BASE",
@@ -501,7 +772,7 @@ class TestMalformedBillingHandling:
                 "org-123",
                 datetime(2024, 1, 1, tzinfo=UTC),
                 datetime(2024, 1, 16, tzinfo=UTC),
-                uow=None,
+                uow=_SourceUow(),
             )
         )
 
@@ -524,6 +795,7 @@ class TestMalformedBillingHandling:
                     "data": [
                         {
                             "start_date": "2024-01-15",
+                            **_required_provider_fields("cost-valid", "2024-01-16", 100),
                             "resource": {"id": "lkc-valid"},
                             "product": "KAFKA",
                             "line_type": "KAFKA_BASE",
@@ -533,6 +805,7 @@ class TestMalformedBillingHandling:
                         },
                         {
                             # Malformed — no start_date; amount must still appear in output
+                            **_required_provider_fields("cost-malformed", "2024-01-16", 50),
                             "resource": {"id": "lkc-malformed"},
                             "product": "KAFKA",
                             "line_type": "KAFKA_BASE",
@@ -555,7 +828,7 @@ class TestMalformedBillingHandling:
                 "org-123",
                 datetime(2024, 1, 1, tzinfo=UTC),
                 datetime(2024, 1, 16, tzinfo=UTC),
-                uow=None,
+                uow=_SourceUow(),
             )
         )
 
@@ -577,6 +850,7 @@ class TestMalformedBillingHandling:
                     "data": [
                         {
                             "start_date": "2024-01-15",
+                            **_required_provider_fields("cost-good", "2024-01-16", 100),
                             "resource": {"id": "lkc-good"},
                             "product": "KAFKA",
                             "line_type": "KAFKA_BASE",
@@ -586,6 +860,7 @@ class TestMalformedBillingHandling:
                         },
                         {
                             # No start_date → malformed
+                            **_required_provider_fields("cost-bad", "2024-01-16", 75),
                             "resource": {"id": "lkc-bad"},
                             "product": "KAFKA",
                             "line_type": "KAFKA_BASE",
@@ -608,7 +883,7 @@ class TestMalformedBillingHandling:
                 "org-123",
                 datetime(2024, 1, 1, tzinfo=UTC),
                 datetime(2024, 1, 16, tzinfo=UTC),
-                uow=None,
+                uow=_SourceUow(),
             )
         )
 
@@ -637,6 +912,7 @@ class TestTierAggregation:
                     "data": [
                         {
                             "start_date": "2026-03-01",
+                            **_required_provider_fields("cost-tier-1", "2026-03-02", 5.52),
                             "resource": {"id": "lsrc-test", "environment": {"id": "env-1"}},
                             "product": "STREAM_GOVERNANCE",
                             "line_type": "NUM_RULES",
@@ -646,6 +922,7 @@ class TestTierAggregation:
                         },
                         {
                             "start_date": "2026-03-01",
+                            **_required_provider_fields("cost-tier-2", "2026-03-02", 2.484),
                             "resource": {"id": "lsrc-test", "environment": {"id": "env-1"}},
                             "product": "STREAM_GOVERNANCE",
                             "line_type": "NUM_RULES",
@@ -668,7 +945,7 @@ class TestTierAggregation:
                 "org-123",
                 datetime(2026, 3, 1, tzinfo=UTC),
                 datetime(2026, 3, 2, tzinfo=UTC),
-                uow=None,
+                uow=_SourceUow(),
             )
         )
 
@@ -694,6 +971,7 @@ class TestTierAggregation:
                     "data": [
                         {
                             "start_date": "2026-03-01",
+                            **_required_provider_fields("cost-aaa", "2026-03-02", 5.52),
                             "resource": {"id": "lsrc-aaa", "environment": {"id": "env-1"}},
                             "product": "STREAM_GOVERNANCE",
                             "line_type": "NUM_RULES",
@@ -703,6 +981,7 @@ class TestTierAggregation:
                         },
                         {
                             "start_date": "2026-03-01",
+                            **_required_provider_fields("cost-bbb", "2026-03-02", 1.656),
                             "resource": {"id": "lsrc-bbb", "environment": {"id": "env-1"}},
                             "product": "STREAM_GOVERNANCE",
                             "line_type": "NUM_RULES",
@@ -725,7 +1004,7 @@ class TestTierAggregation:
                 "org-123",
                 datetime(2026, 3, 1, tzinfo=UTC),
                 datetime(2026, 3, 2, tzinfo=UTC),
-                uow=None,
+                uow=_SourceUow(),
             )
         )
 
@@ -751,6 +1030,7 @@ class TestTierAggregation:
                     "data": [
                         {
                             "start_date": "2026-03-01",
+                            **_required_provider_fields("cost-solo", "2026-03-02", 2.3),
                             "resource": {"id": "lsrc-solo", "environment": {"id": "env-1"}},
                             "product": "STREAM_GOVERNANCE",
                             "line_type": "NUM_RULES",
@@ -773,7 +1053,7 @@ class TestTierAggregation:
                 "org-123",
                 datetime(2026, 3, 1, tzinfo=UTC),
                 datetime(2026, 3, 2, tzinfo=UTC),
-                uow=None,
+                uow=_SourceUow(),
             )
         )
 
@@ -798,6 +1078,7 @@ class TestTierAggregation:
                     "data": [
                         {
                             "start_date": "2026-03-01",
+                            **_required_provider_fields("cost-valid-tier", "2026-03-02", 5.52),
                             "resource": {"id": "lsrc-test", "environment": {"id": "env-1"}},
                             "product": "STREAM_GOVERNANCE",
                             "line_type": "NUM_RULES",
@@ -807,6 +1088,7 @@ class TestTierAggregation:
                         },
                         {
                             # Missing start_date → malformed at idx=1 → resource_id="malformed_billing_1"
+                            **_required_provider_fields("cost-malformed-tier", "2026-03-02", 2.484),
                             "resource": {"id": "lsrc-test", "environment": {"id": "env-1"}},
                             "product": "STREAM_GOVERNANCE",
                             "line_type": "NUM_RULES",
@@ -829,7 +1111,7 @@ class TestTierAggregation:
                 "org-123",
                 datetime(2026, 3, 1, tzinfo=UTC),
                 datetime(2026, 3, 2, tzinfo=UTC),
-                uow=None,
+                uow=_SourceUow(),
             )
         )
 
@@ -853,6 +1135,7 @@ class TestTierAggregation:
                     "data": [
                         {
                             "start_date": "2026-03-01",
+                            **_required_provider_fields("cost-breakdown-1", "2026-03-02", 5.52),
                             "resource": {"id": "lsrc-test", "environment": {"id": "env-1"}},
                             "product": "STREAM_GOVERNANCE",
                             "line_type": "NUM_RULES",
@@ -862,6 +1145,7 @@ class TestTierAggregation:
                         },
                         {
                             "start_date": "2026-03-01",
+                            **_required_provider_fields("cost-breakdown-2", "2026-03-02", 2.484),
                             "resource": {"id": "lsrc-test", "environment": {"id": "env-1"}},
                             "product": "STREAM_GOVERNANCE",
                             "line_type": "NUM_RULES",
@@ -884,7 +1168,7 @@ class TestTierAggregation:
                 "org-123",
                 datetime(2026, 3, 1, tzinfo=UTC),
                 datetime(2026, 3, 2, tzinfo=UTC),
-                uow=None,
+                uow=_SourceUow(),
             )
         )
 
@@ -914,6 +1198,7 @@ class TestTierAggregation:
             "data": [
                 {
                     "start_date": "2026-03-01",
+                    **_required_provider_fields("cost-idempotent-1", "2026-03-02", 5.52),
                     "resource": {"id": "lsrc-test", "environment": {"id": "env-1"}},
                     "product": "STREAM_GOVERNANCE",
                     "line_type": "NUM_RULES",
@@ -923,6 +1208,7 @@ class TestTierAggregation:
                 },
                 {
                     "start_date": "2026-03-01",
+                    **_required_provider_fields("cost-idempotent-2", "2026-03-02", 2.484),
                     "resource": {"id": "lsrc-test", "environment": {"id": "env-1"}},
                     "product": "STREAM_GOVERNANCE",
                     "line_type": "NUM_RULES",
@@ -948,7 +1234,7 @@ class TestTierAggregation:
             "tenant_id": "org-123",
             "start": datetime(2026, 3, 1, tzinfo=UTC),
             "end": datetime(2026, 3, 2, tzinfo=UTC),
-            "uow": None,
+            "uow": _SourceUow(),
         }
 
         items_first = list(cost_input.gather(**gather_kwargs))
@@ -960,3 +1246,341 @@ class TestTierAggregation:
             assert a.quantity == b.quantity
             assert a.unit_price == b.unit_price
             assert a.resource_id == b.resource_id
+
+
+class TestCostSourceEvidenceMapping:
+    @respx.mock
+    def test_complete_cost_maps_every_native_field_exactly(self) -> None:
+        raw = _valid_cost(extra_provider_field="retained")
+        respx.get("https://api.confluent.cloud/billing/v1/costs").mock(return_value=_billing_response([raw]))
+        writer = _SourceWriter()
+
+        aggregates = list(
+            _cost_input().gather(
+                "org-123",
+                datetime(2026, 7, 1, tzinfo=UTC),
+                datetime(2026, 7, 2, tzinfo=UTC),
+                _SourceUow(writer),
+            )
+        )
+
+        assert len(aggregates) == 1
+        assert len(writer.calls) == 1
+        ecosystem, tenant_id, refresh_start, refresh_end, records = writer.calls[0]
+        assert (ecosystem, tenant_id) == ("confluent_cloud", "org-123")
+        assert (refresh_start, refresh_end) == (
+            datetime(2026, 7, 1, tzinfo=UTC),
+            datetime(2026, 7, 2, tzinfo=UTC),
+        )
+        assert len(records) == 1
+        record = records[0]
+        assert record.source_record_id == "provider:cost-1"
+        assert record.identity_scheme == "provider_cost_id"
+        assert record.provider_cost_id == "cost-1"
+        assert record.source_period_start == datetime(2026, 7, 1, tzinfo=UTC)
+        assert record.source_period_end == datetime(2026, 7, 2, tzinfo=UTC)
+        assert record.collection_window_start == datetime(2026, 7, 1, tzinfo=UTC)
+        assert record.collection_window_end == datetime(2026, 7, 2, tzinfo=UTC)
+        assert record.evidence_scope_start == datetime(2026, 7, 1, tzinfo=UTC)
+        assert record.evidence_scope_end == datetime(2026, 7, 2, tzinfo=UTC)
+        assert record.allocation_timestamp == datetime(2026, 7, 1, tzinfo=UTC)
+        assert record.retention_timestamp == datetime(2026, 7, 1, tzinfo=UTC)
+        assert record.granularity == "DAILY"
+        assert record.product == "KAFKA"
+        assert record.line_type == "KAFKA_NUM_CKU"
+        assert record.amount == Decimal("12.3400")
+        assert record.original_amount == Decimal("15.0000")
+        assert record.discount_amount == Decimal("2.6600")
+        assert record.price == Decimal("1.2340")
+        assert record.quantity == Decimal("10.0000")
+        assert record.unit == "CKU_HOUR"
+        assert record.description == "Kafka capacity"
+        assert record.network_access_type == "PRIVATE"
+        assert record.resource_id == "lkc-1"
+        assert record.resource_name == "cluster-1"
+        assert record.environment_id == "env-1"
+        assert record.tier_dimensions == {"tier_start": "0", "tier_end": "100"}
+        assert record.malformed is False
+        assert record.diagnostics == ()
+        assert record.raw_payload == raw
+
+    @respx.mock
+    def test_missing_ids_use_stable_distinct_composites_for_duplicate_payloads(self) -> None:
+        raw = _valid_cost()
+        raw.pop("id")
+        respx.get("https://api.confluent.cloud/billing/v1/costs").mock(
+            side_effect=[_billing_response([raw, raw]), _billing_response([raw, raw])]
+        )
+        writer = _SourceWriter()
+        cost_input = _cost_input()
+        uow = _SourceUow(writer)
+        bounds = (
+            "org-123",
+            datetime(2026, 7, 1, tzinfo=UTC),
+            datetime(2026, 7, 2, tzinfo=UTC),
+            uow,
+        )
+
+        list(cost_input.gather(*bounds))
+        list(cost_input.gather(*bounds))
+
+        first_ids = [record.source_record_id for record in writer.calls[0][4]]
+        second_ids = [record.source_record_id for record in writer.calls[1][4]]
+        assert len(set(first_ids)) == 2
+        assert first_ids == second_ids
+        assert all(source_id.startswith("composite:v1:") for source_id in first_ids)
+        assert all(record.provider_cost_id is None for record in writer.calls[0][4])
+        assert all(record.identity_scheme == "composite_v1" for record in writer.calls[0][4])
+        assert all("missing_required:id" in record.diagnostics for record in writer.calls[0][4])
+
+    @respx.mock
+    def test_provider_id_collisions_are_partition_independent(self) -> None:
+        first = _valid_cost("duplicate", start_date="2026-07-01", end_date="2026-07-02")
+        second = _valid_cost(
+            "duplicate",
+            start_date="2026-07-02",
+            end_date="2026-07-03",
+            amount="20",
+        )
+        route = respx.get("https://api.confluent.cloud/billing/v1/costs")
+        route.side_effect = [
+            _billing_response([first]),
+            _billing_response([second]),
+            _billing_response([first, second]),
+        ]
+        partitioned_writer = _SourceWriter()
+        single_writer = _SourceWriter()
+
+        list(
+            _cost_input(days_per_query=1).gather(
+                "org-123",
+                datetime(2026, 7, 1, tzinfo=UTC),
+                datetime(2026, 7, 3, tzinfo=UTC),
+                _SourceUow(partitioned_writer),
+            )
+        )
+        list(
+            _cost_input(days_per_query=2).gather(
+                "org-123",
+                datetime(2026, 7, 1, tzinfo=UTC),
+                datetime(2026, 7, 3, tzinfo=UTC),
+                _SourceUow(single_writer),
+            )
+        )
+
+        partitioned = partitioned_writer.calls[0][4]
+        unpartitioned = single_writer.calls[0][4]
+        assert {r.source_record_id for r in partitioned} == {r.source_record_id for r in unpartitioned}
+        assert len({r.source_record_id for r in partitioned}) == 2
+        assert all(r.identity_scheme == "provider_id_collision_v1" for r in partitioned)
+        assert all(r.provider_cost_id == "duplicate" for r in partitioned)
+        assert all("duplicate_provider_id:duplicate" in r.diagnostics for r in partitioned)
+
+    @respx.mock
+    def test_invalid_native_values_remain_raw_and_are_diagnosed(self) -> None:
+        raw: dict[str, Any] = {
+            "id": "",
+            "start_date": "not-a-date",
+            "end_date": "2026-07-01",
+            "unit": None,
+            "original_amount": "not-decimal",
+            "amount": "also-not-decimal",
+            "price": "1.0",
+            "quantity": "2.0",
+            "resource": "not-an-object",
+            "tier_dimensions": {"tier": 1},
+        }
+        respx.get("https://api.confluent.cloud/billing/v1/costs").mock(return_value=_billing_response([raw]))
+        writer = _SourceWriter()
+
+        aggregates = list(
+            _cost_input().gather(
+                "org-123",
+                datetime(2026, 7, 1, tzinfo=UTC),
+                datetime(2026, 7, 2, tzinfo=UTC),
+                _SourceUow(writer),
+            )
+        )
+
+        assert len(aggregates) == 1
+        assert aggregates[0].resource_id == "malformed_billing_0"
+        assert aggregates[0].metadata["malformed"] is True
+        assert "parse_error" in aggregates[0].metadata
+        record = writer.calls[0][4][0]
+        assert record.raw_payload == raw
+        assert record.source_period_start is None
+        assert record.amount is None
+        assert record.original_amount is None
+        assert record.resource_id is None
+        assert record.environment_id is None
+        assert record.tier_dimensions == {}
+        assert record.allocation_timestamp == datetime(1970, 1, 1, tzinfo=UTC)
+        assert record.retention_timestamp == datetime(2026, 7, 2, tzinfo=UTC)
+        assert record.malformed is True
+        assert {
+            "missing_required:id",
+            "invalid_date:start_date",
+            "missing_required:unit",
+            "invalid_decimal:original_amount",
+            "invalid_decimal:amount",
+            "invalid_shape:resource",
+            "invalid_shape:tier_dimensions",
+        }.issubset(set(record.diagnostics))
+
+    @pytest.mark.parametrize(
+        ("case", "expected_diagnostic"),
+        [
+            ("missing_start", "missing_required:start_date"),
+            ("missing_end", "missing_required:end_date"),
+            ("missing_original_amount", "missing_required:original_amount"),
+            ("invalid_end_format", "invalid_date:end_date"),
+            ("invalid_end_type", "invalid_date:end_date"),
+            ("invalid_environment", "invalid_shape:environment"),
+        ],
+    )
+    @respx.mock
+    def test_required_field_and_environment_diagnostics_are_explicit(self, case: str, expected_diagnostic: str) -> None:
+        raw = _valid_cost()
+        if case == "missing_start":
+            raw.pop("start_date")
+        elif case == "missing_end":
+            raw.pop("end_date")
+        elif case == "missing_original_amount":
+            raw.pop("original_amount")
+        elif case == "invalid_end_format":
+            raw["end_date"] = "not-a-date"
+        elif case == "invalid_end_type":
+            raw["end_date"] = 123
+        elif case == "invalid_environment":
+            raw["resource"]["environment"] = "not-an-object"
+
+        respx.get("https://api.confluent.cloud/billing/v1/costs").mock(return_value=_billing_response([raw]))
+        writer = _SourceWriter()
+
+        aggregates = list(
+            _cost_input().gather(
+                "org-123",
+                datetime(2026, 7, 1, tzinfo=UTC),
+                datetime(2026, 7, 2, tzinfo=UTC),
+                _SourceUow(writer),
+            )
+        )
+
+        record = writer.calls[0][4][0]
+        assert expected_diagnostic in record.diagnostics
+        assert record.malformed is True
+        if case == "invalid_environment":
+            assert aggregates[0].resource_id == "malformed_billing_0"
+            assert aggregates[0].metadata["malformed"] is True
+            assert "parse_error" in aggregates[0].metadata
+
+    @respx.mock
+    def test_missing_optional_values_remain_null_without_schema_diagnostics(self) -> None:
+        raw: dict[str, Any] = {
+            "id": "minimal-cost",
+            "start_date": "2026-07-01",
+            "end_date": "2026-07-02",
+            "unit": "CKU_HOUR",
+            "original_amount": "0",
+        }
+        respx.get("https://api.confluent.cloud/billing/v1/costs").mock(return_value=_billing_response([raw]))
+        writer = _SourceWriter()
+
+        list(
+            _cost_input().gather(
+                "org-123",
+                datetime(2026, 7, 1, tzinfo=UTC),
+                datetime(2026, 7, 2, tzinfo=UTC),
+                _SourceUow(writer),
+            )
+        )
+
+        record = writer.calls[0][4][0]
+        assert record.malformed is False
+        assert record.diagnostics == ()
+        assert record.amount is None
+        assert record.discount_amount is None
+        assert record.price is None
+        assert record.quantity is None
+        assert record.description is None
+        assert record.network_access_type is None
+        assert record.resource_id is None
+        assert record.resource_name is None
+        assert record.environment_id is None
+        assert record.tier_dimensions == {}
+
+    @respx.mock
+    def test_gather_normalizes_bounds_and_replaces_once_after_all_windows(self) -> None:
+        route = respx.get("https://api.confluent.cloud/billing/v1/costs")
+        route.side_effect = [
+            _billing_response([_valid_cost("cost-1", start_date="2026-07-01", end_date="2026-07-02")]),
+            _billing_response([_valid_cost("cost-2", start_date="2026-07-02", end_date="2026-07-03")]),
+        ]
+        writer = _SourceWriter()
+
+        list(
+            _cost_input(days_per_query=1).gather(
+                "org-123",
+                datetime(2026, 7, 1, 18, 30, tzinfo=UTC),
+                datetime(2026, 7, 3, 9, 45, tzinfo=UTC),
+                _SourceUow(writer),
+            )
+        )
+
+        assert len(writer.calls) == 1
+        assert writer.calls[0][2:4] == (
+            datetime(2026, 7, 1, tzinfo=UTC),
+            datetime(2026, 7, 3, tzinfo=UTC),
+        )
+        assert len(writer.calls[0][4]) == 2
+        assert [call.request.url.params["start_date"] for call in respx.calls] == [
+            "2026-07-01",
+            "2026-07-02",
+        ]
+        assert [call.request.url.params["end_date"] for call in respx.calls] == [
+            "2026-07-02",
+            "2026-07-03",
+        ]
+        assert [(r.collection_window_start, r.collection_window_end) for r in writer.calls[0][4]] == [
+            (datetime(2026, 7, 1, tzinfo=UTC), datetime(2026, 7, 2, tzinfo=UTC)),
+            (datetime(2026, 7, 2, tzinfo=UTC), datetime(2026, 7, 3, tzinfo=UTC)),
+        ]
+
+    @respx.mock
+    def test_later_subquery_failure_never_replaces_source_window(self) -> None:
+        route = respx.get("https://api.confluent.cloud/billing/v1/costs")
+        route.side_effect = [
+            _billing_response([_valid_cost()]),
+            httpx.Response(500, json={"message": "failed"}),
+        ]
+        writer = _SourceWriter()
+
+        import pytest
+
+        from plugins.confluent_cloud.exceptions import CCloudApiError
+
+        with pytest.raises(CCloudApiError):
+            list(
+                _cost_input(days_per_query=1).gather(
+                    "org-123",
+                    datetime(2026, 7, 1, tzinfo=UTC),
+                    datetime(2026, 7, 3, tzinfo=UTC),
+                    _SourceUow(writer),
+                )
+            )
+
+        assert writer.calls == []
+
+    @respx.mock
+    def test_gather_rejects_repository_without_source_writer_before_http(self) -> None:
+        with pytest.raises(RuntimeError, match="source.*writer|CCloudSourceWindowWriter"):
+            list(
+                _cost_input().gather(
+                    "org-123",
+                    datetime(2026, 7, 1, tzinfo=UTC),
+                    datetime(2026, 7, 2, tzinfo=UTC),
+                    _SourceUow(_BillingRepositoryProxy()),
+                )
+            )
+
+        assert len(respx.calls) == 0
