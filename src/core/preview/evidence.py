@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
@@ -86,6 +87,10 @@ class PreviewAllocationEvidence:
 
 @runtime_checkable
 class PreviewCostEvidenceReader(Protocol):
+    def iter_preview_sources(self, scope: PreviewEvidenceScope) -> Iterator[PreviewSourceEvidence]: ...
+
+    def iter_preview_aggregates(self, scope: PreviewEvidenceScope) -> Iterator[PreviewAggregateEvidence]: ...
+
     def find_preview_source_candidates(self, scope: PreviewEvidenceScope) -> tuple[PreviewSourceEvidence, ...]: ...
 
     def find_preview_aggregate_candidates(

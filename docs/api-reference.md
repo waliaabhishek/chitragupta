@@ -464,7 +464,10 @@ The `tags` column is serialized as `key=value;key=value` pairs (e.g. `team=platf
 FOCUS Mapping Preview is an asynchronous, Confluent Cloud-only exposition API.
 It reads persisted calculation and source evidence; it never calls the provider,
 triggers the pipeline, or edits/backfills data. The current request contract is
-Daily grain plus the Full column profile.
+Daily grain plus the Full column profile. The tenant's optional `focus_preview`
+block must establish a `direct_payg` commercial profile over the complete
+request interval. `billing_currency` defaults to normalized `USD`; any other
+configured currency fails closed without conversion.
 
 ### `POST /api/v1/tenants/{tenant_name}/focus-preview/requests`
 
@@ -493,7 +496,10 @@ Common response fields are `request_id`, `tenant_name`, `grain`, `start_date`,
 `completed_at`, `diagnostic`, `source_snapshot`, and `package`.
 
 - Queued/running responses have no diagnostic, source snapshot, or package.
-- Failed responses contain `{code, message, retryable}` and no package.
+- Failed responses contain `{code, message, retryable}` and no package. Source-
+  related failures can also contain `source_correlation_ids`, a sorted, unique,
+  maximum-20 list of opaque `src:v1:<64 lowercase hex>` values. These values do
+  not reveal provider record IDs, tenant IDs, raw fields, secrets, or paths.
 - Ready responses contain a source snapshot and package metadata.
 
 The source snapshot contains `calculation_timestamp`, date-ordered
@@ -534,11 +540,35 @@ Calculation diagnostics use these exact public meanings:
 | Code | Retryable | Message |
 |---|---:|---|
 | `calculation_metadata_unavailable` | false | `One or more requested dates lack preview calculation metadata.` |
+| `calculation_before_acquisition_lookback` | false | `Required retained calculation evidence is unavailable outside the current acquisition window.` |
+| `calculation_pending_cutoff_window` | true | `One or more requested dates are still inside the configured acquisition cutoff window; wait for the dates to enter the acquisition window, run the pipeline, and retry.` |
 | `calculation_unavailable` | true | `No successful persisted calculation is available for the requested dates; run the pipeline and retry.` |
 | `calculation_coverage_incomplete` | true | `No successful persisted calculation covers every requested date; run the pipeline and retry.` |
 
-Incomplete persisted metadata has precedence over the two recoverable coverage
-diagnostics. The API provides no data-editing or correlation-repair endpoint.
+Eligibility and source diagnostics are:
+
+| Code | Retryable | Meaning |
+|---|---:|---|
+| `preview_commercial_profile_unavailable` | false | The optional tenant block is absent or its Direct-billed PAYG effective interval does not contain the request. |
+| `preview_billing_currency_unsupported` | false | The configured or selected currency is not USD. Preview performs no currency conversion. |
+| `preview_billing_currency_unknown` | false | Selected persisted aggregate currency evidence is blank. |
+| `preview_source_record_malformed` | false | Persisted provider source evidence is malformed. |
+| `preview_source_scope_unsupported` | false | Source evidence is not fully contained in the requested Daily scope. |
+| `preview_charge_classification_ambiguous` | false | Credit/refund/adjustment/correction-like semantics are not authoritative. |
+| `preview_source_line_type_unknown` | false | A source record has no line type. |
+| `preview_source_line_type_unsupported` | false | A provider line type is unknown to this release. |
+| `preview_source_mapping_unavailable` | false | A known line type, including Support or `KAFKA_STREAMS`, does not yet have a complete Preview mapping. |
+| `preview_source_record_incomplete` | false | Required Preview evidence is absent. |
+| `preview_source_economics_unsupported` | false | Monetary or quantity values are outside the supported tracer. |
+| `preview_source_reconciliation_failed` | false | Source, aggregate, or allocation evidence does not reconcile. |
+| `preview_source_coverage_incomplete` | false | Complete source and aggregate origin coverage does not match. |
+| `preview_mapping_scope_unsupported` | false | The complete source set exceeds the current one-source Daily Full mapping scope. |
+
+Incomplete persisted calculation metadata has precedence over acquisition,
+commercial, currency, source, and mapping diagnostics. `lookback_days` is capped
+at 364 and classifies the current acquisition/recalculation window; it is not a
+retention or reconstruction promise. The API provides no data-editing,
+historical reconstruction, or correlation-repair endpoint.
 See [FOCUS Mapping Preview](focus-mapping-preview.md) for UI and CLI usage.
 
 ---

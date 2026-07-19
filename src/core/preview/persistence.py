@@ -6,9 +6,10 @@ from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta
 from typing import Literal, Protocol, Self, runtime_checkable
 
-from sqlalchemy import Column, Date, DateTime, Index, String, cast, update
+from sqlalchemy import Column, Date, DateTime, Index, String, Text, cast, update
 from sqlmodel import Field, Session, SQLModel, col, select
 
+from core.preview.eligibility import capped_correlations
 from core.preview.evidence import (  # noqa: TC001  # resolved by get_type_hints contract test
     PreviewAllocationEvidenceReader,
     PreviewCostEvidenceReader,
@@ -107,6 +108,10 @@ class PreviewRequestTable(SQLModel, table=True):
     diagnostic_code: str | None = None
     diagnostic_message: str | None = None
     diagnostic_retryable: bool | None = None
+    diagnostic_source_correlation_ids_json: str | None = Field(
+        default=None,
+        sa_column=Column(Text(), nullable=True),
+    )
     storage_key: str | None = None
     manifest_metadata_json: str | None = None
     data_files_json: str | None = None
@@ -159,6 +164,11 @@ def request_to_table(request: PreviewRequest) -> PreviewRequestTable:
         diagnostic_code=request.diagnostic.code if request.diagnostic else None,
         diagnostic_message=request.diagnostic.message if request.diagnostic else None,
         diagnostic_retryable=request.diagnostic.retryable if request.diagnostic else None,
+        diagnostic_source_correlation_ids_json=(
+            _canonical_json(capped_correlations(request.diagnostic.source_correlation_ids))
+            if request.diagnostic
+            else None
+        ),
         storage_key=request.storage_key,
         manifest_metadata_json=_canonical_json(_artifact_dict(package.manifest)) if package else None,
         data_files_json=_canonical_json([_artifact_dict(item) for item in package.files]) if package else None,
@@ -213,7 +223,18 @@ def request_to_domain(row: PreviewRequestTable) -> PreviewRequest:
     if row.diagnostic_code is not None:
         if row.diagnostic_message is None or row.diagnostic_retryable is None:
             raise ValueError("preview diagnostic metadata is incomplete")
-        diagnostic = PreviewDiagnostic(row.diagnostic_code, row.diagnostic_message, row.diagnostic_retryable)
+        correlations: tuple[str, ...] = ()
+        if row.diagnostic_source_correlation_ids_json:
+            values = json.loads(row.diagnostic_source_correlation_ids_json)
+            if not isinstance(values, list) or not all(isinstance(value, str) for value in values):
+                raise ValueError("preview diagnostic correlations must be a string list")
+            correlations = capped_correlations(values)
+        diagnostic = PreviewDiagnostic(
+            row.diagnostic_code,
+            row.diagnostic_message,
+            row.diagnostic_retryable,
+            correlations,
+        )
     package = None
     if row.manifest_metadata_json is not None and row.data_files_json is not None:
         package = PreviewPackageMetadata(
@@ -375,6 +396,9 @@ class SQLModelPreviewRequestRepository:
                 diagnostic_code=diagnostic.code,
                 diagnostic_message=diagnostic.message,
                 diagnostic_retryable=diagnostic.retryable,
+                diagnostic_source_correlation_ids_json=_canonical_json(
+                    capped_correlations(diagnostic.source_correlation_ids)
+                ),
             )
         )
         return getattr(result, "rowcount", 0) == 1

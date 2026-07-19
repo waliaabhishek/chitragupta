@@ -28,6 +28,7 @@ class PreviewDiagnostic:
     code: str
     message: str
     retryable: bool
+    source_correlation_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

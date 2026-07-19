@@ -152,6 +152,29 @@ usable correlation remain unchanged and produce a non-retryable metadata
 diagnostic. Only the ordinary collector and calculation lifecycle can later
 replace persisted data.
 
+At submission, Preview samples `created_at` once and derives an immutable policy
+from tenant `focus_preview` configuration plus `lookback_days`/`cutoff_days`.
+The worker checks, in order: calculation correlation, acquisition/cutoff
+lifecycle, Direct-billed PAYG effective containment, configured USD, complete
+streamed source classification, complete source/aggregate coverage, then the
+current one-source mapping/reconciliation seams. All evidence reads occur in one
+read-only transaction. Complete source and aggregate reads stream in stable
+origin order; only the selected source's aggregate/allocation candidate queries
+retain their two-row ambiguity bounds.
+
+Expected failures travel through the initialized diagnostic path and atomically
+mark the request failed without a source snapshot or package. Source diagnostics
+can persist up to 20 sorted, unique, opaque tenant-scoped correlations; raw
+provider identities and payload fields never enter the public diagnostic.
+
+Confluent's Costs API currently omits per-record ISO currency. Configured/default
+USD establishes the eligible commercial contract, but it does not become source
+evidence: mapped `BillingCurrency` remains null and the manifest records
+`provider_billing_currency_field_unavailable`. No currency conversion occurs.
+The maximum 364-day `lookback_days` is an acquisition/recalculation boundary,
+not retention or a reconstruction promise. TASK-256 owns any independent
+longer-term completed-chargeback archive.
+
 ## Concurrency
 
 Multiple tenants run concurrently (bounded by `features.max_parallel_tenants`).

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -126,6 +127,119 @@ def test_source_candidate_query_is_tenant_scoped_deterministic_and_hard_limited_
     assert len(candidates) == 2
     assert [item.source_record_id for item in candidates] == ["a", "b"]
     engine.dispose()
+
+
+def test_complete_source_iterator_returns_every_overlapping_record_in_order(tmp_path: Path) -> None:
+    engine = _engine(tmp_path)
+    with Session(engine) as session:
+        repository = CCloudBillingRepository(session)
+        repository.replace_source_window(
+            "confluent_cloud",
+            "tenant-1",
+            datetime(2026, 6, 30, tzinfo=UTC),
+            datetime(2026, 7, 4, tzinfo=UTC),
+            [_source("c"), _source("a"), _source("b")],
+        )
+        repository.replace_source_window(
+            "confluent_cloud",
+            "tenant-2",
+            datetime(2026, 6, 30, tzinfo=UTC),
+            datetime(2026, 7, 4, tzinfo=UTC),
+            [_source("other", tenant_id="tenant-2")],
+        )
+        session.commit()
+
+    with Session(engine) as session:
+        rows = CCloudBillingRepository(session).iter_preview_sources(_scope())
+        assert iter(rows) is rows
+        first = next(rows)
+        remaining = list(rows)
+
+    assert [first.source_record_id, *(item.source_record_id for item in remaining)] == ["a", "b", "c"]
+    engine.dispose()
+
+
+def test_complete_source_iterator_includes_undated_malformed_evidence_overlap(tmp_path: Path) -> None:
+    engine = _engine(tmp_path)
+    with Session(engine) as session:
+        repository = CCloudBillingRepository(session)
+        repository.replace_source_window(
+            "confluent_cloud",
+            "tenant-1",
+            datetime(2026, 6, 30, tzinfo=UTC),
+            datetime(2026, 7, 4, tzinfo=UTC),
+            [_source("valid"), _source("undated", source_start=None, source_end=None, malformed=True)],
+        )
+        session.commit()
+
+    with Session(engine) as session:
+        rows = list(CCloudBillingRepository(session).iter_preview_sources(_scope()))
+
+    assert {item.source_record_id for item in rows} == {"valid", "undated"}
+    engine.dispose()
+
+
+def test_complete_aggregate_iterator_returns_every_scoped_row_in_origin_order(tmp_path: Path) -> None:
+    engine = _engine(tmp_path)
+    with Session(engine) as session:
+        repository = CCloudBillingRepository(session)
+        for resource_id in ("lkc-c", "lkc-a", "lkc-b"):
+            repository.upsert(
+                CCloudBillingLineItem(
+                    ecosystem="confluent_cloud",
+                    tenant_id="tenant-1",
+                    timestamp=datetime(2026, 7, 1, tzinfo=UTC),
+                    env_id="env-1",
+                    resource_id=resource_id,
+                    product_category="KAFKA",
+                    product_type="KAFKA_STORAGE",
+                    quantity=Decimal("5"),
+                    unit_price=Decimal("2"),
+                    total_cost=Decimal("8"),
+                    currency="USD",
+                    granularity="daily",
+                    metadata={},
+                )
+            )
+        repository.upsert(
+            CCloudBillingLineItem(
+                ecosystem="confluent_cloud",
+                tenant_id="tenant-2",
+                timestamp=datetime(2026, 7, 1, tzinfo=UTC),
+                env_id="env-1",
+                resource_id="other",
+                product_category="KAFKA",
+                product_type="KAFKA_STORAGE",
+                quantity=Decimal("5"),
+                unit_price=Decimal("2"),
+                total_cost=Decimal("8"),
+                currency="USD",
+                granularity="daily",
+                metadata={},
+            )
+        )
+        session.commit()
+
+    with Session(engine) as session:
+        rows = CCloudBillingRepository(session).iter_preview_aggregates(_scope())
+        assert iter(rows) is rows
+        first = next(rows)
+        remaining = list(rows)
+
+    assert [first.resource_id, *(item.resource_id for item in remaining)] == ["lkc-a", "lkc-b", "lkc-c"]
+    engine.dispose()
+
+
+def test_complete_iterator_implementation_does_not_materialize_all_rows() -> None:
+    source = inspect.getsource(CCloudBillingRepository.iter_preview_sources)
+    aggregates = inspect.getsource(CCloudBillingRepository.iter_preview_aggregates)
+
+    assert ".all()" not in source
+    assert "tuple(" not in source
+    assert "yield_per" in source
+    assert ".all()" not in aggregates
+    assert "tuple(" not in aggregates
+    assert "yield_per" in aggregates
 
 
 def test_source_mapper_copies_all_values_and_canonicalizes_tiers(tmp_path: Path) -> None:

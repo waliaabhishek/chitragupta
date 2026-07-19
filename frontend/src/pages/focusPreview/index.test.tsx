@@ -83,7 +83,7 @@ describe("FOCUS Mapping Preview page delegation", () => {
     for (const description of [
       "Billing account and issuer mapping is pending.",
       "Authoritative provider billing-period mapping is pending.",
-      "Commercial arrangement and authoritative billing currency are unavailable.",
+      "Confluent Costs API monetary values are documented in USD but do not include a per-record ISO currency value.",
       "Provider-authoritative SKU identity is unavailable.",
       "Post-issuance invoice identity is unavailable.",
       "Allocation lineage and tag projection are pending.",
@@ -253,4 +253,28 @@ describe("FOCUS Mapping Preview page delegation", () => {
       }
     },
   );
+
+  it("renders safe source correlation identifiers from the persisted diagnostic", async () => {
+    const correlations = [
+      `src:v1:${"a".repeat(64)}`,
+      `src:v1:${"b".repeat(64)}`,
+    ];
+    vi.mocked(fetchFocusPreviewStatus).mockResolvedValue({
+      ...baseRequest,
+      status: "failed",
+      diagnostic: {
+        code: "preview_source_record_malformed",
+        message: "One or more persisted Confluent Costs API records are malformed.",
+        retryable: false,
+        source_correlation_ids: correlations,
+      },
+    });
+
+    render(<FocusPreviewPage />);
+    await submitForm();
+
+    expect(await screen.findByText(correlations[0])).toBeTruthy();
+    expect(screen.getByText(correlations[1])).toBeTruthy();
+    expect(screen.queryByText(/provider payload|storage path|credential/i)).toBeNull();
+  });
 });

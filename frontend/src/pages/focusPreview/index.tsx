@@ -33,8 +33,9 @@ const CURRENT_AUTHORITY_GAPS = [
     owner: "TASK-254.04",
   },
   {
-    code: "commercial_arrangement_and_billing_currency_authority_pending",
-    description: "Commercial arrangement and authoritative billing currency are unavailable.",
+    code: "provider_billing_currency_field_unavailable",
+    description:
+      "Confluent Costs API monetary values are documented in USD but do not include a per-record ISO currency value.",
     owner: "TASK-254.03",
   },
   {
@@ -192,6 +193,9 @@ export function FocusPreviewPage({ now = () => new Date() }: FocusPreviewPagePro
             <Space direction="vertical">
               <Text>{preview.diagnostic.message}</Text>
               <Text>Retryable: {preview.diagnostic.retryable ? "Yes" : "No"}</Text>
+              {preview.diagnostic.source_correlation_ids?.map((correlation) => (
+                <Text code key={correlation}>{correlation}</Text>
+              ))}
             </Space>
           }
         />

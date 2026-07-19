@@ -8,6 +8,7 @@ from datetime import UTC, date, datetime
 from importlib import import_module
 from pathlib import Path
 from threading import Event, Thread
+from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import anyio.to_thread
@@ -16,9 +17,15 @@ import pytest
 
 from core.api.app import create_app
 from core.config.models import ApiConfig, AppSettings, StorageConfig, TenantConfig
+from core.models.identity import CoreIdentity
+from core.models.pipeline import PipelineState
+from core.models.resource import CoreResource, ResourceStatus
 from core.storage.backends.sqlmodel.unit_of_work import SQLModelBackend
 from plugins.confluent_cloud.storage.module import CCloudStorageModule
 from tests.unit.core.preview.test_service import _aggregate, _allocation, _seed, _source
+
+if TYPE_CHECKING:
+    from plugins.confluent_cloud.models.billing import CCloudCostSourceRecord
 
 
 @pytest.fixture(autouse=True)
@@ -80,6 +87,12 @@ def _settings(tmp_path: Path, *, ecosystem: str = "confluent_cloud") -> AppSetti
                 ecosystem=ecosystem,
                 tenant_id="tenant-1",
                 storage=StorageConfig(connection_string=f"sqlite:///{tmp_path / 'preview.db'}"),
+                focus_preview={
+                    "commercial_profile": "direct_payg",
+                    "billing_currency": "USD",
+                    "effective_start_date": "2020-01-01",
+                    "effective_end_date": "2030-01-01",
+                },
             )
         },
     )
@@ -99,15 +112,43 @@ def _body() -> dict[str, str]:
     }
 
 
-def _wait_for_terminal(client: SameThreadApiClient, request_id: str) -> dict[str, object]:
+def _wait_for_terminal(
+    client: SameThreadApiClient,
+    request_id: str,
+    *,
+    tenant_name: str = "production",
+) -> dict[str, object]:
     deadline = time.monotonic() + 5
     while time.monotonic() < deadline:
-        response = client.get(f"/api/v1/tenants/production/focus-preview/requests/{request_id}")
+        response = client.get(f"/api/v1/tenants/{tenant_name}/focus-preview/requests/{request_id}")
         body = response.json()
         if body["status"] in {"ready", "failed"}:
             return body
         time.sleep(0.01)
     pytest.fail("preview request did not reach a terminal state")
+
+
+def _assert_terminal_failure(
+    body: dict[str, object],
+    *,
+    code: str,
+    message: str,
+    retryable: bool,
+    correlation_count: int = 0,
+) -> None:
+    assert body["status"] == "failed"
+    diagnostic = body["diagnostic"]
+    assert isinstance(diagnostic, dict)
+    expected: dict[str, object] = {"code": code, "message": message, "retryable": retryable}
+    if correlation_count:
+        correlations = diagnostic["source_correlation_ids"]
+        assert isinstance(correlations, list)
+        assert len(correlations) == correlation_count
+        assert all(isinstance(value, str) and value.startswith("src:v1:") for value in correlations)
+        expected["source_correlation_ids"] = correlations
+    assert diagnostic == expected
+    assert body["source_snapshot"] is None
+    assert body["package"] is None
 
 
 class BlockingExecutor:
@@ -349,6 +390,513 @@ def test_focus_preview_status_routes_publish_typed_openapi_response_contract(tmp
         "source_snapshot",
         "package",
     }
+    diagnostic_schema = schema["components"]["schemas"]["FocusPreviewDiagnosticResponse"]
+    assert diagnostic_schema["properties"]["source_correlation_ids"] == {
+        "items": {"type": "string"},
+        "title": "Source Correlation Ids",
+        "type": "array",
+    }
+
+
+def test_primary_api_seam_serializes_safe_diagnostic_correlations_and_no_internal_fields(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    backend = SQLModelBackend(
+        settings.tenants["production"].storage.connection_string.get_secret_value(),
+        CCloudStorageModule(),
+        use_migrations=False,
+    )
+    backend.create_tables()
+    _seed(
+        backend,
+        source=_source(malformed=True, diagnostics=("provider secret diagnostic",)),
+        aggregate=_aggregate(),
+        allocation=_allocation(),
+    )
+    app, client = _client(settings)
+    with patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"), client:
+        app.state.backends["production"] = backend
+        submitted = client.post("/api/v1/tenants/production/focus-preview/requests", json=_body())
+        assert submitted.status_code == 202
+        body = _wait_for_terminal(client, submitted.json()["request_id"])
+
+    assert body["status"] == "failed"
+    assert body["diagnostic"]["code"] == "preview_source_record_malformed"
+    assert len(body["diagnostic"]["source_correlation_ids"]) == 1
+    assert body["diagnostic"]["source_correlation_ids"][0].startswith("src:v1:")
+    assert "provider secret" not in str(body)
+    assert "source_record_id" not in str(body)
+    assert "storage_key" not in str(body)
+    assert body["source_snapshot"] is None
+    assert body["package"] is None
+
+
+def _mapper_backed_malformed_source() -> CCloudCostSourceRecord:
+    cost_input = import_module("plugins.confluent_cloud.cost_input")
+    candidate_type = cost_input._SourceCandidate
+    mapper = cost_input._map_source_record
+    candidate = candidate_type(
+        raw_payload={
+            "id": "malformed-provider-cost",
+            "start_date": "not-a-date",
+            "end_date": "2026-07-02",
+            "product": "KAFKA",
+            "line_type": "KAFKA_STORAGE",
+            "amount": "8",
+            "original_amount": "10",
+            "discount_amount": "2",
+            "price": "2",
+            "quantity": "5",
+            "unit": "GB",
+            "description": "Kafka storage usage",
+            "resource": {"id": "lkc-1", "environment": {"id": "env-1"}},
+        },
+        collection_window_start=datetime(2026, 7, 1, tzinfo=UTC),
+        collection_window_end=datetime(2026, 7, 2, tzinfo=UTC),
+        ordinal=0,
+    )
+    mapped: CCloudCostSourceRecord = mapper(
+        candidate,
+        "tenant-1",
+        "provider:malformed-provider-cost",
+        "provider_cost_id",
+        "malformed-provider-cost",
+    )
+    return mapped
+
+
+@pytest.mark.parametrize(
+    ("source_changes", "expected_code"),
+    [
+        (
+            {
+                "source_period_start": datetime(2026, 6, 30, tzinfo=UTC),
+                "allocation_timestamp": datetime(2026, 6, 30, tzinfo=UTC),
+                "retention_timestamp": datetime(2026, 6, 30, tzinfo=UTC),
+            },
+            "preview_source_scope_unsupported",
+        ),
+        ({"description": "Prior period refund"}, "preview_charge_classification_ambiguous"),
+        ({"line_type": None}, "preview_source_line_type_unknown"),
+        ({"line_type": "FUTURE_LINE"}, "preview_source_line_type_unsupported"),
+        ({"line_type": "SUPPORT"}, "preview_source_mapping_unavailable"),
+        ({"resource_id": None}, "preview_source_record_incomplete"),
+        ({"amount": 0}, "preview_source_economics_unsupported"),
+        ({"amount": 7}, "preview_source_reconciliation_failed"),
+    ],
+)
+def test_primary_api_seam_persists_each_source_eligibility_category(
+    tmp_path: Path,
+    source_changes: dict[str, object],
+    expected_code: str,
+) -> None:
+    settings = _settings(tmp_path)
+    backend = SQLModelBackend(
+        settings.tenants["production"].storage.connection_string.get_secret_value(),
+        CCloudStorageModule(),
+        use_migrations=False,
+    )
+    backend.create_tables()
+    _seed(
+        backend,
+        source=_source(**source_changes),
+        aggregate=_aggregate(),
+        allocation=_allocation(),
+    )
+    app, client = _client(settings)
+    with patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"), client:
+        app.state.backends["production"] = backend
+        submitted = client.post("/api/v1/tenants/production/focus-preview/requests", json=_body())
+        body = _wait_for_terminal(client, submitted.json()["request_id"])
+
+    assert body["status"] == "failed"
+    assert body["diagnostic"]["code"] == expected_code
+    assert len(body["diagnostic"]["source_correlation_ids"]) == 1
+    assert body["source_snapshot"] is None
+    assert body["package"] is None
+
+
+def test_primary_api_seam_uses_real_source_mapper_for_malformed_diagnostic(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    backend = SQLModelBackend(
+        settings.tenants["production"].storage.connection_string.get_secret_value(),
+        CCloudStorageModule(),
+        use_migrations=False,
+    )
+    backend.create_tables()
+    _seed(
+        backend,
+        source=_mapper_backed_malformed_source(),
+        aggregate=_aggregate(),
+        allocation=_allocation(),
+    )
+    app, client = _client(settings)
+    with patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"), client:
+        app.state.backends["production"] = backend
+        submitted = client.post("/api/v1/tenants/production/focus-preview/requests", json=_body())
+        body = _wait_for_terminal(client, submitted.json()["request_id"])
+
+    assert body["status"] == "failed"
+    assert body["diagnostic"]["code"] == "preview_source_record_malformed"
+    assert len(body["diagnostic"]["source_correlation_ids"]) == 1
+
+
+def test_primary_api_kafka_streams_mapping_precedes_unknown_unsupported_line(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    backend = SQLModelBackend(
+        settings.tenants["production"].storage.connection_string.get_secret_value(),
+        CCloudStorageModule(),
+        use_migrations=False,
+    )
+    backend.create_tables()
+    _seed(backend, aggregate=_aggregate(), allocation=_allocation())
+    with backend.create_unit_of_work() as uow:
+        uow.billing.replace_source_window(
+            "confluent_cloud",
+            "tenant-1",
+            datetime(2026, 6, 30, tzinfo=UTC),
+            datetime(2026, 7, 3, tzinfo=UTC),
+            [
+                _source(source_record_id="provider:future", provider_cost_id="future", line_type="FUTURE_LINE"),
+                _source(source_record_id="provider:streams", provider_cost_id="streams", line_type="KAFKA_STREAMS"),
+            ],
+        )
+        uow.commit()
+    app, client = _client(settings)
+    with patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"), client:
+        app.state.backends["production"] = backend
+        submitted = client.post("/api/v1/tenants/production/focus-preview/requests", json=_body())
+        body = _wait_for_terminal(client, submitted.json()["request_id"])
+
+    assert body["status"] == "failed"
+    assert body["diagnostic"]["code"] == "preview_source_mapping_unavailable"
+    assert len(body["diagnostic"]["source_correlation_ids"]) == 1
+
+
+def test_primary_api_seam_missing_focus_preview_fails_only_requested_scope(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    settings.tenants["production"] = TenantConfig(
+        ecosystem="confluent_cloud",
+        tenant_id="tenant-1",
+        storage=StorageConfig(connection_string=f"sqlite:///{tmp_path / 'preview.db'}"),
+    )
+    backend = SQLModelBackend(
+        settings.tenants["production"].storage.connection_string.get_secret_value(),
+        CCloudStorageModule(),
+        use_migrations=False,
+    )
+    backend.create_tables()
+    _seed(backend, source=_source(), aggregate=_aggregate(), allocation=_allocation())
+    app, client = _client(settings)
+    with patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"), client:
+        app.state.backends["production"] = backend
+        generic_before = client.post(
+            "/api/v1/tenants/production/export",
+            json={"start_date": "2026-07-01", "end_date": "2026-07-02"},
+        )
+        submitted = client.post("/api/v1/tenants/production/focus-preview/requests", json=_body())
+        body = _wait_for_terminal(client, submitted.json()["request_id"])
+        generic_after = client.post(
+            "/api/v1/tenants/production/export",
+            json={"start_date": "2026-07-01", "end_date": "2026-07-02"},
+        )
+
+    assert body["status"] == "failed"
+    assert body["diagnostic"] == {
+        "code": "preview_commercial_profile_unavailable",
+        "message": "An explicit Direct-billed PAYG profile does not cover the requested interval.",
+        "retryable": False,
+    }
+    assert generic_before.status_code == generic_after.status_code == 200
+    assert generic_after.content == generic_before.content
+
+
+@pytest.mark.parametrize(
+    ("tracking_date", "code", "message", "retryable"),
+    [
+        (
+            date(2026, 6, 23),
+            "calculation_before_acquisition_lookback",
+            "Required retained calculation evidence is unavailable outside the current acquisition window.",
+            False,
+        ),
+        (
+            date(2026, 6, 29),
+            "calculation_pending_cutoff_window",
+            "One or more requested dates are still inside the configured acquisition cutoff window; "
+            "wait for the dates to enter the acquisition window, run the pipeline, and retry.",
+            True,
+        ),
+    ],
+)
+def test_primary_api_calculation_window_failure_reaches_exact_terminal_status(
+    tmp_path: Path,
+    tracking_date: date,
+    code: str,
+    message: str,
+    retryable: bool,
+) -> None:
+    settings = _settings(tmp_path)
+    tenant = settings.tenants["production"]
+    settings.tenants["production"] = tenant.model_copy(update={"lookback_days": 10, "cutoff_days": 5})
+    backend = SQLModelBackend(
+        tenant.storage.connection_string.get_secret_value(),
+        CCloudStorageModule(),
+        use_migrations=False,
+    )
+    backend.create_tables()
+    _seed(
+        backend,
+        state=PipelineState(
+            ecosystem="confluent_cloud",
+            tenant_id="tenant-1",
+            tracking_date=tracking_date,
+            billing_gathered=True,
+            resources_gathered=True,
+            chargeback_calculated=False,
+            calculation_id=None,
+            calculation_completed_at=None,
+            calculation_run_id=None,
+        ),
+    )
+    app, client = _client(settings)
+    body = {
+        **_body(),
+        "start_date": tracking_date.isoformat(),
+        "end_date": tracking_date.replace(day=tracking_date.day + 1).isoformat(),
+    }
+    with patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"), client:
+        app.state.backends["production"] = backend
+        with patch.object(app.state.preview_runtime, "_clock", lambda: datetime(2026, 7, 4, tzinfo=UTC)):
+            submitted = client.post("/api/v1/tenants/production/focus-preview/requests", json=body)
+            assert submitted.status_code == 202
+            terminal = _wait_for_terminal(client, submitted.json()["request_id"])
+
+    _assert_terminal_failure(terminal, code=code, message=message, retryable=retryable)
+
+
+def test_primary_api_unknown_persisted_currency_reaches_exact_terminal_status(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    backend = SQLModelBackend(
+        settings.tenants["production"].storage.connection_string.get_secret_value(),
+        CCloudStorageModule(),
+        use_migrations=False,
+    )
+    backend.create_tables()
+    _seed(backend, source=_source(), aggregate=_aggregate(currency=""), allocation=_allocation())
+    app, client = _client(settings)
+    with patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"), client:
+        app.state.backends["production"] = backend
+        submitted = client.post("/api/v1/tenants/production/focus-preview/requests", json=_body())
+        assert submitted.status_code == 202
+        terminal = _wait_for_terminal(client, submitted.json()["request_id"])
+
+    _assert_terminal_failure(
+        terminal,
+        code="preview_billing_currency_unknown",
+        message="Persisted billing currency evidence is unknown for one or more source records.",
+        retryable=False,
+        correlation_count=1,
+    )
+
+
+def test_primary_api_multiple_valid_sources_reach_exact_mapping_scope_terminal_status(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    backend = SQLModelBackend(
+        settings.tenants["production"].storage.connection_string.get_secret_value(),
+        CCloudStorageModule(),
+        use_migrations=False,
+    )
+    backend.create_tables()
+    _seed(backend, aggregate=_aggregate(), allocation=_allocation())
+    with backend.create_unit_of_work() as uow:
+        uow.billing.replace_source_window(
+            "confluent_cloud",
+            "tenant-1",
+            datetime(2026, 6, 30, tzinfo=UTC),
+            datetime(2026, 7, 3, tzinfo=UTC),
+            [
+                _source(),
+                _source(source_record_id="provider:cost-2", provider_cost_id="cost-2"),
+            ],
+        )
+        uow.commit()
+    app, client = _client(settings)
+    with patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"), client:
+        app.state.backends["production"] = backend
+        submitted = client.post("/api/v1/tenants/production/focus-preview/requests", json=_body())
+        assert submitted.status_code == 202
+        terminal = _wait_for_terminal(client, submitted.json()["request_id"])
+
+    _assert_terminal_failure(
+        terminal,
+        code="preview_mapping_scope_unsupported",
+        message="The complete source set exceeds the current Daily Full mapping scope.",
+        retryable=False,
+        correlation_count=2,
+    )
+    assert "provider:cost-1" not in str(terminal)
+    assert "provider:cost-2" not in str(terminal)
+
+
+def test_primary_api_non_usd_configuration_fails_without_provider_or_artifact(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    tenant = settings.tenants["production"]
+    settings.tenants["production"] = TenantConfig(
+        ecosystem=tenant.ecosystem,
+        tenant_id=tenant.tenant_id,
+        storage=tenant.storage,
+        focus_preview={
+            "commercial_profile": "direct_payg",
+            "billing_currency": "EUR",
+            "effective_start_date": "2020-01-01",
+            "effective_end_date": "2030-01-01",
+        },
+    )
+    backend = SQLModelBackend(
+        tenant.storage.connection_string.get_secret_value(),
+        CCloudStorageModule(),
+        use_migrations=False,
+    )
+    backend.create_tables()
+    _seed(backend, source=_source(), aggregate=_aggregate(), allocation=_allocation())
+    app, client = _client(settings)
+    with patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"), client:
+        app.state.backends["production"] = backend
+        submitted = client.post("/api/v1/tenants/production/focus-preview/requests", json=_body())
+        body = _wait_for_terminal(client, submitted.json()["request_id"])
+
+    assert body["status"] == "failed"
+    assert body["diagnostic"] == {
+        "code": "preview_billing_currency_unsupported",
+        "message": "FOCUS Mapping Preview currently supports only USD billing currency.",
+        "retryable": False,
+    }
+    assert body["source_snapshot"] is None
+    assert body["package"] is None
+
+
+def test_primary_api_failure_isolated_across_tenant_databases_and_non_overlapping_interval(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    settings.tenants["sandbox"] = TenantConfig.model_validate(
+        {
+            "ecosystem": "confluent_cloud",
+            "tenant_id": "tenant-2",
+            "storage": StorageConfig(connection_string=f"sqlite:///{tmp_path / 'sandbox-preview.db'}"),
+            "focus_preview": {
+                "commercial_profile": "direct_payg",
+                "billing_currency": "USD",
+                "effective_start_date": "2020-01-01",
+                "effective_end_date": "2030-01-01",
+            },
+        }
+    )
+    production_backend = SQLModelBackend(
+        settings.tenants["production"].storage.connection_string.get_secret_value(),
+        CCloudStorageModule(),
+        use_migrations=False,
+    )
+    sandbox_backend = SQLModelBackend(
+        settings.tenants["sandbox"].storage.connection_string.get_secret_value(),
+        CCloudStorageModule(),
+        use_migrations=False,
+    )
+    production_backend.create_tables()
+    sandbox_backend.create_tables()
+    _seed(
+        production_backend,
+        source=_source(malformed=True, diagnostics=("provider malformed",)),
+        aggregate=_aggregate(),
+        allocation=_allocation(),
+    )
+    sandbox_source = _source(
+        tenant_id="tenant-2",
+        source_record_id="provider:cost-2",
+        provider_cost_id="cost-2",
+        source_period_start=datetime(2026, 7, 2, tzinfo=UTC),
+        source_period_end=datetime(2026, 7, 3, tzinfo=UTC),
+        collection_window_start=datetime(2026, 7, 1, tzinfo=UTC),
+        collection_window_end=datetime(2026, 7, 4, tzinfo=UTC),
+        evidence_scope_start=datetime(2026, 7, 2, tzinfo=UTC),
+        evidence_scope_end=datetime(2026, 7, 3, tzinfo=UTC),
+        allocation_timestamp=datetime(2026, 7, 2, tzinfo=UTC),
+        retention_timestamp=datetime(2026, 7, 2, tzinfo=UTC),
+    )
+    with sandbox_backend.create_unit_of_work() as uow:
+        uow.resources.upsert(
+            CoreResource(
+                ecosystem="confluent_cloud",
+                tenant_id="tenant-2",
+                resource_id="lkc-1",
+                resource_type="kafka_cluster",
+                display_name="Sandbox orders",
+                status=ResourceStatus.ACTIVE,
+                created_at=datetime(2026, 1, 1, tzinfo=UTC),
+            )
+        )
+        uow.identities.upsert(
+            CoreIdentity(
+                ecosystem="confluent_cloud",
+                tenant_id="tenant-2",
+                identity_id="sa-1",
+                identity_type="service_account",
+                display_name="Sandbox service",
+                created_at=datetime(2026, 1, 1, tzinfo=UTC),
+            )
+        )
+        uow.billing.replace_source_window(
+            "confluent_cloud",
+            "tenant-2",
+            datetime(2026, 7, 1, tzinfo=UTC),
+            datetime(2026, 7, 4, tzinfo=UTC),
+            [sandbox_source],
+        )
+        uow.billing.upsert(
+            _aggregate(
+                tenant_id="tenant-2",
+                timestamp=datetime(2026, 7, 2, tzinfo=UTC),
+            )
+        )
+        uow.chargebacks.upsert_batch(
+            [
+                _allocation(
+                    tenant_id="tenant-2",
+                    timestamp=datetime(2026, 7, 2, tzinfo=UTC),
+                )
+            ]
+        )
+        uow.pipeline_state.upsert(
+            PipelineState(
+                ecosystem="confluent_cloud",
+                tenant_id="tenant-2",
+                tracking_date=date(2026, 7, 2),
+                billing_gathered=True,
+                resources_gathered=True,
+                chargeback_calculated=True,
+                calculation_id="calculation-2",
+                calculation_completed_at=datetime(2026, 7, 3, 3, tzinfo=UTC),
+                calculation_run_id=None,
+            )
+        )
+        uow.commit()
+    app, client = _client(settings)
+    with patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"), client:
+        app.state.backends["production"] = production_backend
+        app.state.backends["sandbox"] = sandbox_backend
+        first = client.post("/api/v1/tenants/production/focus-preview/requests", json=_body())
+        first_body = _wait_for_terminal(client, first.json()["request_id"])
+        second = client.post(
+            "/api/v1/tenants/sandbox/focus-preview/requests",
+            json={**_body(), "start_date": "2026-07-02", "end_date": "2026-07-03"},
+        )
+        second_body = _wait_for_terminal(client, second.json()["request_id"], tenant_name="sandbox")
+        cross_tenant = client.get(f"/api/v1/tenants/sandbox/focus-preview/requests/{first.json()['request_id']}")
+
+    assert first_body["status"] == "failed"
+    assert first_body["diagnostic"]["code"] == "preview_source_record_malformed"
+    assert second_body["status"] == "ready"
+    assert second_body["diagnostic"] is None
+    assert second_body["package"] is not None
+    assert cross_tenant.status_code == 404
 
 
 def test_missing_request_is_tenant_scoped_404(tmp_path: Path) -> None:

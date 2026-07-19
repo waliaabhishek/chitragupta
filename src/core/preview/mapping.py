@@ -9,6 +9,7 @@ import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
+from enum import StrEnum
 from typing import Any
 
 from core.models.identity import Identity  # noqa: TC001  # resolved by get_type_hints contract test
@@ -22,7 +23,7 @@ from core.preview.models import PreviewArtifactPayload, PreviewPackagePayload, P
 
 logger = logging.getLogger(__name__)
 
-MAPPING_PROFILE_VERSION = "focus-1.4-daily-full-tracer-v1"
+MAPPING_PROFILE_VERSION = "focus-1.4-daily-full-tracer-v2"
 
 
 class PreviewMappingError(ValueError):
@@ -39,6 +40,18 @@ class PreviewSourceSnapshotError(PreviewMappingError):
 
 class PreviewReconciliationError(PreviewMappingError):
     """Persisted source, aggregate, and allocation evidence disagree."""
+
+
+class PreviewSourceIssue(StrEnum):
+    RECORD_MALFORMED = "preview_source_record_malformed"
+    SCOPE_UNSUPPORTED = "preview_source_scope_unsupported"
+    CHARGE_CLASSIFICATION_AMBIGUOUS = "preview_charge_classification_ambiguous"
+    LINE_TYPE_UNKNOWN = "preview_source_line_type_unknown"
+    LINE_TYPE_UNSUPPORTED = "preview_source_line_type_unsupported"
+    MAPPING_UNAVAILABLE = "preview_source_mapping_unavailable"
+    RECORD_INCOMPLETE = "preview_source_record_incomplete"
+    ECONOMICS_UNSUPPORTED = "preview_source_economics_unsupported"
+    RECONCILIATION_FAILED = "preview_source_reconciliation_failed"
 
 
 FOCUS_1_4_FULL_COLUMNS = (
@@ -184,8 +197,8 @@ KNOWN_GAPS = (
         ("BillingPeriodEnd", "BillingPeriodStart"),
     ),
     KnownGap(
-        "commercial_arrangement_and_billing_currency_authority_pending",
-        "Commercial arrangement and authoritative billing currency are unavailable.",
+        "provider_billing_currency_field_unavailable",
+        "Confluent Costs API monetary values are documented in USD but do not include a per-record ISO currency value.",
         "TASK-254.03",
         ("BillingCurrency",),
     ),
@@ -359,36 +372,63 @@ def validate_daily_full_mapping(
 def validate_daily_full_source(
     *, request_start: datetime, request_end: datetime, source: PreviewSourceEvidence
 ) -> None:
-    if source.malformed or source.diagnostics or source.source_period_start is None or source.source_period_end is None:
-        raise PreviewSourceSnapshotError("persisted source evidence is incomplete")
-    if not (request_start <= source.source_period_start < source.source_period_end <= request_end):
-        raise PreviewTracerScopeError("source period is outside the requested Daily range")
+    issue = classify_daily_full_source(request_start=request_start, request_end=request_end, source=source)
+    if issue is None:
+        return
+    if issue is PreviewSourceIssue.RECORD_MALFORMED:
+        raise PreviewSourceSnapshotError("persisted source evidence is malformed")
+    if issue is PreviewSourceIssue.RECONCILIATION_FAILED:
+        raise PreviewReconciliationError("source arithmetic does not reconcile")
+    raise PreviewTracerScopeError("source evidence is outside the Daily Full mapping scope")
 
+
+def classify_daily_full_source(
+    *, request_start: datetime, request_end: datetime, source: PreviewSourceEvidence
+) -> PreviewSourceIssue | None:
+    if source.malformed or source.diagnostics:
+        return PreviewSourceIssue.RECORD_MALFORMED
+    if source.source_period_start is None or source.source_period_end is None:
+        return PreviewSourceIssue.SCOPE_UNSUPPORTED
+    bounds = (
+        source.source_period_start,
+        source.source_period_end,
+        source.collection_window_start,
+        source.collection_window_end,
+        source.evidence_scope_start,
+        source.evidence_scope_end,
+    )
+    if any(value.tzinfo is None or value.utcoffset() is None for value in bounds):
+        return PreviewSourceIssue.SCOPE_UNSUPPORTED
+    if (
+        source.source_period_start >= source.source_period_end
+        or source.collection_window_start >= source.collection_window_end
+        or source.evidence_scope_start >= source.evidence_scope_end
+        or not (request_start <= source.source_period_start < source.source_period_end <= request_end)
+    ):
+        return PreviewSourceIssue.SCOPE_UNSUPPORTED
+    if _has_rejected_semantics(source.native_product or "", source.native_description or ""):
+        return PreviewSourceIssue.CHARGE_CLASSIFICATION_AMBIGUOUS
+    if not source.native_line_type:
+        return PreviewSourceIssue.LINE_TYPE_UNKNOWN
+    if source.native_line_type in {"SUPPORT", "KAFKA_STREAMS"}:
+        return PreviewSourceIssue.MAPPING_UNAVAILABLE
+    if source.native_line_type == "PROMO_CREDIT":
+        return PreviewSourceIssue.CHARGE_CLASSIFICATION_AMBIGUOUS
+    if source.native_line_type not in ORDINARY_METERED_LINE_TYPES:
+        return PreviewSourceIssue.LINE_TYPE_UNSUPPORTED
     required = (
         source.provider_cost_id,
         source.native_product,
-        source.native_line_type,
         source.unit,
         source.native_description,
         source.resource_id,
         source.environment_id,
     )
-    if (
-        any(not value for value in required)
-        or source.native_line_type not in ORDINARY_METERED_LINE_TYPES
-        or _has_rejected_semantics(source.native_product or "", source.native_description or "")
-    ):
-        raise PreviewTracerScopeError("source semantics are outside the positive tracer")
-
-    source_values = (
-        source.amount,
-        source.original_amount,
-        source.discount_amount,
-        source.price,
-        source.quantity,
-    )
-    if not all(_finite(value) for value in source_values):
-        raise PreviewTracerScopeError("source economics must be finite")
+    if any(not value for value in required):
+        return PreviewSourceIssue.RECORD_INCOMPLETE
+    values = (source.amount, source.original_amount, source.discount_amount, source.price, source.quantity)
+    if not all(_finite(value) for value in values):
+        return PreviewSourceIssue.ECONOMICS_UNSUPPORTED
     assert source.amount is not None
     assert source.original_amount is not None
     assert source.discount_amount is not None
@@ -401,14 +441,13 @@ def validate_daily_full_source(
         and source.quantity > 0
         and source.discount_amount >= 0
     ):
-        raise PreviewTracerScopeError("source economics are outside the positive tracer")
+        return PreviewSourceIssue.ECONOMICS_UNSUPPORTED
     if (
         source.original_amount - source.discount_amount != source.amount
         or source.price * source.quantity != source.original_amount
     ):
-        raise PreviewReconciliationError("source arithmetic does not reconcile")
-
-    source_through(source)
+        return PreviewSourceIssue.RECONCILIATION_FAILED
+    return None
 
 
 def build_daily_full_package(

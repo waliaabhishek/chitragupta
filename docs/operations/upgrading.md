@@ -130,6 +130,27 @@ unchanged. A Preview request covering such a date fails with
 an edit, approval, backfill, or repair operation. The ordinary collector and
 calculation lifecycle remains the only producer of new calculation metadata.
 
+### Migration 020: Preview eligibility diagnostics
+
+Migration 020 adds nullable
+`preview_requests.diagnostic_source_correlation_ids_json`. Existing Preview
+requests and per-date calculation metadata are preserved. A legacy null value is
+read as an empty public correlation list, and downgrading removes only the new
+column.
+
+The related tenant `focus_preview` configuration is additive and optional. An
+existing configuration still loads without it, but new Preview requests fail
+closed with `preview_commercial_profile_unavailable` until the operator declares
+`commercial_profile: direct_payg` and a containing effective interval.
+`billing_currency` defaults to normalized `USD`; non-USD fails Preview with no
+currency conversion. Confluent's Costs API does not provide per-record ISO
+currency, so `BillingCurrency` remains null in generated output.
+
+Do not increase `lookback_days` in an attempt to recover absent Preview history.
+Its maximum remains 364 and it defines acquisition/recalculation eligibility,
+not retention, archival history, or guaranteed reconstruction from billing and
+Metrics APIs. TASK-256 owns a future independent archive/retention design.
+
 ## Rollback
 
 If an upgrade fails or the new version misbehaves:

@@ -98,6 +98,7 @@ def _serialize(request: PreviewRequest) -> FocusPreviewStatusResponse:
             code=request.diagnostic.code,
             message=request.diagnostic.message,
             retryable=request.diagnostic.retryable,
+            source_correlation_ids=list(request.diagnostic.source_correlation_ids),
         )
     return FocusPreviewStatusResponse(
         request_id=request.request_id,

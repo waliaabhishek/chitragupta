@@ -3,7 +3,7 @@ from __future__ import annotations
 import csv
 import io
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from concurrent.futures import Future
 from dataclasses import replace
 from datetime import UTC, date, datetime
@@ -52,10 +52,18 @@ class ControlledExecutor:
 
 
 def _tenant_config(connection_string: str) -> TenantConfig:
-    return TenantConfig(
-        ecosystem="confluent_cloud",
-        tenant_id="tenant-1",
-        storage=StorageConfig(connection_string=connection_string),
+    return TenantConfig.model_validate(
+        {
+            "ecosystem": "confluent_cloud",
+            "tenant_id": "tenant-1",
+            "storage": StorageConfig(connection_string=connection_string),
+            "focus_preview": {
+                "commercial_profile": "direct_payg",
+                "billing_currency": "USD",
+                "effective_start_date": "2020-01-01",
+                "effective_end_date": "2030-01-01",
+            },
+        }
     )
 
 
@@ -310,7 +318,7 @@ def test_daily_full_package_has_exact_headers_null_authority_fields_and_manifest
         assert manifest["schema_version"] == "chitragupta.preview-manifest.v1"
         assert manifest["target_focus_version"] == "1.4"
         assert manifest["conformance_status"] == "non_conforming"
-        assert manifest["mapping_profile_version"] == "focus-1.4-daily-full-tracer-v1"
+        assert manifest["mapping_profile_version"] == "focus-1.4-daily-full-tracer-v2"
         assert [gap["code"] for gap in manifest["known_gaps"]] == [gap.code for gap in mapping.KNOWN_GAPS]
         assert manifest["known_gaps"] == [
             {
@@ -468,7 +476,17 @@ def test_positive_tracer_rejects_non_positive_non_finite_or_unsupported_evidence
             tenant_id="tenant-1",
         )
         assert failed.status.value == "failed"
-        assert failed.diagnostic.code == "daily_full_tracer_scope_unsupported"
+        if source_overrides.get("line_type") == "PROMO_CREDIT":
+            expected_code = "preview_charge_classification_ambiguous"
+        elif source_overrides.get("line_type") == "SUPPORT":
+            expected_code = "preview_source_mapping_unavailable"
+        elif source_overrides.get("product") == "" or source_overrides.get("description") == "":
+            expected_code = "preview_source_record_incomplete"
+        elif source_overrides:
+            expected_code = "preview_source_economics_unsupported"
+        else:
+            expected_code = "preview_source_reconciliation_failed"
+        assert failed.diagnostic.code == expected_code
         assert failed.source_snapshot is None
         assert failed.package is None
         assert failed.storage_key is None
@@ -567,7 +585,7 @@ def test_positive_tracer_rejects_credit_refund_adjustment_and_correction_semanti
             ecosystem="confluent_cloud",
             tenant_id="tenant-1",
         )
-        assert failed.diagnostic.code == "daily_full_tracer_scope_unsupported"
+        assert failed.diagnostic.code == "preview_charge_classification_ambiguous"
         assert failed.package is None
     finally:
         runtime.close()
@@ -656,7 +674,9 @@ def test_positive_tracer_rejects_every_exact_arithmetic_mismatch(
             tenant_id="tenant-1",
         )
         assert failed.status.value == "failed"
-        assert failed.diagnostic.code == "preview_reconciliation_failed"
+        assert failed.diagnostic.code == "preview_source_reconciliation_failed"
+        assert len(failed.diagnostic.source_correlation_ids) == 1
+        assert failed.diagnostic.source_correlation_ids[0].startswith("src:v1:")
         assert failed.package is None
     finally:
         runtime.close()
@@ -688,7 +708,7 @@ def test_overlapping_but_not_contained_source_fails_tracer_scope(tmp_path: Path)
             ecosystem="confluent_cloud",
             tenant_id="tenant-1",
         )
-        assert failed.diagnostic.code == "daily_full_tracer_scope_unsupported"
+        assert failed.diagnostic.code == "preview_source_scope_unsupported"
     finally:
         runtime.close()
         backend.dispose()
@@ -734,7 +754,7 @@ def test_malformed_undated_overlapping_evidence_blocks_even_with_epoch_allocatio
             tenant_id="tenant-1",
         )
         assert failed.status.value == "failed"
-        assert failed.diagnostic.code == "daily_full_tracer_scope_unsupported"
+        assert failed.diagnostic.code == "preview_source_record_malformed"
         assert failed.source_snapshot is None
     finally:
         runtime.close()
@@ -778,7 +798,14 @@ def test_single_malformed_or_incomplete_source_has_snapshot_diagnostic(
             tenant_id="tenant-1",
         )
         assert failed.status.value == "failed"
-        assert failed.diagnostic.code == "preview_source_snapshot_incomplete"
+        expected_code = (
+            "preview_source_record_malformed"
+            if source.malformed or source.diagnostics
+            else "preview_source_scope_unsupported"
+        )
+        assert failed.diagnostic.code == expected_code
+        assert len(failed.diagnostic.source_correlation_ids) == 1
+        assert failed.diagnostic.source_correlation_ids[0].startswith("src:v1:")
         assert failed.source_snapshot is None
         assert failed.package is None
     finally:
@@ -804,15 +831,15 @@ def test_every_bounded_evidence_seam_rejects_zero_or_multiple_candidates(
     backend.create_tables()
     _seed(backend, source=_source(), aggregate=_aggregate(), allocation=_allocation())
     if candidate_kind == "source":
-        original = repositories.CCloudBillingRepository.find_preview_source_candidates
+        original = repositories.CCloudBillingRepository.iter_preview_sources
 
-        def source_candidates(repository: object, scope: object) -> tuple[object, ...]:
-            candidates = original(repository, scope)
-            return () if candidate_count == 0 else (candidates[0], candidates[0])
+        def source_candidates(repository: object, scope: object) -> Iterator[object]:
+            candidates = list(original(repository, scope))
+            return iter(()) if candidate_count == 0 else iter((candidates[0], candidates[0]))
 
         monkeypatch.setattr(
             repositories.CCloudBillingRepository,
-            "find_preview_source_candidates",
+            "iter_preview_sources",
             source_candidates,
         )
     elif candidate_kind == "aggregate":
@@ -852,7 +879,15 @@ def test_every_bounded_evidence_seam_rejects_zero_or_multiple_candidates(
             tenant_id="tenant-1",
         )
         assert failed.status.value == "failed"
-        assert failed.diagnostic.code == "daily_full_tracer_scope_unsupported"
+        expected_code = (
+            "preview_source_coverage_incomplete"
+            if candidate_kind == "source" and candidate_count == 0
+            else "preview_mapping_scope_unsupported"
+        )
+        assert failed.diagnostic.code == expected_code
+        if candidate_kind != "source" or candidate_count != 0:
+            assert len(failed.diagnostic.source_correlation_ids) >= 1
+            assert all(value.startswith("src:v1:") for value in failed.diagnostic.source_correlation_ids)
         assert failed.source_snapshot is None
         assert failed.package is None
     finally:
@@ -919,7 +954,7 @@ def test_complete_origin_tuple_mismatch_is_rejected_by_runtime_reconciliation(
             tenant_id="tenant-1",
         )
         assert failed.status.value == "failed"
-        assert failed.diagnostic.code == "preview_reconciliation_failed"
+        assert failed.diagnostic.code == "preview_source_reconciliation_failed"
         assert failed.package is None
     finally:
         runtime.close()
@@ -929,9 +964,9 @@ def test_complete_origin_tuple_mismatch_is_rejected_by_runtime_reconciliation(
 @pytest.mark.parametrize(
     ("allocation", "include_resource", "include_identity", "expected_code"),
     [
-        (_allocation(identity_id="UNALLOCATED"), True, True, "daily_full_tracer_scope_unsupported"),
-        (_allocation(), False, True, "preview_source_snapshot_incomplete"),
-        (_allocation(), True, False, "preview_source_snapshot_incomplete"),
+        (_allocation(identity_id="UNALLOCATED"), True, True, "preview_mapping_scope_unsupported"),
+        (_allocation(), False, True, "preview_source_record_incomplete"),
+        (_allocation(), True, False, "preview_source_record_incomplete"),
     ],
 )
 def test_allocation_target_resource_and_identity_gap_scenarios(
@@ -968,6 +1003,8 @@ def test_allocation_target_resource_and_identity_gap_scenarios(
         )
         assert failed.status.value == "failed"
         assert failed.diagnostic.code == expected_code
+        assert len(failed.diagnostic.source_correlation_ids) == 1
+        assert failed.diagnostic.source_correlation_ids[0].startswith("src:v1:")
         assert failed.package is None
     finally:
         runtime.close()
@@ -996,19 +1033,21 @@ def test_invalid_or_naive_collection_window_never_reports_freshness(
     )
     backend.create_tables()
     _seed(backend, source=_source(), aggregate=_aggregate(), allocation=_allocation())
-    original = repositories.CCloudBillingRepository.find_preview_source_candidates
+    original = repositories.CCloudBillingRepository.iter_preview_sources
 
-    def invalid(repository: object, scope: object) -> tuple[object, ...]:
-        candidates = original(repository, scope)
-        return (
-            replace(
-                candidates[0],
-                collection_window_start=window_start,
-                collection_window_end=window_end,
-            ),
+    def invalid(repository: object, scope: object) -> Iterator[object]:
+        candidates = list(original(repository, scope))
+        return iter(
+            (
+                replace(
+                    candidates[0],
+                    collection_window_start=window_start,
+                    collection_window_end=window_end,
+                ),
+            )
         )
 
-    monkeypatch.setattr(repositories.CCloudBillingRepository, "find_preview_source_candidates", invalid)
+    monkeypatch.setattr(repositories.CCloudBillingRepository, "iter_preview_sources", invalid)
     executor = ControlledExecutor()
     runtime = _runtime(tmp_path, backend, executor)
     try:
@@ -1021,7 +1060,7 @@ def test_invalid_or_naive_collection_window_never_reports_freshness(
             tenant_id="tenant-1",
         )
         assert failed.status.value == "failed"
-        assert failed.diagnostic.code == "preview_source_snapshot_incomplete"
+        assert failed.diagnostic.code == "preview_source_scope_unsupported"
         assert failed.source_snapshot is None
     finally:
         runtime.close()

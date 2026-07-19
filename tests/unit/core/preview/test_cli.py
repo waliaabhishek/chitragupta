@@ -207,6 +207,40 @@ def test_cli_prints_persisted_failure_without_resubmit_or_derived_remediation(
         assert "repair" not in message.casefold()
 
 
+def test_cli_prints_only_safe_persisted_source_correlations(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    correlations = [f"src:v1:{'a' * 64}", f"src:v1:{'b' * 64}"]
+
+    def respond(request: httpx.Request, _sequence: int) -> httpx.Response:
+        if request.method == "POST":
+            return httpx.Response(202, json=_status("request-1", "queued"))
+        return httpx.Response(
+            200,
+            json=_status(
+                "request-1",
+                "failed",
+                diagnostic={
+                    "code": "preview_source_record_malformed",
+                    "message": "One or more persisted Confluent Costs API records are malformed.",
+                    "retryable": False,
+                    "source_correlation_ids": correlations,
+                },
+            ),
+        )
+
+    exit_code = _invoke(monkeypatch, tmp_path, RecordingTransport(respond))
+    output = capsys.readouterr().err
+
+    assert exit_code == 1
+    assert correlations[0] in output
+    assert correlations[1] in output
+    assert "provider" not in output.casefold()
+    assert str(tmp_path) not in output
+
+
 def test_cli_rejects_cross_origin_download_before_attaching_credentials(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

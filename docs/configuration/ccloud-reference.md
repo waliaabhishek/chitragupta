@@ -21,6 +21,11 @@ tenants:
     lookback_days: 200
     cutoff_days: 5
     retention_days: 250
+    focus_preview:
+      commercial_profile: direct_payg
+      billing_currency: USD
+      effective_start_date: 2026-01-01
+      effective_end_date: 2027-01-01
     storage:
       connection_string: "sqlite:///data/ccloud.db"
     plugin_settings:
@@ -61,7 +66,7 @@ tenants:
 |---|---|---|---|
 | `ecosystem` | string | required | Must be `confluent_cloud` |
 | `tenant_id` | string | required | Unique partition key for DB records. Can be any string (e.g. `prod`, `acme-corp`). This is **not** your Confluent Cloud Organization ID — it is an internal label used to isolate data across tenants in the database. |
-| `lookback_days` | int | 200 | Days of billing history to fetch (max 364). Must be > `cutoff_days`. |
+| `lookback_days` | int | 200 | Provider acquisition/recalculation window (max 364). Must be > `cutoff_days`; it is not retention or a reconstruction guarantee. |
 | `cutoff_days` | int | 5 | Skip dates within this many days of today (billing lag, max 30) |
 | `retention_days` | int | 250 | Delete data older than this (max 730) |
 | `allocation_retry_limit` | int | 3 | Max identity resolution retries before fallback (max 10) |
@@ -70,6 +75,48 @@ tenants:
 | `tenant_execution_timeout_seconds` | int | 3600 | Per-tenant run timeout (0 = no timeout) |
 | `metrics_prefetch_workers` | int | 4 | Parallel metrics query threads (1–20) |
 | `zero_gather_deletion_threshold` | int | -1 | Mark resources deleted after N zero-gather cycles (-1 = disabled) |
+| `focus_preview` | mapping | absent | Optional Preview eligibility declaration. Absence loads successfully but Preview requests fail closed. |
+| `focus_preview.commercial_profile` | string | required in block | Must be `direct_payg`. |
+| `focus_preview.billing_currency` | string | `USD` | Three-letter code normalized to uppercase. Only USD is currently eligible. |
+| `focus_preview.effective_start_date` | date | required in block | Inclusive start of the commercial declaration. |
+| `focus_preview.effective_end_date` | date | required in block | Exclusive end; must be after the start and contain the complete Preview request. |
+
+## FOCUS Mapping Preview eligibility
+
+`focus_preview` is optional to preserve existing application configurations.
+Omitting it does not imply eligibility: a Preview request is persisted and then
+fails with `preview_commercial_profile_unavailable`. When supplied,
+`focus_preview.commercial_profile` is required and must be `direct_payg`.
+The effective dates form a non-empty half-open interval; the request's inclusive
+start and exclusive end must both fit within it.
+
+`focus_preview.billing_currency` defaults to `USD`. Values such as `usd` or
+` USD ` normalize to `USD`; malformed or non-string values fail configuration
+loading. A valid non-USD code loads so the request can return the stable
+`preview_billing_currency_unsupported` diagnostic, but Preview performs no
+relabeling. There is no currency conversion of stored monetary values.
+
+The Confluent Costs API does not return a per-record ISO currency value. The USD
+setting is therefore an explicit customer/operator contract for the supported
+Direct-billed PAYG scope, not provider-supplied record evidence. Compatibility
+aggregate currency is not treated as commercial authority. Generated FOCUS
+`BillingCurrency` remains null, and the v2 manifest reports
+`provider_billing_currency_field_unavailable`. If the provider later supplies
+authoritative currency, that limitation can be revisited without inventing
+historical values.
+
+`lookback_days` remains capped at 364 because it controls current provider
+acquisition and recalculation. `lookback_days` is not retention, archival
+history, or a promise that billing and Metrics API inputs still exist for
+reconstruction. `retention_days` is separate but does not introduce a
+multi-year completed-chargeback archive. TASK-256 owns design of independent
+longer-term chargeback evidence retention/archive.
+
+Source-related failures can expose at most 20 sorted, unique, tenant-scoped
+`src:v1:<64 lowercase hex>` correlation values. They are safe lookup handles,
+not provider IDs, raw fields, secrets, or storage paths. All commercial,
+currency, calculation, source, and reconciliation failures are fail-closed and
+produce no Preview package.
 
 ## plugin_settings fields (CCloud)
 

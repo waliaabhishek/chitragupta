@@ -102,15 +102,21 @@ def _submit_range(runtime: object, backend: SQLModelBackend, end_date: date) -> 
         (
             [(date(2026, 7, 1), False, None, False)],
             date(2026, 7, 2),
-            "calculation_unavailable",
-            "No successful persisted calculation is available for the requested dates; run the pipeline and retry.",
+            "calculation_pending_cutoff_window",
+            (
+                "One or more requested dates are still inside the configured acquisition cutoff window; "
+                "wait for the dates to enter the acquisition window, run the pipeline, and retry."
+            ),
             True,
         ),
         (
             [(date(2026, 7, 1), True, "usable-a", True), (date(2026, 7, 2), False, None, False)],
             date(2026, 7, 3),
-            "calculation_coverage_incomplete",
-            "No successful persisted calculation covers every requested date; run the pipeline and retry.",
+            "calculation_pending_cutoff_window",
+            (
+                "One or more requested dates are still inside the configured acquisition cutoff window; "
+                "wait for the dates to enter the acquisition window, run the pipeline, and retry."
+            ),
             True,
         ),
     ],

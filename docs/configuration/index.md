@@ -37,7 +37,7 @@ All tenants share these `TenantConfig` fields:
 |---|---|---|---|
 | `ecosystem` | string | required | Plugin key from the table above |
 | `tenant_id` | string | required | Unique partition key for DB records. Can be any string (e.g. `prod`, `acme-corp`). This is **not** a vendor-specific ID (e.g. not your CCloud Organization ID) — it is an internal label used to isolate data across tenants in the database. |
-| `lookback_days` | int | 200 | Days of billing history to fetch |
+| `lookback_days` | int | 200 | Provider acquisition/recalculation window in days (1–364 and greater than `cutoff_days`); not retention or guaranteed reconstructability |
 | `cutoff_days` | int | 5 | Skip dates within this many days of today |
 | `retention_days` | int | 250 | Delete data older than this |
 | `storage.connection_string` | string | required | Database URL (SQLite or PostgreSQL) |
@@ -62,6 +62,33 @@ The artifact root must be on durable storage and writable by the API process.
 For containers, mount it into the data volume. The database stores request and
 artifact metadata; artifact bytes remain under this root and are served only by
 the protected Preview API. Changing the root does not move existing packages.
+
+Confluent Cloud tenants can optionally declare the commercial contract required
+for Preview:
+
+```yaml
+tenants:
+  production:
+    focus_preview:
+      commercial_profile: direct_payg
+      billing_currency: USD       # optional; defaults to normalized USD
+      effective_start_date: 2026-01-01
+      effective_end_date: 2027-01-01
+```
+
+| Field | Type | Default | Constraints | Description |
+|---|---|---|---|---|
+| `focus_preview` | mapping | absent | Confluent Cloud only | Optional block. Absence remains valid application configuration but every Preview request fails closed. |
+| `focus_preview.commercial_profile` | string | required in block | `direct_payg` | Declares the supported Direct-billed PAYG arrangement. |
+| `focus_preview.billing_currency` | string | `USD` | three ASCII letters | Normalized uppercase. Non-USD loads but Preview fails without conversion. |
+| `focus_preview.effective_start_date` | date | required in block | before end | Inclusive start of the commercial declaration. |
+| `focus_preview.effective_end_date` | date | required in block | after start | Exclusive end; the complete request must be contained in the interval. |
+
+Confluent's Costs API does not supply a per-record ISO currency value. USD is the
+current configured contract, while generated `BillingCurrency` remains null and
+the manifest identifies the provider-field limitation. See the
+[Confluent Cloud reference](ccloud-reference.md#focus-mapping-preview-eligibility)
+for the fail-closed rules and retention boundary.
 
 See [FOCUS Mapping Preview](../focus-mapping-preview.md) for request behavior and
 client usage.

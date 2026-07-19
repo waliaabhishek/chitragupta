@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -19,6 +20,8 @@ def test_core_preview_evidence_has_no_plugin_dependency() -> None:
 @pytest.mark.parametrize(
     ("protocol_name", "method_name", "parameter_names"),
     [
+        ("PreviewCostEvidenceReader", "iter_preview_sources", ["self", "scope"]),
+        ("PreviewCostEvidenceReader", "iter_preview_aggregates", ["self", "scope"]),
         ("PreviewCostEvidenceReader", "find_preview_source_candidates", ["self", "scope"]),
         (
             "PreviewCostEvidenceReader",
@@ -60,6 +63,22 @@ def test_confluent_repositories_satisfy_core_preview_protocols() -> None:
         CCloudChargebackRepository.__new__(CCloudChargebackRepository),
         evidence.PreviewAllocationEvidenceReader,
     )
+
+
+def test_complete_evidence_reads_are_iterator_contracts() -> None:
+    evidence = preview_module("evidence")
+
+    source_hint = inspect.get_annotations(
+        evidence.PreviewCostEvidenceReader.iter_preview_sources,
+        eval_str=True,
+    )["return"]
+    aggregate_hint = inspect.get_annotations(
+        evidence.PreviewCostEvidenceReader.iter_preview_aggregates,
+        eval_str=True,
+    )["return"]
+
+    assert source_hint == Iterator[evidence.PreviewSourceEvidence]
+    assert aggregate_hint == Iterator[evidence.PreviewAggregateEvidence]
 
 
 def test_source_scope_model_requires_aware_ordered_bounds() -> None:

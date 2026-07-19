@@ -42,6 +42,7 @@ def test_preview_cli_entry_point_is_registered() -> None:
     [
         "__init__",
         "models",
+        "eligibility",
         "evidence",
         "persistence",
         "mapping",
@@ -68,6 +69,14 @@ def test_focus_preview_route_uses_postponed_annotations() -> None:
 
 def test_migration_019_uses_postponed_annotations() -> None:
     migration = import_module("core.storage.migrations.versions.019_add_focus_preview_and_calculation_identity")
+    source = inspect.getsource(migration)
+    meaningful_lines = [line.strip() for line in source.splitlines() if line.strip() and not line.startswith("#")]
+
+    assert meaningful_lines[0] == "from __future__ import annotations"
+
+
+def test_migration_020_uses_postponed_annotations() -> None:
+    migration = import_module("core.storage.migrations.versions.020_add_preview_diagnostic_correlations")
     source = inspect.getsource(migration)
     meaningful_lines = [line.strip() for line in source.splitlines() if line.strip() and not line.startswith("#")]
 

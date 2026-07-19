@@ -159,11 +159,11 @@ def test_migration_019_contains_no_data_repair_dml() -> None:
     assert "delete from topic_attribution" not in normalized
 
 
-def test_migration_019_matches_create_all_schema(tmp_path: Path) -> None:
+def test_current_preview_migrations_match_create_all_schema(tmp_path: Path) -> None:
     migration_connection = f"sqlite:///{tmp_path / 'migration.db'}"
     direct_connection = f"sqlite:///{tmp_path / 'direct.db'}"
     config = _alembic_config(migration_connection)
-    command.upgrade(config, "019")
+    command.upgrade(config, "020")
 
     direct_backend = SQLModelBackend(direct_connection, CCloudStorageModule(), use_migrations=False)
     direct_backend.create_tables()

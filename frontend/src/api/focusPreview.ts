@@ -4,6 +4,7 @@ export interface FocusPreviewDiagnostic {
   code: string;
   message: string;
   retryable: boolean;
+  source_correlation_ids?: string[];
 }
 
 export interface FocusPreviewArtifact {

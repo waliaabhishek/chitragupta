@@ -17,6 +17,36 @@ Run the API in `api` or `both` mode and configure durable artifact storage befor
 using Preview. See [Configuration](configuration/index.md#focus-mapping-preview)
 and the [API Reference](api-reference.md#focus-mapping-preview).
 
+## Tenant eligibility configuration
+
+The tenant-level `focus_preview` block is optional so existing configurations
+continue to load. Omission does not make a tenant eligible: a submitted request
+fails asynchronously with `preview_commercial_profile_unavailable`.
+
+```yaml
+tenants:
+  production:
+    focus_preview:
+      commercial_profile: direct_payg
+      billing_currency: USD
+      effective_start_date: 2026-01-01
+      effective_end_date: 2027-01-01
+```
+
+When the block is present, `commercial_profile` must be `direct_payg` and the
+effective dates define a non-empty half-open interval that contains the complete
+request. `billing_currency` defaults to `USD`; surrounding whitespace and case
+are normalized. A valid non-USD value can load configuration, but Preview fails
+closed with `preview_billing_currency_unsupported`. There is no currency
+conversion or relabeling.
+
+Confluent's Costs API currently does not return a per-record ISO currency value.
+Configured/default USD is therefore the supported commercial contract, not a
+claim that the provider supplied record-level currency. The generated FOCUS
+`BillingCurrency` remains null and the manifest reports
+`provider_billing_currency_field_unavailable`. A future provider currency field
+can close that limitation without silently rewriting historical values.
+
 ## Request scope
 
 A request uses inclusive-start, exclusive-end UTC dates and must contain 1–31
@@ -54,7 +84,7 @@ The page declares these current authority gaps before submission:
 |---|---|---|
 | `billing_account_and_issuer_mapping_pending` | Billing account and issuer mapping | TASK-254.04 |
 | `billing_period_authority_pending` | Authoritative provider billing period | TASK-254.04 |
-| `commercial_arrangement_and_billing_currency_authority_pending` | Commercial arrangement and authoritative billing currency | TASK-254.03 |
+| `provider_billing_currency_field_unavailable` | The provider Costs API omits a per-record ISO currency; `BillingCurrency` remains null | TASK-254.03 |
 | `provider_authoritative_sku_identity_unavailable` | Provider-authoritative SKU identity | TASK-254.04 |
 | `invoice_identity_unavailable` | Post-issuance invoice identity | TASK-254.04 |
 | `allocation_lineage_and_tag_projection_pending` | Allocation lineage and tag projection | TASK-254.05 |
@@ -91,11 +121,13 @@ creates the local output directory and writes `manifest.json` and
 
 ```text
 Preview failed [<code>]: <message>
+Source correlation: src:v1:<hash>
 ```
 
 and exits non-zero. It does not automatically resubmit, run the pipeline, or
 change server data. API-provided cross-origin download URLs are rejected before
-credentials are forwarded.
+credentials are forwarded. The correlation line appears only when the API
+returns safe source correlations; raw provider identifiers are never printed.
 
 ## Lifecycle and diagnostics
 
@@ -117,12 +149,27 @@ Calculation coverage failures are:
 | Code | Retryable | Meaning |
 |---|---:|---|
 | `calculation_metadata_unavailable` | no | A calculated date lacks usable persisted calculation identity/completion metadata. No edit or repair action is implied. |
+| `calculation_before_acquisition_lookback` | no | Required retained calculation evidence is outside the current acquisition window. Increasing lookback or reconstructing provider data is not promised. |
+| `calculation_pending_cutoff_window` | yes | At least one missing date is still inside the recent cutoff window; wait for it to enter the acquisition window, run the ordinary pipeline, and retry. |
 | `calculation_unavailable` | yes | No requested date has a usable persisted calculation; run the ordinary pipeline and retry. |
 | `calculation_coverage_incomplete` | yes | Some, but not all, requested dates have usable persisted calculations; run the ordinary pipeline and retry. |
 
-Other stable failure codes cover evidence outside the narrow tracer scope,
-incomplete source evidence, reconciliation failure, generation failure, and an
-unavailable worker. Failed requests have no package or downloadable artifact.
+Commercial/currency failures then precede a complete streamed source scan.
+Source diagnostics distinguish malformed, out-of-scope, ambiguous charge,
+unknown/unsupported line type, mapping-unavailable, incomplete, unsupported
+economics, reconciliation, coverage, and current mapping-cardinality failures.
+Where a source can be implicated, the API/UI/CLI can display up to 20 sorted,
+unique safe `src:v1:<64 lowercase hex>` correlations. Correlations are
+tenant-scoped hashes and contain no provider IDs or raw source values. Failed
+requests have no source snapshot, package, staging path, or downloadable
+artifact.
+
+`lookback_days` remains capped at 364. It controls the current provider
+acquisition/recalculation window and Preview's lifecycle classification; it is
+not retention, an archive, or a guarantee that billing plus Metrics API evidence
+can be reconstructed. `retention_days` is a separate current-data cleanup
+setting. Independent multi-year completed-chargeback retention/archive is owned
+by TASK-256 and is outside this release.
 
 ## Current boundaries
 

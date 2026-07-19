@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+import re
+from datetime import date
 from pathlib import Path
 from typing import Any, Literal
 
@@ -60,6 +62,29 @@ class StorageConfig(BaseModel):
 class PreviewConfig(BaseModel):
     artifact_root: Path = Path("data/focus-preview")
     max_workers: int = Field(default=2, gt=0, le=16)
+
+
+class FocusPreviewTenantConfig(BaseModel):
+    commercial_profile: Literal["direct_payg"]
+    billing_currency: str = "USD"
+    effective_start_date: date
+    effective_end_date: date
+
+    @field_validator("billing_currency", mode="before")
+    @classmethod
+    def normalize_billing_currency(cls, value: object) -> str:
+        if not isinstance(value, str):
+            raise ValueError("focus_preview.billing_currency must be a three-letter currency code")
+        normalized = value.strip().upper()
+        if re.fullmatch(r"[A-Z]{3}", normalized) is None:
+            raise ValueError("focus_preview.billing_currency must be a three-letter currency code")
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_effective_interval(self) -> FocusPreviewTenantConfig:
+        if self.effective_start_date >= self.effective_end_date:
+            raise ValueError("focus_preview.effective_start_date must be before effective_end_date")
+        return self
 
 
 class EmitterSpec(BaseModel):
@@ -155,6 +180,7 @@ class TenantConfig(BaseModel):
     metrics_prefetch_workers: int = Field(default=4, ge=1, le=20)
     storage: StorageConfig = Field(default_factory=StorageConfig)
     plugin_settings: PluginSettingsBase = Field(default_factory=PluginSettingsBase)
+    focus_preview: FocusPreviewTenantConfig | None = None
 
     @model_validator(mode="after")
     def validate_lookback_gt_cutoff(self) -> TenantConfig:

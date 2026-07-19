@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, cast
@@ -370,6 +370,78 @@ class CCloudBillingRepository:
             .limit(2)
         )
         return tuple(_source_table_to_preview(row) for row in self._session.exec(statement).all())
+
+    def iter_preview_sources(self, scope: PreviewEvidenceScope) -> Iterator[PreviewSourceEvidence]:
+        dated_overlap = (
+            col(CCloudCostSourceTable.malformed) == False,  # noqa: E712
+            col(CCloudCostSourceTable.source_period_start).is_not(None),
+            col(CCloudCostSourceTable.source_period_end).is_not(None),
+            col(CCloudCostSourceTable.source_period_start) < scope.end,
+            col(CCloudCostSourceTable.source_period_end) > scope.start,
+        )
+        fallback_overlap = (
+            or_(
+                col(CCloudCostSourceTable.malformed) == True,  # noqa: E712
+                col(CCloudCostSourceTable.source_period_start).is_(None),
+                col(CCloudCostSourceTable.source_period_end).is_(None),
+            ),
+            col(CCloudCostSourceTable.evidence_scope_start) < scope.end,
+            col(CCloudCostSourceTable.evidence_scope_end) > scope.start,
+        )
+        statement = (
+            select(CCloudCostSourceTable)
+            .where(
+                col(CCloudCostSourceTable.ecosystem) == scope.ecosystem,
+                col(CCloudCostSourceTable.tenant_id) == scope.tenant_id,
+                or_(and_(*dated_overlap), and_(*fallback_overlap)),
+            )
+            .order_by(
+                col(CCloudCostSourceTable.allocation_timestamp),
+                col(CCloudCostSourceTable.environment_id).nulls_first(),
+                col(CCloudCostSourceTable.resource_id).nulls_first(),
+                col(CCloudCostSourceTable.product).nulls_first(),
+                col(CCloudCostSourceTable.line_type).nulls_first(),
+                col(CCloudCostSourceTable.source_record_id),
+                col(CCloudCostSourceTable.identity_scheme),
+            )
+            .execution_options(yield_per=256, stream_results=True)
+        )
+        rows = self._session.exec(statement).yield_per(256)
+        for row in rows:
+            yield _source_table_to_preview(row)
+
+    def iter_preview_aggregates(self, scope: PreviewEvidenceScope) -> Iterator[PreviewAggregateEvidence]:
+        statement = (
+            select(CCloudBillingTable)
+            .where(
+                col(CCloudBillingTable.ecosystem) == scope.ecosystem,
+                col(CCloudBillingTable.tenant_id) == scope.tenant_id,
+                col(CCloudBillingTable.timestamp) >= scope.start,
+                col(CCloudBillingTable.timestamp) < scope.end,
+            )
+            .order_by(
+                col(CCloudBillingTable.timestamp),
+                col(CCloudBillingTable.env_id),
+                col(CCloudBillingTable.resource_id),
+                col(CCloudBillingTable.product_category),
+                col(CCloudBillingTable.product_type),
+            )
+            .execution_options(yield_per=256, stream_results=True)
+        )
+        rows = self._session.exec(statement).yield_per(256)
+        for row in rows:
+            yield PreviewAggregateEvidence(
+                timestamp=_ensure_utc(row.timestamp),
+                environment_id=row.env_id,
+                resource_id=row.resource_id,
+                native_product=row.product_category,
+                native_line_type=row.product_type,
+                quantity=Decimal(row.quantity),
+                unit_price=Decimal(row.unit_price),
+                total_cost=Decimal(row.total_cost),
+                compatibility_currency=row.currency,
+                granularity=row.granularity,
+            )
 
     def find_preview_aggregate_candidates(
         self, scope: PreviewEvidenceScope, source: PreviewSourceEvidence

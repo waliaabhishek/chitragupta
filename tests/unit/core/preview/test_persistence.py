@@ -404,6 +404,64 @@ def test_request_mapper_round_trips_persisted_grain_and_column_profile() -> None
     assert restored.column_profile == request.column_profile == "full"
 
 
+def test_request_mapper_round_trips_canonical_diagnostic_correlations() -> None:
+    models = preview_module("models")
+    persistence = preview_module("persistence")
+    request = _queued_request()
+    diagnostic = models.PreviewDiagnostic(
+        code="preview_source_record_malformed",
+        message="One or more persisted Confluent Costs API records are malformed.",
+        retryable=False,
+        source_correlation_ids=("src:v1:bbb", "src:v1:aaa", "src:v1:bbb"),
+    )
+    request = request.__class__(**{**request.__dict__, "diagnostic": diagnostic})
+
+    row = persistence.request_to_table(request)
+    restored = persistence.request_to_domain(row)
+
+    assert row.diagnostic_source_correlation_ids_json == '["src:v1:aaa","src:v1:bbb"]'
+    assert restored.diagnostic is not None
+    assert restored.diagnostic.source_correlation_ids == ("src:v1:aaa", "src:v1:bbb")
+
+
+def test_request_mapper_hydrates_legacy_null_diagnostic_correlations_as_empty() -> None:
+    models = preview_module("models")
+    persistence = preview_module("persistence")
+    request = _queued_request()
+    diagnostic = models.PreviewDiagnostic(
+        code="calculation_unavailable",
+        message="No successful persisted calculation is available for the requested dates; run the pipeline and retry.",
+        retryable=True,
+    )
+    request = request.__class__(**{**request.__dict__, "diagnostic": diagnostic})
+    row = persistence.request_to_table(request)
+    row.diagnostic_source_correlation_ids_json = None
+
+    restored = persistence.request_to_domain(row)
+
+    assert restored.diagnostic is not None
+    assert restored.diagnostic.source_correlation_ids == ()
+
+
+def test_diagnostic_correlations_are_capped_before_persistence() -> None:
+    models = preview_module("models")
+    persistence = preview_module("persistence")
+    request = _queued_request()
+    diagnostic = models.PreviewDiagnostic(
+        code="preview_source_record_malformed",
+        message="One or more persisted Confluent Costs API records are malformed.",
+        retryable=False,
+        source_correlation_ids=tuple(f"src:v1:{index:064x}" for index in range(25)),
+    )
+    request = request.__class__(**{**request.__dict__, "diagnostic": diagnostic})
+
+    row = persistence.request_to_table(request)
+    values = __import__("json").loads(row.diagnostic_source_correlation_ids_json)
+
+    assert len(values) == 20
+    assert values == sorted(set(values))
+
+
 @pytest.mark.parametrize(
     ("field", "value", "message"),
     [("grain", "hourly", "grain"), ("column_profile", "thin", "column profile")],

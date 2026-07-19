@@ -63,8 +63,9 @@ tenants:
     tenant_id: "${CCLOUD_TENANT_ID}"
 
     # ── Backfill & retention ─────────────────────────────────────────────────
-    # lookback_days: how far back to pull historical billing data on the first run.
-    # Subsequent runs only fetch new data. Range: 1–364. Must be > cutoff_days.
+    # lookback_days: provider acquisition/recalculation window. Range: 1–364.
+    # Must be > cutoff_days. lookback_days is not retention, an archive, or a
+    # guarantee that billing and Metrics API inputs can be reconstructed.
     lookback_days: 90
     # cutoff_days: skip the most recent N days of billing data (data may still be incomplete).
     # CCloud billing data for very recent days is often not fully settled. Range: 1–30.
@@ -72,6 +73,19 @@ tenants:
     # retention_days: how long to keep chargeback records in the database.
     # Records older than this are purged automatically. Range: 1–730.
     # retention_days: 250
+
+    # ── Optional FOCUS Mapping Preview eligibility ───────────────────────────
+    # Existing configs load without this block, but Preview requests then fail
+    # closed. Enable only for a Direct-billed PAYG scope whose complete request
+    # interval is contained in the half-open [start, end) dates below.
+    # billing_currency defaults to USD and is normalized to uppercase. Confluent's
+    # Costs API does not return per-record ISO currency; non-USD fails Preview and
+    # no currency conversion is performed. Generated BillingCurrency remains null.
+    # focus_preview:
+    #   commercial_profile: direct_payg
+    #   billing_currency: USD
+    #   effective_start_date: 2026-01-01
+    #   effective_end_date: 2027-01-01
 
     # ── Processing tuning ────────────────────────────────────────────────────
     # allocation_retry_limit: how many times to retry a failed allocation per billing day.

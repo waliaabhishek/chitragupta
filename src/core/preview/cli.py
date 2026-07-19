@@ -93,6 +93,8 @@ def main(argv: list[str] | None = None) -> int:
             if status["status"] == "failed":
                 diagnostic = status["diagnostic"]
                 print(f"Preview failed [{diagnostic['code']}]: {diagnostic['message']}", file=sys.stderr)
+                for correlation in diagnostic.get("source_correlation_ids", []):
+                    print(f"Source correlation: {correlation}", file=sys.stderr)
                 return 1
             package = status["package"]
             artifacts = [package["manifest"], *package["files"]]

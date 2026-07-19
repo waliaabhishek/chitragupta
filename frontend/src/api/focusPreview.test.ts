@@ -21,6 +21,15 @@ const queued = {
   package: null,
 };
 
+const correlatedDiagnostic: import("./focusPreview").FocusPreviewDiagnostic = {
+  code: "preview_source_record_malformed",
+  message: "One or more persisted Confluent Costs API records are malformed.",
+  retryable: false,
+  source_correlation_ids: [`src:v1:${"a".repeat(64)}`],
+};
+
+expect(correlatedDiagnostic.source_correlation_ids).toHaveLength(1);
+
 async function loadClient() {
   vi.resetModules();
   vi.stubEnv("VITE_API_URL", API_BASE);

@@ -148,6 +148,15 @@ class PreviewPipelinePlugin(ConfluentCloudPlugin):
         return super().get_cost_input()
 
 
+def _focus_preview_block() -> dict[str, object]:
+    return {
+        "commercial_profile": "direct_payg",
+        "billing_currency": "USD",
+        "effective_start_date": "2020-01-01",
+        "effective_end_date": "2030-01-01",
+    }
+
+
 def _cost_response(**overrides: object) -> httpx.Response:
     item: dict[str, object] = {
         "id": "cost-1",
@@ -348,6 +357,7 @@ def test_workflow_runner_provider_calculation_to_preview_mixed_retry_and_unrelat
         lookback_days=31,
         cutoff_days=5,
         storage=StorageConfig(connection_string=connection_string),
+        focus_preview=_focus_preview_block(),
         plugin_settings={
             "ccloud_api": {"key": "key", "secret": "secret"},  # pragma: allowlist secret
             "billing_api": {"days_per_query": 30},
@@ -487,23 +497,17 @@ def test_workflow_runner_provider_calculation_to_preview_mixed_retry_and_unrelat
         assert committed_b is not None
         assert committed_b.has_usable_calculation is True
         assert committed_b.calculation_run_id == running_run.id
-        ab_ready = _request(client, date(2026, 7, 1), date(2026, 7, 3))
-        assert ab_ready["status"] == "ready"
-        ab_entries = ab_ready["source_snapshot"]["calculation_coverage"]
-        assert [entry["tracking_date"] for entry in ab_entries] == ["2026-07-01", "2026-07-02"]
-        assert len({entry["calculation_id"] for entry in ab_entries}) == 2
-        assert len({entry["calculation_run_id"] for entry in ab_entries}) == 2
+        ab_failed = _request(client, date(2026, 7, 1), date(2026, 7, 3))
+        assert ab_failed["status"] == "failed"
+        assert ab_failed["diagnostic"]["code"] == "preview_source_coverage_incomplete"
         assert len(respx.calls) == provider_call_count
 
         handler.failing_dates.clear()
         third = runner.run_tenant("production")
         assert third.errors == []
-        abc_ready = _request(client, date(2026, 7, 1), date(2026, 7, 4))
-        assert abc_ready["status"] == "ready"
-        entries = abc_ready["source_snapshot"]["calculation_coverage"]
-        assert [entry["tracking_date"] for entry in entries] == ["2026-07-01", "2026-07-02", "2026-07-03"]
-        assert len({entry["calculation_id"] for entry in entries}) == 3
-        assert len({entry["calculation_run_id"] for entry in entries}) == 3
+        abc_failed = _request(client, date(2026, 7, 1), date(2026, 7, 4))
+        assert abc_failed["status"] == "failed"
+        assert abc_failed["diagnostic"]["code"] == "preview_source_coverage_incomplete"
         assert len(respx.calls) == provider_call_count
     finally:
         client.close()
@@ -559,6 +563,7 @@ def test_provider_backed_unsupported_economics_and_semantics_fail_before_artifac
         lookback_days=31,
         cutoff_days=5,
         storage=StorageConfig(connection_string=connection_string),
+        focus_preview=_focus_preview_block(),
         plugin_settings={
             "ccloud_api": {"key": "key", "secret": "secret"},  # pragma: allowlist secret
             "billing_api": {"days_per_query": 30},
@@ -625,11 +630,14 @@ def test_provider_backed_unsupported_economics_and_semantics_fail_before_artifac
 
         failed = _request(client, date(2026, 7, 1), date(2026, 7, 2))
         assert failed["status"] == "failed"
-        assert failed["diagnostic"] == {
-            "code": "daily_full_tracer_scope_unsupported",
-            "message": "Persisted evidence is outside the Daily Full tracer scope.",
-            "retryable": False,
-        }
+        diagnostic = failed["diagnostic"]
+        if provider_overrides.get("line_type") == "PROMO_CREDIT" or "description" in provider_overrides:
+            assert diagnostic["code"] == "preview_charge_classification_ambiguous"
+        else:
+            assert diagnostic["code"] == "preview_source_economics_unsupported"
+        assert diagnostic["retryable"] is False
+        assert len(diagnostic["source_correlation_ids"]) == 1
+        assert diagnostic["source_correlation_ids"][0].startswith("src:v1:")
         assert failed["source_snapshot"] is None
         assert failed["package"] is None
         assert list((tmp_path / "provider-negative-artifacts").iterdir()) == []
@@ -657,7 +665,7 @@ def test_migrated_legacy_metadata_failure_preserves_data_when_provider_is_unavai
     migration = _alembic_config(connection_string)
     command.upgrade(migration, "018")
     _seed_legacy_rows(connection_string)
-    command.upgrade(migration, "019")
+    command.upgrade(migration, "020")
 
     route = respx.get("https://api.confluent.cloud/billing/v1/costs")
     route.mock(return_value=httpx.Response(200, json={"data": [], "metadata": {}}))
@@ -667,6 +675,7 @@ def test_migrated_legacy_metadata_failure_preserves_data_when_provider_is_unavai
         lookback_days=31,
         cutoff_days=30,
         storage=StorageConfig(connection_string=connection_string),
+        focus_preview=_focus_preview_block(),
         plugin_settings={
             "ccloud_api": {"key": "key", "secret": "secret"},  # pragma: allowlist secret
             "billing_api": {"days_per_query": 30},
@@ -745,7 +754,7 @@ def test_migrated_legacy_precedence_uses_real_recoverable_lifecycle_without_muta
     migration = _alembic_config(connection_string)
     command.upgrade(migration, "018")
     _seed_legacy_rows(connection_string)
-    command.upgrade(migration, "019")
+    command.upgrade(migration, "020")
     snapshot_engine = create_engine(connection_string)
     legacy_before = _legacy_july_first_snapshot(snapshot_engine)
 
@@ -767,6 +776,7 @@ def test_migrated_legacy_precedence_uses_real_recoverable_lifecycle_without_muta
         lookback_days=31,
         cutoff_days=5,
         storage=StorageConfig(connection_string=connection_string),
+        focus_preview=_focus_preview_block(),
         plugin_settings={
             "ccloud_api": {"key": "key", "secret": "secret"},  # pragma: allowlist secret
             "billing_api": {"days_per_query": 30},
@@ -867,13 +877,14 @@ def test_ordinary_gather_and_calculate_lifecycle_replaces_incomplete_legacy_corr
                 {"tracking_timestamp": tracking_timestamp},
             )
     legacy_engine.dispose()
-    command.upgrade(migration, "019")
+    command.upgrade(migration, "020")
     tenant = TenantConfig(
         ecosystem="confluent_cloud",
         tenant_id="tenant-1",
         lookback_days=31,
         cutoff_days=5,
         storage=StorageConfig(connection_string=connection_string),
+        focus_preview=_focus_preview_block(),
         plugin_settings={
             "ccloud_api": {"key": "key", "secret": "secret"},  # pragma: allowlist secret
             "billing_api": {"days_per_query": 30},

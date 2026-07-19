@@ -34,9 +34,31 @@ tenants:       # Required — one entry per managed tenant
   <name>:
     ecosystem: ...
     tenant_id: ...
+    focus_preview: ...  # Optional Confluent Cloud Preview eligibility contract
     storage: ...
     plugin_settings: ...
 ```
+
+For Confluent Cloud FOCUS Mapping Preview, the optional tenant block is:
+
+```yaml
+focus_preview:
+  commercial_profile: direct_payg
+  billing_currency: USD       # optional; defaults to normalized USD
+  effective_start_date: 2026-01-01
+  effective_end_date: 2027-01-01
+```
+
+Omitting the block leaves configuration valid but makes Preview fail closed.
+Only `direct_payg` with a request contained in the half-open effective interval
+is supported. Non-USD values are not converted. Confluent's Costs API does not
+provide per-record ISO currency, so generated FOCUS `BillingCurrency` remains
+null even when configured/default USD makes the request eligible. See the
+[Confluent Cloud reference](../configuration/ccloud-reference.md#focus-mapping-preview-eligibility).
+
+Tenant `lookback_days` is capped at 364 and controls acquisition/recalculation,
+not retention or guaranteed historical reconstruction. TASK-256 owns a future
+independent archive/retention design for completed chargeback evidence.
 
 ## Tenant isolation
 
