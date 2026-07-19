@@ -9,7 +9,8 @@ All endpoints except `/health` are prefixed with `/api/v1`.
 - **Authentication:** None built-in. Use a reverse proxy for auth.
 - **CORS:** Configurable via `api.enable_cors` and `api.cors_origins`. Allowed methods: GET, POST, PATCH, DELETE.
 - **Request timeout:** Requests exceeding `api.request_timeout_seconds` (default 30, max 300) return HTTP 504.
-- **Content type:** JSON for all endpoints except export (CSV).
+- **Content type:** JSON for API data. Export and Preview artifact endpoints
+  return their declared CSV or manifest media type.
 
 ### Pagination
 
@@ -24,7 +25,8 @@ Response includes: `items`, `total`, `page`, `page_size`, `pages`.
 
 ### Date range defaults
 
-When `start_date` / `end_date` are omitted, the API uses the tenant's configured lookback window.
+When `start_date` / `end_date` are omitted on list endpoints, the API uses the
+tenant's configured lookback window. FOCUS Mapping Preview requires both dates.
 
 ### Error responses
 
@@ -454,6 +456,90 @@ Stream chargeback data as CSV. Returns `text/csv` with `Content-Disposition: att
 The `tags` column is serialized as `key=value;key=value` pairs (e.g. `team=platform;env=prod`).
 
 **Default columns:** `timestamp`, `resource_id`, `product_category`, `product_type`, `identity_id`, `cost_type`, `amount`, `allocation_method`, `tags`.
+
+---
+
+## FOCUS Mapping Preview
+
+FOCUS Mapping Preview is an asynchronous, Confluent Cloud-only exposition API.
+It reads persisted calculation and source evidence; it never calls the provider,
+triggers the pipeline, or edits/backfills data. The current request contract is
+Daily grain plus the Full column profile.
+
+### `POST /api/v1/tenants/{tenant_name}/focus-preview/requests`
+
+Create a request. Returns HTTP 202 with a queued status document.
+
+```json
+{
+  "grain": "daily",
+  "start_date": "2026-07-01",
+  "end_date": "2026-08-01",
+  "column_profile": "full"
+}
+```
+
+Dates are UTC and use inclusive-start/exclusive-end semantics. The request must
+contain 1–31 days within the UTC calendar month containing `start_date`; the
+exclusive end may be the first day of the following month.
+
+### `GET /api/v1/tenants/{tenant_name}/focus-preview/requests/{request_id}`
+
+Return the tenant-scoped request. The active lifecycle is `queued`, `running`,
+then `ready` or `failed`.
+
+Common response fields are `request_id`, `tenant_name`, `grain`, `start_date`,
+`end_date`, `column_profile`, `status`, `created_at`, `started_at`,
+`completed_at`, `diagnostic`, `source_snapshot`, and `package`.
+
+- Queued/running responses have no diagnostic, source snapshot, or package.
+- Failed responses contain `{code, message, retryable}` and no package.
+- Ready responses contain a source snapshot and package metadata.
+
+The source snapshot contains `calculation_timestamp`, date-ordered
+`calculation_coverage` entries, and `source_through`. Each coverage entry has
+`tracking_date`, `calculation_id`, `calculation_completed_at`, and optional
+`calculation_run_id`. Package metadata contains public name, media type, size,
+SHA-256, order (data files only), and API download URL. It contains no artifact
+root, storage key, or server path.
+
+### `GET /api/v1/tenants/{tenant_name}/focus-preview/requests/{request_id}/manifest`
+
+Return the exact stored `manifest.json` bytes for a ready request.
+
+### `GET /api/v1/tenants/{tenant_name}/focus-preview/requests/{request_id}/files/{file_name}`
+
+Return the exact stored bytes for a file enumerated by a ready request. The
+current package contains `cost-and-usage.csv`.
+
+### Preview errors
+
+| Condition | Status | Detail |
+|---|---:|---|
+| Invalid JSON, date, grain, or profile | 422 | FastAPI validation body |
+| Unknown tenant | 404 | `Tenant '<tenant_name>' not found` |
+| Non-Confluent Cloud tenant | 400 | `FOCUS Mapping Preview currently supports only Confluent Cloud tenants` |
+| Start is not before end | 400 | `start_date must be before end_date` |
+| Range crosses the allowed UTC month | 400 | `Daily preview range must stay within one UTC calendar month` |
+| Runtime unavailable | 503 | `FOCUS Mapping Preview runtime is unavailable` |
+| Storage unavailable | 503 | `FOCUS Mapping Preview storage is unavailable` |
+| Worker scheduling unavailable | 503 | `FOCUS Mapping Preview worker is unavailable` |
+| Request absent or owned by another tenant | 404 | `Preview request '<request_id>' not found` |
+| Manifest/file requested before ready | 409 | Status-specific not-ready detail |
+| File not enumerated by a ready package | 404 | File-specific not-found detail |
+| Stored bytes unavailable | 500 | `Stored preview artifact is unavailable` |
+
+Calculation diagnostics use these exact public meanings:
+
+| Code | Retryable | Message |
+|---|---:|---|
+| `calculation_metadata_unavailable` | false | `One or more requested dates lack preview calculation metadata.` |
+| `calculation_unavailable` | true | `No successful persisted calculation is available for the requested dates; run the pipeline and retry.` |
+| `calculation_coverage_incomplete` | true | `No successful persisted calculation covers every requested date; run the pipeline and retry.` |
+
+Incomplete persisted metadata has precedence over the two recoverable coverage
+diagnostics. The API provides no data-editing or correlation-repair endpoint.
+See [FOCUS Mapping Preview](focus-mapping-preview.md) for UI and CLI usage.
 
 ---
 

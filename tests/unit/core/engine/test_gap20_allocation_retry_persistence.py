@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime, timedelta
+from datetime import date as date_type
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
@@ -12,6 +13,7 @@ from core.engine.orchestrator import ChargebackOrchestrator, billing_window
 from core.models.billing import BillingLineItem, CoreBillingLineItem
 from core.models.identity import CoreIdentity, Identity, IdentityResolution, IdentitySet
 from core.models.resource import CoreResource, Resource
+from core.storage.interface import PipelineStateRepository
 
 if TYPE_CHECKING:
     from core.engine.allocation import AllocationContext, AllocationResult
@@ -230,11 +232,42 @@ class MockPipelineStateRepo:
     def mark_resources_gathered(self, *args: Any) -> None:
         pass
 
-    def mark_chargeback_calculated(self, *args: Any) -> None:
+    def mark_chargeback_calculated(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        tracking_date: date_type,
+        *,
+        calculation_id: str,
+        calculation_completed_at: datetime,
+        calculation_run_id: int | None,
+    ) -> None:
         pass
 
     def mark_needs_recalculation(self, *args: Any) -> None:
         pass
+
+    def mark_topic_overlay_gathered(self, ecosystem: str, tenant_id: str, tracking_date: date_type) -> None:
+        pass
+
+    def mark_topic_attribution_calculated(self, ecosystem: str, tenant_id: str, tracking_date: date_type) -> None:
+        pass
+
+    def find_needing_topic_attribution(self, ecosystem: str, tenant_id: str) -> list[PipelineState]:
+        return []
+
+    def count_pending(self, ecosystem: str, tenant_id: str) -> int:
+        return 0
+
+    def count_calculated(self, ecosystem: str, tenant_id: str) -> int:
+        return 0
+
+    def get_last_calculated_date(self, ecosystem: str, tenant_id: str) -> date_type | None:
+        return None
+
+
+def test_pipeline_state_fake_structurally_satisfies_repository_protocol() -> None:
+    assert isinstance(MockPipelineStateRepo(), PipelineStateRepository)
 
 
 class MockUnitOfWork:

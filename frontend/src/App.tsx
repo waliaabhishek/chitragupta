@@ -24,6 +24,7 @@ import { PipelineStatusPage } from "./pages/pipeline/status";
 import { TagManagementPage } from "./pages/tags/list";
 import { TopicAttributionPage } from "./pages/topicAttributions/list";
 import { ExplorerPage } from "./components/explorer/ExplorerPage";
+import { FocusPreviewPage } from "./pages/focusPreview";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -99,6 +100,7 @@ export function App(): React.JSX.Element {
                         />
                         <Route path="/tags" element={<TagManagementPage />} />
                         <Route path="/explorer" element={<ExplorerPage />} />
+                        <Route path="/focus-preview" element={<FocusPreviewPage />} />
                       </Routes>
                     </AppLayout>
                   </AppShellContext.Provider>

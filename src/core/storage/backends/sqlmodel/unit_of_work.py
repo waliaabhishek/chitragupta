@@ -20,6 +20,8 @@ from core.storage.backends.sqlmodel.repositories import (
 if TYPE_CHECKING:
     from core.emitters.repository import EmissionRepository
     from core.plugin.protocols import StorageModule
+    from core.preview.evidence import PreviewAllocationEvidenceReader, PreviewCostEvidenceReader
+    from core.preview.persistence import PreviewCalculationRepository, PreviewRequestRepository
     from core.storage.interface import (
         BillingRepository,
         ChargebackRepository,
@@ -126,6 +128,96 @@ class ReadOnlySQLModelUnitOfWork(SQLModelUnitOfWork):
         raise RuntimeError("Cannot commit on a read-only UnitOfWork — use get_write_unit_of_work dependency")
 
 
+class PreviewWriteSQLModelUnitOfWork:
+    def __init__(self, connection_string: str) -> None:
+        self._engine = get_or_create_engine(connection_string)
+        self._session: Session | None = None
+        self.requests: PreviewRequestRepository = None  # type: ignore[assignment]
+
+    def __enter__(self) -> Self:
+        from core.preview.persistence import SQLModelPreviewRequestRepository
+
+        self._session = Session(self._engine)
+        self._committed = False
+        self.requests = SQLModelPreviewRequestRepository(self._session)
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: object,
+    ) -> None:
+        if self._session is not None:
+            try:
+                if not self._committed:
+                    self._session.rollback()
+            finally:
+                self._session.close()
+                self._session = None
+
+    def commit(self) -> None:
+        if self._session is None:
+            raise RuntimeError("Cannot commit outside of a transaction")
+        self._session.commit()
+        self._committed = True
+
+    def rollback(self) -> None:
+        if self._session is None:
+            raise RuntimeError("Cannot rollback outside of a transaction")
+        self._session.rollback()
+
+
+class PreviewReadSQLModelUnitOfWork:
+    def __init__(self, connection_string: str, storage_module: StorageModule) -> None:
+        self._engine = get_or_create_read_only_engine(connection_string)
+        self._storage_module = storage_module
+        self._session: Session | None = None
+        self.requests: PreviewRequestRepository = None  # type: ignore[assignment]
+        self.calculations: PreviewCalculationRepository = None  # type: ignore[assignment]
+        self.cost_evidence: PreviewCostEvidenceReader = None  # type: ignore[assignment]
+        self.allocation_evidence: PreviewAllocationEvidenceReader = None  # type: ignore[assignment]
+        self.resources: ResourceRepository = None  # type: ignore[assignment]
+        self.identities: IdentityRepository = None  # type: ignore[assignment]
+
+    def __enter__(self) -> Self:
+        from core.preview.evidence import PreviewAllocationEvidenceReader, PreviewCostEvidenceReader
+        from core.preview.persistence import (
+            SQLModelPreviewCalculationRepository,
+            SQLModelPreviewRequestRepository,
+        )
+
+        self._session = Session(self._engine)
+        try:
+            self.requests = SQLModelPreviewRequestRepository(self._session)
+            self.calculations = SQLModelPreviewCalculationRepository(self._session)
+            self.resources = self._storage_module.create_resource_repository(self._session)
+            self.identities = self._storage_module.create_identity_repository(self._session)
+            billing = self._storage_module.create_billing_repository(self._session)
+            chargebacks = self._storage_module.create_chargeback_repository(self._session)
+            if not isinstance(billing, PreviewCostEvidenceReader):
+                raise TypeError("storage billing repository lacks preview evidence support")
+            if not isinstance(chargebacks, PreviewAllocationEvidenceReader):
+                raise TypeError("storage chargeback repository lacks preview evidence support")
+            self.cost_evidence = billing
+            self.allocation_evidence = chargebacks
+            return self
+        except BaseException:
+            self._session.close()
+            self._session = None
+            raise
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: object,
+    ) -> None:
+        if self._session is not None:
+            self._session.close()
+            self._session = None
+
+
 class SQLModelBackend:
     """SQLModel implementation of StorageBackend protocol."""
 
@@ -147,6 +239,12 @@ class SQLModelBackend:
 
     def create_read_only_unit_of_work(self) -> ReadOnlySQLModelUnitOfWork:
         return ReadOnlySQLModelUnitOfWork(self._connection_string, self._storage_module)
+
+    def create_preview_write_unit_of_work(self) -> PreviewWriteSQLModelUnitOfWork:
+        return PreviewWriteSQLModelUnitOfWork(self._connection_string)
+
+    def create_preview_read_unit_of_work(self) -> PreviewReadSQLModelUnitOfWork:
+        return PreviewReadSQLModelUnitOfWork(self._connection_string, self._storage_module)
 
     def create_tables(self) -> None:
         if self._use_migrations:

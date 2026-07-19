@@ -160,6 +160,12 @@ export function AppLayout({
       label: "Pipeline",
       disabled: tenantRequired,
     },
+    {
+      key: "/focus-preview",
+      icon: <DollarOutlined />,
+      label: "FOCUS Mapping Preview",
+      disabled: tenantRequired,
+    },
   ];
 
   return (

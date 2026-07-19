@@ -22,6 +22,7 @@ from core.models.chargeback import ChargebackRow, CostType
 from core.models.identity import CoreIdentity, Identity, IdentityResolution, IdentitySet
 from core.models.pipeline import PipelineState
 from core.models.resource import CoreResource, Resource
+from core.storage.interface import PipelineStateRepository
 
 if TYPE_CHECKING:
     from core.models.metrics import MetricQuery, MetricRow
@@ -430,11 +431,56 @@ class MockPipelineStateRepo:
         key = (ecosystem, tenant_id, tracking_date)
         if key in self._data:
             self._data[key].chargeback_calculated = False
+            self._data[key].calculation_id = None
+            self._data[key].calculation_completed_at = None
+            self._data[key].calculation_run_id = None
 
-    def mark_chargeback_calculated(self, ecosystem: str, tenant_id: str, tracking_date: date) -> None:
+    def mark_chargeback_calculated(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        tracking_date: date,
+        *,
+        calculation_id: str,
+        calculation_completed_at: datetime,
+        calculation_run_id: int | None,
+    ) -> None:
         key = (ecosystem, tenant_id, tracking_date)
         if key in self._data:
             self._data[key].chargeback_calculated = True
+            self._data[key].calculation_id = calculation_id
+            self._data[key].calculation_completed_at = calculation_completed_at
+            self._data[key].calculation_run_id = calculation_run_id
+
+    def mark_topic_overlay_gathered(self, ecosystem: str, tenant_id: str, tracking_date: date) -> None:
+        pass
+
+    def mark_topic_attribution_calculated(self, ecosystem: str, tenant_id: str, tracking_date: date) -> None:
+        pass
+
+    def find_needing_topic_attribution(self, ecosystem: str, tenant_id: str) -> list[PipelineState]:
+        return []
+
+    def count_pending(self, ecosystem: str, tenant_id: str) -> int:
+        return len(self.find_needing_calculation(ecosystem, tenant_id))
+
+    def count_calculated(self, ecosystem: str, tenant_id: str) -> int:
+        return sum(
+            state.ecosystem == ecosystem and state.tenant_id == tenant_id and state.chargeback_calculated
+            for state in self._data.values()
+        )
+
+    def get_last_calculated_date(self, ecosystem: str, tenant_id: str) -> date | None:
+        dates = [
+            state.tracking_date
+            for state in self._data.values()
+            if state.ecosystem == ecosystem and state.tenant_id == tenant_id and state.chargeback_calculated
+        ]
+        return max(dates, default=None)
+
+
+def test_pipeline_state_fake_structurally_satisfies_repository_protocol() -> None:
+    assert isinstance(MockPipelineStateRepo(), PipelineStateRepository)
 
 
 class MockStorageBackend:

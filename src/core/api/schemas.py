@@ -59,6 +59,65 @@ class PipelineStateResponse(BaseModel):
     topic_attribution_calculated: bool = False
 
 
+class FocusPreviewRequestBody(BaseModel):
+    grain: Literal["daily"]
+    start_date: date
+    end_date: date
+    column_profile: Literal["full"]
+
+
+class FocusPreviewDiagnosticResponse(BaseModel):
+    code: str
+    message: str
+    retryable: bool
+
+
+class FocusPreviewCalculationCoverageEntryResponse(BaseModel):
+    tracking_date: date
+    calculation_id: str
+    calculation_completed_at: datetime
+    calculation_run_id: int | None
+
+
+class FocusPreviewSourceSnapshotResponse(BaseModel):
+    calculation_timestamp: datetime
+    calculation_coverage: list[FocusPreviewCalculationCoverageEntryResponse]
+    source_through: datetime
+
+
+class FocusPreviewArtifactResponse(BaseModel):
+    name: str
+    media_type: str
+    size_bytes: int
+    sha256: str
+    order: int | None = Field(default=None, exclude_if=lambda value: value is None)
+    download_url: str
+
+
+class FocusPreviewPackageResponse(BaseModel):
+    manifest: FocusPreviewArtifactResponse
+    files: list[FocusPreviewArtifactResponse]
+
+
+class FocusPreviewResponse(BaseModel):
+    request_id: str
+    tenant_name: str
+    grain: Literal["daily"]
+    start_date: date
+    end_date: date
+    column_profile: Literal["full"]
+    status: Literal["queued", "running", "ready", "failed", "expired"]
+    created_at: datetime
+    started_at: datetime | None
+    completed_at: datetime | None
+    diagnostic: FocusPreviewDiagnosticResponse | None
+    source_snapshot: FocusPreviewSourceSnapshotResponse | None
+    package: FocusPreviewPackageResponse | None
+
+
+FocusPreviewStatusResponse = FocusPreviewResponse
+
+
 class TenantStatusDetailResponse(BaseModel):
     """Detailed pipeline status for a tenant."""
 

@@ -56,6 +56,17 @@ class ChargebackFactTable(SQLModel, table=True):
 
 class PipelineStateTable(SQLModel, table=True):
     __tablename__ = "pipeline_state"
+    __table_args__ = (
+        Index(
+            "ix_pipeline_state_preview_coverage",
+            "ecosystem",
+            "tenant_id",
+            "tracking_date",
+            "chargeback_calculated",
+            "calculation_id",
+            "calculation_completed_at",
+        ),
+    )
 
     ecosystem: str = Field(primary_key=True)
     tenant_id: str = Field(primary_key=True)
@@ -63,6 +74,9 @@ class PipelineStateTable(SQLModel, table=True):
     billing_gathered: bool = False
     resources_gathered: bool = False
     chargeback_calculated: bool = False
+    calculation_id: str | None = None
+    calculation_completed_at: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True)))
+    calculation_run_id: int | None = Field(default=None, foreign_key="pipeline_runs.id")
     topic_overlay_gathered: bool = False
     topic_attribution_calculated: bool = False
 

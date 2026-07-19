@@ -61,18 +61,64 @@ def create_app(
         app.state.backends = {}
         app.state.workflow_runner = workflow_runner
         app.state.mode = mode
-        if workflow_runner is None:
-            from workflow_runner import cleanup_orphaned_runs_for_all_tenants
+        from core.preview.artifacts import LocalPreviewArtifactStore
+        from core.preview.service import PreviewRuntime
 
-            await asyncio.to_thread(cleanup_orphaned_runs_for_all_tenants, settings, swallow_errors=True)
-        yield
-        logger.info("Chitragupta API shutting down — disposing backends")
-        for backend in app.state.backends.values():
-            backend.dispose()
-        if workflow_runner is not None:
-            logger.debug("Draining workflow runner")
-            await asyncio.to_thread(workflow_runner.drain, 30)
-        logger.info("Chitragupta API shutdown complete")
+        preview_artifact_store: LocalPreviewArtifactStore | None = None
+        preview_runtime: PreviewRuntime | None = None
+        original_error: BaseException | None = None
+        try:
+            preview_artifact_store = LocalPreviewArtifactStore(settings.preview.artifact_root)
+            preview_runtime = PreviewRuntime(
+                artifact_store=preview_artifact_store,
+                max_workers=settings.preview.max_workers,
+            )
+            app.state.preview_artifact_store = preview_artifact_store
+            app.state.preview_runtime = preview_runtime
+            if workflow_runner is None:
+                from workflow_runner import cleanup_orphaned_runs_for_all_tenants
+
+                await asyncio.to_thread(cleanup_orphaned_runs_for_all_tenants, settings, swallow_errors=True)
+            yield
+        except BaseException as exc:
+            original_error = exc
+            raise
+        finally:
+            logger.info("Chitragupta API shutting down — disposing backends")
+            cleanup_errors: list[BaseException] = []
+
+            def record_cleanup_error(step: str, exc: BaseException) -> None:
+                cleanup_errors.append(exc)
+                logger.error(
+                    "Chitragupta API cleanup failed step=%s error_type=%s",
+                    step,
+                    type(exc).__name__,
+                )
+
+            if preview_runtime is not None:
+                try:
+                    preview_runtime.close(wait=True)
+                except BaseException as exc:
+                    record_cleanup_error("preview_runtime", exc)
+            if preview_artifact_store is not None:
+                try:
+                    preview_artifact_store.close()
+                except BaseException as exc:
+                    record_cleanup_error("preview_artifact_store", exc)
+            for backend in tuple(app.state.backends.values()):
+                try:
+                    backend.dispose()
+                except BaseException as exc:
+                    record_cleanup_error("backend", exc)
+            if workflow_runner is not None:
+                logger.debug("Draining workflow runner")
+                try:
+                    await asyncio.to_thread(workflow_runner.drain, 30)
+                except BaseException as exc:
+                    record_cleanup_error("workflow_runner", exc)
+            logger.info("Chitragupta API shutdown complete")
+            if cleanup_errors and original_error is None:
+                raise cleanup_errors[0]
 
     app = FastAPI(
         title="Chitragupta API",
@@ -102,6 +148,7 @@ def create_app(
         billing,
         chargebacks,
         export,
+        focus_preview,
         graph,
         health,
         identities,
@@ -128,6 +175,7 @@ def create_app(
     app.include_router(tags.router, prefix="/api/v1")
     app.include_router(pipeline.router, prefix="/api/v1")
     app.include_router(export.router, prefix="/api/v1")
+    app.include_router(focus_preview.router, prefix="/api/v1")
     app.include_router(topic_attributions.router, prefix="/api/v1")
     app.include_router(graph.router, prefix="/api/v1")
 

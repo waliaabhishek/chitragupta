@@ -57,6 +57,11 @@ class StorageConfig(BaseModel):
     connection_string: SecretStr = Field(default=SecretStr("sqlite:///data/chargeback.db"))
 
 
+class PreviewConfig(BaseModel):
+    artifact_root: Path = Path("data/focus-preview")
+    max_workers: int = Field(default=2, gt=0, le=16)
+
+
 class EmitterSpec(BaseModel):
     """Spec for one emitter entry in YAML config.
 
@@ -162,6 +167,7 @@ class AppSettings(BaseModel):
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     features: FeaturesConfig = Field(default_factory=FeaturesConfig)
     api: ApiConfig = Field(default_factory=ApiConfig)
+    preview: PreviewConfig = Field(default_factory=PreviewConfig)
     tenants: dict[str, TenantConfig] = Field(default_factory=dict)
     plugins_path: Path | None = Field(
         default=None,

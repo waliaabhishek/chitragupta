@@ -82,6 +82,7 @@ nav:
     - Self-Managed Kafka: configuration/self-managed-reference.md
     - Generic Metrics: configuration/generic-metrics-reference.md
     - Advanced Scenarios: configuration/advanced-scenarios.md
+  - FOCUS Mapping Preview: focus-mapping-preview.md
   - Architecture:
     - architecture/index.md
     - Plugin System: architecture/plugin-system.md

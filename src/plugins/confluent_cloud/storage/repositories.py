@@ -7,12 +7,18 @@ from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, cast
 
-from sqlalchemy import delete, func, update
+from sqlalchemy import and_, delete, func, or_, update
 from sqlmodel import Session, col, select
 
+from core.preview.evidence import (
+    PreviewAggregateEvidence,
+    PreviewAllocationEvidence,
+    PreviewEvidenceScope,
+    PreviewSourceEvidence,
+)
 from core.storage.backends.sqlmodel.mappers import chargeback_to_dimension
 from core.storage.backends.sqlmodel.repositories import SQLModelChargebackRepository
-from core.storage.backends.sqlmodel.tables import ChargebackDimensionTable
+from core.storage.backends.sqlmodel.tables import ChargebackDimensionTable, ChargebackFactTable
 from plugins.confluent_cloud.models.billing import CCloudBillingLineItem, CCloudCostSourceRecord
 from plugins.confluent_cloud.storage.tables import CCloudBillingTable, CCloudCostSourceTable
 
@@ -97,6 +103,46 @@ def _source_to_table(record: CCloudCostSourceRecord) -> CCloudCostSourceTable:
         malformed=record.malformed,
         diagnostics_json=_canonical_json(record.diagnostics),
         raw_payload_json=_canonical_json(record.raw_payload),
+    )
+
+
+def _source_table_to_preview(row: CCloudCostSourceTable) -> PreviewSourceEvidence:
+    tiers = json.loads(row.tier_dimensions_json)
+    if not isinstance(tiers, dict) or not all(
+        isinstance(key, str) and isinstance(value, str) for key, value in tiers.items()
+    ):
+        raise ValueError("source tier dimensions must be a string mapping")
+    diagnostics = json.loads(row.diagnostics_json)
+    if not isinstance(diagnostics, list) or not all(isinstance(value, str) for value in diagnostics):
+        raise ValueError("source diagnostics must be a string list")
+    return PreviewSourceEvidence(
+        source_record_id=row.source_record_id,
+        identity_scheme=row.identity_scheme,
+        provider_cost_id=row.provider_cost_id,
+        source_period_start=_ensure_utc(row.source_period_start) if row.source_period_start else None,
+        source_period_end=_ensure_utc(row.source_period_end) if row.source_period_end else None,
+        collection_window_start=_ensure_utc(row.collection_window_start),
+        collection_window_end=_ensure_utc(row.collection_window_end),
+        evidence_scope_start=_ensure_utc(row.evidence_scope_start),
+        evidence_scope_end=_ensure_utc(row.evidence_scope_end),
+        allocation_timestamp=_ensure_utc(row.allocation_timestamp),
+        granularity=row.granularity,
+        native_product=row.product,
+        native_line_type=row.line_type,
+        amount=Decimal(row.amount) if row.amount is not None else None,
+        original_amount=Decimal(row.original_amount) if row.original_amount is not None else None,
+        discount_amount=Decimal(row.discount_amount) if row.discount_amount is not None else None,
+        price=Decimal(row.price) if row.price is not None else None,
+        quantity=Decimal(row.quantity) if row.quantity is not None else None,
+        unit=row.unit,
+        native_description=row.description,
+        native_network_access_type=row.network_access_type,
+        resource_id=row.resource_id,
+        resource_name=row.resource_name,
+        environment_id=row.environment_id,
+        native_tier_dimensions=tuple(sorted(tiers.items())),
+        malformed=row.malformed,
+        diagnostics=tuple(diagnostics),
     )
 
 
@@ -291,6 +337,79 @@ class CCloudBillingRepository:
         )
         return [_table_to_line(r) for r in self._session.exec(stmt).all()]
 
+    def find_preview_source_candidates(self, scope: PreviewEvidenceScope) -> tuple[PreviewSourceEvidence, ...]:
+        dated_overlap = (
+            col(CCloudCostSourceTable.malformed) == False,  # noqa: E712
+            col(CCloudCostSourceTable.source_period_start).is_not(None),
+            col(CCloudCostSourceTable.source_period_end).is_not(None),
+            col(CCloudCostSourceTable.source_period_start) < scope.end,
+            col(CCloudCostSourceTable.source_period_end) > scope.start,
+        )
+        fallback_overlap = (
+            or_(
+                col(CCloudCostSourceTable.malformed) == True,  # noqa: E712
+                col(CCloudCostSourceTable.source_period_start).is_(None),
+                col(CCloudCostSourceTable.source_period_end).is_(None),
+            ),
+            col(CCloudCostSourceTable.evidence_scope_start) < scope.end,
+            col(CCloudCostSourceTable.evidence_scope_end) > scope.start,
+        )
+        statement = (
+            select(CCloudCostSourceTable)
+            .where(
+                col(CCloudCostSourceTable.ecosystem) == scope.ecosystem,
+                col(CCloudCostSourceTable.tenant_id) == scope.tenant_id,
+                or_(and_(*dated_overlap), and_(*fallback_overlap)),
+            )
+            .order_by(
+                col(CCloudCostSourceTable.evidence_scope_start),
+                col(CCloudCostSourceTable.evidence_scope_end),
+                col(CCloudCostSourceTable.source_record_id),
+                col(CCloudCostSourceTable.identity_scheme),
+            )
+            .limit(2)
+        )
+        return tuple(_source_table_to_preview(row) for row in self._session.exec(statement).all())
+
+    def find_preview_aggregate_candidates(
+        self, scope: PreviewEvidenceScope, source: PreviewSourceEvidence
+    ) -> tuple[PreviewAggregateEvidence, ...]:
+        statement = (
+            select(CCloudBillingTable)
+            .where(
+                col(CCloudBillingTable.ecosystem) == scope.ecosystem,
+                col(CCloudBillingTable.tenant_id) == scope.tenant_id,
+                col(CCloudBillingTable.timestamp) == source.allocation_timestamp,
+                col(CCloudBillingTable.env_id) == source.environment_id,
+                col(CCloudBillingTable.resource_id) == source.resource_id,
+                col(CCloudBillingTable.product_category) == source.native_product,
+                col(CCloudBillingTable.product_type) == source.native_line_type,
+            )
+            .order_by(
+                col(CCloudBillingTable.timestamp),
+                col(CCloudBillingTable.env_id),
+                col(CCloudBillingTable.resource_id),
+                col(CCloudBillingTable.product_category),
+                col(CCloudBillingTable.product_type),
+            )
+            .limit(2)
+        )
+        return tuple(
+            PreviewAggregateEvidence(
+                timestamp=_ensure_utc(row.timestamp),
+                environment_id=row.env_id,
+                resource_id=row.resource_id,
+                native_product=row.product_category,
+                native_line_type=row.product_type,
+                quantity=Decimal(row.quantity),
+                unit_price=Decimal(row.unit_price),
+                total_cost=Decimal(row.total_cost),
+                compatibility_currency=row.currency,
+                granularity=row.granularity,
+            )
+            for row in self._session.exec(statement).all()
+        )
+
     def _increment_int_column(self, line: BillingLineItem, attr: str) -> int:
         ccloud_line = cast("CCloudBillingLineItem", line)
         row = self._session.get(CCloudBillingTable, _billing_pk(ccloud_line))
@@ -396,6 +515,48 @@ class CCloudChargebackRepository(SQLModelChargebackRepository):
     def _make_dimension_key(self, row: ChargebackRow) -> tuple[str | None, ...]:
         base = super()._make_dimension_key(row)
         return (*base, row.metadata.get("env_id", ""))
+
+    def find_preview_allocation_candidates(
+        self, scope: PreviewEvidenceScope, source: PreviewSourceEvidence
+    ) -> tuple[PreviewAllocationEvidence, ...]:
+        statement = (
+            select(ChargebackDimensionTable, ChargebackFactTable)
+            .join(
+                ChargebackFactTable,
+                col(ChargebackFactTable.dimension_id) == col(ChargebackDimensionTable.dimension_id),
+            )
+            .where(
+                col(ChargebackDimensionTable.ecosystem) == scope.ecosystem,
+                col(ChargebackDimensionTable.tenant_id) == scope.tenant_id,
+                col(ChargebackFactTable.timestamp) == source.allocation_timestamp,
+                col(ChargebackDimensionTable.env_id) == source.environment_id,
+                col(ChargebackDimensionTable.resource_id) == source.resource_id,
+                col(ChargebackDimensionTable.product_category) == source.native_product,
+                col(ChargebackDimensionTable.product_type) == source.native_line_type,
+            )
+            .order_by(
+                col(ChargebackFactTable.timestamp),
+                col(ChargebackDimensionTable.env_id),
+                col(ChargebackDimensionTable.resource_id),
+                col(ChargebackDimensionTable.product_category),
+                col(ChargebackDimensionTable.product_type),
+                col(ChargebackDimensionTable.identity_id),
+            )
+            .limit(2)
+        )
+        return tuple(
+            PreviewAllocationEvidence(
+                timestamp=_ensure_utc(fact.timestamp),
+                environment_id=dimension.env_id,
+                resource_id=dimension.resource_id or "",
+                native_product=dimension.product_category,
+                native_line_type=dimension.product_type,
+                allocation_target_id=dimension.identity_id,
+                allocation_method=dimension.allocation_method or "",
+                amount=Decimal(fact.amount),
+            )
+            for dimension, fact in self._session.exec(statement).all()
+        )
 
     def _get_or_create_dimension(self, row: ChargebackRow) -> ChargebackDimensionTable:
         # Full override (not super()) required because the SQL WHERE clause must include

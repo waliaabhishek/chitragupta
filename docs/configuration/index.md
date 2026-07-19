@@ -13,6 +13,7 @@ This section provides complete configuration documentation for each supported ec
 ```mermaid
 graph TD
     A[AppSettings] --> B[TenantConfig]
+    A --> P[PreviewConfig]
     B --> C[StorageConfig]
     B --> D[PluginSettingsBase]
     D --> E[CCloudPluginConfig]
@@ -40,6 +41,30 @@ All tenants share these `TenantConfig` fields:
 | `cutoff_days` | int | 5 | Skip dates within this many days of today |
 | `retention_days` | int | 250 | Delete data older than this |
 | `storage.connection_string` | string | required | Database URL (SQLite or PostgreSQL) |
+
+## FOCUS Mapping Preview
+
+Preview artifact storage and worker concurrency are process-wide settings, not
+tenant settings:
+
+```yaml
+preview:
+  artifact_root: /var/lib/chitragupta/focus-preview
+  max_workers: 2
+```
+
+| Field | Type | Default | Constraints | Description |
+|---|---|---|---|---|
+| `preview.artifact_root` | path | `data/focus-preview` | writable directory | Durable local root for immutable Preview packages. Relative paths resolve from the process working directory. |
+| `preview.max_workers` | int | `2` | 1–16 | Maximum Preview generation jobs in this API process. |
+
+The artifact root must be on durable storage and writable by the API process.
+For containers, mount it into the data volume. The database stores request and
+artifact metadata; artifact bytes remain under this root and are served only by
+the protected Preview API. Changing the root does not move existing packages.
+
+See [FOCUS Mapping Preview](../focus-mapping-preview.md) for request behavior and
+client usage.
 
 ## Emitters
 

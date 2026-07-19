@@ -528,7 +528,16 @@ class PipelineStateRepository(Protocol):
         """Resets chargeback_calculated=False for the given date (for recalculation window)."""
         ...
 
-    def mark_chargeback_calculated(self, ecosystem: str, tenant_id: str, tracking_date: date) -> None: ...
+    def mark_chargeback_calculated(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        tracking_date: date,
+        *,
+        calculation_id: str,
+        calculation_completed_at: datetime,
+        calculation_run_id: int | None,
+    ) -> None: ...
 
     def mark_topic_overlay_gathered(self, ecosystem: str, tenant_id: str, tracking_date: date) -> None:
         """Sets topic_overlay_gathered=True for the given date."""

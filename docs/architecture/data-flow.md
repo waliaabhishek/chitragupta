@@ -109,10 +109,11 @@ The pipeline loop ends at step 8. Topic overlay (step 9) is a separate pass over
 | `identities` | Discovered principals/service accounts with lifecycle timestamps |
 | `chargeback_dimensions` | Unique (identity, resource, product, cost_type) combinations — the "what" |
 | `chargeback_facts` | Cost amounts linked to dimensions via `dimension_id` — the "how much" |
-| `pipeline_state` | Per-date progress flags: `billing_gathered`, `resources_gathered`, `chargeback_calculated`, `topic_overlay_gathered`, `topic_attribution_calculated` |
+| `pipeline_state` | Per-date progress flags plus the successful chargeback calculation ID, completion time, and optional owning-run provenance used by Preview |
 | `topic_attribution_dimensions` | Unique (cluster, topic, product_type, attribution_method) combinations |
 | `topic_attribution_facts` | Per-topic cost amounts linked to dimensions via `dimension_id` |
 | `pipeline_runs` | Audit trail: run start/end, status, rows written, errors |
+| `preview_requests` | Tenant-scoped Daily Full Preview lifecycle, diagnostics, source snapshot, and public artifact metadata (never server paths) |
 | `custom_tags` | User-defined key/value tags attached to chargeback dimensions |
 | `emission_records` | Per-tenant/emitter/date emission outcome tracking (emitted, failed) with attempt count |
 
@@ -124,6 +125,32 @@ The `pipeline_state` table enables resumption and prevents re-processing. The ca
 phase only processes dates where billing and resources are gathered but chargebacks not
 yet calculated. When new billing data arrives for recent dates, the recalculation window
 re-clears the `chargeback_calculated` flag so those dates get reprocessed.
+
+The calculate phase writes `calculation_id`, `calculation_completed_at`, and
+optional `calculation_run_id` in the same per-date transaction as the chargeback
+rows. Preview uses the per-date identity and completion time as success authority;
+the global `pipeline_runs` status is audit provenance and does not invalidate a
+date that already committed.
+
+## FOCUS Mapping Preview read path
+
+```mermaid
+flowchart LR
+    PS[(Persisted pipeline state)] --> PR[Preview read transaction]
+    EV[(Persisted source and allocation evidence)] --> PR
+    PR --> MAP[Validate, reconcile, and map Daily Full]
+    MAP --> ART[(Atomic local artifact package)]
+    ART --> API[Protected Preview API]
+    API --> UI[Web UI]
+    API --> CLI[Remote CLI]
+```
+
+Preview is read-only with respect to collected business data. It does not call a
+provider, start a gather/calculation run, infer missing historical calculation
+metadata, or expose an edit/backfill path. Migrated calculated dates without
+usable correlation remain unchanged and produce a non-retryable metadata
+diagnostic. Only the ordinary collector and calculation lifecycle can later
+replace persisted data.
 
 ## Concurrency
 

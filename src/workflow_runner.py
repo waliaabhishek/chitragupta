@@ -421,7 +421,9 @@ class WorkflowRunner:
             runtime.orchestrator._progress_callback = tracker.make_progress_callback(pipeline_run)
 
             try:
-                result = runtime.orchestrator.run()  # GatherFailureThresholdError propagates up
+                result = runtime.orchestrator.run(
+                    calculation_run_id=pipeline_run.id
+                )  # GatherFailureThresholdError propagates up
                 runtime.last_run_at = datetime.now(UTC)
                 tracker.finalize(pipeline_run, result)
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import calendar
 import logging
 import time
+import uuid
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field, replace
@@ -48,6 +49,14 @@ def _get_ta_config(plugin: EcosystemPlugin) -> OverlayConfig | None:
 
 
 logger = logging.getLogger(__name__)
+
+
+def _new_calculation_id() -> str:
+    return str(uuid.uuid4())
+
+
+def _calculation_utc_now() -> datetime:
+    return datetime.now(UTC)
 
 
 class GatherFailureThresholdError(Exception):
@@ -461,6 +470,9 @@ class CalculatePhase:
         metrics_step: timedelta,
         extra_granularity_durations: dict[str, timedelta] | None = None,
         metrics_prefetch_workers: int = 4,
+        *,
+        calculation_id_factory: Callable[[], str] = _new_calculation_id,
+        calculation_clock: Callable[[], datetime] = _calculation_utc_now,
     ) -> None:
         self._ecosystem = ecosystem
         self._tenant_id = tenant_id
@@ -472,17 +484,25 @@ class CalculatePhase:
         self._allocator_params = allocator_params
         self._metrics_step = metrics_step
         self._metrics_prefetch_workers = metrics_prefetch_workers
+        self._calculation_id_factory = calculation_id_factory
+        self._calculation_clock = calculation_clock
         self._merged_granularity_durations: dict[str, timedelta] = {
             **_DEFAULT_GRANULARITY_DURATION,
             **(extra_granularity_durations or {}),
         }
 
-    def run(self, uow: UnitOfWork, tracking_date: date_type) -> int:
+    def run(
+        self,
+        uow: UnitOfWork,
+        tracking_date: date_type,
+        *,
+        calculation_run_id: int | None = None,
+    ) -> int:
         """Calculate chargebacks for a single date. Returns rows written."""
         billing_lines = uow.billing.find_by_date(self._ecosystem, self._tenant_id, tracking_date)
 
         if not billing_lines:
-            uow.pipeline_state.mark_chargeback_calculated(self._ecosystem, self._tenant_id, tracking_date)
+            self._mark_success(uow, tracking_date, calculation_run_id)
             return 0
 
         line_window_cache = self._compute_line_window_cache(billing_lines)
@@ -505,8 +525,29 @@ class CalculatePhase:
             all_rows.extend(rows)
 
         total_rows = uow.chargebacks.upsert_batch(all_rows)
-        uow.pipeline_state.mark_chargeback_calculated(self._ecosystem, self._tenant_id, tracking_date)
+        self._mark_success(uow, tracking_date, calculation_run_id)
         return total_rows
+
+    def _mark_success(
+        self,
+        uow: UnitOfWork,
+        tracking_date: date_type,
+        calculation_run_id: int | None,
+    ) -> None:
+        calculation_id = self._calculation_id_factory()
+        completed_at = self._calculation_clock()
+        if not calculation_id:
+            raise ValueError("calculation_id must not be empty")
+        if completed_at.tzinfo is None or completed_at.utcoffset() is None:
+            raise ValueError("calculation completion time must be timezone-aware")
+        uow.pipeline_state.mark_chargeback_calculated(
+            self._ecosystem,
+            self._tenant_id,
+            tracking_date,
+            calculation_id=calculation_id,
+            calculation_completed_at=completed_at.astimezone(UTC),
+            calculation_run_id=calculation_run_id,
+        )
 
     def _compute_line_window_cache(
         self, billing_lines: list[BillingLineItem]
@@ -910,15 +951,23 @@ class ChargebackOrchestrator:
         )
         return uow.chargebacks.upsert_batch(rows)
 
-    def _calculate_date(self, uow: UnitOfWork, tracking_date: date_type) -> int:
+    def _calculate_date(
+        self,
+        uow: UnitOfWork,
+        tracking_date: date_type,
+        *,
+        calculation_run_id: int | None = None,
+    ) -> int:
         """Backward-compatible wrapper — delegates to CalculatePhase.run()."""
-        return self._calculate_phase.run(uow, tracking_date)
+        if calculation_run_id is None:
+            return self._calculate_phase.run(uow, tracking_date)
+        return self._calculate_phase.run(uow, tracking_date, calculation_run_id=calculation_run_id)
 
     def _report_progress(self, stage: str | None, current_date: date_type | None = None) -> None:
         if self._progress_callback is not None:
             self._progress_callback(stage, current_date)
 
-    def run(self) -> PipelineRunResult:
+    def run(self, *, calculation_run_id: int | None = None) -> PipelineRunResult:
         errors: list[str] = []
         dates_gathered = 0
         dates_calculated = 0
@@ -969,7 +1018,14 @@ class ChargebackOrchestrator:
             start_time = time.time()
             try:
                 with self._storage_backend.create_unit_of_work() as uow:
-                    rows = self._calculate_phase.run(uow, tracking_date)
+                    if calculation_run_id is None:
+                        rows = self._calculate_phase.run(uow, tracking_date)
+                    else:
+                        rows = self._calculate_phase.run(
+                            uow,
+                            tracking_date,
+                            calculation_run_id=calculation_run_id,
+                        )
                     chargeback_rows_written += rows
                     dates_calculated += 1
                     uow.commit()

@@ -16,6 +16,11 @@ cp data/chargeback.db-shm data/chargeback.db-shm.bak 2>/dev/null
 
 If you have multiple tenants, back up each tenant's database.
 
+If the deployment has generated FOCUS Mapping Preview packages, also back up
+the configured `preview.artifact_root`. The database contains request/package
+metadata, while the immutable manifest and CSV bytes live under that filesystem
+root.
+
 ### PostgreSQL
 
 ```bash
@@ -111,6 +116,19 @@ uv run alembic -c src/core/storage/migrations/alembic.ini \
   -x sqlalchemy.url="postgresql+psycopg2://user:pass@host/dbname" \
   upgrade head
 ```
+
+### Migration 019: FOCUS Mapping Preview
+
+Migration 019 adds the `preview_requests` table and nullable per-date
+`calculation_id`, `calculation_completed_at`, and `calculation_run_id` fields to
+`pipeline_state`, plus their indexes and optional run foreign key.
+
+The migration is additive and performs no data-repair update or backfill.
+Existing calculated dates therefore retain null correlation metadata and remain
+unchanged. A Preview request covering such a date fails with
+`calculation_metadata_unavailable` and `retryable=false`; Preview does not expose
+an edit, approval, backfill, or repair operation. The ordinary collector and
+calculation lifecycle remains the only producer of new calculation metadata.
 
 ## Rollback
 

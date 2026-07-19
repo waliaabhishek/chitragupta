@@ -1501,7 +1501,13 @@ class SQLModelPipelineStateRepository:
                 col(PipelineStateTable.tenant_id) == tenant_id,
                 col(PipelineStateTable.tracking_date) == tracking_date,
             )
-            .values(chargeback_calculated=False, topic_attribution_calculated=False)
+            .values(
+                chargeback_calculated=False,
+                topic_attribution_calculated=False,
+                calculation_id=None,
+                calculation_completed_at=None,
+                calculation_run_id=None,
+            )
         )
         self._session.execute(stmt)
 
@@ -1542,7 +1548,20 @@ class SQLModelPipelineStateRepository:
         )
         return [pipeline_state_to_domain(row) for row in self._session.exec(stmt).all()]
 
-    def mark_chargeback_calculated(self, ecosystem: str, tenant_id: str, tracking_date: date) -> None:
+    def mark_chargeback_calculated(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        tracking_date: date,
+        *,
+        calculation_id: str,
+        calculation_completed_at: datetime,
+        calculation_run_id: int | None,
+    ) -> None:
+        if not calculation_id:
+            raise ValueError("calculation_id must not be empty")
+        if calculation_completed_at.tzinfo is None or calculation_completed_at.utcoffset() is None:
+            raise ValueError("calculation_completed_at must be timezone-aware")
         stmt = (
             update(PipelineStateTable)
             .where(
@@ -1550,7 +1569,12 @@ class SQLModelPipelineStateRepository:
                 col(PipelineStateTable.tenant_id) == tenant_id,
                 col(PipelineStateTable.tracking_date) == tracking_date,
             )
-            .values(chargeback_calculated=True)
+            .values(
+                chargeback_calculated=True,
+                calculation_id=calculation_id,
+                calculation_completed_at=calculation_completed_at.astimezone(UTC),
+                calculation_run_id=calculation_run_id,
+            )
         )
         self._session.execute(stmt)
 

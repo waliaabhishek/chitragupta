@@ -43,6 +43,7 @@ docs = [
 
 [project.scripts]
 chitragupta = "main:main"
+chitragupta-preview = "core.preview.cli:main"
 
 [tool.hatch.version]
 source = "vcs"

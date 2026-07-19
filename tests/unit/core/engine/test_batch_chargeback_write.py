@@ -11,6 +11,7 @@ from core.engine.orchestrator import CalculatePhase
 from core.models.billing import BillingLineItem, CoreBillingLineItem
 from core.models.chargeback import ChargebackRow, CostType
 from core.models.identity import CoreIdentity, Identity, IdentityResolution, IdentitySet
+from core.storage.interface import PipelineStateRepository
 
 if TYPE_CHECKING:
     from core.models.pipeline import PipelineState
@@ -22,6 +23,7 @@ if TYPE_CHECKING:
 
 NOW = datetime(2026, 3, 1, 0, 0, 0, tzinfo=UTC)
 TODAY = NOW.date()
+CALCULATION_ID = "batch-write-calculation"
 ECOSYSTEM = "test-eco"
 TENANT_ID = "tenant-1"
 
@@ -194,6 +196,7 @@ class MockIdentityRepo:
 class MockPipelineStateRepo:
     def __init__(self) -> None:
         self._data: dict[tuple[str, str, date_type], PipelineState] = {}
+        self.marked: list[tuple[str, str, date_type, str, datetime, int | None]] = []
 
     def upsert(self, state: PipelineState) -> PipelineState:
         key = (state.ecosystem, state.tenant_id, state.tracking_date)
@@ -218,8 +221,48 @@ class MockPipelineStateRepo:
     def mark_needs_recalculation(self, *args: Any) -> None:
         pass
 
-    def mark_chargeback_calculated(self, *args: Any) -> None:
+    def mark_chargeback_calculated(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        tracking_date: date_type,
+        *,
+        calculation_id: str,
+        calculation_completed_at: datetime,
+        calculation_run_id: int | None,
+    ) -> None:
+        self.marked.append(
+            (
+                ecosystem,
+                tenant_id,
+                tracking_date,
+                calculation_id,
+                calculation_completed_at,
+                calculation_run_id,
+            )
+        )
+
+    def mark_topic_overlay_gathered(self, ecosystem: str, tenant_id: str, tracking_date: date_type) -> None:
         pass
+
+    def mark_topic_attribution_calculated(self, ecosystem: str, tenant_id: str, tracking_date: date_type) -> None:
+        pass
+
+    def find_needing_topic_attribution(self, ecosystem: str, tenant_id: str) -> list[PipelineState]:
+        return []
+
+    def count_pending(self, ecosystem: str, tenant_id: str) -> int:
+        return 0
+
+    def count_calculated(self, ecosystem: str, tenant_id: str) -> int:
+        return 0
+
+    def get_last_calculated_date(self, ecosystem: str, tenant_id: str) -> date_type | None:
+        return None
+
+
+def test_pipeline_state_fake_structurally_satisfies_repository_protocol() -> None:
+    assert isinstance(MockPipelineStateRepo(), PipelineStateRepository)
 
 
 class MockUnitOfWork:
@@ -271,6 +314,8 @@ def _make_calculate_phase(
         identity_overrides={},
         allocator_params={},
         metrics_step=timedelta(hours=1),
+        calculation_id_factory=lambda: CALCULATION_ID,
+        calculation_clock=lambda: NOW,
     )
 
 
@@ -319,6 +364,8 @@ class TestCollectBillingLineRows:
             identity_overrides={},
             allocator_params={},
             metrics_step=timedelta(hours=1),
+            calculation_id_factory=lambda: CALCULATION_ID,
+            calculation_clock=lambda: NOW,
         )
 
         line = _make_billing_line()
@@ -418,6 +465,8 @@ class TestCalculatePhaseRunBatch:
             identity_overrides={},
             allocator_params={},
             metrics_step=timedelta(hours=1),
+            calculation_id_factory=lambda: CALCULATION_ID,
+            calculation_clock=lambda: NOW,
         )
 
         # 3 billing lines → 3 chargeback rows (1 per line)
@@ -436,6 +485,7 @@ class TestCalculatePhaseRunBatch:
         assert len(uow.chargebacks._upsert_batch_calls) == 1
         batch = uow.chargebacks._upsert_batch_calls[0]
         assert len(batch) == 3
+        assert uow.pipeline_state.marked == [(ECOSYSTEM, TENANT_ID, TODAY, CALCULATION_ID, NOW, None)]
 
     def test_run_empty_billing_lines_returns_zero_no_batch(self) -> None:
         """run() with no billing lines returns 0 and never calls upsert_batch."""
@@ -446,3 +496,4 @@ class TestCalculatePhaseRunBatch:
 
         assert total == 0
         assert uow.chargebacks._upsert_batch_calls == []
+        assert uow.pipeline_state.marked == [(ECOSYSTEM, TENANT_ID, TODAY, CALCULATION_ID, NOW, None)]

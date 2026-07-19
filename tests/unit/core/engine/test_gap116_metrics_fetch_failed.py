@@ -29,6 +29,7 @@ from core.models import IdentityResolution, IdentitySet
 from core.models.billing import BillingLineItem, CoreBillingLineItem
 from core.models.chargeback import AllocationDetail, ChargebackRow
 from core.models.metrics import MetricQuery
+from core.storage.interface import PipelineStateRepository
 
 from .conftest import make_billing_line, make_identity_resolution
 
@@ -36,6 +37,7 @@ from .conftest import make_billing_line, make_identity_resolution
 
 NOW = datetime(2026, 2, 22, 12, 0, 0, tzinfo=UTC)
 TODAY = NOW.date()
+CALCULATION_ID = "gap116-calculation"
 ECOSYSTEM = "test-eco"
 TENANT_ID = "tenant-1"
 
@@ -96,6 +98,8 @@ def _make_calculate_phase(
         allocator_params=allocator_params or {},
         metrics_step=timedelta(hours=1),
         metrics_prefetch_workers=metrics_prefetch_workers,
+        calculation_id_factory=lambda: CALCULATION_ID,
+        calculation_clock=lambda: NOW,
     )
 
 
@@ -445,8 +449,72 @@ class _MockChargebackRepo:
 
 
 class _MockPipelineStateRepo:
-    def mark_chargeback_calculated(self, *args: Any) -> None:
+    def __init__(self) -> None:
+        self.marked: list[tuple[str, str, date_type, str, datetime, int | None]] = []
+
+    def mark_chargeback_calculated(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        tracking_date: date_type,
+        *,
+        calculation_id: str,
+        calculation_completed_at: datetime,
+        calculation_run_id: int | None,
+    ) -> None:
+        self.marked.append(
+            (
+                ecosystem,
+                tenant_id,
+                tracking_date,
+                calculation_id,
+                calculation_completed_at,
+                calculation_run_id,
+            )
+        )
+
+    def upsert(self, state: Any) -> Any:
+        return state
+
+    def get(self, ecosystem: str, tenant_id: str, tracking_date: date_type) -> Any | None:
+        return None
+
+    def find_needing_calculation(self, ecosystem: str, tenant_id: str) -> list[Any]:
+        return []
+
+    def find_by_range(self, ecosystem: str, tenant_id: str, start: date_type, end: date_type) -> list[Any]:
+        return []
+
+    def mark_billing_gathered(self, ecosystem: str, tenant_id: str, tracking_date: date_type) -> None:
         pass
+
+    def mark_resources_gathered(self, ecosystem: str, tenant_id: str, tracking_date: date_type) -> None:
+        pass
+
+    def mark_needs_recalculation(self, ecosystem: str, tenant_id: str, tracking_date: date_type) -> None:
+        pass
+
+    def mark_topic_overlay_gathered(self, ecosystem: str, tenant_id: str, tracking_date: date_type) -> None:
+        pass
+
+    def mark_topic_attribution_calculated(self, ecosystem: str, tenant_id: str, tracking_date: date_type) -> None:
+        pass
+
+    def find_needing_topic_attribution(self, ecosystem: str, tenant_id: str) -> list[Any]:
+        return []
+
+    def count_pending(self, ecosystem: str, tenant_id: str) -> int:
+        return 0
+
+    def count_calculated(self, ecosystem: str, tenant_id: str) -> int:
+        return 0
+
+    def get_last_calculated_date(self, ecosystem: str, tenant_id: str) -> date_type | None:
+        return None
+
+
+def test_pipeline_state_fake_structurally_satisfies_repository_protocol() -> None:
+    assert isinstance(_MockPipelineStateRepo(), PipelineStateRepository)
 
 
 class _MockUoW:
@@ -504,6 +572,7 @@ class TestOrchestratorEndToEnd:
         assert row.allocation_detail == AllocationDetail.METRICS_FETCH_FAILED, (
             f"Expected METRICS_FETCH_FAILED, got {row.allocation_detail!r}"
         )
+        assert uow.pipeline_state.marked == [(ECOSYSTEM, TENANT_ID, TODAY, CALCULATION_ID, NOW, None)]
 
     def test_successful_prefetch_does_not_produce_metrics_fetch_failed(self) -> None:
         """E2E: Successful MetricsSource → allocation_detail is NOT METRICS_FETCH_FAILED."""
@@ -549,3 +618,4 @@ class TestOrchestratorEndToEnd:
             f"Expected non-METRICS_FETCH_FAILED for successful empty query, got {row.allocation_detail!r}"
         )
         assert row.allocation_detail == AllocationDetail.NO_USAGE_FOR_ACTIVE_IDENTITIES
+        assert uow.pipeline_state.marked == [(ECOSYSTEM, TENANT_ID, TODAY, CALCULATION_ID, NOW, None)]

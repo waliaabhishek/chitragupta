@@ -29,6 +29,7 @@ as the config file. Variables already in the environment take precedence.
 logging:       # Optional — log level and format
 features:      # Optional — periodic refresh, parallelism
 api:           # Optional — HTTP server settings
+preview:       # Optional — FOCUS Mapping Preview artifact root and workers
 tenants:       # Required — one entry per managed tenant
   <name>:
     ecosystem: ...
