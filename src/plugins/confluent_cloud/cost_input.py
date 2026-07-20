@@ -40,6 +40,7 @@ class _SourceCandidate:
     collection_window_start: datetime
     collection_window_end: datetime
     ordinal: int
+    billing_key: tuple[str, str, datetime, str, str, str, str]
 
 
 def _canonical_json(value: Any) -> str:
@@ -109,6 +110,8 @@ def _map_billing_item(
         raise ValueError("Invalid billing environment shape: expected object")
     environment = environment_value
     env_id = environment.get("id") or ""
+    product_value = item.get("product")
+    product_category = product_value if isinstance(product_value, str) else ""
 
     # Build metadata, excluding None values
     metadata: dict[str, Any] = {}
@@ -124,7 +127,7 @@ def _map_billing_item(
         timestamp=_parse_billing_date(item["start_date"]),
         env_id=env_id,  # CCloud-specific: part of 7-field PK
         resource_id=resource.get("id") or f"unresolved_billing_{row_index}",
-        product_category=item.get("product", ""),
+        product_category=product_category,
         product_type=item.get("line_type", ""),
         quantity=_safe_decimal(item.get("quantity")),
         unit_price=_safe_decimal(item.get("price")),
@@ -300,6 +303,11 @@ def _map_source_record(
         malformed=bool(diagnostics),
         diagnostics=tuple(diagnostics),
         raw_payload=deepcopy(raw),
+        billing_timestamp=candidate.billing_key[2],
+        billing_env_id=candidate.billing_key[3],
+        billing_resource_id=candidate.billing_key[4],
+        billing_product_type=candidate.billing_key[5],
+        billing_product_category=candidate.billing_key[6],
     )
 
 
@@ -484,19 +492,20 @@ class CCloudBillingCostInput(CostInput):
         )
         candidates: list[_SourceCandidate] = []
         for idx, raw_item in enumerate(self._connection.get(BILLING_API_PATH, params=params)):
+            try:
+                item = _map_billing_item(raw_item, ECOSYSTEM, tenant_id, row_index=idx)
+            except (AttributeError, KeyError, TypeError, ValueError) as exc:
+                logger.debug("Preserving malformed billing item %d as sentinel row: %s", idx, exc)
+                item = _map_malformed_item(raw_item, ECOSYSTEM, tenant_id, idx, exc)
             candidates.append(
                 _SourceCandidate(
                     raw_payload=deepcopy(raw_item),
                     collection_window_start=start,
                     collection_window_end=end,
                     ordinal=idx,
+                    billing_key=billing_natural_key(item),
                 )
             )
-            try:
-                item = _map_billing_item(raw_item, ECOSYSTEM, tenant_id, row_index=idx)
-            except (AttributeError, KeyError, TypeError, ValueError) as exc:
-                logger.debug("Preserving malformed billing item %d as sentinel row: %s", idx, exc)
-                item = _map_malformed_item(raw_item, ECOSYSTEM, tenant_id, idx, exc)
             groups[billing_natural_key(item)].append(item)
 
         return [_aggregate_tiers(group) for group in groups.values()], candidates

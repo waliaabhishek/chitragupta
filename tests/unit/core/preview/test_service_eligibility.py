@@ -368,10 +368,10 @@ def test_one_sided_source_aggregate_coverage_fails_closed(
     ("source_changes", "expected_code"),
     [
         ({"malformed": True}, "preview_source_record_malformed"),
-        ({"line_type": None}, "preview_source_line_type_unknown"),
+        ({"line_type": ""}, "preview_source_line_type_unknown"),
         ({"line_type": "FUTURE_LINE"}, "preview_source_line_type_unsupported"),
         ({"line_type": "SUPPORT"}, "preview_charge_classification_ambiguous"),
-        ({"line_type": "KAFKA_STREAMS"}, "preview_mapping_scope_unsupported"),
+        ({"line_type": "KAFKA_STREAMS"}, "preview_source_coverage_incomplete"),
         ({"line_type": "PROMO_CREDIT"}, "preview_source_economics_unsupported"),
         ({"description": "Prior period refund"}, "preview_charge_classification_ambiguous"),
         ({"resource_id": None}, "preview_source_record_incomplete"),
@@ -540,7 +540,7 @@ def test_more_than_twenty_valid_sources_use_independent_valid_correlation_accumu
 @pytest.mark.parametrize(
     ("matched", "expected_code"),
     [
-        (True, "preview_mapping_scope_unsupported"),
+        (True, "preview_allocation_lineage_incomplete"),
         (False, "preview_source_coverage_incomplete"),
     ],
 )

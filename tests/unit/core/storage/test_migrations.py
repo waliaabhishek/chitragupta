@@ -138,7 +138,12 @@ class TestBaselineMigration:
         inspector_d = sa_inspect(engine_d)
 
         # Plugin-specific tables created by migrations but not by CoreStorageModule
-        plugin_tables = {"ccloud_billing", "ccloud_cost_source_records"}
+        plugin_tables = {
+            "ccloud_allocation_lineage_portions",
+            "ccloud_allocation_lineage_runs",
+            "ccloud_billing",
+            "ccloud_cost_source_records",
+        }
 
         tables_m = set(inspector_m.get_table_names()) - {"alembic_version"} - plugin_tables
         tables_d = set(inspector_d.get_table_names())

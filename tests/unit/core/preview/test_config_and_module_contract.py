@@ -97,7 +97,7 @@ def test_mapping_accepts_typed_projection_and_domain_objects() -> None:
     assert hints["environment"] == Resource | None
 
 
-def test_mapping_helpers_expose_the_typed_v3_boundary_contracts() -> None:
+def test_mapping_helpers_expose_the_typed_v4_boundary_contracts() -> None:
     mapping = preview_module("mapping")
 
     assert list(inspect.signature(mapping.classify_daily_full_source).parameters) == [

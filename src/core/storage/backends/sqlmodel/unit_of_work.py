@@ -49,11 +49,11 @@ class SQLModelUnitOfWork:
         # outside a context block (UnitOfWork is @runtime_checkable Protocol).
         self.resources: ResourceRepository = None  # type: ignore[assignment]
         self.identities: IdentityRepository = None  # type: ignore[assignment]
+        self.tags: EntityTagRepository = None  # type: ignore[assignment]
         self.billing: BillingRepository = None  # type: ignore[assignment]
         self.chargebacks: ChargebackRepository = None  # type: ignore[assignment]
         self.pipeline_state: PipelineStateRepository = None  # type: ignore[assignment]
         self.pipeline_runs: PipelineRunRepository = None  # type: ignore[assignment]
-        self.tags: EntityTagRepository = None  # type: ignore[assignment]
         self.emissions: EmissionRepository = None  # type: ignore[assignment]
         self.graph: GraphRepository = None  # type: ignore[assignment]
         self._topic_attributions: TopicAttributionRepositoryImpl | None = None
@@ -179,6 +179,7 @@ class PreviewReadSQLModelUnitOfWork:
         self.allocation_evidence: PreviewAllocationEvidenceReader = None  # type: ignore[assignment]
         self.resources: ResourceRepository = None  # type: ignore[assignment]
         self.identities: IdentityRepository = None  # type: ignore[assignment]
+        self.tags: EntityTagRepository = None  # type: ignore[assignment]
 
     def __enter__(self) -> Self:
         from core.preview.evidence import PreviewAllocationEvidenceReader, PreviewCostEvidenceReader
@@ -193,6 +194,7 @@ class PreviewReadSQLModelUnitOfWork:
             self.calculations = SQLModelPreviewCalculationRepository(self._session)
             self.resources = self._storage_module.create_resource_repository(self._session)
             self.identities = self._storage_module.create_identity_repository(self._session)
+            self.tags = SQLModelEntityTagRepository(self._session)
             billing = self._storage_module.create_billing_repository(self._session)
             chargebacks = self._storage_module.create_chargeback_repository(self._session)
             if not isinstance(billing, PreviewCostEvidenceReader):

@@ -267,7 +267,7 @@ _REAL_BUNDLE_MAPPING_SCOPE_CASES: tuple[tuple[str, dict[str, object]], ...] = (
     (
         "promotional-allowance",
         {
-            "product": "KAFKA",
+            "product": None,
             "line_type": "PROMO_CREDIT",
             "description": "Promotional allowance",
             "amount": "-5",
@@ -409,6 +409,11 @@ class ReplacementCostInput:
                     resource_id="lkc-1",
                     resource_name="Orders",
                     environment_id="env-1",
+                    billing_timestamp=window_start,
+                    billing_env_id="env-1",
+                    billing_resource_id="lkc-1",
+                    billing_product_type="KAFKA_STORAGE",
+                    billing_product_category="KAFKA",
                     tier_dimensions={"tier": "standard"},
                     malformed=False,
                     diagnostics=(),
@@ -511,14 +516,6 @@ def test_real_bundle_deferred_native_lines_fail_mapping_scope_before_later_previ
     case_id: str,
     provider_overrides: dict[str, object],
 ) -> None:
-    del case_id
-    from core.preview import service
-    from core.storage.backends.sqlmodel.repositories import (
-        SQLModelIdentityRepository,
-        SQLModelResourceRepository,
-    )
-    from plugins.confluent_cloud.storage import repositories
-
     async def to_thread_inline(function: Any, *args: object, **kwargs: object) -> object:
         return function(*args, **kwargs)
 
@@ -560,6 +557,36 @@ def test_real_bundle_deferred_native_lines_fail_mapping_scope_before_later_previ
     with backend.create_unit_of_work() as uow:
         gathered_dates = orchestrator._gather_phase._gather_billing(uow, datetime(2026, 7, 3, tzinfo=UTC))
         assert gathered_dates == {tracking_date}
+        for resource in (
+            CoreResource(
+                ecosystem="confluent_cloud",
+                tenant_id="tenant-1",
+                resource_id="11111111-2222-4333-8444-555555555555",
+                resource_type="organization",
+                display_name="Provider billing organization",
+                status=ResourceStatus.ACTIVE,
+                metadata={"organization_binding_state": "bound"},
+            ),
+            CoreResource(
+                ecosystem="confluent_cloud",
+                tenant_id="tenant-1",
+                resource_id="env-1",
+                resource_type="environment",
+                display_name="Production",
+                status=ResourceStatus.ACTIVE,
+            ),
+            CoreResource(
+                ecosystem="confluent_cloud",
+                tenant_id="tenant-1",
+                resource_id="lkc-1",
+                resource_type="kafka_cluster",
+                display_name="Orders",
+                parent_id="env-1",
+                status=ResourceStatus.ACTIVE,
+                metadata={"provider_cloud": "AWS", "provider_region": "us-east-1"},
+            ),
+        ):
+            uow.resources.upsert(resource)
         uow.pipeline_state.upsert(
             PipelineState(
                 ecosystem="confluent_cloud",
@@ -584,37 +611,55 @@ def test_real_bundle_deferred_native_lines_fail_mapping_scope_before_later_previ
     assert state.has_usable_calculation is True
     assert costs_route.call_count == 1
 
-    def forbidden(*_args: object, **_kwargs: object) -> object:
-        raise AssertionError("later Preview boundary must not run")
-
-    monkeypatch.setattr(service, "_coverage_matches", forbidden)
-    monkeypatch.setattr(service, "reconcile_selected_evidence", forbidden)
-    monkeypatch.setattr(service, "resolve_provider_resource_context", forbidden)
-    monkeypatch.setattr(service, "build_daily_full_package", forbidden)
-    monkeypatch.setattr(repositories.CCloudBillingRepository, "find_preview_aggregate_candidates", forbidden)
-    monkeypatch.setattr(repositories.CCloudChargebackRepository, "find_preview_allocation_candidates", forbidden)
-    monkeypatch.setattr(SQLModelResourceRepository, "find_active_at", forbidden)
-    monkeypatch.setattr(SQLModelResourceRepository, "get", forbidden)
-    monkeypatch.setattr(SQLModelIdentityRepository, "get", forbidden)
-
     app = create_app(settings)
     client = PipelineApiClient(app, use_lifespan=True)
-    monkeypatch.setattr(app.state.preview_artifact_store, "finalize_package", forbidden)
     try:
         failed = _request(client, tracking_date, date(2026, 7, 2))
 
-        assert failed["status"] == "failed"
-        assert failed["diagnostic"] == {
-            "code": "preview_mapping_scope_unsupported",
-            "message": "The complete source set exceeds the current Daily Full mapping scope.",
-            "retryable": False,
-            "source_correlation_ids": failed["diagnostic"]["source_correlation_ids"],
-        }
-        assert len(failed["diagnostic"]["source_correlation_ids"]) == 1
-        assert failed["source_snapshot"] is None
-        assert failed.get("storage_key") is None
-        assert failed["package"] is None
-        assert list((tmp_path / "real-bundle-artifacts").iterdir()) == []
+        if provider_overrides["product"] in {
+            "CONNECT",
+            "CUSTOM_CONNECT",
+            "FLINK",
+            "KSQL",
+            "STREAM_GOVERNANCE",
+            "TABLEFLOW",
+        }:
+            assert failed["status"] == "failed"
+            assert failed["diagnostic"]["code"] == "preview_provider_context_incomplete"
+        else:
+            assert failed["status"] == "ready", failed
+            assert failed["diagnostic"] is None
+            assert failed["package"] is not None
+            if case_id in {"promotional-allowance", "promo-refund-kafka"}:
+                csv_response = client.get(failed["package"]["files"][0]["download_url"])
+                assert csv_response.status_code == 200
+                rows = list(csv.DictReader(io.StringIO(csv_response.text)))
+                assert len(rows) == 1
+                row = rows[0]
+                assert row["x_ConfluentLineType"] == "PROMO_CREDIT"
+                assert row["ChargeClass"] == ""
+                if case_id == "promotional-allowance":
+                    assert row["x_ConfluentProduct"] == ""
+                    assert row["ChargeCategory"] == "Credit"
+                    assert row["ChargeFrequency"] == "One-Time"
+                    assert row["ServiceCategory"] == "Other"
+                    assert row["ServiceName"] == "Confluent Cloud Promotional Credits"
+                    assert row["ServiceSubcategory"] == "Other (Other)"
+                    assert row["BilledCost"] == "-5"
+                    assert row["EffectiveCost"] == "-5"
+                    assert row["ContractedCost"] == "-5"
+                    assert row["ListCost"] == "-5"
+                else:
+                    assert row["x_ConfluentProduct"] == "KAFKA"
+                    assert row["ChargeCategory"] == "Usage"
+                    assert row["ChargeFrequency"] == "Usage-Based"
+                    assert row["ServiceCategory"] == "Integration"
+                    assert row["ServiceName"] == "Confluent Cloud Apache Kafka"
+                    assert row["ServiceSubcategory"] == "Messaging"
+                    assert row["BilledCost"] == "-8"
+                    assert row["EffectiveCost"] == "-8"
+                    assert row["ContractedCost"] == "-10"
+                    assert row["ListCost"] == "-10"
         assert costs_route.call_count == 1
     finally:
         client.close()
@@ -768,7 +813,7 @@ def test_workflow_runner_provider_calculation_to_preview_mixed_retry_and_unrelat
         assert csv_response.status_code == 200
         manifest = manifest_response.json()
         assert manifest["source_snapshot"]["source_through"] == a_ready["source_snapshot"]["source_through"]
-        assert manifest["mapping_profile_version"] == "focus-1.4-daily-full-v3"
+        assert manifest["mapping_profile_version"] == "focus-1.4-daily-full-v4"
         assert manifest["known_gaps"]
         assert manifest["conformance_status"] == "non_conforming"
         row = next(csv.DictReader(io.StringIO(csv_response.text)))
@@ -1137,17 +1182,11 @@ def test_custom_pipeline_allocation_cannot_bypass_native_lineage_scope(
 
         preview = _request(client, date(2026, 7, 1), date(2026, 7, 2))
 
-        assert preview["status"] == "failed"
+        assert preview["status"] == "ready"
         assert len(respx.calls) == provider_call_count
-        assert preview["diagnostic"] == {
-            "code": "preview_mapping_scope_unsupported",
-            "message": "The complete source set exceeds the current Daily Full mapping scope.",
-            "retryable": False,
-            "source_correlation_ids": preview["diagnostic"]["source_correlation_ids"],
-        }
-        assert len(preview["diagnostic"]["source_correlation_ids"]) == 1
-        assert preview["source_snapshot"] is None
-        assert preview["package"] is None
+        assert preview["diagnostic"] is None
+        assert preview["source_snapshot"] is not None
+        assert preview["package"] is not None
     finally:
         client.close()
         runner.close()
@@ -1331,17 +1370,11 @@ def test_custom_pipeline_and_provider_context_cannot_bypass_promo_lineage_scope(
 
         preview = _request(client, date(2026, 7, 1), date(2026, 7, 2))
 
-        assert preview["status"] == "failed"
+        assert preview["status"] == "ready"
         assert len(respx.calls) == provider_call_count
-        assert preview["diagnostic"] == {
-            "code": "preview_mapping_scope_unsupported",
-            "message": "The complete source set exceeds the current Daily Full mapping scope.",
-            "retryable": False,
-            "source_correlation_ids": preview["diagnostic"]["source_correlation_ids"],
-        }
-        assert len(preview["diagnostic"]["source_correlation_ids"]) == 1
-        assert preview["source_snapshot"] is None
-        assert preview["package"] is None
+        assert preview["diagnostic"] is None
+        assert preview["source_snapshot"] is not None
+        assert preview["package"] is not None
     finally:
         client.close()
         runner.close()
@@ -1509,7 +1542,7 @@ def test_migrated_legacy_metadata_failure_preserves_data_when_provider_is_unavai
     migration = _alembic_config(connection_string)
     command.upgrade(migration, "018")
     _seed_legacy_rows(connection_string)
-    command.upgrade(migration, "020")
+    command.upgrade(migration, "021")
 
     route = respx.get("https://api.confluent.cloud/billing/v1/costs")
     route.mock(return_value=httpx.Response(200, json={"data": [], "metadata": {}}))
@@ -1599,7 +1632,7 @@ def test_migrated_legacy_precedence_uses_real_recoverable_lifecycle_without_muta
     migration = _alembic_config(connection_string)
     command.upgrade(migration, "018")
     _seed_legacy_rows(connection_string)
-    command.upgrade(migration, "020")
+    command.upgrade(migration, "021")
     snapshot_engine = create_engine(connection_string)
     legacy_before = _legacy_july_first_snapshot(snapshot_engine)
 
@@ -1724,7 +1757,7 @@ def test_ordinary_gather_and_calculate_lifecycle_replaces_incomplete_legacy_corr
                 {"tracking_timestamp": tracking_timestamp},
             )
     legacy_engine.dispose()
-    command.upgrade(migration, "020")
+    command.upgrade(migration, "021")
     tenant = TenantConfig(
         ecosystem="confluent_cloud",
         tenant_id="tenant-1",

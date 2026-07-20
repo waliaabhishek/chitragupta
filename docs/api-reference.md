@@ -509,13 +509,20 @@ The source snapshot contains `calculation_timestamp`, date-ordered
 SHA-256, order (data files only), and API download URL. It contains no artifact
 root, storage key, or server path.
 
-A ready package stores the exact `focus-1.4-daily-full-v3` output: 65 ordered
+A ready package stores the exact `focus-1.4-daily-full-v4` output: 65 ordered
 FOCUS Full columns followed by 12 ordered custom evidence columns. The stored
 manifest declares `conformance_status: non_conforming`, profile version,
 calculation/source coverage, exact known gaps, validation status/counts,
 reconciliation, and file checksums. Mapping/profile validation completes before
 atomic finalization. Manifest and CSV downloads return the stored bytes; the
 API, UI, and CLI do not remap them.
+
+The package may contain multiple persisted billing origins and multiple actual
+allocation portions per origin. `CCloudBillingLineItem` remains the sole
+allocation origin; raw Cost rows remain classification/coverage evidence linked
+to that existing billing key. Actual `UNALLOCATED` portions have null allocated
+resource/name/tag fields. Origin `Tags` and target `AllocatedTags` are resolved
+separately at package time and frozen into the stored bytes.
 
 ### `GET /api/v1/tenants/{tenant_name}/focus-preview/requests/{request_id}/manifest`
 
@@ -570,20 +577,23 @@ Eligibility and source diagnostics are:
 | `preview_source_economics_unsupported` | false | Monetary or quantity values are outside the supported tracer. |
 | `preview_source_reconciliation_failed` | false | Source, aggregate, or allocation evidence does not reconcile. |
 | `preview_source_coverage_incomplete` | false | Complete source and aggregate origin coverage does not match. |
-| `preview_mapping_scope_unsupported` | false | The complete source set exceeds the current Daily Full scope, including organization-wide rows and TASK-254.05 lineage-deferred native types. |
+| `preview_mapping_scope_unsupported` | false | The complete source set exceeds the current Daily Full scope, including multiple native/tier Cost rows associated with one billing origin. |
+| `preview_allocation_lineage_incomplete` | false | Persisted calculation lineage is missing, incomplete, corrupt, or structurally inconsistent for one or more billing origins. |
 | `preview_billing_account_unavailable` | false | No authoritative persisted Confluent organization binding is available. |
 | `preview_billing_account_conflicting` | false | Persisted Confluent organization evidence conflicts for the tenant partition. |
 | `preview_provider_context_incomplete` | false | Authoritative resource context is absent or incompatible; all TABLEFLOW rows use this failure because current inventory cannot prove their provider context. |
-| `preview_mapping_validation_failed` | false | The generated row does not satisfy the complete Daily Full v3 mapping profile. |
+| `preview_mapping_validation_failed` | false | The generated row does not satisfy the complete Daily Full v4 mapping profile. |
 
-The TASK-254.05 lineage gate returns `preview_mapping_scope_unsupported` for
-`KAFKA_REST_PRODUCE`, `KAFKA_STREAMS`, `CONNECT_NUM_RECORDS`, all three
-`CLUSTER_LINKING_*` types, `USM_CONNECTED_NODE`, and every `PROMO_CREDIT` row,
-including refunds. `AUDIT_LOG_READ` and `SUPPORT` return the same diagnostic at
-the earlier organization-wide boundary. TABLEFLOW instead returns
-`preview_provider_context_incomplete`. These typed failures are non-retryable,
-carry at most 20 sorted safe correlations, and persist null source snapshot and
-package fields; manifest/file retrieval therefore remains unavailable.
+All accepted native line types can use persisted calculation lineage, including
+organization-wide rows, provider-null promotional allowances, and signed
+refunds. TABLEFLOW still returns `preview_provider_context_incomplete` because
+current inventory cannot prove its provider context. Missing legacy billing
+association returns `preview_source_coverage_incomplete`; recovery requires an
+ordinary provider regather followed by ordinary calculation. Missing or invalid
+lineage returns `preview_allocation_lineage_incomplete`; exact cost or quantity
+shortfall/overage returns `preview_source_reconciliation_failed`. These failures
+are non-retryable, carry at most 20 sorted safe correlations, and persist null
+source snapshot and package fields; manifest/file retrieval remains unavailable.
 
 Incomplete persisted calculation metadata has precedence over acquisition,
 commercial, currency, source, and mapping diagnostics. `lookback_days` is capped

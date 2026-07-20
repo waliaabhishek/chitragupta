@@ -13,14 +13,22 @@ from sqlmodel import Session, col, select
 from core.preview.evidence import (
     PreviewAggregateEvidence,
     PreviewAllocationEvidence,
+    PreviewAllocationRunEvidence,
     PreviewEvidenceScope,
     PreviewSourceEvidence,
+    decode_lineage_decimal,
 )
 from core.storage.backends.sqlmodel.mappers import chargeback_to_dimension
 from core.storage.backends.sqlmodel.repositories import SQLModelChargebackRepository
 from core.storage.backends.sqlmodel.tables import ChargebackDimensionTable, ChargebackFactTable
+from core.storage.interface import AllocationLineageRunCapture, LineageCaptureStatus
 from plugins.confluent_cloud.models.billing import CCloudBillingLineItem, CCloudCostSourceRecord
-from plugins.confluent_cloud.storage.tables import CCloudBillingTable, CCloudCostSourceTable
+from plugins.confluent_cloud.storage.tables import (
+    CCloudAllocationLineagePortionTable,
+    CCloudAllocationLineageRunTable,
+    CCloudBillingTable,
+    CCloudCostSourceTable,
+)
 
 if TYPE_CHECKING:
     from core.models.billing import BillingLineItem
@@ -99,6 +107,11 @@ def _source_to_table(record: CCloudCostSourceRecord) -> CCloudCostSourceTable:
         resource_id=record.resource_id,
         resource_name=record.resource_name,
         environment_id=record.environment_id,
+        billing_timestamp=None if record.billing_timestamp is None else _ensure_utc_strict(record.billing_timestamp),
+        billing_env_id=record.billing_env_id,
+        billing_resource_id=record.billing_resource_id,
+        billing_product_type=record.billing_product_type,
+        billing_product_category=record.billing_product_category,
         tier_dimensions_json=_canonical_json(record.tier_dimensions),
         malformed=record.malformed,
         diagnostics_json=_canonical_json(record.diagnostics),
@@ -140,6 +153,11 @@ def _source_table_to_preview(row: CCloudCostSourceTable) -> PreviewSourceEvidenc
         resource_id=row.resource_id,
         resource_name=row.resource_name,
         environment_id=row.environment_id,
+        billing_timestamp=_ensure_utc(row.billing_timestamp) if row.billing_timestamp else None,
+        billing_env_id=row.billing_env_id,
+        billing_resource_id=row.billing_resource_id,
+        billing_product_type=row.billing_product_type,
+        billing_product_category=row.billing_product_category,
         native_tier_dimensions=tuple(sorted(tiers.items())),
         malformed=row.malformed,
         diagnostics=tuple(diagnostics),
@@ -194,6 +212,31 @@ def _validate_source_record(
             raise ValueError("Source allocation timestamp must be inside replacement window")
     elif retention != scope_end:
         raise ValueError("Undated source retention timestamp must equal evidence scope end")
+
+    association = (
+        record.billing_timestamp,
+        record.billing_env_id,
+        record.billing_resource_id,
+        record.billing_product_type,
+        record.billing_product_category,
+    )
+    if any(value is None for value in association):
+        raise ValueError("Source record billing association must be complete")
+    billing_timestamp = _ensure_utc_strict(cast("datetime", record.billing_timestamp))
+    if not record.malformed:
+        billing_resource_id = cast("str", record.billing_resource_id)
+        expected_billing_product_category = record.product or ""
+        resource_matches = billing_resource_id == record.resource_id or (
+            record.resource_id is None and billing_resource_id.startswith("unresolved_billing_")
+        )
+        if (
+            billing_timestamp != allocation
+            or record.billing_env_id != (record.environment_id or "")
+            or not resource_matches
+            or record.billing_product_type != record.line_type
+            or record.billing_product_category != expected_billing_product_category
+        ):
+            raise ValueError("Source record billing association is inconsistent with mapped billing identity")
 
 
 def _line_to_table(line: CCloudBillingLineItem) -> CCloudBillingTable:
@@ -587,6 +630,173 @@ class CCloudChargebackRepository(SQLModelChargebackRepository):
     def _make_dimension_key(self, row: ChargebackRow) -> tuple[str | None, ...]:
         base = super()._make_dimension_key(row)
         return (*base, row.metadata.get("env_id", ""))
+
+    def replace_calculation_lineage(
+        self,
+        run: AllocationLineageRunCapture,
+        *,
+        calculation_completed_at: datetime,
+    ) -> None:
+        if not run.calculation_id:
+            raise ValueError("calculation_id must not be empty")
+        completed_at = _ensure_utc_strict(calculation_completed_at)
+        self._session.execute(
+            delete(CCloudAllocationLineagePortionTable).where(
+                col(CCloudAllocationLineagePortionTable.ecosystem) == run.ecosystem,
+                col(CCloudAllocationLineagePortionTable.tenant_id) == run.tenant_id,
+                col(CCloudAllocationLineagePortionTable.tracking_date) == run.tracking_date,
+            )
+        )
+        self._session.execute(
+            delete(CCloudAllocationLineageRunTable).where(
+                col(CCloudAllocationLineageRunTable.ecosystem) == run.ecosystem,
+                col(CCloudAllocationLineageRunTable.tenant_id) == run.tenant_id,
+                col(CCloudAllocationLineageRunTable.tracking_date) == run.tracking_date,
+            )
+        )
+        invalid = next((capture for capture in run.captures if capture.status is LineageCaptureStatus.INVALID), None)
+        portions = [
+            CCloudAllocationLineagePortionTable(
+                ecosystem=run.ecosystem,
+                tenant_id=run.tenant_id,
+                tracking_date=run.tracking_date,
+                calculation_id=run.calculation_id,
+                origin_timestamp=_ensure_utc_strict(capture.origin_timestamp),
+                origin_env_id=capture.origin_env_id,
+                origin_resource_id=capture.origin_resource_id,
+                origin_product_type=capture.origin_product_type,
+                origin_product_category=capture.origin_product_category,
+                portion_ordinal=fact.portion_ordinal,
+                target_kind=fact.target_kind.value,
+                target_id=fact.target_id,
+                allocated_cost=str(fact.allocated_cost),
+                allocated_quantity=str(fact.allocated_quantity),
+                allocation_ratio=str(fact.allocation_ratio),
+                method_id=fact.method_id,
+                method_version=fact.method_version,
+                method_details_json=fact.method_details_json,
+            )
+            for capture in run.captures
+            if capture.status is LineageCaptureStatus.COMPLETE
+            for fact in capture.facts
+        ]
+        self._session.add(
+            CCloudAllocationLineageRunTable(
+                ecosystem=run.ecosystem,
+                tenant_id=run.tenant_id,
+                tracking_date=run.tracking_date,
+                calculation_id=run.calculation_id,
+                calculation_completed_at=completed_at,
+                capture_status=(
+                    LineageCaptureStatus.INVALID.value if invalid is not None else LineageCaptureStatus.COMPLETE.value
+                ),
+                capture_reason=None if invalid is None or invalid.reason is None else invalid.reason.value,
+                portion_count=len(portions),
+            )
+        )
+        self._session.add_all(portions)
+        self._session.flush()
+
+    def iter_preview_allocation_runs(
+        self,
+        scope: PreviewEvidenceScope,
+        calculation_ids: tuple[str, ...],
+    ) -> Iterator[PreviewAllocationRunEvidence]:
+        if not calculation_ids:
+            return
+        statement = (
+            select(CCloudAllocationLineageRunTable)
+            .where(
+                col(CCloudAllocationLineageRunTable.ecosystem) == scope.ecosystem,
+                col(CCloudAllocationLineageRunTable.tenant_id) == scope.tenant_id,
+                col(CCloudAllocationLineageRunTable.tracking_date) >= scope.start.date(),
+                col(CCloudAllocationLineageRunTable.tracking_date) < scope.end.date(),
+                col(CCloudAllocationLineageRunTable.calculation_id).in_(calculation_ids),
+            )
+            .order_by(col(CCloudAllocationLineageRunTable.tracking_date))
+            .execution_options(yield_per=256, stream_results=True)
+        )
+        for row in self._session.exec(statement).yield_per(256):
+            yield PreviewAllocationRunEvidence(
+                ecosystem=row.ecosystem,
+                tenant_id=row.tenant_id,
+                tracking_date=row.tracking_date,
+                calculation_id=row.calculation_id,
+                calculation_completed_at=_ensure_utc(row.calculation_completed_at),
+                capture_status=row.capture_status,
+                capture_reason=row.capture_reason,
+                portion_count=row.portion_count,
+            )
+
+    def iter_preview_allocations(
+        self,
+        scope: PreviewEvidenceScope,
+        calculation_ids: tuple[str, ...],
+    ) -> Iterator[PreviewAllocationEvidence]:
+        if not calculation_ids:
+            return
+        statement = (
+            select(CCloudAllocationLineagePortionTable, CCloudBillingTable)
+            .join(
+                CCloudBillingTable,
+                and_(
+                    col(CCloudBillingTable.ecosystem) == col(CCloudAllocationLineagePortionTable.ecosystem),
+                    col(CCloudBillingTable.tenant_id) == col(CCloudAllocationLineagePortionTable.tenant_id),
+                    col(CCloudBillingTable.timestamp) == col(CCloudAllocationLineagePortionTable.origin_timestamp),
+                    col(CCloudBillingTable.env_id) == col(CCloudAllocationLineagePortionTable.origin_env_id),
+                    col(CCloudBillingTable.resource_id) == col(CCloudAllocationLineagePortionTable.origin_resource_id),
+                    col(CCloudBillingTable.product_type)
+                    == col(CCloudAllocationLineagePortionTable.origin_product_type),
+                    col(CCloudBillingTable.product_category)
+                    == col(CCloudAllocationLineagePortionTable.origin_product_category),
+                ),
+            )
+            .where(
+                col(CCloudAllocationLineagePortionTable.ecosystem) == scope.ecosystem,
+                col(CCloudAllocationLineagePortionTable.tenant_id) == scope.tenant_id,
+                col(CCloudAllocationLineagePortionTable.tracking_date) >= scope.start.date(),
+                col(CCloudAllocationLineagePortionTable.tracking_date) < scope.end.date(),
+                col(CCloudAllocationLineagePortionTable.calculation_id).in_(calculation_ids),
+            )
+            .order_by(
+                col(CCloudAllocationLineagePortionTable.origin_timestamp),
+                col(CCloudAllocationLineagePortionTable.origin_env_id),
+                col(CCloudAllocationLineagePortionTable.origin_resource_id),
+                col(CCloudAllocationLineagePortionTable.origin_product_type),
+                col(CCloudAllocationLineagePortionTable.origin_product_category),
+                col(CCloudAllocationLineagePortionTable.portion_ordinal),
+            )
+            .execution_options(yield_per=256, stream_results=True)
+        )
+        for portion, origin in self._session.exec(statement).yield_per(256):
+            allocated_cost = decode_lineage_decimal(portion.allocated_cost)
+            allocated_quantity = decode_lineage_decimal(portion.allocated_quantity)
+            allocation_ratio = decode_lineage_decimal(portion.allocation_ratio)
+            yield PreviewAllocationEvidence(
+                timestamp=_ensure_utc(origin.timestamp),
+                environment_id=origin.env_id,
+                resource_id=origin.resource_id,
+                native_product=origin.product_category,
+                native_line_type=origin.product_type,
+                allocation_target_id=portion.target_id or "UNALLOCATED",
+                allocation_method=portion.method_id,
+                amount=allocated_cost,
+                calculation_id=portion.calculation_id,
+                portion_ordinal=portion.portion_ordinal,
+                target_kind=portion.target_kind,
+                target_id=portion.target_id,
+                allocated_cost=allocated_cost,
+                allocated_quantity=allocated_quantity,
+                allocation_ratio=allocation_ratio,
+                method_id=portion.method_id,
+                method_version=portion.method_version,
+                method_details_json=portion.method_details_json,
+                origin_total_cost=Decimal(origin.total_cost),
+                origin_quantity=Decimal(origin.quantity),
+                origin_unit_price=Decimal(origin.unit_price),
+                origin_currency=origin.currency,
+                origin_granularity=origin.granularity,
+            )
 
     def find_preview_allocation_candidates(
         self, scope: PreviewEvidenceScope, source: PreviewSourceEvidence

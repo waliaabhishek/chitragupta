@@ -141,10 +141,12 @@ date that already committed.
 ```mermaid
 flowchart LR
     PS[(Persisted pipeline state)] --> PR[Preview read transaction]
-    EV[(Persisted source and allocation evidence)] --> PR
+    SRC[(Raw Cost source evidence)] --> PR
+    BILL[(Billing origins)] --> PR
+    LINE[(Calculation lineage runs and portions)] --> PR
     ORG[(Persisted provider organization)] --> PR
-    PR --> READY[Classify and apply native-line readiness]
-    READY --> MAP[Reconcile, map, and validate Daily Full v3]
+    PR --> READY[Classify and validate complete streams]
+    READY --> MAP[Reconcile, map, and validate Daily Full v4]
     MAP --> ART[(Atomic local artifact package)]
     ART --> API[Protected Preview API]
     API --> UI[Web UI]
@@ -161,19 +163,27 @@ replace persisted data.
 At submission, Preview samples `created_at` once and derives an immutable policy
 from tenant `focus_preview` configuration plus `lookback_days`/`cutoff_days`.
 The worker checks, in order: calculation correlation, acquisition/cutoff
-lifecycle, Direct-billed PAYG effective containment, configured USD, complete
-streamed structural/classification/financial evaluation, and source-issue
-precedence. It then rejects organization-wide sources with
-`PreviewMappingScopeError`, TABLEFLOW with
-`PreviewProviderContextIncompleteError`, and TASK-254.05 lineage-deferred native
-types with `PreviewMappingScopeError`. Only production-ready resource-specific
-types continue through complete source/aggregate coverage, one-source
-cardinality, bounded aggregate/allocation candidates, currency compatibility,
-reconciliation, immutable organization binding, identity/environment/provider
-context, 65/12 v3 row validation, and atomic artifact finalization. All evidence
-reads occur in one read-only transaction. Complete source and aggregate reads
-stream in stable origin order; only the selected source's candidate queries
-retain their two-row ambiguity bounds.
+lifecycle, Direct-billed PAYG effective containment, configured USD, and the
+complete streamed structural/classification/financial source issue precedence.
+Keyed TABLEFLOW provider-context rejection then precedes complete
+source/aggregate coverage and the one-source-per-billing-origin cardinality
+gate. Global aggregate currency and source equality checks precede complete
+lineage run/portion structure; every origin is structurally valid before any
+allocation cost/quantity total is reconciled. Billing-account,
+resource/identity/environment, and separate tag enrichment follow, then 65/12
+v4 row validation and atomic artifact finalization. Iterator order does not
+change this diagnostic precedence. All evidence reads occur in one read-only
+transaction.
+
+The persisted `CCloudBillingLineItem` is the sole allocation origin. During the
+ordinary calculation transaction, `CalculatePhase` stores lineage for the
+actual output portions keyed back to that existing billing row. Raw Cost rows
+remain source/classification/coverage evidence with a lossless association to
+the billing key. The lineage path does not reconstruct billing from chargebacks,
+redistribute costs, create a residual portion, or alter allocation policy.
+Migration 021 adds the nullable raw-source association and Confluent-owned
+lineage run/portion tables. Legacy null associations recover only through an
+ordinary regather followed by ordinary calculation.
 
 Expected failures travel through the initialized diagnostic path and atomically
 mark the request failed without a source snapshot or package. Source diagnostics
@@ -188,13 +198,14 @@ The maximum 364-day `lookback_days` is an acquisition/recalculation boundary,
 not retention or a reconstruction promise. TASK-256 owns any independent
 longer-term completed-chargeback archive.
 
-The readiness table has a closed 16-ready/13-deferred partition. TASK-254.05
-lineage defers `KAFKA_REST_PRODUCE`, `KAFKA_STREAMS`,
-`CONNECT_NUM_RECORDS`, all Cluster Linking types, `USM_CONNECTED_NODE`, and
-every `PROMO_CREDIT` row. Organization-wide `AUDIT_LOG_READ`/`SUPPORT` and all
-TABLEFLOW types also remain non-ready, with the distinct typed routes described
-above. Complete semantic mapping is not a conformance or allocation-readiness
-claim.
+All accepted native line types can consume persisted lineage. Multiple billing
+origins and their actual identity/resource/`UNALLOCATED` portions are supported;
+`UNALLOCATED` projects null allocated fields. Origin and target tags are loaded
+separately at package time and become immutable stored bytes. Provider-null
+promotional allowances and signed refunds preserve their native source and
+financial semantics. TABLEFLOW provider context and multiple native/tier source
+rows under one billing origin remain fail-closed. Complete semantic mapping is
+not a conformance claim.
 
 ## Concurrency
 

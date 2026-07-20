@@ -11,7 +11,7 @@ from core.engine.allocation import AllocatorRegistry
 from core.engine.orchestrator import CalculatePhase, ChargebackOrchestrator, PipelineRunResult
 from core.models.pipeline import PipelineRun
 from core.plugin.registry import EcosystemBundle
-from core.storage.interface import BillingRepository, PipelineStateRepository, UnitOfWork
+from core.storage.interface import BillingRepository, ChargebackRepository, PipelineStateRepository, UnitOfWork
 from workflow_runner import TenantRuntime, WorkflowRunner, _config_hash
 
 
@@ -41,6 +41,7 @@ def _empty_uow() -> tuple[MagicMock, MagicMock, MagicMock]:
     pipeline_state = MagicMock(spec=PipelineStateRepository)
     billing.find_by_date.return_value = []
     uow.billing = billing
+    uow.chargebacks = MagicMock(spec=ChargebackRepository)
     uow.pipeline_state = pipeline_state
     return uow, billing, pipeline_state
 

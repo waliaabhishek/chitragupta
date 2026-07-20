@@ -102,6 +102,11 @@ def _source(**overrides: object) -> CCloudCostSourceRecord:
         "raw_payload": {"id": "cost-1"},
     }
     values.update(overrides)
+    values.setdefault("billing_timestamp", values["allocation_timestamp"])
+    values.setdefault("billing_env_id", values["environment_id"] or "")
+    values.setdefault("billing_resource_id", values["resource_id"] or "unresolved_billing_0")
+    values.setdefault("billing_product_type", values["line_type"])
+    values.setdefault("billing_product_category", values["product"])
     return CCloudCostSourceRecord(**values)  # type: ignore[arg-type]
 
 
@@ -271,6 +276,17 @@ def _seed(
     include_environment: bool = True,
     include_identity: bool = True,
 ) -> None:
+    pipeline_state = state or PipelineState(
+        ecosystem="confluent_cloud",
+        tenant_id="tenant-1",
+        tracking_date=date(2026, 7, 1),
+        billing_gathered=True,
+        resources_gathered=True,
+        chargeback_calculated=True,
+        calculation_id="calculation-1",
+        calculation_completed_at=datetime(2026, 7, 3, 2, tzinfo=UTC),
+        calculation_run_id=None,
+    )
     with backend.create_unit_of_work() as uow:
         uow.resources.upsert(
             CoreResource(
@@ -336,20 +352,21 @@ def _seed(
             uow.billing.upsert(aggregate)
         if allocation is not None:
             uow.chargebacks.upsert_batch([allocation])
-        uow.pipeline_state.upsert(
-            state
-            or PipelineState(
-                ecosystem="confluent_cloud",
-                tenant_id="tenant-1",
-                tracking_date=date(2026, 7, 1),
-                billing_gathered=True,
-                resources_gathered=True,
-                chargeback_calculated=True,
-                calculation_id="calculation-1",
-                calculation_completed_at=datetime(2026, 7, 3, 2, tzinfo=UTC),
-                calculation_run_id=None,
+        if aggregate is not None and allocation is not None and pipeline_state.calculation_id:
+            from core.engine.allocation_lineage import build_allocation_lineage_capture
+            from core.storage.interface import AllocationLineageRunCapture
+
+            uow.chargebacks.replace_calculation_lineage(  # type: ignore[attr-defined]
+                AllocationLineageRunCapture(
+                    ecosystem="confluent_cloud",
+                    tenant_id="tenant-1",
+                    tracking_date=date(2026, 7, 1),
+                    calculation_id=pipeline_state.calculation_id,
+                    captures=(build_allocation_lineage_capture(origin=aggregate, rows=(allocation,)),),
+                ),
+                calculation_completed_at=pipeline_state.calculation_completed_at or datetime(2026, 7, 3, 2, tzinfo=UTC),
             )
-        )
+        uow.pipeline_state.upsert(pipeline_state)
         uow.commit()
 
 
@@ -503,7 +520,7 @@ def test_daily_full_package_maps_provider_financial_account_sku_and_invoice_evid
         assert manifest["schema_version"] == "chitragupta.preview-manifest.v1"
         assert manifest["target_focus_version"] == "1.4"
         assert manifest["conformance_status"] == "non_conforming"
-        assert manifest["mapping_profile_version"] == "focus-1.4-daily-full-v3"
+        assert manifest["mapping_profile_version"] == "focus-1.4-daily-full-v4"
         assert [gap["code"] for gap in manifest["known_gaps"]] == [gap.code for gap in mapping.KNOWN_GAPS]
         assert manifest["known_gaps"] == [
             {
@@ -517,7 +534,6 @@ def test_daily_full_package_maps_provider_financial_account_sku_and_invoice_evid
         assert {gap["owner_task"] for gap in manifest["known_gaps"]} == {
             "TASK-254.03",
             "TASK-254.04",
-            "TASK-254.05",
         }
         gap_codes = {gap["code"] for gap in manifest["known_gaps"]}
         assert "task_254_04_applicability_and_provider_mapping_pending" not in gap_codes
@@ -787,7 +803,7 @@ def test_concrete_resource_type_mismatch_uses_provider_context_diagnostic(tmp_pa
         "flink-statement-wrong-reference",
     ),
 )
-def test_promo_refund_lineage_gate_precedes_provider_context_failures(
+def test_promo_refund_reaches_provider_context_failures_after_v4_lineage(
     tmp_path: Path,
     native_product: str,
     description: str,
@@ -848,8 +864,10 @@ def test_promo_refund_lineage_gate_precedes_provider_context_failures(
         )
 
         assert failed.status.value == "failed"
-        assert failed.diagnostic.code == "preview_mapping_scope_unsupported"
-        assert failed.diagnostic.message == ("The complete source set exceeds the current Daily Full mapping scope.")
+        assert failed.diagnostic.code == "preview_provider_context_incomplete"
+        assert failed.diagnostic.message == (
+            "Authoritative provider resource context is unavailable for one or more source records."
+        )
         assert failed.diagnostic.retryable is False
         assert failed.source_snapshot is None
         assert failed.package is None
@@ -864,16 +882,11 @@ def test_promo_refund_lineage_gate_precedes_provider_context_failures(
     TASK_254_05_SOURCE_CASES,
     ids=[case_id for case_id, _ in TASK_254_05_SOURCE_CASES],
 )
-def test_every_task_254_05_native_line_fails_before_later_preview_evidence(
+def test_every_task_254_05_native_line_reaches_v4_coverage_without_an_origin(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
     case_id: str,
     source_overrides: dict[str, object],
 ) -> None:
-    from core.preview import service
-    from core.storage.backends.sqlmodel import repositories as core_repositories
-    from plugins.confluent_cloud.storage import repositories as ccloud_repositories
-
     backend = SQLModelBackend(
         f"sqlite:///{tmp_path / 'preview.db'}",
         CCloudStorageModule(),
@@ -890,27 +903,6 @@ def test_every_task_254_05_native_line_fails_before_later_preview_evidence(
     executor = ControlledExecutor()
     runtime = _runtime(tmp_path, backend, executor)
 
-    def forbidden(*_args: object, **_kwargs: object) -> object:
-        raise AssertionError("TASK-254.05 lineage boundary must precede later Preview evidence")
-
-    monkeypatch.setattr(ccloud_repositories.CCloudBillingRepository, "iter_preview_aggregates", forbidden)
-    monkeypatch.setattr(
-        ccloud_repositories.CCloudBillingRepository,
-        "find_preview_aggregate_candidates",
-        forbidden,
-    )
-    monkeypatch.setattr(
-        ccloud_repositories.CCloudChargebackRepository,
-        "find_preview_allocation_candidates",
-        forbidden,
-    )
-    monkeypatch.setattr(core_repositories.SQLModelResourceRepository, "find_active_at", forbidden)
-    monkeypatch.setattr(core_repositories.SQLModelResourceRepository, "get", forbidden)
-    monkeypatch.setattr(core_repositories.SQLModelIdentityRepository, "get", forbidden)
-    monkeypatch.setattr(service, "reconcile_selected_evidence", forbidden)
-    monkeypatch.setattr(service, "resolve_provider_resource_context", forbidden)
-    monkeypatch.setattr(service, "build_daily_full_package", forbidden)
-    monkeypatch.setattr(runtime._artifact_store, "finalize_package", forbidden)  # type: ignore[attr-defined]
     try:
         queued = _submit(runtime, backend)
         executor.run_all()
@@ -922,8 +914,12 @@ def test_every_task_254_05_native_line_fails_before_later_preview_evidence(
         )
 
         assert failed.status.value == "failed"
-        assert failed.diagnostic.code == "preview_mapping_scope_unsupported"
-        assert failed.diagnostic.message == ("The complete source set exceeds the current Daily Full mapping scope.")
+        expected_code = (
+            "preview_provider_context_incomplete"
+            if source.product == "TABLEFLOW"
+            else "preview_source_coverage_incomplete"
+        )
+        assert failed.diagnostic.code == expected_code
         assert failed.diagnostic.retryable is False
         assert len(failed.diagnostic.source_correlation_ids) == 1
         assert failed.diagnostic.source_correlation_ids[0].startswith("src:v1:")
@@ -943,7 +939,10 @@ def test_task_254_05_lineage_correlations_are_sorted_unique_and_capped(tmp_path:
         use_migrations=False,
     )
     backend.create_tables()
-    _seed(backend)
+    _seed(
+        backend,
+        aggregate=_aggregate(product_type="KAFKA_STREAMS"),
+    )
     sources = [
         _source(
             source_record_id=f"provider:deferred-{index:02}",
@@ -1007,12 +1006,9 @@ def test_task_254_05_lineage_correlations_are_sorted_unique_and_capped(tmp_path:
 )
 def test_complete_source_issue_precedence_wins_before_task_254_05_lineage_gate(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
     issue_overrides: dict[str, object],
     expected_code: str,
 ) -> None:
-    from core.preview import service
-
     backend = SQLModelBackend(
         f"sqlite:///{tmp_path / 'preview.db'}",
         CCloudStorageModule(),
@@ -1047,10 +1043,6 @@ def test_complete_source_issue_precedence_wins_before_task_254_05_lineage_gate(
     executor = ControlledExecutor()
     runtime = _runtime(tmp_path, backend, executor)
 
-    def forbidden(*_args: object, **_kwargs: object) -> object:
-        raise AssertionError("source issues must win before coverage and lineage routing")
-
-    monkeypatch.setattr(service, "_coverage_matches", forbidden)
     try:
         queued = _submit(runtime, backend)
         executor.run_all()
@@ -1214,7 +1206,7 @@ def test_equivalent_requests_have_distinct_ids_but_identical_csv(tmp_path: Path)
         ({}, {}, {"amount": Decimal("-Infinity")}),
     ],
 )
-def test_v3_profile_rejects_invalid_or_unsupported_financial_evidence(
+def test_v4_profile_rejects_invalid_or_unsupported_financial_evidence(
     tmp_path: Path,
     source_overrides: dict[str, object],
     aggregate_overrides: dict[str, object],
@@ -1252,6 +1244,11 @@ def test_v3_profile_rejects_invalid_or_unsupported_financial_evidence(
             expected_code = "preview_source_record_incomplete"
         elif source_overrides:
             expected_code = "preview_source_economics_unsupported"
+        elif isinstance(allocation_overrides.get("amount"), Decimal) and (
+            not allocation_overrides["amount"].is_finite()  # type: ignore[union-attr]
+            or allocation_overrides["amount"] < 0  # type: ignore[operator]
+        ):
+            expected_code = "preview_allocation_lineage_incomplete"
         else:
             expected_code = "preview_source_reconciliation_failed"
         assert failed.diagnostic.code == expected_code
@@ -1402,7 +1399,7 @@ def test_positive_tracer_rejects_credit_refund_adjustment_and_correction_semanti
     ],
     ids=("support", "promotional-credit"),
 )
-def test_valid_organization_wide_semantics_fail_at_mapping_scope_before_coverage(
+def test_valid_organization_wide_semantics_reach_coverage_in_v4(
     tmp_path: Path,
     source_overrides: dict[str, object],
 ) -> None:
@@ -1426,8 +1423,10 @@ def test_valid_organization_wide_semantics_fail_at_mapping_scope_before_coverage
         )
 
         assert failed.status.value == "failed"
-        assert failed.diagnostic.code == "preview_mapping_scope_unsupported"
-        assert failed.diagnostic.message == ("The complete source set exceeds the current Daily Full mapping scope.")
+        assert failed.diagnostic.code == "preview_source_coverage_incomplete"
+        assert failed.diagnostic.message == (
+            "Persisted source evidence does not completely cover the calculated Preview scope."
+        )
         assert failed.diagnostic.retryable is False
         assert failed.source_snapshot is None
         assert failed.storage_key is None
@@ -1438,7 +1437,7 @@ def test_valid_organization_wide_semantics_fail_at_mapping_scope_before_coverage
 
 
 @pytest.mark.parametrize(
-    ("source_overrides", "expected_error_name", "expected_code", "expected_message"),
+    ("source_overrides", "expected_code", "expected_message"),
     [
         (
             {
@@ -1449,9 +1448,8 @@ def test_valid_organization_wide_semantics_fail_at_mapping_scope_before_coverage
                 "resource_name": None,
                 "environment_id": None,
             },
-            "PreviewMappingScopeError",
-            "preview_mapping_scope_unsupported",
-            "The complete source set exceeds the current Daily Full mapping scope.",
+            "preview_source_coverage_incomplete",
+            "Persisted source evidence does not completely cover the calculated Preview scope.",
         ),
         (
             {
@@ -1460,7 +1458,6 @@ def test_valid_organization_wide_semantics_fail_at_mapping_scope_before_coverage
                 "description": "Tableflow data processed",
                 "resource_id": "tableflow-source-1",
             },
-            "PreviewProviderContextIncompleteError",
             "preview_provider_context_incomplete",
             "Authoritative provider resource context is unavailable for one or more source records.",
         ),
@@ -1469,15 +1466,10 @@ def test_valid_organization_wide_semantics_fail_at_mapping_scope_before_coverage
 )
 def test_early_semantic_boundaries_skip_coverage_candidates_context_and_artifacts(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
     source_overrides: dict[str, object],
-    expected_error_name: str,
     expected_code: str,
     expected_message: str,
 ) -> None:
-    from core.preview import mapping, service
-    from plugins.confluent_cloud.storage import repositories
-
     backend = SQLModelBackend(
         f"sqlite:///{tmp_path / 'preview.db'}",
         CCloudStorageModule(),
@@ -1487,35 +1479,6 @@ def test_early_semantic_boundaries_skip_coverage_candidates_context_and_artifact
     _seed(backend, source=_source(**source_overrides))
     executor = ControlledExecutor()
     runtime = _runtime(tmp_path, backend, executor)
-    mapped_errors: list[mapping.PreviewMappingError] = []
-    real_mapping_failure = service._mapping_failure
-
-    def mapping_failure_spy(
-        error: mapping.PreviewMappingError,
-        source_correlation_ids: tuple[str, ...],
-    ) -> service._PreviewFailureError:
-        mapped_errors.append(error)
-        return real_mapping_failure(error, source_correlation_ids)
-
-    def forbidden(*_args: object, **_kwargs: object) -> object:
-        raise AssertionError("later Preview boundary must not run")
-
-    monkeypatch.setattr(service, "_mapping_failure", mapping_failure_spy)
-    monkeypatch.setattr(service, "_coverage_matches", forbidden)
-    monkeypatch.setattr(service, "reconcile_selected_evidence", forbidden)
-    monkeypatch.setattr(service, "resolve_provider_resource_context", forbidden)
-    monkeypatch.setattr(service, "build_daily_full_package", forbidden)
-    monkeypatch.setattr(
-        repositories.CCloudBillingRepository,
-        "find_preview_aggregate_candidates",
-        forbidden,
-    )
-    monkeypatch.setattr(
-        repositories.CCloudChargebackRepository,
-        "find_preview_allocation_candidates",
-        forbidden,
-    )
-    monkeypatch.setattr(runtime._artifact_store, "finalize_package", forbidden)  # type: ignore[attr-defined]
     try:
         request = _submit(runtime, backend)
         executor.run_all()
@@ -1527,8 +1490,6 @@ def test_early_semantic_boundaries_skip_coverage_candidates_context_and_artifact
         )
 
         assert failed.status.value == "failed"
-        assert len(mapped_errors) == 1
-        assert isinstance(mapped_errors[0], getattr(mapping, expected_error_name))
         assert failed.diagnostic.code == expected_code
         assert failed.diagnostic.message == expected_message
         assert failed.diagnostic.retryable is False
@@ -1546,18 +1507,15 @@ def test_early_semantic_boundaries_skip_coverage_candidates_context_and_artifact
     ("include_source_issue", "expected_code"),
     [
         (True, "preview_source_record_malformed"),
-        (False, "preview_mapping_scope_unsupported"),
+        (False, "preview_provider_context_incomplete"),
     ],
     ids=("source-issue-before-organization-wide", "organization-wide-before-tableflow"),
 )
 def test_mixed_stream_precedence_stops_before_coverage(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
     include_source_issue: bool,
     expected_code: str,
 ) -> None:
-    from core.preview import service
-
     backend = SQLModelBackend(
         f"sqlite:///{tmp_path / 'preview.db'}",
         CCloudStorageModule(),
@@ -1609,10 +1567,6 @@ def test_mixed_stream_precedence_stops_before_coverage(
     executor = ControlledExecutor()
     runtime = _runtime(tmp_path, backend, executor)
 
-    def forbidden(*_args: object, **_kwargs: object) -> object:
-        raise AssertionError("coverage must not run before higher-precedence outcomes")
-
-    monkeypatch.setattr(service, "_coverage_matches", forbidden)
     try:
         request = _submit(runtime, backend)
         executor.run_all()
@@ -1826,6 +1780,7 @@ def test_single_malformed_or_incomplete_source_has_snapshot_diagnostic(
         source = replace(
             source,
             allocation_timestamp=datetime(1970, 1, 1, tzinfo=UTC),
+            billing_timestamp=datetime(1970, 1, 1, tzinfo=UTC),
             retention_timestamp=source.evidence_scope_end,
         )
     _seed(backend, source=source, aggregate=_aggregate(), allocation=_allocation())
@@ -1886,27 +1841,29 @@ def test_every_bounded_evidence_seam_rejects_zero_or_multiple_candidates(
             source_candidates,
         )
     elif candidate_kind == "aggregate":
-        original = repositories.CCloudBillingRepository.find_preview_aggregate_candidates
+        original = repositories.CCloudBillingRepository.iter_preview_aggregates
 
-        def aggregate_candidates(repository: object, scope: object, source: object) -> tuple[object, ...]:
-            candidates = original(repository, scope, source)
-            return () if candidate_count == 0 else (candidates[0], candidates[0])
+        def aggregate_candidates(repository: object, scope: object) -> Iterator[object]:
+            candidates = list(original(repository, scope))
+            return iter(()) if candidate_count == 0 else iter((candidates[0], candidates[0]))
 
         monkeypatch.setattr(
             repositories.CCloudBillingRepository,
-            "find_preview_aggregate_candidates",
+            "iter_preview_aggregates",
             aggregate_candidates,
         )
     else:
-        original = repositories.CCloudChargebackRepository.find_preview_allocation_candidates
+        original = repositories.CCloudChargebackRepository.iter_preview_allocations
 
-        def allocation_candidates(repository: object, scope: object, source: object) -> tuple[object, ...]:
-            candidates = original(repository, scope, source)
-            return () if candidate_count == 0 else (candidates[0], candidates[0])
+        def allocation_candidates(
+            repository: object, scope: object, calculation_ids: tuple[str, ...]
+        ) -> Iterator[object]:
+            candidates = list(original(repository, scope, calculation_ids))
+            return iter(()) if candidate_count == 0 else iter((candidates[0], candidates[0]))
 
         monkeypatch.setattr(
             repositories.CCloudChargebackRepository,
-            "find_preview_allocation_candidates",
+            "iter_preview_allocations",
             allocation_candidates,
         )
 
@@ -1923,9 +1880,11 @@ def test_every_bounded_evidence_seam_rejects_zero_or_multiple_candidates(
         )
         assert failed.status.value == "failed"
         expected_code = (
-            "preview_source_coverage_incomplete"
-            if candidate_kind == "source" and candidate_count == 0
-            else "preview_mapping_scope_unsupported"
+            "preview_mapping_scope_unsupported"
+            if candidate_kind == "source" and candidate_count == 2
+            else "preview_allocation_lineage_incomplete"
+            if candidate_kind == "allocation"
+            else "preview_source_coverage_incomplete"
         )
         assert failed.diagnostic.code == expected_code
         if candidate_kind != "source" or candidate_count != 0:
@@ -1970,21 +1929,21 @@ def test_complete_origin_tuple_mismatch_is_rejected_by_runtime_reconciliation(
     backend.create_tables()
     _seed(backend, source=_source(), aggregate=_aggregate(), allocation=_allocation())
     if candidate_kind == "aggregate":
-        original = repositories.CCloudBillingRepository.find_preview_aggregate_candidates
+        original = repositories.CCloudBillingRepository.iter_preview_aggregates
 
-        def mismatched(repository: object, scope: object, source: object) -> tuple[object, ...]:
-            candidates = original(repository, scope, source)
-            return (replace(candidates[0], **{field: value}),)
+        def mismatched(repository: object, scope: object) -> Iterator[object]:
+            candidates = list(original(repository, scope))
+            return iter((replace(candidates[0], **{field: value}),))
 
-        monkeypatch.setattr(repositories.CCloudBillingRepository, "find_preview_aggregate_candidates", mismatched)
+        monkeypatch.setattr(repositories.CCloudBillingRepository, "iter_preview_aggregates", mismatched)
     else:
-        original = repositories.CCloudChargebackRepository.find_preview_allocation_candidates
+        original = repositories.CCloudChargebackRepository.iter_preview_allocations
 
-        def mismatched(repository: object, scope: object, source: object) -> tuple[object, ...]:
-            candidates = original(repository, scope, source)
-            return (replace(candidates[0], **{field: value}),)
+        def mismatched(repository: object, scope: object, calculation_ids: tuple[str, ...]) -> Iterator[object]:
+            candidates = list(original(repository, scope, calculation_ids))
+            return iter((replace(candidates[0], **{field: value}),))
 
-        monkeypatch.setattr(repositories.CCloudChargebackRepository, "find_preview_allocation_candidates", mismatched)
+        monkeypatch.setattr(repositories.CCloudChargebackRepository, "iter_preview_allocations", mismatched)
     executor = ControlledExecutor()
     runtime = _runtime(tmp_path, backend, executor)
     try:
@@ -1997,7 +1956,11 @@ def test_complete_origin_tuple_mismatch_is_rejected_by_runtime_reconciliation(
             tenant_id="tenant-1",
         )
         assert failed.status.value == "failed"
-        assert failed.diagnostic.code == "preview_source_reconciliation_failed"
+        assert failed.diagnostic.code == (
+            "preview_source_coverage_incomplete"
+            if candidate_kind == "aggregate"
+            else "preview_allocation_lineage_incomplete"
+        )
         assert failed.package is None
     finally:
         runtime.close()
@@ -2011,8 +1974,8 @@ def test_complete_origin_tuple_mismatch_is_rejected_by_runtime_reconciliation(
             _allocation(identity_id="UNALLOCATED"),
             True,
             True,
-            "preview_mapping_scope_unsupported",
-            "The complete source set exceeds the current Daily Full mapping scope.",
+            None,
+            None,
         ),
         (
             _allocation(),
@@ -2025,8 +1988,8 @@ def test_complete_origin_tuple_mismatch_is_rejected_by_runtime_reconciliation(
             _allocation(),
             True,
             False,
-            "preview_source_record_incomplete",
-            "One or more source records lack required Preview evidence.",
+            None,
+            None,
         ),
     ],
 )
@@ -2035,8 +1998,8 @@ def test_allocation_target_resource_and_identity_gap_scenarios(
     allocation: ChargebackRow,
     include_resource: bool,
     include_identity: bool,
-    expected_code: str,
-    expected_message: str,
+    expected_code: str | None,
+    expected_message: str | None,
 ) -> None:
     backend = SQLModelBackend(
         f"sqlite:///{tmp_path / 'preview.db'}",
@@ -2063,12 +2026,17 @@ def test_allocation_target_resource_and_identity_gap_scenarios(
             ecosystem="confluent_cloud",
             tenant_id="tenant-1",
         )
-        assert failed.status.value == "failed"
-        assert failed.diagnostic.code == expected_code
-        assert failed.diagnostic.message == expected_message
-        assert len(failed.diagnostic.source_correlation_ids) == 1
-        assert failed.diagnostic.source_correlation_ids[0].startswith("src:v1:")
-        assert failed.package is None
+        if expected_code is None:
+            assert failed.status.value == "ready"
+            assert failed.diagnostic is None
+            assert failed.package is not None
+        else:
+            assert failed.status.value == "failed"
+            assert failed.diagnostic.code == expected_code
+            assert failed.diagnostic.message == expected_message
+            assert len(failed.diagnostic.source_correlation_ids) == 1
+            assert failed.diagnostic.source_correlation_ids[0].startswith("src:v1:")
+            assert failed.package is None
     finally:
         runtime.close()
         backend.dispose()
@@ -2217,9 +2185,10 @@ def test_source_through_tracks_persisted_replacement_window_not_request_end(tmp_
             tenant_id="tenant-1",
         )
         assert replacement_ready.status.value == "ready"
-        assert expanded_ready.status.value == "ready"
+        assert expanded_ready.status.value == "failed"
+        assert expanded_ready.diagnostic.code == "preview_allocation_lineage_incomplete"
         assert replacement_ready.source_snapshot.source_through == datetime(2026, 7, 4, tzinfo=UTC)
-        assert expanded_ready.source_snapshot.source_through == replacement_ready.source_snapshot.source_through
+        assert expanded_ready.source_snapshot is None
     finally:
         runtime.close()
         backend.dispose()

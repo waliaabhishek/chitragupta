@@ -45,6 +45,11 @@ class CCloudCostSourceRecord:
     malformed: bool
     diagnostics: tuple[str, ...]
     raw_payload: dict[str, Any]
+    billing_timestamp: datetime | None = None
+    billing_env_id: str | None = None
+    billing_resource_id: str | None = None
+    billing_product_type: str | None = None
+    billing_product_category: str | None = None
 
 
 @runtime_checkable

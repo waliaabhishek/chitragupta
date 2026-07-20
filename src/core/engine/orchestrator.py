@@ -10,9 +10,11 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from datetime import date as date_type
 from decimal import Decimal
+from inspect import getattr_static
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from core.engine.allocation import AllocationContext, AllocatorRegistry
+from core.engine.allocation_lineage import build_allocation_lineage_capture
 from core.engine.helpers import compute_active_fraction
 from core.engine.loading import load_protocol_callable
 from core.models.chargeback import ChargebackRow, CostType
@@ -20,6 +22,10 @@ from core.models.identity import SENTINEL_IDENTITY_TYPES, CoreIdentity, Identity
 from core.models.pipeline import PipelineState
 from core.plugin.protocols import OverlayPlugin, SupplementalResourceGatherer, TopicDiscoveryPlugin
 from core.plugin.registry import EcosystemBundle
+from core.storage.interface import (
+    AllocationLineageRepository,
+    AllocationLineageRunCapture,
+)
 
 if TYPE_CHECKING:
     from core.config.models import PluginSettingsBase, TenantConfig
@@ -57,6 +63,16 @@ def _new_calculation_id() -> str:
 
 def _calculation_utc_now() -> datetime:
     return datetime.now(UTC)
+
+
+def _allocation_lineage_repository(value: object) -> AllocationLineageRepository | None:
+    """Resolve the optional writer without triggering dynamic mock attributes."""
+    try:
+        getattr_static(value, "replace_calculation_lineage")
+    except AttributeError:
+        return None
+    writer = getattr(value, "replace_calculation_lineage", None)
+    return cast("AllocationLineageRepository", value) if callable(writer) else None
 
 
 class GatherFailureThresholdError(Exception):
@@ -658,10 +674,32 @@ class CalculatePhase:
         calculation_run_id: int | None = None,
     ) -> int:
         """Calculate chargebacks for a single date. Returns rows written."""
+        calculation_id = self._calculation_id_factory()
+        if not calculation_id:
+            raise ValueError("calculation_id must not be empty")
+        lineage_repo = _allocation_lineage_repository(getattr(uow, "chargebacks", None))
         billing_lines = uow.billing.find_by_date(self._ecosystem, self._tenant_id, tracking_date)
 
         if not billing_lines:
-            self._mark_success(uow, tracking_date, calculation_run_id)
+            completed_at = self._completion_time()
+            if lineage_repo is not None:
+                lineage_repo.replace_calculation_lineage(
+                    AllocationLineageRunCapture(
+                        ecosystem=self._ecosystem,
+                        tenant_id=self._tenant_id,
+                        tracking_date=tracking_date,
+                        calculation_id=calculation_id,
+                        captures=(),
+                    ),
+                    calculation_completed_at=completed_at,
+                )
+            self._mark_success(
+                uow,
+                tracking_date,
+                calculation_run_id,
+                calculation_id=calculation_id,
+                completed_at=completed_at,
+            )
             return 0
 
         line_window_cache = self._compute_line_window_cache(billing_lines)
@@ -671,6 +709,7 @@ class CalculatePhase:
         resource_cache = self._build_resource_cache(uow, billing_windows)
 
         all_rows: list[ChargebackRow] = []
+        lineage_captures = []
         for line in billing_lines:
             rows = self._collect_billing_line_rows(
                 line,
@@ -682,29 +721,52 @@ class CalculatePhase:
                 line_window_cache,
             )
             all_rows.extend(rows)
+            if lineage_repo is not None:
+                lineage_captures.append(build_allocation_lineage_capture(origin=line, rows=tuple(rows)))
 
         total_rows = uow.chargebacks.upsert_batch(all_rows)
-        self._mark_success(uow, tracking_date, calculation_run_id)
+        completed_at = self._completion_time()
+        if lineage_repo is not None:
+            lineage_repo.replace_calculation_lineage(
+                AllocationLineageRunCapture(
+                    ecosystem=self._ecosystem,
+                    tenant_id=self._tenant_id,
+                    tracking_date=tracking_date,
+                    calculation_id=calculation_id,
+                    captures=tuple(lineage_captures),
+                ),
+                calculation_completed_at=completed_at,
+            )
+        self._mark_success(
+            uow,
+            tracking_date,
+            calculation_run_id,
+            calculation_id=calculation_id,
+            completed_at=completed_at,
+        )
         return total_rows
+
+    def _completion_time(self) -> datetime:
+        completed_at = self._calculation_clock()
+        if completed_at.tzinfo is None or completed_at.utcoffset() is None:
+            raise ValueError("calculation completion time must be timezone-aware")
+        return completed_at.astimezone(UTC)
 
     def _mark_success(
         self,
         uow: UnitOfWork,
         tracking_date: date_type,
         calculation_run_id: int | None,
+        *,
+        calculation_id: str,
+        completed_at: datetime,
     ) -> None:
-        calculation_id = self._calculation_id_factory()
-        completed_at = self._calculation_clock()
-        if not calculation_id:
-            raise ValueError("calculation_id must not be empty")
-        if completed_at.tzinfo is None or completed_at.utcoffset() is None:
-            raise ValueError("calculation completion time must be timezone-aware")
         uow.pipeline_state.mark_chargeback_calculated(
             self._ecosystem,
             self._tenant_id,
             tracking_date,
             calculation_id=calculation_id,
-            calculation_completed_at=completed_at.astimezone(UTC),
+            calculation_completed_at=completed_at,
             calculation_run_id=calculation_run_id,
         )
 

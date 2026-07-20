@@ -6,9 +6,10 @@ import io
 import json
 import logging
 import re
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
-from decimal import Decimal
+from datetime import UTC, date, datetime
+from decimal import Context, Decimal, localcontext
 from enum import StrEnum
 from types import MappingProxyType
 from typing import Literal
@@ -18,12 +19,15 @@ from core.models.resource import Resource  # noqa: TC001 - resolved by contract 
 from core.preview.evidence import (  # noqa: TC001 - resolved by contract tests
     PreviewAggregateEvidence,
     PreviewAllocationEvidence,
+    PreviewAllocationRunEvidence,
     PreviewSourceEvidence,
+    decode_lineage_method_details,
 )
 from core.preview.models import PreviewArtifactPayload, PreviewPackagePayload, PreviewRequest, PreviewSourceSnapshot
 from core.storage.interface import ResourceRepository  # noqa: TC001 - resolved by contract tests
 
-MAPPING_PROFILE_VERSION = "focus-1.4-daily-full-v3"
+MAPPING_PROFILE_VERSION = "focus-1.4-daily-full-v4"
+_DECIMAL_CONTEXT = Context(prec=38)
 logger = logging.getLogger(__name__)
 
 
@@ -57,6 +61,32 @@ class PreviewBillingAccountConflictError(PreviewMappingError):
 
 class PreviewProviderContextIncompleteError(PreviewMappingError):
     """Provider resource context is missing or incompatible."""
+
+
+class PreviewAllocationLineageError(PreviewMappingError):
+    """Persisted allocation lineage is incomplete or structurally invalid."""
+
+
+class PreviewSourceCoverageError(PreviewMappingError):
+    """Accepted source evidence does not cover the persisted billing origins."""
+
+
+class PreviewBillingCurrencyUnknownError(PreviewMappingError):
+    def __init__(self, source_record_ids: tuple[str, ...]) -> None:
+        self.source_record_ids = source_record_ids
+        super().__init__("persisted billing currency is unknown")
+
+
+class PreviewBillingCurrencyUnsupportedError(PreviewMappingError):
+    def __init__(self, source_record_ids: tuple[str, ...]) -> None:
+        self.source_record_ids = source_record_ids
+        super().__init__("persisted billing currency is unsupported")
+
+
+class PreviewSourceAggregateReconciliationError(PreviewFinancialReconciliationError):
+    def __init__(self, source_record_ids: tuple[str, ...]) -> None:
+        self.source_record_ids = source_record_ids
+        super().__init__("persisted source and aggregate evidence do not reconcile")
 
 
 class PreviewProfileDefinitionError(RuntimeError):
@@ -221,10 +251,10 @@ _COLUMN_SPECS = (
 
 _TARGET_RULE_AUTHORITIES = {
     "AllocatedMethodId": ("allocation.allocation_method", "copy the current allocation method"),
-    "AllocatedMethodDetails": ("none", "remain null until TASK-254.05"),
+    "AllocatedMethodDetails": ("persisted allocation lineage", "copy canonical method details"),
     "AllocatedResourceId": ("allocation.allocation_target_id", "copy the allocation target identifier"),
     "AllocatedResourceName": ("allocation target identity", "copy its display name"),
-    "AllocatedTags": ("none", "remain null until TASK-254.05"),
+    "AllocatedTags": ("allocation target tags", "serialize separately as canonical JSON"),
     "AvailabilityZone": ("none", "not applicable to retained Direct PAYG evidence"),
     "BilledCost": ("source.amount and allocation.amount", "copy the exactly reconciled allocated share"),
     "BillingAccountId": ("bound provider organization resource", "copy the provider organization identifier"),
@@ -284,7 +314,7 @@ _TARGET_RULE_AUTHORITIES = {
     "SubAccountId": ("source.environment_id", "copy the native Confluent environment identifier"),
     "SubAccountName": ("environment inventory", "copy its display name"),
     "SubAccountType": ("mapping profile", "emit Environment when SubAccountId is present"),
-    "Tags": ("none", "remain null until TASK-254.05"),
+    "Tags": ("origin resource tags", "serialize separately as canonical JSON"),
 }
 
 _FEATURE_LEVEL = {
@@ -337,7 +367,7 @@ _NOT_APPLICABLE = frozenset(
         "PricingCurrencyContractedUnitPrice",
     }
 )
-_DEFERRED = frozenset({"AllocatedMethodDetails", "AllocatedTags", "Tags"})
+_DEFERRED: frozenset[str] = frozenset()
 _DECLARED_GAPS = {
     "BillingCurrency": ("provider_billing_currency_field_unavailable", "TASK-254.03"),
     "HostProviderName": ("provider_host_display_name_unavailable", "TASK-254.04"),
@@ -439,18 +469,18 @@ _CUSTOM_SPECS = (
     (
         "x_ChitraguptaAllocationRatio",
         True,
-        PreviewApplicability.DEFERRED,
+        PreviewApplicability.APPLICABLE,
         PreviewValidatorKind.DECIMAL,
-        "allocation_ratio_deferred",
-        "TASK-254.05",
+        None,
+        None,
     ),
     (
         "x_ChitraguptaAllocationMethodVersion",
         True,
-        PreviewApplicability.DEFERRED,
+        PreviewApplicability.APPLICABLE,
         PreviewValidatorKind.TEXT,
-        "allocation_method_version_deferred",
-        "TASK-254.05",
+        None,
+        None,
     ),
     (
         "x_ChitraguptaMappingProfileVersion",
@@ -468,7 +498,7 @@ _CUSTOM_SPECS = (
         "derived_sku_identity_not_provider_authoritative",
         "TASK-254.04",
     ),
-    ("x_ConfluentProduct", False, PreviewApplicability.APPLICABLE, PreviewValidatorKind.TEXT, None, None),
+    ("x_ConfluentProduct", True, PreviewApplicability.APPLICABLE, PreviewValidatorKind.TEXT, None, None),
     ("x_ConfluentLineType", False, PreviewApplicability.APPLICABLE, PreviewValidatorKind.ENUM, None, None),
     ("x_ConfluentDescription", False, PreviewApplicability.APPLICABLE, PreviewValidatorKind.TEXT, None, None),
     ("x_ConfluentDiscountAmount", False, PreviewApplicability.APPLICABLE, PreviewValidatorKind.DECIMAL, None, None),
@@ -484,9 +514,9 @@ _CUSTOM_RULE_AUTHORITIES = {
         "provider organization and UTC billing month",
         "derive the namespaced v1 SHA-256 key",
     ),
-    "x_ChitraguptaAllocationRatio": ("none", "remain null until TASK-254.05"),
-    "x_ChitraguptaAllocationMethodVersion": ("none", "remain null until TASK-254.05"),
-    "x_ChitraguptaMappingProfileVersion": ("mapping profile", "emit focus-1.4-daily-full-v3"),
+    "x_ChitraguptaAllocationRatio": ("persisted allocation lineage", "copy exact realized ratio"),
+    "x_ChitraguptaAllocationMethodVersion": ("persisted allocation lineage", "copy lineage method version"),
+    "x_ChitraguptaMappingProfileVersion": ("mapping profile", "emit focus-1.4-daily-full-v4"),
     "x_ChitraguptaSkuComponents": (
         "canonical SKU and SKU price components",
         "serialize as canonical JSON",
@@ -562,24 +592,6 @@ KNOWN_GAPS = (
         "SKU values are deterministic Chitragupta-derived evidence, not provider-issued identifiers.",
         "TASK-254.04",
         ("SkuId", "SkuMeter", "SkuPriceDetails", "SkuPriceId", "x_ChitraguptaSkuComponents"),
-    ),
-    KnownGap(
-        "allocation_lineage_and_tag_projection_pending",
-        "General allocation lineage and tag projection are deferred.",
-        "TASK-254.05",
-        ("AllocatedMethodDetails", "AllocatedTags", "Tags"),
-    ),
-    KnownGap(
-        "allocation_ratio_deferred",
-        "Durable allocation-ratio evidence is deferred.",
-        "TASK-254.05",
-        ("x_ChitraguptaAllocationRatio",),
-    ),
-    KnownGap(
-        "allocation_method_version_deferred",
-        "Allocation method-version evidence is deferred.",
-        "TASK-254.05",
-        ("x_ChitraguptaAllocationMethodVersion",),
     ),
 )
 PROFILE_NOT_APPLICABLE_COLUMNS = tuple(
@@ -833,7 +845,7 @@ _TASK_254_05_NATIVE_LINE_TYPES_V1 = (
 FOCUS_1_4_NATIVE_LINE_READINESS_V1 = MappingProxyType(
     {
         **{line_type: PreviewLineageReadiness.READY for line_type in _READY_NATIVE_LINE_TYPES_V1},
-        **{line_type: PreviewLineageReadiness.TASK_254_05 for line_type in _TASK_254_05_NATIVE_LINE_TYPES_V1},
+        **{line_type: PreviewLineageReadiness.READY for line_type in _TASK_254_05_NATIVE_LINE_TYPES_V1},
     }
 )
 
@@ -914,6 +926,7 @@ class PreviewFinancialProjection:
 
 
 type PreviewCell = str | Decimal | datetime | None
+type PreviewOriginKey = tuple[datetime, str, str, str, str]
 
 
 @dataclass(frozen=True)
@@ -950,6 +963,16 @@ class PreviewResourceContext:
     resource_type: str | None
     host_provider_code: str | None
     region_id: str | None
+
+
+@dataclass(frozen=True)
+class PreparedPreviewPackageRow:
+    evidence: SelectedPreviewEvidence
+    resource_context: PreviewResourceContext
+    allocated_entity: Identity | Resource | None
+    environment: Resource | None
+    origin_tags_json: str
+    allocated_tags_json: str | None
 
 
 def _utc(value: datetime) -> str:
@@ -1017,13 +1040,13 @@ def classify_daily_full_source(
         return RejectedPreviewSource(PreviewSourceIssue.SCOPE_UNSUPPORTED)
     if not source.native_line_type:
         return RejectedPreviewSource(PreviewSourceIssue.LINE_TYPE_UNKNOWN)
-    if not source.provider_cost_id or not source.native_product or not source.native_description:
+    if not source.provider_cost_id or not source.native_description:
         return RejectedPreviewSource(PreviewSourceIssue.RECORD_INCOMPLETE)
     if not all(
         isinstance(value, Decimal) for value in (source.amount, source.original_amount, source.discount_amount)
     ) or any(value is not None and not isinstance(value, Decimal) for value in (source.price, source.quantity)):
         return RejectedPreviewSource(PreviewSourceIssue.RECORD_MALFORMED)
-    refund, promotion, support, ambiguous = _semantic_flags(source.native_product, source.native_description)
+    refund, promotion, support, ambiguous = _semantic_flags(source.native_product or "", source.native_description)
     if ambiguous:
         return RejectedPreviewSource(PreviewSourceIssue.CHARGE_CLASSIFICATION_AMBIGUOUS)
     line_type = source.native_line_type
@@ -1044,6 +1067,8 @@ def classify_daily_full_source(
             )
         )
 
+    if not source.native_product:
+        return RejectedPreviewSource(PreviewSourceIssue.RECORD_INCOMPLETE)
     product_rule = NATIVE_PRODUCT_SERVICE_RULES_V1.get(source.native_product)
     if product_rule is None:
         return RejectedPreviewSource(PreviewSourceIssue.CHARGE_CLASSIFICATION_AMBIGUOUS)
@@ -1166,41 +1191,310 @@ def project_financials(
 def reconcile_selected_evidence(
     *, selected: SelectedSourceProjection, aggregate: PreviewAggregateEvidence, allocation: PreviewAllocationEvidence
 ) -> SelectedPreviewEvidence:
+    reconcile_source_aggregate_evidence(selected=selected, aggregate=aggregate)
+    validate_allocation_lineage_evidence(aggregate=aggregate, allocations=(allocation,))
+    return SelectedPreviewEvidence(selected, aggregate, allocation)
+
+
+def project_allocated_financials(
+    *,
+    selected: SelectedSourceProjection,
+    allocation: PreviewAllocationEvidence,
+) -> PreviewFinancialProjection:
+    """Project one persisted actual portion without changing allocation economics."""
     source = selected.source
-    source_origin = (
-        source.allocation_timestamp,
-        source.environment_id,
-        source.resource_id,
-        source.native_product,
-        source.native_line_type,
+    if source.amount is None or source.amount == 0:
+        raise PreviewFinancialReconciliationError("source amount cannot support allocation projection")
+    original = source.original_amount
+    if original is None:
+        raise PreviewSourceEvidenceError("source original amount is unavailable")
+    with localcontext(_DECIMAL_CONTEXT):
+        list_cost = original * allocation.allocation_ratio
+    emits_pricing = selected.semantics.emits_pricing
+    emits_consumption = selected.semantics.emits_consumption
+    return PreviewFinancialProjection(
+        billed_cost=allocation.allocated_cost,
+        contracted_cost=list_cost,
+        effective_cost=allocation.allocated_cost,
+        list_cost=list_cost,
+        list_unit_price=source.price if emits_pricing else None,
+        pricing_currency_effective_cost=allocation.allocated_cost,
+        pricing_currency_list_unit_price=source.price if emits_pricing else None,
+        pricing_quantity=allocation.allocated_quantity if emits_pricing else None,
+        pricing_unit=source.unit if emits_pricing else None,
+        consumed_quantity=allocation.allocated_quantity if emits_consumption else None,
+        consumed_unit=source.unit if emits_consumption else None,
     )
-    aggregate_origin = (
+
+
+def reconcile_source_aggregate_evidence(
+    *,
+    selected: SelectedSourceProjection,
+    aggregate: PreviewAggregateEvidence,
+) -> None:
+    source = selected.source
+    source_quantity = source.quantity
+    source_price = source.price
+    if source.native_line_type == "PROMO_CREDIT":
+        source_quantity = Decimal(0) if source_quantity is None else source_quantity
+        source_price = Decimal(0) if source_price is None else source_price
+    if (
+        aggregate.total_cost != source.amount
+        or aggregate.quantity != source_quantity
+        or aggregate.unit_price != source_price
+    ):
+        raise PreviewFinancialReconciliationError("persisted source and aggregate evidence do not reconcile")
+
+
+def _source_billing_origin(source: PreviewSourceEvidence) -> PreviewOriginKey | None:
+    values = (
+        source.billing_timestamp,
+        source.billing_env_id,
+        source.billing_resource_id,
+        source.billing_product_category,
+        source.billing_product_type,
+    )
+    if any(value is None for value in values):
+        return None
+    timestamp, environment_id, resource_id, product, line_type = values
+    assert isinstance(timestamp, datetime)
+    assert isinstance(environment_id, str)
+    assert isinstance(resource_id, str)
+    assert isinstance(product, str)
+    assert isinstance(line_type, str)
+    return timestamp, environment_id, resource_id, product, line_type
+
+
+def _aggregate_billing_origin(aggregate: PreviewAggregateEvidence) -> PreviewOriginKey:
+    return (
         aggregate.timestamp,
         aggregate.environment_id,
         aggregate.resource_id,
         aggregate.native_product,
         aggregate.native_line_type,
     )
-    allocation_origin = (
+
+
+def _allocation_billing_origin(allocation: PreviewAllocationEvidence) -> PreviewOriginKey:
+    return (
         allocation.timestamp,
         allocation.environment_id,
         allocation.resource_id,
         allocation.native_product,
         allocation.native_line_type,
     )
+
+
+def reconcile_source_aggregate_stream(
+    *,
+    selected_sources: Iterable[SelectedSourceProjection],
+    aggregates: Iterable[PreviewAggregateEvidence],
+) -> tuple[
+    dict[PreviewOriginKey, SelectedSourceProjection],
+    dict[PreviewOriginKey, PreviewAggregateEvidence],
+]:
+    """Validate the complete source/aggregate stream in closed stage order."""
+    sources_by_origin: dict[PreviewOriginKey, list[SelectedSourceProjection]] = {}
+    missing_association = False
+    for selected in selected_sources:
+        origin = _source_billing_origin(selected.source)
+        if origin is None:
+            missing_association = True
+            continue
+        sources_by_origin.setdefault(origin, []).append(selected)
+
+    aggregates_by_origin: dict[PreviewOriginKey, PreviewAggregateEvidence] = {}
+    duplicate_aggregate = False
+    for aggregate in aggregates:
+        origin = _aggregate_billing_origin(aggregate)
+        duplicate_aggregate = duplicate_aggregate or origin in aggregates_by_origin
+        aggregates_by_origin[origin] = aggregate
+
     if (
-        source_origin != aggregate_origin
-        or source_origin != allocation_origin
-        or aggregate.compatibility_currency != "USD"
-        or aggregate.total_cost != source.amount
-        or aggregate.quantity != source.quantity
-        or aggregate.unit_price != source.price
-        or allocation.amount != source.amount
+        missing_association
+        or not sources_by_origin
+        or duplicate_aggregate
+        or set(sources_by_origin) != set(aggregates_by_origin)
     ):
-        raise PreviewFinancialReconciliationError("persisted evidence does not reconcile")
-    if allocation.allocation_target_id == "UNALLOCATED":
-        raise PreviewMappingScopeError("unallocated output is outside the Daily Full scope")
-    return SelectedPreviewEvidence(selected, aggregate, allocation)
+        raise PreviewSourceCoverageError("source and aggregate coverage is incomplete")
+    if any(len(sources) != 1 for sources in sources_by_origin.values()):
+        raise PreviewMappingScopeError("billing origin has multiple accepted sources")
+
+    selected_by_origin = {origin: sources[0] for origin, sources in sources_by_origin.items()}
+    unknown_currency = tuple(
+        selected_by_origin[origin].source.source_record_id
+        for origin, aggregate in aggregates_by_origin.items()
+        if not aggregate.compatibility_currency
+    )
+    if unknown_currency:
+        raise PreviewBillingCurrencyUnknownError(unknown_currency)
+    unsupported_currency = tuple(
+        selected_by_origin[origin].source.source_record_id
+        for origin, aggregate in aggregates_by_origin.items()
+        if aggregate.compatibility_currency != "USD"
+    )
+    if unsupported_currency:
+        raise PreviewBillingCurrencyUnsupportedError(unsupported_currency)
+
+    mismatched_sources: list[str] = []
+    for origin, selected in selected_by_origin.items():
+        try:
+            reconcile_source_aggregate_evidence(selected=selected, aggregate=aggregates_by_origin[origin])
+        except PreviewFinancialReconciliationError:
+            mismatched_sources.append(selected.source.source_record_id)
+    if mismatched_sources:
+        raise PreviewSourceAggregateReconciliationError(tuple(mismatched_sources))
+    return selected_by_origin, aggregates_by_origin
+
+
+def validate_allocation_lineage_structure(
+    *,
+    aggregate: PreviewAggregateEvidence,
+    allocations: Sequence[PreviewAllocationEvidence],
+) -> None:
+    if not allocations:
+        raise PreviewAllocationLineageError("allocation lineage has no portions")
+    ordinals = {item.portion_ordinal for item in allocations}
+    if len(ordinals) != len(allocations) or ordinals != set(range(len(allocations))):
+        raise PreviewAllocationLineageError("allocation lineage ordinals are invalid")
+    origin = (
+        aggregate.timestamp,
+        aggregate.environment_id,
+        aggregate.resource_id,
+        aggregate.native_product,
+        aggregate.native_line_type,
+    )
+    for allocation in allocations:
+        allocation_origin = (
+            allocation.timestamp,
+            allocation.environment_id,
+            allocation.resource_id,
+            allocation.native_product,
+            allocation.native_line_type,
+        )
+        target_valid = (allocation.target_kind == "unallocated" and allocation.target_id is None) or (
+            allocation.target_kind in {"identity", "resource"}
+            and isinstance(allocation.target_id, str)
+            and bool(allocation.target_id.strip())
+            and (allocation.target_kind != "resource" or allocation.target_id == aggregate.resource_id)
+        )
+        quantity_sign_valid = (
+            aggregate.quantity == 0
+            and allocation.allocated_quantity == 0
+            or aggregate.quantity > 0
+            and allocation.allocated_quantity >= 0
+            or aggregate.quantity < 0
+            and allocation.allocated_quantity <= 0
+        )
+        try:
+            with localcontext(_DECIMAL_CONTEXT):
+                realized_ratio = allocation.allocated_cost / allocation.origin_total_cost
+            decode_lineage_method_details(
+                allocation.method_details_json,
+                target_kind=allocation.target_kind,
+            )
+        except (ArithmeticError, ValueError) as exc:
+            raise PreviewAllocationLineageError("allocation lineage encoding is invalid") from exc
+        if not (
+            allocation_origin == origin
+            and allocation.origin_total_cost == aggregate.total_cost
+            and allocation.origin_quantity == aggregate.quantity
+            and allocation.origin_unit_price == aggregate.unit_price
+            and allocation.origin_currency == aggregate.compatibility_currency
+            and allocation.origin_granularity == aggregate.granularity
+            and allocation.method_id.strip()
+            and allocation.method_version == "v1"
+            and allocation.allocation_ratio.is_finite()
+            and allocation.allocation_ratio >= 0
+            and allocation.allocation_ratio == realized_ratio
+            and allocation.allocated_cost.is_finite()
+            and allocation.allocated_quantity.is_finite()
+            and quantity_sign_valid
+            and target_valid
+        ):
+            raise PreviewAllocationLineageError("allocation lineage structure is invalid")
+
+
+def reconcile_allocation_lineage_totals(
+    *,
+    aggregate: PreviewAggregateEvidence,
+    allocations: Sequence[PreviewAllocationEvidence],
+) -> None:
+    with localcontext(_DECIMAL_CONTEXT):
+        allocated_cost = sum((item.allocated_cost for item in allocations), Decimal(0))
+        allocated_quantity = sum((item.allocated_quantity for item in allocations), Decimal(0))
+    if allocated_cost != aggregate.total_cost or allocated_quantity != aggregate.quantity:
+        raise PreviewFinancialReconciliationError("allocation lineage totals do not reconcile")
+
+
+def reconcile_allocation_lineage_stream(
+    *,
+    aggregates_by_origin: Mapping[PreviewOriginKey, PreviewAggregateEvidence],
+    expected_completion_by_run: Mapping[tuple[date, str], datetime],
+    runs: Iterable[PreviewAllocationRunEvidence],
+    allocations: Iterable[PreviewAllocationEvidence],
+) -> dict[PreviewOriginKey, list[PreviewAllocationEvidence]]:
+    """Validate the complete run/portion stream before reconciling any totals."""
+    runs_by_identity: dict[tuple[date, str], PreviewAllocationRunEvidence] = {}
+    duplicate_run = False
+    for run in runs:
+        identity = run.tracking_date, run.calculation_id
+        duplicate_run = duplicate_run or identity in runs_by_identity
+        runs_by_identity[identity] = run
+
+    expected_calculation_by_date = {
+        tracking_date: calculation_id for tracking_date, calculation_id in expected_completion_by_run
+    }
+    allocations_by_origin: dict[PreviewOriginKey, list[PreviewAllocationEvidence]] = {}
+    allocation_count_by_run: dict[tuple[date, str], int] = {}
+    invalid_allocation_scope = False
+    for allocation in allocations:
+        origin = _allocation_billing_origin(allocation)
+        allocations_by_origin.setdefault(origin, []).append(allocation)
+        run_identity = allocation.timestamp.date(), allocation.calculation_id
+        allocation_count_by_run[run_identity] = allocation_count_by_run.get(run_identity, 0) + 1
+        invalid_allocation_scope = invalid_allocation_scope or not (
+            origin in aggregates_by_origin
+            and allocation.calculation_id == expected_calculation_by_date.get(allocation.timestamp.date())
+        )
+
+    invalid_runs = (
+        duplicate_run
+        or set(runs_by_identity) != set(expected_completion_by_run)
+        or any(
+            run.capture_status != "complete"
+            or run.capture_reason is not None
+            or run.calculation_completed_at != expected_completion_by_run.get(identity)
+            or run.portion_count != allocation_count_by_run.get(identity, 0)
+            for identity, run in runs_by_identity.items()
+        )
+    )
+    if invalid_runs or invalid_allocation_scope or set(allocations_by_origin) != set(aggregates_by_origin):
+        raise PreviewAllocationLineageError("allocation lineage stream is incomplete")
+
+    for origin, portions in allocations_by_origin.items():
+        validate_allocation_lineage_structure(
+            aggregate=aggregates_by_origin[origin],
+            allocations=portions,
+        )
+    for origin, portions in allocations_by_origin.items():
+        reconcile_allocation_lineage_totals(
+            aggregate=aggregates_by_origin[origin],
+            allocations=portions,
+        )
+        portions.sort(key=lambda item: item.portion_ordinal)
+    return allocations_by_origin
+
+
+def validate_allocation_lineage_evidence(
+    *,
+    aggregate: PreviewAggregateEvidence,
+    allocations: tuple[PreviewAllocationEvidence, ...],
+) -> tuple[PreviewAllocationEvidence, ...]:
+    validate_allocation_lineage_structure(aggregate=aggregate, allocations=allocations)
+    reconcile_allocation_lineage_totals(aggregate=aggregate, allocations=allocations)
+    ordered = tuple(sorted(allocations, key=lambda item: item.portion_ordinal))
+    return ordered
 
 
 def _provider_metadata(resource: Resource) -> tuple[str, str]:
@@ -1218,6 +1512,40 @@ def resolve_provider_resource_context(
     origin_resource: Resource | None,
     resources: ResourceRepository,
 ) -> PreviewResourceContext:
+    return _resolve_provider_resource_context(
+        source=source,
+        semantics=semantics,
+        origin_resource=origin_resource,
+        resources=resources,
+        resource_by_id=None,
+    )
+
+
+def resolve_provider_resource_context_from_mapping(
+    *,
+    source: PreviewSourceEvidence,
+    semantics: PreviewChargeSemantics,
+    origin_resource: Resource | None,
+    resources: ResourceRepository,
+    resource_by_id: Mapping[str, Resource],
+) -> PreviewResourceContext:
+    return _resolve_provider_resource_context(
+        source=source,
+        semantics=semantics,
+        origin_resource=origin_resource,
+        resources=resources,
+        resource_by_id=resource_by_id,
+    )
+
+
+def _resolve_provider_resource_context(
+    *,
+    source: PreviewSourceEvidence,
+    semantics: PreviewChargeSemantics,
+    origin_resource: Resource | None,
+    resources: ResourceRepository,
+    resource_by_id: Mapping[str, Resource] | None,
+) -> PreviewResourceContext:
     rule = FOCUS_1_4_SERVICE_RULES_V1[semantics.service_rule_key]
     if rule.context_strategy == "unsupported_provider_context":
         raise PreviewProviderContextIncompleteError("provider relationship is unsupported")
@@ -1230,10 +1558,16 @@ def resolve_provider_resource_context(
     authority: Resource | None = origin_resource
     ecosystem = origin_resource.ecosystem
     tenant_id = origin_resource.tenant_id
+
+    def find_resource(resource_id: str) -> Resource | None:
+        if resource_by_id is not None:
+            return resource_by_id.get(resource_id)
+        return resources.get(ecosystem, tenant_id, resource_id)
+
     if rule.context_strategy == "connector_parent_kafka":
         if origin_resource.metadata.get("env_id") != source.environment_id:
             raise PreviewProviderContextIncompleteError("connector environment is incompatible")
-        authority = resources.get(ecosystem, tenant_id, origin_resource.parent_id or "")
+        authority = find_resource(origin_resource.parent_id or "")
         if (
             authority is None
             or authority.resource_type != "kafka_cluster"
@@ -1245,7 +1579,7 @@ def resolve_provider_resource_context(
         if origin_resource.parent_id != source.environment_id:
             raise PreviewProviderContextIncompleteError("ksqlDB environment is incompatible")
         reference = origin_resource.metadata.get("kafka_cluster_id")
-        authority = resources.get(ecosystem, tenant_id, reference if isinstance(reference, str) else "")
+        authority = find_resource(reference if isinstance(reference, str) else "")
         if (
             authority is None
             or authority.resource_type != "kafka_cluster"
@@ -1257,7 +1591,7 @@ def resolve_provider_resource_context(
         if origin_resource.parent_id != source.environment_id:
             raise PreviewProviderContextIncompleteError("Flink statement environment is incompatible")
         reference = origin_resource.metadata.get("compute_pool_id")
-        authority = resources.get(ecosystem, tenant_id, reference if isinstance(reference, str) else "")
+        authority = find_resource(reference if isinstance(reference, str) else "")
         if (
             authority is None
             or authority.resource_type != "flink_compute_pool"
@@ -1320,10 +1654,11 @@ def validate_daily_full_mapping(
         raise PreviewSourceEvidenceError(result.issue.value)
     assert source.amount is not None
     projection = project_financials(source=source, semantics=result.semantics, billed_share=source.amount)
-    reconcile_selected_evidence(
-        selected=SelectedSourceProjection(source, result.semantics, projection),
+    selected = SelectedSourceProjection(source, result.semantics, projection)
+    reconcile_source_aggregate_evidence(selected=selected, aggregate=aggregate)
+    validate_allocation_lineage_evidence(
         aggregate=aggregate,
-        allocation=allocation,
+        allocations=(allocation,),
     )
 
 
@@ -1655,21 +1990,21 @@ def _billing_bounds(value: datetime) -> tuple[datetime, datetime]:
     return start, end
 
 
-def build_daily_full_package(
+def _project_daily_full_row(
     *,
-    request: PreviewRequest,
-    snapshot: PreviewSourceSnapshot,
     evidence: SelectedPreviewEvidence,
     provider_context: PreviewProviderContext,
     resource_context: PreviewResourceContext,
-    identity: Identity,
+    identity: Identity | Resource | None,
     environment: Resource | None,
-    generated_at: datetime,
-) -> PreviewPackagePayload:
+    origin_tags_json: str = "{}",
+    allocated_tags_json: str | None = None,
+) -> dict[str, PreviewCell]:
     source = evidence.selected.source
     semantics = evidence.selected.semantics
     financials = evidence.selected.financials
     allocation = evidence.allocation
+    allocated_resource_id = None if allocation.target_kind == "unallocated" else allocation.target_id
     service = FOCUS_1_4_SERVICE_RULES_V1[semantics.service_rule_key]
     assert source.source_period_start is not None and source.source_period_end is not None
     assert source.amount is not None
@@ -1698,9 +2033,11 @@ def build_daily_full_package(
     row: dict[str, PreviewCell] = {column: None for column in (*FOCUS_1_4_FULL_COLUMNS, *CUSTOM_EVIDENCE_COLUMNS)}
     row.update(
         {
-            "AllocatedMethodId": allocation.allocation_method,
-            "AllocatedResourceId": allocation.allocation_target_id,
-            "AllocatedResourceName": identity.display_name,
+            "AllocatedMethodId": allocation.method_id or allocation.allocation_method,
+            "AllocatedMethodDetails": allocation.method_details_json or None,
+            "AllocatedResourceId": allocated_resource_id,
+            "AllocatedResourceName": identity.display_name if identity is not None else None,
+            "AllocatedTags": allocated_tags_json,
             "BilledCost": financials.billed_cost,
             "BillingAccountId": provider_context.billing_account_id,
             "BillingAccountName": provider_context.billing_account_name,
@@ -1740,8 +2077,11 @@ def build_daily_full_package(
             "SubAccountId": source.environment_id,
             "SubAccountName": environment.display_name if environment is not None else None,
             "SubAccountType": "Environment" if source.environment_id is not None else None,
+            "Tags": origin_tags_json,
             "x_ChitraguptaSourceCostId": source.provider_cost_id or source.source_record_id,
             "x_ChitraguptaBillingScopeId": billing_scope,
+            "x_ChitraguptaAllocationRatio": allocation.allocation_ratio,
+            "x_ChitraguptaAllocationMethodVersion": allocation.method_version or None,
             "x_ChitraguptaMappingProfileVersion": MAPPING_PROFILE_VERSION,
             "x_ChitraguptaSkuComponents": sku_components,
             "x_ConfluentProduct": source.native_product,
@@ -1758,12 +2098,20 @@ def build_daily_full_package(
         financials,
     )
     validate_preview_row(row=projection, target_rules=FOCUS_1_4_COLUMN_RULES, custom_rules=CUSTOM_EVIDENCE_RULES)
-    buffer = io.StringIO(newline="")
-    writer = csv.writer(buffer, lineterminator="\n")
-    columns = (*FOCUS_1_4_FULL_COLUMNS, *CUSTOM_EVIDENCE_COLUMNS)
-    writer.writerow(columns)
-    writer.writerow([_serialize_cell(row[column]) for column in columns])
-    csv_body = buffer.getvalue().encode()
+    return row
+
+
+def _build_daily_full_package_payload(
+    *,
+    request: PreviewRequest,
+    snapshot: PreviewSourceSnapshot,
+    csv_body: bytes,
+    row_count: int,
+    source_records: int,
+    source_cost: Decimal,
+    allocated_cost: Decimal,
+    generated_at: datetime,
+) -> PreviewPackagePayload:
     file_metadata = {
         "name": "cost-and-usage.csv",
         "media_type": "text/csv",
@@ -1810,14 +2158,14 @@ def build_daily_full_package(
         "validation": {
             "status": "passed",
             "mapping_profile_version": MAPPING_PROFILE_VERSION,
-            "source_records": 1,
-            "rows": 1,
+            "source_records": source_records,
+            "rows": row_count,
             "mapping_errors": 0,
         },
         "reconciliation": {
-            "source_cost": _decimal(source.amount),
-            "allocated_cost": _decimal(allocation.amount),
-            "difference": _decimal(source.amount - allocation.amount),
+            "source_cost": _decimal(source_cost),
+            "allocated_cost": _decimal(allocated_cost),
+            "difference": _decimal(source_cost - allocated_cost),
         },
         "generated_at": _utc(generated_at),
         "files": [file_metadata],
@@ -1825,6 +2173,92 @@ def build_daily_full_package(
     manifest_body = (_canonical_json(manifest) + "\n").encode()
     return PreviewPackagePayload(
         manifest_body=manifest_body, data_files=(PreviewArtifactPayload("cost-and-usage.csv", "text/csv", 1, csv_body),)
+    )
+
+
+def build_daily_full_package(
+    *,
+    request: PreviewRequest,
+    snapshot: PreviewSourceSnapshot,
+    evidence: SelectedPreviewEvidence,
+    provider_context: PreviewProviderContext,
+    resource_context: PreviewResourceContext,
+    identity: Identity,
+    environment: Resource | None,
+    generated_at: datetime,
+) -> PreviewPackagePayload:
+    """Build the compatibility single-row Daily / Full package."""
+    row = _project_daily_full_row(
+        evidence=evidence,
+        provider_context=provider_context,
+        resource_context=resource_context,
+        identity=identity,
+        environment=environment,
+    )
+    source_amount = evidence.selected.source.amount
+    assert source_amount is not None
+    columns = (*FOCUS_1_4_FULL_COLUMNS, *CUSTOM_EVIDENCE_COLUMNS)
+    buffer = io.StringIO(newline="")
+    writer = csv.writer(buffer, lineterminator="\n")
+    writer.writerow(columns)
+    writer.writerow([_serialize_cell(row[column]) for column in columns])
+    return _build_daily_full_package_payload(
+        request=request,
+        snapshot=snapshot,
+        csv_body=buffer.getvalue().encode(),
+        row_count=1,
+        source_records=1,
+        source_cost=source_amount,
+        allocated_cost=evidence.allocation.amount,
+        generated_at=generated_at,
+    )
+
+
+def build_daily_full_package_rows(
+    *,
+    request: PreviewRequest,
+    snapshot: PreviewSourceSnapshot,
+    rows: Iterable[PreparedPreviewPackageRow],
+    provider_context: PreviewProviderContext,
+    generated_at: datetime,
+) -> PreviewPackagePayload:
+    columns = (*FOCUS_1_4_FULL_COLUMNS, *CUSTOM_EVIDENCE_COLUMNS)
+    buffer = io.StringIO(newline="")
+    writer = csv.writer(buffer, lineterminator="\n")
+    writer.writerow(columns)
+    source_record_ids: set[str] = set()
+    source_cost = Decimal(0)
+    allocated_cost = Decimal(0)
+    row_count = 0
+    for prepared in rows:
+        source = prepared.evidence.selected.source
+        with localcontext(_DECIMAL_CONTEXT):
+            if source.source_record_id not in source_record_ids:
+                source_record_ids.add(source.source_record_id)
+                source_cost += source.amount or Decimal(0)
+            allocated_cost += prepared.evidence.allocation.allocated_cost
+        projected = _project_daily_full_row(
+            evidence=prepared.evidence,
+            provider_context=provider_context,
+            resource_context=prepared.resource_context,
+            identity=prepared.allocated_entity,
+            environment=prepared.environment,
+            origin_tags_json=prepared.origin_tags_json,
+            allocated_tags_json=prepared.allocated_tags_json,
+        )
+        writer.writerow([_serialize_cell(projected[column]) for column in columns])
+        row_count += 1
+    if row_count == 0:
+        raise PreviewMappingScopeError("no allocation portions are available")
+    return _build_daily_full_package_payload(
+        request=request,
+        snapshot=snapshot,
+        csv_body=buffer.getvalue().encode(),
+        row_count=row_count,
+        source_records=len(source_record_ids),
+        source_cost=source_cost,
+        allocated_cost=allocated_cost,
+        generated_at=generated_at,
     )
 
 
@@ -1935,7 +2369,7 @@ def _validate_profile_definition() -> None:
         raise PreviewProfileDefinitionError("accepted native line type coverage is invalid")
     expected_readiness = {
         **{line_type: PreviewLineageReadiness.READY for line_type in _READY_NATIVE_LINE_TYPES_V1},
-        **{line_type: PreviewLineageReadiness.TASK_254_05 for line_type in _TASK_254_05_NATIVE_LINE_TYPES_V1},
+        **{line_type: PreviewLineageReadiness.READY for line_type in _TASK_254_05_NATIVE_LINE_TYPES_V1},
     }
     if dict(FOCUS_1_4_NATIVE_LINE_READINESS_V1) != expected_readiness or set(expected_readiness) != set(
         line_type_owners

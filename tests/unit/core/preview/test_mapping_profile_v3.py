@@ -7,7 +7,7 @@ import io
 import json
 from dataclasses import fields, replace
 from datetime import UTC, date, datetime
-from decimal import Decimal
+from decimal import Decimal, localcontext
 from types import MappingProxyType
 from typing import Any
 from unittest.mock import MagicMock
@@ -25,10 +25,10 @@ REQUEST_END = datetime(2026, 7, 2, tzinfo=UTC)
 
 TARGET_RULE_AUTHORITIES = (
     ("AllocatedMethodId", "allocation.allocation_method", "copy the current allocation method"),
-    ("AllocatedMethodDetails", "none", "remain null until TASK-254.05"),
+    ("AllocatedMethodDetails", "persisted allocation lineage", "copy canonical method details"),
     ("AllocatedResourceId", "allocation.allocation_target_id", "copy the allocation target identifier"),
     ("AllocatedResourceName", "allocation target identity", "copy its display name"),
-    ("AllocatedTags", "none", "remain null until TASK-254.05"),
+    ("AllocatedTags", "allocation target tags", "serialize separately as canonical JSON"),
     ("AvailabilityZone", "none", "not applicable to retained Direct PAYG evidence"),
     ("BilledCost", "source.amount and allocation.amount", "copy the exactly reconciled allocated share"),
     ("BillingAccountId", "bound provider organization resource", "copy the provider organization identifier"),
@@ -88,7 +88,7 @@ TARGET_RULE_AUTHORITIES = (
     ("SubAccountId", "source.environment_id", "copy the native Confluent environment identifier"),
     ("SubAccountName", "environment inventory", "copy its display name"),
     ("SubAccountType", "mapping profile", "emit Environment when SubAccountId is present"),
-    ("Tags", "none", "remain null until TASK-254.05"),
+    ("Tags", "origin resource tags", "serialize separately as canonical JSON"),
 )
 
 CUSTOM_RULE_AUTHORITIES = (
@@ -102,9 +102,9 @@ CUSTOM_RULE_AUTHORITIES = (
         "provider organization and UTC billing month",
         "derive the namespaced v1 SHA-256 key",
     ),
-    ("x_ChitraguptaAllocationRatio", "none", "remain null until TASK-254.05"),
-    ("x_ChitraguptaAllocationMethodVersion", "none", "remain null until TASK-254.05"),
-    ("x_ChitraguptaMappingProfileVersion", "mapping profile", "emit focus-1.4-daily-full-v3"),
+    ("x_ChitraguptaAllocationRatio", "persisted allocation lineage", "copy exact realized ratio"),
+    ("x_ChitraguptaAllocationMethodVersion", "persisted allocation lineage", "copy lineage method version"),
+    ("x_ChitraguptaMappingProfileVersion", "mapping profile", "emit focus-1.4-daily-full-v4"),
     ("x_ChitraguptaSkuComponents", "canonical SKU and SKU price components", "serialize as canonical JSON"),
     ("x_ConfluentProduct", "source.native_product", "copy losslessly"),
     ("x_ConfluentLineType", "source.native_line_type", "copy losslessly"),
@@ -396,7 +396,7 @@ def _valid_row_projection(mapping: Any) -> Any:
         {
             "x_ChitraguptaSourceCostId": "cost-1",
             "x_ChitraguptaBillingScopeId": billing_scope,
-            "x_ChitraguptaMappingProfileVersion": "focus-1.4-daily-full-v3",
+            "x_ChitraguptaMappingProfileVersion": "focus-1.4-daily-full-v4",
             "x_ChitraguptaSkuComponents": mapping._canonical_json(
                 {"schema_version": "v1", "sku": sku, "sku_price": sku_price}
             ),
@@ -449,6 +449,7 @@ def _package_row(
     cloud: str = "AWS",
     region: str = "us-east-1",
     include_manifest: bool = False,
+    financials: Any | None = None,
 ) -> Any:
     classification = mapping.classify_daily_full_source(
         request_start=REQUEST_START,
@@ -457,11 +458,12 @@ def _package_row(
     )
     assert isinstance(classification, mapping.AcceptedPreviewSource)
     assert source.amount is not None
-    financials = mapping.project_financials(
-        source=source,
-        semantics=classification.semantics,
-        billed_share=source.amount,
-    )
+    if financials is None:
+        financials = mapping.project_financials(
+            source=source,
+            semantics=classification.semantics,
+            billed_share=source.amount,
+        )
     evidence = mapping.SelectedPreviewEvidence(
         mapping.SelectedSourceProjection(source, classification.semantics, financials),
         aggregate,
@@ -526,6 +528,70 @@ def _package_row(
     return row
 
 
+def test_nonterminating_persisted_ratio_uses_fixed_precision_for_contracted_and_list_cost(
+    valid_source_evidence: Any,
+    valid_aggregate_evidence: Any,
+    valid_allocation_evidence: Any,
+) -> None:
+    mapping = preview_module("mapping")
+    ratio = Decimal("0.33333333333333333333333333333333333333")
+    source = replace(
+        valid_source_evidence,
+        amount=Decimal("3"),
+        original_amount=Decimal("10"),
+        discount_amount=Decimal("7"),
+        price=Decimal("10"),
+        quantity=Decimal("1"),
+    )
+    aggregate = replace(
+        valid_aggregate_evidence,
+        total_cost=Decimal("3"),
+        unit_price=Decimal("10"),
+        quantity=Decimal("1"),
+    )
+    allocation = replace(
+        valid_allocation_evidence,
+        amount=Decimal("1"),
+        allocated_cost=Decimal("1"),
+        allocated_quantity=ratio,
+        allocation_ratio=ratio,
+    )
+    classification = mapping.classify_daily_full_source(
+        request_start=REQUEST_START,
+        request_end=REQUEST_END,
+        source=source,
+    )
+    assert isinstance(classification, mapping.AcceptedPreviewSource)
+    selected = mapping.SelectedSourceProjection(
+        source,
+        classification.semantics,
+        mapping.project_financials(
+            source=source,
+            semantics=classification.semantics,
+            billed_share=source.amount,
+        ),
+    )
+
+    with localcontext() as ambient:
+        ambient.prec = 2
+        projected = mapping.project_allocated_financials(
+            selected=selected,
+            allocation=allocation,
+        )
+        row = _package_row(
+            mapping,
+            source=source,
+            aggregate=aggregate,
+            allocation=allocation,
+            financials=projected,
+        )
+
+    assert row["x_ChitraguptaAllocationRatio"] == format(ratio, "f")
+    assert row["BilledCost"] == "1"
+    assert row["ContractedCost"] == "3.3333333333333333333333333333333333333"
+    assert row["ListCost"] == "3.3333333333333333333333333333333333333"
+
+
 def test_focus_rule_table_is_the_complete_ordered_65_column_authority() -> None:
     mapping = preview_module("mapping")
 
@@ -547,8 +613,6 @@ def test_focus_rule_table_is_the_complete_ordered_65_column_authority() -> None:
         for rule in rules
         if rule.applicability.value in {"deferred", "declared_gap"}
     } == {
-        "AllocatedMethodDetails": ("allocation_lineage_and_tag_projection_pending", "TASK-254.05"),
-        "AllocatedTags": ("allocation_lineage_and_tag_projection_pending", "TASK-254.05"),
         "BillingCurrency": ("provider_billing_currency_field_unavailable", "TASK-254.03"),
         "HostProviderName": ("provider_host_display_name_unavailable", "TASK-254.04"),
         "InvoiceDetailId": ("invoice_identity_unavailable", "TASK-254.04"),
@@ -559,7 +623,6 @@ def test_focus_rule_table_is_the_complete_ordered_65_column_authority() -> None:
         "SkuMeter": ("derived_sku_identity_not_provider_authoritative", "TASK-254.04"),
         "SkuPriceDetails": ("derived_sku_identity_not_provider_authoritative", "TASK-254.04"),
         "SkuPriceId": ("derived_sku_identity_not_provider_authoritative", "TASK-254.04"),
-        "Tags": ("allocation_lineage_and_tag_projection_pending", "TASK-254.05"),
     }
 
 
@@ -614,12 +677,12 @@ def test_native_line_readiness_is_the_exact_typed_immutable_v1_authority() -> No
         line_type
         for line_type, readiness in mapping.FOCUS_1_4_NATIVE_LINE_READINESS_V1.items()
         if readiness is mapping.PreviewLineageReadiness.READY
-    } == READY_NATIVE_LINE_TYPES
+    } == READY_NATIVE_LINE_TYPES | TASK_254_05_NATIVE_LINE_TYPES
     assert {
         line_type
         for line_type, readiness in mapping.FOCUS_1_4_NATIVE_LINE_READINESS_V1.items()
         if readiness is mapping.PreviewLineageReadiness.TASK_254_05
-    } == TASK_254_05_NATIVE_LINE_TYPES
+    } == frozenset()
 
     with pytest.raises(TypeError):
         mapping.FOCUS_1_4_NATIVE_LINE_READINESS_V1["KAFKA_STORAGE"] = (  # type: ignore[index]
@@ -1806,11 +1869,11 @@ def test_package_manifest_reports_the_complete_validated_v3_profile(
         include_manifest=True,
     )
 
-    assert manifest["mapping_profile_version"] == "focus-1.4-daily-full-v3"
+    assert manifest["mapping_profile_version"] == "focus-1.4-daily-full-v4"
     assert manifest["conformance_status"] == "non_conforming"
     assert manifest["validation"] == {
         "mapping_errors": 0,
-        "mapping_profile_version": "focus-1.4-daily-full-v3",
+        "mapping_profile_version": "focus-1.4-daily-full-v4",
         "rows": 1,
         "source_records": 1,
         "status": "passed",

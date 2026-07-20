@@ -202,6 +202,25 @@ class SQLModelResourceRepository:
         self._resource_cache[key] = result
         return result
 
+    def get_many(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        resource_ids: Sequence[str],
+    ) -> dict[str, Resource]:
+        unique_ids = sorted(set(resource_ids))
+        if not unique_ids:
+            return {}
+        statement = select(ResourceTable).where(
+            col(ResourceTable.ecosystem) == ecosystem,
+            col(ResourceTable.tenant_id) == tenant_id,
+            col(ResourceTable.resource_id).in_(unique_ids),
+        )
+        resources = [resource_to_domain(row) for row in self._session.exec(statement).all()]
+        for resource in resources:
+            self._resource_cache[(ecosystem, tenant_id, resource.resource_id)] = resource
+        return {resource.resource_id: resource for resource in resources}
+
     def find_active_at(
         self,
         ecosystem: str,
@@ -423,6 +442,25 @@ class SQLModelIdentityRepository:
         result = identity_to_domain(row) if row else None
         self._identity_cache[key] = result
         return result
+
+    def get_many(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        identity_ids: Sequence[str],
+    ) -> dict[str, Identity]:
+        unique_ids = sorted(set(identity_ids))
+        if not unique_ids:
+            return {}
+        statement = select(IdentityTable).where(
+            col(IdentityTable.ecosystem) == ecosystem,
+            col(IdentityTable.tenant_id) == tenant_id,
+            col(IdentityTable.identity_id).in_(unique_ids),
+        )
+        identities = [identity_to_domain(row) for row in self._session.exec(statement).all()]
+        for identity in identities:
+            self._identity_cache[(ecosystem, tenant_id, identity.identity_id)] = identity
+        return {identity.identity_id: identity for identity in identities}
 
     def find_active_at(
         self,

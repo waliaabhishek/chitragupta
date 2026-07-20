@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterator, Sequence
+from dataclasses import dataclass
 from datetime import date, datetime
+from decimal import Decimal
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Protocol, Self, runtime_checkable
 
 if TYPE_CHECKING:
@@ -26,6 +29,71 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+class AllocationTargetKind(StrEnum):
+    IDENTITY = "identity"
+    RESOURCE = "resource"
+    UNALLOCATED = "unallocated"
+
+
+class LineageCaptureStatus(StrEnum):
+    COMPLETE = "complete"
+    INVALID = "invalid"
+
+
+class LineageCaptureReason(StrEnum):
+    NO_PORTIONS = "no_portions"
+    ZERO_ORIGIN_COST = "zero_origin_cost"
+    INVALID_ROW_COST = "invalid_row_cost"
+    INVALID_METHOD = "invalid_method"
+    INVALID_METADATA = "invalid_metadata"
+    INVALID_RATIO = "invalid_ratio"
+    INVALID_QUANTITY = "invalid_quantity"
+
+
+@dataclass(frozen=True)
+class AllocationLineageFact:
+    portion_ordinal: int
+    target_kind: AllocationTargetKind
+    target_id: str | None
+    allocated_cost: Decimal
+    allocated_quantity: Decimal
+    allocation_ratio: Decimal
+    method_id: str
+    method_version: str
+    method_details_json: str
+
+
+@dataclass(frozen=True)
+class AllocationLineageCapture:
+    origin_timestamp: datetime
+    origin_env_id: str
+    origin_resource_id: str
+    origin_product_type: str
+    origin_product_category: str
+    status: LineageCaptureStatus
+    reason: LineageCaptureReason | None
+    facts: tuple[AllocationLineageFact, ...]
+
+
+@dataclass(frozen=True)
+class AllocationLineageRunCapture:
+    ecosystem: str
+    tenant_id: str
+    tracking_date: date
+    calculation_id: str
+    captures: tuple[AllocationLineageCapture, ...]
+
+
+@runtime_checkable
+class AllocationLineageRepository(Protocol):
+    def replace_calculation_lineage(
+        self,
+        run: AllocationLineageRunCapture,
+        *,
+        calculation_completed_at: datetime,
+    ) -> None: ...
+
+
 @runtime_checkable
 class ResourceRepository(Protocol):
     """Repository for resource persistence with temporal query support."""
@@ -33,6 +101,13 @@ class ResourceRepository(Protocol):
     def upsert(self, resource: Resource) -> Resource: ...
 
     def get(self, ecosystem: str, tenant_id: str, resource_id: str) -> Resource | None: ...
+
+    def get_many(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        resource_ids: Sequence[str],
+    ) -> dict[str, Resource]: ...
 
     def find_active_at(
         self,
@@ -143,6 +218,13 @@ class IdentityRepository(Protocol):
     def upsert(self, identity: Identity) -> Identity: ...
 
     def get(self, ecosystem: str, tenant_id: str, identity_id: str) -> Identity | None: ...
+
+    def get_many(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        identity_ids: Sequence[str],
+    ) -> dict[str, Identity]: ...
 
     def find_active_at(
         self,

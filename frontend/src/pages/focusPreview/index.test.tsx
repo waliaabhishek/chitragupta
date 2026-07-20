@@ -87,14 +87,12 @@ describe("FOCUS Mapping Preview page delegation", () => {
       "HostProviderName contains the raw provider cloud code, not a provider display name.",
       "Confluent inventory does not provide a distinct region display name.",
       "SKU values are deterministic Chitragupta-derived evidence, not provider-issued identifiers.",
-      "General allocation lineage and tag projection are deferred.",
-      "Durable allocation-ratio evidence is deferred.",
-      "Allocation method-version evidence is deferred.",
     ]) {
       expect(screen.getByText(description)).toBeTruthy();
     }
-    expect(screen.getByText("allocation_ratio_deferred")).toBeTruthy();
-    expect(screen.getByText("allocation_method_version_deferred")).toBeTruthy();
+    expect(screen.queryByText("allocation_lineage_and_tag_projection_pending")).toBeNull();
+    expect(screen.queryByText("allocation_ratio_deferred")).toBeNull();
+    expect(screen.queryByText("allocation_method_version_deferred")).toBeNull();
     expect(screen.queryByText("Billing account and issuer mapping is pending.")).toBeNull();
     expect(screen.queryByText("Authoritative provider billing-period mapping is pending.")).toBeNull();
     expect(screen.queryByText("Provider applicability and mapping are pending.")).toBeNull();

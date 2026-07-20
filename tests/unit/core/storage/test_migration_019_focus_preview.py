@@ -163,7 +163,7 @@ def test_current_preview_migrations_match_create_all_schema(tmp_path: Path) -> N
     migration_connection = f"sqlite:///{tmp_path / 'migration.db'}"
     direct_connection = f"sqlite:///{tmp_path / 'direct.db'}"
     config = _alembic_config(migration_connection)
-    command.upgrade(config, "020")
+    command.upgrade(config, "021")
 
     direct_backend = SQLModelBackend(direct_connection, CCloudStorageModule(), use_migrations=False)
     direct_backend.create_tables()
@@ -172,11 +172,21 @@ def test_current_preview_migrations_match_create_all_schema(tmp_path: Path) -> N
     migrated_inspector = sa_inspect(migrated)
     direct_inspector = sa_inspect(direct)
 
-    assert set(migrated_inspector.get_table_names()) - {"alembic_version"} == set(direct_inspector.get_table_names())
-    for table in ("pipeline_state", "preview_requests"):
+    migrated_tables = set(migrated_inspector.get_table_names()) - {"alembic_version"}
+    direct_tables = set(direct_inspector.get_table_names())
+    assert migrated_tables == direct_tables
+    for table in migrated_tables:
         assert {column["name"] for column in migrated_inspector.get_columns(table)} == {
             column["name"] for column in direct_inspector.get_columns(table)
         }
+        assert (
+            migrated_inspector.get_pk_constraint(table)["constrained_columns"]
+            == direct_inspector.get_pk_constraint(table)["constrained_columns"]
+        )
+        if table in {"ccloud_allocation_lineage_runs", "ccloud_allocation_lineage_portions"}:
+            assert {index["name"] for index in migrated_inspector.get_indexes(table)} == {
+                index["name"] for index in direct_inspector.get_indexes(table)
+            }
 
     migrated.dispose()
     direct.dispose()

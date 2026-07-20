@@ -248,7 +248,11 @@ def test_unexpected_generation_failure_logs_request_and_leaves_no_package(
     executor = ControlledExecutor()
     runtime = _runtime(tmp_path, backend, executor)
     service = preview_module("service")
-    monkeypatch.setattr(service, "build_daily_full_package", lambda **_kwargs: (_ for _ in ()).throw(OSError("disk")))
+    monkeypatch.setattr(
+        service,
+        "build_daily_full_package_rows",
+        lambda **_kwargs: (_ for _ in ()).throw(OSError("disk")),
+    )
     try:
         queued = _submit_range(runtime, backend, date(2026, 7, 2))
         with caplog.at_level("ERROR", logger="core.preview.service"):

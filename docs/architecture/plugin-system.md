@@ -77,9 +77,9 @@ TASK-254.04 does not expand global handler or allocator policy. In particular,
 `KAFKA_REST_PRODUCE`, `KAFKA_STREAMS`, `CONNECT_NUM_RECORDS`,
 `USM_CONNECTED_NODE`, and `PROMO_CREDIT` have no new dedicated production
 owner. Cluster Linking remains owned by the existing default handler and keeps
-its existing allocator behavior. The Preview-only readiness gate for these
-native types is separate from global chargeback dispatch; TASK-254.05 owns any
-future lineage-readiness change.
+its existing allocator behavior. Preview lineage consumes the actual output of
+this unchanged global chargeback dispatch; it does not introduce dedicated
+handlers or allocators for these native types.
 
 ## ResolveContext
 
@@ -133,6 +133,15 @@ Provides overlay-specific configuration (e.g., `TopicAttributionConfig`) to core
 | `self_managed_kafka` | No | No |
 | `generic_metrics_only` | No | No |
 
+Confluent Cloud's storage module also exposes the optional
+`AllocationLineageRepository` capability on its chargeback repository.
+`CalculatePhase` uses that capability to persist one calculation envelope and
+the actual output portions keyed to each existing `CCloudBillingLineItem` origin.
+Repositories without the capability retain the ordinary calculation path
+unchanged. This storage extension records calculation evidence only; it does not
+change handler selection, allocator behavior, chargeback output, or generic CSV
+export. Migration 021 owns the Confluent source-association and lineage tables.
+
 ## Lifecycle
 
 1. `plugin.initialize(config)` — validate config, create clients
@@ -143,5 +152,5 @@ Provides overlay-specific configuration (e.g., `TopicAttributionConfig`) to core
 6. `plugin.get_fallback_allocator()` → CostAllocator or None (handles unknown product types)
 7. `plugin.build_shared_context(tenant_id)` → shared state accessible to all handlers
 8. `plugin.gather_supplemental_resources(...)` → isolated authorities when the plugin implements `SupplementalResourceGatherer`
-9. Per billing date: gather → per-type deletion reconciliation → allocate → commit → emit
+9. Per billing date: gather → per-type deletion reconciliation → allocate → optionally persist actual lineage → commit → emit
 10. `plugin.close()` — clean up connections

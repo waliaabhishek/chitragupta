@@ -52,21 +52,6 @@ const CURRENT_AUTHORITY_GAPS = [
     description: "SKU values are deterministic Chitragupta-derived evidence, not provider-issued identifiers.",
     owner: "TASK-254.04",
   },
-  {
-    code: "allocation_lineage_and_tag_projection_pending",
-    description: "General allocation lineage and tag projection are deferred.",
-    owner: "TASK-254.05",
-  },
-  {
-    code: "allocation_ratio_deferred",
-    description: "Durable allocation-ratio evidence is deferred.",
-    owner: "TASK-254.05",
-  },
-  {
-    code: "allocation_method_version_deferred",
-    description: "Allocation method-version evidence is deferred.",
-    owner: "TASK-254.05",
-  },
 ] as const;
 
 interface FocusPreviewPageProps {

@@ -1,13 +1,71 @@
 from __future__ import annotations
 
+import json
 import logging
+import math
 from collections.abc import Iterator
 from dataclasses import dataclass
-from datetime import datetime
-from decimal import Decimal
-from typing import Protocol, runtime_checkable
+from datetime import date, datetime
+from decimal import Decimal, InvalidOperation
+from typing import Any, Protocol, runtime_checkable
 
 logger = logging.getLogger(__name__)
+
+
+class PreviewAllocationEvidenceDecodeError(ValueError):
+    """Persisted lineage evidence does not satisfy the closed storage codec."""
+
+
+def decode_lineage_decimal(value: str) -> Decimal:
+    if not value or value != value.strip():
+        raise PreviewAllocationEvidenceDecodeError("invalid lineage decimal")
+    try:
+        decoded = Decimal(value)
+    except InvalidOperation as exc:
+        raise PreviewAllocationEvidenceDecodeError("invalid lineage decimal") from exc
+    if not decoded.is_finite() or str(decoded) != value:
+        raise PreviewAllocationEvidenceDecodeError("invalid lineage decimal")
+    return decoded
+
+
+def _decode_lineage_metadata(value: Any) -> Any:
+    if value is None or isinstance(value, (str, bool, int)):
+        return value
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise PreviewAllocationEvidenceDecodeError("invalid lineage metadata")
+        return value
+    if isinstance(value, list):
+        return [_decode_lineage_metadata(item) for item in value]
+    if isinstance(value, dict):
+        if set(value) == {"decimal"}:
+            decimal_value = value["decimal"]
+            if not isinstance(decimal_value, str):
+                raise PreviewAllocationEvidenceDecodeError("invalid lineage decimal tag")
+            decode_lineage_decimal(decimal_value)
+            return value
+        if not all(isinstance(key, str) for key in value):
+            raise PreviewAllocationEvidenceDecodeError("invalid lineage metadata")
+        return {key: _decode_lineage_metadata(item) for key, item in value.items()}
+    raise PreviewAllocationEvidenceDecodeError("invalid lineage metadata")
+
+
+def decode_lineage_method_details(value: str, *, target_kind: str) -> dict[str, Any]:
+    try:
+        decoded = json.loads(value)
+    except (TypeError, ValueError) as exc:
+        raise PreviewAllocationEvidenceDecodeError("invalid lineage method details") from exc
+    if (
+        not isinstance(decoded, dict)
+        or set(decoded) != {"allocation_detail", "metadata", "target_kind"}
+        or not isinstance(decoded.get("metadata"), dict)
+        or decoded.get("target_kind") != target_kind
+    ):
+        raise PreviewAllocationEvidenceDecodeError("invalid lineage method details")
+    _decode_lineage_metadata(decoded)
+    if json.dumps(decoded, sort_keys=True, separators=(",", ":"), ensure_ascii=False) != value:
+        raise PreviewAllocationEvidenceDecodeError("noncanonical lineage method details")
+    return decoded
 
 
 def _aware(value: datetime) -> bool:
@@ -57,6 +115,11 @@ class PreviewSourceEvidence:
     native_tier_dimensions: tuple[tuple[str, str], ...]
     malformed: bool
     diagnostics: tuple[str, ...]
+    billing_timestamp: datetime | None = None
+    billing_env_id: str | None = None
+    billing_resource_id: str | None = None
+    billing_product_type: str | None = None
+    billing_product_category: str | None = None
 
 
 @dataclass(frozen=True)
@@ -83,6 +146,33 @@ class PreviewAllocationEvidence:
     allocation_target_id: str
     allocation_method: str
     amount: Decimal
+    calculation_id: str = ""
+    portion_ordinal: int = 0
+    target_kind: str = "identity"
+    target_id: str | None = None
+    allocated_cost: Decimal = Decimal(0)
+    allocated_quantity: Decimal = Decimal(0)
+    allocation_ratio: Decimal = Decimal(0)
+    method_id: str = ""
+    method_version: str = ""
+    method_details_json: str = ""
+    origin_total_cost: Decimal = Decimal(0)
+    origin_quantity: Decimal = Decimal(0)
+    origin_unit_price: Decimal = Decimal(0)
+    origin_currency: str = ""
+    origin_granularity: str = ""
+
+
+@dataclass(frozen=True)
+class PreviewAllocationRunEvidence:
+    ecosystem: str
+    tenant_id: str
+    tracking_date: date
+    calculation_id: str
+    calculation_completed_at: datetime
+    capture_status: str
+    capture_reason: str | None
+    portion_count: int
 
 
 @runtime_checkable
@@ -103,3 +193,15 @@ class PreviewAllocationEvidenceReader(Protocol):
     def find_preview_allocation_candidates(
         self, scope: PreviewEvidenceScope, source: PreviewSourceEvidence
     ) -> tuple[PreviewAllocationEvidence, ...]: ...
+
+    def iter_preview_allocations(
+        self,
+        scope: PreviewEvidenceScope,
+        calculation_ids: tuple[str, ...],
+    ) -> Iterator[PreviewAllocationEvidence]: ...
+
+    def iter_preview_allocation_runs(
+        self,
+        scope: PreviewEvidenceScope,
+        calculation_ids: tuple[str, ...],
+    ) -> Iterator[PreviewAllocationRunEvidence]: ...

@@ -532,7 +532,7 @@ def test_primary_api_seam_transports_exact_row_validation_diagnostic(tmp_path: P
     validation_error = mapping.PreviewRowValidationError(mapping.PreviewRowRuleId.TYPE, column="BillingAccountId")
     with (
         patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"),
-        patch("core.preview.service.build_daily_full_package", side_effect=validation_error),
+        patch("core.preview.service.build_daily_full_package_rows", side_effect=validation_error),
         client,
     ):
         app.state.backends["production"] = backend
@@ -571,6 +571,15 @@ def _mapper_backed_malformed_source() -> CCloudCostSourceRecord:
         collection_window_start=datetime(2026, 7, 1, tzinfo=UTC),
         collection_window_end=datetime(2026, 7, 2, tzinfo=UTC),
         ordinal=0,
+        billing_key=(
+            "confluent_cloud",
+            "tenant-1",
+            datetime(2026, 7, 1, tzinfo=UTC),
+            "env-1",
+            "lkc-1",
+            "KAFKA_STORAGE",
+            "KAFKA",
+        ),
     )
     mapped: CCloudCostSourceRecord = mapper(
         candidate,
@@ -594,12 +603,12 @@ def _mapper_backed_malformed_source() -> CCloudCostSourceRecord:
             "preview_source_scope_unsupported",
         ),
         ({"description": "Prior period refund"}, "preview_charge_classification_ambiguous"),
-        ({"line_type": None}, "preview_source_line_type_unknown"),
+        ({"line_type": ""}, "preview_source_line_type_unknown"),
         ({"line_type": "FUTURE_LINE"}, "preview_source_line_type_unsupported"),
         ({"line_type": "SUPPORT"}, "preview_charge_classification_ambiguous"),
         (
             {"line_type": "SUPPORT", "product": "SUPPORT_CLOUD_BUSINESS", "description": "Support subscription"},
-            "preview_mapping_scope_unsupported",
+            "preview_source_coverage_incomplete",
         ),
         ({"resource_id": None}, "preview_source_record_incomplete"),
         ({"amount": 0}, "preview_source_economics_unsupported"),
@@ -1043,9 +1052,9 @@ def test_primary_api_failure_isolated_across_tenant_databases_and_non_overlappin
 
     assert first_body["status"] == "failed"
     assert first_body["diagnostic"]["code"] == "preview_source_record_malformed"
-    assert second_body["status"] == "ready"
-    assert second_body["diagnostic"] is None
-    assert second_body["package"] is not None
+    assert second_body["status"] == "failed"
+    assert second_body["diagnostic"]["code"] == "preview_allocation_lineage_incomplete"
+    assert second_body["package"] is None
     assert cross_tenant.status_code == 404
 
 

@@ -77,6 +77,11 @@ def _record(**overrides: Any) -> Any:
         "raw_payload": {"z": 1, "a": {"b": 2}},
     }
     values.update(overrides)
+    values.setdefault("billing_timestamp", values["allocation_timestamp"])
+    values.setdefault("billing_env_id", values["environment_id"] or "")
+    values.setdefault("billing_resource_id", values["resource_id"] or "unresolved_billing_0")
+    values.setdefault("billing_product_type", values["line_type"])
+    values.setdefault("billing_product_category", values["product"])
     return CCloudCostSourceRecord(**values)
 
 

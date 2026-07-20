@@ -27,6 +27,7 @@ from core.preview.models import (
 from core.storage.backends.sqlmodel.mappers import ensure_utc, ensure_utc_strict
 from core.storage.backends.sqlmodel.tables import PipelineStateTable
 from core.storage.interface import (  # noqa: TC001  # resolved by get_type_hints contract test
+    EntityTagRepository,
     IdentityRepository,
     ResourceRepository,
 )
@@ -427,6 +428,7 @@ class PreviewReadUnitOfWork(Protocol):
     allocation_evidence: PreviewAllocationEvidenceReader
     resources: ResourceRepository
     identities: IdentityRepository
+    tags: EntityTagRepository
 
     def __enter__(self) -> Self: ...
     def __exit__(

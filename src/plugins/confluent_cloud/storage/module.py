@@ -43,12 +43,19 @@ class CCloudStorageModule:
     def register_tables(self, engine: Engine) -> None:
         """Ensure CCloud plugin tables are created (idempotent)."""
         from core.storage.backends.sqlmodel.base_tables import IdentityTable, ResourceTable
-        from plugins.confluent_cloud.storage.tables import CCloudBillingTable, CCloudCostSourceTable
+        from plugins.confluent_cloud.storage.tables import (
+            CCloudAllocationLineagePortionTable,
+            CCloudAllocationLineageRunTable,
+            CCloudBillingTable,
+            CCloudCostSourceTable,
+        )
 
         ccloud_tables = [
             ResourceTable.__table__,  # type: ignore[attr-defined]  # SQLModel tables have __table__ at runtime via SQLAlchemy metaclass
             IdentityTable.__table__,  # type: ignore[attr-defined]  # SQLModel tables have __table__ at runtime via SQLAlchemy metaclass
             CCloudBillingTable.__table__,  # type: ignore[attr-defined]  # SQLModel tables have __table__ at runtime via SQLAlchemy metaclass
             CCloudCostSourceTable.__table__,  # type: ignore[attr-defined]  # SQLModel tables have __table__ at runtime via SQLAlchemy metaclass
+            CCloudAllocationLineageRunTable.__table__,  # type: ignore[attr-defined]
+            CCloudAllocationLineagePortionTable.__table__,  # type: ignore[attr-defined]
         ]
         SQLModel.metadata.create_all(engine, tables=ccloud_tables)
