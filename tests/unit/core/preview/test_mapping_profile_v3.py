@@ -104,7 +104,7 @@ CUSTOM_RULE_AUTHORITIES = (
     ),
     ("x_ChitraguptaAllocationRatio", "persisted allocation lineage", "copy exact realized ratio"),
     ("x_ChitraguptaAllocationMethodVersion", "persisted allocation lineage", "copy lineage method version"),
-    ("x_ChitraguptaMappingProfileVersion", "mapping profile", "emit focus-1.4-daily-full-v4"),
+    ("x_ChitraguptaMappingProfileVersion", "mapping profile", "emit focus-1.4-preview-v5"),
     ("x_ChitraguptaSkuComponents", "canonical SKU and SKU price components", "serialize as canonical JSON"),
     ("x_ConfluentProduct", "source.native_product", "copy losslessly"),
     ("x_ConfluentLineType", "source.native_line_type", "copy losslessly"),
@@ -396,7 +396,7 @@ def _valid_row_projection(mapping: Any) -> Any:
         {
             "x_ChitraguptaSourceCostId": "cost-1",
             "x_ChitraguptaBillingScopeId": billing_scope,
-            "x_ChitraguptaMappingProfileVersion": "focus-1.4-daily-full-v4",
+            "x_ChitraguptaMappingProfileVersion": "focus-1.4-preview-v5",
             "x_ChitraguptaSkuComponents": mapping._canonical_json(
                 {"schema_version": "v1", "sku": sku, "sku_price": sku_price}
             ),
@@ -408,10 +408,22 @@ def _valid_row_projection(mapping: Any) -> Any:
             "x_ConfluentTierDimensions": '{"lower_bound":"0","upper_bound":"100"}',
         }
     )
-    return mapping.PreviewRowProjection(
+    return mapping.PreviewFullRow(
         target_values=tuple(values[column] for column in mapping.FOCUS_1_4_FULL_COLUMNS),
         custom_values=tuple(custom_values[column] for column in mapping.CUSTOM_EVIDENCE_COLUMNS),
         financials=financials,
+        lineage_members=(
+            mapping.PreviewLineageMember(
+                source_cost_id="cost-1",
+                calculation_id="calculation-1",
+                origin_timestamp=REQUEST_START,
+                origin_environment_id="env-1",
+                origin_resource_id="lkc-1",
+                origin_product_type="KAFKA_STORAGE",
+                origin_product_category="KAFKA",
+                portion_ordinal=0,
+            ),
+        ),
     )
 
 
@@ -476,8 +488,9 @@ def _package_row(
         tenant_id="tenant-1",
         grain="daily",
         start_date=date(2026, 7, 1),
-        end_date=date(2026, 7, 1),
+        end_date=date(2026, 7, 2),
         column_profile="full",
+        effective_columns=mapping.FOCUS_1_4_FULL_PROFILE_COLUMNS,
         status=preview_module("models").PreviewRequestStatus.RUNNING,
         created_at=datetime(2026, 7, 1, tzinfo=UTC),
         started_at=datetime(2026, 7, 1, tzinfo=UTC),
@@ -499,12 +512,14 @@ def _package_row(
             ),
         ),
         source_through=datetime(2026, 7, 3, tzinfo=UTC),
+        effective_coverage_start_date=date(2026, 7, 1),
+        effective_coverage_end_date=date(2026, 7, 2),
+        availability_cutoff_end_date=None,
+        monthly_status=None,
     )
-    package = mapping.build_daily_full_package(
-        request=request,
-        snapshot=snapshot,
+    provider_context = mapping.PreviewProviderContext(billing_account_id, "Provider organization")
+    prepared = mapping.PreparedPreviewPackageRow(
         evidence=evidence,
-        provider_context=mapping.PreviewProviderContext(billing_account_id, "Provider organization"),
         resource_context=mapping.PreviewResourceContext(
             resource_id,
             "Orders",
@@ -512,13 +527,29 @@ def _package_row(
             cloud,
             region,
         ),
-        identity=CoreIdentity("confluent_cloud", "tenant-1", "sa-1", "service_account", "Owner"),
+        allocated_entity=CoreIdentity("confluent_cloud", "tenant-1", "sa-1", "service_account", "Owner"),
         environment=CoreResource(
             "confluent_cloud",
             "tenant-1",
             "env-1",
             "environment",
             "Production",
+        ),
+        origin_tags_json="{}",
+        allocated_tags_json=None,
+    )
+    full_row = mapping.project_daily_portion_full_row(
+        prepared=prepared,
+        provider_context=provider_context,
+    )
+    package = mapping.build_preview_package(
+        request=request,
+        snapshot=snapshot,
+        full_rows=(full_row,),
+        reconciliation=mapping.PreviewPackageReconciliation(
+            source_records=1,
+            source_cost=source.amount,
+            allocated_cost=allocation.allocated_cost,
         ),
         generated_at=datetime(2026, 7, 4, tzinfo=UTC),
     )
@@ -1329,10 +1360,11 @@ def test_validate_preview_row_rejects_noncanonical_billing_scope_without_trustin
     row = _valid_row_projection(mapping)
     custom_values = list(row.custom_values)
     custom_values[mapping.CUSTOM_EVIDENCE_COLUMNS.index("x_ChitraguptaBillingScopeId")] = "billing-scope-1"
-    untrusted = mapping.PreviewRowProjection(
+    untrusted = mapping.PreviewFullRow(
         target_values=row.target_values,
         custom_values=tuple(custom_values),
         financials=row.financials,
+        lineage_members=row.lineage_members,
     )
 
     with pytest.raises(mapping.PreviewRowValidationError) as caught:
@@ -1345,10 +1377,11 @@ def test_validate_preview_row_rejects_noncanonical_billing_scope_without_trustin
 def test_row_projection_has_no_private_derived_authority_state() -> None:
     mapping = preview_module("mapping")
 
-    assert tuple(field.name for field in fields(mapping.PreviewRowProjection)) == (
+    assert tuple(field.name for field in fields(mapping.PreviewFullRow)) == (
         "target_values",
         "custom_values",
         "financials",
+        "lineage_members",
     )
 
 
@@ -1869,11 +1902,11 @@ def test_package_manifest_reports_the_complete_validated_v3_profile(
         include_manifest=True,
     )
 
-    assert manifest["mapping_profile_version"] == "focus-1.4-daily-full-v4"
+    assert manifest["mapping_profile_version"] == "focus-1.4-preview-v5"
     assert manifest["conformance_status"] == "non_conforming"
     assert manifest["validation"] == {
         "mapping_errors": 0,
-        "mapping_profile_version": "focus-1.4-daily-full-v4",
+        "mapping_profile_version": "focus-1.4-preview-v5",
         "rows": 1,
         "source_records": 1,
         "status": "passed",

@@ -391,6 +391,7 @@ def _submit(runtime: object, backend: SQLModelBackend) -> object:
         end_date=date(2026, 7, 2),
         grain="daily",
         column_profile="full",
+        effective_columns=preview_module("mapping").FOCUS_1_4_FULL_PROFILE_COLUMNS,
     )
 
 
@@ -520,7 +521,7 @@ def test_daily_full_package_maps_provider_financial_account_sku_and_invoice_evid
         assert manifest["schema_version"] == "chitragupta.preview-manifest.v1"
         assert manifest["target_focus_version"] == "1.4"
         assert manifest["conformance_status"] == "non_conforming"
-        assert manifest["mapping_profile_version"] == "focus-1.4-daily-full-v4"
+        assert manifest["mapping_profile_version"] == "focus-1.4-preview-v5"
         assert [gap["code"] for gap in manifest["known_gaps"]] == [gap.code for gap in mapping.KNOWN_GAPS]
         assert manifest["known_gaps"] == [
             {
@@ -2141,6 +2142,7 @@ def test_source_through_tracks_persisted_replacement_window_not_request_end(tmp_
             end_date=end_date,
             grain="daily",
             column_profile="full",
+            effective_columns=preview_module("mapping").FOCUS_1_4_FULL_PROFILE_COLUMNS,
         )
 
     try:

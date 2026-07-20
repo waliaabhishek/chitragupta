@@ -3,7 +3,9 @@ from __future__ import annotations
 import csv
 import io
 import json
+import time
 from datetime import UTC, date, datetime
+from decimal import Decimal
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -150,6 +152,23 @@ def _csv_rows(client: PipelineApiClient, ready: dict[str, Any]) -> tuple[bytes, 
     assert response.status_code == 200
     body = response.content
     return body, list(csv.DictReader(io.StringIO(body.decode())))
+
+
+def _profile_request(client: PipelineApiClient, body: dict[str, object]) -> dict[str, Any]:
+    submitted = client.post(
+        "/api/v1/tenants/production/focus-preview/requests",
+        json=body,
+    )
+    assert submitted.status_code == 202
+    request_id = submitted.json()["request_id"]
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        response = client.get(f"/api/v1/tenants/production/focus-preview/requests/{request_id}")
+        assert response.status_code == 200
+        if response.json()["status"] in {"ready", "failed"}:
+            return response.json()
+        time.sleep(0.01)
+    raise AssertionError("profile Preview request did not finish")
 
 
 @respx.mock
@@ -302,10 +321,10 @@ def test_real_production_lineage_projects_multiple_origins_actual_portions_and_f
         manifest_response = client.get(ready["package"]["manifest"]["download_url"])
         assert manifest_response.status_code == 200
         manifest = manifest_response.json()
-        assert manifest["mapping_profile_version"] == "focus-1.4-daily-full-v4"
+        assert manifest["mapping_profile_version"] == "focus-1.4-preview-v5"
         assert manifest["validation"] == {
             "status": "passed",
-            "mapping_profile_version": "focus-1.4-daily-full-v4",
+            "mapping_profile_version": "focus-1.4-preview-v5",
             "source_records": 4,
             "rows": 6,
             "mapping_errors": 0,
@@ -355,6 +374,49 @@ def test_real_production_lineage_projects_multiple_origins_actual_portions_and_f
             ("resource", ("lkc-1",)),
             ("identity", ("sa-1", "user-1")),
         ]
+
+        mapping = __import__("core.preview.mapping", fromlist=["FOCUS_1_4_FULL_PROFILE_COLUMNS"])
+        custom_columns = ["BilledCost", "AllocatedResourceId", "x_ChitraguptaAllocationRatio"]
+        profile_columns = {
+            "full": list(mapping.FOCUS_1_4_FULL_PROFILE_COLUMNS),
+            "summary": list(mapping.FOCUS_1_4_SUMMARY_COLUMNS),
+            "custom": custom_columns,
+        }
+        for profile in ("summary", "custom"):
+            body: dict[str, object] = {
+                "grain": "daily",
+                "start_date": "2026-07-01",
+                "end_date": "2026-07-04",
+                "column_profile": profile,
+            }
+            if profile == "custom":
+                body["columns"] = custom_columns
+            daily_profile = _profile_request(client, body)
+            assert daily_profile["status"] == "ready"
+            daily_bytes, _daily_rows = _csv_rows(client, daily_profile)
+            assert next(csv.reader(io.StringIO(daily_bytes.decode()))) == profile_columns[profile]
+
+        app.state.preview_runtime._clock = lambda: datetime(2026, 7, 4, tzinfo=UTC)
+        for profile in ("full", "summary", "custom"):
+            body = {"grain": "monthly", "month": "2026-07", "column_profile": profile}
+            if profile == "custom":
+                body["columns"] = custom_columns
+            monthly = _profile_request(client, body)
+            assert monthly["status"] == "ready"
+            assert monthly["grain"] == "monthly"
+            assert monthly["month"] == "2026-07"
+            assert monthly["start_date"] == "2026-07-01"
+            assert monthly["end_date"] == "2026-08-01"
+            assert monthly["column_profile"] == profile
+            assert monthly["effective_columns"] == profile_columns[profile]
+            assert monthly["source_snapshot"]["monthly_status"] == "provisional"
+            assert monthly["source_snapshot"]["effective_coverage_end_date"] == "2026-07-03"
+            monthly_bytes, monthly_rows = _csv_rows(client, monthly)
+            assert next(csv.reader(io.StringIO(monthly_bytes.decode()))) == profile_columns[profile]
+            if profile in {"full", "custom"}:
+                assert sum(Decimal(row["BilledCost"]) for row in monthly_rows) == Decimal("16")
+        assert cost_route.call_count == 1
+        assert len(respx.calls) == provider_calls_before_preview
 
         with backend.create_unit_of_work() as uow:
             uow.tags.update_tag(origin_tag_id, "changed-origin")

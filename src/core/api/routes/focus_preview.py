@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import calendar
 import logging
 from datetime import timedelta
 from typing import Annotated
@@ -14,16 +13,35 @@ from core.api.schemas import (  # noqa: TC001  # FastAPI evaluates annotations
     FocusPreviewCalculationCoverageEntryResponse,
     FocusPreviewDiagnosticResponse,
     FocusPreviewPackageResponse,
+    FocusPreviewProfileResponse,
     FocusPreviewRequestBody,
     FocusPreviewSourceSnapshotResponse,
     FocusPreviewStatusResponse,
 )
 from core.config.models import TenantConfig  # noqa: TC001  # FastAPI evaluates annotations
-from core.preview.models import PreviewArtifactMetadata, PreviewRequest, PreviewRequestStatus
+from core.preview.mapping import (
+    FOCUS_1_4_FULL_PROFILE_COLUMNS,
+    FOCUS_1_4_SUMMARY_COLUMNS,
+    MAPPING_PROFILE_VERSION,
+)
+from core.preview.models import (
+    PreviewArtifactMetadata,
+    PreviewRequest,
+    PreviewRequestStatus,
+    preview_month,
+    validate_preview_request_snapshot,
+)
 from core.preview.persistence import PreviewStorageBackend
+from core.preview.request import (
+    PreviewColumnSelectionEmptyError,
+    PreviewRequestValidationError,
+    canonicalize_daily_interval,
+    canonicalize_monthly_interval,
+    normalize_column_selection,
+)
 from core.preview.service import PreviewArtifactUnavailable, PreviewRuntime, PreviewWorkerUnavailable
 
-router = APIRouter(prefix="/tenants/{tenant_name}/focus-preview/requests", tags=["focus-preview"])
+router = APIRouter(prefix="/tenants/{tenant_name}/focus-preview", tags=["focus-preview"])
 logger = logging.getLogger(__name__)
 
 
@@ -70,9 +88,18 @@ def _artifact_response(
 
 
 def _serialize(request: PreviewRequest) -> FocusPreviewStatusResponse:
+    validate_preview_request_snapshot(
+        request=request,
+        snapshot=request.source_snapshot,
+        resulting_status=request.status,
+        mode="strict_materialized",
+    )
     base = f"/api/v1/tenants/{request.tenant_name}/focus-preview/requests/{request.request_id}"
     snapshot = None
     if request.source_snapshot is not None:
+        effective_start = request.source_snapshot.effective_coverage_start_date
+        effective_end = request.source_snapshot.effective_coverage_end_date
+        assert effective_start is not None and effective_end is not None
         snapshot = FocusPreviewSourceSnapshotResponse(
             calculation_timestamp=request.source_snapshot.calculation_timestamp,
             calculation_coverage=[
@@ -85,6 +112,11 @@ def _serialize(request: PreviewRequest) -> FocusPreviewStatusResponse:
                 for item in request.source_snapshot.calculation_coverage
             ],
             source_through=request.source_snapshot.source_through,
+            effective_coverage_start_date=effective_start,
+            effective_coverage_end_date=effective_end,
+            evidence_through_date=(None if effective_start == effective_end else effective_end - timedelta(days=1)),
+            availability_cutoff_end_date=request.source_snapshot.availability_cutoff_end_date,
+            monthly_status=request.source_snapshot.monthly_status,
         )
     package = None
     if request.package is not None:
@@ -106,7 +138,9 @@ def _serialize(request: PreviewRequest) -> FocusPreviewStatusResponse:
         grain=request.grain,
         start_date=request.start_date,
         end_date=request.end_date,
+        month=preview_month(grain=request.grain, start_date=request.start_date, end_date=request.end_date),
         column_profile=request.column_profile,
+        effective_columns=list(request.effective_columns),
         status=request.status.value,
         created_at=request.created_at,
         started_at=request.started_at,
@@ -137,7 +171,38 @@ def _lookup(
     return runtime, preview
 
 
-@router.post("", status_code=202, response_model=FocusPreviewStatusResponse)
+def _log_ignored_columns(
+    tenant_name: str,
+    unknown: tuple[str, ...],
+    duplicates: tuple[str, ...],
+) -> None:
+    for column in unknown:
+        logger.warning(
+            "FOCUS Mapping Preview ignored unsupported Custom column tenant=%s column=%r",
+            tenant_name,
+            column,
+        )
+    for column in duplicates:
+        logger.warning(
+            "FOCUS Mapping Preview ignored duplicate Custom column tenant=%s column=%r",
+            tenant_name,
+            column,
+        )
+
+
+@router.get("/profile", response_model=FocusPreviewProfileResponse)
+def get_profile(
+    tenant_config: Annotated[TenantConfig, Depends(get_tenant_config)],
+) -> FocusPreviewProfileResponse:
+    _check_ecosystem(tenant_config)
+    return FocusPreviewProfileResponse(
+        mapping_profile_version=MAPPING_PROFILE_VERSION,
+        full_columns=list(FOCUS_1_4_FULL_PROFILE_COLUMNS),
+        summary_columns=list(FOCUS_1_4_SUMMARY_COLUMNS),
+    )
+
+
+@router.post("/requests", status_code=202, response_model=FocusPreviewStatusResponse)
 def submit_preview(
     request: Request,
     tenant_name: str,
@@ -145,13 +210,22 @@ def submit_preview(
     tenant_config: Annotated[TenantConfig, Depends(get_tenant_config)],
 ) -> FocusPreviewStatusResponse:
     _check_ecosystem(tenant_config)
-    if body.start_date >= body.end_date:
-        raise HTTPException(400, detail="start_date must be before end_date")
-    last_day = calendar.monthrange(body.start_date.year, body.start_date.month)[1]
-    month_exclusive_end = body.start_date.replace(day=last_day)
-    month_exclusive_end += timedelta(days=1)
-    if body.end_date > month_exclusive_end:
-        raise HTTPException(400, detail="Daily preview range must stay within one UTC calendar month")
+    try:
+        interval = (
+            canonicalize_daily_interval(start_date=body.start_date, end_date=body.end_date)
+            if body.grain == "daily"
+            else canonicalize_monthly_interval(month=body.month)
+        )
+        selection = normalize_column_selection(
+            profile=body.column_profile,
+            requested_columns=body.columns,
+        )
+    except PreviewColumnSelectionEmptyError as exc:
+        _log_ignored_columns(tenant_name, exc.ignored_unknown, exc.ignored_duplicates)
+        raise HTTPException(400, detail=exc.detail) from None
+    except PreviewRequestValidationError as exc:
+        raise HTTPException(400, detail=exc.detail) from None
+    _log_ignored_columns(tenant_name, selection.ignored_unknown, selection.ignored_duplicates)
     runtime = _runtime(request)
     backend = _backend(request, tenant_name, tenant_config)
     try:
@@ -159,17 +233,18 @@ def submit_preview(
             tenant_name=tenant_name,
             tenant_config=tenant_config,
             backend=backend,
-            start_date=body.start_date,
-            end_date=body.end_date,
-            grain=body.grain,
+            start_date=interval.start_date,
+            end_date=interval.end_date,
+            grain=interval.grain,
             column_profile=body.column_profile,
+            effective_columns=selection.effective_columns,
         )
     except PreviewWorkerUnavailable:
         raise HTTPException(503, detail="FOCUS Mapping Preview worker is unavailable") from None
     return _serialize(preview)
 
 
-@router.get("/{request_id}", response_model=FocusPreviewStatusResponse)
+@router.get("/requests/{request_id}", response_model=FocusPreviewStatusResponse)
 def get_preview(
     request: Request,
     tenant_name: str,
@@ -190,7 +265,7 @@ def _require_ready(preview: PreviewRequest) -> None:
         raise HTTPException(409, detail=f"Preview request {preview.request_id!r} failed; inspect diagnostics")
 
 
-@router.get("/{request_id}/manifest")
+@router.get("/requests/{request_id}/manifest")
 def get_manifest(
     request: Request,
     tenant_name: str,
@@ -206,7 +281,7 @@ def get_manifest(
     return Response(body, media_type="application/json")
 
 
-@router.get("/{request_id}/files/{file_name}")
+@router.get("/requests/{request_id}/files/{file_name}")
 def get_file(
     request: Request,
     tenant_name: str,

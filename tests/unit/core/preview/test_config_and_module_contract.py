@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import inspect
 import tomllib
-from datetime import timedelta
+from collections.abc import Iterable
+from datetime import datetime, timedelta
 from importlib import import_module
 from pathlib import Path
 from typing import get_type_hints
@@ -83,18 +84,19 @@ def test_migration_020_uses_postponed_annotations() -> None:
     assert meaningful_lines[0] == "from __future__ import annotations"
 
 
-def test_mapping_accepts_typed_projection_and_domain_objects() -> None:
-    from core.models.identity import Identity
-    from core.models.resource import Resource
-
+def test_mapping_exposes_the_typed_v5_package_and_full_row_contract() -> None:
     mapping = preview_module("mapping")
-    hints = get_type_hints(mapping.build_daily_full_package)
+    models = preview_module("models")
+    hints = get_type_hints(mapping.build_preview_package)
 
-    assert hints["evidence"] is mapping.SelectedPreviewEvidence
-    assert hints["provider_context"] is mapping.PreviewProviderContext
-    assert hints["resource_context"] is mapping.PreviewResourceContext
-    assert hints["identity"] is Identity
-    assert hints["environment"] == Resource | None
+    assert hints == {
+        "request": models.PreviewRequest,
+        "snapshot": models.PreviewSourceSnapshot,
+        "full_rows": Iterable[mapping.PreviewFullRow],
+        "reconciliation": mapping.PreviewPackageReconciliation,
+        "generated_at": datetime,
+        "return": models.PreviewPackagePayload,
+    }
 
 
 def test_mapping_helpers_expose_the_typed_v4_boundary_contracts() -> None:

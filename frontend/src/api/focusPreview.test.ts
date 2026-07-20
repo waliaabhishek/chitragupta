@@ -11,7 +11,9 @@ const queued = {
   grain: "daily",
   start_date: "2026-07-01",
   end_date: "2026-07-02",
+  month: null,
   column_profile: "full",
+  effective_columns: ["BilledCost"],
   status: "queued",
   created_at: "2026-07-03T00:00:00Z",
   started_at: null,
@@ -186,7 +188,7 @@ describe("FOCUS Mapping Preview API delegation", () => {
     const source = await import("./focusPreview?raw");
     const text = source.default;
 
-    expect(text).not.toContain("mapping");
+    expect(text).not.toContain("core.preview.mapping");
     expect(text).not.toContain("csv.writer");
     expect(text).not.toContain("sha256");
     expect(text).not.toContain("storage_key");

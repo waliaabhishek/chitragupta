@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FocusPreviewPage } from ".";
 import {
+  fetchFocusPreviewProfile,
   fetchFocusPreviewStatus,
   fetchPreviewArtifact,
   submitFocusPreview,
@@ -22,6 +23,7 @@ vi.mock("../../providers/TenantContext", () => ({
 
 vi.mock("../../api/focusPreview", () => ({
   submitFocusPreview: vi.fn(),
+  fetchFocusPreviewProfile: vi.fn(),
   fetchFocusPreviewStatus: vi.fn(),
   fetchPreviewArtifact: vi.fn(),
 }));
@@ -32,7 +34,9 @@ const baseRequest = {
   grain: "daily" as const,
   start_date: "2026-07-01",
   end_date: "2026-07-02",
+  month: null,
   column_profile: "full" as const,
+  effective_columns: ["BilledCost", "Tags"],
   status: "queued" as const,
   created_at: "2026-07-03T00:00:00Z",
   started_at: null,
@@ -50,6 +54,11 @@ async function submitForm(): Promise<void> {
 describe("FOCUS Mapping Preview page delegation", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(fetchFocusPreviewProfile).mockResolvedValue({
+      mapping_profile_version: "focus-1.4-preview-v5",
+      full_columns: ["BilledCost", "Tags", "AllocatedResourceId"],
+      summary_columns: ["AllocatedResourceId", "BilledCost", "Tags"],
+    });
     vi.mocked(submitFocusPreview).mockResolvedValue(baseRequest);
   });
 
@@ -58,27 +67,31 @@ describe("FOCUS Mapping Preview page delegation", () => {
   });
 
   it.each([
-    ["2026-08-01T00:30:00.000Z", "2026-08-01", "2026-09-01"],
-    ["2026-12-15T23:30:00.000Z", "2026-12-01", "2027-01-01"],
+    ["2026-08-01T00:30:00.000Z", "2026-08"],
+    ["2026-12-15T23:30:00.000Z", "2026-12"],
   ])(
-    "defaults to the full current UTC month at %s",
-    (now, expectedStart, expectedEnd) => {
+    "defaults to Monthly and the current UTC month at %s",
+    (now, expectedMonth) => {
       vi.useFakeTimers();
       vi.setSystemTime(new Date(now));
 
       render(<FocusPreviewPage />);
 
-      expect((screen.getByLabelText(/start date/i) as HTMLInputElement).value).toBe(expectedStart);
-      expect((screen.getByLabelText(/end date/i) as HTMLInputElement).value).toBe(expectedEnd);
+      expect((screen.getByLabelText(/^grain$/i) as HTMLSelectElement).value).toBe("monthly");
+      expect((screen.getByLabelText(/month/i) as HTMLInputElement).value).toBe(expectedMonth);
     },
   );
 
-  it("shows fixed Daily Full scope, non-conformance, and current authority gaps before submit", () => {
+  it("shows both grains and all column profiles while retaining non-conformance gaps", async () => {
     render(<FocusPreviewPage />);
 
     expect(screen.getByRole("heading", { name: "FOCUS Mapping Preview" })).toBeTruthy();
-    expect(screen.getByText("Daily")).toBeTruthy();
-    expect(screen.getByText("Full")).toBeTruthy();
+    expect(screen.getByRole("option", { name: "Monthly" })).toBeTruthy();
+    expect(screen.getByRole("option", { name: "Daily" })).toBeTruthy();
+    expect(screen.getByRole("option", { name: "Full" })).toBeTruthy();
+    expect(screen.getByRole("option", { name: "Summary" })).toBeTruthy();
+    expect(screen.getByRole("option", { name: "Custom" })).toBeTruthy();
+    await waitFor(() => expect(fetchFocusPreviewProfile).toHaveBeenCalledWith("production"));
     expect(screen.getByText(/non-conforming/i)).toBeTruthy();
     for (const description of [
       "Confluent Costs records do not carry a per-record billing currency.",
@@ -125,8 +138,7 @@ describe("FOCUS Mapping Preview page delegation", () => {
     });
     vi.mocked(fetchPreviewArtifact).mockResolvedValue(new Blob(["bytes"]));
     render(<FocusPreviewPage />);
-    const expectedStart = (screen.getByLabelText(/start date/i) as HTMLInputElement).value;
-    const expectedEnd = (screen.getByLabelText(/end date/i) as HTMLInputElement).value;
+    const expectedMonth = (screen.getByLabelText(/month/i) as HTMLInputElement).value;
 
     await submitForm();
     await waitFor(() => expect(fetchFocusPreviewStatus).toHaveBeenCalled());
@@ -139,9 +151,8 @@ describe("FOCUS Mapping Preview page delegation", () => {
     );
 
     expect(submitFocusPreview).toHaveBeenCalledWith("production", {
-      grain: "daily",
-      start_date: expectedStart,
-      end_date: expectedEnd,
+      grain: "monthly",
+      month: expectedMonth,
       column_profile: "full",
     });
     expect(fetchFocusPreviewStatus).toHaveBeenCalledWith(
@@ -157,6 +168,65 @@ describe("FOCUS Mapping Preview page delegation", () => {
       2,
       "/api/v1/cost-and-usage.csv",
     );
+  });
+
+  it("submits Daily Custom bounds and columns in caller selection order", async () => {
+    render(<FocusPreviewPage />);
+    const user = userEvent.setup();
+
+    await waitFor(() => expect(fetchFocusPreviewProfile).toHaveBeenCalledWith("production"));
+    await user.selectOptions(screen.getByLabelText(/^grain$/i), "daily");
+
+    const startDate = screen.getByLabelText(/start date/i);
+    await user.clear(startDate);
+    await user.type(startDate, "2026-07-05");
+    await user.tab();
+    const endDate = screen.getByLabelText(/end date/i);
+    await user.clear(endDate);
+    await user.type(endDate, "2026-07-12");
+    await user.tab();
+
+    await user.selectOptions(screen.getByLabelText(/column profile/i), "custom");
+    const columns = await screen.findByLabelText(/custom columns/i);
+    await user.selectOptions(columns, "Tags");
+    await user.selectOptions(columns, "BilledCost");
+    await user.click(screen.getByRole("button", { name: /generate preview/i }));
+
+    expect(submitFocusPreview).toHaveBeenCalledWith("production", {
+      grain: "daily",
+      start_date: "2026-07-05",
+      end_date: "2026-07-12",
+      column_profile: "custom",
+      columns: ["Tags", "BilledCost"],
+    });
+  });
+
+  it("renders provisional Monthly evidence coverage from persisted status", async () => {
+    vi.mocked(fetchFocusPreviewStatus).mockResolvedValue({
+      ...baseRequest,
+      grain: "monthly",
+      start_date: "2026-07-01",
+      end_date: "2026-08-01",
+      month: "2026-07",
+      status: "ready",
+      source_snapshot: {
+        calculation_timestamp: "2026-07-15T02:00:00Z",
+        calculation_coverage: [],
+        source_through: "2026-07-15T00:00:00Z",
+        effective_coverage_start_date: "2026-07-01",
+        effective_coverage_end_date: "2026-07-15",
+        evidence_through_date: "2026-07-14",
+        availability_cutoff_end_date: "2026-07-15",
+        monthly_status: "provisional",
+      },
+      package: null,
+    });
+    render(<FocusPreviewPage />);
+
+    await submitForm();
+
+    expect(await screen.findByText(/provisional/i)).toBeTruthy();
+    expect(screen.getByText(/2026-07-14/)).toBeTruthy();
   });
 
   it("renders a submit rejection and restores the submit control", async () => {

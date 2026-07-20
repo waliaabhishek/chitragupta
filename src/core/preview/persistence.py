@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import date, datetime, timedelta
 from typing import Literal, Protocol, Self, runtime_checkable
 
@@ -14,6 +14,7 @@ from core.preview.evidence import (  # noqa: TC001  # resolved by get_type_hints
     PreviewAllocationEvidenceReader,
     PreviewCostEvidenceReader,
 )
+from core.preview.mapping import LEGACY_DAILY_FULL_V4_COLUMNS, validate_preview_effective_columns
 from core.preview.models import (
     PreviewArtifactMetadata,
     PreviewCalculationCoverageEntry,
@@ -23,6 +24,8 @@ from core.preview.models import (
     PreviewRequestStatus,
     PreviewSourceSnapshot,
     PreviewStoredPackage,
+    preview_request_status,
+    validate_preview_request_snapshot,
 )
 from core.storage.backends.sqlmodel.mappers import ensure_utc, ensure_utc_strict
 from core.storage.backends.sqlmodel.tables import PipelineStateTable
@@ -71,7 +74,7 @@ class PreviewRequestRepository(Protocol):
 
     def get_for_owner(self, request_id: str, ecosystem: str, tenant_id: str) -> PreviewRequest | None: ...
 
-    def mark_running(self, request_id: str, started_at: datetime) -> bool: ...
+    def mark_running(self, request_id: str, started_at: datetime) -> PreviewRequest | None: ...
 
     def mark_ready(
         self,
@@ -116,6 +119,11 @@ class PreviewRequestTable(SQLModel, table=True):
     storage_key: str | None = None
     manifest_metadata_json: str | None = None
     data_files_json: str | None = None
+    effective_columns_json: str | None = Field(default=None, sa_column=Column(Text(), nullable=True))
+    effective_coverage_start_date: date | None = Field(default=None, sa_column=Column(Date(), nullable=True))
+    effective_coverage_end_date: date | None = Field(default=None, sa_column=Column(Date(), nullable=True))
+    availability_cutoff_end_date: date | None = Field(default=None, sa_column=Column(Date(), nullable=True))
+    monthly_status: str | None = None
 
 
 def _canonical_json(value: object) -> str:
@@ -143,6 +151,13 @@ def _coverage_json(snapshot: PreviewSourceSnapshot | None) -> str | None:
 
 
 def request_to_table(request: PreviewRequest) -> PreviewRequestTable:
+    validate_preview_effective_columns(request.column_profile, request.effective_columns)
+    validate_preview_request_snapshot(
+        request=request,
+        snapshot=request.source_snapshot,
+        resulting_status=request.status,
+        mode="strict_materialized",
+    )
     package = request.package
     return PreviewRequestTable(
         request_id=request.request_id,
@@ -173,6 +188,17 @@ def request_to_table(request: PreviewRequest) -> PreviewRequestTable:
         storage_key=request.storage_key,
         manifest_metadata_json=_canonical_json(_artifact_dict(package.manifest)) if package else None,
         data_files_json=_canonical_json([_artifact_dict(item) for item in package.files]) if package else None,
+        effective_columns_json=_canonical_json(request.effective_columns),
+        effective_coverage_start_date=(
+            request.source_snapshot.effective_coverage_start_date if request.source_snapshot else None
+        ),
+        effective_coverage_end_date=(
+            request.source_snapshot.effective_coverage_end_date if request.source_snapshot else None
+        ),
+        availability_cutoff_end_date=(
+            request.source_snapshot.availability_cutoff_end_date if request.source_snapshot else None
+        ),
+        monthly_status=request.source_snapshot.monthly_status if request.source_snapshot else None,
     )
 
 
@@ -186,19 +212,51 @@ def _artifact_from_dict(value: dict[str, object]) -> PreviewArtifactMetadata:
     )
 
 
-def _supported_grain(value: str) -> Literal["daily"]:
-    if value != "daily":
-        raise ValueError(f"unsupported persisted preview grain: {value!r}")
-    return "daily"
+def _supported_grain(value: str) -> Literal["daily", "monthly"]:
+    if value == "daily":
+        return "daily"
+    if value == "monthly":
+        return "monthly"
+    raise ValueError(f"unsupported persisted preview grain: {value!r}")
 
 
-def _supported_column_profile(value: str) -> Literal["full"]:
-    if value != "full":
-        raise ValueError(f"unsupported persisted preview column profile: {value!r}")
-    return "full"
+def _supported_column_profile(value: str) -> Literal["full", "summary", "custom"]:
+    if value == "full":
+        return "full"
+    if value == "summary":
+        return "summary"
+    if value == "custom":
+        return "custom"
+    raise ValueError(f"unsupported persisted preview column profile: {value!r}")
+
+
+def _supported_monthly_status(value: str | None) -> Literal["provisional", "settled"] | None:
+    if value is None:
+        return None
+    if value == "provisional":
+        return "provisional"
+    if value == "settled":
+        return "settled"
+    raise ValueError(f"unsupported persisted preview monthly status: {value!r}")
 
 
 def request_to_domain(row: PreviewRequestTable) -> PreviewRequest:
+    profile = _supported_column_profile(row.column_profile)
+    grain = _supported_grain(row.grain)
+    legacy_v4 = row.effective_columns_json is None
+    if legacy_v4:
+        if profile != "full" or grain != "daily":
+            raise ValueError("legacy preview columns are valid only for Daily Full rows")
+        effective_columns = LEGACY_DAILY_FULL_V4_COLUMNS
+    else:
+        explicit_columns_json = row.effective_columns_json
+        assert explicit_columns_json is not None
+        decoded_columns = json.loads(explicit_columns_json)
+        if not isinstance(decoded_columns, list) or not all(isinstance(value, str) for value in decoded_columns):
+            raise ValueError("preview effective columns must be a string list")
+        effective_columns = tuple(decoded_columns)
+        validate_preview_effective_columns(profile, effective_columns)
+
     coverage: tuple[PreviewCalculationCoverageEntry, ...] = ()
     if row.calculation_coverage_json:
         raw = json.loads(row.calculation_coverage_json)
@@ -212,13 +270,27 @@ def request_to_domain(row: PreviewRequestTable) -> PreviewRequest:
             for item in raw
         )
     snapshot = None
-    if coverage:
-        if row.calculation_timestamp is None or row.source_through is None:
-            raise ValueError("preview source snapshot metadata is incomplete")
+    if row.status in {PreviewRequestStatus.READY.value, PreviewRequestStatus.EXPIRED.value}:
+        effective_coverage_start_date: date
+        effective_coverage_end_date: date
+        if legacy_v4:
+            effective_coverage_start_date = row.start_date
+            effective_coverage_end_date = row.end_date
+        else:
+            persisted_start = row.effective_coverage_start_date
+            persisted_end = row.effective_coverage_end_date
+            if persisted_start is None or persisted_end is None:
+                raise ValueError("v5 ready preview requires persisted effective coverage bounds")
+            effective_coverage_start_date = persisted_start
+            effective_coverage_end_date = persisted_end
         snapshot = PreviewSourceSnapshot(
             calculation_timestamp=ensure_utc(row.calculation_timestamp),
             calculation_coverage=coverage,
             source_through=ensure_utc(row.source_through),
+            effective_coverage_start_date=effective_coverage_start_date,
+            effective_coverage_end_date=effective_coverage_end_date,
+            availability_cutoff_end_date=row.availability_cutoff_end_date,
+            monthly_status=_supported_monthly_status(row.monthly_status),
         )
     diagnostic = None
     if row.diagnostic_code is not None:
@@ -242,16 +314,16 @@ def request_to_domain(row: PreviewRequestTable) -> PreviewRequest:
             manifest=_artifact_from_dict(json.loads(row.manifest_metadata_json)),
             files=tuple(_artifact_from_dict(item) for item in json.loads(row.data_files_json)),
         )
-    return PreviewRequest(
+    request = PreviewRequest(
         request_id=row.request_id,
         tenant_name=row.tenant_name,
         ecosystem=row.ecosystem,
         tenant_id=row.tenant_id,
-        grain=_supported_grain(row.grain),
+        grain=grain,
         start_date=row.start_date,
         end_date=row.end_date,
-        column_profile=_supported_column_profile(row.column_profile),
-        status=PreviewRequestStatus(row.status),
+        column_profile=profile,
+        status=preview_request_status(row.status),
         created_at=ensure_utc(row.created_at),
         started_at=ensure_utc(row.started_at),
         completed_at=ensure_utc(row.completed_at),
@@ -259,7 +331,15 @@ def request_to_domain(row: PreviewRequestTable) -> PreviewRequest:
         diagnostic=diagnostic,
         storage_key=row.storage_key,
         package=package,
+        effective_columns=effective_columns,
     )
+    validate_preview_request_snapshot(
+        request=request,
+        snapshot=request.source_snapshot,
+        resulting_status=request.status,
+        mode="strict_materialized",
+    )
+    return request
 
 
 class SQLModelPreviewCalculationRepository:
@@ -345,16 +425,34 @@ class SQLModelPreviewRequestRepository:
         row = self._session.exec(statement).first()
         return request_to_domain(row) if row else None
 
-    def mark_running(self, request_id: str, started_at: datetime) -> bool:
+    def _current(self, request_id: str) -> PreviewRequest | None:
+        row = self._session.get(PreviewRequestTable, request_id)
+        return None if row is None else request_to_domain(row)
+
+    def mark_running(self, request_id: str, started_at: datetime) -> PreviewRequest | None:
+        current = self._current(request_id)
+        if current is None or current.status is not PreviewRequestStatus.QUEUED:
+            return None
+        candidate = replace(
+            current,
+            status=PreviewRequestStatus.RUNNING,
+            started_at=started_at,
+        )
+        validate_preview_request_snapshot(
+            request=candidate,
+            snapshot=candidate.source_snapshot,
+            resulting_status=candidate.status,
+            mode="strict_materialized",
+        )
         result = self._session.execute(
             update(PreviewRequestTable)
             .where(
                 col(PreviewRequestTable.request_id) == request_id,
                 col(PreviewRequestTable.status) == PreviewRequestStatus.QUEUED.value,
             )
-            .values(status=PreviewRequestStatus.RUNNING.value, started_at=ensure_utc_strict(started_at))
+            .values(status=candidate.status.value, started_at=ensure_utc_strict(candidate.started_at))
         )
-        return getattr(result, "rowcount", 0) == 1
+        return candidate if getattr(result, "rowcount", 0) == 1 else None
 
     def mark_ready(
         self,
@@ -363,6 +461,24 @@ class SQLModelPreviewRequestRepository:
         source_snapshot: PreviewSourceSnapshot,
         stored_package: PreviewStoredPackage,
     ) -> bool:
+        current = self._current(request_id)
+        if current is None or current.status is not PreviewRequestStatus.RUNNING:
+            return False
+        package = PreviewPackageMetadata(stored_package.manifest, stored_package.files)
+        candidate = replace(
+            current,
+            status=PreviewRequestStatus.READY,
+            completed_at=completed_at,
+            source_snapshot=source_snapshot,
+            storage_key=stored_package.storage_key,
+            package=package,
+        )
+        validate_preview_request_snapshot(
+            request=candidate,
+            snapshot=candidate.source_snapshot,
+            resulting_status=candidate.status,
+            mode="strict_materialized",
+        )
         result = self._session.execute(
             update(PreviewRequestTable)
             .where(
@@ -371,18 +487,38 @@ class SQLModelPreviewRequestRepository:
             )
             .values(
                 status=PreviewRequestStatus.READY.value,
-                completed_at=ensure_utc_strict(completed_at),
-                calculation_timestamp=source_snapshot.calculation_timestamp,
-                source_through=source_snapshot.source_through,
+                completed_at=ensure_utc_strict(candidate.completed_at),
+                calculation_timestamp=ensure_utc_strict(source_snapshot.calculation_timestamp),
+                source_through=ensure_utc_strict(source_snapshot.source_through),
                 calculation_coverage_json=_coverage_json(source_snapshot),
-                storage_key=stored_package.storage_key,
-                manifest_metadata_json=_canonical_json(_artifact_dict(stored_package.manifest)),
-                data_files_json=_canonical_json([_artifact_dict(item) for item in stored_package.files]),
+                effective_coverage_start_date=source_snapshot.effective_coverage_start_date,
+                effective_coverage_end_date=source_snapshot.effective_coverage_end_date,
+                availability_cutoff_end_date=source_snapshot.availability_cutoff_end_date,
+                monthly_status=source_snapshot.monthly_status,
+                storage_key=candidate.storage_key,
+                manifest_metadata_json=_canonical_json(_artifact_dict(package.manifest)),
+                data_files_json=_canonical_json([_artifact_dict(item) for item in package.files]),
             )
         )
         return getattr(result, "rowcount", 0) == 1
 
     def mark_failed(self, request_id: str, completed_at: datetime, diagnostic: PreviewDiagnostic) -> bool:
+        current = self._current(request_id)
+        if current is None or current.status not in {PreviewRequestStatus.QUEUED, PreviewRequestStatus.RUNNING}:
+            return False
+        candidate = replace(
+            current,
+            status=PreviewRequestStatus.FAILED,
+            completed_at=completed_at,
+            diagnostic=diagnostic,
+        )
+        validate_preview_request_snapshot(
+            request=candidate,
+            snapshot=candidate.source_snapshot,
+            resulting_status=candidate.status,
+            mode="strict_materialized",
+        )
+        assert candidate.diagnostic is not None
         result = self._session.execute(
             update(PreviewRequestTable)
             .where(
@@ -393,12 +529,12 @@ class SQLModelPreviewRequestRepository:
             )
             .values(
                 status=PreviewRequestStatus.FAILED.value,
-                completed_at=ensure_utc_strict(completed_at),
-                diagnostic_code=diagnostic.code,
-                diagnostic_message=diagnostic.message,
-                diagnostic_retryable=diagnostic.retryable,
+                completed_at=ensure_utc_strict(candidate.completed_at),
+                diagnostic_code=candidate.diagnostic.code,
+                diagnostic_message=candidate.diagnostic.message,
+                diagnostic_retryable=candidate.diagnostic.retryable,
                 diagnostic_source_correlation_ids_json=_canonical_json(
-                    capped_correlations(diagnostic.source_correlation_ids)
+                    capped_correlations(candidate.diagnostic.source_correlation_ids)
                 ),
             )
         )

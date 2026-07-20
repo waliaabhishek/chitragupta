@@ -62,25 +62,61 @@ def _parser() -> argparse.ArgumentParser:
     daily.add_argument("--end-date", required=True)
     daily.add_argument("--output-dir", required=True, type=Path)
     daily.add_argument("--header", action="append", default=[])
+    request = subparsers.add_parser("request")
+    request.add_argument("--api-url", required=True)
+    request.add_argument("--tenant", required=True)
+    request.add_argument("--month")
+    request.add_argument("--start-date")
+    request.add_argument("--end-date")
+    request.add_argument("--column-profile", choices=("full", "summary", "custom"), default="full")
+    request.add_argument("--column", action="append")
+    request.add_argument("--output-dir", required=True, type=Path)
+    request.add_argument("--header", action="append", default=[])
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = _parser().parse_args(argv)
+    parser = _parser()
+    args = parser.parse_args(argv)
+    if args.command == "request":
+        has_daily = args.start_date is not None or args.end_date is not None
+        if (args.month is None) == (not has_daily):
+            parser.error("request requires either --month or --start-date with --end-date")
+        if has_daily and (args.start_date is None or args.end_date is None):
+            parser.error("Daily request requires both --start-date and --end-date")
+        if args.column and args.column_profile != "custom":
+            parser.error("--column may be supplied only with --column-profile custom")
     try:
         headers = _headers(args.header)
         api_url = args.api_url.rstrip("/")
         base = f"{api_url}/tenants/{args.tenant}/focus-preview/requests"
         with httpx.Client(timeout=30.0) as client:
-            response = client.post(
-                base,
-                headers=headers,
-                json={
+            if args.command == "daily-full":
+                body: dict[str, object] = {
                     "grain": "daily",
                     "start_date": args.start_date,
                     "end_date": args.end_date,
                     "column_profile": "full",
-                },
+                }
+            elif args.month is not None:
+                body = {
+                    "grain": "monthly",
+                    "month": args.month,
+                    "column_profile": args.column_profile,
+                }
+            else:
+                body = {
+                    "grain": "daily",
+                    "start_date": args.start_date,
+                    "end_date": args.end_date,
+                    "column_profile": args.column_profile,
+                }
+            if args.command == "request" and args.column_profile == "custom":
+                body["columns"] = args.column or []
+            response = client.post(
+                base,
+                headers=headers,
+                json=body,
             )
             _raise_for_status(response)
             status = response.json()

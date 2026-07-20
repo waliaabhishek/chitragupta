@@ -117,7 +117,7 @@ The pipeline loop ends at step 8. Topic overlay (step 9) is a separate pass over
 | `topic_attribution_dimensions` | Unique (cluster, topic, product_type, attribution_method) combinations |
 | `topic_attribution_facts` | Per-topic cost amounts linked to dimensions via `dimension_id` |
 | `pipeline_runs` | Audit trail: run start/end, status, rows written, errors |
-| `preview_requests` | Tenant-scoped Daily Full Preview lifecycle, diagnostics, source snapshot, and public artifact metadata (never server paths) |
+| `preview_requests` | Tenant-scoped Daily/Monthly grain, profile and effective columns, effective evidence coverage/cutoff/Monthly status, lifecycle, diagnostics, source snapshot, and public artifact metadata (never server paths) |
 | `custom_tags` | User-defined key/value tags attached to chargeback dimensions |
 | `emission_records` | Per-tenant/emitter/date emission outcome tracking (emitted, failed) with attempt count |
 
@@ -140,14 +140,18 @@ date that already committed.
 
 ```mermaid
 flowchart LR
+    REQ[Daily/Monthly request + profile] --> CAN[Canonical bounds and effective columns]
     PS[(Persisted pipeline state)] --> PR[Preview read transaction]
     SRC[(Raw Cost source evidence)] --> PR
     BILL[(Billing origins)] --> PR
     LINE[(Calculation lineage runs and portions)] --> PR
     ORG[(Persisted provider organization)] --> PR
-    PR --> READY[Classify and validate complete streams]
-    READY --> MAP[Reconcile, map, and validate Daily Full v4]
-    MAP --> ART[(Atomic local artifact package)]
+    CAN --> PR
+    PR --> READY[Classify and validate effective evidence]
+    READY --> MAP[Reconcile and map Full rows]
+    MAP --> MONTH[Optional Monthly aggregation]
+    MONTH --> PROJ[Full, Summary, or Custom projection]
+    PROJ --> ART[(Atomic local artifact package)]
     ART --> API[Protected Preview API]
     API --> UI[Web UI]
     API --> CLI[Remote CLI]
@@ -160,20 +164,41 @@ usable correlation remain unchanged and produce a non-retryable metadata
 diagnostic. Only the ordinary collector and calculation lifecycle can later
 replace persisted data.
 
-At submission, Preview samples `created_at` once and derives an immutable policy
+At submission, Preview canonicalizes either explicit Daily bounds or one
+`YYYY-MM` Monthly interval, resolves Full/Summary/Custom effective columns, and
+samples `created_at` once to derive an immutable policy
 from tenant `focus_preview` configuration plus `lookback_days`/`cutoff_days`.
-The worker checks, in order: calculation correlation, acquisition/cutoff
-lifecycle, Direct-billed PAYG effective containment, configured USD, and the
-complete streamed structural/classification/financial source issue precedence.
+The worker first resolves the evidence interval. For Monthly, this classifies
+future, provisional, or settlement-candidate state from immutable submission
+time and the acquisition cutoff. A future month fails with the cutoff diagnostic
+before calculation lookup. An empty provisional interval skips calculation
+lookup and source/enrichment reads, but still checks Direct-billed PAYG and
+configured-USD eligibility before producing a header-only package. For a
+nonempty interval, Daily and Monthly both check calculation correlation and
+complete coverage before commercial eligibility, then apply the complete
+streamed structural/classification/financial source issue precedence.
 Keyed TABLEFLOW provider-context rejection then precedes complete
 source/aggregate coverage and the one-source-per-billing-origin cardinality
 gate. Global aggregate currency and source equality checks precede complete
 lineage run/portion structure; every origin is structurally valid before any
 allocation cost/quantity total is reconciled. Billing-account,
-resource/identity/environment, and separate tag enrichment follow, then 65/12
-v4 row validation and atomic artifact finalization. Iterator order does not
-change this diagnostic precedence. All evidence reads occur in one read-only
-transaction.
+resource/identity/environment, and separate tag enrichment follow. The mapping
+path builds and validates complete Full rows before optional Monthly
+aggregation. Monthly sums additive measures but retains allocation ratio/method,
+target, classification, tier, pricing, tags, SKU, and provenance as grouping
+dimensions. Full/Summary/Custom projection then selects output columns without
+changing hidden row identity or reconciliation, followed by atomic artifact
+finalization. Iterator order does not change diagnostic precedence. All
+nonempty evidence reads occur in one read-only transaction. Daily retains its
+existing calculation-before-commercial diagnostic precedence.
+
+Monthly requested bounds always cover the complete UTC calendar month. The
+effective evidence end is frozen from request creation time and the acquisition
+cutoff. A month is provisional until full-month evidence is available and the
+72-hour post-month minimum has elapsed; a longer configured cutoff delays
+settlement. Preview reads existing daily calculations and TASK-254.05 lineage
+only: it does not call the provider, rerun allocation, or derive a replacement
+allocation ratio.
 
 The persisted `CCloudBillingLineItem` is the sole allocation origin. During the
 ordinary calculation transaction, `CalculatePhase` stores lineage for the
@@ -184,6 +209,11 @@ redistribute costs, create a residual portion, or alter allocation policy.
 Migration 021 adds the nullable raw-source association and Confluent-owned
 lineage run/portion tables. Legacy null associations recover only through an
 ordinary regather followed by ordinary calculation.
+
+Migration 022 adds effective-column and evidence-coverage metadata to Preview
+requests. Pre-022 Daily/Full rows use the frozen v4 column authority, retain
+their original requested coverage with no synthesized availability cutoff, and
+continue serving their immutable stored artifacts.
 
 Expected failures travel through the initialized diagnostic path and atomically
 mark the request failed without a source snapshot or package. Source diagnostics

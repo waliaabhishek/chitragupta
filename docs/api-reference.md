@@ -463,11 +463,20 @@ The `tags` column is serialized as `key=value;key=value` pairs (e.g. `team=platf
 
 FOCUS Mapping Preview is an asynchronous, Confluent Cloud-only exposition API.
 It reads persisted calculation and source evidence; it never calls the provider,
-triggers the pipeline, or edits/backfills data. The current request contract is
-Daily grain plus the Full column profile. The tenant's optional `focus_preview`
+triggers the pipeline, reruns allocation, or edits/backfills data. Requests
+support Daily or Monthly grain and Full, Summary, or Custom column profiles. The
+tenant's optional `focus_preview`
 block must establish a `direct_payg` commercial profile over the complete
 request interval. `billing_currency` defaults to normalized `USD`; any other
 configured currency fails closed without conversion.
+
+### `GET /api/v1/tenants/{tenant_name}/focus-preview/profile`
+
+Return static metadata for the current `focus-1.4-preview-v5` mapping profile:
+`mapping_profile_version`, the ordered `full_columns` allowlist, and the ordered
+20-column `summary_columns` subset. This endpoint validates tenant existence and
+the Confluent Cloud ecosystem but does not initialize Preview storage or the
+worker runtime.
 
 ### `POST /api/v1/tenants/{tenant_name}/focus-preview/requests`
 
@@ -486,13 +495,32 @@ Dates are UTC and use inclusive-start/exclusive-end semantics. The request must
 contain 1–31 days within the UTC calendar month containing `start_date`; the
 exclusive end may be the first day of the following month.
 
+Monthly requests supply one exact ASCII `YYYY-MM`; public start/end dates are
+not accepted for Monthly submission:
+
+```json
+{
+  "grain": "monthly",
+  "month": "2026-07",
+  "column_profile": "summary"
+}
+```
+
+`column_profile` defaults to `full`. Summary uses the fixed profile subset.
+Custom supplies `columns`, for example
+`{"column_profile":"custom","columns":["BilledCost","ResourceId"]}`.
+Supported names retain first-occurrence caller order; unknown and duplicate
+entries are logged and ignored. Full and Summary reject `columns`, and Custom
+rejects a selection with no supported Full-profile columns.
+
 ### `GET /api/v1/tenants/{tenant_name}/focus-preview/requests/{request_id}`
 
 Return the tenant-scoped request. The active lifecycle is `queued`, `running`,
 then `ready` or `failed`.
 
 Common response fields are `request_id`, `tenant_name`, `grain`, `start_date`,
-`end_date`, `column_profile`, `status`, `created_at`, `started_at`,
+`end_date`, derived nullable `month`, `column_profile`, ordered
+`effective_columns`, `status`, `created_at`, `started_at`,
 `completed_at`, `diagnostic`, `source_snapshot`, and `package`.
 
 - Queued/running responses have no diagnostic, source snapshot, or package.
@@ -502,16 +530,22 @@ Common response fields are `request_id`, `tenant_name`, `grain`, `start_date`,
   not reveal provider record IDs, tenant IDs, raw fields, secrets, or paths.
 - Ready responses contain a source snapshot and package metadata.
 
-The source snapshot contains `calculation_timestamp`, date-ordered
-`calculation_coverage` entries, and `source_through`. Each coverage entry has
+The source snapshot contains nullable `calculation_timestamp`, date-ordered
+`calculation_coverage` entries, nullable `source_through`,
+`effective_coverage_start_date`, `effective_coverage_end_date`, nullable
+`evidence_through_date`, nullable `availability_cutoff_end_date`, and nullable
+`monthly_status`. Each coverage entry has
 `tracking_date`, `calculation_id`, `calculation_completed_at`, and optional
 `calculation_run_id`. Package metadata contains public name, media type, size,
 SHA-256, order (data files only), and API download URL. It contains no artifact
 root, storage key, or server path.
 
-A ready package stores the exact `focus-1.4-daily-full-v4` output: 65 ordered
-FOCUS Full columns followed by 12 ordered custom evidence columns. The stored
-manifest declares `conformance_status: non_conforming`, profile version,
+A ready package stores `focus-1.4-preview-v5` output using the exact ordered
+effective columns. Full is the legacy-compatible 65 ordered FOCUS columns plus
+12 custom evidence columns; Summary and Custom are projections of those same
+validated rows. The stored manifest declares `conformance_status:
+non_conforming`, profile version, grain, requested bounds, derived month,
+column profile, effective columns,
 calculation/source coverage, exact known gaps, validation status/counts,
 reconciliation, and file checksums. Mapping/profile validation completes before
 atomic finalization. Manifest and CSV downloads return the stored bytes; the
@@ -523,6 +557,14 @@ allocation origin; raw Cost rows remain classification/coverage evidence linked
 to that existing billing key. Actual `UNALLOCATED` portions have null allocated
 resource/name/tag fields. Origin `Tags` and target `AllocatedTags` are resolved
 separately at package time and frozen into the stored bytes.
+
+Monthly requests preserve the full requested calendar bounds while aggregating
+only the frozen effective daily evidence interval. They remain `provisional`
+until both the 72-hour post-month threshold and configured acquisition cutoff
+permit complete full-month evidence; only then can a fully validated package be
+`settled`. Monthly aggregation preserves non-additive allocation ratio/method,
+target, classification, tier, pricing, tag, SKU, and provenance distinctions.
+It does not invoke the provider or allocation code.
 
 ### `GET /api/v1/tenants/{tenant_name}/focus-preview/requests/{request_id}/manifest`
 
@@ -542,6 +584,9 @@ current package contains `cost-and-usage.csv`.
 | Non-Confluent Cloud tenant | 400 | `FOCUS Mapping Preview currently supports only Confluent Cloud tenants` |
 | Start is not before end | 400 | `start_date must be before end_date` |
 | Range crosses the allowed UTC month | 400 | `Daily preview range must stay within one UTC calendar month` |
+| Invalid or unrepresentable Monthly value | 400 | `month must use YYYY-MM` |
+| `columns` supplied for Full or Summary | 400 | `columns may be supplied only when column_profile is custom` |
+| Custom has no supported columns | 400 | `Custom column selection must contain at least one supported Full-profile column` |
 | Runtime unavailable | 503 | `FOCUS Mapping Preview runtime is unavailable` |
 | Storage unavailable | 503 | `FOCUS Mapping Preview storage is unavailable` |
 | Worker scheduling unavailable | 503 | `FOCUS Mapping Preview worker is unavailable` |
@@ -551,6 +596,13 @@ current package contains `cost-and-usage.csv`.
 | Stored bytes unavailable | 500 | `Stored preview artifact is unavailable` |
 
 Calculation diagnostics use these exact public meanings:
+
+The message strings below remain unchanged for compatibility. For Daily they
+refer to the explicit requested interval; for Monthly they apply only to the
+frozen effective evidence interval, which can be shorter than the requested
+calendar month while provisional. An empty early-month effective interval
+performs no calculation lookup and therefore does not emit an unavailable or
+incomplete calculation diagnostic.
 
 | Code | Retryable | Message |
 |---|---:|---|
@@ -568,7 +620,7 @@ Eligibility and source diagnostics are:
 | `preview_billing_currency_unsupported` | false | The configured or selected currency is not USD. Preview performs no currency conversion. |
 | `preview_billing_currency_unknown` | false | Selected persisted aggregate currency evidence is blank. |
 | `preview_source_record_malformed` | false | Persisted provider source evidence is malformed. |
-| `preview_source_scope_unsupported` | false | Source evidence is not fully contained in the requested Daily scope. |
+| `preview_source_scope_unsupported` | false | Source evidence is not fully contained in the effective Daily or Monthly evidence interval. |
 | `preview_charge_classification_ambiguous` | false | Credit/refund/adjustment/correction-like semantics are not authoritative. |
 | `preview_source_line_type_unknown` | false | A source record has no line type. |
 | `preview_source_line_type_unsupported` | false | A provider line type is unknown to this release. |
@@ -577,12 +629,12 @@ Eligibility and source diagnostics are:
 | `preview_source_economics_unsupported` | false | Monetary or quantity values are outside the supported tracer. |
 | `preview_source_reconciliation_failed` | false | Source, aggregate, or allocation evidence does not reconcile. |
 | `preview_source_coverage_incomplete` | false | Complete source and aggregate origin coverage does not match. |
-| `preview_mapping_scope_unsupported` | false | The complete source set exceeds the current Daily Full scope, including multiple native/tier Cost rows associated with one billing origin. |
+| `preview_mapping_scope_unsupported` | false | The complete source set exceeds the current v5 Full-row mapping scope before profile projection, including multiple native/tier Cost rows associated with one billing origin. |
 | `preview_allocation_lineage_incomplete` | false | Persisted calculation lineage is missing, incomplete, corrupt, or structurally inconsistent for one or more billing origins. |
 | `preview_billing_account_unavailable` | false | No authoritative persisted Confluent organization binding is available. |
 | `preview_billing_account_conflicting` | false | Persisted Confluent organization evidence conflicts for the tenant partition. |
 | `preview_provider_context_incomplete` | false | Authoritative resource context is absent or incompatible; all TABLEFLOW rows use this failure because current inventory cannot prove their provider context. |
-| `preview_mapping_validation_failed` | false | The generated row does not satisfy the complete Daily Full v4 mapping profile. |
+| `preview_mapping_validation_failed` | false | A generated Daily Full row or Monthly Full aggregate does not satisfy the current v5 Full-row mapping profile before Full/Summary/Custom projection. |
 
 All accepted native line types can use persisted calculation lineage, including
 organization-wide rows, provider-null promotional allowances, and signed

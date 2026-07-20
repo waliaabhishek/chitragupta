@@ -43,7 +43,7 @@ TASK_254_05_LINE_TYPES = {
 
 
 def test_profile_v4_resolves_only_task_254_05_gaps_and_makes_five_columns_applicable() -> None:
-    assert mapping.MAPPING_PROFILE_VERSION == "focus-1.4-daily-full-v4"
+    assert mapping.MAPPING_PROFILE_VERSION == "focus-1.4-preview-v5"
     assert RESOLVED_GAPS.isdisjoint({gap.code for gap in mapping.KNOWN_GAPS})
     rules = {rule.column: rule for rule in (*mapping.FOCUS_1_4_COLUMN_RULES, *mapping.CUSTOM_EVIDENCE_RULES)}
     for column in RESOLVED_COLUMNS:

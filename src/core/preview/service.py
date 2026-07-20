@@ -6,7 +6,8 @@ import uuid
 from collections.abc import Callable, Iterator, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import UTC, date, datetime
-from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable
+from decimal import Decimal
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from core.preview.eligibility import (
     PreviewEligibilityPolicy,
@@ -35,6 +36,7 @@ from core.preview.mapping import (
     PreviewLineageReadiness,
     PreviewMappingError,
     PreviewMappingScopeError,
+    PreviewPackageReconciliation,
     PreviewProviderContext,
     PreviewProviderContextIncompleteError,
     PreviewResourceShape,
@@ -45,28 +47,37 @@ from core.preview.mapping import (
     PreviewSourceIssue,
     SelectedPreviewEvidence,
     SelectedSourceProjection,
-    build_daily_full_package_rows,
+    build_preview_package,
     classify_daily_full_source,
+    preview_sum_decimals,
     project_allocated_financials,
+    project_daily_portion_full_row,
     project_financials,
     reconcile_allocation_lineage_stream,
     reconcile_source_aggregate_stream,
     resolve_provider_resource_context_from_mapping,
     source_through,
+    validate_preview_effective_columns,
 )
 from core.preview.models import (
+    PreviewColumnProfile,
     PreviewDiagnostic,
+    PreviewGrain,
+    PreviewMonthlyStatus,
     PreviewPackagePayload,
     PreviewRequest,
     PreviewRequestStatus,
     PreviewSourceSnapshot,
+    validate_preview_request_snapshot,
 )
+from core.preview.monthly import PreviewMonthlyAggregationError, aggregate_monthly_full_rows
 from core.preview.persistence import (
     CompleteCalculationCoverage,
     NoUsableCalculationCoverage,
     PartialCalculationCoverage,
     PreviewStorageBackend,
 )
+from core.preview.request import PreviewEvidencePendingError, resolve_preview_evidence_interval
 
 if TYPE_CHECKING:
     from core.config.models import TenantConfig
@@ -102,6 +113,12 @@ class _PreviewFailureError(Exception):
     def __init__(self, diagnostic: PreviewDiagnostic) -> None:
         super().__init__(diagnostic.message)
         self.diagnostic = diagnostic
+
+
+class _PreviewReadyTransitionError(RuntimeError):
+    def __init__(self, storage_key: str) -> None:
+        super().__init__("preview ready transition was rejected after artifact finalization")
+        self.storage_key = storage_key
 
 
 def _failure(
@@ -159,7 +176,7 @@ def _mapping_failure(
             "Authoritative provider resource context is unavailable for one or more source records.",
             source_correlation_ids=source_correlation_ids,
         )
-    if isinstance(error, PreviewRowValidationError):
+    if isinstance(error, (PreviewRowValidationError, PreviewMonthlyAggregationError)):
         return _failure(
             "preview_mapping_validation_failed",
             "The generated row does not satisfy the Daily Full mapping profile.",
@@ -258,13 +275,15 @@ class PreviewRuntime:
         backend: PreviewStorageBackend,
         start_date: date,
         end_date: date,
-        grain: Literal["daily"],
-        column_profile: Literal["full"],
+        grain: PreviewGrain,
+        column_profile: PreviewColumnProfile,
+        effective_columns: tuple[str, ...],
     ) -> PreviewRequest:
         if self._closed:
             raise PreviewWorkerUnavailable("preview runtime is closed")
         created_at = self._clock()
         policy = policy_from_tenant_config(tenant_config, created_at=created_at)
+        validate_preview_effective_columns(column_profile, effective_columns)
         request = PreviewRequest(
             request_id=self._request_id_factory(),
             tenant_name=tenant_name,
@@ -282,6 +301,13 @@ class PreviewRuntime:
             diagnostic=None,
             storage_key=None,
             package=None,
+            effective_columns=effective_columns,
+        )
+        validate_preview_request_snapshot(
+            request=request,
+            snapshot=request.source_snapshot,
+            resulting_status=request.status,
+            mode="strict_materialized",
         )
         with backend.create_preview_write_unit_of_work() as uow:
             uow.requests.create_queued(request)
@@ -293,9 +319,7 @@ class PreviewRuntime:
             diagnostic = PreviewDiagnostic(
                 "preview_worker_unavailable", "FOCUS Mapping Preview worker is unavailable.", True
             )
-            with backend.create_preview_write_unit_of_work() as uow:
-                uow.requests.mark_failed(request.request_id, self._clock(), diagnostic)
-                uow.commit()
+            self._mark_failed(backend, request.request_id, diagnostic)
             raise PreviewWorkerUnavailable("FOCUS Mapping Preview worker is unavailable") from exc
         return request
 
@@ -307,16 +331,30 @@ class PreviewRuntime:
     ) -> None:
         try:
             with backend.create_preview_write_unit_of_work() as uow:
-                if not uow.requests.mark_running(request.request_id, self._clock()):
+                running = uow.requests.mark_running(request.request_id, self._clock())
+                if running is None:
                     return
                 uow.commit()
-            snapshot, package = self._generate(backend, request, policy)
+            snapshot, package = self._generate(backend, running, policy)
             stored = self._artifact_store.finalize_package(request_id=request.request_id, package=package)
             with backend.create_preview_write_unit_of_work() as uow:
-                uow.requests.mark_ready(request.request_id, self._clock(), snapshot, stored)
+                if not uow.requests.mark_ready(request.request_id, self._clock(), snapshot, stored):
+                    raise _PreviewReadyTransitionError(stored.storage_key)
                 uow.commit()
         except _PreviewFailureError as exc:
             self._mark_failed(backend, request.request_id, exc.diagnostic)
+        except _PreviewReadyTransitionError as exc:
+            logger.error(
+                "FOCUS Mapping Preview ready transition rejected after artifact finalization "
+                "request_id=%s storage_key=%s",
+                request.request_id,
+                exc.storage_key,
+            )
+            self._mark_failed(
+                backend,
+                request.request_id,
+                PreviewDiagnostic("preview_generation_failed", "FOCUS Mapping Preview generation failed.", True),
+            )
         except Exception:
             logger.exception("Unexpected FOCUS Mapping Preview worker failure request_id=%s", request.request_id)
             self._mark_failed(
@@ -325,14 +363,21 @@ class PreviewRuntime:
                 PreviewDiagnostic("preview_generation_failed", "FOCUS Mapping Preview generation failed.", True),
             )
 
-    def _mark_failed(self, backend: PreviewStorageBackend, request_id: str, diagnostic: PreviewDiagnostic) -> None:
+    def _mark_failed(self, backend: PreviewStorageBackend, request_id: str, diagnostic: PreviewDiagnostic) -> bool:
         try:
             with backend.create_preview_write_unit_of_work() as uow:
-                uow.requests.mark_failed(request_id, self._clock(), diagnostic)
+                if not uow.requests.mark_failed(request_id, self._clock(), diagnostic):
+                    logger.error(
+                        "FOCUS Mapping Preview failure transition rejected request_id=%s diagnostic_code=%s",
+                        request_id,
+                        diagnostic.code,
+                    )
+                    return False
                 uow.commit()
+            return True
         except Exception:
             logger.exception("FOCUS Mapping Preview failure persistence failed request_id=%s", request_id)
-            raise
+            return False
 
     def _generate(
         self,
@@ -340,15 +385,52 @@ class PreviewRuntime:
         request: PreviewRequest,
         policy: PreviewEligibilityPolicy,
     ) -> tuple[PreviewSourceSnapshot, PreviewPackagePayload]:
-        start = datetime.combine(request.start_date, datetime.min.time(), tzinfo=UTC)
-        end = datetime.combine(request.end_date, datetime.min.time(), tzinfo=UTC)
+        try:
+            evidence_interval = resolve_preview_evidence_interval(request=request, policy=policy)
+        except PreviewEvidencePendingError:
+            raise _failure(
+                "calculation_pending_cutoff_window",
+                "One or more requested dates are still inside the configured acquisition cutoff window; "
+                "wait for the dates to enter the acquisition window, run the pipeline, and retry.",
+                True,
+            ) from None
+        monthly_status: PreviewMonthlyStatus | None = (
+            None
+            if evidence_interval.monthly_stage is None
+            else "settled"
+            if evidence_interval.monthly_stage == "settlement_candidate"
+            else "provisional"
+        )
+        if evidence_interval.start_date == evidence_interval.end_date:
+            diagnostic = request_eligibility_diagnostic(request=request, policy=policy)
+            if diagnostic is not None:
+                raise _PreviewFailureError(diagnostic)
+            snapshot = PreviewSourceSnapshot(
+                calculation_timestamp=None,
+                calculation_coverage=(),
+                source_through=None,
+                effective_coverage_start_date=evidence_interval.start_date,
+                effective_coverage_end_date=evidence_interval.end_date,
+                availability_cutoff_end_date=(policy.acquisition_end_date if request.grain == "monthly" else None),
+                monthly_status=monthly_status,
+            )
+            package = build_preview_package(
+                request=request,
+                snapshot=snapshot,
+                full_rows=(),
+                reconciliation=PreviewPackageReconciliation(0, Decimal(0), Decimal(0)),
+                generated_at=self._clock(),
+            )
+            return snapshot, package
+        start = datetime.combine(evidence_interval.start_date, datetime.min.time(), tzinfo=UTC)
+        end = datetime.combine(evidence_interval.end_date, datetime.min.time(), tzinfo=UTC)
         scope = PreviewEvidenceScope(request.ecosystem, request.tenant_id, start, end)
         with backend.create_preview_read_unit_of_work() as uow:
             coverage = uow.calculations.find_current_coverage(
                 ecosystem=request.ecosystem,
                 tenant_id=request.tenant_id,
-                start_date=request.start_date,
-                end_date=request.end_date,
+                start_date=evidence_interval.start_date,
+                end_date=evidence_interval.end_date,
             )
             if isinstance(coverage, (NoUsableCalculationCoverage, PartialCalculationCoverage)):
                 raise _calculation_failure(coverage, policy)
@@ -356,7 +438,6 @@ class PreviewRuntime:
             diagnostic = request_eligibility_diagnostic(request=request, policy=policy)
             if diagnostic is not None:
                 raise _PreviewFailureError(diagnostic)
-
             accepted: list[SelectedSourceProjection] = []
             winning_issue: PreviewSourceIssue | None = None
             issue_correlations: tuple[str, ...] = ()
@@ -470,6 +551,26 @@ class PreviewRuntime:
                 ) from None
 
             current_time = self._clock()
+            snapshot = PreviewSourceSnapshot(
+                calculation_timestamp=max(entry.calculation_completed_at for entry in coverage.entries),
+                calculation_coverage=coverage.entries,
+                source_through=(
+                    max((source_through(item.source) for item in selected_by_origin.values()), default=None)
+                ),
+                effective_coverage_start_date=evidence_interval.start_date,
+                effective_coverage_end_date=evidence_interval.end_date,
+                availability_cutoff_end_date=(policy.acquisition_end_date if request.grain == "monthly" else None),
+                monthly_status=monthly_status,
+            )
+            if not selected_by_origin:
+                package = build_preview_package(
+                    request=request,
+                    snapshot=snapshot,
+                    full_rows=(),
+                    reconciliation=PreviewPackageReconciliation(0, Decimal(0), Decimal(0)),
+                    generated_at=current_time,
+                )
+                return snapshot, package
             organizations, _ = uow.resources.find_active_at(
                 request.ecosystem,
                 request.tenant_id,
@@ -543,11 +644,6 @@ class PreviewRuntime:
             identity_tags = uow.tags.find_tags_for_entities(request.tenant_id, "identity", sorted(identity_tag_ids))
 
             try:
-                snapshot = PreviewSourceSnapshot(
-                    calculation_timestamp=max(entry.calculation_completed_at for entry in coverage.entries),
-                    calculation_coverage=coverage.entries,
-                    source_through=max(source_through(item.source) for item in selected_by_origin.values()),
-                )
 
                 def package_rows() -> Iterator[PreparedPreviewPackageRow]:
                     for key in sorted(allocations_by_origin):
@@ -611,11 +707,32 @@ class PreviewRuntime:
                                 allocated_tags_json=allocated_tags,
                             )
 
-                package = build_daily_full_package_rows(
+                full_rows = tuple(
+                    project_daily_portion_full_row(
+                        prepared=prepared,
+                        provider_context=provider_context,
+                    )
+                    for prepared in package_rows()
+                )
+                if request.grain == "monthly":
+                    full_rows = aggregate_monthly_full_rows(
+                        rows=full_rows,
+                        month_start=datetime.combine(request.start_date, datetime.min.time(), tzinfo=UTC),
+                        month_end=datetime.combine(request.end_date, datetime.min.time(), tzinfo=UTC),
+                    )
+                source_cost = preview_sum_decimals(
+                    item.source.amount or Decimal(0) for item in selected_by_origin.values()
+                )
+                allocated_cost = preview_sum_decimals(
+                    allocation.allocated_cost
+                    for allocations in allocations_by_origin.values()
+                    for allocation in allocations
+                )
+                package = build_preview_package(
                     request=request,
                     snapshot=snapshot,
-                    rows=package_rows(),
-                    provider_context=provider_context,
+                    full_rows=full_rows,
+                    reconciliation=PreviewPackageReconciliation(len(selected_by_origin), source_cost, allocated_cost),
                     generated_at=current_time,
                 )
             except PreviewMappingError as exc:

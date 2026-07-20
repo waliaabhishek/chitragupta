@@ -16,30 +16,64 @@ export interface FocusPreviewArtifact {
   [key: string]: unknown;
 }
 
+export interface FocusPreviewSourceSnapshot {
+  calculation_timestamp: string | null;
+  calculation_coverage: unknown[];
+  source_through: string | null;
+  effective_coverage_start_date: string;
+  effective_coverage_end_date: string;
+  evidence_through_date: string | null;
+  availability_cutoff_end_date: string | null;
+  monthly_status: "provisional" | "settled" | null;
+}
+
 export interface FocusPreviewRequest {
   request_id: string;
   tenant_name: string;
-  grain: "daily";
+  grain: "daily" | "monthly";
   start_date: string;
   end_date: string;
-  column_profile: "full";
+  month: string | null;
+  column_profile: "full" | "summary" | "custom";
+  effective_columns: string[];
   status: "queued" | "running" | "ready" | "failed" | "expired";
   created_at: string;
   started_at: string | null;
   completed_at: string | null;
   diagnostic: FocusPreviewDiagnostic | null;
-  source_snapshot: unknown | null;
+  source_snapshot: FocusPreviewSourceSnapshot | null;
   package: {
     manifest: FocusPreviewArtifact;
     files: FocusPreviewArtifact[];
   } | null;
 }
 
-export interface SubmitFocusPreviewBody {
+export type FocusPreviewColumnProfile = "full" | "summary" | "custom";
+
+interface FocusPreviewColumnSelection {
+  column_profile: FocusPreviewColumnProfile;
+  columns?: readonly string[];
+}
+
+export interface SubmitDailyFocusPreviewBody extends FocusPreviewColumnSelection {
   grain: "daily";
   start_date: string;
   end_date: string;
-  column_profile: "full";
+}
+
+export interface SubmitMonthlyFocusPreviewBody extends FocusPreviewColumnSelection {
+  grain: "monthly";
+  month: string;
+}
+
+export type SubmitFocusPreviewBody =
+  | SubmitDailyFocusPreviewBody
+  | SubmitMonthlyFocusPreviewBody;
+
+export interface FocusPreviewProfile {
+  mapping_profile_version: string;
+  full_columns: string[];
+  summary_columns: string[];
 }
 
 async function requireOk(response: Response): Promise<Response> {
@@ -75,6 +109,15 @@ export async function fetchFocusPreviewStatus(
     ),
   );
   return response.json() as Promise<FocusPreviewRequest>;
+}
+
+export async function fetchFocusPreviewProfile(
+  tenantName: string,
+): Promise<FocusPreviewProfile> {
+  const response = await requireOk(
+    await fetch(`${API_URL}/tenants/${tenantName}/focus-preview/profile`),
+  );
+  return response.json() as Promise<FocusPreviewProfile>;
 }
 
 export function resolvePreviewDownloadUrl(downloadUrl: string): string {

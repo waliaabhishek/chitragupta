@@ -813,7 +813,7 @@ def test_workflow_runner_provider_calculation_to_preview_mixed_retry_and_unrelat
         assert csv_response.status_code == 200
         manifest = manifest_response.json()
         assert manifest["source_snapshot"]["source_through"] == a_ready["source_snapshot"]["source_through"]
-        assert manifest["mapping_profile_version"] == "focus-1.4-daily-full-v4"
+        assert manifest["mapping_profile_version"] == "focus-1.4-preview-v5"
         assert manifest["known_gaps"]
         assert manifest["conformance_status"] == "non_conforming"
         row = next(csv.DictReader(io.StringIO(csv_response.text)))
@@ -1542,7 +1542,7 @@ def test_migrated_legacy_metadata_failure_preserves_data_when_provider_is_unavai
     migration = _alembic_config(connection_string)
     command.upgrade(migration, "018")
     _seed_legacy_rows(connection_string)
-    command.upgrade(migration, "021")
+    command.upgrade(migration, "022")
 
     route = respx.get("https://api.confluent.cloud/billing/v1/costs")
     route.mock(return_value=httpx.Response(200, json={"data": [], "metadata": {}}))
@@ -1632,7 +1632,7 @@ def test_migrated_legacy_precedence_uses_real_recoverable_lifecycle_without_muta
     migration = _alembic_config(connection_string)
     command.upgrade(migration, "018")
     _seed_legacy_rows(connection_string)
-    command.upgrade(migration, "021")
+    command.upgrade(migration, "022")
     snapshot_engine = create_engine(connection_string)
     legacy_before = _legacy_july_first_snapshot(snapshot_engine)
 
@@ -1757,7 +1757,7 @@ def test_ordinary_gather_and_calculate_lifecycle_replaces_incomplete_legacy_corr
                 {"tracking_timestamp": tracking_timestamp},
             )
     legacy_engine.dispose()
-    command.upgrade(migration, "021")
+    command.upgrade(migration, "022")
     tenant = TenantConfig(
         ecosystem="confluent_cloud",
         tenant_id="tenant-1",

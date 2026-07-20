@@ -3,14 +3,16 @@ import { useEffect, useRef, useState } from "react";
 import { Alert, Button, DatePicker, Descriptions, Space, Typography } from "antd";
 import dayjs from "dayjs";
 import {
+  fetchFocusPreviewProfile,
   fetchFocusPreviewStatus,
   fetchPreviewArtifact,
   submitFocusPreview,
   type FocusPreviewArtifact,
   type FocusPreviewRequest,
+  type FocusPreviewColumnProfile,
 } from "../../api/focusPreview";
 import { useTenant } from "../../providers/TenantContext";
-import { getCurrentUtcMonthRange } from "./dateRange";
+import { getCurrentUtcMonth, getCurrentUtcMonthRange } from "./dateRange";
 
 const { Title, Text } = Typography;
 
@@ -61,6 +63,11 @@ interface FocusPreviewPageProps {
 export function FocusPreviewPage({ now = () => new Date() }: FocusPreviewPageProps = {}): React.JSX.Element {
   const { currentTenant } = useTenant();
   const [initialRange] = useState(() => getCurrentUtcMonthRange(now()));
+  const [grain, setGrain] = useState<"monthly" | "daily">("monthly");
+  const [month, setMonth] = useState(() => getCurrentUtcMonth(now()));
+  const [columnProfile, setColumnProfile] = useState<FocusPreviewColumnProfile>("full");
+  const [customColumns, setCustomColumns] = useState<string[]>([]);
+  const [fullColumns, setFullColumns] = useState<string[]>([]);
   const [startDate, setStartDate] = useState(initialRange.startDate);
   const [endDate, setEndDate] = useState(initialRange.endDate);
   const [preview, setPreview] = useState<FocusPreviewRequest | null>(null);
@@ -76,6 +83,21 @@ export function FocusPreviewPage({ now = () => new Date() }: FocusPreviewPagePro
     [],
   );
 
+  useEffect(() => {
+    if (!currentTenant) return;
+    let active = true;
+    void fetchFocusPreviewProfile(currentTenant.tenant_name)
+      .then((profile) => {
+        if (active) setFullColumns(profile.full_columns);
+      })
+      .catch(() => {
+        if (active) setOperationError(REQUEST_ERROR_MESSAGE);
+      });
+    return () => {
+      active = false;
+    };
+  }, [currentTenant]);
+
   async function submit(): Promise<void> {
     if (!currentTenant) return;
     setBusy(true);
@@ -84,12 +106,15 @@ export function FocusPreviewPage({ now = () => new Date() }: FocusPreviewPagePro
     const controller = new AbortController();
     abortRef.current = controller;
     try {
-      const queued = await submitFocusPreview(currentTenant.tenant_name, {
-        grain: "daily",
-        start_date: startDate,
-        end_date: endDate,
-        column_profile: "full",
-      });
+      const selection =
+        columnProfile === "custom"
+          ? { column_profile: columnProfile, columns: customColumns }
+          : { column_profile: columnProfile };
+      const body =
+        grain === "monthly"
+          ? { grain, month, ...selection } as const
+          : { grain, start_date: startDate, end_date: endDate, ...selection } as const;
+      const queued = await submitFocusPreview(currentTenant.tenant_name, body);
       setPreview(queued);
       let status = queued;
       while (status.status === "queued" || status.status === "running") {
@@ -154,27 +179,71 @@ export function FocusPreviewPage({ now = () => new Date() }: FocusPreviewPagePro
         </ul>
       </section>
       <Descriptions bordered size="small" column={2}>
-        <Descriptions.Item label="Grain">Daily</Descriptions.Item>
-        <Descriptions.Item label="Column profile">Full</Descriptions.Item>
+        <Descriptions.Item label="Grain">{grain === "monthly" ? "Monthly" : "Daily"}</Descriptions.Item>
+        <Descriptions.Item label="Column profile">{columnProfile}</Descriptions.Item>
       </Descriptions>
       {operationError && <Alert type="error" showIcon message={operationError} />}
       <Space wrap>
-        <label>
-          Start date
-          <DatePicker
-            aria-label="Start date"
-            value={dayjs(startDate)}
-            onChange={(_value, text) => setStartDate(String(text))}
-          />
+        <label>Grain
+          <select aria-label="Grain" value={grain} onChange={(event) => setGrain(event.target.value as "monthly" | "daily")}>
+            <option value="monthly">Monthly</option>
+            <option value="daily">Daily</option>
+          </select>
         </label>
-        <label>
-          End date
-          <DatePicker
-            aria-label="End date"
-            value={dayjs(endDate)}
-            onChange={(_value, text) => setEndDate(String(text))}
-          />
+        {grain === "monthly" ? (
+          <label>Month
+            <input aria-label="Month" type="month" value={month} onChange={(event) => setMonth(event.target.value)} />
+          </label>
+        ) : (
+          <>
+            <label>
+              Start date
+              <DatePicker
+                aria-label="Start date"
+                value={dayjs(startDate)}
+                onChange={(_value, text) => setStartDate(String(text))}
+              />
+            </label>
+            <label>
+              End date
+              <DatePicker
+                aria-label="End date"
+                value={dayjs(endDate)}
+                onChange={(_value, text) => setEndDate(String(text))}
+              />
+            </label>
+          </>
+        )}
+        <label>Column profile
+          <select
+            aria-label="Column profile"
+            value={columnProfile}
+            onChange={(event) => setColumnProfile(event.target.value as FocusPreviewColumnProfile)}
+          >
+            <option value="full">Full</option>
+            <option value="summary">Summary</option>
+            <option value="custom">Custom</option>
+          </select>
         </label>
+        {columnProfile === "custom" && (
+          <label>Custom columns
+            <select
+              aria-label="Custom columns"
+              multiple
+              value={customColumns}
+              onChange={(event) => {
+                const selected = Array.from(event.target.selectedOptions, (option) => option.value);
+                const selectedSet = new Set(selected);
+                setCustomColumns((current) => [
+                  ...current.filter((column) => selectedSet.has(column)),
+                  ...selected.filter((column) => !current.includes(column)),
+                ]);
+              }}
+            >
+              {fullColumns.map((column) => <option key={column} value={column}>{column}</option>)}
+            </select>
+          </label>
+        )}
         <Button type="primary" loading={busy} disabled={!currentTenant} onClick={() => void submit()}>
           Generate preview
         </Button>
@@ -191,6 +260,17 @@ export function FocusPreviewPage({ now = () => new Date() }: FocusPreviewPagePro
                 <Text code key={correlation}>{correlation}</Text>
               ))}
             </Space>
+          }
+        />
+      )}
+      {preview?.source_snapshot?.monthly_status && (
+        <Alert
+          type={preview.source_snapshot.monthly_status === "provisional" ? "warning" : "success"}
+          message={`Monthly status: ${preview.source_snapshot.monthly_status}`}
+          description={
+            preview.source_snapshot.evidence_through_date
+              ? `Evidence through ${preview.source_snapshot.evidence_through_date}`
+              : "No complete daily evidence is available yet."
           }
         />
       )}

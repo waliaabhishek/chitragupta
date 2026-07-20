@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -59,11 +59,28 @@ class PipelineStateResponse(BaseModel):
     topic_attribution_calculated: bool = False
 
 
-class FocusPreviewRequestBody(BaseModel):
+class _FocusPreviewColumnSelectionBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    column_profile: Literal["full", "summary", "custom"] = "full"
+    columns: list[str] | None = None
+
+
+class FocusPreviewDailyRequestBody(_FocusPreviewColumnSelectionBody):
     grain: Literal["daily"]
     start_date: date
     end_date: date
-    column_profile: Literal["full"]
+
+
+class FocusPreviewMonthlyRequestBody(_FocusPreviewColumnSelectionBody):
+    grain: Literal["monthly"]
+    month: str
+
+
+FocusPreviewRequestBody = Annotated[
+    FocusPreviewDailyRequestBody | FocusPreviewMonthlyRequestBody,
+    Field(discriminator="grain"),
+]
 
 
 class FocusPreviewDiagnosticResponse(BaseModel):
@@ -81,9 +98,20 @@ class FocusPreviewCalculationCoverageEntryResponse(BaseModel):
 
 
 class FocusPreviewSourceSnapshotResponse(BaseModel):
-    calculation_timestamp: datetime
+    calculation_timestamp: datetime | None
     calculation_coverage: list[FocusPreviewCalculationCoverageEntryResponse]
-    source_through: datetime
+    source_through: datetime | None
+    effective_coverage_start_date: date
+    effective_coverage_end_date: date
+    evidence_through_date: date | None
+    availability_cutoff_end_date: date | None
+    monthly_status: Literal["provisional", "settled"] | None
+
+
+class FocusPreviewProfileResponse(BaseModel):
+    mapping_profile_version: str
+    full_columns: list[str]
+    summary_columns: list[str]
 
 
 class FocusPreviewArtifactResponse(BaseModel):
@@ -103,10 +131,12 @@ class FocusPreviewPackageResponse(BaseModel):
 class FocusPreviewResponse(BaseModel):
     request_id: str
     tenant_name: str
-    grain: Literal["daily"]
+    grain: Literal["daily", "monthly"]
     start_date: date
     end_date: date
-    column_profile: Literal["full"]
+    month: str | None
+    column_profile: Literal["full", "summary", "custom"]
+    effective_columns: list[str]
     status: Literal["queued", "running", "ready", "failed", "expired"]
     created_at: datetime
     started_at: datetime | None

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
+from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
-from decimal import Decimal
+from decimal import ROUND_DOWN, ROUND_UP, Decimal, localcontext
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
@@ -23,6 +25,7 @@ from tests.unit.core.preview.conftest import preview_module
 from tests.unit.core.preview.test_service import (
     ControlledExecutor,
     _aggregate,
+    _context_resource,
     _runtime,
     _seed,
     _source,
@@ -92,6 +95,7 @@ def _run_failure(
                 end_date=end_date,
                 grain="daily",
                 column_profile="full",
+                effective_columns=preview_module("mapping").FOCUS_1_4_FULL_PROFILE_COLUMNS,
             )
         )
         executor.run_all()
@@ -114,6 +118,8 @@ def _seed_two_day_origins(
     backend: SQLModelBackend,
     *,
     first_currency: str = "USD",
+    first_source_cost: Decimal = Decimal("8"),
+    first_aggregate_cost: Decimal = Decimal("8"),
     second_source_cost: Decimal = Decimal("4"),
     second_aggregate_cost: Decimal = Decimal("4"),
     first_allocated_cost: Decimal = Decimal("8"),
@@ -123,7 +129,13 @@ def _seed_two_day_origins(
     from core.storage.interface import AllocationLineageRunCapture
 
     _seed(backend)
-    first_source = _associated_source()
+    first_source = _associated_source(
+        amount=first_source_cost,
+        original_amount=first_source_cost,
+        discount_amount=Decimal(0),
+        price=first_source_cost,
+        quantity=Decimal(1),
+    )
     second_source = _associated_source(
         source_record_id="provider:cost-2",
         provider_cost_id="cost-2",
@@ -134,22 +146,27 @@ def _seed_two_day_origins(
         allocation_timestamp=datetime(2026, 7, 2, tzinfo=UTC),
         retention_timestamp=datetime(2026, 7, 2, tzinfo=UTC),
         amount=second_source_cost,
-        original_amount=Decimal("4"),
-        discount_amount=Decimal("0"),
-        price=Decimal("2"),
-        quantity=Decimal("2"),
+        original_amount=second_source_cost,
+        discount_amount=Decimal(0),
+        price=second_source_cost,
+        quantity=Decimal(1),
         resource_id="lkc-2",
         resource_name="Payments",
         billing_timestamp=datetime(2026, 7, 2, tzinfo=UTC),
         billing_resource_id="lkc-2",
         raw_payload={"id": "cost-2"},
     )
-    first_aggregate = _aggregate(currency=first_currency)
+    first_aggregate = _aggregate(
+        currency=first_currency,
+        quantity=Decimal(1),
+        unit_price=first_aggregate_cost,
+        total_cost=first_aggregate_cost,
+    )
     second_aggregate = _aggregate(
         timestamp=datetime(2026, 7, 2, tzinfo=UTC),
         resource_id="lkc-2",
-        quantity=Decimal("2"),
-        unit_price=Decimal("2"),
+        quantity=Decimal(1),
+        unit_price=second_aggregate_cost,
         total_cost=second_aggregate_cost,
     )
     first_row = ChargebackRow(
@@ -182,6 +199,12 @@ def _seed_two_day_origins(
     )
     completed_at = datetime(2026, 7, 3, 2, tzinfo=UTC)
     with backend.create_unit_of_work() as uow:
+        uow.resources.upsert(
+            replace(
+                _context_resource("lkc-2", "kafka_cluster"),
+                created_at=datetime(2026, 1, 1, tzinfo=UTC),
+            )
+        )
         uow.billing.replace_source_window(
             "confluent_cloud",
             "tenant-1",
@@ -280,6 +303,71 @@ def _run_permuted_failure(
         patcher.setattr(CCloudChargebackRepository, "iter_preview_allocation_runs", ordered_runs)
         patcher.setattr(CCloudChargebackRepository, "iter_preview_allocations", ordered_portions)
         return _run_failure(tmp_path, backend, end_date=date(2026, 7, 3))
+
+
+def _run_permuted_success(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    backend: SQLModelBackend,
+    permutation: tuple[bool, bool, bool, bool],
+) -> dict[str, object]:
+    from plugins.confluent_cloud.storage.repositories import (
+        CCloudBillingRepository,
+        CCloudChargebackRepository,
+    )
+
+    reverse_sources, reverse_aggregates, reverse_runs, reverse_portions = permutation
+    original_sources = CCloudBillingRepository.iter_preview_sources
+    original_aggregates = CCloudBillingRepository.iter_preview_aggregates
+    original_runs = CCloudChargebackRepository.iter_preview_allocation_runs
+    original_portions = CCloudChargebackRepository.iter_preview_allocations
+
+    def ordered_sources(self: Any, scope: Any) -> Any:
+        rows = tuple(original_sources(self, scope))
+        return iter(reversed(rows) if reverse_sources else rows)
+
+    def ordered_aggregates(self: Any, scope: Any) -> Any:
+        rows = tuple(original_aggregates(self, scope))
+        return iter(reversed(rows) if reverse_aggregates else rows)
+
+    def ordered_runs(self: Any, scope: Any, calculation_ids: tuple[str, ...]) -> Any:
+        rows = tuple(original_runs(self, scope, calculation_ids))
+        return iter(reversed(rows) if reverse_runs else rows)
+
+    def ordered_portions(self: Any, scope: Any, calculation_ids: tuple[str, ...]) -> Any:
+        rows = tuple(original_portions(self, scope, calculation_ids))
+        return iter(reversed(rows) if reverse_portions else rows)
+
+    executor = ControlledExecutor()
+    runtime = _runtime(tmp_path, backend, executor)
+    try:
+        with monkeypatch.context() as patcher:
+            patcher.setattr(CCloudBillingRepository, "iter_preview_sources", ordered_sources)
+            patcher.setattr(CCloudBillingRepository, "iter_preview_aggregates", ordered_aggregates)
+            patcher.setattr(CCloudChargebackRepository, "iter_preview_allocation_runs", ordered_runs)
+            patcher.setattr(CCloudChargebackRepository, "iter_preview_allocations", ordered_portions)
+            queued = runtime.submit(
+                tenant_name="production",
+                tenant_config=_tenant_config(backend._connection_string),
+                backend=backend,
+                start_date=date(2026, 7, 1),
+                end_date=date(2026, 7, 3),
+                grain="daily",
+                column_profile="full",
+                effective_columns=preview_module("mapping").FOCUS_1_4_FULL_PROFILE_COLUMNS,
+            )
+            executor.run_all()
+        ready = runtime.get_request(
+            backend=backend,
+            request_id=queued.request_id,
+            ecosystem="confluent_cloud",
+            tenant_id="tenant-1",
+        )
+        assert ready is not None
+        assert ready.status.value == "ready", ready.diagnostic
+        return json.loads(runtime.read_manifest_bytes(ready))
+    finally:
+        runtime.close()
 
 
 def _persist_valid_or_short_lineage(
@@ -757,6 +845,45 @@ def test_global_lineage_structure_stage_precedes_earlier_origin_totals_mismatch_
     assert message == "Persisted allocation lineage is incomplete for one or more billing origins."
     assert retryable is False
     assert len(correlations) == 2
+
+
+@pytest.mark.parametrize(
+    ("precision", "rounding"),
+    [(6, ROUND_DOWN), (9, ROUND_UP)],
+    ids=("low-precision-down", "changed-precision-up"),
+)
+def test_package_reconciliation_totals_ignore_ambient_decimal_context_and_stream_order(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    precision: int,
+    rounding: str,
+) -> None:
+    expected = "999999.000001"
+    observed: list[dict[str, object]] = []
+    for index, permutation in enumerate(_STREAM_PERMUTATIONS):
+        backend = _backend(tmp_path, f"decimal-context-{precision}-{index}.db")
+        try:
+            _seed_two_day_origins(
+                backend,
+                first_source_cost=Decimal("999999"),
+                first_aggregate_cost=Decimal("999999"),
+                first_allocated_cost=Decimal("999999"),
+                second_source_cost=Decimal("0.000001"),
+                second_aggregate_cost=Decimal("0.000001"),
+            )
+            with localcontext() as ambient:
+                ambient.prec = precision
+                ambient.rounding = rounding
+                manifest = _run_permuted_success(tmp_path, monkeypatch, backend, permutation)
+            reconciliation = manifest["reconciliation"]
+            assert isinstance(reconciliation, dict)
+            observed.append(reconciliation)
+        finally:
+            backend.dispose()
+
+    assert observed == [{"source_cost": expected, "allocated_cost": expected, "difference": "0"}] * len(
+        _STREAM_PERMUTATIONS
+    )
 
 
 def test_recalculation_alone_cannot_recover_legacy_association_but_regather_then_calculation_can(

@@ -9,6 +9,7 @@ from core.config.models import StorageConfig, TenantConfig
 from core.models.pipeline import PipelineState
 from core.storage.backends.sqlmodel.unit_of_work import SQLModelBackend
 from plugins.confluent_cloud.storage.module import CCloudStorageModule
+from tests.unit.core.preview.conftest import preview_module
 from tests.unit.core.preview.test_service import (
     ControlledExecutor,
     _aggregate,
@@ -89,6 +90,7 @@ def _submit(
         end_date=end_date,
         grain="daily",
         column_profile="full",
+        effective_columns=preview_module("mapping").FOCUS_1_4_FULL_PROFILE_COLUMNS,
     )
 
 
@@ -196,8 +198,8 @@ def test_outside_acquisition_diagnostic_never_promises_reconstruction_or_more_lo
 @pytest.mark.parametrize(
     ("start_date", "end_date", "expected_code"),
     [
-        (date(2026, 6, 23), date(2026, 7, 2), "calculation_before_acquisition_lookback"),
-        (date(2026, 6, 25), date(2026, 7, 2), "calculation_pending_cutoff_window"),
+        (date(2026, 6, 23), date(2026, 6, 30), "calculation_before_acquisition_lookback"),
+        (date(2026, 6, 25), date(2026, 6, 30), "calculation_pending_cutoff_window"),
     ],
 )
 def test_mixed_missing_dates_use_outside_then_cutoff_precedence(
@@ -305,7 +307,7 @@ def test_commercial_and_currency_eligibility_fail_asynchronously_after_calculati
         backend.dispose()
 
 
-def test_zero_source_and_zero_aggregate_fails_complete_coverage(tmp_path: Path) -> None:
+def test_zero_source_and_zero_aggregate_without_complete_lineage_fails_lineage_coverage(tmp_path: Path) -> None:
     backend = _backend(tmp_path)
     _seed(backend)
     executor = ControlledExecutor()
@@ -321,7 +323,7 @@ def test_zero_source_and_zero_aggregate_fails_complete_coverage(tmp_path: Path) 
         executor.run_all()
         failed = _failed(runtime, backend, queued.request_id)
 
-        assert failed.diagnostic.code == "preview_source_coverage_incomplete"
+        assert failed.diagnostic.code == "preview_allocation_lineage_incomplete"
         assert failed.diagnostic.source_correlation_ids == ()
         _assert_no_artifact(failed)
     finally:

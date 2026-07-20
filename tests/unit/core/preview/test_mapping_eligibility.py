@@ -340,7 +340,7 @@ def test_mapping_profile_and_currency_gap_advance_without_mapping_billing_curren
     mapping = preview_module("mapping")
     gaps = {gap.code: gap for gap in mapping.KNOWN_GAPS}
 
-    assert mapping.MAPPING_PROFILE_VERSION == "focus-1.4-daily-full-v4"
+    assert mapping.MAPPING_PROFILE_VERSION == "focus-1.4-preview-v5"
     assert "commercial_arrangement_and_billing_currency_authority_pending" not in gaps
     assert gaps["provider_billing_currency_field_unavailable"].columns == ("BillingCurrency",)
     assert gaps["provider_billing_currency_field_unavailable"].owner_task == "TASK-254.03"

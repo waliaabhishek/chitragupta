@@ -404,7 +404,9 @@ def test_focus_preview_status_routes_publish_typed_openapi_response_contract(tmp
         "grain",
         "start_date",
         "end_date",
+        "month",
         "column_profile",
+        "effective_columns",
         "status",
         "created_at",
         "started_at",
@@ -532,7 +534,7 @@ def test_primary_api_seam_transports_exact_row_validation_diagnostic(tmp_path: P
     validation_error = mapping.PreviewRowValidationError(mapping.PreviewRowRuleId.TYPE, column="BillingAccountId")
     with (
         patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"),
-        patch("core.preview.service.build_daily_full_package_rows", side_effect=validation_error),
+        patch("core.preview.service.build_preview_package", side_effect=validation_error),
         client,
     ):
         app.state.backends["production"] = backend

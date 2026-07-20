@@ -47,6 +47,7 @@ def _request(**overrides: object) -> PreviewRequest:
         "start_date": date(2026, 7, 1),
         "end_date": date(2026, 7, 2),
         "column_profile": "full",
+        "effective_columns": import_module("core.preview.mapping").FOCUS_1_4_FULL_PROFILE_COLUMNS,
         "status": PreviewRequestStatus.QUEUED,
         "created_at": datetime(2026, 7, 4, tzinfo=UTC),
         "started_at": None,

@@ -23,16 +23,30 @@ from core.preview.evidence import (  # noqa: TC001 - resolved by contract tests
     PreviewSourceEvidence,
     decode_lineage_method_details,
 )
-from core.preview.models import PreviewArtifactPayload, PreviewPackagePayload, PreviewRequest, PreviewSourceSnapshot
+from core.preview.models import (
+    PreviewArtifactPayload,
+    PreviewColumnProfile,
+    PreviewPackagePayload,
+    PreviewRequest,
+    PreviewRequestStatus,
+    PreviewSourceSnapshot,
+    preview_month,
+    validate_preview_request_snapshot,
+)
 from core.storage.interface import ResourceRepository  # noqa: TC001 - resolved by contract tests
 
-MAPPING_PROFILE_VERSION = "focus-1.4-daily-full-v4"
-_DECIMAL_CONTEXT = Context(prec=38)
+MAPPING_PROFILE_VERSION = "focus-1.4-preview-v5"
+PREVIEW_DECIMAL_CONTEXT = Context(prec=38)
+_DECIMAL_CONTEXT = PREVIEW_DECIMAL_CONTEXT
 logger = logging.getLogger(__name__)
 
 
 class PreviewMappingError(ValueError):
     """Base error raised by the Daily Full mapping boundary."""
+
+
+class PreviewEffectiveColumnsError(PreviewMappingError):
+    """The persisted or requested profile/column combination is invalid."""
 
 
 class PreviewSourceEvidenceError(PreviewMappingError):
@@ -516,7 +530,7 @@ _CUSTOM_RULE_AUTHORITIES = {
     ),
     "x_ChitraguptaAllocationRatio": ("persisted allocation lineage", "copy exact realized ratio"),
     "x_ChitraguptaAllocationMethodVersion": ("persisted allocation lineage", "copy lineage method version"),
-    "x_ChitraguptaMappingProfileVersion": ("mapping profile", "emit focus-1.4-daily-full-v4"),
+    "x_ChitraguptaMappingProfileVersion": ("mapping profile", "emit focus-1.4-preview-v5"),
     "x_ChitraguptaSkuComponents": (
         "canonical SKU and SKU price components",
         "serialize as canonical JSON",
@@ -546,6 +560,54 @@ CUSTOM_EVIDENCE_RULES = tuple(
     for column, allows_null, applicability, validator, gap, owner in _CUSTOM_SPECS
 )
 CUSTOM_EVIDENCE_COLUMNS = tuple(rule.column for rule in CUSTOM_EVIDENCE_RULES)
+
+LEGACY_DAILY_FULL_V4_COLUMNS = (
+    *FOCUS_1_4_FULL_COLUMNS,
+    *CUSTOM_EVIDENCE_COLUMNS,
+)
+FOCUS_1_4_FULL_PROFILE_COLUMNS = LEGACY_DAILY_FULL_V4_COLUMNS
+FOCUS_1_4_SUMMARY_COLUMNS = (
+    "AllocatedResourceId",
+    "AllocatedResourceName",
+    "AllocatedTags",
+    "BilledCost",
+    "BillingAccountId",
+    "BillingAccountName",
+    "BillingCurrency",
+    "BillingPeriodEnd",
+    "BillingPeriodStart",
+    "ChargeCategory",
+    "ChargePeriodEnd",
+    "ChargePeriodStart",
+    "EffectiveCost",
+    "ResourceId",
+    "ResourceName",
+    "ServiceCategory",
+    "ServiceName",
+    "SubAccountId",
+    "SubAccountName",
+    "Tags",
+)
+
+
+def validate_preview_effective_columns(
+    profile: PreviewColumnProfile,
+    effective_columns: tuple[str, ...],
+) -> None:
+    if profile == "full":
+        valid = effective_columns == FOCUS_1_4_FULL_PROFILE_COLUMNS
+    elif profile == "summary":
+        valid = effective_columns == FOCUS_1_4_SUMMARY_COLUMNS
+    elif profile == "custom":
+        valid = (
+            bool(effective_columns)
+            and len(effective_columns) == len(set(effective_columns))
+            and all(column in FOCUS_1_4_FULL_PROFILE_COLUMNS for column in effective_columns)
+        )
+    else:
+        valid = False
+    if not valid:
+        raise PreviewEffectiveColumnsError("preview effective columns do not match the selected profile")
 
 
 @dataclass(frozen=True)
@@ -930,10 +992,23 @@ type PreviewOriginKey = tuple[datetime, str, str, str, str]
 
 
 @dataclass(frozen=True)
-class PreviewRowProjection:
+class PreviewLineageMember:
+    source_cost_id: str
+    calculation_id: str
+    origin_timestamp: datetime
+    origin_environment_id: str
+    origin_resource_id: str
+    origin_product_type: str
+    origin_product_category: str
+    portion_ordinal: int
+
+
+@dataclass(frozen=True)
+class PreviewFullRow:
     target_values: tuple[PreviewCell, ...]
     custom_values: tuple[PreviewCell, ...]
     financials: PreviewFinancialProjection
+    lineage_members: tuple[PreviewLineageMember, ...]
 
 
 @dataclass(frozen=True)
@@ -975,29 +1050,49 @@ class PreparedPreviewPackageRow:
     allocated_tags_json: str | None
 
 
-def _utc(value: datetime) -> str:
+def preview_utc_text(value: datetime) -> str:
     return value.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _decimal(value: Decimal) -> str:
+def preview_decimal_text(value: Decimal) -> str:
     result = format(value, "f")
     if "." in result:
         result = result.rstrip("0").rstrip(".")
     return result or "0"
 
 
-def _serialize_cell(value: PreviewCell) -> str:
+def preview_sum_decimals(values: Iterable[Decimal]) -> Decimal:
+    """Sum Preview decimals deterministically under the mapping-owned context."""
+    with localcontext(PREVIEW_DECIMAL_CONTEXT):
+        return sum(sorted(values), Decimal(0))
+
+
+def preview_subtract_decimals(minuend: Decimal, subtrahend: Decimal) -> Decimal:
+    """Subtract Preview decimals under the mapping-owned context."""
+    with localcontext(PREVIEW_DECIMAL_CONTEXT):
+        return minuend - subtrahend
+
+
+def preview_serialize_cell(value: PreviewCell) -> str:
     if value is None:
         return ""
     if isinstance(value, datetime):
-        return _utc(value)
+        return preview_utc_text(value)
     if isinstance(value, Decimal):
-        return _decimal(value)
+        return preview_decimal_text(value)
     return value
 
 
-def _canonical_json(value: object) -> str:
+def preview_canonical_json(value: object) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"))
+
+
+# Compatibility names for unchanged v4 call sites. New v5 modules use the
+# named Preview APIs above.
+_utc = preview_utc_text
+_decimal = preview_decimal_text
+_serialize_cell = preview_serialize_cell
+_canonical_json = preview_canonical_json
 
 
 def _semantic_flags(*values: str) -> tuple[bool, bool, bool, bool]:
@@ -1169,7 +1264,9 @@ def project_financials(
         raise PreviewFinancialUnsupportedError("priced charge lacks supported price evidence")
     if not is_refund and (price < 0 or quantity < 0):
         raise PreviewFinancialUnsupportedError("positive charge price or quantity sign is unsupported")
-    if original - discount != amount or price * quantity != original:
+    with localcontext(PREVIEW_DECIMAL_CONTEXT):
+        source_arithmetic_reconciles = original - discount == amount and price * quantity == original
+    if not source_arithmetic_reconciles:
         raise PreviewFinancialReconciliationError("source arithmetic does not reconcile")
     consumed_quantity = quantity if semantics.emits_consumption else None
     consumed_unit = unit if semantics.emits_consumption else None
@@ -1309,6 +1406,9 @@ def reconcile_source_aggregate_stream(
         origin = _aggregate_billing_origin(aggregate)
         duplicate_aggregate = duplicate_aggregate or origin in aggregates_by_origin
         aggregates_by_origin[origin] = aggregate
+
+    if not sources_by_origin and not aggregates_by_origin and not missing_association and not duplicate_aggregate:
+        return {}, {}
 
     if (
         missing_association
@@ -1740,7 +1840,7 @@ def _manifest_gap_ownership() -> dict[tuple[str, str], list[str]]:
 
 def validate_preview_row(
     *,
-    row: PreviewRowProjection,
+    row: PreviewFullRow,
     target_rules: tuple[FocusColumnRule, ...],
     custom_rules: tuple[CustomEvidenceRule, ...],
 ) -> None:
@@ -2092,26 +2192,90 @@ def _project_daily_full_row(
             "x_ConfluentTierDimensions": _canonical_json(dict(source.native_tier_dimensions)),
         }
     )
-    projection = PreviewRowProjection(
-        tuple(row[column] for column in FOCUS_1_4_FULL_COLUMNS),
-        tuple(row[column] for column in CUSTOM_EVIDENCE_COLUMNS),
-        financials,
-    )
-    validate_preview_row(row=projection, target_rules=FOCUS_1_4_COLUMN_RULES, custom_rules=CUSTOM_EVIDENCE_RULES)
     return row
 
 
-def _build_daily_full_package_payload(
+def project_daily_portion_full_row(
+    *,
+    prepared: PreparedPreviewPackageRow,
+    provider_context: PreviewProviderContext,
+) -> PreviewFullRow:
+    values = _project_daily_full_row(
+        evidence=prepared.evidence,
+        provider_context=provider_context,
+        resource_context=prepared.resource_context,
+        identity=prepared.allocated_entity,
+        environment=prepared.environment,
+        origin_tags_json=prepared.origin_tags_json,
+        allocated_tags_json=prepared.allocated_tags_json,
+    )
+    source = prepared.evidence.selected.source
+    allocation = prepared.evidence.allocation
+    source_id = source.provider_cost_id or source.source_record_id
+    member = PreviewLineageMember(
+        source_cost_id=source_id,
+        calculation_id=allocation.calculation_id,
+        origin_timestamp=allocation.timestamp,
+        origin_environment_id=allocation.environment_id,
+        origin_resource_id=allocation.resource_id,
+        origin_product_type=allocation.native_product,
+        origin_product_category=allocation.native_line_type,
+        portion_ordinal=allocation.portion_ordinal,
+    )
+    row = PreviewFullRow(
+        target_values=tuple(values[column] for column in FOCUS_1_4_FULL_COLUMNS),
+        custom_values=tuple(values[column] for column in CUSTOM_EVIDENCE_COLUMNS),
+        financials=prepared.evidence.selected.financials,
+        lineage_members=(member,),
+    )
+    validate_preview_row(row=row, target_rules=FOCUS_1_4_COLUMN_RULES, custom_rules=CUSTOM_EVIDENCE_RULES)
+    return row
+
+
+@dataclass(frozen=True)
+class PreviewPackageReconciliation:
+    source_records: int
+    source_cost: Decimal
+    allocated_cost: Decimal
+
+
+def build_preview_package(
     *,
     request: PreviewRequest,
     snapshot: PreviewSourceSnapshot,
-    csv_body: bytes,
-    row_count: int,
-    source_records: int,
-    source_cost: Decimal,
-    allocated_cost: Decimal,
+    full_rows: Iterable[PreviewFullRow],
+    reconciliation: PreviewPackageReconciliation,
     generated_at: datetime,
 ) -> PreviewPackagePayload:
+    validate_preview_effective_columns(request.column_profile, request.effective_columns)
+    validate_preview_request_snapshot(
+        request=request,
+        snapshot=snapshot,
+        resulting_status=PreviewRequestStatus.READY,
+        mode="candidate_ready",
+    )
+    rows = tuple(full_rows)
+    if reconciliation.source_records < 0:
+        raise PreviewMappingError("source record count cannot be negative")
+    if reconciliation.source_records == 0:
+        if (
+            reconciliation.source_cost != 0
+            or reconciliation.allocated_cost != 0
+            or rows
+            or snapshot.source_through is not None
+        ):
+            raise PreviewMappingError("zero-source package state is inconsistent")
+    elif not rows or snapshot.source_through is None:
+        raise PreviewMappingError("positive-source package state is inconsistent")
+
+    all_columns = FOCUS_1_4_FULL_PROFILE_COLUMNS
+    buffer = io.StringIO(newline="")
+    writer = csv.writer(buffer, lineterminator="\n")
+    writer.writerow(request.effective_columns)
+    for row in rows:
+        values = dict(zip(all_columns, (*row.target_values, *row.custom_values), strict=True))
+        writer.writerow(preview_serialize_cell(values[column]) for column in request.effective_columns)
+    csv_body = buffer.getvalue().encode()
     file_metadata = {
         "name": "cost-and-usage.csv",
         "media_type": "text/csv",
@@ -2119,18 +2283,24 @@ def _build_daily_full_package_payload(
         "sha256": hashlib.sha256(csv_body).hexdigest(),
         "order": 1,
     }
+    evidence_start = snapshot.effective_coverage_start_date
+    evidence_end = snapshot.effective_coverage_end_date
+    assert evidence_start is not None and evidence_end is not None
+    evidence_through = None if evidence_start == evidence_end else evidence_end - date.resolution
     source_snapshot = {
-        "calculation_timestamp": _utc(snapshot.calculation_timestamp),
+        "calculation_timestamp": (
+            None if snapshot.calculation_timestamp is None else preview_utc_text(snapshot.calculation_timestamp)
+        ),
         "calculation_coverage": [
             {
                 "tracking_date": entry.tracking_date.isoformat(),
                 "calculation_id": entry.calculation_id,
-                "calculation_completed_at": _utc(entry.calculation_completed_at),
+                "calculation_completed_at": preview_utc_text(entry.calculation_completed_at),
                 "calculation_run_id": entry.calculation_run_id,
             }
             for entry in snapshot.calculation_coverage
         ],
-        "source_through": _utc(snapshot.source_through),
+        "source_through": None if snapshot.source_through is None else preview_utc_text(snapshot.source_through),
     }
     manifest = {
         "schema_version": "chitragupta.preview-manifest.v1",
@@ -2140,7 +2310,9 @@ def _build_daily_full_package_payload(
         "grain": request.grain,
         "start_date": request.start_date.isoformat(),
         "end_date": request.end_date.isoformat(),
+        "month": preview_month(grain=request.grain, start_date=request.start_date, end_date=request.end_date),
         "column_profile": request.column_profile,
+        "effective_columns": list(request.effective_columns),
         "target_focus_version": "1.4",
         "conformance_status": "non_conforming",
         "mapping_profile_version": MAPPING_PROFILE_VERSION,
@@ -2155,110 +2327,38 @@ def _build_daily_full_package_payload(
         ],
         "profile_not_applicable_columns": list(PROFILE_NOT_APPLICABLE_COLUMNS),
         "source_snapshot": source_snapshot,
+        "evidence_coverage": {
+            "start_date": evidence_start.isoformat(),
+            "end_date": evidence_end.isoformat(),
+            "end_exclusive": True,
+            "evidence_through_date": None if evidence_through is None else evidence_through.isoformat(),
+            "availability_cutoff_end_date": (
+                None
+                if snapshot.availability_cutoff_end_date is None
+                else snapshot.availability_cutoff_end_date.isoformat()
+            ),
+        },
+        "monthly_status": snapshot.monthly_status,
         "validation": {
             "status": "passed",
             "mapping_profile_version": MAPPING_PROFILE_VERSION,
-            "source_records": source_records,
-            "rows": row_count,
+            "source_records": reconciliation.source_records,
+            "rows": len(rows),
             "mapping_errors": 0,
         },
         "reconciliation": {
-            "source_cost": _decimal(source_cost),
-            "allocated_cost": _decimal(allocated_cost),
-            "difference": _decimal(source_cost - allocated_cost),
+            "source_cost": preview_decimal_text(reconciliation.source_cost),
+            "allocated_cost": preview_decimal_text(reconciliation.allocated_cost),
+            "difference": preview_decimal_text(
+                preview_subtract_decimals(reconciliation.source_cost, reconciliation.allocated_cost)
+            ),
         },
-        "generated_at": _utc(generated_at),
+        "generated_at": preview_utc_text(generated_at),
         "files": [file_metadata],
     }
-    manifest_body = (_canonical_json(manifest) + "\n").encode()
     return PreviewPackagePayload(
-        manifest_body=manifest_body, data_files=(PreviewArtifactPayload("cost-and-usage.csv", "text/csv", 1, csv_body),)
-    )
-
-
-def build_daily_full_package(
-    *,
-    request: PreviewRequest,
-    snapshot: PreviewSourceSnapshot,
-    evidence: SelectedPreviewEvidence,
-    provider_context: PreviewProviderContext,
-    resource_context: PreviewResourceContext,
-    identity: Identity,
-    environment: Resource | None,
-    generated_at: datetime,
-) -> PreviewPackagePayload:
-    """Build the compatibility single-row Daily / Full package."""
-    row = _project_daily_full_row(
-        evidence=evidence,
-        provider_context=provider_context,
-        resource_context=resource_context,
-        identity=identity,
-        environment=environment,
-    )
-    source_amount = evidence.selected.source.amount
-    assert source_amount is not None
-    columns = (*FOCUS_1_4_FULL_COLUMNS, *CUSTOM_EVIDENCE_COLUMNS)
-    buffer = io.StringIO(newline="")
-    writer = csv.writer(buffer, lineterminator="\n")
-    writer.writerow(columns)
-    writer.writerow([_serialize_cell(row[column]) for column in columns])
-    return _build_daily_full_package_payload(
-        request=request,
-        snapshot=snapshot,
-        csv_body=buffer.getvalue().encode(),
-        row_count=1,
-        source_records=1,
-        source_cost=source_amount,
-        allocated_cost=evidence.allocation.amount,
-        generated_at=generated_at,
-    )
-
-
-def build_daily_full_package_rows(
-    *,
-    request: PreviewRequest,
-    snapshot: PreviewSourceSnapshot,
-    rows: Iterable[PreparedPreviewPackageRow],
-    provider_context: PreviewProviderContext,
-    generated_at: datetime,
-) -> PreviewPackagePayload:
-    columns = (*FOCUS_1_4_FULL_COLUMNS, *CUSTOM_EVIDENCE_COLUMNS)
-    buffer = io.StringIO(newline="")
-    writer = csv.writer(buffer, lineterminator="\n")
-    writer.writerow(columns)
-    source_record_ids: set[str] = set()
-    source_cost = Decimal(0)
-    allocated_cost = Decimal(0)
-    row_count = 0
-    for prepared in rows:
-        source = prepared.evidence.selected.source
-        with localcontext(_DECIMAL_CONTEXT):
-            if source.source_record_id not in source_record_ids:
-                source_record_ids.add(source.source_record_id)
-                source_cost += source.amount or Decimal(0)
-            allocated_cost += prepared.evidence.allocation.allocated_cost
-        projected = _project_daily_full_row(
-            evidence=prepared.evidence,
-            provider_context=provider_context,
-            resource_context=prepared.resource_context,
-            identity=prepared.allocated_entity,
-            environment=prepared.environment,
-            origin_tags_json=prepared.origin_tags_json,
-            allocated_tags_json=prepared.allocated_tags_json,
-        )
-        writer.writerow([_serialize_cell(projected[column]) for column in columns])
-        row_count += 1
-    if row_count == 0:
-        raise PreviewMappingScopeError("no allocation portions are available")
-    return _build_daily_full_package_payload(
-        request=request,
-        snapshot=snapshot,
-        csv_body=buffer.getvalue().encode(),
-        row_count=row_count,
-        source_records=len(source_record_ids),
-        source_cost=source_cost,
-        allocated_cost=allocated_cost,
-        generated_at=generated_at,
+        manifest_body=(preview_canonical_json(manifest) + "\n").encode(),
+        data_files=(PreviewArtifactPayload("cost-and-usage.csv", "text/csv", 1, csv_body),),
     )
 
 

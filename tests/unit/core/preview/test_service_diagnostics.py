@@ -6,6 +6,7 @@ from datetime import UTC, date, datetime
 from pathlib import Path
 
 import pytest
+from sqlalchemy import event
 
 from core.models.pipeline import PipelineState
 from core.storage.backends.sqlmodel.unit_of_work import SQLModelBackend
@@ -61,6 +62,7 @@ def _submit_range(runtime: object, backend: SQLModelBackend, end_date: date) -> 
         end_date=end_date,
         grain="daily",
         column_profile="full",
+        effective_columns=preview_module("mapping").FOCUS_1_4_FULL_PROFILE_COLUMNS,
     )
 
 
@@ -250,7 +252,7 @@ def test_unexpected_generation_failure_logs_request_and_leaves_no_package(
     service = preview_module("service")
     monkeypatch.setattr(
         service,
-        "build_daily_full_package_rows",
+        "build_preview_package",
         lambda **_kwargs: (_ for _ in ()).throw(OSError("disk")),
     )
     try:
@@ -313,6 +315,156 @@ def test_post_rename_pre_ready_failure_leaves_inaccessible_orphan(
             runtime.read_manifest_bytes(failed)
     finally:
         monkeypatch.setattr(persistence.SQLModelPreviewRequestRepository, "mark_ready", real_mark_ready)
+        runtime.close()
+        backend.dispose()
+
+
+def test_false_ready_compare_and_set_is_not_silently_accepted(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    backend = _backend(tmp_path)
+    _seed(backend, source=_source(), aggregate=_aggregate(), allocation=_allocation())
+    executor = ControlledExecutor()
+    runtime = _runtime(tmp_path, backend, executor)
+    persistence = preview_module("persistence")
+
+    monkeypatch.setattr(persistence.SQLModelPreviewRequestRepository, "mark_ready", lambda *_args, **_kwargs: False)
+    try:
+        queued = _submit_range(runtime, backend, date(2026, 7, 2))
+        with caplog.at_level("ERROR", logger="core.preview.service"):
+            executor.run_all()
+        terminal = runtime.get_request(
+            backend=backend,
+            request_id=queued.request_id,
+            ecosystem="confluent_cloud",
+            tenant_id="tenant-1",
+        )
+
+        assert terminal is not None
+        assert terminal.status.value == "failed"
+        assert terminal.diagnostic.code == "preview_generation_failed"
+        assert terminal.package is None
+        assert any("ready transition rejected" in message for message in caplog.messages)
+    finally:
+        runtime.close()
+        backend.dispose()
+
+
+def test_worker_ready_path_preserves_validation_artifact_and_compare_and_set_order(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend = _backend(tmp_path)
+    _seed(backend, source=_source(), aggregate=_aggregate(), allocation=_allocation())
+    executor = ControlledExecutor()
+    runtime = _runtime(tmp_path, backend, executor)
+    mapping = preview_module("mapping")
+    models = preview_module("models")
+    persistence = preview_module("persistence")
+    events: list[str] = []
+
+    real_mark_running = persistence.SQLModelPreviewRequestRepository.mark_running
+    real_mark_ready = persistence.SQLModelPreviewRequestRepository.mark_ready
+    real_validate_columns = mapping.validate_preview_effective_columns
+    real_candidate_validate = mapping.validate_preview_request_snapshot
+    real_payload = mapping.PreviewPackagePayload
+    real_finalize = runtime._artifact_store.finalize_package
+    real_replace = persistence.replace
+    real_post_init = models.PreviewRequest.__post_init__
+    real_strict_validate = persistence.validate_preview_request_snapshot
+
+    def mark_running(*args: object, **kwargs: object) -> object:
+        result = real_mark_running(*args, **kwargs)
+        if result is not None:
+            events.append("running-candidate")
+        return result
+
+    def validate_columns(profile: str, columns: tuple[str, ...]) -> None:
+        events.append("effective-columns")
+        real_validate_columns(profile, columns)
+
+    def candidate_validate(**kwargs: object) -> None:
+        if kwargs["mode"] == "candidate_ready":
+            events.append("candidate-snapshot")
+        real_candidate_validate(**kwargs)
+
+    def package_payload(*args: object, **kwargs: object) -> object:
+        events.append("package-rendered")
+        return real_payload(*args, **kwargs)
+
+    def finalize(*args: object, **kwargs: object) -> object:
+        events.append("artifact-finalized")
+        return real_finalize(*args, **kwargs)
+
+    def replace_candidate(instance: object, /, **changes: object) -> object:
+        if changes.get("status") is models.PreviewRequestStatus.READY:
+            events.append("ready-construction")
+        return real_replace(instance, **changes)
+
+    def post_init(instance: object) -> None:
+        if getattr(instance, "status", None) is models.PreviewRequestStatus.READY:
+            events.append("ready-post-init")
+        real_post_init(instance)
+
+    def strict_validate(**kwargs: object) -> None:
+        if kwargs["mode"] == "strict_materialized" and kwargs["resulting_status"] is models.PreviewRequestStatus.READY:
+            events.append("ready-strict-validation")
+        real_strict_validate(**kwargs)
+
+    def capture_sql(
+        _conn: object,
+        _cursor: object,
+        statement: str,
+        _parameters: object,
+        _context: object,
+        _executemany: bool,
+    ) -> None:
+        if events and events[-1] == "ready-strict-validation" and statement.lstrip().upper().startswith("UPDATE"):
+            events.append("ready-cas-sql")
+
+    def mark_ready(*args: object, **kwargs: object) -> bool:
+        result = real_mark_ready(*args, **kwargs)
+        events.append(f"ready-cas-result:{result}")
+        return result
+
+    monkeypatch.setattr(persistence.SQLModelPreviewRequestRepository, "mark_running", mark_running)
+    monkeypatch.setattr(persistence.SQLModelPreviewRequestRepository, "mark_ready", mark_ready)
+    monkeypatch.setattr(mapping, "validate_preview_effective_columns", validate_columns)
+    monkeypatch.setattr(mapping, "validate_preview_request_snapshot", candidate_validate)
+    monkeypatch.setattr(mapping, "PreviewPackagePayload", package_payload)
+    monkeypatch.setattr(runtime._artifact_store, "finalize_package", finalize)
+    monkeypatch.setattr(persistence, "replace", replace_candidate)
+    monkeypatch.setattr(models.PreviewRequest, "__post_init__", post_init)
+    monkeypatch.setattr(persistence, "validate_preview_request_snapshot", strict_validate)
+    event.listen(backend._engine, "before_cursor_execute", capture_sql)
+    try:
+        queued = _submit_range(runtime, backend, date(2026, 7, 2))
+        events.clear()
+        executor.run_all()
+
+        ready = runtime.get_request(
+            backend=backend,
+            request_id=queued.request_id,
+            ecosystem="confluent_cloud",
+            tenant_id="tenant-1",
+        )
+        assert ready is not None and ready.status.value == "ready"
+        assert events[:10] == [
+            "running-candidate",
+            "effective-columns",
+            "candidate-snapshot",
+            "package-rendered",
+            "artifact-finalized",
+            "ready-construction",
+            "ready-post-init",
+            "ready-strict-validation",
+            "ready-cas-sql",
+            "ready-cas-result:True",
+        ]
+    finally:
+        event.remove(backend._engine, "before_cursor_execute", capture_sql)
         runtime.close()
         backend.dispose()
 

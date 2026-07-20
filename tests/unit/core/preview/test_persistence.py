@@ -356,6 +356,7 @@ def test_coverage_query_is_bounded_ordered_and_does_not_join_pipeline_runs(tmp_p
 
 
 def _queued_request(request_id: str = "request-1", tenant_id: str = "tenant-1") -> Any:
+    mapping = preview_module("mapping")
     models = preview_module("models")
     return models.PreviewRequest(
         request_id=request_id,
@@ -366,6 +367,7 @@ def _queued_request(request_id: str = "request-1", tenant_id: str = "tenant-1") 
         start_date=date(2026, 7, 1),
         end_date=date(2026, 7, 2),
         column_profile="full",
+        effective_columns=mapping.FOCUS_1_4_FULL_PROFILE_COLUMNS,
         status=models.PreviewRequestStatus.QUEUED,
         created_at=datetime(2026, 7, 3, tzinfo=UTC),
         started_at=None,
@@ -383,8 +385,11 @@ def test_request_repository_enforces_transitions_and_tenant_isolation(tmp_path: 
         with backend.create_preview_write_unit_of_work() as uow:
             created = uow.requests.create_queued(_queued_request())
             assert created.status.value == "queued"
-            assert uow.requests.mark_running("request-1", datetime(2026, 7, 3, 1, tzinfo=UTC)) is True
-            assert uow.requests.mark_running("request-1", datetime(2026, 7, 3, 2, tzinfo=UTC)) is False
+            running = uow.requests.mark_running("request-1", datetime(2026, 7, 3, 1, tzinfo=UTC))
+            assert running is not None
+            assert running.status.value == "running"
+            assert running.started_at == datetime(2026, 7, 3, 1, tzinfo=UTC)
+            assert uow.requests.mark_running("request-1", datetime(2026, 7, 3, 2, tzinfo=UTC)) is None
             uow.commit()
 
         with backend.create_preview_read_unit_of_work() as uow:
@@ -414,7 +419,14 @@ def test_request_mapper_round_trips_canonical_diagnostic_correlations() -> None:
         retryable=False,
         source_correlation_ids=("src:v1:bbb", "src:v1:aaa", "src:v1:bbb"),
     )
-    request = request.__class__(**{**request.__dict__, "diagnostic": diagnostic})
+    request = request.__class__(
+        **{
+            **request.__dict__,
+            "status": models.PreviewRequestStatus.FAILED,
+            "completed_at": datetime(2026, 7, 3, 1, tzinfo=UTC),
+            "diagnostic": diagnostic,
+        }
+    )
 
     row = persistence.request_to_table(request)
     restored = persistence.request_to_domain(row)
@@ -433,7 +445,14 @@ def test_request_mapper_hydrates_legacy_null_diagnostic_correlations_as_empty() 
         message="No successful persisted calculation is available for the requested dates; run the pipeline and retry.",
         retryable=True,
     )
-    request = request.__class__(**{**request.__dict__, "diagnostic": diagnostic})
+    request = request.__class__(
+        **{
+            **request.__dict__,
+            "status": models.PreviewRequestStatus.FAILED,
+            "completed_at": datetime(2026, 7, 3, 1, tzinfo=UTC),
+            "diagnostic": diagnostic,
+        }
+    )
     row = persistence.request_to_table(request)
     row.diagnostic_source_correlation_ids_json = None
 
@@ -453,7 +472,14 @@ def test_diagnostic_correlations_are_capped_before_persistence() -> None:
         retryable=False,
         source_correlation_ids=tuple(f"src:v1:{index:064x}" for index in range(25)),
     )
-    request = request.__class__(**{**request.__dict__, "diagnostic": diagnostic})
+    request = request.__class__(
+        **{
+            **request.__dict__,
+            "status": models.PreviewRequestStatus.FAILED,
+            "completed_at": datetime(2026, 7, 3, 1, tzinfo=UTC),
+            "diagnostic": diagnostic,
+        }
+    )
 
     row = persistence.request_to_table(request)
     values = __import__("json").loads(row.diagnostic_source_correlation_ids_json)
@@ -472,6 +498,28 @@ def test_request_mapper_rejects_unsupported_persisted_literals(field: str, value
     setattr(row, field, value)
 
     with pytest.raises(ValueError, match=message):
+        persistence.request_to_domain(row)
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["request_id", "tenant_name", "ecosystem", "tenant_id"],
+)
+def test_request_mapper_rejects_blank_persisted_owner_identity(field: str) -> None:
+    persistence = preview_module("persistence")
+    row = persistence.request_to_table(_queued_request())
+    setattr(row, field, "  ")
+
+    with pytest.raises(ValueError, match=field):
+        persistence.request_to_domain(row)
+
+
+def test_request_mapper_rejects_unsupported_persisted_status() -> None:
+    persistence = preview_module("persistence")
+    row = persistence.request_to_table(_queued_request())
+    row.status = "paused"
+
+    with pytest.raises(ValueError, match="(?i)status"):
         persistence.request_to_domain(row)
 
 
