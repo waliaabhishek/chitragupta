@@ -17,15 +17,29 @@ from core.preview.eligibility import (
 )
 from core.preview.evidence import PreviewAggregateEvidence, PreviewEvidenceScope, PreviewSourceEvidence
 from core.preview.mapping import (
+    FOCUS_1_4_NATIVE_LINE_READINESS_V1,
+    FOCUS_1_4_SERVICE_RULES_V1,
+    AcceptedPreviewSource,
+    PreviewBillingAccountConflictError,
+    PreviewBillingAccountUnavailableError,
+    PreviewFinancialReconciliationError,
+    PreviewFinancialUnsupportedError,
+    PreviewLineageReadiness,
     PreviewMappingError,
-    PreviewReconciliationError,
+    PreviewMappingScopeError,
+    PreviewProviderContext,
+    PreviewProviderContextIncompleteError,
+    PreviewResourceShape,
+    PreviewRowValidationError,
+    PreviewSourceEvidenceError,
     PreviewSourceIssue,
-    PreviewSourceSnapshotError,
-    PreviewTracerScopeError,
+    SelectedSourceProjection,
     build_daily_full_package,
     classify_daily_full_source,
+    project_financials,
+    reconcile_selected_evidence,
+    resolve_provider_resource_context,
     source_through,
-    validate_daily_full_mapping,
 )
 from core.preview.models import (
     PreviewDiagnostic,
@@ -89,30 +103,55 @@ def _mapping_failure(
     error: PreviewMappingError,
     source_correlation_ids: tuple[str, ...],
 ) -> _PreviewFailureError:
-    if isinstance(error, PreviewSourceSnapshotError):
+    if isinstance(error, PreviewSourceEvidenceError):
         return _failure(
             "preview_source_record_incomplete",
             "One or more source records lack required Preview evidence.",
             source_correlation_ids=source_correlation_ids,
         )
-    if isinstance(error, PreviewReconciliationError):
+    if isinstance(error, PreviewFinancialUnsupportedError):
+        return _failure(
+            "preview_source_economics_unsupported",
+            "One or more source records have unsupported monetary or quantity values.",
+            source_correlation_ids=source_correlation_ids,
+        )
+    if isinstance(error, PreviewFinancialReconciliationError):
         return _failure(
             "preview_source_reconciliation_failed",
             "Persisted source, aggregate, or allocation evidence does not reconcile.",
             source_correlation_ids=source_correlation_ids,
         )
-    assert isinstance(error, PreviewTracerScopeError)
-    if "unallocated" in str(error):
+    if isinstance(error, PreviewMappingScopeError):
         return _failure(
             "preview_mapping_scope_unsupported",
             "The complete source set exceeds the current Daily Full mapping scope.",
             source_correlation_ids=source_correlation_ids,
         )
-    return _failure(
-        "preview_source_reconciliation_failed",
-        "Persisted source, aggregate, or allocation evidence does not reconcile.",
-        source_correlation_ids=source_correlation_ids,
-    )
+    if isinstance(error, PreviewBillingAccountUnavailableError):
+        return _failure(
+            "preview_billing_account_unavailable",
+            "Authoritative Confluent Cloud organization evidence is unavailable for this tenant.",
+            source_correlation_ids=source_correlation_ids,
+        )
+    if isinstance(error, PreviewBillingAccountConflictError):
+        return _failure(
+            "preview_billing_account_conflicting",
+            "Persisted Confluent Cloud organization evidence conflicts for this tenant.",
+            source_correlation_ids=source_correlation_ids,
+        )
+    if isinstance(error, PreviewProviderContextIncompleteError):
+        return _failure(
+            "preview_provider_context_incomplete",
+            "Authoritative provider resource context is unavailable for one or more source records.",
+            source_correlation_ids=source_correlation_ids,
+        )
+    if isinstance(error, PreviewRowValidationError):
+        return _failure(
+            "preview_mapping_validation_failed",
+            "The generated row does not satisfy the Daily Full mapping profile.",
+            source_correlation_ids=source_correlation_ids,
+        )
+    raise TypeError(f"Unhandled Preview mapping error type: {type(error).__name__}")
 
 
 _ISSUE_PRECEDENCE = {
@@ -346,17 +385,37 @@ class PreviewRuntime:
                 raise _PreviewFailureError(diagnostic)
 
             valid_count = 0
-            source: PreviewSourceEvidence | None = None
+            selected: SelectedSourceProjection | None = None
             winning_issue: PreviewSourceIssue | None = None
             issue_correlations: tuple[str, ...] = ()
             valid_correlations: tuple[str, ...] = ()
+            deferred_lineage_correlations: tuple[str, ...] = ()
+            organization_wide = False
+            unsupported_provider_context = False
             for candidate in uow.cost_evidence.iter_preview_sources(scope):
-                issue = classify_daily_full_source(request_start=start, request_end=end, source=candidate)
+                issue: PreviewSourceIssue | None
+                classification = classify_daily_full_source(request_start=start, request_end=end, source=candidate)
                 correlation = public_source_correlation_id(
                     ecosystem=request.ecosystem,
                     tenant_id=request.tenant_id,
                     source_record_id=candidate.source_record_id,
                 )
+                if isinstance(classification, AcceptedPreviewSource):
+                    assert candidate.amount is not None
+                    try:
+                        financials = project_financials(
+                            source=candidate,
+                            semantics=classification.semantics,
+                            billed_share=candidate.amount,
+                        )
+                    except PreviewFinancialUnsupportedError:
+                        issue = PreviewSourceIssue.ECONOMICS_UNSUPPORTED
+                    except PreviewFinancialReconciliationError:
+                        issue = PreviewSourceIssue.RECONCILIATION_FAILED
+                    else:
+                        issue = None
+                else:
+                    issue = classification.issue
                 if issue is not None:
                     if winning_issue is None or _ISSUE_PRECEDENCE[issue] < _ISSUE_PRECEDENCE[winning_issue]:
                         winning_issue = issue
@@ -364,11 +423,45 @@ class PreviewRuntime:
                     elif issue is winning_issue:
                         issue_correlations = capped_correlations([*issue_correlations, correlation])
                     continue
+                assert isinstance(classification, AcceptedPreviewSource)
+                assert candidate.native_line_type is not None
+                rule = FOCUS_1_4_SERVICE_RULES_V1[classification.semantics.service_rule_key]
+                if candidate.native_line_type != "PROMO_CREDIT":
+                    organization_wide = (
+                        organization_wide or rule.resource_shape is PreviewResourceShape.ORGANIZATION_WIDE
+                    )
+                    unsupported_provider_context = (
+                        unsupported_provider_context or rule.context_strategy == "unsupported_provider_context"
+                    )
+                if (
+                    FOCUS_1_4_NATIVE_LINE_READINESS_V1[candidate.native_line_type]
+                    is PreviewLineageReadiness.TASK_254_05
+                ):
+                    deferred_lineage_correlations = capped_correlations([*deferred_lineage_correlations, correlation])
                 valid_count = min(2, valid_count + 1)
-                source = candidate if valid_count == 1 else None
+                selected = (
+                    SelectedSourceProjection(candidate, classification.semantics, financials)
+                    if valid_count == 1
+                    else None
+                )
                 valid_correlations = capped_correlations([*valid_correlations, correlation])
             if winning_issue is not None:
                 raise _PreviewFailureError(source_issue_diagnostic(winning_issue, issue_correlations))
+            if organization_wide:
+                raise _mapping_failure(
+                    PreviewMappingScopeError("organization-wide allocation lineage is outside the current scope"),
+                    valid_correlations,
+                )
+            if unsupported_provider_context:
+                raise _mapping_failure(
+                    PreviewProviderContextIncompleteError("TABLEFLOW provider context is unavailable"),
+                    valid_correlations,
+                )
+            if deferred_lineage_correlations:
+                raise _mapping_failure(
+                    PreviewMappingScopeError("native line type allocation lineage is deferred to TASK-254.05"),
+                    deferred_lineage_correlations,
+                )
 
             coverage_matches = _coverage_matches(
                 uow.cost_evidence.iter_preview_sources(scope),
@@ -381,13 +474,14 @@ class PreviewRuntime:
                     False,
                     valid_correlations,
                 )
-            if valid_count != 1 or source is None:
+            if valid_count != 1 or selected is None:
                 raise _failure(
                     "preview_mapping_scope_unsupported",
                     "The complete source set exceeds the current Daily Full mapping scope.",
                     False,
                     valid_correlations,
                 )
+            source = selected.source
             source_correlation = public_source_correlation_id(
                 ecosystem=request.ecosystem,
                 tenant_id=request.tenant_id,
@@ -418,15 +512,31 @@ class PreviewRuntime:
                     (source_correlation,),
                 )
             try:
-                validate_daily_full_mapping(
-                    request_start=start,
-                    request_end=end,
-                    source=source,
+                evidence = reconcile_selected_evidence(
+                    selected=selected,
                     aggregate=aggregate,
                     allocation=allocation,
                 )
             except PreviewMappingError as exc:
                 raise _mapping_failure(exc, selected_correlations) from exc
+            current_time = self._clock()
+            organizations, _ = uow.resources.find_active_at(
+                request.ecosystem,
+                request.tenant_id,
+                current_time,
+                resource_type="organization",
+                limit=2,
+                count=False,
+            )
+            if not organizations:
+                raise _mapping_failure(PreviewBillingAccountUnavailableError(), selected_correlations)
+            if len(organizations) != 1 or organizations[0].metadata.get("organization_binding_state") != "bound":
+                raise _mapping_failure(PreviewBillingAccountConflictError(), selected_correlations)
+            organization = organizations[0]
+            if not organization.resource_id.strip():
+                raise _mapping_failure(PreviewBillingAccountUnavailableError(), selected_correlations)
+            provider_context = PreviewProviderContext(organization.resource_id, organization.display_name)
+
             assert source.resource_id is not None
             resource = uow.resources.get(request.ecosystem, request.tenant_id, source.resource_id)
             environment = (
@@ -434,14 +544,32 @@ class PreviewRuntime:
                 if source.environment_id is not None
                 else None
             )
+            if (
+                source.environment_id is None
+                or environment is None
+                or environment.ecosystem != request.ecosystem
+                or environment.tenant_id != request.tenant_id
+                or environment.resource_id != source.environment_id
+                or environment.resource_type != "environment"
+            ):
+                raise _mapping_failure(
+                    PreviewProviderContextIncompleteError("source environment authority is incompatible"),
+                    selected_correlations,
+                )
             identity = uow.identities.get(request.ecosystem, request.tenant_id, allocation.allocation_target_id)
-            if resource is None or identity is None:
+            if identity is None:
                 raise _failure(
                     "preview_source_record_incomplete",
                     "One or more source records lack required Preview evidence.",
                     source_correlation_ids=selected_correlations,
                 )
             try:
+                resource_context = resolve_provider_resource_context(
+                    source=source,
+                    semantics=selected.semantics,
+                    origin_resource=resource,
+                    resources=uow.resources,
+                )
                 snapshot = PreviewSourceSnapshot(
                     calculation_timestamp=max(entry.calculation_completed_at for entry in coverage.entries),
                     calculation_coverage=coverage.entries,
@@ -450,13 +578,12 @@ class PreviewRuntime:
                 package = build_daily_full_package(
                     request=request,
                     snapshot=snapshot,
-                    source=source,
-                    aggregate=aggregate,
-                    allocation=allocation,
-                    resource=resource,
+                    evidence=evidence,
+                    provider_context=provider_context,
+                    resource_context=resource_context,
                     identity=identity,
                     environment=environment,
-                    generated_at=self._clock(),
+                    generated_at=current_time,
                 )
             except PreviewMappingError as exc:
                 raise _mapping_failure(exc, selected_correlations) from exc

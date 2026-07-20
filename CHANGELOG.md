@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Complete the TASK-254.04 FOCUS Mapping Preview v3 provider mapping: add the executable 65-column Full plus 12-column custom profile, persisted Confluent organization billing-account authority, typed service/credit/refund and exact financial projection, deterministic derived SKU evidence, raw provider cloud/region projection, invoice separation, closed gap validation, and a 16-ready/13-deferred native-line readiness authority. Organization-wide and TASK-254.05 lineage shapes fail closed with `preview_mapping_scope_unsupported`, TABLEFLOW fails `preview_provider_context_incomplete`, and the package remains explicitly non-conforming. Provider organization gathering and per-resource-type deletion safety are isolated without changing global handler or allocator ownership.
 - Fail closed on ineligible FOCUS Mapping Preview scopes (TASK-254.03): add optional tenant `focus_preview` Direct-billed PAYG/USD/effective-interval configuration, acquisition-window-aware calculation diagnostics, complete streamed source/aggregate eligibility checks, stable source failure categories, and bounded redacted diagnostic correlations across persistence, API, CLI, and UI. Migration 020 adds nullable correlation persistence. Confluent Costs API records remain without authoritative per-record ISO currency, so `BillingCurrency` stays null; non-USD is rejected without conversion, and the 364-day `lookback_days` limit remains acquisition-only rather than a retention or reconstruction promise.
 - Add the first end-to-end FOCUS Mapping Preview tracer (TASK-254.02): asynchronous Daily Full requests for Confluent Cloud, deterministic non-conforming FOCUS 1.4 manifest/CSV packages in atomic durable local storage, canonical status/download APIs, a minimal web UI, and the remote `chitragupta-preview` client. Migration 019 adds per-date calculation identity/provenance and Preview request persistence without backfilling or editing existing collected data.
 - Add native Confluent Cost API source-evidence persistence alongside billing aggregates, with provider-backed IDs, deterministic composite/collision identities, tier-level addressability, malformed-row diagnostics, and rolling-window replacement and retention semantics (TASK-254.01).
@@ -2741,5 +2742,4 @@ except ValueError, TypeError → except (ValueError, TypeError) ([03ac8cd](https
 - Add .env* glob to .gitignore to prevent accidental secret commits
 - Add .github/dependabot.yml for weekly pip ecosystem CVE scanning
 - Add uv audit --frozen step to CI workflow (non-blocking initially) ([8ff2845](https://github.com/waliaabhishek/chitragupta/commit/8ff284555b58b187dc837e05c40e91dc0e7b5210))
-
 

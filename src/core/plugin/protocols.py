@@ -157,6 +157,21 @@ class EcosystemPlugin(Protocol):
 
 
 @runtime_checkable
+class SupplementalResourceGatherer(Protocol):
+    """Optional plugin capability for isolated, non-billing resource inventory."""
+
+    @property
+    def supplemental_resource_types(self) -> tuple[str, ...]: ...
+
+    def gather_supplemental_resources(
+        self,
+        tenant_id: str,
+        resource_type: str,
+        uow: UnitOfWork,
+    ) -> Iterable[Resource]: ...
+
+
+@runtime_checkable
 class TopicDiscoveryPlugin(Protocol):
     """Plugin capability for topic resource discovery via metrics.
 

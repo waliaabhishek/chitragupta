@@ -45,6 +45,7 @@ class PreviewPipelineHandler:
 
     def __init__(self) -> None:
         self.failing_dates: set[date] = set()
+        self.extra_resources: tuple[CoreResource, ...] = ()
         self.identity = CoreIdentity(
             ecosystem="confluent_cloud",
             tenant_id="tenant-1",
@@ -60,18 +61,40 @@ class PreviewPipelineHandler:
         uow: Any,
         shared_ctx: object | None = None,
     ) -> Iterable[Resource]:
-        del uow, shared_ctx
-        return (
-            CoreResource(
-                ecosystem="confluent_cloud",
-                tenant_id=tenant_id,
-                resource_id="lkc-1",
-                resource_type="kafka_cluster",
-                display_name="Orders",
-                status=ResourceStatus.ACTIVE,
-                created_at=datetime(2026, 1, 1, tzinfo=UTC),
-            ),
+        del uow
+        from plugins.confluent_cloud.shared_context import CCloudSharedContext
+
+        if isinstance(shared_ctx, CCloudSharedContext):
+            yield from shared_ctx.environment_resources
+            yield from shared_ctx.kafka_cluster_resources
+            yield from self.extra_resources
+            return
+        yield CoreResource(
+            ecosystem="confluent_cloud",
+            tenant_id=tenant_id,
+            resource_id="env-1",
+            resource_type="environment",
+            display_name="Production",
+            status=ResourceStatus.ACTIVE,
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
+        yield CoreResource(
+            ecosystem="confluent_cloud",
+            tenant_id=tenant_id,
+            resource_id="lkc-1",
+            resource_type="kafka_cluster",
+            display_name="Orders",
+            parent_id="env-1",
+            status=ResourceStatus.ACTIVE,
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
+            metadata={
+                "cloud": "aws",
+                "region": "us-east-1",
+                "provider_cloud": "AWS",
+                "provider_region": "us-east-1",
+            },
+        )
+        yield from self.extra_resources
 
     def gather_identities(self, tenant_id: str, uow: Any) -> Iterable[Identity]:
         del tenant_id, uow
@@ -128,6 +151,7 @@ class PreviewPipelinePlugin(ConfluentCloudPlugin):
         super().__init__()
         self._preview_handler = handler
         self.cost_input_override: object | None = None
+        self.use_provider_inventory = False
 
     def initialize(self, config: dict[str, Any]) -> None:
         super().initialize(config)
@@ -135,8 +159,9 @@ class PreviewPipelinePlugin(ConfluentCloudPlugin):
         self._connection.request_interval_seconds = 0
         self._handlers = {"kafka": self._preview_handler}
 
-    def build_shared_context(self, tenant_id: str) -> None:
-        del tenant_id
+    def build_shared_context(self, tenant_id: str) -> object | None:
+        if self.use_provider_inventory:
+            return super().build_shared_context(tenant_id)
         return None
 
     def get_fallback_allocator(self) -> None:
@@ -188,6 +213,156 @@ def _cost_response(**overrides: object) -> httpx.Response:
             "metadata": {},
         },
     )
+
+
+_REAL_BUNDLE_MAPPING_SCOPE_CASES: tuple[tuple[str, dict[str, object]], ...] = (
+    (
+        "kafka-rest-produce",
+        {
+            "product": "KAFKA",
+            "line_type": "KAFKA_REST_PRODUCE",
+            "description": "Kafka REST produce usage",
+        },
+    ),
+    (
+        "kafka-streams",
+        {"product": "KAFKA", "line_type": "KAFKA_STREAMS", "description": "Kafka Streams usage"},
+    ),
+    (
+        "connect-records",
+        {
+            "product": "CONNECT",
+            "line_type": "CONNECT_NUM_RECORDS",
+            "description": "Connect records usage",
+        },
+    ),
+    (
+        "cluster-link-per-link",
+        {
+            "product": "CLUSTER_LINK",
+            "line_type": "CLUSTER_LINKING_PER_LINK",
+            "description": "Cluster Linking per-link usage",
+        },
+    ),
+    (
+        "cluster-link-read",
+        {
+            "product": "CLUSTER_LINK",
+            "line_type": "CLUSTER_LINKING_READ",
+            "description": "Cluster Linking read usage",
+        },
+    ),
+    (
+        "cluster-link-write",
+        {
+            "product": "CLUSTER_LINK",
+            "line_type": "CLUSTER_LINKING_WRITE",
+            "description": "Cluster Linking write usage",
+        },
+    ),
+    (
+        "usm-connected-node",
+        {"product": "USM", "line_type": "USM_CONNECTED_NODE", "description": "USM connected node usage"},
+    ),
+    (
+        "promotional-allowance",
+        {
+            "product": "KAFKA",
+            "line_type": "PROMO_CREDIT",
+            "description": "Promotional allowance",
+            "amount": "-5",
+            "original_amount": "-5",
+            "discount_amount": "0",
+            "price": None,
+            "quantity": None,
+            "unit": None,
+        },
+    ),
+) + tuple(
+    (
+        f"promo-refund-{product.lower().replace('_', '-')}",
+        {
+            "product": product,
+            "line_type": "PROMO_CREDIT",
+            "description": description,
+            "amount": "-8",
+            "original_amount": "-10",
+            "discount_amount": "-2",
+            "price": "-2",
+        },
+    )
+    for product, description in {
+        "KAFKA": "Refund Kafka usage",
+        "CONNECT": "Refund Connect usage",
+        "KSQL": "Refund ksqlDB usage",
+        "AUDIT_LOG": "Refund audit log usage",
+        "STREAM_GOVERNANCE": "Refund governance usage",
+        "CLUSTER_LINK": "Refund cluster linking usage",
+        "CUSTOM_CONNECT": "Refund custom Connect usage",
+        "FLINK": "Refund Flink usage",
+        "TABLEFLOW": "Refund Tableflow usage",
+        "SUPPORT_CLOUD_BASIC": "Refund support subscription",
+        "SUPPORT_CLOUD_DEVELOPER": "Refund support subscription",
+        "SUPPORT_CLOUD_BUSINESS": "Refund support subscription",
+        "SUPPORT_CLOUD_PREMIER": "Refund support subscription",
+        "USM": "Refund USM usage",
+    }.items()
+)
+
+
+def _organization_response(
+    organization_id: str = "11111111-2222-4333-8444-555555555555",
+    display_name: str = "Provider billing organization",
+) -> httpx.Response:
+    return httpx.Response(
+        200,
+        json={
+            "data": [
+                {
+                    "id": organization_id,
+                    "display_name": display_name,
+                }
+            ],
+            "metadata": {},
+        },
+    )
+
+
+def _mock_organization_api() -> respx.Route:
+    return respx.get("https://api.confluent.cloud/org/v2/organizations").mock(return_value=_organization_response())
+
+
+def _mock_provider_inventory_api() -> tuple[respx.Route, respx.Route]:
+    environments = respx.get("https://api.confluent.cloud/org/v2/environments").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "data": [{"id": "env-1", "display_name": "Production", "metadata": {}}],
+                "metadata": {},
+            },
+        )
+    )
+    clusters = respx.get("https://api.confluent.cloud/cmk/v2/clusters").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "data": [
+                    {
+                        "id": "lkc-1",
+                        "spec": {
+                            "display_name": "Orders",
+                            "environment": {"id": "env-1"},
+                            "cloud": "AWS",
+                            "region": "us-east-1",
+                        },
+                        "metadata": {},
+                    }
+                ],
+                "metadata": {},
+            },
+        )
+    )
+    return environments, clusters
 
 
 class ReplacementCostInput:
@@ -324,6 +499,129 @@ def _legacy_july_first_snapshot(engine: object) -> dict[str, tuple[object, ...]]
         return {name: tuple(connection.execute(text(statement)).one()) for name, statement in statements.items()}
 
 
+@pytest.mark.parametrize(
+    ("case_id", "provider_overrides"),
+    _REAL_BUNDLE_MAPPING_SCOPE_CASES,
+    ids=[case_id for case_id, _ in _REAL_BUNDLE_MAPPING_SCOPE_CASES],
+)
+@respx.mock
+def test_real_bundle_deferred_native_lines_fail_mapping_scope_before_later_preview_reads(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    case_id: str,
+    provider_overrides: dict[str, object],
+) -> None:
+    del case_id
+    from core.preview import service
+    from core.storage.backends.sqlmodel.repositories import (
+        SQLModelIdentityRepository,
+        SQLModelResourceRepository,
+    )
+    from plugins.confluent_cloud.storage import repositories
+
+    async def to_thread_inline(function: Any, *args: object, **kwargs: object) -> object:
+        return function(*args, **kwargs)
+
+    async def run_sync_inline(function: Any, *args: object, **_kwargs: object) -> object:
+        return function(*args)
+
+    monkeypatch.setattr("core.api.app.asyncio.to_thread", to_thread_inline)
+    monkeypatch.setattr(anyio.to_thread, "run_sync", run_sync_inline)
+    monkeypatch.setattr("workflow_runner.cleanup_orphaned_runs_for_all_tenants", lambda *_args, **_kwargs: None)
+    costs_route = respx.get("https://api.confluent.cloud/billing/v1/costs").mock(
+        return_value=_cost_response(**provider_overrides)
+    )
+    connection_string = f"sqlite:///{tmp_path / 'real-bundle-mapping-scope.db'}"
+    tenant = TenantConfig(
+        ecosystem="confluent_cloud",
+        tenant_id="tenant-1",
+        lookback_days=2,
+        cutoff_days=1,
+        storage=StorageConfig(connection_string=connection_string),
+        focus_preview=_focus_preview_block(),
+        plugin_settings={
+            "ccloud_api": {"key": "key", "secret": "secret"},  # pragma: allowlist secret
+            "billing_api": {"days_per_query": 30},
+        },
+    )
+    settings = AppSettings(
+        api=ApiConfig(host="127.0.0.1", port=8080),
+        preview=PreviewConfig(artifact_root=tmp_path / "real-bundle-artifacts", max_workers=1),
+        tenants={"production": tenant},
+    )
+    plugin = ConfluentCloudPlugin()
+    plugin.initialize(tenant.plugin_settings.model_dump())
+    assert plugin._connection is not None
+    plugin._connection.request_interval_seconds = 0
+    backend = SQLModelBackend(connection_string, plugin.get_storage_module(), use_migrations=False)
+    backend.create_tables()
+    orchestrator = ChargebackOrchestrator("production", tenant, plugin, backend)
+    tracking_date = date(2026, 7, 1)
+    with backend.create_unit_of_work() as uow:
+        gathered_dates = orchestrator._gather_phase._gather_billing(uow, datetime(2026, 7, 3, tzinfo=UTC))
+        assert gathered_dates == {tracking_date}
+        uow.pipeline_state.upsert(
+            PipelineState(
+                ecosystem="confluent_cloud",
+                tenant_id="tenant-1",
+                tracking_date=tracking_date,
+                billing_gathered=True,
+                resources_gathered=True,
+            )
+        )
+        uow.commit()
+    with backend.create_unit_of_work() as uow:
+        assert orchestrator._calculate_date(uow, tracking_date) == 1
+        uow.commit()
+    with backend.create_read_only_unit_of_work() as uow:
+        billing = uow.billing.find_by_date("confluent_cloud", "tenant-1", tracking_date)
+        chargebacks = uow.chargebacks.find_by_date("confluent_cloud", "tenant-1", tracking_date)
+        state = uow.pipeline_state.get("confluent_cloud", "tenant-1", tracking_date)
+    assert len(billing) == 1
+    assert billing[0].product_type == provider_overrides["line_type"]
+    assert len(chargebacks) == 1
+    assert state is not None
+    assert state.has_usable_calculation is True
+    assert costs_route.call_count == 1
+
+    def forbidden(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("later Preview boundary must not run")
+
+    monkeypatch.setattr(service, "_coverage_matches", forbidden)
+    monkeypatch.setattr(service, "reconcile_selected_evidence", forbidden)
+    monkeypatch.setattr(service, "resolve_provider_resource_context", forbidden)
+    monkeypatch.setattr(service, "build_daily_full_package", forbidden)
+    monkeypatch.setattr(repositories.CCloudBillingRepository, "find_preview_aggregate_candidates", forbidden)
+    monkeypatch.setattr(repositories.CCloudChargebackRepository, "find_preview_allocation_candidates", forbidden)
+    monkeypatch.setattr(SQLModelResourceRepository, "find_active_at", forbidden)
+    monkeypatch.setattr(SQLModelResourceRepository, "get", forbidden)
+    monkeypatch.setattr(SQLModelIdentityRepository, "get", forbidden)
+
+    app = create_app(settings)
+    client = PipelineApiClient(app, use_lifespan=True)
+    monkeypatch.setattr(app.state.preview_artifact_store, "finalize_package", forbidden)
+    try:
+        failed = _request(client, tracking_date, date(2026, 7, 2))
+
+        assert failed["status"] == "failed"
+        assert failed["diagnostic"] == {
+            "code": "preview_mapping_scope_unsupported",
+            "message": "The complete source set exceeds the current Daily Full mapping scope.",
+            "retryable": False,
+            "source_correlation_ids": failed["diagnostic"]["source_correlation_ids"],
+        }
+        assert len(failed["diagnostic"]["source_correlation_ids"]) == 1
+        assert failed["source_snapshot"] is None
+        assert failed.get("storage_key") is None
+        assert failed["package"] is None
+        assert list((tmp_path / "real-bundle-artifacts").iterdir()) == []
+        assert costs_route.call_count == 1
+    finally:
+        client.close()
+        backend.dispose()
+        plugin.close()
+
+
 @respx.mock
 def test_workflow_runner_provider_calculation_to_preview_mixed_retry_and_unrelated_failure(
     tmp_path: Path,
@@ -338,6 +636,8 @@ def test_workflow_runner_provider_calculation_to_preview_mixed_retry_and_unrelat
     monkeypatch.setattr("core.api.app.asyncio.to_thread", to_thread_inline)
     monkeypatch.setattr(anyio.to_thread, "run_sync", run_sync_inline)
     monkeypatch.setattr("workflow_runner.cleanup_orphaned_runs_for_all_tenants", lambda *_args, **_kwargs: None)
+    organization_route = _mock_organization_api()
+    environment_route, cluster_route = _mock_provider_inventory_api()
     route = respx.get("https://api.confluent.cloud/billing/v1/costs")
 
     def provider_response(request: httpx.Request) -> httpx.Response:
@@ -373,6 +673,7 @@ def test_workflow_runner_provider_calculation_to_preview_mixed_retry_and_unrelat
     handler.failing_dates = {date(2026, 7, 2), date(2026, 7, 3)}
     plugin = PreviewPipelinePlugin(handler)
     plugin.initialize(tenant.plugin_settings.model_dump())
+    plugin.use_provider_inventory = True
     backend = SQLModelBackend(connection_string, plugin.get_storage_module(), use_migrations=False)
     backend.create_tables()
     with backend.create_unit_of_work() as uow:
@@ -435,12 +736,23 @@ def test_workflow_runner_provider_calculation_to_preview_mixed_retry_and_unrelat
         with backend.create_read_only_unit_of_work() as uow:
             failed_run = uow.pipeline_runs.get_latest_run("production")
             committed_a = uow.pipeline_state.get("confluent_cloud", "tenant-1", date(2026, 7, 1))
+            organization = uow.resources.get("confluent_cloud", "tenant-1", "11111111-2222-4333-8444-555555555555")
+            cluster = uow.resources.get("confluent_cloud", "tenant-1", "lkc-1")
         assert failed_run is not None
         assert failed_run.status == "failed"
         assert failed_run.ended_at is not None
         assert committed_a is not None
         assert committed_a.has_usable_calculation is True
         assert committed_a.calculation_run_id == failed_run.id
+        assert organization is not None
+        assert organization.resource_id != tenant.tenant_id
+        assert organization.metadata["organization_binding_state"] == "bound"
+        assert cluster is not None
+        assert cluster.metadata["provider_cloud"] == "AWS"
+        assert cluster.metadata["provider_region"] == "us-east-1"
+        assert organization_route.called
+        assert environment_route.called
+        assert cluster_route.called
         provider_call_count = len(respx.calls)
         route.side_effect = AssertionError("provider access is disabled during Preview")
 
@@ -456,12 +768,18 @@ def test_workflow_runner_provider_calculation_to_preview_mixed_retry_and_unrelat
         assert csv_response.status_code == 200
         manifest = manifest_response.json()
         assert manifest["source_snapshot"]["source_through"] == a_ready["source_snapshot"]["source_through"]
+        assert manifest["mapping_profile_version"] == "focus-1.4-daily-full-v3"
         assert manifest["known_gaps"]
         assert manifest["conformance_status"] == "non_conforming"
         row = next(csv.DictReader(io.StringIO(csv_response.text)))
+        assert row["BillingAccountId"] == "11111111-2222-4333-8444-555555555555"
+        assert row["BillingAccountId"] != tenant.tenant_id
+        assert row["BillingAccountName"] == "Provider billing organization"
         assert row["BillingCurrency"] == ""
-        assert row["BillingPeriodStart"] == ""
-        assert row["BillingPeriodEnd"] == ""
+        assert row["BillingPeriodStart"] == "2026-07-01T00:00:00Z"
+        assert row["BillingPeriodEnd"] == "2026-08-01T00:00:00Z"
+        assert row["HostProviderName"] == "AWS"
+        assert row["RegionId"] == "us-east-1"
 
         abc_failed = _request(client, date(2026, 7, 1), date(2026, 7, 4))
         assert abc_failed["status"] == "failed"
@@ -514,23 +832,246 @@ def test_workflow_runner_provider_calculation_to_preview_mixed_retry_and_unrelat
         runner.close()
 
 
+@respx.mock
+def test_pipeline_organization_binding_conflict_and_original_credential_recovery(tmp_path: Path) -> None:
+    organization_route = _mock_organization_api()
+    respx.get("https://api.confluent.cloud/billing/v1/costs").mock(
+        return_value=httpx.Response(200, json={"data": [], "metadata": {}})
+    )
+    connection_string = f"sqlite:///{tmp_path / 'organization-recovery.db'}"
+    tenant = TenantConfig(
+        ecosystem="confluent_cloud",
+        tenant_id="tenant-1",
+        lookback_days=31,
+        cutoff_days=5,
+        storage=StorageConfig(connection_string=connection_string),
+        focus_preview=_focus_preview_block(),
+        plugin_settings={
+            "ccloud_api": {"key": "key", "secret": "secret"},  # pragma: allowlist secret
+            "billing_api": {"days_per_query": 30},
+            "min_refresh_gap_seconds": 0,
+        },
+    )
+    settings = AppSettings(tenants={"production": tenant})
+    plugin = PreviewPipelinePlugin(PreviewPipelineHandler())
+    plugin.initialize(tenant.plugin_settings.model_dump())
+    backend = SQLModelBackend(connection_string, plugin.get_storage_module(), use_migrations=False)
+    backend.create_tables()
+    runner = WorkflowRunner(settings, MagicMock())
+    runner._bootstrapped = True
+    runner._tenant_runtimes["production"] = TenantRuntime(
+        tenant_name="production",
+        plugin=plugin,
+        storage=backend,
+        orchestrator=ChargebackOrchestrator("production", tenant, plugin, backend),
+        config_hash=_config_hash(tenant),
+        created_at=datetime.now(UTC),
+    )
+    original_id = "11111111-2222-4333-8444-555555555555"
+    conflicting_id = "99999999-8888-4777-8666-555555555555"
+    try:
+        first = runner.run_tenant("production")
+        assert first.errors == []
+
+        organization_route.mock(
+            return_value=_organization_response(conflicting_id, "Conflicting provider organization")
+        )
+        conflict = runner.run_tenant("production")
+        assert len(conflict.errors) == 1
+        assert conflict.errors[0].startswith("Supplemental organization gather failed:")
+
+        with backend.create_read_only_unit_of_work() as uow:
+            original = uow.resources.get("confluent_cloud", "tenant-1", original_id)
+            conflicting = uow.resources.get("confluent_cloud", "tenant-1", conflicting_id)
+        assert original is not None
+        assert original.metadata["organization_binding_state"] == "bound"
+        assert conflicting is not None
+        assert conflicting.metadata["organization_binding_state"] == "conflicting_observation"
+
+        organization_route.mock(return_value=_organization_response())
+        recovered = runner.run_tenant("production")
+        assert recovered.errors == []
+        with backend.create_read_only_unit_of_work() as uow:
+            restored = uow.resources.get("confluent_cloud", "tenant-1", original_id)
+            retired = uow.resources.get("confluent_cloud", "tenant-1", conflicting_id)
+        assert restored is not None
+        assert restored.status is ResourceStatus.ACTIVE
+        assert restored.metadata["organization_binding_state"] == "bound"
+        assert retired is not None
+        assert retired.status is ResourceStatus.DELETED
+    finally:
+        runner.close()
+
+
+@respx.mock
+def test_provider_tableflow_cost_with_production_topic_discovery_fails_provider_context(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def to_thread_inline(function: Any, *args: object, **kwargs: object) -> object:
+        return function(*args, **kwargs)
+
+    async def run_sync_inline(function: Any, *args: object, **_kwargs: object) -> object:
+        return function(*args)
+
+    monkeypatch.setattr("core.api.app.asyncio.to_thread", to_thread_inline)
+    monkeypatch.setattr(anyio.to_thread, "run_sync", run_sync_inline)
+    monkeypatch.setattr("workflow_runner.cleanup_orphaned_runs_for_all_tenants", lambda *_args, **_kwargs: None)
+    organization_route = _mock_organization_api()
+    _mock_provider_inventory_api()
+    costs_route = respx.get("https://api.confluent.cloud/billing/v1/costs").mock(
+        return_value=_cost_response(
+            product="TABLEFLOW",
+            line_type="TABLEFLOW_DATA_PROCESSED",
+            description="Tableflow data processed",
+            resource={
+                "id": "lkc-1:topic:orders",
+                "display_name": "orders",
+                "environment": {"id": "env-1"},
+            },
+        )
+    )
+    connection_string = f"sqlite:///{tmp_path / 'tableflow-pipeline.db'}"
+    tenant = TenantConfig(
+        ecosystem="confluent_cloud",
+        tenant_id="tenant-1",
+        lookback_days=31,
+        cutoff_days=5,
+        storage=StorageConfig(connection_string=connection_string),
+        focus_preview=_focus_preview_block(),
+        plugin_settings={
+            "ccloud_api": {"key": "key", "secret": "secret"},  # pragma: allowlist secret
+            "billing_api": {"days_per_query": 30},
+            "metrics": {"type": "prometheus", "url": "http://prometheus.invalid:9090"},
+            "topic_attribution": {"enabled": True},
+            "min_refresh_gap_seconds": 0,
+        },
+    )
+    settings = AppSettings(
+        api=ApiConfig(host="127.0.0.1", port=8080),
+        preview=PreviewConfig(artifact_root=tmp_path / "tableflow-artifacts", max_workers=1),
+        tenants={"production": tenant},
+    )
+    handler = PreviewPipelineHandler()
+    handler.handles_product_types = ("KAFKA_STORAGE", "TABLEFLOW_DATA_PROCESSED")
+    plugin = PreviewPipelinePlugin(handler)
+    plugin.initialize(tenant.plugin_settings.model_dump())
+    plugin.use_provider_inventory = True
+    metrics = MagicMock()
+    metrics.query.return_value = {"received_bytes": [MagicMock(labels={"topic": "orders"})]}
+    plugin._metrics_source = metrics
+    backend = SQLModelBackend(connection_string, plugin.get_storage_module(), use_migrations=False)
+    backend.create_tables()
+    orchestrator = ChargebackOrchestrator("production", tenant, plugin, backend)
+    runner = WorkflowRunner(settings, MagicMock())
+    runner._bootstrapped = True
+    runner._tenant_runtimes["production"] = TenantRuntime(
+        tenant_name="production",
+        plugin=plugin,
+        storage=backend,
+        orchestrator=orchestrator,
+        config_hash=_config_hash(tenant),
+        created_at=datetime.now(UTC),
+    )
+    client = PipelineApiClient(create_app(settings), use_lifespan=True)
+    try:
+        result = runner.run_tenant("production")
+        assert result.dates_calculated == 1
+        with backend.create_read_only_unit_of_work() as uow:
+            topic = uow.resources.get("confluent_cloud", "tenant-1", "lkc-1:topic:orders")
+            organization = uow.resources.get("confluent_cloud", "tenant-1", "11111111-2222-4333-8444-555555555555")
+            state = uow.pipeline_state.get("confluent_cloud", "tenant-1", date(2026, 7, 1))
+        assert topic is not None
+        assert topic.resource_type == "topic"
+        assert topic.parent_id == "lkc-1"
+        assert topic.metadata == {}
+        assert organization is not None
+        assert organization.resource_id != tenant.tenant_id
+        assert state is not None
+        assert state.has_usable_calculation is True
+        assert metrics.query.called
+        assert organization_route.called
+        assert costs_route.called
+        provider_call_count = len(respx.calls)
+
+        initial_failure = _request(client, date(2026, 7, 1), date(2026, 7, 2))
+        assert initial_failure["status"] == "failed"
+        assert initial_failure["diagnostic"]["code"] == "preview_provider_context_incomplete"
+
+        with backend.create_unit_of_work() as uow:
+            uow.resources.upsert(
+                CoreResource(
+                    ecosystem="confluent_cloud",
+                    tenant_id="tenant-1",
+                    resource_id="lkc-1:topic:orders",
+                    resource_type="topic",
+                    display_name="orders",
+                    parent_id="lkc-1",
+                    status=ResourceStatus.ACTIVE,
+                    metadata={"provider_cloud": "AWS", "provider_region": "us-east-1"},
+                )
+            )
+            uow.commit()
+
+        failed = _request(client, date(2026, 7, 1), date(2026, 7, 2))
+        assert failed["status"] == "failed"
+        assert failed["diagnostic"] == {
+            "code": "preview_provider_context_incomplete",
+            "message": "Authoritative provider resource context is unavailable for one or more source records.",
+            "retryable": False,
+            "source_correlation_ids": failed["diagnostic"]["source_correlation_ids"],
+        }
+        assert len(failed["diagnostic"]["source_correlation_ids"]) == 1
+        assert failed["source_snapshot"] is None
+        assert failed["package"] is None
+        assert list((tmp_path / "tableflow-artifacts").iterdir()) == []
+        assert len(respx.calls) == provider_call_count
+    finally:
+        client.close()
+        runner.close()
+
+
 @pytest.mark.parametrize(
     "provider_overrides",
     [
+        {"line_type": "KAFKA_STREAMS", "description": "Kafka Streams usage", "unit": "CKU"},
         {
-            "amount": "0",
-            "original_amount": "0",
-            "discount_amount": "0",
-            "price": "0",
-            "quantity": "0",
+            "product": "SUPPORT_CLOUD_BUSINESS",
+            "line_type": "SUPPORT",
+            "description": "Support subscription",
         },
-        {"amount": "-8", "original_amount": "-10", "discount_amount": "-2", "price": "-2"},
-        {"line_type": "PROMO_CREDIT"},
-        {"description": "Refund adjustment for prior period"},
+        {
+            "line_type": "PROMO_CREDIT",
+            "description": "Promotional allowance",
+            "amount": "-5",
+            "original_amount": "-5",
+            "discount_amount": "0",
+            "price": None,
+            "quantity": None,
+            "unit": "CREDIT",
+        },
+        {
+            "line_type": "PROMO_CREDIT",
+            "description": "Refund Kafka storage",
+            "amount": "-8",
+            "original_amount": "-10",
+            "discount_amount": "-2",
+            "price": "-2",
+        },
+        {
+            "product": "SUPPORT_CLOUD_BUSINESS",
+            "line_type": "PROMO_CREDIT",
+            "description": "Refund support subscription",
+            "amount": "-8",
+            "original_amount": "-10",
+            "discount_amount": "-2",
+            "price": "-2",
+        },
     ],
+    ids=("kafka-streams", "support", "promotional-allowance", "usage-refund", "support-refund"),
 )
 @respx.mock
-def test_provider_backed_unsupported_economics_and_semantics_fail_before_artifacts(
+def test_custom_pipeline_allocation_cannot_bypass_native_lineage_scope(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     provider_overrides: dict[str, object],
@@ -544,6 +1085,311 @@ def test_provider_backed_unsupported_economics_and_semantics_fail_before_artifac
     monkeypatch.setattr("core.api.app.asyncio.to_thread", to_thread_inline)
     monkeypatch.setattr(anyio.to_thread, "run_sync", run_sync_inline)
     monkeypatch.setattr("workflow_runner.cleanup_orphaned_runs_for_all_tenants", lambda *_args, **_kwargs: None)
+    _mock_organization_api()
+    _mock_provider_inventory_api()
+    costs_route = respx.get("https://api.confluent.cloud/billing/v1/costs").mock(
+        return_value=_cost_response(**provider_overrides)
+    )
+    connection_string = f"sqlite:///{tmp_path / 'provider-kind.db'}"
+    tenant = TenantConfig(
+        ecosystem="confluent_cloud",
+        tenant_id="tenant-1",
+        lookback_days=31,
+        cutoff_days=5,
+        storage=StorageConfig(connection_string=connection_string),
+        focus_preview=_focus_preview_block(),
+        plugin_settings={
+            "ccloud_api": {"key": "key", "secret": "secret"},  # pragma: allowlist secret
+            "billing_api": {"days_per_query": 30},
+            "min_refresh_gap_seconds": 0,
+        },
+    )
+    settings = AppSettings(
+        api=ApiConfig(host="127.0.0.1", port=8080),
+        preview=PreviewConfig(artifact_root=tmp_path / "provider-kind-artifacts", max_workers=1),
+        tenants={"production": tenant},
+    )
+    handler = PreviewPipelineHandler()
+    handler.handles_product_types = ("KAFKA_STREAMS", "PROMO_CREDIT", "SUPPORT")
+    plugin = PreviewPipelinePlugin(handler)
+    plugin.initialize(tenant.plugin_settings.model_dump())
+    plugin.use_provider_inventory = True
+    backend = SQLModelBackend(connection_string, plugin.get_storage_module(), use_migrations=False)
+    backend.create_tables()
+    orchestrator = ChargebackOrchestrator("production", tenant, plugin, backend)
+    runner = WorkflowRunner(settings, MagicMock())
+    runner._bootstrapped = True
+    runner._tenant_runtimes["production"] = TenantRuntime(
+        tenant_name="production",
+        plugin=plugin,
+        storage=backend,
+        orchestrator=orchestrator,
+        config_hash=_config_hash(tenant),
+        created_at=datetime.now(UTC),
+    )
+    client = PipelineApiClient(create_app(settings), use_lifespan=True)
+    try:
+        result = runner.run_tenant("production")
+        assert result.errors == []
+        assert result.dates_calculated == 1
+        assert costs_route.called
+        provider_call_count = len(respx.calls)
+
+        preview = _request(client, date(2026, 7, 1), date(2026, 7, 2))
+
+        assert preview["status"] == "failed"
+        assert len(respx.calls) == provider_call_count
+        assert preview["diagnostic"] == {
+            "code": "preview_mapping_scope_unsupported",
+            "message": "The complete source set exceeds the current Daily Full mapping scope.",
+            "retryable": False,
+            "source_correlation_ids": preview["diagnostic"]["source_correlation_ids"],
+        }
+        assert len(preview["diagnostic"]["source_correlation_ids"]) == 1
+        assert preview["source_snapshot"] is None
+        assert preview["package"] is None
+    finally:
+        client.close()
+        runner.close()
+
+
+@pytest.mark.parametrize(
+    ("native_product", "description", "resource_id", "extra_resources"),
+    [
+        (
+            "CONNECT",
+            "Refund Connect usage",
+            "lcc-1",
+            (
+                CoreResource(
+                    ecosystem="confluent_cloud",
+                    tenant_id="tenant-1",
+                    resource_id="lcc-1",
+                    resource_type="connector",
+                    parent_id="lkc-1",
+                    metadata={"env_id": "env-1"},
+                ),
+            ),
+        ),
+        (
+            "KSQL",
+            "Refund ksqlDB usage",
+            "lksqlc-1",
+            (
+                CoreResource(
+                    ecosystem="confluent_cloud",
+                    tenant_id="tenant-1",
+                    resource_id="lksqlc-1",
+                    resource_type="ksqldb_cluster",
+                    parent_id="env-1",
+                    metadata={"kafka_cluster_id": "lkc-1"},
+                ),
+            ),
+        ),
+        (
+            "FLINK",
+            "Refund Flink pool usage",
+            "lfcp-1",
+            (
+                CoreResource(
+                    ecosystem="confluent_cloud",
+                    tenant_id="tenant-1",
+                    resource_id="lfcp-1",
+                    resource_type="flink_compute_pool",
+                    parent_id="env-1",
+                    metadata={"provider_cloud": "AWS", "provider_region": "us-east-1"},
+                ),
+            ),
+        ),
+        (
+            "FLINK",
+            "Refund Flink statement usage",
+            "lfstmt-1",
+            (
+                CoreResource(
+                    ecosystem="confluent_cloud",
+                    tenant_id="tenant-1",
+                    resource_id="lfstmt-1",
+                    resource_type="flink_statement",
+                    parent_id="env-1",
+                    metadata={"compute_pool_id": "lfcp-1"},
+                ),
+                CoreResource(
+                    ecosystem="confluent_cloud",
+                    tenant_id="tenant-1",
+                    resource_id="lfcp-1",
+                    resource_type="flink_compute_pool",
+                    parent_id="env-1",
+                    metadata={"provider_cloud": "AWS", "provider_region": "us-east-1"},
+                ),
+            ),
+        ),
+        (
+            "STREAM_GOVERNANCE",
+            "Refund governance usage",
+            "lsrc-1",
+            (
+                CoreResource(
+                    ecosystem="confluent_cloud",
+                    tenant_id="tenant-1",
+                    resource_id="lsrc-1",
+                    resource_type="schema_registry",
+                    parent_id="env-1",
+                    metadata={"provider_cloud": "AWS", "provider_region": "us-east-1"},
+                ),
+            ),
+        ),
+        ("CLUSTER_LINK", "Refund cluster linking usage", "lkc-1", ()),
+        ("USM", "Refund USM usage", "lkc-1", ()),
+    ],
+    ids=("connect", "ksqldb", "flink-pool", "flink-statement", "schema-registry", "cluster-link", "usm"),
+)
+@respx.mock
+def test_custom_pipeline_and_provider_context_cannot_bypass_promo_lineage_scope(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    native_product: str,
+    description: str,
+    resource_id: str,
+    extra_resources: tuple[CoreResource, ...],
+) -> None:
+    async def to_thread_inline(function: Any, *args: object, **kwargs: object) -> object:
+        return function(*args, **kwargs)
+
+    async def run_sync_inline(function: Any, *args: object, **_kwargs: object) -> object:
+        return function(*args)
+
+    monkeypatch.setattr("core.api.app.asyncio.to_thread", to_thread_inline)
+    monkeypatch.setattr(anyio.to_thread, "run_sync", run_sync_inline)
+    monkeypatch.setattr("workflow_runner.cleanup_orphaned_runs_for_all_tenants", lambda *_args, **_kwargs: None)
+    _mock_organization_api()
+    _mock_provider_inventory_api()
+    costs_route = respx.get("https://api.confluent.cloud/billing/v1/costs").mock(
+        return_value=_cost_response(
+            product=native_product,
+            line_type="PROMO_CREDIT",
+            description=description,
+            amount="-8",
+            original_amount="-10",
+            discount_amount="-2",
+            price="-2",
+            resource={
+                "id": resource_id,
+                "display_name": f"Provider {resource_id}",
+                "environment": {"id": "env-1"},
+            },
+        )
+    )
+    connection_string = f"sqlite:///{tmp_path / 'provider-promo-refund.db'}"
+    tenant = TenantConfig(
+        ecosystem="confluent_cloud",
+        tenant_id="tenant-1",
+        lookback_days=31,
+        cutoff_days=5,
+        storage=StorageConfig(connection_string=connection_string),
+        focus_preview=_focus_preview_block(),
+        plugin_settings={
+            "ccloud_api": {"key": "key", "secret": "secret"},  # pragma: allowlist secret
+            "billing_api": {"days_per_query": 30},
+            "min_refresh_gap_seconds": 0,
+        },
+    )
+    settings = AppSettings(
+        api=ApiConfig(host="127.0.0.1", port=8080),
+        preview=PreviewConfig(artifact_root=tmp_path / "provider-promo-refund-artifacts", max_workers=1),
+        tenants={"production": tenant},
+    )
+    handler = PreviewPipelineHandler()
+    handler.handles_product_types = ("PROMO_CREDIT",)
+    handler.extra_resources = extra_resources
+    handler.gathered_resource_types = tuple(
+        {"kafka_cluster", *(resource.resource_type for resource in extra_resources)}
+    )
+    plugin = PreviewPipelinePlugin(handler)
+    plugin.initialize(tenant.plugin_settings.model_dump())
+    plugin.use_provider_inventory = True
+    backend = SQLModelBackend(connection_string, plugin.get_storage_module(), use_migrations=False)
+    backend.create_tables()
+    orchestrator = ChargebackOrchestrator("production", tenant, plugin, backend)
+    runner = WorkflowRunner(settings, MagicMock())
+    runner._bootstrapped = True
+    runner._tenant_runtimes["production"] = TenantRuntime(
+        tenant_name="production",
+        plugin=plugin,
+        storage=backend,
+        orchestrator=orchestrator,
+        config_hash=_config_hash(tenant),
+        created_at=datetime.now(UTC),
+    )
+    client = PipelineApiClient(create_app(settings), use_lifespan=True)
+    try:
+        result = runner.run_tenant("production")
+        assert result.errors == []
+        assert result.dates_calculated == 1
+        assert costs_route.called
+        provider_call_count = len(respx.calls)
+
+        preview = _request(client, date(2026, 7, 1), date(2026, 7, 2))
+
+        assert preview["status"] == "failed"
+        assert len(respx.calls) == provider_call_count
+        assert preview["diagnostic"] == {
+            "code": "preview_mapping_scope_unsupported",
+            "message": "The complete source set exceeds the current Daily Full mapping scope.",
+            "retryable": False,
+            "source_correlation_ids": preview["diagnostic"]["source_correlation_ids"],
+        }
+        assert len(preview["diagnostic"]["source_correlation_ids"]) == 1
+        assert preview["source_snapshot"] is None
+        assert preview["package"] is None
+    finally:
+        client.close()
+        runner.close()
+
+
+@pytest.mark.parametrize(
+    ("provider_overrides", "expected_code"),
+    [
+        (
+            {
+                "amount": "0",
+                "original_amount": "0",
+                "discount_amount": "0",
+                "price": "0",
+                "quantity": "0",
+            },
+            "preview_source_economics_unsupported",
+        ),
+        (
+            {"amount": "-8", "original_amount": "-10", "discount_amount": "-2", "price": "-2"},
+            "preview_source_economics_unsupported",
+        ),
+        ({"line_type": "PROMO_CREDIT"}, "preview_source_economics_unsupported"),
+        ({"description": "Refund adjustment for prior period"}, "preview_charge_classification_ambiguous"),
+        ({"description": "Refund Kafka storage"}, "preview_source_economics_unsupported"),
+        (
+            {"product": "KAFKA", "line_type": "SUPPORT", "description": "Support subscription"},
+            "preview_charge_classification_ambiguous",
+        ),
+    ],
+)
+@respx.mock
+def test_provider_backed_unsupported_economics_and_semantics_fail_before_artifacts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    provider_overrides: dict[str, object],
+    expected_code: str,
+) -> None:
+    async def to_thread_inline(function: Any, *args: object, **kwargs: object) -> object:
+        return function(*args, **kwargs)
+
+    async def run_sync_inline(function: Any, *args: object, **_kwargs: object) -> object:
+        return function(*args)
+
+    monkeypatch.setattr("core.api.app.asyncio.to_thread", to_thread_inline)
+    monkeypatch.setattr(anyio.to_thread, "run_sync", run_sync_inline)
+    monkeypatch.setattr("workflow_runner.cleanup_orphaned_runs_for_all_tenants", lambda *_args, **_kwargs: None)
+    _mock_organization_api()
     route = respx.get("https://api.confluent.cloud/billing/v1/costs")
 
     def provider_response(request: httpx.Request) -> httpx.Response:
@@ -576,7 +1422,7 @@ def test_provider_backed_unsupported_economics_and_semantics_fail_before_artifac
         tenants={"production": tenant},
     )
     handler = PreviewPipelineHandler()
-    handler.handles_product_types = ("KAFKA_STORAGE", "PROMO_CREDIT")
+    handler.handles_product_types = ("KAFKA_STORAGE", "PROMO_CREDIT", "SUPPORT")
     plugin = PreviewPipelinePlugin(handler)
     plugin.initialize(tenant.plugin_settings.model_dump())
     backend = SQLModelBackend(connection_string, plugin.get_storage_module(), use_migrations=False)
@@ -631,10 +1477,7 @@ def test_provider_backed_unsupported_economics_and_semantics_fail_before_artifac
         failed = _request(client, date(2026, 7, 1), date(2026, 7, 2))
         assert failed["status"] == "failed"
         diagnostic = failed["diagnostic"]
-        if provider_overrides.get("line_type") == "PROMO_CREDIT" or "description" in provider_overrides:
-            assert diagnostic["code"] == "preview_charge_classification_ambiguous"
-        else:
-            assert diagnostic["code"] == "preview_source_economics_unsupported"
+        assert diagnostic["code"] == expected_code
         assert diagnostic["retryable"] is False
         assert len(diagnostic["source_correlation_ids"]) == 1
         assert diagnostic["source_correlation_ids"][0].startswith("src:v1:")
@@ -661,6 +1504,7 @@ def test_migrated_legacy_metadata_failure_preserves_data_when_provider_is_unavai
     monkeypatch.setattr("core.api.app.asyncio.to_thread", to_thread_inline)
     monkeypatch.setattr(anyio.to_thread, "run_sync", run_sync_inline)
     monkeypatch.setattr("workflow_runner.cleanup_orphaned_runs_for_all_tenants", lambda *_args, **_kwargs: None)
+    _mock_organization_api()
     connection_string = f"sqlite:///{tmp_path / 'legacy.db'}"
     migration = _alembic_config(connection_string)
     command.upgrade(migration, "018")
@@ -750,6 +1594,7 @@ def test_migrated_legacy_precedence_uses_real_recoverable_lifecycle_without_muta
     monkeypatch.setattr("core.api.app.asyncio.to_thread", to_thread_inline)
     monkeypatch.setattr(anyio.to_thread, "run_sync", run_sync_inline)
     monkeypatch.setattr("workflow_runner.cleanup_orphaned_runs_for_all_tenants", lambda *_args, **_kwargs: None)
+    _mock_organization_api()
     connection_string = f"sqlite:///{tmp_path / 'legacy-precedence.db'}"
     migration = _alembic_config(connection_string)
     command.upgrade(migration, "018")
@@ -844,6 +1689,7 @@ def test_migrated_legacy_precedence_uses_real_recoverable_lifecycle_without_muta
         snapshot_engine.dispose()
 
 
+@respx.mock
 def test_ordinary_gather_and_calculate_lifecycle_replaces_incomplete_legacy_correlation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -857,6 +1703,7 @@ def test_ordinary_gather_and_calculate_lifecycle_replaces_incomplete_legacy_corr
     monkeypatch.setattr("core.api.app.asyncio.to_thread", to_thread_inline)
     monkeypatch.setattr(anyio.to_thread, "run_sync", run_sync_inline)
     monkeypatch.setattr("workflow_runner.cleanup_orphaned_runs_for_all_tenants", lambda *_args, **_kwargs: None)
+    _mock_organization_api()
     tracking_date = (datetime.now(UTC) - timedelta(days=2)).date()
     tracking_start = datetime.combine(tracking_date, datetime.min.time(), tzinfo=UTC)
     connection_string = f"sqlite:///{tmp_path / 'replacement.db'}"
@@ -936,7 +1783,7 @@ def test_ordinary_gather_and_calculate_lifecycle_replaces_incomplete_legacy_corr
         assert [row.amount for row in chargebacks] == [Decimal("8")]
 
         ready = _request(client, tracking_date, tracking_date + timedelta(days=1))
-        assert ready["status"] == "ready"
+        assert ready["status"] == "ready", ready["diagnostic"]
         assert ready["source_snapshot"]["calculation_coverage"] == [
             {
                 "tracking_date": tracking_date.isoformat(),

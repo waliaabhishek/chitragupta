@@ -23,25 +23,9 @@ function isAbortError(error: unknown): boolean {
 
 const CURRENT_AUTHORITY_GAPS = [
   {
-    code: "billing_account_and_issuer_mapping_pending",
-    description: "Billing account and issuer mapping is pending.",
-    owner: "TASK-254.04",
-  },
-  {
-    code: "billing_period_authority_pending",
-    description: "Authoritative provider billing-period mapping is pending.",
-    owner: "TASK-254.04",
-  },
-  {
     code: "provider_billing_currency_field_unavailable",
-    description:
-      "Confluent Costs API monetary values are documented in USD but do not include a per-record ISO currency value.",
+    description: "Confluent Costs records do not carry a per-record billing currency.",
     owner: "TASK-254.03",
-  },
-  {
-    code: "provider_authoritative_sku_identity_unavailable",
-    description: "Provider-authoritative SKU identity is unavailable.",
-    owner: "TASK-254.04",
   },
   {
     code: "invoice_identity_unavailable",
@@ -49,14 +33,39 @@ const CURRENT_AUTHORITY_GAPS = [
     owner: "TASK-254.04",
   },
   {
+    code: "invoice_issuer_name_unavailable",
+    description: "Provider legal invoice-issuer evidence is unavailable.",
+    owner: "TASK-254.04",
+  },
+  {
+    code: "provider_host_display_name_unavailable",
+    description: "HostProviderName contains the raw provider cloud code, not a provider display name.",
+    owner: "TASK-254.04",
+  },
+  {
+    code: "provider_region_display_name_unavailable",
+    description: "Confluent inventory does not provide a distinct region display name.",
+    owner: "TASK-254.04",
+  },
+  {
+    code: "derived_sku_identity_not_provider_authoritative",
+    description: "SKU values are deterministic Chitragupta-derived evidence, not provider-issued identifiers.",
+    owner: "TASK-254.04",
+  },
+  {
     code: "allocation_lineage_and_tag_projection_pending",
-    description: "Allocation lineage and tag projection are pending.",
+    description: "General allocation lineage and tag projection are deferred.",
     owner: "TASK-254.05",
   },
   {
-    code: "task_254_04_applicability_and_provider_mapping_pending",
-    description: "Provider applicability and mapping are pending.",
-    owner: "TASK-254.04",
+    code: "allocation_ratio_deferred",
+    description: "Durable allocation-ratio evidence is deferred.",
+    owner: "TASK-254.05",
+  },
+  {
+    code: "allocation_method_version_deferred",
+    description: "Allocation method-version evidence is deferred.",
+    owner: "TASK-254.05",
   },
 ] as const;
 
@@ -145,7 +154,7 @@ export function FocusPreviewPage({ now = () => new Date() }: FocusPreviewPagePro
         type="warning"
         showIcon
         message="Non-conforming preview"
-        description="Provider-authoritative billing currency and billing period evidence is not yet available. The manifest declares every current authority gap."
+        description="Provider-authoritative billing currency evidence is unavailable. The manifest declares every current authority gap."
       />
       <section aria-labelledby="focus-preview-gaps">
         <Title id="focus-preview-gaps" level={4}>Current authority gaps</Title>

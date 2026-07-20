@@ -7,7 +7,7 @@ Covers all 7 handlers and all product type categories.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
@@ -21,6 +21,7 @@ from core.models import (
     IdentitySet,
 )
 from core.models.billing import CoreBillingLineItem
+from core.plugin.registry import EcosystemBundle
 
 
 def _make_billing_line(
@@ -150,6 +151,99 @@ class TestFullPipelineWithAllProductTypes:
             assert pt in default.handles_product_types
             allocator = default.get_allocator(pt)
             assert callable(allocator)
+
+
+class TestPreviewResourceTypeProductionOwnership:
+    """TASK-254.04 must leave the production allocation bundle unchanged."""
+
+    def test_deferred_native_types_have_no_dedicated_owner_or_allocator(self) -> None:
+        bundle = EcosystemBundle.build(_initialized_plugin())
+        deferred_unowned = {
+            "KAFKA_REST_PRODUCE",
+            "KAFKA_STREAMS",
+            "CONNECT_NUM_RECORDS",
+            "USM_CONNECTED_NODE",
+            "PROMO_CREDIT",
+        }
+
+        assert deferred_unowned.isdisjoint(bundle.product_type_to_handler)
+        for handler in bundle.handlers.values():
+            for product_type in deferred_unowned:
+                with pytest.raises(ValueError, match=f"Unknown product type: {product_type}"):
+                    handler.get_allocator(product_type)
+
+    def test_existing_handler_ownership_is_unchanged(self) -> None:
+        bundle = EcosystemBundle.build(_initialized_plugin())
+
+        expected_product_types = {
+            "kafka": {
+                "KAFKA_NUM_CKU",
+                "KAFKA_NUM_CKUS",
+                "KAFKA_BASE",
+                "KAFKA_PARTITION",
+                "KAFKA_STORAGE",
+                "KAFKA_NETWORK_READ",
+                "KAFKA_NETWORK_WRITE",
+            },
+            "schema_registry": {"SCHEMA_REGISTRY", "GOVERNANCE_BASE", "NUM_RULES"},
+            "connector": {
+                "CONNECT_CAPACITY",
+                "CONNECT_NUM_TASKS",
+                "CONNECT_THROUGHPUT",
+                "CUSTOM_CONNECT_PLUGIN",
+                "CUSTOM_CONNECT_NUM_TASKS",
+                "CUSTOM_CONNECT_THROUGHPUT",
+            },
+            "ksqldb": {"KSQL_NUM_CSU", "KSQL_NUM_CSUS"},
+            "flink": {"FLINK_NUM_CFU", "FLINK_NUM_CFUS"},
+            "org_wide": {"AUDIT_LOG_READ", "SUPPORT"},
+            "default": {
+                "TABLEFLOW_DATA_PROCESSED",
+                "TABLEFLOW_NUM_TOPICS",
+                "TABLEFLOW_STORAGE",
+                "CLUSTER_LINKING_PER_LINK",
+                "CLUSTER_LINKING_READ",
+                "CLUSTER_LINKING_WRITE",
+            },
+        }
+
+        assert {
+            name: set(handler.handles_product_types) for name, handler in bundle.handlers.items()
+        } == expected_product_types
+        for product_type, handler in bundle.product_type_to_handler.items():
+            assert callable(handler.get_allocator(product_type))
+
+    def test_cluster_linking_remains_default_owned_without_gathered_context(self) -> None:
+        from plugins.confluent_cloud.allocators.default_allocators import (
+            cluster_linking_allocator,
+        )
+
+        bundle = EcosystemBundle.build(_initialized_plugin())
+        default = bundle.handlers["default"]
+        cluster_linking_types = {
+            "CLUSTER_LINKING_PER_LINK",
+            "CLUSTER_LINKING_READ",
+            "CLUSTER_LINKING_WRITE",
+        }
+
+        assert default.gathered_resource_types == []
+        assert list(default.gather_resources("org-123", None)) == []  # type: ignore[arg-type]
+        assert list(default.gather_identities("org-123", None)) == []  # type: ignore[arg-type]
+        resolution = default.resolve_identities(
+            tenant_id="org-123",
+            resource_id="lkc-link-1",
+            billing_timestamp=datetime(2026, 2, 1, tzinfo=UTC),
+            billing_duration=timedelta(days=1),
+            metrics_data=None,
+            uow=None,  # type: ignore[arg-type]
+        )
+
+        assert list(resolution.resource_active) == []
+        assert list(resolution.metrics_derived) == []
+        assert list(resolution.tenant_period) == []
+        for product_type in cluster_linking_types:
+            assert bundle.product_type_to_handler[product_type] is default
+            assert default.get_allocator(product_type) is cluster_linking_allocator
 
 
 class TestHandlerOrderingKafkaFirst:

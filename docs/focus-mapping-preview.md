@@ -51,9 +51,9 @@ can close that limitation without silently rewriting historical values.
 
 A request uses inclusive-start, exclusive-end UTC dates and must contain 1–31
 days within one UTC calendar month. The exclusive end may be the first day of
-the following month. The current tracer requires exactly one supported ordinary
-metered source, one compatibility aggregate, and one non-`UNALLOCATED`
-Allocation Target that reconcile exactly.
+the following month. A ready package currently requires exactly one
+production-ready resource-specific source, one compatibility aggregate, and
+one non-`UNALLOCATED` Allocation Target that reconcile exactly.
 
 The package contains:
 
@@ -65,6 +65,74 @@ The package contains:
 The manifest and CSV are stored as immutable bytes. API responses expose public
 filenames, sizes, SHA-256 values, and download URLs, but never the artifact root,
 opaque storage key, or server filesystem path.
+
+## Daily Full v3 mapping
+
+`focus-1.4-daily-full-v3` is the single code-owned mapping profile. It defines
+all 65 FOCUS 1.4 Full columns and 12 ordered custom evidence columns, including
+feature level, applicability, nullability, source, transformation, allowed
+values, validator, and gap ownership. Startup validation rejects incomplete,
+overlapping, reordered, or inconsistent profile/readiness definitions. Every
+row is validated against the complete profile before artifact finalization.
+Passing this validation means only that the row matches this declared Preview
+profile; the manifest remains `non_conforming`.
+
+The ordinary pipeline gathers the Confluent organization from
+`GET /org/v2/organizations` as isolated supplemental inventory. Preview reads
+the persisted immutable binding: `BillingAccountId` is the provider
+organization ID, `BillingAccountName` is its optional display name, and
+`BillingAccountType` is `Organization`. The tenant ID is only Chitragupta's
+partition key and is never used as a billing account. Missing or conflicting
+organization authority fails the request; Preview does not call the provider.
+The containing UTC month supplies `BillingPeriodStart` and
+`BillingPeriodEnd`.
+
+Charge and financial behavior is fail-closed:
+
+- ordinary metered usage is `Usage` / `Usage-Based`;
+- Support is `Purchase` / `Recurring` but is not lineage-ready in this task;
+- a non-refund native `PROMO_CREDIT` is `Credit` / `One-Time`, including when
+  the provider supplies null unit, price, and quantity;
+- an unambiguous refund retains the original native product's `Usage` /
+  `Usage-Based` or `Purchase` / `Recurring` semantics; and
+- ambiguous classification, invalid signs, non-finite numbers, or failed exact
+  `Decimal` arithmetic blocks the whole request.
+
+For a ready priced row, source `amount` supplies allocated `BilledCost` and
+`EffectiveCost`; `original_amount` supplies allocated `ListCost` and
+`ContractedCost` after exact source arithmetic. Price, quantity, unit, and tier
+evidence are emitted only when their arithmetic is valid. `SkuId` and
+`SkuPriceId` are deterministic namespaced v1 hashes over closed canonical
+component schemas; `SkuPriceDetails` and `x_ChitraguptaSkuComponents` preserve
+the exact canonical components. These values are Chitragupta-derived, not
+provider-issued SKU authority.
+
+`InvoiceId`, `InvoiceDetailId`, and `InvoiceIssuerName` remain null. Provider
+cloud and region inventory is retained twice: normalized operational fields
+continue to serve allocation code, while Preview copies the exact raw
+`provider_cloud` into `HostProviderName` and raw `provider_region` into
+`RegionId`. It does not trim, title-case, canonicalize, or synthesize display
+names. `RegionName` remains null.
+
+The v3 readiness authority has 16 `READY` native line types. The following 13
+types are completely classified and financially evaluated but fail before
+coverage, candidate, reconciliation, identity, or provider-context reads:
+
+- `AUDIT_LOG_READ` and `SUPPORT` are organization-wide and fail
+  `preview_mapping_scope_unsupported`;
+- `KAFKA_REST_PRODUCE`, `KAFKA_STREAMS`, `CONNECT_NUM_RECORDS`,
+  `CLUSTER_LINKING_PER_LINK`, `CLUSTER_LINKING_READ`,
+  `CLUSTER_LINKING_WRITE`, `USM_CONNECTED_NODE`, and every `PROMO_CREDIT` row
+  fail the TASK-254.05 lineage gate with `preview_mapping_scope_unsupported`;
+  and
+- `TABLEFLOW_DATA_PROCESSED`, `TABLEFLOW_NUM_TOPICS`, and
+  `TABLEFLOW_STORAGE` fail `preview_provider_context_incomplete` because the
+  current inventory cannot prove provider-authoritative TABLEFLOW context.
+
+Custom handlers, manually inserted resources, or apparently compatible
+allocations cannot bypass this native-line readiness boundary. TASK-254.05 owns
+making the deferred lineage shapes ready; TASK-254.04 does not change global
+handler, allocator, metrics, or identity-resolution policy.
 
 ## Web UI
 
@@ -82,13 +150,15 @@ The page declares these current authority gaps before submission:
 
 | Code | Gap | Owner |
 |---|---|---|
-| `billing_account_and_issuer_mapping_pending` | Billing account and issuer mapping | TASK-254.04 |
-| `billing_period_authority_pending` | Authoritative provider billing period | TASK-254.04 |
 | `provider_billing_currency_field_unavailable` | The provider Costs API omits a per-record ISO currency; `BillingCurrency` remains null | TASK-254.03 |
-| `provider_authoritative_sku_identity_unavailable` | Provider-authoritative SKU identity | TASK-254.04 |
 | `invoice_identity_unavailable` | Post-issuance invoice identity | TASK-254.04 |
-| `allocation_lineage_and_tag_projection_pending` | Allocation lineage and tag projection | TASK-254.05 |
-| `task_254_04_applicability_and_provider_mapping_pending` | Provider applicability and remaining provider mapping | TASK-254.04 |
+| `invoice_issuer_name_unavailable` | Provider legal invoice-issuer evidence is unavailable | TASK-254.04 |
+| `provider_host_display_name_unavailable` | `HostProviderName` contains the raw provider cloud code, not a provider display name | TASK-254.04 |
+| `provider_region_display_name_unavailable` | Confluent inventory does not provide a distinct region display name; `RegionName` remains null | TASK-254.04 |
+| `derived_sku_identity_not_provider_authoritative` | Deterministic SKU values are Chitragupta-derived, not provider-issued identifiers | TASK-254.04 |
+| `allocation_lineage_and_tag_projection_pending` | General allocation lineage and tag projection are deferred | TASK-254.05 |
+| `allocation_ratio_deferred` | Durable allocation-ratio evidence is deferred | TASK-254.05 |
+| `allocation_method_version_deferred` | Allocation method-version evidence is deferred | TASK-254.05 |
 
 Request, polling, and download transport failures produce a generic safe UI
 error. Cancelling or leaving the page aborts polling without showing an error.
@@ -155,9 +225,13 @@ Calculation coverage failures are:
 | `calculation_coverage_incomplete` | yes | Some, but not all, requested dates have usable persisted calculations; run the ordinary pipeline and retry. |
 
 Commercial/currency failures then precede a complete streamed source scan.
+Structural, classification, financial, and source-reconciliation issues win
+before organization-wide, TABLEFLOW, and TASK-254.05 readiness routing. Those
+three routes all precede compatibility coverage and selected evidence reads.
 Source diagnostics distinguish malformed, out-of-scope, ambiguous charge,
 unknown/unsupported line type, mapping-unavailable, incomplete, unsupported
-economics, reconciliation, coverage, and current mapping-cardinality failures.
+economics, reconciliation, coverage, provider context, billing-account
+authority, row validation, and current mapping-cardinality failures.
 Where a source can be implicated, the API/UI/CLI can display up to 20 sorted,
 unique safe `src:v1:<64 lowercase hex>` correlations. Correlations are
 tenant-scoped hashes and contain no provider IDs or raw source values. Failed
@@ -176,4 +250,6 @@ by TASK-256 and is outside this release.
 This release does not provide Preview data editing, approval, manual metadata
 correction, request-triggered collection, historical correlation backfill,
 partial output, request listing, automatic expiry, or a Download All archive.
-The generic chargeback export remains a separate API and is unchanged.
+It also does not make the 13 deferred native line types ready or claim FOCUS
+1.4 conformance. The generic chargeback export remains a separate API and is
+unchanged.

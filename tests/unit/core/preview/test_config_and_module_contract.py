@@ -83,16 +83,50 @@ def test_migration_020_uses_postponed_annotations() -> None:
     assert meaningful_lines[0] == "from __future__ import annotations"
 
 
-def test_mapping_accepts_typed_resource_and_identity_domain_objects() -> None:
+def test_mapping_accepts_typed_projection_and_domain_objects() -> None:
     from core.models.identity import Identity
     from core.models.resource import Resource
 
     mapping = preview_module("mapping")
     hints = get_type_hints(mapping.build_daily_full_package)
 
-    assert hints["resource"] is Resource
+    assert hints["evidence"] is mapping.SelectedPreviewEvidence
+    assert hints["provider_context"] is mapping.PreviewProviderContext
+    assert hints["resource_context"] is mapping.PreviewResourceContext
     assert hints["identity"] is Identity
     assert hints["environment"] == Resource | None
+
+
+def test_mapping_helpers_expose_the_typed_v3_boundary_contracts() -> None:
+    mapping = preview_module("mapping")
+
+    assert list(inspect.signature(mapping.classify_daily_full_source).parameters) == [
+        "request_start",
+        "request_end",
+        "source",
+    ]
+    assert list(inspect.signature(mapping.project_financials).parameters) == [
+        "source",
+        "semantics",
+        "billed_share",
+    ]
+    assert list(inspect.signature(mapping.reconcile_selected_evidence).parameters) == [
+        "selected",
+        "aggregate",
+        "allocation",
+    ]
+    assert list(inspect.signature(mapping.resolve_provider_resource_context).parameters) == [
+        "source",
+        "semantics",
+        "origin_resource",
+        "resources",
+    ]
+    assert list(inspect.signature(mapping.validate_preview_row).parameters) == [
+        "row",
+        "target_rules",
+        "custom_rules",
+    ]
+    assert get_type_hints(mapping.validate_preview_row)["return"] is type(None)
 
 
 def test_focus_preview_route_imports_timedelta_at_module_scope() -> None:

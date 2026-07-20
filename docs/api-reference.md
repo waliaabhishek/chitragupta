@@ -509,6 +509,14 @@ The source snapshot contains `calculation_timestamp`, date-ordered
 SHA-256, order (data files only), and API download URL. It contains no artifact
 root, storage key, or server path.
 
+A ready package stores the exact `focus-1.4-daily-full-v3` output: 65 ordered
+FOCUS Full columns followed by 12 ordered custom evidence columns. The stored
+manifest declares `conformance_status: non_conforming`, profile version,
+calculation/source coverage, exact known gaps, validation status/counts,
+reconciliation, and file checksums. Mapping/profile validation completes before
+atomic finalization. Manifest and CSV downloads return the stored bytes; the
+API, UI, and CLI do not remap them.
+
 ### `GET /api/v1/tenants/{tenant_name}/focus-preview/requests/{request_id}/manifest`
 
 Return the exact stored `manifest.json` bytes for a ready request.
@@ -557,12 +565,25 @@ Eligibility and source diagnostics are:
 | `preview_charge_classification_ambiguous` | false | Credit/refund/adjustment/correction-like semantics are not authoritative. |
 | `preview_source_line_type_unknown` | false | A source record has no line type. |
 | `preview_source_line_type_unsupported` | false | A provider line type is unknown to this release. |
-| `preview_source_mapping_unavailable` | false | A known line type, including Support or `KAFKA_STREAMS`, does not yet have a complete Preview mapping. |
+| `preview_source_mapping_unavailable` | false | A known line type lacks required mapping evidence, such as a returned unit for `KAFKA_STREAMS`. |
 | `preview_source_record_incomplete` | false | Required Preview evidence is absent. |
 | `preview_source_economics_unsupported` | false | Monetary or quantity values are outside the supported tracer. |
 | `preview_source_reconciliation_failed` | false | Source, aggregate, or allocation evidence does not reconcile. |
 | `preview_source_coverage_incomplete` | false | Complete source and aggregate origin coverage does not match. |
-| `preview_mapping_scope_unsupported` | false | The complete source set exceeds the current one-source Daily Full mapping scope. |
+| `preview_mapping_scope_unsupported` | false | The complete source set exceeds the current Daily Full scope, including organization-wide rows and TASK-254.05 lineage-deferred native types. |
+| `preview_billing_account_unavailable` | false | No authoritative persisted Confluent organization binding is available. |
+| `preview_billing_account_conflicting` | false | Persisted Confluent organization evidence conflicts for the tenant partition. |
+| `preview_provider_context_incomplete` | false | Authoritative resource context is absent or incompatible; all TABLEFLOW rows use this failure because current inventory cannot prove their provider context. |
+| `preview_mapping_validation_failed` | false | The generated row does not satisfy the complete Daily Full v3 mapping profile. |
+
+The TASK-254.05 lineage gate returns `preview_mapping_scope_unsupported` for
+`KAFKA_REST_PRODUCE`, `KAFKA_STREAMS`, `CONNECT_NUM_RECORDS`, all three
+`CLUSTER_LINKING_*` types, `USM_CONNECTED_NODE`, and every `PROMO_CREDIT` row,
+including refunds. `AUDIT_LOG_READ` and `SUPPORT` return the same diagnostic at
+the earlier organization-wide boundary. TABLEFLOW instead returns
+`preview_provider_context_incomplete`. These typed failures are non-retryable,
+carry at most 20 sorted safe correlations, and persist null source snapshot and
+package fields; manifest/file retrieval therefore remains unavailable.
 
 Incomplete persisted calculation metadata has precedence over acquisition,
 commercial, currency, source, and mapping diagnostics. `lookback_days` is capped

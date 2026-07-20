@@ -55,17 +55,21 @@ flowchart TD
    constructs from YAML cost model + Prometheus.
 
 2. **Gather resources** — `handler.gather_resources(tenant_id, uow)`
-   Discovers infrastructure resources (clusters, topics, connectors, etc.).
-   Stored in `resources` table.
+   discovers ordinary infrastructure resources. A separate plugin supplemental
+   gather acquires the Confluent organization used as Preview billing-account
+   authority. All are stored in `resources`.
 
 3. **Gather identities** — `handler.gather_identities(tenant_id, uow)`
    Discovers principals, service accounts, teams.
    Stored in `identities` table.
 
-4. **Detect deletions** — `_detect_entity_deletions()`
-   Compares gathered entity IDs against previously active entities. Marks missing ones
-   with `deleted_at` timestamp. Skipped if any handler gather failed. A consecutive
-   zero-gather safety threshold prevents bulk deletion from transient API failures.
+4. **Detect deletions** — resource deletion authority is tracked per declared
+   resource type. A type is scanned only when every handler declaring that type
+   succeeded; IDs yielded under an undeclared type may be persisted but are
+   never deletion authority. Identity deletion remains skipped after any
+   handler failure. Supplemental organization reconciliation is isolated from
+   both paths. Consecutive zero-gather thresholds prevent transient bulk
+   deletion.
 
 5. **Fetch metrics** — `metrics_source.query_range(...)` per handler
    Prometheus range queries for the billing period. Returns `MetricRow` objects.
@@ -138,7 +142,9 @@ date that already committed.
 flowchart LR
     PS[(Persisted pipeline state)] --> PR[Preview read transaction]
     EV[(Persisted source and allocation evidence)] --> PR
-    PR --> MAP[Validate, reconcile, and map Daily Full]
+    ORG[(Persisted provider organization)] --> PR
+    PR --> READY[Classify and apply native-line readiness]
+    READY --> MAP[Reconcile, map, and validate Daily Full v3]
     MAP --> ART[(Atomic local artifact package)]
     ART --> API[Protected Preview API]
     API --> UI[Web UI]
@@ -156,10 +162,17 @@ At submission, Preview samples `created_at` once and derives an immutable policy
 from tenant `focus_preview` configuration plus `lookback_days`/`cutoff_days`.
 The worker checks, in order: calculation correlation, acquisition/cutoff
 lifecycle, Direct-billed PAYG effective containment, configured USD, complete
-streamed source classification, complete source/aggregate coverage, then the
-current one-source mapping/reconciliation seams. All evidence reads occur in one
-read-only transaction. Complete source and aggregate reads stream in stable
-origin order; only the selected source's aggregate/allocation candidate queries
+streamed structural/classification/financial evaluation, and source-issue
+precedence. It then rejects organization-wide sources with
+`PreviewMappingScopeError`, TABLEFLOW with
+`PreviewProviderContextIncompleteError`, and TASK-254.05 lineage-deferred native
+types with `PreviewMappingScopeError`. Only production-ready resource-specific
+types continue through complete source/aggregate coverage, one-source
+cardinality, bounded aggregate/allocation candidates, currency compatibility,
+reconciliation, immutable organization binding, identity/environment/provider
+context, 65/12 v3 row validation, and atomic artifact finalization. All evidence
+reads occur in one read-only transaction. Complete source and aggregate reads
+stream in stable origin order; only the selected source's candidate queries
 retain their two-row ambiguity bounds.
 
 Expected failures travel through the initialized diagnostic path and atomically
@@ -174,6 +187,14 @@ evidence: mapped `BillingCurrency` remains null and the manifest records
 The maximum 364-day `lookback_days` is an acquisition/recalculation boundary,
 not retention or a reconstruction promise. TASK-256 owns any independent
 longer-term completed-chargeback archive.
+
+The readiness table has a closed 16-ready/13-deferred partition. TASK-254.05
+lineage defers `KAFKA_REST_PRODUCE`, `KAFKA_STREAMS`,
+`CONNECT_NUM_RECORDS`, all Cluster Linking types, `USM_CONNECTED_NODE`, and
+every `PROMO_CREDIT` row. Organization-wide `AUDIT_LOG_READ`/`SUPPORT` and all
+TABLEFLOW types also remain non-ready, with the distinct typed routes described
+above. Complete semantic mapping is not a conformance or allocation-readiness
+claim.
 
 ## Concurrency
 

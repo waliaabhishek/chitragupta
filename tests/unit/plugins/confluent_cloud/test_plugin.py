@@ -147,6 +147,17 @@ def test_plugin_conforms_to_protocol():
     assert isinstance(plugin, EcosystemPlugin)
 
 
+def test_plugin_exposes_only_organization_as_isolated_supplemental_resource() -> None:
+    from core.plugin.protocols import SupplementalResourceGatherer
+    from plugins.confluent_cloud import ConfluentCloudPlugin
+
+    plugin = ConfluentCloudPlugin()
+    plugin.initialize({"ccloud_api": {"key": "k", "secret": "s"}})
+
+    assert isinstance(plugin, SupplementalResourceGatherer)
+    assert plugin.supplemental_resource_types == ("organization",)
+
+
 def test_plugin_creates_connection():
     from plugins.confluent_cloud import ConfluentCloudPlugin
 

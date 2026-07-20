@@ -370,9 +370,9 @@ def test_one_sided_source_aggregate_coverage_fails_closed(
         ({"malformed": True}, "preview_source_record_malformed"),
         ({"line_type": None}, "preview_source_line_type_unknown"),
         ({"line_type": "FUTURE_LINE"}, "preview_source_line_type_unsupported"),
-        ({"line_type": "SUPPORT"}, "preview_source_mapping_unavailable"),
-        ({"line_type": "KAFKA_STREAMS"}, "preview_source_mapping_unavailable"),
-        ({"line_type": "PROMO_CREDIT"}, "preview_charge_classification_ambiguous"),
+        ({"line_type": "SUPPORT"}, "preview_charge_classification_ambiguous"),
+        ({"line_type": "KAFKA_STREAMS"}, "preview_mapping_scope_unsupported"),
+        ({"line_type": "PROMO_CREDIT"}, "preview_source_economics_unsupported"),
         ({"description": "Prior period refund"}, "preview_charge_classification_ambiguous"),
         ({"resource_id": None}, "preview_source_record_incomplete"),
         ({"amount": 0}, "preview_source_economics_unsupported"),
@@ -404,6 +404,10 @@ def test_source_eligibility_diagnostics_travel_through_worker_failure_path(
         assert failed.diagnostic.code != "preview_generation_failed"
         assert len(failed.diagnostic.source_correlation_ids) == 1
         assert "cost-1" not in failed.diagnostic.source_correlation_ids[0]
+        if expected_code == "preview_mapping_scope_unsupported":
+            assert failed.diagnostic.message == (
+                "The complete source set exceeds the current Daily Full mapping scope."
+            )
         _assert_no_artifact(failed)
     finally:
         runtime.close()

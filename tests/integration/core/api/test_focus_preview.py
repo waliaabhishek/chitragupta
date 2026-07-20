@@ -77,6 +77,29 @@ class SameThreadApiClient:
         return self._loop.run_until_complete(self._client.post(url, **kwargs))  # type: ignore[arg-type]
 
 
+class SameThreadCliClient:
+    """Adapt the same-thread ASGI client to the synchronous CLI client contract."""
+
+    def __init__(self, api_client: SameThreadApiClient) -> None:
+        self._api_client = api_client
+        self.submitted_request_id: str | None = None
+
+    def __enter__(self) -> SameThreadCliClient:
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        return None
+
+    def get(self, url: str, **kwargs: object) -> httpx.Response:
+        return self._api_client.get(url, **kwargs)
+
+    def post(self, url: str, **kwargs: object) -> httpx.Response:
+        response = self._api_client.post(url, **kwargs)
+        if response.status_code == 202:
+            self.submitted_request_id = response.json()["request_id"]
+        return response
+
+
 def _settings(tmp_path: Path, *, ecosystem: str = "confluent_cloud") -> AppSettings:
     config = import_module("core.config.models")
     return AppSettings(
@@ -430,6 +453,101 @@ def test_primary_api_seam_serializes_safe_diagnostic_correlations_and_no_interna
     assert body["package"] is None
 
 
+@pytest.mark.parametrize(
+    ("account_state", "code", "message"),
+    [
+        (
+            "missing",
+            "preview_billing_account_unavailable",
+            "Authoritative Confluent Cloud organization evidence is unavailable for this tenant.",
+        ),
+        (
+            "conflicting",
+            "preview_billing_account_conflicting",
+            "Persisted Confluent Cloud organization evidence conflicts for this tenant.",
+        ),
+    ],
+)
+def test_primary_api_seam_transports_exact_billing_account_diagnostic(
+    tmp_path: Path,
+    account_state: str,
+    code: str,
+    message: str,
+) -> None:
+    settings = _settings(tmp_path)
+    backend = SQLModelBackend(
+        settings.tenants["production"].storage.connection_string.get_secret_value(),
+        CCloudStorageModule(),
+        use_migrations=False,
+    )
+    backend.create_tables()
+    _seed(backend, source=_source(), aggregate=_aggregate(), allocation=_allocation())
+    with backend.create_unit_of_work() as uow:
+        if account_state == "missing":
+            uow.resources.mark_deleted(
+                "confluent_cloud",
+                "tenant-1",
+                "11111111-2222-4333-8444-555555555555",
+                datetime(2026, 7, 3, tzinfo=UTC),
+            )
+        else:
+            uow.resources.upsert(
+                CoreResource(
+                    ecosystem="confluent_cloud",
+                    tenant_id="tenant-1",
+                    resource_id="22222222-3333-4444-8555-666666666666",
+                    resource_type="organization",
+                    display_name="Conflicting provider organization",
+                    status=ResourceStatus.ACTIVE,
+                    metadata={"organization_binding_state": "conflicting_observation"},
+                )
+            )
+        uow.commit()
+    app, client = _client(settings)
+    with patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"), client:
+        app.state.backends["production"] = backend
+        submitted = client.post("/api/v1/tenants/production/focus-preview/requests", json=_body())
+        body = _wait_for_terminal(client, submitted.json()["request_id"])
+
+    _assert_terminal_failure(
+        body,
+        code=code,
+        message=message,
+        retryable=False,
+        correlation_count=1,
+    )
+
+
+def test_primary_api_seam_transports_exact_row_validation_diagnostic(tmp_path: Path) -> None:
+    mapping = import_module("core.preview.mapping")
+    settings = _settings(tmp_path)
+    backend = SQLModelBackend(
+        settings.tenants["production"].storage.connection_string.get_secret_value(),
+        CCloudStorageModule(),
+        use_migrations=False,
+    )
+    backend.create_tables()
+    _seed(backend, source=_source(), aggregate=_aggregate(), allocation=_allocation())
+    app, client = _client(settings)
+    validation_error = mapping.PreviewRowValidationError(mapping.PreviewRowRuleId.TYPE, column="BillingAccountId")
+    with (
+        patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"),
+        patch("core.preview.service.build_daily_full_package", side_effect=validation_error),
+        client,
+    ):
+        app.state.backends["production"] = backend
+        submitted = client.post("/api/v1/tenants/production/focus-preview/requests", json=_body())
+        body = _wait_for_terminal(client, submitted.json()["request_id"])
+
+    _assert_terminal_failure(
+        body,
+        code="preview_mapping_validation_failed",
+        message="The generated row does not satisfy the Daily Full mapping profile.",
+        retryable=False,
+        correlation_count=1,
+    )
+
+
 def _mapper_backed_malformed_source() -> CCloudCostSourceRecord:
     cost_input = import_module("plugins.confluent_cloud.cost_input")
     candidate_type = cost_input._SourceCandidate
@@ -478,7 +596,11 @@ def _mapper_backed_malformed_source() -> CCloudCostSourceRecord:
         ({"description": "Prior period refund"}, "preview_charge_classification_ambiguous"),
         ({"line_type": None}, "preview_source_line_type_unknown"),
         ({"line_type": "FUTURE_LINE"}, "preview_source_line_type_unsupported"),
-        ({"line_type": "SUPPORT"}, "preview_source_mapping_unavailable"),
+        ({"line_type": "SUPPORT"}, "preview_charge_classification_ambiguous"),
+        (
+            {"line_type": "SUPPORT", "product": "SUPPORT_CLOUD_BUSINESS", "description": "Support subscription"},
+            "preview_mapping_scope_unsupported",
+        ),
         ({"resource_id": None}, "preview_source_record_incomplete"),
         ({"amount": 0}, "preview_source_economics_unsupported"),
         ({"amount": 7}, "preview_source_reconciliation_failed"),
@@ -540,7 +662,7 @@ def test_primary_api_seam_uses_real_source_mapper_for_malformed_diagnostic(tmp_p
     assert len(body["diagnostic"]["source_correlation_ids"]) == 1
 
 
-def test_primary_api_kafka_streams_mapping_precedes_unknown_unsupported_line(tmp_path: Path) -> None:
+def test_primary_api_unknown_unsupported_line_precedes_valid_kafka_streams(tmp_path: Path) -> None:
     settings = _settings(tmp_path)
     backend = SQLModelBackend(
         settings.tenants["production"].storage.connection_string.get_secret_value(),
@@ -568,7 +690,7 @@ def test_primary_api_kafka_streams_mapping_precedes_unknown_unsupported_line(tmp
         body = _wait_for_terminal(client, submitted.json()["request_id"])
 
     assert body["status"] == "failed"
-    assert body["diagnostic"]["code"] == "preview_source_mapping_unavailable"
+    assert body["diagnostic"]["code"] == "preview_source_line_type_unsupported"
     assert len(body["diagnostic"]["source_correlation_ids"]) == 1
 
 
@@ -826,11 +948,39 @@ def test_primary_api_failure_isolated_across_tenant_databases_and_non_overlappin
             CoreResource(
                 ecosystem="confluent_cloud",
                 tenant_id="tenant-2",
+                resource_id="22222222-3333-4444-8555-666666666666",
+                resource_type="organization",
+                display_name="Sandbox provider organization",
+                status=ResourceStatus.ACTIVE,
+                metadata={"organization_binding_state": "bound"},
+            )
+        )
+        uow.resources.upsert(
+            CoreResource(
+                ecosystem="confluent_cloud",
+                tenant_id="tenant-2",
+                resource_id="env-1",
+                resource_type="environment",
+                display_name="Sandbox production",
+                status=ResourceStatus.ACTIVE,
+            )
+        )
+        uow.resources.upsert(
+            CoreResource(
+                ecosystem="confluent_cloud",
+                tenant_id="tenant-2",
                 resource_id="lkc-1",
                 resource_type="kafka_cluster",
                 display_name="Sandbox orders",
+                parent_id="env-1",
                 status=ResourceStatus.ACTIVE,
                 created_at=datetime(2026, 1, 1, tzinfo=UTC),
+                metadata={
+                    "cloud": "aws",
+                    "region": "us-east-1",
+                    "provider_cloud": "AWS",
+                    "provider_region": "us-east-1",
+                },
             )
         )
         uow.identities.upsert(
@@ -966,6 +1116,56 @@ def test_production_app_default_runtime_serves_exact_stored_ready_package_withou
         unlisted = client.get(f"/api/v1/tenants/production/focus-preview/requests/{request_id}/files/unlisted.csv")
         assert unlisted.status_code == 404
         assert unlisted.json() == {"detail": f"Preview file 'unlisted.csv' not found for request '{request_id}'"}
+
+
+def test_cli_downloads_exact_bytes_served_by_same_production_api(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = _settings(tmp_path)
+    backend = SQLModelBackend(
+        settings.tenants["production"].storage.connection_string.get_secret_value(),
+        CCloudStorageModule(),
+        use_migrations=False,
+    )
+    backend.create_tables()
+    _seed(backend, source=_source(), aggregate=_aggregate(), allocation=_allocation())
+    app, client = _client(settings)
+    cli = import_module("core.preview.cli")
+    cli_client = SameThreadCliClient(client)
+    output_dir = tmp_path / "cli-output"
+
+    monkeypatch.setattr(cli.httpx, "Client", lambda **_kwargs: cli_client)
+    monkeypatch.setattr(cli.time, "sleep", lambda _seconds: None)
+    with patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"), client:
+        app.state.backends["production"] = backend
+        exit_code = cli.main(
+            [
+                "daily-full",
+                "--api-url",
+                "http://testserver/api/v1",
+                "--tenant",
+                "production",
+                "--start-date",
+                "2026-07-01",
+                "--end-date",
+                "2026-07-02",
+                "--output-dir",
+                str(output_dir),
+            ]
+        )
+
+        assert exit_code == 0
+        assert cli_client.submitted_request_id is not None
+        status = client.get(f"/api/v1/tenants/production/focus-preview/requests/{cli_client.submitted_request_id}")
+        assert status.status_code == 200
+        package = status.json()["package"]
+        artifacts = [package["manifest"], *package["files"]]
+        api_bytes = {artifact["name"]: client.get(artifact["download_url"]).content for artifact in artifacts}
+
+    assert {path.name for path in output_dir.iterdir()} == set(api_bytes)
+    for name, stored_bytes in api_bytes.items():
+        assert (output_dir / name).read_bytes() == stored_bytes
 
 
 def test_api_observes_running_between_queued_and_ready(tmp_path: Path) -> None:

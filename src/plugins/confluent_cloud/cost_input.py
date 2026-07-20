@@ -245,8 +245,9 @@ def _map_source_record(
     raw_id = raw.get("id")
     if not isinstance(raw_id, str) or not raw_id.strip():
         diagnostics.append("missing_required:id")
+    line_type = _optional_string(raw, "line_type")
     unit = _optional_string(raw, "unit")
-    if not unit:
+    if not unit and line_type != "PROMO_CREDIT":
         diagnostics.append("missing_required:unit")
 
     source_start = _strict_date(raw, "start_date", diagnostics)
@@ -283,7 +284,7 @@ def _map_source_record(
         retention_timestamp=retention_timestamp,
         granularity=_optional_string(raw, "granularity"),
         product=_optional_string(raw, "product"),
-        line_type=_optional_string(raw, "line_type"),
+        line_type=line_type,
         amount=decimals["amount"],
         original_amount=decimals["original_amount"],
         discount_amount=decimals["discount_amount"],

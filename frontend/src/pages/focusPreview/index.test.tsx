@@ -81,16 +81,24 @@ describe("FOCUS Mapping Preview page delegation", () => {
     expect(screen.getByText("Full")).toBeTruthy();
     expect(screen.getByText(/non-conforming/i)).toBeTruthy();
     for (const description of [
-      "Billing account and issuer mapping is pending.",
-      "Authoritative provider billing-period mapping is pending.",
-      "Confluent Costs API monetary values are documented in USD but do not include a per-record ISO currency value.",
-      "Provider-authoritative SKU identity is unavailable.",
+      "Confluent Costs records do not carry a per-record billing currency.",
       "Post-issuance invoice identity is unavailable.",
-      "Allocation lineage and tag projection are pending.",
-      "Provider applicability and mapping are pending.",
+      "Provider legal invoice-issuer evidence is unavailable.",
+      "HostProviderName contains the raw provider cloud code, not a provider display name.",
+      "Confluent inventory does not provide a distinct region display name.",
+      "SKU values are deterministic Chitragupta-derived evidence, not provider-issued identifiers.",
+      "General allocation lineage and tag projection are deferred.",
+      "Durable allocation-ratio evidence is deferred.",
+      "Allocation method-version evidence is deferred.",
     ]) {
       expect(screen.getByText(description)).toBeTruthy();
     }
+    expect(screen.getByText("allocation_ratio_deferred")).toBeTruthy();
+    expect(screen.getByText("allocation_method_version_deferred")).toBeTruthy();
+    expect(screen.queryByText("Billing account and issuer mapping is pending.")).toBeNull();
+    expect(screen.queryByText("Authoritative provider billing-period mapping is pending.")).toBeNull();
+    expect(screen.queryByText("Provider applicability and mapping are pending.")).toBeNull();
+    expect(screen.queryByText(/billing period evidence is not yet available/i)).toBeNull();
   });
 
   it("submits, polls, and downloads only through the API module", async () => {

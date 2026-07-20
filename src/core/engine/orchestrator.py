@@ -18,7 +18,7 @@ from core.engine.loading import load_protocol_callable
 from core.models.chargeback import ChargebackRow, CostType
 from core.models.identity import SENTINEL_IDENTITY_TYPES, CoreIdentity, IdentityResolution, IdentitySet
 from core.models.pipeline import PipelineState
-from core.plugin.protocols import OverlayPlugin, TopicDiscoveryPlugin
+from core.plugin.protocols import OverlayPlugin, SupplementalResourceGatherer, TopicDiscoveryPlugin
 from core.plugin.registry import EcosystemBundle
 
 if TYPE_CHECKING:
@@ -226,6 +226,7 @@ class GatherPhase:
                             exc,
                         )
                         gather_errors.append(f"Handler {handler.service_type} gather failed: {exc}")
+                self._run_supplemental_gather(uow, datetime.now(UTC), gather_errors)
 
         return GatherResult(dates_gathered=0, errors=gather_errors)
 
@@ -241,7 +242,19 @@ class GatherPhase:
             )
             return GatherResult(dates_gathered=0, errors=[], skipped=True)
 
-        all_gathered_resource_ids: set[str] = set()
+        handlers = tuple(self._bundle.handlers.items())
+        declared_handlers_by_type: dict[str, set[str]] = {}
+        successful_handlers_by_type: dict[str, set[str]] = {}
+        observed_declared_resource_ids_by_type: dict[str, set[str]] = {}
+        for handler_name, handler in handlers:
+            for resource_type in dict.fromkeys(handler.gathered_resource_types):
+                declaring_handlers = declared_handlers_by_type.get(resource_type)
+                if declaring_handlers is None:
+                    declaring_handlers = set()
+                    declared_handlers_by_type[resource_type] = declaring_handlers
+                    successful_handlers_by_type[resource_type] = set()
+                    observed_declared_resource_ids_by_type[resource_type] = set()
+                declaring_handlers.add(handler_name)
         all_gathered_identity_ids: set[str] = set()
         gather_complete = True
         gather_errors: list[str] = []
@@ -249,26 +262,59 @@ class GatherPhase:
         # Phase 1: Build shared context once for all handlers.
         shared_ctx = self._bundle.plugin.build_shared_context(self._tenant_id)
 
-        for handler in self._bundle.handlers.values():
+        for handler_name, handler in handlers:
             try:
-                r_ids, i_ids = self._gather_resources_and_identities(handler, uow, shared_ctx)
-                all_gathered_resource_ids.update(r_ids)
+                handler_ids_by_type, i_ids = self._gather_resources_and_identities(handler, uow, shared_ctx)
                 all_gathered_identity_ids.update(i_ids)
+                for resource_type in dict.fromkeys(handler.gathered_resource_types):
+                    successful_handlers_by_type[resource_type].add(handler_name)
+                    resource_ids = handler_ids_by_type.get(resource_type)
+                    if resource_ids is not None:
+                        observed_declared_resource_ids_by_type[resource_type].update(resource_ids)
             except Exception as exc:
                 logger.exception("Handler %s gather failed: %s", handler.service_type, exc)
                 gather_complete = False
                 gather_errors.append(f"Handler {handler.service_type} gather failed: {exc}")
 
+        resource_ids_by_type = {
+            resource_type: observed_declared_resource_ids_by_type[resource_type]
+            for resource_type, declaring_handlers in declared_handlers_by_type.items()
+            if successful_handlers_by_type[resource_type] == declaring_handlers
+        }
+
+        # Supplemental inventory is isolated from ordinary handler completion,
+        # billing readiness, and billing-resource deletion detection.
+        self._run_supplemental_gather(uow, now, gather_errors)
+
+        excluded_resource_types = (
+            self._bundle.plugin.supplemental_resource_types
+            if isinstance(self._bundle.plugin, SupplementalResourceGatherer)
+            else ()
+        )
+        if resource_ids_by_type:
+            for resource_type in sorted(resource_ids_by_type):
+                self._detect_resource_deletions(
+                    uow.resources,
+                    resource_ids_by_type[resource_type],
+                    now,
+                    (resource_type,),
+                    excluded_resource_types,
+                    counter_name=f"resources:{resource_type}",
+                )
+            self._zero_gather_counters["resources"] = max(
+                (count for name, count in self._zero_gather_counters.items() if name.startswith("resources:")),
+                default=0,
+            )
         if gather_complete:
             self._detect_deletions(
                 uow,
                 now,
-                all_gathered_resource_ids,
+                set(),
                 all_gathered_identity_ids,
-                gathered_resource_types=self._bundle.billing_resource_types,
+                (),
             )
         else:
-            logger.warning("Skipping deletion detection — incomplete gather for %s", self._tenant_id)
+            logger.warning("Skipping identity deletion detection — incomplete gather for %s", self._tenant_id)
 
         gathered_billing_dates = self._gather_billing(uow, now)
 
@@ -311,20 +357,115 @@ class GatherPhase:
 
     def _gather_resources_and_identities(
         self, handler: ServiceHandler, uow: UnitOfWork, shared_ctx: object | None = None
-    ) -> tuple[set[str], set[str]]:
-        gathered_resource_ids: set[str] = set()
+    ) -> tuple[dict[str, set[str]], set[str]]:
+        gathered_resource_ids_by_type: dict[str, set[str]] = {}
         gathered_identity_ids: set[str] = set()
         for resource in handler.gather_resources(self._tenant_id, uow, shared_ctx):
             if resource.created_at is not None:
                 resource = replace(resource, created_at=_ensure_utc(resource.created_at))  # type: ignore[type-var]  # runtime objects are dataclasses behind Resource Protocol
             uow.resources.upsert(resource)
-            gathered_resource_ids.add(resource.resource_id)
+            resource_ids = gathered_resource_ids_by_type.get(resource.resource_type)
+            if resource_ids is None:
+                resource_ids = set()
+                gathered_resource_ids_by_type[resource.resource_type] = resource_ids
+            resource_ids.add(resource.resource_id)
         for identity in handler.gather_identities(self._tenant_id, uow):
             if identity.created_at is not None:
                 identity = replace(identity, created_at=_ensure_utc(identity.created_at))  # type: ignore[type-var]  # runtime objects are dataclasses behind Identity Protocol
             uow.identities.upsert(identity)
             gathered_identity_ids.add(identity.identity_id)
-        return gathered_resource_ids, gathered_identity_ids
+        return gathered_resource_ids_by_type, gathered_identity_ids
+
+    def _run_supplemental_gather(
+        self,
+        uow: UnitOfWork,
+        now: datetime,
+        gather_errors: list[str],
+    ) -> None:
+        plugin = self._bundle.plugin
+        if not isinstance(plugin, SupplementalResourceGatherer):
+            return
+        for resource_type in plugin.supplemental_resource_types:
+            try:
+                resources = list(plugin.gather_supplemental_resources(self._tenant_id, resource_type, uow))
+                if any(resource.resource_type != resource_type for resource in resources):
+                    raise ValueError(f"supplemental {resource_type} gather returned another resource type")
+                if resource_type == "organization":
+                    self._reconcile_organization_resources(uow, resources, now)
+                else:
+                    for resource in resources:
+                        uow.resources.upsert(resource)
+                    observed_ids = {resource.resource_id for resource in resources}
+                    active, _ = uow.resources.find_active_at(
+                        self._ecosystem,
+                        self._tenant_id,
+                        now,
+                        resource_type=resource_type,
+                        count=False,
+                    )
+                    for existing in active:
+                        if existing.resource_type == resource_type and existing.resource_id not in observed_ids:
+                            uow.resources.mark_deleted(
+                                self._ecosystem,
+                                self._tenant_id,
+                                existing.resource_id,
+                                now,
+                            )
+            except Exception as exc:
+                logger.exception("Supplemental %s gather failed: %s", resource_type, exc)
+                gather_errors.append(f"Supplemental {resource_type} gather failed: {exc}")
+
+    def _reconcile_organization_resources(
+        self,
+        uow: UnitOfWork,
+        observed: Sequence[Resource],
+        now: datetime,
+    ) -> None:
+        """Persist one immutable provider organization binding per tenant partition."""
+        active, _ = uow.resources.find_active_at(
+            self._ecosystem,
+            self._tenant_id,
+            now,
+            resource_type="organization",
+            count=False,
+        )
+        active_organizations = [resource for resource in active if resource.resource_type == "organization"]
+        bound = [
+            resource
+            for resource in active_organizations
+            if resource.metadata.get("organization_binding_state") == "bound"
+        ]
+        if len(bound) > 1:
+            raise ValueError("multiple provider organization bindings are active")
+        observed_by_id = {resource.resource_id: resource for resource in observed if resource.resource_id.strip()}
+        bound_id = bound[0].resource_id if bound else None
+        if len(observed) != 1 or len(observed_by_id) != 1:
+            for resource in observed_by_id.values():
+                state = "bound" if resource.resource_id == bound_id else "conflicting_observation"
+                uow.resources.upsert(
+                    replace(  # type: ignore[type-var]  # runtime Resource implementations are dataclasses
+                        resource,
+                        metadata={**resource.metadata, "organization_binding_state": state},
+                    )
+                )
+            raise ValueError("provider organization acquisition must return exactly one nonblank ID")
+        observed_id, resource = next(iter(observed_by_id.items()))
+        if bound_id is not None and observed_id != bound_id:
+            uow.resources.upsert(
+                replace(  # type: ignore[type-var]  # runtime Resource implementations are dataclasses
+                    resource, metadata={**resource.metadata, "organization_binding_state": "conflicting_observation"}
+                )
+            )
+            raise ValueError("provider organization observation conflicts with the immutable binding")
+        uow.resources.upsert(
+            replace(  # type: ignore[type-var]  # runtime Resource implementations are dataclasses
+                resource,
+                metadata={**resource.metadata, "organization_binding_state": "bound"},
+            )
+        )
+        for existing in active_organizations:
+            if existing.resource_id != observed_id:
+                uow.resources.mark_deleted(self._ecosystem, self._tenant_id, existing.resource_id, now)
 
     def _run_deletion_scan(
         self,
@@ -341,6 +482,7 @@ class GatherPhase:
         then pass the results here along with id_getter and mark_fn closures.
         """
         threshold = self._tenant_config.zero_gather_deletion_threshold
+        self._zero_gather_counters.setdefault(entity_name, 0)
         if not gathered_ids and active_entities:
             self._zero_gather_counters[entity_name] += 1
             consecutive = self._zero_gather_counters[entity_name]
@@ -376,6 +518,8 @@ class GatherPhase:
         gathered_ids: set[str],
         now: datetime,
         resource_types: Sequence[str],
+        excluded_resource_types: Sequence[str] = (),
+        counter_name: str = "resources",
     ) -> None:
         """Deletion detection scoped to billing-relevant resource types.
 
@@ -389,10 +533,17 @@ class GatherPhase:
             resource_type=resource_types,
             count=False,
         )
+        if excluded_resource_types:
+            active_resources = [
+                resource
+                for resource in active_resources
+                if resource.resource_type not in excluded_resource_types
+                and (not resource_types or resource.resource_type in resource_types)
+            ]
         self._run_deletion_scan(
             active_resources,
             gathered_ids,
-            "resources",
+            counter_name,
             now,
             id_getter=lambda r: r.resource_id,
             mark_fn=lambda rid, ts: repo.mark_deleted(self._ecosystem, self._tenant_id, rid, ts),
@@ -423,8 +574,16 @@ class GatherPhase:
         gathered_resource_ids: set[str],
         gathered_identity_ids: set[str],
         gathered_resource_types: Sequence[str],
+        excluded_resource_types: Sequence[str] = (),
     ) -> None:
-        self._detect_resource_deletions(uow.resources, gathered_resource_ids, now, gathered_resource_types)
+        if gathered_resource_types:
+            self._detect_resource_deletions(
+                uow.resources,
+                gathered_resource_ids,
+                now,
+                gathered_resource_types,
+                excluded_resource_types,
+            )
         self._detect_entity_deletions(uow.identities, gathered_identity_ids, "identities", lambda i: i.identity_id, now)
 
     def _gather_billing(self, uow: UnitOfWork, now: datetime) -> set[date_type]:

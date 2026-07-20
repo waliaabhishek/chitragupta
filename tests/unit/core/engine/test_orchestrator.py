@@ -13,6 +13,7 @@ from core.engine.allocation import AllocationContext, AllocationResult
 from core.engine.orchestrator import (
     ChargebackOrchestrator,
     GatherFailureThresholdError,
+    GatherPhase,
     PipelineRunResult,
     _ensure_utc,
     billing_window,
@@ -22,6 +23,7 @@ from core.models.chargeback import ChargebackRow, CostType
 from core.models.identity import CoreIdentity, Identity, IdentityResolution, IdentitySet
 from core.models.pipeline import PipelineState
 from core.models.resource import CoreResource, Resource
+from core.plugin.protocols import EcosystemPlugin, SupplementalResourceGatherer
 from core.storage.interface import PipelineStateRepository
 
 if TYPE_CHECKING:
@@ -80,6 +82,21 @@ def _make_resource(resource_id: str = "cluster-1", created_at: datetime | None =
     )
 
 
+def _organization(
+    resource_id: str,
+    *,
+    tenant_id: str = TENANT_ID,
+    display_name: str | None = None,
+) -> CoreResource:
+    return CoreResource(
+        ecosystem=ECOSYSTEM,
+        tenant_id=tenant_id,
+        resource_id=resource_id,
+        resource_type="organization",
+        display_name=display_name,
+    )
+
+
 def _make_identity(identity_id: str = "user-1") -> Identity:
     return CoreIdentity(
         ecosystem=ECOSYSTEM,
@@ -119,6 +136,7 @@ class MockServiceHandler:
         metrics_queries: list[MetricQuery] | None = None,
         allocator: Any = None,
         resolve_fn: Any = None,
+        gathered_resource_types: list[str] | None = None,
     ):
         self._service_type = service_type
         self._product_types = product_types or ["KAFKA_CKU"]
@@ -127,6 +145,7 @@ class MockServiceHandler:
         self._metrics_queries = metrics_queries or []
         self._allocator = allocator or _simple_allocator
         self._resolve_fn = resolve_fn
+        self._gathered_resource_types = gathered_resource_types or []
 
     @property
     def service_type(self) -> str:
@@ -138,7 +157,7 @@ class MockServiceHandler:
 
     @property
     def gathered_resource_types(self) -> list[str]:
-        return []
+        return self._gathered_resource_types
 
     def gather_resources(self, tenant_id: str, uow: Any, shared_ctx: object | None = None) -> Iterable[Resource]:
         return self._resources
@@ -210,8 +229,58 @@ class MockPlugin:
     def build_shared_context(self, tenant_id: str) -> None:
         return None
 
+    def get_storage_module(self) -> Any:
+        raise AssertionError("MockPlugin storage module is not used by orchestrator unit tests")
+
     def close(self) -> None:
         pass
+
+
+class MockSupplementalPlugin(MockPlugin):
+    def __init__(
+        self,
+        *,
+        fail_organization: bool = False,
+        supplemental_types: tuple[str, ...] = ("organization",),
+        supplemental_responses: dict[str, list[Iterable[Resource] | Exception]] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(**kwargs)
+        self.fail_organization = fail_organization
+        self._supplemental_types = supplemental_types
+        self._supplemental_responses = supplemental_responses or {}
+        self.supplemental_calls: list[tuple[str, str]] = []
+
+    @property
+    def supplemental_resource_types(self) -> tuple[str, ...]:
+        return self._supplemental_types
+
+    def gather_supplemental_resources(
+        self,
+        tenant_id: str,
+        resource_type: str,
+        uow: Any,
+    ) -> Iterable[Resource]:
+        self.supplemental_calls.append((tenant_id, resource_type))
+        responses = self._supplemental_responses.get(resource_type)
+        if responses:
+            response = responses.pop(0)
+            if isinstance(response, Exception):
+                raise response
+            return response
+        if self.fail_organization:
+            raise RuntimeError("organization endpoint unavailable")
+        if resource_type != "organization":
+            return ()
+        return (
+            CoreResource(
+                ecosystem=ECOSYSTEM,
+                tenant_id=tenant_id,
+                resource_id="11111111-2222-4333-8444-555555555555",
+                resource_type="organization",
+                display_name="Provider billing organization",
+            ),
+        )
 
 
 class MockPluginWithFallback(MockPlugin):
@@ -255,18 +324,27 @@ class MockResourceRepo:
     def __init__(self) -> None:
         self._data: dict[str, Resource] = {}
         self._deletions: list[tuple[str, datetime]] = []
+        self.get_calls: list[tuple[str, str, str]] = []
 
     def upsert(self, resource: Resource) -> Resource:
         self._data[resource.resource_id] = resource
         return resource
 
     def get(self, ecosystem: str, tenant_id: str, resource_id: str) -> Resource | None:
+        self.get_calls.append((ecosystem, tenant_id, resource_id))
         return self._data.get(resource_id)
 
     def find_active_at(
         self, ecosystem: str, tenant_id: str, timestamp: datetime, **kwargs: Any
     ) -> tuple[list[Resource], int]:
-        items = [r for r in self._data.values() if r.deleted_at is None]
+        requested_types = kwargs.get("resource_type")
+        if isinstance(requested_types, str):
+            requested_types = (requested_types,)
+        items = [
+            resource
+            for resource in self._data.values()
+            if resource.deleted_at is None and (requested_types is None or resource.resource_type in requested_types)
+        ]
         return items, len(items)
 
     def find_by_period(
@@ -292,6 +370,7 @@ class MockIdentityRepo:
     def __init__(self) -> None:
         self._data: dict[str, Identity] = {}
         self._deletions: list[tuple[str, datetime]] = []
+        self.find_active_at_calls = 0
 
     def upsert(self, identity: Identity) -> Identity:
         self._data[identity.identity_id] = identity
@@ -303,6 +382,7 @@ class MockIdentityRepo:
     def find_active_at(
         self, ecosystem: str, tenant_id: str, timestamp: datetime, **kwargs: Any
     ) -> tuple[list[Identity], int]:
+        self.find_active_at_calls += 1
         items = [i for i in self._data.values() if i.deleted_at is None]
         return items, len(items)
 
@@ -483,6 +563,13 @@ def test_pipeline_state_fake_structurally_satisfies_repository_protocol() -> Non
     assert isinstance(MockPipelineStateRepo(), PipelineStateRepository)
 
 
+def test_supplemental_plugin_fake_satisfies_every_production_protocol_member() -> None:
+    plugin = MockSupplementalPlugin()
+
+    assert isinstance(plugin, EcosystemPlugin)
+    assert isinstance(plugin, SupplementalResourceGatherer)
+
+
 class MockStorageBackend:
     def __init__(self, uow: MockUnitOfWork | None = None) -> None:
         self._uow = uow or MockUnitOfWork()
@@ -628,6 +715,19 @@ class TestGatherPhase:
         assert "r2" in uow.resources._data
         assert "i1" in uow.identities._data
 
+    def test_identity_only_success_runs_one_identity_scan_without_deleting_gathered_identity(self) -> None:
+        identity = _make_identity("i1")
+        handler = MockServiceHandler(resources=[], identities=[identity], gathered_resource_types=[])
+        orch, storage = _create_orchestrator(handler=handler, zero_gather_deletion_threshold=1)
+        uow = storage.create_unit_of_work()
+        uow.identities.upsert(identity)
+
+        orch.run()
+
+        assert "i1" not in {identity_id for identity_id, _deleted_at in uow.identities._deletions}
+        assert uow.identities._data["i1"].deleted_at is None
+        assert uow.identities.find_active_at_calls == 1
+
     def test_partial_gather_skips_deletion(self, caplog: pytest.LogCaptureFixture) -> None:
         """If a handler raises during gather, deletion detection is skipped."""
 
@@ -648,11 +748,77 @@ class TestGatherPhase:
         uow = storage.create_unit_of_work()
         assert uow.resources._deletions == []
 
+    def test_overlapping_declared_type_is_not_deletion_scanned_when_one_handler_fails(self) -> None:
+        class FailingHandler(MockServiceHandler):
+            def gather_resources(
+                self, tenant_id: str, uow: Any, shared_ctx: object | None = None
+            ) -> Iterable[Resource]:
+                raise RuntimeError("shared type unavailable")
+
+        successful = MockServiceHandler(
+            service_type="successful",
+            product_types=["SUCCESS_PRODUCT"],
+            resources=[_make_resource("r-observed")],
+            gathered_resource_types=["kafka_cluster"],
+        )
+        failing = FailingHandler(
+            service_type="failing",
+            product_types=["FAIL_PRODUCT"],
+            gathered_resource_types=["kafka_cluster"],
+        )
+        storage = MockStorageBackend()
+        uow = storage.create_unit_of_work()
+        uow.resources.upsert(_make_resource("r-failed-handler"))
+        plugin = MockPlugin(handlers={"successful": successful, "failing": failing})
+        orchestrator = ChargebackOrchestrator(
+            TENANT_NAME,
+            _make_tenant_config(),
+            plugin,
+            storage,
+        )
+
+        result = orchestrator.run()
+
+        assert any("shared type unavailable" in error for error in result.errors)
+        assert uow.resources._deletions == []
+        assert uow.resources._data["r-observed"].deleted_at is None
+        assert uow.resources._data["r-failed-handler"].deleted_at is None
+
+    def test_yielded_undeclared_resource_type_is_not_deletion_authoritative(self) -> None:
+        handler = MockServiceHandler(
+            resources=[
+                CoreResource(
+                    ecosystem=ECOSYSTEM,
+                    tenant_id=TENANT_ID,
+                    resource_id="connector-observed",
+                    resource_type="connector",
+                )
+            ],
+            gathered_resource_types=["kafka_cluster"],
+        )
+        orch, storage = _create_orchestrator(handler=handler)
+        uow = storage.create_unit_of_work()
+        uow.resources.upsert(
+            CoreResource(
+                ecosystem=ECOSYSTEM,
+                tenant_id=TENANT_ID,
+                resource_id="connector-not-observed",
+                resource_type="connector",
+            )
+        )
+
+        orch.run()
+
+        deleted_ids = {resource_id for resource_id, _deleted_at in uow.resources._deletions}
+        assert "connector-not-observed" not in deleted_ids
+        assert uow.resources._data["connector-not-observed"].deleted_at is None
+
     def test_deletion_detection_marks_missing(self) -> None:
         """Resources not returned by gather get marked deleted."""
         handler = MockServiceHandler(
             resources=[_make_resource("r1")],
             identities=[_make_identity("i1")],
+            gathered_resource_types=["kafka_cluster"],
         )
         orch, storage = _create_orchestrator(handler=handler)
         uow = storage.create_unit_of_work()
@@ -666,11 +832,346 @@ class TestGatherPhase:
         deleted_ids = [rid for rid, _ in uow.resources._deletions]
         assert "r-old" in deleted_ids
 
+    def test_supplemental_organization_runs_once_after_ordinary_resources(self) -> None:
+        handler = MockServiceHandler(
+            resources=[_make_resource("r1")],
+            identities=[_make_identity("i1")],
+            gathered_resource_types=["kafka_cluster"],
+        )
+        plugin = MockSupplementalPlugin(handlers={"kafka": handler})
+        storage = MockStorageBackend()
+        orchestrator = ChargebackOrchestrator(
+            TENANT_NAME,
+            _make_tenant_config(),
+            plugin,
+            storage,
+        )
+
+        orchestrator.run()
+
+        uow = storage.create_unit_of_work()
+        assert plugin.supplemental_calls == [(TENANT_ID, "organization")]
+        assert "r1" in uow.resources._data
+        organization = uow.resources._data["11111111-2222-4333-8444-555555555555"]
+        assert organization.resource_type == "organization"
+        assert organization.metadata["organization_binding_state"] == "bound"
+
+    def test_gather_bookkeeping_does_not_issue_one_repository_get_per_resource(self) -> None:
+        ordinary = [_make_resource(f"cluster-{index}") for index in range(64)]
+        catalogs = tuple(
+            CoreResource(
+                ecosystem=ECOSYSTEM,
+                tenant_id=TENANT_ID,
+                resource_id=f"catalog-{index}",
+                resource_type="catalog",
+            )
+            for index in range(64)
+        )
+        plugin = MockSupplementalPlugin(
+            handlers={
+                "kafka": MockServiceHandler(
+                    resources=ordinary,
+                    gathered_resource_types=["kafka_cluster"],
+                )
+            },
+            supplemental_types=("organization", "catalog"),
+            supplemental_responses={
+                "organization": [(_organization("org-a"),)],
+                "catalog": [catalogs],
+            },
+        )
+        storage = MockStorageBackend()
+        orchestrator = ChargebackOrchestrator(
+            TENANT_NAME,
+            _make_tenant_config(),
+            plugin,
+            storage,
+        )
+
+        result = orchestrator.run()
+
+        assert result.errors == []
+        assert len(storage._uow.resources._data) == 129
+        assert storage._uow.resources.get_calls == []
+
+    def test_failed_organization_gather_does_not_delete_binding_or_block_ordinary_resources(self) -> None:
+        handler = MockServiceHandler(
+            resources=[_make_resource("r1")],
+            identities=[_make_identity("i1")],
+            gathered_resource_types=["kafka_cluster"],
+        )
+        plugin = MockSupplementalPlugin(handlers={"kafka": handler}, fail_organization=True)
+        storage = MockStorageBackend()
+        uow = storage.create_unit_of_work()
+        uow.resources.upsert(
+            CoreResource(
+                ecosystem=ECOSYSTEM,
+                tenant_id=TENANT_ID,
+                resource_id="11111111-2222-4333-8444-555555555555",
+                resource_type="organization",
+                metadata={"organization_binding_state": "bound"},
+            )
+        )
+        orchestrator = ChargebackOrchestrator(
+            TENANT_NAME,
+            _make_tenant_config(),
+            plugin,
+            storage,
+        )
+
+        result = orchestrator.run()
+
+        assert plugin.supplemental_calls == [(TENANT_ID, "organization")]
+        assert "r1" in uow.resources._data
+        assert "11111111-2222-4333-8444-555555555555" in uow.resources._data
+        deleted_ids = [resource_id for resource_id, _deleted_at in uow.resources._deletions]
+        assert "11111111-2222-4333-8444-555555555555" not in deleted_ids
+        assert any("organization endpoint unavailable" in error for error in result.errors)
+
+    @pytest.mark.parametrize(
+        "observed",
+        [
+            (),
+            (_organization("org-a"), _organization("org-b")),
+        ],
+        ids=("zero", "multiple"),
+    )
+    def test_invalid_initial_organization_cardinality_never_creates_a_binding(
+        self,
+        observed: tuple[CoreResource, ...],
+    ) -> None:
+        plugin = MockSupplementalPlugin(
+            handlers={"kafka": MockServiceHandler(resources=[_make_resource()])},
+            supplemental_responses={"organization": [observed]},
+        )
+        storage = MockStorageBackend()
+        orchestrator = ChargebackOrchestrator(
+            TENANT_NAME,
+            _make_tenant_config(),
+            plugin,
+            storage,
+        )
+
+        result = orchestrator.run()
+
+        active, _ = storage._uow.resources.find_active_at(ECOSYSTEM, TENANT_ID, NOW)
+        assert not any(
+            resource.resource_type == "organization" and resource.metadata.get("organization_binding_state") == "bound"
+            for resource in active
+        )
+        assert any("must return exactly one nonblank ID" in error for error in result.errors)
+
+    def test_valid_and_blank_organization_observations_fail_without_binding_or_deletion(self) -> None:
+        plugin = MockSupplementalPlugin(
+            handlers={"kafka": MockServiceHandler(resources=[_make_resource()])},
+            supplemental_responses={
+                "organization": [
+                    (_organization("org-valid"), _organization("")),
+                ]
+            },
+        )
+        storage = MockStorageBackend()
+        orchestrator = ChargebackOrchestrator(
+            TENANT_NAME,
+            _make_tenant_config(),
+            plugin,
+            storage,
+        )
+
+        result = orchestrator.run()
+
+        assert any("must return exactly one nonblank ID" in error for error in result.errors)
+        valid = storage._uow.resources._data["org-valid"]
+        assert valid.metadata["organization_binding_state"] == "conflicting_observation"
+        assert valid.deleted_at is None
+        assert not any(
+            resource.metadata.get("organization_binding_state") == "bound"
+            for resource in storage._uow.resources._data.values()
+            if resource.resource_type == "organization"
+        )
+        assert "org-valid" not in {resource_id for resource_id, _deleted_at in storage._uow.resources._deletions}
+
+    def test_same_organization_id_refreshes_name_without_rebinding(self) -> None:
+        plugin = MockSupplementalPlugin(
+            handlers={"kafka": MockServiceHandler(resources=[_make_resource()])},
+            supplemental_responses={
+                "organization": [
+                    (_organization("org-a", display_name="Old name"),),
+                    (_organization("org-a", display_name="New name"),),
+                ]
+            },
+        )
+        storage = MockStorageBackend()
+        orchestrator = ChargebackOrchestrator(
+            TENANT_NAME,
+            _make_tenant_config(plugin_settings={"min_refresh_gap_seconds": 0}),
+            plugin,
+            storage,
+        )
+
+        first = orchestrator.run()
+        second = orchestrator.run()
+
+        organization = storage._uow.resources._data["org-a"]
+        assert first.errors == []
+        assert second.errors == []
+        assert organization.display_name == "New name"
+        assert organization.metadata["organization_binding_state"] == "bound"
+        assert organization.deleted_at is None
+
+    def test_conflicting_organization_is_retained_until_bound_id_recovers(self) -> None:
+        plugin = MockSupplementalPlugin(
+            handlers={"kafka": MockServiceHandler(resources=[_make_resource()])},
+            supplemental_responses={
+                "organization": [
+                    (_organization("org-bound"),),
+                    (_organization("org-other"),),
+                    (_organization("org-bound", display_name="Recovered"),),
+                ]
+            },
+        )
+        storage = MockStorageBackend()
+        orchestrator = ChargebackOrchestrator(
+            TENANT_NAME,
+            _make_tenant_config(plugin_settings={"min_refresh_gap_seconds": 0}),
+            plugin,
+            storage,
+        )
+
+        first = orchestrator.run()
+        conflicting = orchestrator.run()
+        conflict_resource = storage._uow.resources._data["org-other"]
+        assert first.errors == []
+        assert any("conflicts with the immutable binding" in error for error in conflicting.errors)
+        assert conflict_resource.metadata["organization_binding_state"] == "conflicting_observation"
+        assert conflict_resource.deleted_at is None
+
+        recovered = orchestrator.run()
+
+        bound = storage._uow.resources._data["org-bound"]
+        assert recovered.errors == []
+        assert bound.display_name == "Recovered"
+        assert bound.metadata["organization_binding_state"] == "bound"
+        assert bound.deleted_at is None
+        assert storage._uow.resources._data["org-other"].deleted_at is not None
+
+    def test_initial_multiple_observations_can_recover_to_first_single_binding(self) -> None:
+        plugin = MockSupplementalPlugin(
+            handlers={"kafka": MockServiceHandler(resources=[_make_resource()])},
+            supplemental_responses={
+                "organization": [
+                    (_organization("org-a"), _organization("org-b")),
+                    (_organization("org-b"),),
+                ]
+            },
+        )
+        storage = MockStorageBackend()
+        orchestrator = ChargebackOrchestrator(
+            TENANT_NAME,
+            _make_tenant_config(plugin_settings={"min_refresh_gap_seconds": 0}),
+            plugin,
+            storage,
+        )
+
+        first = orchestrator.run()
+        second = orchestrator.run()
+
+        assert first.errors
+        assert second.errors == []
+        assert storage._uow.resources._data["org-b"].metadata["organization_binding_state"] == "bound"
+        assert storage._uow.resources._data["org-b"].deleted_at is None
+        assert storage._uow.resources._data["org-a"].deleted_at is not None
+
+    def test_distinct_tenant_partitions_can_bind_different_organizations(self) -> None:
+        bindings: list[tuple[str, str]] = []
+        for tenant_id, organization_id in (("tenant-a", "org-a"), ("tenant-b", "org-b")):
+            plugin = MockSupplementalPlugin(
+                supplemental_responses={"organization": [(_organization(organization_id, tenant_id=tenant_id),)]}
+            )
+            storage = MockStorageBackend()
+            orchestrator = ChargebackOrchestrator(
+                TENANT_NAME,
+                _make_tenant_config(tenant_id=tenant_id),
+                plugin,
+                storage,
+            )
+
+            result = orchestrator.run()
+
+            assert result.errors == []
+            organization = storage._uow.resources._data[organization_id]
+            assert organization.tenant_id == tenant_id
+            assert organization.metadata["organization_binding_state"] == "bound"
+            bindings.append((tenant_id, organization.resource_id))
+
+        assert bindings == [("tenant-a", "org-a"), ("tenant-b", "org-b")]
+
+    def test_successful_supplemental_type_deletes_only_missing_resources_of_that_type(self) -> None:
+        catalog = CoreResource(
+            ecosystem=ECOSYSTEM,
+            tenant_id=TENANT_ID,
+            resource_id="catalog-1",
+            resource_type="catalog",
+        )
+        plugin = MockSupplementalPlugin(
+            handlers={"kafka": MockServiceHandler(resources=[_make_resource()])},
+            supplemental_types=("organization", "catalog"),
+            supplemental_responses={
+                "organization": [(_organization("org-a"),), (_organization("org-a"),)],
+                "catalog": [(catalog,), ()],
+            },
+        )
+        storage = MockStorageBackend()
+        orchestrator = ChargebackOrchestrator(
+            TENANT_NAME,
+            _make_tenant_config(plugin_settings={"min_refresh_gap_seconds": 0}),
+            plugin,
+            storage,
+        )
+
+        first = orchestrator.run()
+        second = orchestrator.run()
+
+        assert first.errors == []
+        assert second.errors == []
+        assert storage._uow.resources._data["org-a"].deleted_at is None
+        assert storage._uow.resources._data["catalog-1"].deleted_at is not None
+
+    def test_failed_supplemental_type_skips_only_its_deletion_scan(self) -> None:
+        catalog = CoreResource(
+            ecosystem=ECOSYSTEM,
+            tenant_id=TENANT_ID,
+            resource_id="catalog-1",
+            resource_type="catalog",
+        )
+        plugin = MockSupplementalPlugin(
+            handlers={"kafka": MockServiceHandler(resources=[_make_resource()])},
+            supplemental_types=("organization", "catalog"),
+            supplemental_responses={
+                "organization": [(_organization("org-a"),), (_organization("org-a"),)],
+                "catalog": [(catalog,), RuntimeError("catalog unavailable")],
+            },
+        )
+        storage = MockStorageBackend()
+        orchestrator = ChargebackOrchestrator(
+            TENANT_NAME,
+            _make_tenant_config(plugin_settings={"min_refresh_gap_seconds": 0}),
+            plugin,
+            storage,
+        )
+
+        orchestrator.run()
+        failed = orchestrator.run()
+
+        assert any("catalog unavailable" in error for error in failed.errors)
+        assert storage._uow.resources._data["catalog-1"].deleted_at is None
+        assert storage._uow.resources._data["org-a"].deleted_at is None
+
 
 class TestZeroGatherProtection:
     def test_zero_gather_default_threshold_skips_deletion(self) -> None:
         """Default threshold=-1 never auto-deletes on zero gather."""
-        handler = MockServiceHandler(resources=[], identities=[])
+        handler = MockServiceHandler(resources=[], identities=[], gathered_resource_types=["kafka_cluster"])
         orch, storage = _create_orchestrator(handler=handler)
         uow = storage.create_unit_of_work()
 
@@ -682,7 +1183,7 @@ class TestZeroGatherProtection:
 
     def test_zero_gather_threshold_exceeded_deletes(self) -> None:
         """After N consecutive zero gathers, deletion proceeds."""
-        handler = MockServiceHandler(resources=[], identities=[])
+        handler = MockServiceHandler(resources=[], identities=[], gathered_resource_types=["kafka_cluster"])
         orch, storage = _create_orchestrator(
             handler=handler, zero_gather_deletion_threshold=2, plugin_settings={"min_refresh_gap_seconds": 0}
         )
@@ -700,7 +1201,7 @@ class TestZeroGatherProtection:
 
     def test_nonzero_gather_resets_counter(self) -> None:
         """Non-zero gather resets the consecutive counter."""
-        handler = MockServiceHandler(resources=[], identities=[])
+        handler = MockServiceHandler(resources=[], identities=[], gathered_resource_types=["kafka_cluster"])
         orch, storage = _create_orchestrator(
             handler=handler, zero_gather_deletion_threshold=3, plugin_settings={"min_refresh_gap_seconds": 0}
         )
@@ -2849,6 +3350,23 @@ class TestOrchestratorFallbackAllocator:
         for node in ast.walk(tree):
             if isinstance(node, ast.ImportFrom) and node.module and node.module.startswith("plugins"):
                 pytest.fail(f"orchestrator.py has forbidden import: from {node.module}")
+
+    def test_gather_bookkeeping_uses_only_resource_ids_by_type_keys_as_success_authority(self) -> None:
+        import inspect
+
+        source = inspect.getsource(GatherPhase._run_full)
+
+        assert "all_gathered_resource_ids" not in source
+        assert "successful_resource_types" not in source
+        assert ".setdefault(resource_type, set())" not in source
+        assert "resource_ids_by_type.get(resource_type, set())" not in source
+
+    def test_resource_gather_bookkeeping_does_not_setdefault_for_every_resource(self) -> None:
+        import inspect
+
+        source = inspect.getsource(GatherPhase._gather_resources_and_identities)
+
+        assert ".setdefault(" not in source
 
 
 # ---------- Shutdown propagation tests (task-083) ----------
