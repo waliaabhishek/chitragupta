@@ -133,6 +133,24 @@ def _parser() -> argparse.ArgumentParser:
     download_output.add_argument("--archive")
     download.add_argument("--output", type=_local_path)
     _add_result_arguments(download)
+
+    revisions = subparsers.add_parser("revisions")
+    _add_connection_arguments(revisions)
+    revisions.add_argument("--month", required=True)
+    revisions.add_argument("--limit", type=int, default=20)
+    revisions.add_argument("--cursor")
+    _add_result_arguments(revisions)
+
+    revision = subparsers.add_parser("revision")
+    _add_connection_arguments(revision)
+    revision.add_argument("revision_id")
+    revision_output = revision.add_mutually_exclusive_group()
+    revision_output.add_argument("--output-dir", type=_local_path)
+    revision_output.add_argument("--manifest")
+    revision_output.add_argument("--file")
+    revision_output.add_argument("--archive")
+    revision.add_argument("--output", type=_local_path)
+    _add_result_arguments(revision)
     return parser
 
 
@@ -156,6 +174,16 @@ def _validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) ->
             parser.error("--file and --output must be supplied together")
         if args.archive == "-" and args.json:
             parser.error("--json cannot be combined with archive stdout")
+        if args.archive is not None and args.archive != "-":
+            args.archive = _parse_local_archive(parser, args.archive)
+    elif args.command == "revision":
+        if (args.file is None) != (args.output is None):
+            parser.error("--file and --output must be supplied together")
+        has_output = any(value is not None for value in (args.output_dir, args.manifest, args.file, args.archive))
+        if args.json and has_output:
+            parser.error("--json cannot be combined with revision output")
+        if args.manifest is not None and args.manifest != "-":
+            args.manifest = _parse_local_archive(parser, args.manifest)
         if args.archive is not None and args.archive != "-":
             args.archive = _parse_local_archive(parser, args.archive)
 
@@ -226,6 +254,41 @@ def _print_json(value: Mapping[str, object]) -> None:
 
 def _print_summary(status: Mapping[str, object]) -> None:
     print(f"{status.get('request_id', '')} {status.get('status', '')}".strip())
+
+
+def _print_revision_page(page: Mapping[str, object]) -> None:
+    print("complete replacement; do not aggregate")
+    items = page.get("items")
+    if not isinstance(items, list):
+        raise RuntimeError("FOCUS Mapping Preview API returned an invalid revision history response")
+    for item in items:
+        if not isinstance(item, Mapping):
+            raise RuntimeError("FOCUS Mapping Preview API returned an invalid revision history response")
+        print(" ".join(str(item.get(key, "")) for key in ("revision_id", "month", "lifecycle", "published_at")).strip())
+
+
+def _print_revision_detail(detail: Mapping[str, object]) -> None:
+    snapshot = detail.get("source_snapshot")
+    validation = detail.get("validation")
+    print(f"revision_id: {detail.get('revision_id', '')}")
+    print(f"month: {detail.get('month', '')}")
+    print(f"lifecycle: {detail.get('lifecycle', '')}")
+    print(f"published_at: {detail.get('published_at', '')}")
+    if isinstance(snapshot, Mapping):
+        print(f"calculation_timestamp: {snapshot.get('calculation_timestamp', '')}")
+        print(f"source_through: {snapshot.get('source_through', '')}")
+        print(f"evidence_through_date: {snapshot.get('evidence_through_date', '')}")
+    if isinstance(validation, Mapping):
+        fields = (
+            "status",
+            "mapping_profile_version",
+            "source_records",
+            "rows",
+            "mapping_errors",
+            "artifact_integrity",
+        )
+        print("validation: " + " ".join(f"{key}={validation.get(key, '')}" for key in fields))
+    print("complete replacement; do not aggregate")
 
 
 def _report_terminal_failure(status: Mapping[str, object], *, json_output: bool = False) -> int:
@@ -311,7 +374,10 @@ def _manifest_files(
         value = json.loads(body)
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise _IntegrityError("Downloaded manifest is invalid") from exc
-    if not isinstance(value, dict) or value.get("request_id") != status.get("request_id"):
+    if not isinstance(value, dict):
+        raise _IntegrityError("Downloaded manifest is invalid")
+    identity_field = "revision_id" if "revision_id" in status else "request_id"
+    if value.get(identity_field) != status.get(identity_field):
         raise _IntegrityError("Downloaded manifest does not match the requested package")
     files_value = value.get("files")
     if not isinstance(files_value, list):
@@ -413,6 +479,81 @@ def _verified_manifest(
     manifest_body = _download_bytes(client, api_url=api_url, artifact=manifest, headers=headers)
     manifest_files = _manifest_files(manifest_body, status=status, status_files=files)
     return manifest_body, manifest_files
+
+
+def _validate_revision_detail(
+    detail: Mapping[str, object],
+    *,
+    revision_id: str,
+    api_url: str,
+) -> None:
+    if detail.get("revision_id") != revision_id:
+        raise _IntegrityError("Revision detail does not match the requested revision")
+    manifest, files = _package_metadata(detail)
+    artifacts = (manifest, *files)
+    for artifact in artifacts:
+        supplied_url = artifact.get("download_url")
+        if not isinstance(supplied_url, str):
+            raise _IntegrityError("Package download URL is invalid")
+        _download_url(api_url, supplied_url)
+    package = detail.get("package")
+    assert isinstance(package, dict)
+    archive_url = package.get("download_all_url")
+    if not isinstance(archive_url, str):
+        raise _IntegrityError("Package archive URL is invalid")
+    _download_url(api_url, archive_url)
+
+
+def _download_manifest(
+    client: _httpx.Client,
+    *,
+    api_url: str,
+    detail: Mapping[str, object],
+    headers: tuple[tuple[str, str], ...],
+    destination: Path | str,
+) -> None:
+    manifest_body, _files = _verified_manifest(
+        client,
+        api_url=api_url,
+        status=detail,
+        headers=headers,
+    )
+    if destination == "-":
+        sys.stdout.buffer.write(manifest_body)
+        sys.stdout.buffer.flush()
+    else:
+        assert isinstance(destination, Path)
+        _write_atomic(destination, manifest_body)
+
+
+def _perform_revision_download(
+    client: _httpx.Client,
+    *,
+    args: argparse.Namespace,
+    api_url: str,
+    detail: Mapping[str, object],
+    headers: tuple[tuple[str, str], ...],
+) -> None:
+    if args.manifest is not None:
+        _download_manifest(
+            client,
+            api_url=api_url,
+            detail=detail,
+            headers=headers,
+            destination=args.manifest,
+        )
+        return
+    if args.file is not None:
+        _manifest, files = _package_metadata(detail)
+        if not any(item.get("name") == args.file for item in files):
+            raise RuntimeError("Requested file is not declared by the revision")
+    _perform_download(
+        client,
+        args=args,
+        api_url=api_url,
+        status=detail,
+        headers=headers,
+    )
 
 
 def _download_directory(
@@ -642,6 +783,51 @@ def main(argv: list[str] | None = None) -> int:
         api_url = args.api_url.rstrip("/")
         base = f"{api_url}/tenants/{args.tenant}/focus-preview/requests"
         with httpx.Client(timeout=30.0) as client:
+            if args.command == "revisions":
+                revisions_url = f"{api_url}/tenants/{args.tenant}/focus-preview/revisions"
+                params: dict[str, str | int] = {"month": args.month, "limit": args.limit}
+                if args.cursor is not None:
+                    params["cursor"] = args.cursor
+                response = client.get(revisions_url, headers=headers, params=params)
+                _raise_for_status(response)
+                page = response.json()
+                if not isinstance(page, dict):
+                    raise RuntimeError("FOCUS Mapping Preview API returned an invalid revision history response")
+                if args.json:
+                    _print_json(page)
+                else:
+                    _print_revision_page(page)
+                return 0
+
+            if args.command == "revision":
+                revision_url = f"{api_url}/tenants/{args.tenant}/focus-preview/revisions/{args.revision_id}"
+                detail = _get_status(
+                    client,
+                    status_url=revision_url,
+                    headers=headers,
+                )
+                _validate_revision_detail(
+                    detail,
+                    revision_id=args.revision_id,
+                    api_url=api_url,
+                )
+                has_output = any(
+                    value is not None for value in (args.output_dir, args.manifest, args.file, args.archive)
+                )
+                if has_output:
+                    _perform_revision_download(
+                        client,
+                        args=args,
+                        api_url=api_url,
+                        detail=detail,
+                        headers=headers,
+                    )
+                elif args.json:
+                    _print_json(detail)
+                else:
+                    _print_revision_detail(detail)
+                return 0
+
             if args.command in {"daily-full", "request"}:
                 response = client.post(base, headers=headers, json=_request_body(args))
                 _raise_for_status(response)

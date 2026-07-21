@@ -2,13 +2,23 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from importlib import import_module
+from types import SimpleNamespace
 from typing import Any
 
+import anyio.to_thread
 import pytest
 
 from tests.unit.core.preview.test_revision_models import _revision
+
+
+@pytest.fixture(autouse=True)
+def _iterate_archive_inline(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def run_sync_inline(function: Callable[..., object], *args: object, **_kwargs: object) -> object:
+        return function(*args)
+
+    monkeypatch.setattr(anyio.to_thread, "run_sync", run_sync_inline)
 
 
 class _Archive:
@@ -75,24 +85,34 @@ def test_revision_archive_close_wrapper_preserves_active_stream_error(
     assert "close sentinel" not in caplog.text
 
 
-def _response(monkeypatch: pytest.MonkeyPatch, archive: _Archive) -> Any:
+def _response(monkeypatch: pytest.MonkeyPatch, archive: _Archive, *, route_kind: str) -> Any:
     route = _route()
     reader = type("Reader", (), {"open_archive": lambda self, revision: archive})()
     monkeypatch.setattr(route, "_revision_reader", lambda request: reader)
-    monkeypatch.setattr(route, "_current_revision", lambda *args: _revision())
-    return route.get_current_revision_archive(
+    if route_kind == "current":
+        monkeypatch.setattr(route, "_current_revision", lambda *args: _revision())
+        return route.get_current_revision_archive(
+            request=object(),
+            tenant_name="new-label",
+            revision_id="revision-1",
+            scope=object(),
+        )
+    monkeypatch.setattr(route, "_direct_revision", lambda *args: _revision())
+    return route.get_revision_archive(
         request=object(),
         tenant_name="new-label",
         revision_id="revision-1",
-        scope=object(),
+        tenant_config=SimpleNamespace(ecosystem="confluent_cloud"),
     )
 
 
+@pytest.mark.parametrize("route_kind", ["current", "direct"])
 def test_archive_stream_normal_consumption_and_background_fallback_both_cleanup(
     monkeypatch: pytest.MonkeyPatch,
+    route_kind: str,
 ) -> None:
     archive = _Archive()
-    response = _response(monkeypatch, archive)
+    response = _response(monkeypatch, archive, route_kind=route_kind)
 
     async def consume() -> None:
         assert [chunk async for chunk in response.body_iterator] == [b"one"]
@@ -103,12 +123,14 @@ def test_archive_stream_normal_consumption_and_background_fallback_both_cleanup(
     assert archive.close_calls == 2
 
 
+@pytest.mark.parametrize("route_kind", ["current", "direct"])
 def test_archive_stream_failure_preserves_original_when_close_also_fails(
     monkeypatch: pytest.MonkeyPatch,
+    route_kind: str,
 ) -> None:
     stream_error = RuntimeError("stream sentinel")
     archive = _Archive(stream_error=stream_error, close_error=OSError("close sentinel"))
-    response = _response(monkeypatch, archive)
+    response = _response(monkeypatch, archive, route_kind=route_kind)
 
     async def consume() -> None:
         iterator = response.body_iterator.__aiter__()
@@ -121,11 +143,13 @@ def test_archive_stream_failure_preserves_original_when_close_also_fails(
     assert archive.close_calls == 1
 
 
+@pytest.mark.parametrize("route_kind", ["current", "direct"])
 def test_archive_stream_close_or_cancellation_path_cleans_up(
     monkeypatch: pytest.MonkeyPatch,
+    route_kind: str,
 ) -> None:
     archive = _Archive()
-    response = _response(monkeypatch, archive)
+    response = _response(monkeypatch, archive, route_kind=route_kind)
 
     async def cancel() -> None:
         iterator = response.body_iterator.__aiter__()
@@ -136,11 +160,13 @@ def test_archive_stream_close_or_cancellation_path_cleans_up(
     assert archive.close_calls == 1
 
 
+@pytest.mark.parametrize("route_kind", ["current", "direct"])
 def test_archive_background_cleanup_runs_when_body_is_never_consumed(
     monkeypatch: pytest.MonkeyPatch,
+    route_kind: str,
 ) -> None:
     archive = _Archive()
-    response = _response(monkeypatch, archive)
+    response = _response(monkeypatch, archive, route_kind=route_kind)
 
     asyncio.run(response.background())
 

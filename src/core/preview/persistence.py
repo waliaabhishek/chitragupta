@@ -18,6 +18,7 @@ from sqlalchemy import (
     and_,
     case,
     cast,
+    delete,
     func,
     or_,
     text,
@@ -95,6 +96,40 @@ class PreviewRequestPage:
     def __post_init__(self) -> None:
         if self.next_cursor is not None:
             _require_safe_identifier(self.next_cursor, "next_cursor")
+
+
+@dataclass(frozen=True)
+class PreviewRevisionPage:
+    items: tuple[PreviewRevision, ...]
+    next_cursor: str | None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.items, tuple) or not all(isinstance(item, PreviewRevision) for item in self.items):
+            raise ValueError("preview revision page items must be a tuple of revisions")
+        if self.next_cursor is not None:
+            _require_safe_identifier(self.next_cursor, "next_cursor")
+            if not self.items or self.next_cursor != self.items[-1].revision_id:
+                raise ValueError("preview revision next_cursor must identify the final item")
+
+
+@dataclass(frozen=True)
+class PreviewRetentionCandidate:
+    revision_id: str
+    ecosystem: str
+    tenant_id: str
+    storage_key: str
+    retention_pending_at: datetime
+
+    def __post_init__(self) -> None:
+        _require_safe_identifier(self.revision_id, "revision_id")
+        _require_safe_identifier(self.storage_key, "storage_key")
+        if not isinstance(self.ecosystem, str) or not self.ecosystem.strip():
+            raise ValueError("ecosystem must not be blank")
+        if self.ecosystem != "confluent_cloud":
+            raise ValueError(f"unsupported preview ecosystem: {self.ecosystem!r}")
+        if not isinstance(self.tenant_id, str) or not self.tenant_id.strip():
+            raise ValueError("tenant_id must not be blank")
+        object.__setattr__(self, "retention_pending_at", ensure_utc_strict(self.retention_pending_at))
 
 
 @dataclass(frozen=True)
@@ -293,6 +328,31 @@ class PreviewRevisionTable(SQLModel, table=True):
         Index("ix_preview_revisions_supersedes", "supersedes_revision_id"),
         Index("ix_preview_revisions_superseded_by", "superseded_by_revision_id"),
         Index(
+            "ix_preview_revisions_owner_month_visible_history",
+            "ecosystem",
+            "tenant_id",
+            "month_start",
+            "retention_pending_at",
+            "published_at",
+            "revision_id",
+        ),
+        Index(
+            "ix_preview_revisions_owner_retention_due",
+            "ecosystem",
+            "tenant_id",
+            "retention_pending_at",
+            "month_end",
+            "published_at",
+            "revision_id",
+        ),
+        Index(
+            "ix_preview_revisions_owner_retention_pending",
+            "ecosystem",
+            "tenant_id",
+            "retention_pending_at",
+            "revision_id",
+        ),
+        Index(
             "ux_preview_revisions_owner_month_current",
             "ecosystem",
             "tenant_id",
@@ -319,6 +379,10 @@ class PreviewRevisionTable(SQLModel, table=True):
     storage_key: str
     manifest_metadata_json: str = Field(sa_column=Column(Text(), nullable=False))
     file_metadata_json: str = Field(sa_column=Column(Text(), nullable=False))
+    retention_pending_at: datetime | None = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True),
+    )
 
 
 def _canonical_json(value: object) -> str:
@@ -1116,6 +1180,12 @@ class PreviewRevisionConflictError(RuntimeError):
     """A concurrent publisher changed the current revision."""
 
 
+class PreviewRevisionCursorError(ValueError):
+    def __init__(self, cursor_revision_id: str) -> None:
+        self.cursor_revision_id = cursor_revision_id
+        super().__init__("preview revision cursor is invalid")
+
+
 @runtime_checkable
 class PreviewRevisionRepository(Protocol):
     def get_current_for_owner(
@@ -1125,6 +1195,70 @@ class PreviewRevisionRepository(Protocol):
         tenant_id: str,
         month_start: date,
     ) -> PreviewRevision | None: ...
+
+    def get_current_for_publication(
+        self,
+        *,
+        ecosystem: str,
+        tenant_id: str,
+        month_start: date,
+    ) -> PreviewRevision | None: ...
+
+    def get_for_owner(
+        self,
+        *,
+        ecosystem: str,
+        tenant_id: str,
+        revision_id: str,
+    ) -> PreviewRevision | None: ...
+
+    def list_for_owner_month(
+        self,
+        *,
+        ecosystem: str,
+        tenant_id: str,
+        month_start: date,
+        limit: int,
+        cursor_revision_id: str | None,
+    ) -> PreviewRevisionPage: ...
+
+    def mark_retention_due(
+        self,
+        *,
+        ecosystem: str,
+        tenant_id: str,
+        cutoff_date: date,
+        pending_at: datetime,
+        limit: int,
+    ) -> tuple[PreviewRetentionCandidate, ...]: ...
+
+    def list_retention_pending(
+        self,
+        *,
+        ecosystem: str,
+        tenant_id: str,
+        limit: int,
+    ) -> tuple[PreviewRetentionCandidate, ...]: ...
+
+    def get_retention_pending_tail(
+        self,
+        *,
+        ecosystem: str,
+        tenant_id: str,
+    ) -> datetime | None: ...
+
+    def defer_retention_pending(
+        self,
+        *,
+        candidate: PreviewRetentionCandidate,
+        retry_at: datetime,
+    ) -> bool: ...
+
+    def delete_retention_pending(
+        self,
+        *,
+        candidate: PreviewRetentionCandidate,
+    ) -> bool: ...
 
     def replace_current(
         self,
@@ -1211,6 +1345,7 @@ def _revision_to_table(
         storage_key=package.storage_key,
         manifest_metadata_json=_canonical_json(_artifact_dict(package.manifest)),
         file_metadata_json=_canonical_json([_artifact_dict(item) for item in package.files]),
+        retention_pending_at=None,
     )
 
 
@@ -1250,6 +1385,19 @@ def _revision_to_domain(row: PreviewRevisionTable) -> PreviewRevision:
             manifest=_artifact_from_dict(manifest_raw),
             files=tuple(_artifact_from_dict(item) for item in files_raw),
         ),
+        retention_pending_at=(None if row.retention_pending_at is None else ensure_utc(row.retention_pending_at)),
+    )
+
+
+def _retention_candidate_from_row(row: PreviewRevisionTable) -> PreviewRetentionCandidate:
+    if row.retention_pending_at is None:
+        raise ValueError("retention candidate must be pending")
+    return PreviewRetentionCandidate(
+        revision_id=row.revision_id,
+        ecosystem=row.ecosystem,
+        tenant_id=row.tenant_id,
+        storage_key=row.storage_key,
+        retention_pending_at=ensure_utc(row.retention_pending_at),
     )
 
 
@@ -1291,9 +1439,239 @@ class SQLModelPreviewRevisionRepository:
                 col(PreviewRevisionTable.tenant_id) == tenant_id,
                 col(PreviewRevisionTable.month_start) == month_start,
                 current_predicate,
+                col(PreviewRevisionTable.retention_pending_at).is_(None),
             )
         ).first()
         return None if row is None else _revision_to_domain(row)
+
+    def get_current_for_publication(
+        self,
+        *,
+        ecosystem: str,
+        tenant_id: str,
+        month_start: date,
+    ) -> PreviewRevision | None:
+        is_current = col(PreviewRevisionTable.is_current)
+        current_predicate = (
+            is_current.is_(True) if self._session.get_bind().dialect.name == "postgresql" else is_current == true()
+        )
+        row = self._session.exec(
+            select(PreviewRevisionTable).where(
+                col(PreviewRevisionTable.ecosystem) == ecosystem,
+                col(PreviewRevisionTable.tenant_id) == tenant_id,
+                col(PreviewRevisionTable.month_start) == month_start,
+                current_predicate,
+            )
+        ).first()
+        return None if row is None else _revision_to_domain(row)
+
+    def get_for_owner(
+        self,
+        *,
+        ecosystem: str,
+        tenant_id: str,
+        revision_id: str,
+    ) -> PreviewRevision | None:
+        row = self._session.exec(
+            select(PreviewRevisionTable).where(
+                col(PreviewRevisionTable.ecosystem) == ecosystem,
+                col(PreviewRevisionTable.tenant_id) == tenant_id,
+                col(PreviewRevisionTable.revision_id) == revision_id,
+                col(PreviewRevisionTable.retention_pending_at).is_(None),
+            )
+        ).first()
+        return None if row is None else _revision_to_domain(row)
+
+    def list_for_owner_month(
+        self,
+        *,
+        ecosystem: str,
+        tenant_id: str,
+        month_start: date,
+        limit: int,
+        cursor_revision_id: str | None,
+    ) -> PreviewRevisionPage:
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ValueError("limit must be between 1 and 100")
+        cursor_row: PreviewRevisionTable | None = None
+        if cursor_revision_id is not None:
+            cursor_row = self._session.exec(
+                select(PreviewRevisionTable).where(
+                    col(PreviewRevisionTable.ecosystem) == ecosystem,
+                    col(PreviewRevisionTable.tenant_id) == tenant_id,
+                    col(PreviewRevisionTable.month_start) == month_start,
+                    col(PreviewRevisionTable.revision_id) == cursor_revision_id,
+                    col(PreviewRevisionTable.retention_pending_at).is_(None),
+                )
+            ).first()
+            if cursor_row is None:
+                raise PreviewRevisionCursorError(cursor_revision_id)
+        statement = select(PreviewRevisionTable).where(
+            col(PreviewRevisionTable.ecosystem) == ecosystem,
+            col(PreviewRevisionTable.tenant_id) == tenant_id,
+            col(PreviewRevisionTable.month_start) == month_start,
+            col(PreviewRevisionTable.retention_pending_at).is_(None),
+        )
+        if cursor_row is not None:
+            statement = statement.where(
+                or_(
+                    col(PreviewRevisionTable.published_at) < cursor_row.published_at,
+                    and_(
+                        col(PreviewRevisionTable.published_at) == cursor_row.published_at,
+                        col(PreviewRevisionTable.revision_id) < cursor_row.revision_id,
+                    ),
+                )
+            )
+        rows = self._session.exec(
+            statement.order_by(
+                col(PreviewRevisionTable.published_at).desc(),
+                col(PreviewRevisionTable.revision_id).desc(),
+            ).limit(limit + 1)
+        ).all()
+        visible = rows[:limit]
+        items = tuple(_revision_to_domain(row) for row in visible)
+        return PreviewRevisionPage(
+            items=items,
+            next_cursor=items[-1].revision_id if len(rows) > limit else None,
+        )
+
+    def mark_retention_due(
+        self,
+        *,
+        ecosystem: str,
+        tenant_id: str,
+        cutoff_date: date,
+        pending_at: datetime,
+        limit: int,
+    ) -> tuple[PreviewRetentionCandidate, ...]:
+        normalized_pending = ensure_utc_strict(pending_at)
+        if type(limit) is not int or limit < 1:
+            return ()
+        selected_ids = self._session.exec(
+            select(PreviewRevisionTable.revision_id)
+            .where(
+                col(PreviewRevisionTable.ecosystem) == ecosystem,
+                col(PreviewRevisionTable.tenant_id) == tenant_id,
+                col(PreviewRevisionTable.month_end) <= cutoff_date,
+                col(PreviewRevisionTable.retention_pending_at).is_(None),
+            )
+            .order_by(
+                col(PreviewRevisionTable.month_end),
+                col(PreviewRevisionTable.published_at),
+                col(PreviewRevisionTable.revision_id),
+            )
+            .limit(limit)
+        ).all()
+        if not selected_ids:
+            return ()
+        claim_result = self._session.execute(
+            update(PreviewRevisionTable)
+            .where(
+                col(PreviewRevisionTable.ecosystem) == ecosystem,
+                col(PreviewRevisionTable.tenant_id) == tenant_id,
+                col(PreviewRevisionTable.revision_id).in_(selected_ids),
+                col(PreviewRevisionTable.month_end) <= cutoff_date,
+                col(PreviewRevisionTable.retention_pending_at).is_(None),
+            )
+            .values(retention_pending_at=normalized_pending)
+            .returning(col(PreviewRevisionTable.revision_id))
+        )
+        claimed_ids = [row[0] for row in claim_result]
+        if not claimed_ids:
+            return ()
+        self._session.flush()
+        rows = self._session.exec(
+            select(PreviewRevisionTable)
+            .where(
+                col(PreviewRevisionTable.ecosystem) == ecosystem,
+                col(PreviewRevisionTable.tenant_id) == tenant_id,
+                col(PreviewRevisionTable.revision_id).in_(claimed_ids),
+                col(PreviewRevisionTable.retention_pending_at) == normalized_pending,
+            )
+            .order_by(
+                col(PreviewRevisionTable.month_end),
+                col(PreviewRevisionTable.published_at),
+                col(PreviewRevisionTable.revision_id),
+            )
+        ).all()
+        return tuple(_retention_candidate_from_row(row) for row in rows)
+
+    def list_retention_pending(
+        self,
+        *,
+        ecosystem: str,
+        tenant_id: str,
+        limit: int,
+    ) -> tuple[PreviewRetentionCandidate, ...]:
+        if type(limit) is not int or limit < 1:
+            return ()
+        rows = self._session.exec(
+            select(PreviewRevisionTable)
+            .where(
+                col(PreviewRevisionTable.ecosystem) == ecosystem,
+                col(PreviewRevisionTable.tenant_id) == tenant_id,
+                col(PreviewRevisionTable.retention_pending_at).is_not(None),
+            )
+            .order_by(
+                col(PreviewRevisionTable.retention_pending_at),
+                col(PreviewRevisionTable.revision_id),
+            )
+            .limit(limit)
+        ).all()
+        return tuple(_retention_candidate_from_row(row) for row in rows)
+
+    def get_retention_pending_tail(
+        self,
+        *,
+        ecosystem: str,
+        tenant_id: str,
+    ) -> datetime | None:
+        value = self._session.exec(
+            select(PreviewRevisionTable.retention_pending_at)
+            .where(
+                col(PreviewRevisionTable.ecosystem) == ecosystem,
+                col(PreviewRevisionTable.tenant_id) == tenant_id,
+                col(PreviewRevisionTable.retention_pending_at).is_not(None),
+            )
+            .order_by(
+                col(PreviewRevisionTable.retention_pending_at).desc(),
+                col(PreviewRevisionTable.revision_id).desc(),
+            )
+            .limit(1)
+        ).first()
+        return None if value is None else ensure_utc(value)
+
+    def defer_retention_pending(
+        self,
+        *,
+        candidate: PreviewRetentionCandidate,
+        retry_at: datetime,
+    ) -> bool:
+        normalized_retry = ensure_utc_strict(retry_at)
+        result = self._session.execute(
+            update(PreviewRevisionTable)
+            .where(
+                col(PreviewRevisionTable.ecosystem) == candidate.ecosystem,
+                col(PreviewRevisionTable.tenant_id) == candidate.tenant_id,
+                col(PreviewRevisionTable.revision_id) == candidate.revision_id,
+                col(PreviewRevisionTable.storage_key) == candidate.storage_key,
+                col(PreviewRevisionTable.retention_pending_at) == candidate.retention_pending_at,
+            )
+            .values(retention_pending_at=normalized_retry)
+        )
+        return getattr(result, "rowcount", 0) == 1
+
+    def delete_retention_pending(self, *, candidate: PreviewRetentionCandidate) -> bool:
+        result = self._session.execute(
+            delete(PreviewRevisionTable).where(
+                col(PreviewRevisionTable.ecosystem) == candidate.ecosystem,
+                col(PreviewRevisionTable.tenant_id) == candidate.tenant_id,
+                col(PreviewRevisionTable.revision_id) == candidate.revision_id,
+                col(PreviewRevisionTable.storage_key) == candidate.storage_key,
+                col(PreviewRevisionTable.retention_pending_at) == candidate.retention_pending_at,
+            )
+        )
+        return getattr(result, "rowcount", 0) == 1
 
     def replace_current(
         self,
@@ -1317,6 +1695,7 @@ class SQLModelPreviewRevisionRepository:
                             col(PreviewRevisionTable.revision_id) == expected_current_revision_id,
                             col(PreviewRevisionTable.is_current) == true(),
                             col(PreviewRevisionTable.superseded_by_revision_id).is_(None),
+                            col(PreviewRevisionTable.retention_pending_at).is_(None),
                         )
                         .values(is_current=False, superseded_by_revision_id=candidate.revision_id)
                     )

@@ -74,6 +74,72 @@ const readyPackage = {
   },
 };
 
+const revisionSummary = {
+  revision_id: "revision-2",
+  tenant_name: "production",
+  month: "2026-07",
+  start_date: "2026-07-01",
+  end_date: "2026-08-01",
+  lifecycle: "current",
+  monthly_status: "provisional",
+  published_at: "2026-07-21T12:00:00Z",
+  supersedes_revision_id: "revision-1",
+  superseded_by_revision_id: null,
+  material_sha256: "d".repeat(64),
+  source_snapshot: {
+    calculation_timestamp: "2026-07-21T11:55:00Z",
+    calculation_coverage: [],
+    source_through: "2026-07-21T11:50:00Z",
+    effective_coverage_start_date: "2026-07-01",
+    effective_coverage_end_date: "2026-07-21",
+    evidence_through_date: "2026-07-20",
+    availability_cutoff_end_date: "2026-07-21",
+    monthly_status: "provisional",
+  },
+  validation: {
+    status: "passed",
+    mapping_profile_version: "focus-1.4-preview-v5",
+    source_records: 12,
+    rows: 10,
+    mapping_errors: 0,
+    artifact_integrity: "passed",
+  },
+  replacement_semantics: "complete_replacement",
+  consumer_action: "replace_do_not_aggregate",
+  detail_url:
+    "/api/v1/tenants/production/focus-preview/revisions/revision-2",
+};
+
+const revisionDetail = {
+  ...revisionSummary,
+  self_url:
+    "/api/v1/tenants/production/focus-preview/revisions/revision-2",
+  package: {
+    manifest: {
+      name: "manifest.json",
+      media_type: "application/json",
+      size_bytes: 321,
+      sha256: "a".repeat(64),
+      download_url:
+        "/api/v1/tenants/production/focus-preview/revisions/revision-2/manifest",
+    },
+    files: [
+      {
+        name: "cost-and-usage.csv",
+        media_type: "text/csv",
+        size_bytes: 12,
+        sha256: "b".repeat(64),
+        order: 1,
+        download_url:
+          "/api/v1/tenants/production/focus-preview/revisions/revision-2/files/cost-and-usage.csv",
+      },
+    ],
+    download_all_name: "focus-mapping-preview-revision-2.zip",
+    download_all_url:
+      "/api/v1/tenants/production/focus-preview/revisions/revision-2/archive",
+  },
+};
+
 const correlatedDiagnostic: import("./focusPreview").FocusPreviewDiagnostic = {
   code: "preview_source_record_malformed",
   message: "One or more persisted Confluent Costs API records are malformed.",
@@ -199,6 +265,219 @@ describe("FOCUS Mapping Preview API delegation", () => {
       "request-2",
     ]);
     expect(page.next_cursor).toBe("request-2");
+  });
+
+  it("lists published revisions for one month using the server keyset cursor", async () => {
+    let capturedUrl = "";
+    let capturedSignal: AbortSignal | undefined;
+    server.use(
+      http.get(
+        `${API_BASE}/tenants/production/focus-preview/revisions`,
+        ({ request }) => {
+          capturedUrl = request.url;
+          capturedSignal = request.signal;
+          return HttpResponse.json({
+            items: [revisionSummary],
+            next_cursor: "revision-2",
+            replacement_semantics: "complete_replacement",
+            consumer_action: "replace_do_not_aggregate",
+          });
+        },
+      ),
+    );
+    const { listFocusPreviewRevisions } = await loadClient();
+    const controller = new AbortController();
+
+    const page = await listFocusPreviewRevisions("production", {
+      month: "2026-07",
+      limit: 1,
+      cursor: "revision-3",
+      signal: controller.signal,
+    });
+
+    expect(capturedUrl).toBe(
+      `${API_BASE}/tenants/production/focus-preview/revisions?month=2026-07&limit=1&cursor=revision-3`,
+    );
+    expect(capturedSignal).toBeInstanceOf(AbortSignal);
+    controller.abort();
+    expect(capturedSignal?.aborted).toBe(true);
+    expect(page).toEqual({
+      items: [revisionSummary],
+      next_cursor: "revision-2",
+      replacement_semantics: "complete_replacement",
+      consumer_action: "replace_do_not_aggregate",
+    });
+  });
+
+  it("covers minimal revision queries and optional signal branches", async () => {
+    server.use(
+      http.get(
+        `${API_BASE}/tenants/production/focus-preview/revisions`,
+        () => HttpResponse.json({
+          items: [],
+          next_cursor: null,
+          replacement_semantics: "complete_replacement",
+          consumer_action: "replace_do_not_aggregate",
+        }),
+      ),
+      http.get(
+        `${API_BASE}/tenants/production/focus-preview/revisions/revision-2`,
+        () => HttpResponse.json(revisionDetail),
+      ),
+      http.get(
+        `${API_BASE}/tenants/production/focus-preview/profile`,
+        () => HttpResponse.json({
+          mapping_profile_version: "focus-1.4-preview-v5",
+          full_columns: ["BilledCost"],
+          summary_columns: ["BilledCost"],
+        }),
+      ),
+      http.get(
+        `${API_BASE}/tenants/production/focus-preview/revisions/revision-2/manifest`,
+        () => new HttpResponse("{}\n"),
+      ),
+    );
+    const {
+      fetchFocusPreviewProfile,
+      fetchFocusPreviewRevision,
+      fetchPreviewArtifact,
+      listFocusPreviewRevisions,
+    } = await loadClient();
+    const controller = new AbortController();
+
+    await expect(listFocusPreviewRevisions("production", { month: "2026-07" }))
+      .resolves.toMatchObject({ items: [], next_cursor: null });
+    await expect(fetchFocusPreviewRevision(
+      "production",
+      "revision-2",
+      controller.signal,
+    )).resolves.toEqual(revisionDetail);
+    await expect(fetchFocusPreviewProfile("production"))
+      .resolves.toMatchObject({ mapping_profile_version: "focus-1.4-preview-v5" });
+    await expect(fetchPreviewArtifact(
+      revisionDetail.package.manifest.download_url,
+      controller.signal,
+    )).resolves.toBeInstanceOf(Blob);
+  });
+
+  it("rejects non-success revision responses through the shared HTTP guard", async () => {
+    server.use(
+      http.get(
+        `${API_BASE}/tenants/production/focus-preview/revisions`,
+        () => new HttpResponse(null, { status: 503, statusText: "Unavailable" }),
+      ),
+    );
+    const { listFocusPreviewRevisions } = await loadClient();
+
+    await expect(listFocusPreviewRevisions("production", { month: "2026-07" }))
+      .rejects.toThrow("HTTP 503: Unavailable");
+  });
+
+  it("covers optional signal and empty request-list query branches", async () => {
+    const seen: string[] = [];
+    server.use(
+      http.post(
+        `${API_BASE}/tenants/production/focus-preview/requests`,
+        ({ request }) => {
+          seen.push(request.url);
+          return HttpResponse.json(queued, { status: 202 });
+        },
+      ),
+      http.get(
+        `${API_BASE}/tenants/production/focus-preview/requests`,
+        ({ request }) => {
+          seen.push(request.url);
+          return HttpResponse.json({ items: [], next_cursor: null });
+        },
+      ),
+      http.get(
+        `${API_BASE}/tenants/production/focus-preview/profile`,
+        ({ request }) => {
+          seen.push(request.url);
+          return HttpResponse.json({
+            mapping_profile_version: "focus-1.4-preview-v5",
+            full_columns: ["BilledCost"],
+            summary_columns: ["BilledCost"],
+          });
+        },
+      ),
+    );
+    const {
+      fetchFocusPreviewProfile,
+      listFocusPreviewRequests,
+      submitFocusPreview,
+    } = await loadClient();
+    const controller = new AbortController();
+
+    await submitFocusPreview("production", {
+      grain: "monthly",
+      month: "2026-07",
+      column_profile: "full",
+    }, controller.signal);
+    await listFocusPreviewRequests("production");
+    await listFocusPreviewRequests("production", { signal: controller.signal });
+    await fetchFocusPreviewProfile("production", controller.signal);
+
+    expect(seen).toEqual([
+      `${API_BASE}/tenants/production/focus-preview/requests`,
+      `${API_BASE}/tenants/production/focus-preview/requests`,
+      `${API_BASE}/tenants/production/focus-preview/requests`,
+      `${API_BASE}/tenants/production/focus-preview/profile`,
+    ]);
+  });
+
+  it("retrieves immutable revision detail and all direct artifact URLs", async () => {
+    const requested: string[] = [];
+    server.use(
+      http.get(
+        `${API_BASE}/tenants/production/focus-preview/revisions/revision-2`,
+        ({ request }) => {
+          requested.push(request.url);
+          return HttpResponse.json(revisionDetail);
+        },
+      ),
+      http.get(
+        `${API_BASE}/tenants/production/focus-preview/revisions/revision-2/manifest`,
+        ({ request }) => {
+          requested.push(request.url);
+          return new HttpResponse("{}\n");
+        },
+      ),
+      http.get(
+        `${API_BASE}/tenants/production/focus-preview/revisions/revision-2/files/cost-and-usage.csv`,
+        ({ request }) => {
+          requested.push(request.url);
+          return new HttpResponse("a,b\n");
+        },
+      ),
+      http.get(
+        `${API_BASE}/tenants/production/focus-preview/revisions/revision-2/archive`,
+        ({ request }) => {
+          requested.push(request.url);
+          return new HttpResponse(new Uint8Array([0x50, 0x4b]));
+        },
+      ),
+    );
+    const { fetchFocusPreviewRevision, fetchPreviewArtifact } = await loadClient();
+
+    const detail = await fetchFocusPreviewRevision(
+      "production",
+      "revision-2",
+    );
+    const manifest = await fetchPreviewArtifact(detail.package.manifest.download_url);
+    const file = await fetchPreviewArtifact(detail.package.files[0].download_url);
+    const archive = await fetchPreviewArtifact(detail.package.download_all_url);
+
+    expect(detail).toEqual(revisionDetail);
+    expect(await manifest.text()).toBe("{}\n");
+    expect(await file.text()).toBe("a,b\n");
+    expect([...new Uint8Array(await archive.arrayBuffer())]).toEqual([0x50, 0x4b]);
+    expect(requested).toEqual([
+      `${API_BASE}/tenants/production/focus-preview/revisions/revision-2`,
+      `${API_BASE}/tenants/production/focus-preview/revisions/revision-2/manifest`,
+      `${API_BASE}/tenants/production/focus-preview/revisions/revision-2/files/cost-and-usage.csv`,
+      `${API_BASE}/tenants/production/focus-preview/revisions/revision-2/archive`,
+    ]);
   });
 
   it("consumes ready status and package bytes exactly as supplied by the API", async () => {

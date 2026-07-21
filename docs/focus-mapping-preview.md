@@ -282,6 +282,11 @@ All paths are under `/api/v1/tenants/{tenant_name}/focus-preview`.
 | `GET /revisions/current/manifest?month=YYYY-MM&revision_id=...` | Download the guarded current revision manifest. |
 | `GET /revisions/current/files/{file_name}?month=YYYY-MM&revision_id=...` | Download one guarded current revision CSV part. |
 | `GET /revisions/current/archive?month=YYYY-MM&revision_id=...` | Stream the guarded current revision ZIP. |
+| `GET /revisions?month=YYYY-MM&limit=20&cursor={revision_id}` | List current and superseded revisions newest first. |
+| `GET /revisions/{revision_id}` | Return one retained revision and its direct artifact URLs. |
+| `GET /revisions/{revision_id}/manifest` | Download a retained revision manifest. |
+| `GET /revisions/{revision_id}/files/{file_name}` | Download one retained revision CSV part. |
+| `GET /revisions/{revision_id}/archive` | Stream a retained revision ZIP. |
 
 Daily request:
 
@@ -323,7 +328,7 @@ snapshot and expiry but return `package: null`.
 See the [API reference](api-reference.md#focus-mapping-preview) for response
 fields, pagination, status behavior, errors, and diagnostic codes.
 
-## 6. Retrieve the current published monthly revision
+## 6. Browse and retrieve published monthly revisions
 
 The periodic worker evaluates every calendar-month scope whose start is inside
 both the tenant's current `lookback_days` acquisition window and the configured
@@ -344,9 +349,38 @@ Published revisions use the Full profile. A month can have these transitions:
 
 A settled month never regresses to provisional. CSV part size, part names,
 source-row counts, timestamps, provenance, and other physical package layout do
-not by themselves create a replacement. Each successful replacement identifies
-the revision it superseded, but the public API exposes only the current revision
-for a tenant and UTC month.
+not by themselves create a replacement. Each revision is a complete replacement
+for the month: use the current revision for reporting and never add revisions
+together.
+
+The web UI's **Published monthly revisions** section has an independent month
+selector. It lists current and superseded revisions newest first, including
+publication state, calculation and source freshness, validation results, and
+predecessor/successor links. Select **View and download** to retrieve the
+manifest, an individual CSV part, or the complete ZIP for that retained
+revision.
+
+The remote CLI offers the same history and retrieval workflow:
+
+```bash
+uv run chitragupta-preview revisions \
+  --api-url https://chitragupta.example/api/v1 \
+  --tenant production \
+  --month 2026-07
+
+uv run chitragupta-preview revision <revision_id> \
+  --api-url https://chitragupta.example/api/v1 \
+  --tenant production \
+  --output-dir ./focus-revision
+```
+
+`revisions` accepts `--limit`, `--cursor`, and `--json`. `revision` shows the
+lifecycle, publication time, source freshness, and validation result when no
+output option is supplied. Use exactly one output option to retrieve content:
+`--output-dir PATH`, `--manifest PATH_OR_DASH`, `--file NAME --output PATH`, or
+`--archive PATH_OR_DASH`. A dash writes a verified manifest or archive to
+stdout. Local targets are published only after identity and checksum
+verification.
 
 Fetch current metadata first:
 
@@ -377,9 +411,12 @@ curl -fSs \
 ```
 
 Published revisions are separate from ad-hoc Preview requests: they do not
-appear in request history, do not have a seven-day request expiry, and cannot be
-selected by retained revision ID. The API currently provides current-only
-retrieval, not revision-history browsing or revision-retention controls.
+appear in request history and do not have a seven-day request expiry. To browse
+retained revisions through the API, call
+`GET /revisions?month=YYYY-MM&limit=20`; continue with `next_cursor`, then follow
+the selected item's direct URL. Direct revision URLs are immutable and do not
+use the current-revision guard. A revision that has passed the billing-scope
+retention cutoff is no longer listed or retrievable.
 
 ## Package contents and lifecycle
 
@@ -411,7 +448,7 @@ publication. At `expires_at`, status becomes `expired` and all downloads return
 410 before filesystem cleanup. The request and audit metadata remain visible.
 Creating a new request after expiry reads the then-current persisted source
 snapshot; it does not recreate the expired bytes. Published monthly revisions
-use the separate current-only lifecycle described above.
+use the separate billing-scope retention lifecycle described above.
 
 This fixed seven-day package lifecycle is independent of tenant
 `retention_days`, topic-attribution retention, and `lookback_days`.

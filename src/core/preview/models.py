@@ -516,6 +516,7 @@ class PreviewRevision:
     superseded_by_revision_id: str | None
     is_current: bool
     package: PreviewStoredPackage
+    retention_pending_at: datetime | None = None
 
     def __post_init__(self) -> None:
         candidate = PreviewRevisionCandidate(
@@ -543,3 +544,32 @@ class PreviewRevision:
             raise ValueError("a current revision cannot identify a successor")
         if not self.is_current and self.superseded_by_revision_id is None:
             raise ValueError("a non-current revision must identify its successor")
+        if self.retention_pending_at is not None:
+            object.__setattr__(
+                self,
+                "retention_pending_at",
+                _require_aware(self.retention_pending_at, "retention_pending_at"),
+            )
+
+
+@dataclass(frozen=True)
+class PreviewRevisionValidationSummary:
+    status: Literal["passed"]
+    mapping_profile_version: str
+    source_records: int
+    rows: int
+    mapping_errors: Literal[0]
+    artifact_integrity: Literal["passed"]
+
+    def __post_init__(self) -> None:
+        if self.status != "passed":
+            raise ValueError("revision validation status must be passed")
+        if not isinstance(self.mapping_profile_version, str) or not self.mapping_profile_version.strip():
+            raise ValueError("mapping_profile_version must not be blank")
+        for field, value in (("source_records", self.source_records), ("rows", self.rows)):
+            if type(value) is not int or value < 0:
+                raise ValueError(f"{field} must be a non-negative integer")
+        if type(self.mapping_errors) is not int or self.mapping_errors != 0:
+            raise ValueError("mapping_errors must be zero")
+        if self.artifact_integrity != "passed":
+            raise ValueError("artifact_integrity must be passed")

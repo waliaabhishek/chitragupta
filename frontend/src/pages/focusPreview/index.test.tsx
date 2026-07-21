@@ -1,12 +1,14 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FocusPreviewPage } from ".";
 import {
   fetchFocusPreviewProfile,
+  fetchFocusPreviewRevision,
   fetchFocusPreviewStatus,
   fetchPreviewArtifact,
   listFocusPreviewRequests,
+  listFocusPreviewRevisions,
   submitFocusPreview,
 } from "../../api/focusPreview";
 
@@ -29,9 +31,11 @@ vi.mock("../../providers/TenantContext", () => ({
 vi.mock("../../api/focusPreview", () => ({
   submitFocusPreview: vi.fn(),
   fetchFocusPreviewProfile: vi.fn(),
+  fetchFocusPreviewRevision: vi.fn(),
   fetchFocusPreviewStatus: vi.fn(),
   fetchPreviewArtifact: vi.fn(),
   listFocusPreviewRequests: vi.fn(),
+  listFocusPreviewRevisions: vi.fn(),
 }));
 
 const baseRequest = {
@@ -51,6 +55,84 @@ const baseRequest = {
   diagnostic: null,
   source_snapshot: null,
   package: null,
+};
+
+const currentRevision = {
+  revision_id: "revision-current",
+  tenant_name: "production",
+  month: "2026-07",
+  start_date: "2026-07-01",
+  end_date: "2026-08-01",
+  lifecycle: "current" as const,
+  monthly_status: "provisional" as const,
+  published_at: "2026-07-21T12:00:00Z",
+  supersedes_revision_id: "revision-old",
+  superseded_by_revision_id: null,
+  material_sha256: "d".repeat(64),
+  source_snapshot: {
+    calculation_timestamp: "2026-07-21T11:55:00Z",
+    calculation_coverage: [],
+    source_through: "2026-07-21T11:50:00Z",
+    effective_coverage_start_date: "2026-07-01",
+    effective_coverage_end_date: "2026-07-21",
+    evidence_through_date: "2026-07-20",
+    availability_cutoff_end_date: "2026-07-21",
+    monthly_status: "provisional" as const,
+  },
+  validation: {
+    status: "passed" as const,
+    mapping_profile_version: "focus-1.4-preview-v5",
+    source_records: 12,
+    rows: 10,
+    mapping_errors: 0 as const,
+    artifact_integrity: "passed" as const,
+  },
+  replacement_semantics: "complete_replacement" as const,
+  consumer_action: "replace_do_not_aggregate" as const,
+  detail_url:
+    "/api/v1/tenants/production/focus-preview/revisions/revision-current",
+};
+
+const supersededRevision = {
+  ...currentRevision,
+  revision_id: "revision-old",
+  lifecycle: "superseded" as const,
+  monthly_status: "settled" as const,
+  published_at: "2026-07-20T12:00:00Z",
+  supersedes_revision_id: null,
+  superseded_by_revision_id: "revision-current",
+  source_snapshot: {
+    ...currentRevision.source_snapshot,
+    monthly_status: "settled" as const,
+  },
+  detail_url:
+    "/api/v1/tenants/production/focus-preview/revisions/revision-old",
+};
+
+const currentRevisionDetail = {
+  ...currentRevision,
+  self_url: currentRevision.detail_url,
+  package: {
+    manifest: {
+      name: "manifest.json",
+      media_type: "application/json",
+      size_bytes: 3,
+      sha256: "a".repeat(64),
+      download_url: `${currentRevision.detail_url}/manifest`,
+    },
+    files: [
+      {
+        name: "cost-and-usage.csv",
+        media_type: "text/csv",
+        size_bytes: 4,
+        sha256: "b".repeat(64),
+        order: 1,
+        download_url: `${currentRevision.detail_url}/files/cost-and-usage.csv`,
+      },
+    ],
+    download_all_name: "focus-mapping-preview-revision-current.zip",
+    download_all_url: `${currentRevision.detail_url}/archive`,
+  },
 };
 
 async function submitForm(): Promise<void> {
@@ -77,6 +159,13 @@ describe("FOCUS Mapping Preview page delegation", () => {
       items: [],
       next_cursor: null,
     });
+    vi.mocked(listFocusPreviewRevisions).mockResolvedValue({
+      items: [],
+      next_cursor: null,
+      replacement_semantics: "complete_replacement",
+      consumer_action: "replace_do_not_aggregate",
+    });
+    vi.mocked(fetchFocusPreviewRevision).mockResolvedValue(currentRevisionDetail);
     vi.mocked(fetchFocusPreviewProfile).mockResolvedValue({
       mapping_profile_version: "focus-1.4-preview-v5",
       full_columns: ["BilledCost", "Tags", "AllocatedResourceId"],
@@ -434,6 +523,272 @@ describe("FOCUS Mapping Preview page delegation", () => {
       signal: expect.any(AbortSignal),
     });
     expect(screen.queryByRole("button", { name: /load more/i })).toBeNull();
+  });
+
+  it("loads monthly revision history and renders replacement, lifecycle, freshness, and validation evidence", async () => {
+    vi.mocked(listFocusPreviewRevisions).mockResolvedValue({
+      items: [currentRevision, supersededRevision],
+      next_cursor: null,
+      replacement_semantics: "complete_replacement",
+      consumer_action: "replace_do_not_aggregate",
+    });
+
+    render(<FocusPreviewPage now={() => new Date("2026-07-21T20:00:00Z")} />);
+
+    expect(await screen.findByRole("heading", { name: /published monthly revisions/i })).toBeTruthy();
+    expect(listFocusPreviewRevisions).toHaveBeenCalledWith("production", {
+      month: "2026-07",
+      signal: expect.any(AbortSignal),
+    });
+    expect(screen.getByText("revision-current")).toBeTruthy();
+    expect(screen.getByText("revision-old")).toBeTruthy();
+    expect(screen.getByText(/each revision is a complete replacement.*do not aggregate revisions/i)).toBeTruthy();
+    expect(screen.getByText(/lifecycle current/i)).toBeTruthy();
+    expect(screen.getByText(/lifecycle superseded/i)).toBeTruthy();
+    expect(screen.getByText(/monthly status provisional/i)).toBeTruthy();
+    expect(screen.getByText(/monthly status settled/i)).toBeTruthy();
+    expect(screen.getByText(/published.*2026-07-21T12:00:00Z/i)).toBeTruthy();
+    expect(screen.getByText(/calculation.*2026-07-21T11:55:00Z/i)).toBeTruthy();
+    expect(screen.getByText(/source through.*2026-07-21T11:50:00Z/i)).toBeTruthy();
+    expect(screen.getByText(/supersedes.*revision-old/i)).toBeTruthy();
+    expect(screen.getByText(/superseded by.*revision-current/i)).toBeTruthy();
+    expect(screen.getAllByText(/validation passed/i)).toHaveLength(2);
+    expect(screen.getAllByText(/mapping profile.*focus-1\.4-preview-v5/i)).toHaveLength(2);
+    expect(screen.getAllByText(/source records.*12/i)).toHaveLength(2);
+    expect(screen.getAllByText(/rows.*10/i)).toHaveLength(2);
+    expect(screen.getAllByText(/artifact integrity passed/i)).toHaveLength(2);
+  });
+
+  it("renders settled request evidence through the persisted daily boundary", async () => {
+    vi.mocked(listFocusPreviewRequests).mockResolvedValue({
+      items: [{
+        ...baseRequest,
+        request_id: "request-settled",
+        status: "ready",
+        source_snapshot: {
+          calculation_timestamp: "2026-08-02T02:00:00Z",
+          calculation_coverage: [],
+          source_through: "2026-08-01T00:00:00Z",
+          effective_coverage_start_date: "2026-07-01",
+          effective_coverage_end_date: "2026-08-01",
+          evidence_through_date: "2026-07-31",
+          availability_cutoff_end_date: "2026-08-01",
+          monthly_status: "settled",
+        },
+      }],
+      next_cursor: null,
+    });
+
+    render(<FocusPreviewPage />);
+
+    expect(await screen.findByText(/monthly status: settled/i)).toBeTruthy();
+    expect(screen.getByText(/evidence through 2026-07-31/i)).toBeTruthy();
+  });
+
+  it("paginates revision history with the returned cursor", async () => {
+    vi.mocked(listFocusPreviewRevisions)
+      .mockResolvedValueOnce({
+        items: [currentRevision],
+        next_cursor: "revision-current",
+        replacement_semantics: "complete_replacement",
+        consumer_action: "replace_do_not_aggregate",
+      })
+      .mockResolvedValueOnce({
+        items: [supersededRevision],
+        next_cursor: null,
+        replacement_semantics: "complete_replacement",
+        consumer_action: "replace_do_not_aggregate",
+      });
+    render(<FocusPreviewPage now={() => new Date("2026-07-21T20:00:00Z")} />);
+
+    expect(await screen.findByText("revision-current")).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: /load more revisions/i }));
+
+    expect(await screen.findByText("revision-old")).toBeTruthy();
+    expect(listFocusPreviewRevisions).toHaveBeenNthCalledWith(2, "production", {
+      month: "2026-07",
+      cursor: "revision-current",
+      signal: expect.any(AbortSignal),
+    });
+    expect(screen.queryByRole("button", { name: /load more revisions/i })).toBeNull();
+  });
+
+  it("loads direct revision detail and downloads its manifest, file, and archive URLs", async () => {
+    vi.mocked(listFocusPreviewRevisions).mockResolvedValue({
+      items: [currentRevision],
+      next_cursor: null,
+      replacement_semantics: "complete_replacement",
+      consumer_action: "replace_do_not_aggregate",
+    });
+    vi.mocked(fetchPreviewArtifact).mockResolvedValue(new Blob(["bytes"]));
+    render(<FocusPreviewPage now={() => new Date("2026-07-21T20:00:00Z")} />);
+
+    expect(await screen.findByText("revision-current")).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: /view and download/i }));
+    expect(fetchFocusPreviewRevision).toHaveBeenCalledWith(
+      "production",
+      "revision-current",
+      expect.any(AbortSignal),
+    );
+
+    await userEvent.click(await screen.findByRole("button", { name: /download manifest\.json/i }));
+    await userEvent.click(screen.getByRole("button", { name: /download cost-and-usage\.csv/i }));
+    await userEvent.click(screen.getByRole("button", { name: /download all/i }));
+
+    expect(vi.mocked(fetchPreviewArtifact).mock.calls.map(([url]) => url)).toEqual([
+      `${currentRevision.detail_url}/manifest`,
+      `${currentRevision.detail_url}/files/cost-and-usage.csv`,
+      `${currentRevision.detail_url}/archive`,
+    ]);
+    for (const [, signal] of vi.mocked(fetchPreviewArtifact).mock.calls) {
+      expect(signal).toBeInstanceOf(AbortSignal);
+    }
+  });
+
+  it("shows a generic revision artifact failure without internal paths", async () => {
+    vi.mocked(listFocusPreviewRevisions).mockResolvedValue({
+      items: [currentRevision],
+      next_cursor: null,
+      replacement_semantics: "complete_replacement",
+      consumer_action: "replace_do_not_aggregate",
+    });
+    vi.mocked(fetchPreviewArtifact).mockRejectedValueOnce(
+      new Error("/srv/private/artifacts/revision-current/manifest.json"),
+    );
+    render(<FocusPreviewPage now={() => new Date("2026-07-21T20:00:00Z")} />);
+
+    expect(await screen.findByText("revision-current")).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: /view and download/i }));
+    await userEvent.click(await screen.findByRole("button", { name: /download manifest\.json/i }));
+
+    expect(await screen.findByText(/published.*revision.*failed.*try again/i)).toBeTruthy();
+    expect(screen.queryByText(/\/srv\/private\/artifacts\/revision-current/i)).toBeNull();
+  });
+
+  it("aborts and clears revision history when the revision month changes", async () => {
+    let oldHistoryAborted = false;
+    const oldHistory = deferred<{
+      items: Array<typeof currentRevision>;
+      next_cursor: string | null;
+      replacement_semantics: "complete_replacement";
+      consumer_action: "replace_do_not_aggregate";
+    }>();
+    vi.mocked(listFocusPreviewRevisions).mockImplementation(
+      (
+        _tenant: string,
+        options: { month: string; signal?: AbortSignal },
+      ) => {
+        if (options.month === "2026-07") {
+          options.signal?.addEventListener("abort", () => {
+            oldHistoryAborted = true;
+          });
+          return oldHistory.promise;
+        }
+        return Promise.resolve({
+          items: [],
+          next_cursor: null,
+          replacement_semantics: "complete_replacement",
+          consumer_action: "replace_do_not_aggregate",
+        });
+      },
+    );
+    render(<FocusPreviewPage now={() => new Date("2026-07-21T20:00:00Z")} />);
+
+    const revisionMonth = await screen.findByLabelText(/revision month/i);
+    fireEvent.change(revisionMonth, { target: { value: "2026-06" } });
+
+    await waitFor(() => expect(oldHistoryAborted).toBe(true));
+    expect(listFocusPreviewRevisions).toHaveBeenLastCalledWith("production", {
+      month: "2026-06",
+      signal: expect.any(AbortSignal),
+    });
+    expect(screen.queryByText("revision-current")).toBeNull();
+  });
+
+  it("aborts and clears selected revision and artifact work on tenant change", async () => {
+    let artifactAborted = false;
+    vi.mocked(listFocusPreviewRevisions).mockImplementation(async (tenantName: string) => ({
+      items: tenantName === "production" ? [currentRevision] : [],
+      next_cursor: null,
+      replacement_semantics: "complete_replacement",
+      consumer_action: "replace_do_not_aggregate",
+    }));
+    vi.mocked(fetchPreviewArtifact).mockImplementation(
+      (_url, signal) => new Promise((_resolve, reject) => {
+        signal?.addEventListener("abort", () => {
+          artifactAborted = true;
+          reject(new DOMException("artifact aborted", "AbortError"));
+        });
+      }),
+    );
+    const { rerender } = render(
+      <FocusPreviewPage now={() => new Date("2026-07-21T20:00:00Z")} />,
+    );
+    expect(await screen.findByText("revision-current")).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: /view and download/i }));
+    await userEvent.click(await screen.findByRole("button", { name: /download manifest\.json/i }));
+
+    tenantState.current = { tenant_name: "staging", tenant_id: "tenant-2" };
+    rerender(<FocusPreviewPage now={() => new Date("2026-07-21T20:00:00Z")} />);
+
+    await waitFor(() => expect(artifactAborted).toBe(true));
+    expect(screen.queryByText("revision-current")).toBeNull();
+    expect(listFocusPreviewRevisions).toHaveBeenLastCalledWith("staging", {
+      month: "2026-07",
+      signal: expect.any(AbortSignal),
+    });
+    expect(screen.queryByText("artifact aborted")).toBeNull();
+  });
+
+  it("removes no-longer-visible revisions after refresh", async () => {
+    vi.mocked(listFocusPreviewRevisions)
+      .mockResolvedValueOnce({
+        items: [currentRevision],
+        next_cursor: null,
+        replacement_semantics: "complete_replacement",
+        consumer_action: "replace_do_not_aggregate",
+      })
+      .mockResolvedValueOnce({
+        items: [],
+        next_cursor: null,
+        replacement_semantics: "complete_replacement",
+        consumer_action: "replace_do_not_aggregate",
+      });
+    render(<FocusPreviewPage now={() => new Date("2026-07-21T20:00:00Z")} />);
+
+    expect(await screen.findByText("revision-current")).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: /refresh revisions/i }));
+
+    await waitFor(() => expect(screen.queryByText("revision-current")).toBeNull());
+  });
+
+  it("shows a generic history failure without internal paths", async () => {
+    vi.mocked(listFocusPreviewRevisions).mockRejectedValueOnce(
+      new Error("/srv/private/tenants/tenant-1/revisions.sqlite"),
+    );
+    render(<FocusPreviewPage now={() => new Date("2026-07-21T20:00:00Z")} />);
+
+    expect(await screen.findByText(/published.*revision.*failed.*try again/i)).toBeTruthy();
+    expect(screen.queryByText(/\/srv\/private|tenant-1|revisions\.sqlite/i)).toBeNull();
+  });
+
+  it("shows a generic direct-detail failure without internal paths", async () => {
+    vi.mocked(listFocusPreviewRevisions).mockResolvedValue({
+      items: [currentRevision],
+      next_cursor: null,
+      replacement_semantics: "complete_replacement",
+      consumer_action: "replace_do_not_aggregate",
+    });
+    vi.mocked(fetchFocusPreviewRevision).mockRejectedValueOnce(
+      new Error("/srv/private/artifacts/revision-current/manifest.json"),
+    );
+    render(<FocusPreviewPage now={() => new Date("2026-07-21T20:00:00Z")} />);
+
+    expect(await screen.findByText("revision-current")).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: /view and download/i }));
+
+    expect(await screen.findByText(/published.*revision.*failed.*try again/i)).toBeTruthy();
+    expect(screen.queryByText(/\/srv\/private|artifacts|manifest\.json/i)).toBeNull();
   });
 
   it("clears recent requests and aborts the old tenant poll when tenant changes", async () => {

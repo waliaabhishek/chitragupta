@@ -5,9 +5,13 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from importlib import import_module
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+from unittest.mock import MagicMock
 
 import pytest
+
+if TYPE_CHECKING:
+    from core.preview.revisions import PreviewRevisionReadService
 
 from tests.unit.core.preview.test_revision_mapping import (
     _draft,
@@ -20,6 +24,7 @@ from tests.unit.core.preview.test_revision_mapping import (
 class _CorruptingStore:
     delegate: Any
     manifest_body: bytes
+    manifest_reads: int = 0
     file_reads: int = 0
     archive_opens: int = 0
 
@@ -28,6 +33,7 @@ class _CorruptingStore:
 
     def read_manifest(self, storage_key: str, metadata: Any) -> bytes:
         del storage_key, metadata
+        self.manifest_reads += 1
         return self.manifest_body
 
     def read_file(self, storage_key: str, metadata: Any) -> bytes:
@@ -112,16 +118,177 @@ def _mutate(body: bytes, field: str, *, rewrite_material: bool = False) -> bytes
     return json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()
 
 
-def _assert_every_delivery_rejects(reader: Any, revision: Any, error_type: type[BaseException]) -> None:
+def _assert_every_delivery_rejects(
+    reader: PreviewRevisionReadService,
+    revision: Any,
+    error_type: type[BaseException],
+) -> None:
     for operation in (
-        lambda: reader.read_manifest(revision),
-        lambda: reader.read_file(revision, "cost-and-usage.csv"),
-        lambda: reader.open_archive(revision),
+        lambda: reader.read_manifest(revision=revision),
+        lambda: reader.read_file(revision=revision, file_name="cost-and-usage.csv"),
+        lambda: reader.open_archive(revision=revision),
     ):
         with pytest.raises(error_type) as raised:
             operation()
         assert "tenant-1" not in str(raised.value)
         assert revision.package.storage_key not in str(raised.value)
+
+
+def test_reader_extracts_validation_summary_from_validated_manifest(tmp_path: Path) -> None:
+    revisions = import_module("core.preview.revisions")
+    revision, _body, store = _stored_revision(tmp_path)
+    reader = revisions.PreviewRevisionReadService(artifact_store=store)
+
+    summary = reader.validation_summary(revision=revision)
+
+    assert summary.status == "passed"
+    assert summary.mapping_profile_version == "focus-1.4-preview-v5"
+    assert summary.source_records == 2
+    assert summary.rows == 2
+    assert summary.mapping_errors == 0
+    assert summary.artifact_integrity == "passed"
+
+
+def test_reader_history_and_direct_lookup_delegate_owner_scoped_keyword_contracts(tmp_path: Path) -> None:
+    revisions = import_module("core.preview.revisions")
+    persistence = import_module("core.preview.persistence")
+    revision, _body, store = _stored_revision(tmp_path)
+    repository = MagicMock()
+    repository.get_for_owner.return_value = revision
+    repository.list_for_owner_month.return_value = persistence.PreviewRevisionPage(items=(revision,), next_cursor=None)
+    uow = MagicMock()
+    uow.__enter__.return_value.revisions = repository
+    backend = MagicMock()
+    backend.create_preview_read_unit_of_work.return_value = uow
+    reader = revisions.PreviewRevisionReadService(artifact_store=store)
+
+    assert (
+        reader.get_for_owner(
+            backend=backend,
+            ecosystem="confluent_cloud",
+            tenant_id="tenant-1",
+            revision_id="revision-1",
+        )
+        is revision
+    )
+    page = reader.list_for_owner_month(
+        backend=backend,
+        ecosystem="confluent_cloud",
+        tenant_id="tenant-1",
+        month_start=date(2026, 7, 1),
+        limit=20,
+        cursor_revision_id=None,
+    )
+
+    assert page.items == (revision,)
+    repository.get_for_owner.assert_called_once_with(
+        ecosystem="confluent_cloud",
+        tenant_id="tenant-1",
+        revision_id="revision-1",
+    )
+    repository.list_for_owner_month.assert_called_once_with(
+        ecosystem="confluent_cloud",
+        tenant_id="tenant-1",
+        month_start=date(2026, 7, 1),
+        limit=20,
+        cursor_revision_id=None,
+    )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("status", "failed"),
+        ("mapping_profile_version", ""),
+        ("mapping_profile_version", 1),
+        ("source_records", -1),
+        ("source_records", True),
+        ("rows", -1),
+        ("rows", False),
+        ("mapping_errors", 1),
+        ("mapping_errors", 0.0),
+        ("mapping_errors", False),
+        ("artifact_integrity", "failed"),
+    ],
+)
+def test_reader_rejects_each_malformed_validation_field(
+    tmp_path: Path,
+    field: str,
+    value: object,
+) -> None:
+    revisions = import_module("core.preview.revisions")
+    revision, body, store = _stored_revision(tmp_path)
+    manifest = json.loads(body)
+    manifest["validation"][field] = value
+    corrupting = _CorruptingStore(
+        store,
+        json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode(),
+    )
+    reader = revisions.PreviewRevisionReadService(artifact_store=corrupting)
+
+    with pytest.raises(revisions.PreviewRevisionArtifactUnavailableError):
+        reader.validation_summary(revision=revision)
+
+
+def test_reader_rejects_non_object_validation_container(tmp_path: Path) -> None:
+    revisions = import_module("core.preview.revisions")
+    revision, body, store = _stored_revision(tmp_path)
+    manifest = json.loads(body)
+    manifest["validation"] = []
+    corrupting = _CorruptingStore(
+        store,
+        json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode(),
+    )
+    reader = revisions.PreviewRevisionReadService(artifact_store=corrupting)
+
+    with pytest.raises(revisions.PreviewRevisionArtifactUnavailableError):
+        reader.validation_summary(revision=revision)
+
+    assert corrupting.manifest_reads == 1
+
+
+def test_reader_rejects_nonblank_validation_mapping_profile_mismatch(
+    tmp_path: Path,
+) -> None:
+    revisions = import_module("core.preview.revisions")
+    revision, body, store = _stored_revision(tmp_path)
+    manifest = json.loads(body)
+    manifest["validation"]["mapping_profile_version"] = "focus-1.4-preview-other"
+    corrupting = _CorruptingStore(
+        store,
+        json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode(),
+    )
+    reader = revisions.PreviewRevisionReadService(artifact_store=corrupting)
+
+    with pytest.raises(revisions.PreviewRevisionArtifactUnavailableError):
+        reader.validation_summary(revision=revision)
+
+    assert corrupting.manifest_reads == 1
+
+
+def test_reader_validates_manifest_before_returning_unknown_file(tmp_path: Path) -> None:
+    revisions = import_module("core.preview.revisions")
+    revision, body, store = _stored_revision(tmp_path)
+    validating = _CorruptingStore(store, body)
+    reader = revisions.PreviewRevisionReadService(artifact_store=validating)
+
+    with pytest.raises(FileNotFoundError, match="file not found"):
+        reader.read_file(revision=revision, file_name="unknown.csv")
+
+    assert validating.manifest_reads == 1
+    assert validating.file_reads == 0
+
+
+def test_corrupt_manifest_wins_before_unknown_file_lookup(tmp_path: Path) -> None:
+    revisions = import_module("core.preview.revisions")
+    revision, _body, store = _stored_revision(tmp_path)
+    corrupting = _CorruptingStore(store, b"not-json")
+    reader = revisions.PreviewRevisionReadService(artifact_store=corrupting)
+
+    with pytest.raises(revisions.PreviewRevisionArtifactUnavailableError):
+        reader.read_file(revision=revision, file_name="unknown.csv")
+
+    assert corrupting.file_reads == 0
 
 
 @pytest.mark.parametrize(
@@ -349,8 +516,8 @@ def test_real_missing_or_corrupt_data_file_is_redacted_for_file_and_archive_deli
     reader = revisions.PreviewRevisionReadService(artifact_store=store)
 
     for operation in (
-        lambda: reader.read_file(revision, revision.package.files[0].name),
-        lambda: reader.open_archive(revision),
+        lambda: reader.read_file(revision=revision, file_name=revision.package.files[0].name),
+        lambda: reader.open_archive(revision=revision),
     ):
         with pytest.raises(revisions.PreviewRevisionArtifactUnavailableError) as raised:
             operation()
@@ -383,7 +550,7 @@ def test_archive_open_failure_is_redacted_without_leaking_storage_details(
     reader = revisions.PreviewRevisionReadService(artifact_store=store)
 
     with pytest.raises(revisions.PreviewRevisionArtifactUnavailableError) as raised:
-        reader.open_archive(revision)
+        reader.open_archive(revision=revision)
     assert revision.package.storage_key not in str(raised.value)
     assert "tenant-1" not in str(raised.value)
 
@@ -407,11 +574,11 @@ def test_every_delivery_calls_shared_revision_invariant_before_artifact_access(
     monkeypatch.setattr(revisions, "validate_preview_revision_invariant", capture)
     reader = revisions.PreviewRevisionReadService(artifact_store=store)
     if operation == "manifest":
-        assert reader.read_manifest(revision) == body
+        assert reader.read_manifest(revision=revision) == body
     elif operation == "file":
-        reader.read_file(revision, "cost-and-usage.csv")
+        reader.read_file(revision=revision, file_name="cost-and-usage.csv")
     else:
-        archive = reader.open_archive(revision)
+        archive = reader.open_archive(revision=revision)
         archive.close()
 
     assert calls == ["2026-07"]
@@ -422,11 +589,11 @@ def test_reader_validates_then_returns_exact_manifest_file_and_archive(tmp_path:
     revision, body, store = _stored_revision(tmp_path)
     reader = revisions.PreviewRevisionReadService(artifact_store=store)
 
-    assert reader.read_manifest(revision) == body
-    metadata, file_body = reader.read_file(revision, "cost-and-usage.csv")
+    assert reader.read_manifest(revision=revision) == body
+    metadata, file_body = reader.read_file(revision=revision, file_name="cost-and-usage.csv")
     assert metadata == revision.package.files[0]
     assert file_body == store.read_file(revision.package.storage_key, metadata)
-    archive = reader.open_archive(revision)
+    archive = reader.open_archive(revision=revision)
     try:
         assert b"".join(archive.iter_chunks())
     finally:

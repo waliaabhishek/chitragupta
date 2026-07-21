@@ -163,7 +163,7 @@ def test_current_preview_migrations_match_create_all_schema(tmp_path: Path) -> N
     migration_connection = f"sqlite:///{tmp_path / 'migration.db'}"
     direct_connection = f"sqlite:///{tmp_path / 'direct.db'}"
     config = _alembic_config(migration_connection)
-    command.upgrade(config, "024")
+    command.upgrade(config, "025")
 
     direct_backend = SQLModelBackend(direct_connection, CCloudStorageModule(), use_migrations=False)
     direct_backend.create_tables()

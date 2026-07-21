@@ -648,12 +648,15 @@ Return the current published revision for required query `month=YYYY-MM`.
 `revision_id` is optional on this metadata route and acts as a current-revision
 guard when supplied.
 
-The response contains `revision_id`, `tenant_name`, `month`, inclusive
-`start_date`, exclusive `end_date`, `monthly_status`, `published_at`, nullable
-`supersedes_revision_id`, `material_sha256`, `source_snapshot`, `self_url`, and
-`package`. Package metadata contains the manifest, ordered CSV files, and ZIP
-download URL. Every returned artifact URL includes both `month` and
-`revision_id`.
+The response contains revision identity and month bounds, `monthly_status`,
+`published_at`, nullable predecessor/successor IDs, `lifecycle`,
+`material_sha256`, `source_snapshot`, `validation`, `self_url`, and `package`.
+The source snapshot reports calculation and source-through freshness, effective
+coverage, evidence-through date, availability cutoff, and Monthly status. The
+validation summary reports the mapping profile, source-record and output-row
+counts, zero mapping errors, and passed artifact integrity. Package metadata
+contains the manifest, ordered CSV files, and ZIP download URL. Every returned
+current-artifact URL includes both `month` and `revision_id`.
 
 #### Current revision artifact endpoints
 
@@ -678,8 +681,44 @@ delivery. If the guard no longer matches, the API returns:
 ```
 
 Clients should fetch metadata, follow its URLs, and repeat that sequence after
-this 409 response. The routes expose only the current revision; there is no
-retained-revision listing or direct historical-revision endpoint.
+this 409 response.
+
+#### `GET /api/v1/tenants/{tenant_name}/focus-preview/revisions`
+
+List retained current and superseded revisions newest first for required query
+`month=YYYY-MM`.
+
+| Query | Default | Constraints | Meaning |
+|---|---:|---|---|
+| `limit` | `20` | 1–100 | Maximum revisions returned. |
+| `cursor` | none | Non-empty revision ID | Continue after the prior page's `next_cursor`. |
+
+The response is `{"items":[...],"next_cursor":"...","replacement_semantics":"complete_replacement","consumer_action":"replace_do_not_aggregate"}`.
+Each item contains the same lifecycle, freshness, validation, and replacement
+fields as revision detail plus `detail_url`. An unknown cursor, a cursor for a
+different tenant/month, or a revision that is no longer publicly retained
+returns 400 `FOCUS Mapping Preview revision cursor is invalid`.
+
+#### `GET /api/v1/tenants/{tenant_name}/focus-preview/revisions/{revision_id}`
+
+Return one publicly retained revision by immutable ID. Its manifest, individual
+file, and archive URLs address that revision directly and do not use a
+current-revision guard. A superseded revision therefore remains retrievable
+until the billing-scope retention cutoff removes its month from public history.
+
+#### Retained revision artifact endpoints
+
+| Endpoint | Result |
+|---|---|
+| `GET /revisions/{revision_id}/manifest` | Exact validated `manifest.json` bytes. |
+| `GET /revisions/{revision_id}/files/{file_name}` | Exact validated bytes for one declared CSV part. |
+| `GET /revisions/{revision_id}/archive` | `application/zip` stream named `focus-mapping-preview-{month}-{revision_id}.zip`. |
+
+All revision list/detail responses state
+`replacement_semantics: complete_replacement` and
+`consumer_action: replace_do_not_aggregate`. Consumers must replace the prior
+monthly revision; adding current and superseded revisions would double-count
+the report.
 
 | Condition | Status | Detail |
 |---|---:|---|
@@ -688,6 +727,9 @@ retained-revision listing or direct historical-revision endpoint.
 | No current revision for this tenant/month | 404 | `Current FOCUS Mapping Preview revision not found` |
 | Unknown file on the matching current revision | 404 | `FOCUS Mapping Preview file not found for current revision` |
 | Guard differs from the current revision | 409 | `focus_preview_current_changed` retry response shown above |
+| Invalid or foreign revision-history cursor | 400 | `FOCUS Mapping Preview revision cursor is invalid` |
+| Direct revision absent, foreign, or pending retention cleanup | 404 | `FOCUS Mapping Preview revision not found` |
+| Unknown file on a direct revision | 404 | `FOCUS Mapping Preview file not found for revision` |
 | Stored revision artifact is missing, corrupt, or inconsistent | 500 | `Stored FOCUS Mapping Preview revision artifact is unavailable` |
 | Revision service is unavailable | 503 | `FOCUS Mapping Preview revision service is unavailable` |
 | Revision storage is unavailable | 503 | `FOCUS Mapping Preview revision storage is unavailable` |

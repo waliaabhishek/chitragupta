@@ -83,7 +83,7 @@ def _runner(
     runner = WorkflowRunner(
         settings,
         MagicMock(),
-        revision_publisher=publisher,
+        revision_manager=publisher,
         owned_preview_artifact_store=owned_store,
     )
     runner._tenant_runtimes["production"] = TenantRuntime(  # noqa: SLF001
@@ -115,6 +115,97 @@ def test_only_periodic_run_loop_publishes_after_successful_calculation() -> None
     assert call["tenant_config"].tenant_id == "tenant-1"
     assert isinstance(call["backend"], _PreviewBackend)
     assert call["now"].tzinfo is UTC
+    publisher.cleanup_retention.assert_called_once()
+    assert publisher.cleanup_retention.call_args.kwargs["now"] is call["now"]
+
+
+def test_revision_cleanup_is_independent_of_result_and_preview_enablement() -> None:
+    manager = MagicMock()
+    runner = _runner(publisher=manager, tenant=_tenant(enabled=False))
+    now = datetime(2026, 8, 4, 12, 0, 0, 123456, tzinfo=UTC)
+
+    runner._cleanup_preview_revision_retention(now=now)  # noqa: SLF001
+
+    manager.cleanup_retention.assert_called_once()
+    call = manager.cleanup_retention.call_args.kwargs
+    assert call["tenant_name"] == "production"
+    assert call["tenant_config"].focus_preview is None
+    assert isinstance(call["backend"], _PreviewBackend)
+    assert call["now"] is now
+
+
+def test_periodic_cleanup_covers_every_cached_owner_once_despite_publication_and_owner_failures() -> None:
+    enabled_base = _tenant()
+    disabled_base = _tenant(enabled=False)
+    enabled = enabled_base.model_copy(
+        update={
+            "tenant_id": "tenant-enabled",
+            "storage": type(enabled_base.storage)(connection_string="sqlite:///enabled.db"),
+        }
+    )
+    disabled = disabled_base.model_copy(
+        update={
+            "tenant_id": "tenant-disabled",
+            "storage": type(disabled_base.storage)(connection_string="sqlite:///disabled.db"),
+        }
+    )
+    settings = AppSettings(
+        features=FeaturesConfig(enable_periodic_refresh=True, refresh_interval=1),
+        tenants={"enabled": enabled, "disabled": disabled},
+    )
+    manager = MagicMock()
+    manager.publish_eligible_months.side_effect = RuntimeError("synthetic publication failure")
+    manager.cleanup_retention.side_effect = [
+        RuntimeError("synthetic first-owner cleanup failure"),
+        MagicMock(),
+    ]
+    runner = WorkflowRunner(settings, MagicMock(), revision_manager=manager)
+    for tenant_name in settings.tenants:
+        runner._tenant_runtimes[tenant_name] = TenantRuntime(  # noqa: SLF001
+            tenant_name=tenant_name,
+            plugin=MagicMock(),
+            storage=_PreviewBackend(),
+            orchestrator=MagicMock(),
+            config_hash=f"hash-{tenant_name}",
+            created_at=datetime(2026, 8, 4, tzinfo=UTC),
+        )
+    shutdown = threading.Event()
+
+    def run_once() -> dict[str, PipelineRunResult]:
+        shutdown.set()
+        return {
+            "enabled": _result(tenant_name="enabled", tenant_id="tenant-enabled"),
+            "disabled": _result(tenant_name="disabled", tenant_id="tenant-disabled"),
+        }
+
+    runner.run_once = run_once  # type: ignore[method-assign]
+    runner.run_loop(shutdown)
+
+    manager.publish_eligible_months.assert_called_once()
+    cleanup_calls = manager.cleanup_retention.call_args_list
+    assert [call.kwargs["tenant_name"] for call in cleanup_calls] == ["enabled", "disabled"]
+    assert [call.kwargs["tenant_config"].focus_preview is not None for call in cleanup_calls] == [True, False]
+    assert all(isinstance(call.kwargs["backend"], _PreviewBackend) for call in cleanup_calls)
+    assert cleanup_calls[0].kwargs["now"] is cleanup_calls[1].kwargs["now"]
+    assert cleanup_calls[0].kwargs["now"] is manager.publish_eligible_months.call_args.kwargs["now"]
+
+
+def test_revision_cleanup_skips_unsupported_uncached_and_wrong_backends() -> None:
+    manager = MagicMock()
+    now = datetime(2026, 8, 4, tzinfo=UTC)
+
+    unsupported = _runner(publisher=manager, tenant=_tenant(ecosystem="other"))
+    unsupported._cleanup_preview_revision_retention(now=now)  # noqa: SLF001
+
+    uncached = _runner(publisher=manager)
+    uncached._tenant_runtimes.clear()  # noqa: SLF001
+    uncached._cleanup_preview_revision_retention(now=now)  # noqa: SLF001
+
+    wrong = _runner(publisher=manager)
+    wrong._tenant_runtimes["production"].storage = object()  # type: ignore[assignment]  # noqa: SLF001
+    wrong._cleanup_preview_revision_retention(now=now)  # noqa: SLF001
+
+    manager.cleanup_retention.assert_not_called()
 
 
 def test_direct_run_once_and_run_tenant_do_not_publish() -> None:
@@ -148,7 +239,9 @@ def test_periodic_publisher_skips_failed_already_running_and_fatal_results() -> 
         _result(already_running=True),
         _result(fatal=True),
     ):
-        runner._publish_scheduled_revisions({"production": result})  # noqa: SLF001
+        runner._publish_scheduled_revisions(  # noqa: SLF001
+            {"production": result}, now=datetime(2026, 8, 4, tzinfo=UTC)
+        )
 
     publisher.publish_eligible_months.assert_not_called()
 
@@ -157,17 +250,25 @@ def test_periodic_publisher_skips_missing_runtime_unsupported_profile_and_wrong_
     publisher = MagicMock()
     runner = _runner(publisher=publisher)
     runner._tenant_runtimes.clear()  # noqa: SLF001
-    runner._publish_scheduled_revisions({"production": _result()})  # noqa: SLF001
+    runner._publish_scheduled_revisions(  # noqa: SLF001
+        {"production": _result()}, now=datetime(2026, 8, 4, tzinfo=UTC)
+    )
 
     unsupported = _runner(publisher=publisher, tenant=_tenant(ecosystem="other"))
-    unsupported._publish_scheduled_revisions({"production": _result()})  # noqa: SLF001
+    unsupported._publish_scheduled_revisions(  # noqa: SLF001
+        {"production": _result()}, now=datetime(2026, 8, 4, tzinfo=UTC)
+    )
 
     no_profile = _runner(publisher=publisher, tenant=_tenant(enabled=False))
-    no_profile._publish_scheduled_revisions({"production": _result()})  # noqa: SLF001
+    no_profile._publish_scheduled_revisions(  # noqa: SLF001
+        {"production": _result()}, now=datetime(2026, 8, 4, tzinfo=UTC)
+    )
 
     wrong_backend = _runner(publisher=publisher)
     wrong_backend._tenant_runtimes["production"].storage = object()  # type: ignore[assignment]  # noqa: SLF001
-    wrong_backend._publish_scheduled_revisions({"production": _result()})  # noqa: SLF001
+    wrong_backend._publish_scheduled_revisions(  # noqa: SLF001
+        {"production": _result()}, now=datetime(2026, 8, 4, tzinfo=UTC)
+    )
 
     publisher.publish_eligible_months.assert_not_called()
 
@@ -212,6 +313,11 @@ def test_drain_waits_for_scheduled_publication_before_closing_backend_and_artifa
             assert backend.dispose_calls == 0
             assert store.close.call_count == 0
             return ()
+
+        def cleanup_retention(self, **kwargs: Any) -> Any:
+            del kwargs
+            revisions = __import__("core.preview.revisions", fromlist=["PreviewRevisionCleanupResult"])
+            return revisions.PreviewRevisionCleanupResult(0, 0, 0)
 
     runner = _runner(publisher=BlockingPublisher(), owned_store=store)
     runtime = runner._tenant_runtimes["production"]  # noqa: SLF001

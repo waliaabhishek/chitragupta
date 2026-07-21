@@ -57,7 +57,59 @@ export interface FocusPreviewRequestPage {
   next_cursor: string | null;
 }
 
+export interface FocusPreviewRevisionValidationSummary {
+  status: "passed";
+  mapping_profile_version: string;
+  source_records: number;
+  rows: number;
+  mapping_errors: 0;
+  artifact_integrity: "passed";
+}
+
+export interface FocusPreviewRevisionSummary {
+  revision_id: string;
+  tenant_name: string;
+  month: string;
+  start_date: string;
+  end_date: string;
+  lifecycle: "current" | "superseded";
+  monthly_status: "provisional" | "settled";
+  published_at: string;
+  supersedes_revision_id: string | null;
+  superseded_by_revision_id: string | null;
+  material_sha256: string;
+  source_snapshot: FocusPreviewSourceSnapshot;
+  validation: FocusPreviewRevisionValidationSummary;
+  replacement_semantics: "complete_replacement";
+  consumer_action: "replace_do_not_aggregate";
+  detail_url: string;
+}
+
+export interface FocusPreviewRevisionPage {
+  items: FocusPreviewRevisionSummary[];
+  next_cursor: string | null;
+  replacement_semantics: "complete_replacement";
+  consumer_action: "replace_do_not_aggregate";
+}
+
+export interface FocusPreviewRevision extends FocusPreviewRevisionSummary {
+  self_url: string;
+  package: {
+    manifest: FocusPreviewArtifact;
+    files: FocusPreviewArtifact[];
+    download_all_name: string;
+    download_all_url: string;
+  };
+}
+
 export interface ListFocusPreviewRequestsOptions {
+  limit?: number;
+  cursor?: string;
+  signal?: AbortSignal;
+}
+
+export interface ListFocusPreviewRevisionsOptions {
+  month: string;
   limit?: number;
   cursor?: string;
   signal?: AbortSignal;
@@ -145,6 +197,36 @@ export async function listFocusPreviewRequests(
     await (options.signal ? fetch(url, { signal: options.signal }) : fetch(url)),
   );
   return response.json() as Promise<FocusPreviewRequestPage>;
+}
+
+export async function listFocusPreviewRevisions(
+  tenantName: string,
+  options: ListFocusPreviewRevisionsOptions,
+): Promise<FocusPreviewRevisionPage> {
+  const params = new URLSearchParams({ month: options.month });
+  if (options.limit !== undefined) {
+    params.set("limit", String(options.limit));
+  }
+  if (options.cursor !== undefined) {
+    params.set("cursor", options.cursor);
+  }
+  const url = `${API_URL}/tenants/${tenantName}/focus-preview/revisions?${params.toString()}`;
+  const response = await requireOk(
+    await (options.signal ? fetch(url, { signal: options.signal }) : fetch(url)),
+  );
+  return response.json() as Promise<FocusPreviewRevisionPage>;
+}
+
+export async function fetchFocusPreviewRevision(
+  tenantName: string,
+  revisionId: string,
+  signal?: AbortSignal,
+): Promise<FocusPreviewRevision> {
+  const url = `${API_URL}/tenants/${tenantName}/focus-preview/revisions/${revisionId}`;
+  const response = await requireOk(
+    await (signal ? fetch(url, { signal }) : fetch(url)),
+  );
+  return response.json() as Promise<FocusPreviewRevision>;
 }
 
 export async function fetchFocusPreviewProfile(

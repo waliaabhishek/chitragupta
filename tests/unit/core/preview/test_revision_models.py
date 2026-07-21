@@ -191,3 +191,62 @@ def test_shared_revision_invariant_is_used_by_both_domain_types(monkeypatch: pyt
     _revision()
 
     assert calls == ["2026-07", "2026-07", "2026-07"]
+
+
+def test_revision_retention_pending_timestamp_is_optional_and_normalized() -> None:
+    pending = datetime(2026, 8, 4, 3, tzinfo=UTC)
+
+    assert _revision().retention_pending_at is None
+    assert _revision(retention_pending_at=pending).retention_pending_at == pending
+
+
+def test_revision_rejects_naive_retention_pending_timestamp() -> None:
+    with pytest.raises(ValueError, match="timezone"):
+        _revision(retention_pending_at=datetime(2026, 8, 4, 3))
+
+
+def test_revision_validation_summary_accepts_only_passed_nonnegative_integer_counts() -> None:
+    models = _models()
+
+    summary = models.PreviewRevisionValidationSummary(
+        status="passed",
+        mapping_profile_version="focus-1.4-v1",
+        source_records=17,
+        rows=9,
+        mapping_errors=0,
+        artifact_integrity="passed",
+    )
+
+    assert summary.source_records == 17
+    assert summary.rows == 9
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"status": "failed"},
+        {"mapping_profile_version": " "},
+        {"source_records": -1},
+        {"source_records": True},
+        {"rows": -1},
+        {"rows": False},
+        {"mapping_errors": 1},
+        {"mapping_errors": 0.0},
+        {"mapping_errors": False},
+        {"artifact_integrity": "failed"},
+    ],
+)
+def test_revision_validation_summary_rejects_invalid_values(changes: dict[str, object]) -> None:
+    models = _models()
+    values: dict[str, object] = {
+        "status": "passed",
+        "mapping_profile_version": "focus-1.4-v1",
+        "source_records": 17,
+        "rows": 9,
+        "mapping_errors": 0,
+        "artifact_integrity": "passed",
+    }
+    values.update(changes)
+
+    with pytest.raises(ValueError):
+        models.PreviewRevisionValidationSummary(**values)

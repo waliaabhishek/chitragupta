@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import threading
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
@@ -85,7 +86,7 @@ class _RevisionRepository:
         self.rows: list[Any] = []
         self.fail_next: BaseException | None = None
 
-    def get_current_for_owner(self, *, ecosystem: str, tenant_id: str, month_start: date) -> Any | None:
+    def get_current_for_publication(self, *, ecosystem: str, tenant_id: str, month_start: date) -> Any | None:
         return self.current.get((ecosystem, tenant_id, month_start))
 
     def replace_current(
@@ -436,6 +437,134 @@ def test_first_scheduled_pass_seeds_every_eligible_month_including_header_only(t
     assert [request.grain for request in generator.requests] == ["monthly", "monthly", "monthly"]
     assert all(request.column_profile == "full" for request in generator.requests)
     assert backend.repository.rows[1].package.files[0].size_bytes > 0
+
+
+def test_scheduled_publication_excludes_months_already_outside_retention(tmp_path: Path) -> None:
+    config = import_module("core.config.models")
+    generator = _Generator([("provisional", "july")])
+    service, _store = _service(tmp_path, generator)
+    backend = _Backend()
+    tenant = config.TenantConfig(
+        ecosystem="confluent_cloud",
+        tenant_id="tenant-1",
+        lookback_days=130,
+        cutoff_days=5,
+        retention_days=30,
+        focus_preview=config.FocusPreviewTenantConfig(
+            commercial_profile="direct_payg",
+            effective_start_date=date(2026, 4, 1),
+            effective_end_date=date(2026, 8, 1),
+        ),
+    )
+
+    published = service.publish_eligible_months(
+        tenant_name="production",
+        tenant_config=tenant,
+        backend=backend,
+        now=datetime(2026, 8, 4, tzinfo=UTC),
+    )
+
+    assert [item.month for item in published] == ["2026-07"]
+    assert [request.start_date for request in generator.requests] == [date(2026, 7, 1)]
+
+
+def test_pending_current_reserves_month_and_suppresses_republication(tmp_path: Path) -> None:
+    generator = _Generator([("settled", "v1"), ("settled", "v2")])
+    service, _store = _service(tmp_path, generator)
+    backend = _Backend()
+    first = _publish(service, backend)[0]
+    pending = replace(
+        first,
+        retention_pending_at=datetime(2026, 8, 5, tzinfo=UTC),
+    )
+    key = (pending.ecosystem, pending.tenant_id, pending.start_date)
+    backend.repository.current[key] = pending
+    backend.repository.rows[backend.repository.rows.index(first)] = pending
+
+    assert _publish(service, backend) == ()
+    assert [item.revision_id for item in backend.repository.rows] == [first.revision_id]
+
+
+def test_retention_mark_wins_replacement_cas_and_only_unpublished_artifact_is_removed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from core.storage.backends.sqlmodel.unit_of_work import SQLModelBackend
+    from plugins.confluent_cloud.storage.module import CCloudStorageModule
+
+    generator = _Generator([("settled", "v1"), ("settled", "v2")])
+    service, store = _service(tmp_path / "artifacts", generator)
+    backend = SQLModelBackend(
+        f"sqlite:///{tmp_path / 'race.db'}",
+        CCloudStorageModule(),
+        use_migrations=False,
+    )
+    backend.create_tables()
+    initial = _publish(service, backend)[0]
+    candidate_staged = threading.Event()
+    retention_committed = threading.Event()
+    deleted_storage_keys: list[str] = []
+    original_delete = store.delete_package
+
+    def record_delete(*, storage_key: str) -> bool:
+        deleted_storage_keys.append(storage_key)
+        return original_delete(storage_key=storage_key)
+
+    monkeypatch.setattr(store, "delete_package", record_delete)
+
+    class RacingBackend:
+        def create_preview_read_unit_of_work(self) -> Any:
+            return backend.create_preview_read_unit_of_work()
+
+        def create_preview_write_unit_of_work(self) -> Any:
+            candidate_staged.set()
+            assert retention_committed.wait(5)
+            return backend.create_preview_write_unit_of_work()
+
+    publication_results: list[tuple[Any, ...]] = []
+    publication = threading.Thread(
+        target=lambda: publication_results.append(_publish(service, RacingBackend())),
+    )
+    publication.start()
+    assert candidate_staged.wait(5)
+
+    pending_at = datetime(2026, 8, 5, tzinfo=UTC)
+    with backend.create_preview_write_unit_of_work() as uow:
+        marked = uow.revisions.mark_retention_due(
+            ecosystem="confluent_cloud",
+            tenant_id="tenant-1",
+            cutoff_date=date(2026, 8, 1),
+            pending_at=pending_at,
+            limit=1,
+        )
+        uow.commit()
+    assert [candidate.revision_id for candidate in marked] == [initial.revision_id]
+    retention_committed.set()
+    publication.join(timeout=10)
+
+    assert not publication.is_alive()
+    assert publication_results == [()]
+    assert len(deleted_storage_keys) == 1
+    assert deleted_storage_keys[0] != initial.package.storage_key
+    assert store.read_manifest(initial.package.storage_key, initial.package.manifest)
+    assert not (tmp_path / "artifacts" / deleted_storage_keys[0]).exists()
+
+    with backend.create_preview_read_unit_of_work() as uow:
+        pending_current = uow.revisions.get_current_for_publication(
+            ecosystem="confluent_cloud",
+            tenant_id="tenant-1",
+            month_start=date(2026, 7, 1),
+        )
+        pending = uow.revisions.list_retention_pending(
+            ecosystem="confluent_cloud",
+            tenant_id="tenant-1",
+            limit=100,
+        )
+    assert pending_current is not None
+    assert pending_current.revision_id == initial.revision_id
+    assert pending_current.retention_pending_at == pending_at
+    assert [candidate.revision_id for candidate in pending] == [initial.revision_id]
+    backend.dispose()
 
 
 def test_scheduled_publication_never_creates_preview_request_rows(tmp_path: Path) -> None:

@@ -1,15 +1,19 @@
 import type React from "react";
 import { useEffect, useRef, useState } from "react";
-import { Alert, Button, DatePicker, Descriptions, Space, Typography } from "antd";
+import { Alert, Button, DatePicker, Descriptions, Space, Tag, Typography } from "antd";
 import dayjs from "dayjs";
 import {
   fetchFocusPreviewProfile,
+  fetchFocusPreviewRevision,
   fetchFocusPreviewStatus,
   fetchPreviewArtifact,
   listFocusPreviewRequests,
+  listFocusPreviewRevisions,
   submitFocusPreview,
-  type FocusPreviewRequest,
   type FocusPreviewColumnProfile,
+  type FocusPreviewRequest,
+  type FocusPreviewRevision,
+  type FocusPreviewRevisionSummary,
 } from "../../api/focusPreview";
 import { useTenant } from "../../providers/TenantContext";
 import { getCurrentUtcMonth, getCurrentUtcMonthRange } from "./dateRange";
@@ -18,6 +22,7 @@ const { Title, Text } = Typography;
 
 const REQUEST_ERROR_MESSAGE = "FOCUS Mapping Preview request failed. Try again.";
 const DOWNLOAD_ERROR_MESSAGE = "FOCUS Mapping Preview download failed. Try again.";
+const REVISION_ERROR_MESSAGE = "Published revision operation failed. Try again.";
 
 function isAbortError(error: unknown): boolean {
   return typeof error === "object" && error !== null && "name" in error && error.name === "AbortError";
@@ -116,6 +121,98 @@ function PreviewRequestDetails({
   );
 }
 
+interface PreviewRevisionDetailsProps {
+  revision: FocusPreviewRevisionSummary;
+  onView: (revisionId: string) => void;
+}
+
+function PreviewRevisionDetails({
+  revision,
+  onView,
+}: PreviewRevisionDetailsProps): React.JSX.Element {
+  return (
+    <section aria-label={`Published revision ${revision.revision_id}`}>
+      <Space direction="vertical" style={{ width: "100%" }}>
+        <Title level={4}>{revision.revision_id}</Title>
+        <Space wrap>
+          <Tag color={revision.lifecycle === "current" ? "green" : "default"}>
+            Lifecycle {revision.lifecycle}
+          </Tag>
+          <Tag color={revision.monthly_status === "provisional" ? "orange" : "green"}>
+            Monthly status {revision.monthly_status}
+          </Tag>
+        </Space>
+        <Text>Published {revision.published_at}</Text>
+        {revision.source_snapshot.calculation_timestamp && (
+          <Text>
+            {revision.lifecycle === "current" ? "Calculation" : "Snapshot calculated at"}{" "}
+            {revision.source_snapshot.calculation_timestamp}
+          </Text>
+        )}
+        {revision.source_snapshot.source_through && (
+          <Text>
+            {revision.lifecycle === "current" ? "Source through" : "Source data through"}{" "}
+            {revision.source_snapshot.source_through}
+          </Text>
+        )}
+        {revision.supersedes_revision_id && (
+          <Text>Supersedes {revision.supersedes_revision_id}</Text>
+        )}
+        {revision.superseded_by_revision_id && (
+          <Text>Superseded by {revision.superseded_by_revision_id}</Text>
+        )}
+        <Text>Validation {revision.validation.status}</Text>
+        <Text>Mapping profile {revision.validation.mapping_profile_version}</Text>
+        <Text>Source records {revision.validation.source_records}</Text>
+        <Text>Rows {revision.validation.rows}</Text>
+        <Text>Artifact integrity {revision.validation.artifact_integrity}</Text>
+        <Button onClick={() => onView(revision.revision_id)}>View and download</Button>
+      </Space>
+    </section>
+  );
+}
+
+interface PreviewRevisionDownloadProps {
+  revision: FocusPreviewRevision;
+  onDownload: (downloadUrl: string, fileName: string) => void;
+}
+
+function PreviewRevisionDownload({
+  revision,
+  onDownload,
+}: PreviewRevisionDownloadProps): React.JSX.Element {
+  return (
+    <section aria-label={`Revision downloads ${revision.revision_id}`}>
+      <Space wrap>
+        <Button
+          onClick={() => onDownload(
+            revision.package.manifest.download_url,
+            revision.package.manifest.name,
+          )}
+        >
+          Download {revision.package.manifest.name}
+        </Button>
+        {revision.package.files.map((item) => (
+          <Button
+            key={item.name}
+            onClick={() => onDownload(item.download_url, item.name)}
+          >
+            Download {item.name}
+          </Button>
+        ))}
+        <Button
+          onClick={() => onDownload(
+            revision.package.download_all_url,
+            revision.package.download_all_name,
+          )}
+        >
+          Download All
+        </Button>
+      </Space>
+    </section>
+  );
+}
+
 const CURRENT_AUTHORITY_GAPS = [
   {
     code: "provider_billing_currency_field_unavailable",
@@ -158,6 +255,7 @@ export function FocusPreviewPage({ now = () => new Date() }: FocusPreviewPagePro
   const [initialRange] = useState(() => getCurrentUtcMonthRange(now()));
   const [grain, setGrain] = useState<"monthly" | "daily">("monthly");
   const [month, setMonth] = useState(() => getCurrentUtcMonth(now()));
+  const [revisionMonth, setRevisionMonth] = useState(() => getCurrentUtcMonth(now()));
   const [columnProfile, setColumnProfile] = useState<FocusPreviewColumnProfile>("full");
   const [customColumns, setCustomColumns] = useState<string[]>([]);
   const [fullColumns, setFullColumns] = useState<string[]>([]);
@@ -166,12 +264,21 @@ export function FocusPreviewPage({ now = () => new Date() }: FocusPreviewPagePro
   const [preview, setPreview] = useState<FocusPreviewRequest | null>(null);
   const [recentRequests, setRecentRequests] = useState<FocusPreviewRequest[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [revisions, setRevisions] = useState<FocusPreviewRevisionSummary[]>([]);
+  const [revisionNextCursor, setRevisionNextCursor] = useState<string | null>(null);
+  const [selectedRevision, setSelectedRevision] = useState<FocusPreviewRevision | null>(null);
   const [busy, setBusy] = useState(false);
   const [historyBusy, setHistoryBusy] = useState(false);
+  const [revisionBusy, setRevisionBusy] = useState(false);
+  const [revisionControlsVisible, setRevisionControlsVisible] = useState(false);
+  const [revisionError, setRevisionError] = useState<string | null>(null);
   const [operationError, setOperationError] = useState<string | null>(null);
   const submitAbortRef = useRef<AbortController | null>(null);
+  const revisionDetailAbortRef = useRef<AbortController | null>(null);
   const controllersRef = useRef(new Set<AbortController>());
+  const revisionControllersRef = useRef(new Set<AbortController>());
   const tenantGenerationRef = useRef(0);
+  const revisionGenerationRef = useRef(0);
   const tenantNameRef = useRef<string | null>(currentTenant?.tenant_name ?? null);
   tenantNameRef.current = currentTenant?.tenant_name ?? null;
 
@@ -181,13 +288,21 @@ export function FocusPreviewPage({ now = () => new Date() }: FocusPreviewPagePro
     const controllers = controllersRef.current;
     for (const controller of controllers) controller.abort();
     controllers.clear();
+    revisionControllersRef.current.clear();
     submitAbortRef.current = null;
+    revisionDetailAbortRef.current = null;
     setPreview(null);
     setRecentRequests([]);
     setNextCursor(null);
+    setRevisions([]);
+    setRevisionNextCursor(null);
+    setSelectedRevision(null);
     setBusy(false);
     setHistoryBusy(false);
+    setRevisionBusy(false);
+    setRevisionControlsVisible(false);
     setOperationError(null);
+    setRevisionError(null);
     if (!currentTenant) return;
 
     const tenantName = currentTenant.tenant_name;
@@ -231,11 +346,73 @@ export function FocusPreviewPage({ now = () => new Date() }: FocusPreviewPagePro
   }, [currentTenant]);
 
   useEffect(() => {
+    revisionGenerationRef.current += 1;
+    const revisionGeneration = revisionGenerationRef.current;
+    const tenantGeneration = tenantGenerationRef.current;
+    const controllers = revisionControllersRef.current;
+    const allControllers = controllersRef.current;
+    for (const controller of controllers) controller.abort();
+    controllers.clear();
+    setRevisions([]);
+    setRevisionNextCursor(null);
+    setSelectedRevision(null);
+    setRevisionBusy(false);
+    setRevisionControlsVisible(false);
+    setRevisionError(null);
+    if (!currentTenant) return;
+
+    const tenantName = currentTenant.tenant_name;
+    const controller = new AbortController();
+    controllers.add(controller);
+    allControllers.add(controller);
+    const active = (): boolean =>
+      !controller.signal.aborted &&
+      revisionGenerationRef.current === revisionGeneration &&
+      tenantGenerationRef.current === tenantGeneration &&
+      tenantNameRef.current === tenantName;
+
+    const visibilityTimer = window.setTimeout(() => {
+      if (active()) setRevisionControlsVisible(true);
+    }, 0);
+
+    setRevisionBusy(true);
+    void listFocusPreviewRevisions(tenantName, {
+      month: revisionMonth,
+      signal: controller.signal,
+    })
+      .then((page) => {
+        if (!active()) return;
+        setRevisions(page.items);
+        setRevisionNextCursor(page.next_cursor);
+      })
+      .catch((error: unknown) => {
+        if (active() && !isAbortError(error)) {
+          setRevisionError(REVISION_ERROR_MESSAGE);
+        }
+      })
+      .finally(() => {
+        controllers.delete(controller);
+        allControllers.delete(controller);
+        if (active()) setRevisionBusy(false);
+      });
+
+    return () => {
+      window.clearTimeout(visibilityTimer);
+      controller.abort();
+      controllers.delete(controller);
+      allControllers.delete(controller);
+    };
+  }, [currentTenant, revisionMonth]);
+
+  useEffect(() => {
     const controllers = controllersRef.current;
+    const revisionControllers = revisionControllersRef.current;
     return () => {
       for (const controller of controllers) controller.abort();
       controllers.clear();
+      revisionControllers.clear();
       submitAbortRef.current = null;
+      revisionDetailAbortRef.current = null;
     };
   }, []);
 
@@ -327,6 +504,153 @@ export function FocusPreviewPage({ now = () => new Date() }: FocusPreviewPagePro
     } finally {
       controllersRef.current.delete(controller);
       if (active()) setHistoryBusy(false);
+    }
+  }
+
+  async function refreshRevisions(): Promise<void> {
+    if (!currentTenant) return;
+    revisionGenerationRef.current += 1;
+    const revisionGeneration = revisionGenerationRef.current;
+    const tenantGeneration = tenantGenerationRef.current;
+    const tenantName = currentTenant.tenant_name;
+    for (const controller of revisionControllersRef.current) controller.abort();
+    revisionControllersRef.current.clear();
+    revisionDetailAbortRef.current = null;
+    setRevisions([]);
+    setRevisionNextCursor(null);
+    setSelectedRevision(null);
+    setRevisionBusy(true);
+    setRevisionError(null);
+    const controller = new AbortController();
+    revisionControllersRef.current.add(controller);
+    controllersRef.current.add(controller);
+    const active = (): boolean =>
+      !controller.signal.aborted &&
+      revisionGenerationRef.current === revisionGeneration &&
+      tenantGenerationRef.current === tenantGeneration &&
+      tenantNameRef.current === tenantName;
+    try {
+      const page = await listFocusPreviewRevisions(tenantName, {
+        month: revisionMonth,
+        signal: controller.signal,
+      });
+      if (!active()) return;
+      setRevisions(page.items);
+      setRevisionNextCursor(page.next_cursor);
+    } catch (error) {
+      if (active() && !isAbortError(error)) {
+        setRevisionError(REVISION_ERROR_MESSAGE);
+      }
+    } finally {
+      revisionControllersRef.current.delete(controller);
+      controllersRef.current.delete(controller);
+      if (active()) setRevisionBusy(false);
+    }
+  }
+
+  async function loadMoreRevisions(): Promise<void> {
+    if (!currentTenant || !revisionNextCursor) return;
+    const tenantName = currentTenant.tenant_name;
+    const tenantGeneration = tenantGenerationRef.current;
+    const revisionGeneration = revisionGenerationRef.current;
+    const cursor = revisionNextCursor;
+    const controller = new AbortController();
+    revisionControllersRef.current.add(controller);
+    controllersRef.current.add(controller);
+    const active = (): boolean =>
+      !controller.signal.aborted &&
+      revisionGenerationRef.current === revisionGeneration &&
+      tenantGenerationRef.current === tenantGeneration &&
+      tenantNameRef.current === tenantName;
+    setRevisionBusy(true);
+    setRevisionError(null);
+    try {
+      const page = await listFocusPreviewRevisions(tenantName, {
+        month: revisionMonth,
+        cursor,
+        signal: controller.signal,
+      });
+      if (!active()) return;
+      setRevisions((current) => [...current, ...page.items]);
+      setRevisionNextCursor(page.next_cursor);
+    } catch (error) {
+      if (active() && !isAbortError(error)) {
+        setRevisionError(REVISION_ERROR_MESSAGE);
+      }
+    } finally {
+      revisionControllersRef.current.delete(controller);
+      controllersRef.current.delete(controller);
+      if (active()) setRevisionBusy(false);
+    }
+  }
+
+  async function viewRevision(revisionId: string): Promise<void> {
+    if (!currentTenant) return;
+    const tenantName = currentTenant.tenant_name;
+    const tenantGeneration = tenantGenerationRef.current;
+    const revisionGeneration = revisionGenerationRef.current;
+    revisionDetailAbortRef.current?.abort();
+    const controller = new AbortController();
+    revisionDetailAbortRef.current = controller;
+    revisionControllersRef.current.add(controller);
+    controllersRef.current.add(controller);
+    const active = (): boolean =>
+      !controller.signal.aborted &&
+      revisionGenerationRef.current === revisionGeneration &&
+      tenantGenerationRef.current === tenantGeneration &&
+      tenantNameRef.current === tenantName;
+    setSelectedRevision(null);
+    setRevisionError(null);
+    try {
+      const detail = await fetchFocusPreviewRevision(
+        tenantName,
+        revisionId,
+        controller.signal,
+      );
+      if (active()) setSelectedRevision(detail);
+    } catch (error) {
+      if (active() && !isAbortError(error)) {
+        setRevisionError(REVISION_ERROR_MESSAGE);
+      }
+    } finally {
+      revisionControllersRef.current.delete(controller);
+      controllersRef.current.delete(controller);
+      if (revisionDetailAbortRef.current === controller) {
+        revisionDetailAbortRef.current = null;
+      }
+    }
+  }
+
+  async function downloadRevision(downloadUrl: string, fileName: string): Promise<void> {
+    const tenantName = currentTenant?.tenant_name;
+    if (!tenantName) return;
+    const tenantGeneration = tenantGenerationRef.current;
+    const revisionGeneration = revisionGenerationRef.current;
+    const controller = new AbortController();
+    revisionControllersRef.current.add(controller);
+    controllersRef.current.add(controller);
+    const active = (): boolean =>
+      !controller.signal.aborted &&
+      revisionGenerationRef.current === revisionGeneration &&
+      tenantGenerationRef.current === tenantGeneration &&
+      tenantNameRef.current === tenantName;
+    setRevisionError(null);
+    try {
+      const blob = await fetchPreviewArtifact(downloadUrl, controller.signal);
+      if (!active() || typeof URL.createObjectURL !== "function") return;
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = fileName;
+      anchor.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      if (active() && !isAbortError(error)) {
+        setRevisionError(REVISION_ERROR_MESSAGE);
+      }
+    } finally {
+      revisionControllersRef.current.delete(controller);
+      controllersRef.current.delete(controller);
     }
   }
 
@@ -454,6 +778,61 @@ export function FocusPreviewPage({ now = () => new Date() }: FocusPreviewPagePro
           Generate preview
         </Button>
       </Space>
+      <section>
+        <Space direction="vertical" size="large" style={{ width: "100%" }}>
+          <Title id="focus-preview-published-revisions" level={3}>
+            Published monthly revisions
+          </Title>
+          <Alert
+            type="warning"
+            showIcon
+            message="Each revision is a complete replacement. Use the current revision; do not aggregate revisions."
+          />
+          {revisionError && <Alert type="error" showIcon message={revisionError} />}
+          {revisionControlsVisible && (
+            <Space wrap>
+              <label>
+                Revision month
+                <input
+                  aria-label="Revision month"
+                  type="month"
+                  value={revisionMonth}
+                  onChange={(event) => setRevisionMonth(event.target.value)}
+                />
+              </label>
+              <Button
+                loading={revisionBusy}
+                disabled={!currentTenant}
+                onClick={() => void refreshRevisions()}
+              >
+                Refresh revisions
+              </Button>
+            </Space>
+          )}
+          {revisions.map((revision) => (
+            <PreviewRevisionDetails
+              key={revision.revision_id}
+              revision={revision}
+              onView={(revisionId) => {
+                void viewRevision(revisionId);
+              }}
+            />
+          ))}
+          {selectedRevision && (
+            <PreviewRevisionDownload
+              revision={selectedRevision}
+              onDownload={(downloadUrl, fileName) => {
+                void downloadRevision(downloadUrl, fileName);
+              }}
+            />
+          )}
+          {revisionNextCursor && (
+            <Button loading={revisionBusy} onClick={() => void loadMoreRevisions()}>
+              Load more revisions
+            </Button>
+          )}
+        </Space>
+      </section>
       <section aria-labelledby="focus-preview-recent-requests">
         <Space direction="vertical" size="large" style={{ width: "100%" }}>
           <Title id="focus-preview-recent-requests" level={3}>Recent requests</Title>

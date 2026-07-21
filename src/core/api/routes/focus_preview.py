@@ -19,7 +19,10 @@ from core.api.schemas import (  # noqa: TC001  # FastAPI evaluates annotations
     FocusPreviewProfileResponse,
     FocusPreviewRequestBody,
     FocusPreviewRequestListResponse,
+    FocusPreviewRevisionListResponse,
     FocusPreviewRevisionResponse,
+    FocusPreviewRevisionSummaryResponse,
+    FocusPreviewRevisionValidationSummaryResponse,
     FocusPreviewSourceSnapshotResponse,
     FocusPreviewStatusResponse,
 )
@@ -39,7 +42,11 @@ from core.preview.models import (
     preview_month,
     validate_preview_request_snapshot,
 )
-from core.preview.persistence import PreviewRequestCursorError, PreviewStorageBackend
+from core.preview.persistence import (
+    PreviewRequestCursorError,
+    PreviewRevisionCursorError,
+    PreviewStorageBackend,
+)
 from core.preview.request import (
     PreviewColumnSelectionEmptyError,
     PreviewRequestValidationError,
@@ -48,8 +55,8 @@ from core.preview.request import (
     normalize_column_selection,
 )
 from core.preview.revisions import (
-    PreviewCurrentRevisionReader,
     PreviewRevisionArtifactUnavailableError,
+    PreviewRevisionReader,
     masked_preview_owner,
 )
 from core.preview.service import (
@@ -85,9 +92,9 @@ def _revision_scope(
     return FocusPreviewRevisionScope(tenant_config, interval)
 
 
-def _revision_reader(request: Request) -> PreviewCurrentRevisionReader:
+def _revision_reader(request: Request) -> PreviewRevisionReader:
     reader = getattr(request.app.state, "preview_revision_reader", None)
-    if not isinstance(reader, PreviewCurrentRevisionReader):
+    if not isinstance(reader, PreviewRevisionReader):
         raise HTTPException(503, detail="FOCUS Mapping Preview revision service is unavailable")
     return reader
 
@@ -251,16 +258,28 @@ def _snapshot_response(revision: PreviewRevision) -> FocusPreviewSourceSnapshotR
     )
 
 
-def _serialize_revision(revision: PreviewRevision, *, tenant_name: str) -> FocusPreviewRevisionResponse:
-    base = f"/api/v1/tenants/{tenant_name}/focus-preview/revisions/current"
-    guard = f"month={revision.month}&revision_id={revision.revision_id}"
-    package = FocusPreviewPackageResponse(
-        manifest=_artifact_response(revision.package.manifest, f"{base}/manifest?{guard}"),
-        files=[_artifact_response(item, f"{base}/files/{item.name}?{guard}") for item in revision.package.files],
-        download_all_name=f"focus-mapping-preview-{revision.month}-{revision.revision_id}.zip",
-        download_all_url=f"{base}/archive?{guard}",
+def _validation_response(
+    reader: PreviewRevisionReader, revision: PreviewRevision
+) -> FocusPreviewRevisionValidationSummaryResponse:
+    summary = reader.validation_summary(revision=revision)
+    return FocusPreviewRevisionValidationSummaryResponse(
+        status=summary.status,
+        mapping_profile_version=summary.mapping_profile_version,
+        source_records=summary.source_records,
+        rows=summary.rows,
+        mapping_errors=summary.mapping_errors,
+        artifact_integrity=summary.artifact_integrity,
     )
-    return FocusPreviewRevisionResponse(
+
+
+def _serialize_revision_summary(
+    revision: PreviewRevision,
+    *,
+    tenant_name: str,
+    reader: PreviewRevisionReader,
+) -> FocusPreviewRevisionSummaryResponse:
+    direct_base = f"/api/v1/tenants/{tenant_name}/focus-preview/revisions/{revision.revision_id}"
+    return FocusPreviewRevisionSummaryResponse(
         revision_id=revision.revision_id,
         tenant_name=tenant_name,
         month=revision.month,
@@ -269,9 +288,47 @@ def _serialize_revision(revision: PreviewRevision, *, tenant_name: str) -> Focus
         monthly_status=revision.monthly_status,
         published_at=revision.published_at,
         supersedes_revision_id=revision.supersedes_revision_id,
+        superseded_by_revision_id=revision.superseded_by_revision_id,
+        lifecycle="current" if revision.is_current else "superseded",
         material_sha256=revision.material_sha256,
         source_snapshot=_snapshot_response(revision),
-        self_url=f"{base}?{guard}",
+        validation=_validation_response(reader, revision),
+        replacement_semantics="complete_replacement",
+        consumer_action="replace_do_not_aggregate",
+        detail_url=direct_base,
+    )
+
+
+def _serialize_revision(
+    revision: PreviewRevision,
+    *,
+    tenant_name: str,
+    reader: PreviewRevisionReader,
+    direct: bool = False,
+) -> FocusPreviewRevisionResponse:
+    summary = _serialize_revision_summary(revision, tenant_name=tenant_name, reader=reader)
+    if direct:
+        base = summary.detail_url
+        manifest_url = f"{base}/manifest"
+        file_urls = [f"{base}/files/{item.name}" for item in revision.package.files]
+        archive_url = f"{base}/archive"
+        self_url = base
+    else:
+        base = f"/api/v1/tenants/{tenant_name}/focus-preview/revisions/current"
+        guard = f"month={revision.month}&revision_id={revision.revision_id}"
+        manifest_url = f"{base}/manifest?{guard}"
+        file_urls = [f"{base}/files/{item.name}?{guard}" for item in revision.package.files]
+        archive_url = f"{base}/archive?{guard}"
+        self_url = f"{base}?{guard}"
+    package = FocusPreviewPackageResponse(
+        manifest=_artifact_response(revision.package.manifest, manifest_url),
+        files=[_artifact_response(item, url) for item, url in zip(revision.package.files, file_urls, strict=True)],
+        download_all_name=f"focus-mapping-preview-{revision.month}-{revision.revision_id}.zip",
+        download_all_url=archive_url,
+    )
+    return FocusPreviewRevisionResponse(
+        **summary.model_dump(),
+        self_url=self_url,
         package=package,
     )
 
@@ -280,7 +337,7 @@ def _current_revision(
     request: Request,
     tenant_name: str,
     scope: FocusPreviewRevisionScope,
-    reader: PreviewCurrentRevisionReader,
+    reader: PreviewRevisionReader,
     revision_id: str | None,
 ) -> PreviewRevision:
     tenant_config = scope.tenant_config
@@ -501,7 +558,14 @@ def get_current_revision(
 ) -> FocusPreviewRevisionResponse:
     reader = _revision_reader(request)
     revision = _current_revision(request, tenant_name, scope, reader, revision_id)
-    return _serialize_revision(revision, tenant_name=tenant_name)
+    try:
+        return _serialize_revision(revision, tenant_name=tenant_name, reader=reader)
+    except Exception as exc:
+        raise _revision_artifact_unavailable(
+            tenant_name=tenant_name,
+            tenant_config=scope.tenant_config,
+            error=exc,
+        ) from None
 
 
 @router.get("/revisions/current/manifest")
@@ -514,7 +578,7 @@ def get_current_revision_manifest(
     reader = _revision_reader(request)
     revision = _current_revision(request, tenant_name, scope, reader, revision_id)
     try:
-        body = reader.read_manifest(revision)
+        body = reader.read_manifest(revision=revision)
     except Exception as exc:
         raise _revision_artifact_unavailable(
             tenant_name=tenant_name,
@@ -537,7 +601,7 @@ def get_current_revision_file(
     if file_name not in {item.name for item in revision.package.files}:
         raise HTTPException(404, detail="FOCUS Mapping Preview file not found for current revision")
     try:
-        metadata, body = reader.read_file(revision, file_name)
+        metadata, body = reader.read_file(revision=revision, file_name=file_name)
     except Exception as exc:
         raise _revision_artifact_unavailable(
             tenant_name=tenant_name,
@@ -557,11 +621,204 @@ def get_current_revision_archive(
     reader = _revision_reader(request)
     revision = _current_revision(request, tenant_name, scope, reader, revision_id)
     try:
-        archive = reader.open_archive(revision)
+        archive = reader.open_archive(revision=revision)
     except Exception as exc:
         raise _revision_artifact_unavailable(
             tenant_name=tenant_name,
             tenant_config=scope.tenant_config,
+            error=exc,
+        ) from None
+
+    def chunks() -> Iterator[bytes]:
+        try:
+            yield from archive.iter_chunks()
+        except BaseException as exc:
+            _close_revision_archive_safely(archive, preserving=exc)
+            raise
+        else:
+            _close_revision_archive_safely(archive, preserving=None)
+
+    filename = f"focus-mapping-preview-{revision.month}-{revision.revision_id}.zip"
+    return StreamingResponse(
+        chunks(),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        background=BackgroundTask(_close_revision_archive_safely, archive, preserving=None),
+    )
+
+
+def _revision_backend(
+    request: Request,
+    tenant_name: str,
+    tenant_config: TenantConfig,
+) -> PreviewStorageBackend:
+    try:
+        return _backend(request, tenant_name, tenant_config)
+    except HTTPException as exc:
+        if exc.status_code == 503:
+            raise HTTPException(503, detail="FOCUS Mapping Preview revision storage is unavailable") from None
+        raise
+
+
+def _direct_revision(
+    request: Request,
+    tenant_name: str,
+    tenant_config: TenantConfig,
+    reader: PreviewRevisionReader,
+    revision_id: str,
+) -> PreviewRevision:
+    backend = _revision_backend(request, tenant_name, tenant_config)
+    try:
+        revision = reader.get_for_owner(
+            backend=backend,
+            ecosystem=tenant_config.ecosystem,
+            tenant_id=tenant_config.tenant_id,
+            revision_id=revision_id,
+        )
+    except Exception as exc:
+        logger.error(
+            "FOCUS Mapping Preview revision storage read failed tenant=%s owner=%s revision_id=%s error_type=%s",
+            tenant_name,
+            masked_preview_owner(ecosystem=tenant_config.ecosystem, tenant_id=tenant_config.tenant_id),
+            revision_id,
+            type(exc).__name__,
+        )
+        raise HTTPException(503, detail="FOCUS Mapping Preview revision storage is unavailable") from None
+    if revision is None:
+        raise HTTPException(404, detail="FOCUS Mapping Preview revision not found")
+    return revision
+
+
+@router.get("/revisions", response_model=FocusPreviewRevisionListResponse)
+def list_revisions(
+    request: Request,
+    tenant_name: str,
+    scope: Annotated[FocusPreviewRevisionScope, Depends(_revision_scope)],
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    cursor: Annotated[str | None, Query(min_length=1)] = None,
+) -> FocusPreviewRevisionListResponse:
+    reader = _revision_reader(request)
+    tenant_config = scope.tenant_config
+    backend = _revision_backend(request, tenant_name, tenant_config)
+    try:
+        page = reader.list_for_owner_month(
+            backend=backend,
+            ecosystem=tenant_config.ecosystem,
+            tenant_id=tenant_config.tenant_id,
+            month_start=scope.interval.start_date,
+            limit=limit,
+            cursor_revision_id=cursor,
+        )
+        items = [_serialize_revision_summary(item, tenant_name=tenant_name, reader=reader) for item in page.items]
+    except PreviewRevisionCursorError:
+        raise HTTPException(400, detail="FOCUS Mapping Preview revision cursor is invalid") from None
+    except PreviewRevisionArtifactUnavailableError as exc:
+        raise _revision_artifact_unavailable(
+            tenant_name=tenant_name,
+            tenant_config=tenant_config,
+            error=exc,
+        ) from None
+    except Exception as exc:
+        logger.error(
+            "FOCUS Mapping Preview revision history read failed tenant=%s owner=%s error_type=%s",
+            tenant_name,
+            masked_preview_owner(ecosystem=tenant_config.ecosystem, tenant_id=tenant_config.tenant_id),
+            type(exc).__name__,
+        )
+        raise HTTPException(503, detail="FOCUS Mapping Preview revision storage is unavailable") from None
+    return FocusPreviewRevisionListResponse(
+        items=items,
+        next_cursor=page.next_cursor,
+        replacement_semantics="complete_replacement",
+        consumer_action="replace_do_not_aggregate",
+    )
+
+
+@router.get("/revisions/{revision_id}", response_model=FocusPreviewRevisionResponse)
+def get_revision(
+    request: Request,
+    tenant_name: str,
+    revision_id: str,
+    tenant_config: Annotated[TenantConfig, Depends(get_tenant_config)],
+) -> FocusPreviewRevisionResponse:
+    _check_ecosystem(tenant_config)
+    reader = _revision_reader(request)
+    revision = _direct_revision(request, tenant_name, tenant_config, reader, revision_id)
+    try:
+        return _serialize_revision(
+            revision,
+            tenant_name=tenant_name,
+            reader=reader,
+            direct=True,
+        )
+    except Exception as exc:
+        raise _revision_artifact_unavailable(
+            tenant_name=tenant_name,
+            tenant_config=tenant_config,
+            error=exc,
+        ) from None
+
+
+@router.get("/revisions/{revision_id}/manifest")
+def get_revision_manifest(
+    request: Request,
+    tenant_name: str,
+    revision_id: str,
+    tenant_config: Annotated[TenantConfig, Depends(get_tenant_config)],
+) -> Response:
+    _check_ecosystem(tenant_config)
+    reader = _revision_reader(request)
+    revision = _direct_revision(request, tenant_name, tenant_config, reader, revision_id)
+    try:
+        return Response(reader.read_manifest(revision=revision), media_type="application/json")
+    except Exception as exc:
+        raise _revision_artifact_unavailable(
+            tenant_name=tenant_name,
+            tenant_config=tenant_config,
+            error=exc,
+        ) from None
+
+
+@router.get("/revisions/{revision_id}/files/{file_name}")
+def get_revision_file(
+    request: Request,
+    tenant_name: str,
+    revision_id: str,
+    file_name: str,
+    tenant_config: Annotated[TenantConfig, Depends(get_tenant_config)],
+) -> Response:
+    _check_ecosystem(tenant_config)
+    reader = _revision_reader(request)
+    revision = _direct_revision(request, tenant_name, tenant_config, reader, revision_id)
+    try:
+        metadata, body = reader.read_file(revision=revision, file_name=file_name)
+        return Response(body, media_type=metadata.media_type)
+    except FileNotFoundError, StopIteration:
+        raise HTTPException(404, detail="FOCUS Mapping Preview file not found for revision") from None
+    except Exception as exc:
+        raise _revision_artifact_unavailable(
+            tenant_name=tenant_name,
+            tenant_config=tenant_config,
+            error=exc,
+        ) from None
+
+
+@router.get("/revisions/{revision_id}/archive")
+def get_revision_archive(
+    request: Request,
+    tenant_name: str,
+    revision_id: str,
+    tenant_config: Annotated[TenantConfig, Depends(get_tenant_config)],
+) -> StreamingResponse:
+    _check_ecosystem(tenant_config)
+    reader = _revision_reader(request)
+    revision = _direct_revision(request, tenant_name, tenant_config, reader, revision_id)
+    try:
+        archive = reader.open_archive(revision=revision)
+    except Exception as exc:
+        raise _revision_artifact_unavailable(
+            tenant_name=tenant_name,
+            tenant_config=tenant_config,
             error=exc,
         ) from None
 

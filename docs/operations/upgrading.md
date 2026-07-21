@@ -195,6 +195,24 @@ metadata without its immutable manifest/CSV bytes, or bytes without their
 current metadata. Automatic publication requires periodic refresh; existing
 run-once and ad-hoc request behavior is unchanged.
 
+### Migration 025: revision history retention
+
+Migration 025 adds pending-cleanup state and indexes for visible revision
+history, newly due revisions, and cleanup retries. It preserves the existing
+one-current-revision constraint. The migration does not backfill, hide, or
+delete any revision or package by itself.
+
+After the upgrade, scheduled periodic cycles apply the tenant billing-data
+`retention_days` cutoff to published revisions. Revisions for an out-of-policy
+month become unavailable before package deletion; failed deletions remain
+pending and retry after later cycles or restarts. Requested ad-hoc Preview
+packages retain their independent seven-day expiry.
+
+Before this upgrade, stop writers and take a coordinated backup of every tenant
+database and its matching Preview packages. Restore both sides from the same
+backup if rollback is required. Restoring only the database or only the packages
+can leave retained revision metadata and immutable package bytes inconsistent.
+
 ## Rollback
 
 If an upgrade fails or the new version misbehaves:

@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     from core.plugin.protocols import EcosystemPlugin, OverlayConfig
     from core.plugin.registry import PluginRegistry
     from core.preview.artifacts import PreviewArtifactStore
-    from core.preview.revisions import PreviewScheduledRevisionPublisher
+    from core.preview.revisions import PreviewScheduledRevisionManager
     from core.storage.interface import StorageBackend
 
 logger = logging.getLogger(__name__)
@@ -180,7 +180,7 @@ class WorkflowRunner:
         settings: AppSettings,
         plugin_registry: PluginRegistry,
         *,
-        revision_publisher: PreviewScheduledRevisionPublisher | None = None,
+        revision_manager: PreviewScheduledRevisionManager | None = None,
         owned_preview_artifact_store: PreviewArtifactStore | None = None,
     ) -> None:
         self._settings = settings
@@ -192,7 +192,7 @@ class WorkflowRunner:
         self._failed_tenants: dict[str, str] = {}  # name -> error message
         self._failed_tenants_lock = threading.Lock()
         self._shutdown_event: threading.Event | None = None
-        self._revision_publisher = revision_publisher
+        self._revision_manager = revision_manager
         self._owned_preview_artifact_store = owned_preview_artifact_store
         self._periodic_cycle_lock = threading.Lock()
         self._close_lock = threading.Lock()
@@ -581,19 +581,20 @@ class WorkflowRunner:
                     result.chargeback_rows_written,
                 )
 
-    def _cleanup_retention(self) -> None:
+    def _cleanup_retention(self, *, now: datetime | None = None) -> None:
         """Delete data older than retention_days for each tenant.
 
         Only processes tenants with a cached TenantRuntime (i.e., tenants that ran
         this cycle). Tenants without a cached runtime are skipped — no new storage
         backend is created.
         """
+        cleanup_now = datetime.now(UTC) if now is None else now
         for name, runtime in self._tenant_runtimes.items():
             config = self._settings.tenants.get(name)
             if config is None or config.retention_days <= 0:
                 continue  # tenant removed from config, or retention disabled
 
-            cutoff = datetime.now(UTC) - timedelta(days=config.retention_days)
+            cutoff = cleanup_now - timedelta(days=config.retention_days)
             try:
                 with runtime.storage.create_unit_of_work() as uow:
                     deleted_billing = uow.billing.delete_before(config.ecosystem, config.tenant_id, cutoff)
@@ -609,7 +610,7 @@ class WorkflowRunner:
                         if isinstance(ta_config, TopicAttributionConfigProtocol):
                             retention_days = getattr(ta_config, "retention_days", None)
                             if retention_days:
-                                ta_cutoff = datetime.now(UTC) - timedelta(days=retention_days)
+                                ta_cutoff = cleanup_now - timedelta(days=retention_days)
                                 deleted_ta = uow.topic_attributions.delete_before(
                                     config.ecosystem, config.tenant_id, ta_cutoff
                                 )
@@ -629,9 +630,14 @@ class WorkflowRunner:
             except Exception:
                 logger.exception("Tenant %s: retention cleanup failed", name)
 
-    def _publish_scheduled_revisions(self, results: dict[str, PipelineRunResult]) -> None:
-        publisher = self._revision_publisher
-        if publisher is None:
+    def _publish_scheduled_revisions(
+        self,
+        results: dict[str, PipelineRunResult],
+        *,
+        now: datetime,
+    ) -> None:
+        manager = self._revision_manager
+        if manager is None:
             return
         from core.preview.persistence import PreviewStorageBackend
 
@@ -650,15 +656,43 @@ class WorkflowRunner:
             ):
                 continue
             try:
-                publisher.publish_eligible_months(
+                manager.publish_eligible_months(
                     tenant_name=tenant_name,
                     tenant_config=config,
                     backend=runtime.storage,
-                    now=datetime.now(UTC),
+                    now=now,
                 )
             except Exception as exc:
                 logger.error(
                     "Tenant %s: scheduled FOCUS Mapping Preview publication failed error_type=%s",
+                    tenant_name,
+                    type(exc).__name__,
+                )
+
+    def _cleanup_preview_revision_retention(self, *, now: datetime) -> None:
+        manager = self._revision_manager
+        if manager is None:
+            return
+        from core.preview.persistence import PreviewStorageBackend
+
+        for tenant_name, config in self._settings.tenants.items():
+            runtime = self._tenant_runtimes.get(tenant_name)
+            if (
+                config.ecosystem != "confluent_cloud"
+                or runtime is None
+                or not isinstance(runtime.storage, PreviewStorageBackend)
+            ):
+                continue
+            try:
+                manager.cleanup_retention(
+                    tenant_name=tenant_name,
+                    tenant_config=config,
+                    backend=runtime.storage,
+                    now=now,
+                )
+            except Exception as exc:
+                logger.error(
+                    "Tenant %s: FOCUS Mapping Preview revision retention failed error_type=%s",
                     tenant_name,
                     type(exc).__name__,
                 )
@@ -677,10 +711,12 @@ class WorkflowRunner:
                 if shutdown_event.is_set():
                     break
                 try:
+                    cycle_now = datetime.now(UTC)
                     results = self.run_once()
                     self._log_results(results)
-                    self._publish_scheduled_revisions(results)
-                    self._cleanup_retention()  # TD-016: Retention cleanup after each cycle
+                    self._publish_scheduled_revisions(results, now=cycle_now)
+                    self._cleanup_retention(now=cycle_now)  # TD-016: Retention cleanup after each cycle
+                    self._cleanup_preview_revision_retention(now=cycle_now)
 
                     # Alert if all configured tenants are permanently failed
                     all_tenants = set(self._settings.tenants)

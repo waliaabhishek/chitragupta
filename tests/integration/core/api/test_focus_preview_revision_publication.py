@@ -4,6 +4,7 @@ import hashlib
 import json
 import logging
 import threading
+from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -22,6 +23,8 @@ from core.models.resource import CoreResource, ResourceStatus
 from core.storage.backends.sqlmodel.unit_of_work import SQLModelBackend
 from core.storage.interface import AllocationLineageRunCapture
 from plugins.confluent_cloud.storage.module import CCloudStorageModule
+from tests.integration.core.api.test_focus_preview import SameThreadApiClient, _body, _wait_for_terminal
+from tests.unit.core.preview.test_revision_models import _candidate, _package
 from tests.unit.core.preview.test_revisions import _tenant_config
 from tests.unit.core.preview.test_service import _aggregate, _allocation, _seed, _source
 from workflow_runner import TenantRuntime, WorkflowRunner
@@ -35,6 +38,80 @@ class _BarrierArtifactStore:
     def stage_data_files(self, *, request_id: str, data_files: tuple[Any, ...]) -> Any:
         self.barrier.wait(timeout=10)
         return self.delegate.stage_data_files(request_id=request_id, data_files=data_files)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.delegate, name)
+
+
+class _FailingDeleteArtifactStore:
+    def __init__(self, delegate: Any) -> None:
+        self.delegate = delegate
+        self.fail_deletes = False
+
+    def delete_package(self, *, storage_key: str) -> bool:
+        if self.fail_deletes:
+            raise OSError("synthetic artifact deletion failure")
+        return self.delegate.delete_package(storage_key=storage_key)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.delegate, name)
+
+
+class _DeleteTrackingRepository:
+    def __init__(self, delegate: Any, owner: _CommitFailingUnitOfWork) -> None:
+        self._delegate = delegate
+        self._owner = owner
+
+    def delete_retention_pending(self, *, candidate: Any) -> bool:
+        deleted = self._delegate.delete_retention_pending(candidate=candidate)
+        self._owner.deleted = deleted
+        return deleted
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._delegate, name)
+
+
+class _CommitFailingUnitOfWork:
+    def __init__(self, delegate: Any, backend: _FinalDeleteCommitFailingBackend) -> None:
+        self._delegate = delegate
+        self._backend = backend
+        self.deleted = False
+        self.revisions: Any = None
+        self.requests: Any = None
+
+    def __enter__(self) -> _CommitFailingUnitOfWork:
+        entered = self._delegate.__enter__()
+        self.requests = entered.requests
+        self.revisions = _DeleteTrackingRepository(entered.revisions, self)
+        return self
+
+    def __exit__(self, exc_type: object, exc_value: object, traceback: object) -> None:
+        self._delegate.__exit__(exc_type, exc_value, traceback)
+
+    def commit(self) -> None:
+        if self.deleted and self._backend.fail_final_delete_commit_once:
+            self._backend.fail_final_delete_commit_once = False
+            self._delegate.rollback()
+            raise RuntimeError("synthetic final deletion commit failure")
+        self._delegate.commit()
+
+    def rollback(self) -> None:
+        self._delegate.rollback()
+
+
+class _FinalDeleteCommitFailingBackend:
+    def __init__(self, delegate: Any) -> None:
+        self.delegate = delegate
+        self.fail_final_delete_commit_once = True
+
+    def create_preview_read_unit_of_work(self) -> Any:
+        return self.delegate.create_preview_read_unit_of_work()
+
+    def create_preview_write_unit_of_work(self) -> _CommitFailingUnitOfWork:
+        return _CommitFailingUnitOfWork(self.delegate.create_preview_write_unit_of_work(), self)
+
+    def dispose(self) -> None:
+        return None
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self.delegate, name)
@@ -219,6 +296,94 @@ def _seed_calculation_days(
         uow.commit()
 
 
+def test_requested_package_expires_at_seven_days_independently_of_revision_retention(
+    tmp_path: Path,
+) -> None:
+    from core.preview.artifacts import LocalPreviewArtifactStore
+    from core.preview.generator import PreviewPackageGenerator
+    from core.preview.revisions import PreviewRevisionService
+
+    connection_string = f"sqlite:///{tmp_path / 'independent-lifecycles.db'}"
+    artifact_root = tmp_path / "independent-lifecycles-artifacts"
+    tenant = _tenant_config(connection_string).model_copy(update={"retention_days": 1})
+    settings = AppSettings(
+        preview=PreviewConfig(artifact_root=artifact_root, max_workers=1),
+        tenants={"production": tenant},
+    )
+    backend = SQLModelBackend(connection_string, CCloudStorageModule(), use_migrations=False)
+    backend.create_tables()
+    _seed_month(backend, billed_cost=Decimal("8"))
+    controlled_now = [datetime(2026, 8, 1, 12, tzinfo=UTC)]
+    publisher_store = LocalPreviewArtifactStore(artifact_root)
+    publisher = PreviewRevisionService(
+        artifact_store=publisher_store,
+        package_generator=PreviewPackageGenerator(
+            max_csv_file_bytes=None,
+            clock=lambda: controlled_now[0],
+        ),
+        clock=lambda: controlled_now[0],
+        revision_id_factory=lambda: "revision-short-retention",
+    )
+
+    try:
+        published = publisher.publish_eligible_months(
+            tenant_name="production",
+            tenant_config=tenant,
+            backend=backend,
+            now=controlled_now[0],
+        )
+        assert [revision.revision_id for revision in published] == ["revision-short-retention"]
+
+        app = create_app(settings)
+        with patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"), SameThreadApiClient(app) as client:
+            app.state.backends["production"] = backend
+            app.state.preview_runtime._clock = lambda: controlled_now[0]  # noqa: SLF001
+            submitted = client.post(
+                "/api/v1/tenants/production/focus-preview/requests",
+                json=_body(),
+            )
+            assert submitted.status_code == 202
+            request_id = submitted.json()["request_id"]
+            ready = _wait_for_terminal(client, request_id)
+            assert ready["status"] == "ready"
+            assert isinstance(ready["completed_at"], str)
+            assert isinstance(ready["expires_at"], str)
+            ready_at = datetime.fromisoformat(ready["completed_at"].replace("Z", "+00:00"))
+            expires_at = datetime.fromisoformat(ready["expires_at"].replace("Z", "+00:00"))
+            assert expires_at == ready_at + timedelta(days=7)
+
+            controlled_now[0] = ready_at + timedelta(days=1)
+            cleanup = publisher.cleanup_retention(
+                tenant_name="production",
+                tenant_config=tenant,
+                backend=backend,
+                now=controlled_now[0],
+            )
+            assert cleanup.deleted_count == 1
+            assert (
+                client.get("/api/v1/tenants/production/focus-preview/revisions/revision-short-retention").status_code
+                == 404
+            )
+            after_revision_cleanup = client.get(f"/api/v1/tenants/production/focus-preview/requests/{request_id}")
+            assert after_revision_cleanup.status_code == 200
+            assert after_revision_cleanup.json()["status"] == "ready"
+
+            controlled_now[0] = expires_at - timedelta(microseconds=1)
+            before_expiry = client.get(f"/api/v1/tenants/production/focus-preview/requests/{request_id}")
+            assert before_expiry.status_code == 200
+            assert before_expiry.json()["status"] == "ready"
+            assert client.get(ready["package"]["manifest"]["download_url"]).status_code == 200
+
+            controlled_now[0] = expires_at
+            at_expiry = client.get(f"/api/v1/tenants/production/focus-preview/requests/{request_id}")
+            assert at_expiry.status_code == 200
+            assert at_expiry.json()["status"] == "expired"
+            assert at_expiry.json()["expires_at"] == ready["expires_at"]
+            assert at_expiry.json()["package"] is None
+    finally:
+        publisher_store.close()
+
+
 def test_periodic_publication_lifecycle_is_visible_through_real_current_api(
     tmp_path: Path,
 ) -> None:
@@ -252,7 +417,7 @@ def test_periodic_publication_lifecycle_is_visible_through_real_current_api(
     runner = WorkflowRunner(
         settings,
         MagicMock(),
-        revision_publisher=publisher,
+        revision_manager=publisher,
         owned_preview_artifact_store=worker_store,
     )
     runner._tenant_runtimes["production"] = TenantRuntime(  # noqa: SLF001
@@ -343,6 +508,20 @@ def test_periodic_publication_lifecycle_is_visible_through_real_current_api(
         assert archive.headers["content-type"].startswith("application/zip")
         first_archive_body = archive.content
 
+        history = client.get("/api/v1/tenants/production/focus-preview/revisions?month=2026-07&limit=2")
+        assert history.status_code == 200
+        history_body = history.json()
+        assert [item["revision_id"] for item in history_body["items"]] == [
+            "revision-4",
+            "revision-3",
+        ]
+        assert history_body["next_cursor"] == "revision-3"
+        assert history_body["consumer_action"] == "replace_do_not_aggregate"
+        superseded = client.get("/api/v1/tenants/production/focus-preview/revisions/revision-3")
+        assert superseded.status_code == 200
+        assert superseded.json()["lifecycle"] == "superseded"
+        assert client.get(superseded.json()["package"]["manifest"]["download_url"]).status_code == 200
+
         stale = client.get(
             "/api/v1/tenants/production/focus-preview/revisions/current/manifest?month=2026-07&revision_id=revision-3"
         )
@@ -365,8 +544,334 @@ def test_periodic_publication_lifecycle_is_visible_through_real_current_api(
         assert client.get(renamed_body["package"]["download_all_url"]).content == first_archive_body
         assert client.get("/api/v1/tenants/production/focus-preview/revisions/current?month=2026-07").status_code == 404
 
+    cleanup = publisher.cleanup_retention(
+        tenant_name="production",
+        tenant_config=tenant,
+        backend=backend,
+        now=datetime(2027, 4, 8, tzinfo=UTC),
+    )
+    assert cleanup.claimed_count == 4
+    assert cleanup.deleted_count == 4
+    assert cleanup.deferred_count == 0
+
+    cleaned_app = create_app(settings)
+    with patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"), TestClient(cleaned_app) as client:
+        cleaned_app.state.backends["production"] = backend
+        history = client.get("/api/v1/tenants/production/focus-preview/revisions?month=2026-07")
+        assert history.status_code == 200
+        assert history.json()["items"] == []
+        assert client.get("/api/v1/tenants/production/focus-preview/revisions/revision-4").status_code == 404
+
     engine.dispose()
     runner.close()
+
+
+def test_real_direct_api_masks_distinct_foreign_pending_and_removed_rows(tmp_path: Path) -> None:
+    connection_string = f"sqlite:///{tmp_path / 'direct-masking.db'}"
+    tenant = _tenant_config(connection_string)
+    settings = AppSettings(
+        preview=PreviewConfig(artifact_root=tmp_path / "direct-masking-artifacts"),
+        tenants={"production": tenant},
+    )
+    backend = SQLModelBackend(connection_string, CCloudStorageModule(), use_migrations=False)
+    backend.create_tables()
+    pending_at = datetime(2026, 8, 5, tzinfo=UTC)
+
+    with backend.create_preview_write_unit_of_work() as uow:
+        uow.revisions.replace_current(
+            candidate=_candidate(revision_id="revision-foreign", tenant_id="tenant-other"),
+            package=replace(_package(), storage_key="revision-foreign"),
+            expected_current_revision_id=None,
+        )
+        uow.revisions.replace_current(
+            candidate=_candidate(revision_id="revision-removed"),
+            package=replace(_package(), storage_key="revision-removed"),
+            expected_current_revision_id=None,
+        )
+        removed = uow.revisions.mark_retention_due(
+            ecosystem="confluent_cloud",
+            tenant_id="tenant-1",
+            cutoff_date=date(2026, 8, 1),
+            pending_at=pending_at,
+            limit=1,
+        )
+        assert [candidate.revision_id for candidate in removed] == ["revision-removed"]
+        assert uow.revisions.delete_retention_pending(candidate=removed[0]) is True
+        uow.commit()
+
+    with backend.create_preview_write_unit_of_work() as uow:
+        uow.revisions.replace_current(
+            candidate=_candidate(revision_id="revision-pending"),
+            package=replace(_package(), storage_key="revision-pending"),
+            expected_current_revision_id=None,
+        )
+        pending = uow.revisions.mark_retention_due(
+            ecosystem="confluent_cloud",
+            tenant_id="tenant-1",
+            cutoff_date=date(2026, 8, 1),
+            pending_at=pending_at,
+            limit=1,
+        )
+        assert [candidate.revision_id for candidate in pending] == ["revision-pending"]
+        uow.commit()
+
+    with backend.create_preview_read_unit_of_work() as uow:
+        assert (
+            uow.revisions.get_for_owner(
+                ecosystem="confluent_cloud",
+                tenant_id="tenant-other",
+                revision_id="revision-foreign",
+            )
+            is not None
+        )
+        assert [
+            candidate.revision_id
+            for candidate in uow.revisions.list_retention_pending(
+                ecosystem="confluent_cloud",
+                tenant_id="tenant-1",
+                limit=100,
+            )
+        ] == ["revision-pending"]
+        assert (
+            uow.revisions.get_for_owner(
+                ecosystem="confluent_cloud",
+                tenant_id="tenant-1",
+                revision_id="revision-removed",
+            )
+            is None
+        )
+
+    app = create_app(settings)
+    with patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"), TestClient(app) as client:
+        app.state.backends["production"] = backend
+        responses = {
+            revision_id: client.get(f"/api/v1/tenants/production/focus-preview/revisions/{revision_id}")
+            for revision_id in ("revision-foreign", "revision-pending", "revision-removed")
+        }
+
+    assert {revision_id: response.status_code for revision_id, response in responses.items()} == {
+        "revision-foreign": 404,
+        "revision-pending": 404,
+        "revision-removed": 404,
+    }
+    assert all(
+        response.json() == {"detail": "FOCUS Mapping Preview revision not found"} for response in responses.values()
+    )
+    backend.dispose()
+
+
+def test_periodic_retention_crash_restart_recovery_is_durable_and_api_masked(
+    tmp_path: Path,
+) -> None:
+    from core.preview.artifacts import LocalPreviewArtifactStore
+    from core.preview.generator import PreviewPackageGenerator
+    from core.preview.revisions import PreviewRevisionService
+
+    connection_string = f"sqlite:///{tmp_path / 'retention-restart.db'}"
+    artifact_root = tmp_path / "retention-restart-artifacts"
+    tenant = _tenant_config(connection_string)
+    settings = AppSettings(
+        features=FeaturesConfig(enable_periodic_refresh=True, refresh_interval=1),
+        preview=PreviewConfig(artifact_root=artifact_root, max_workers=1),
+        tenants={"production": tenant},
+    )
+    backend = SQLModelBackend(
+        connection_string,
+        CCloudStorageModule(),
+        use_migrations=False,
+    )
+    backend.create_tables()
+    _seed_month(backend, billed_cost=Decimal("8"))
+
+    def runner_for(*, manager: Any, runtime_backend: Any, store: Any) -> WorkflowRunner:
+        runner = WorkflowRunner(
+            settings,
+            MagicMock(),
+            revision_manager=manager,
+            owned_preview_artifact_store=store,
+        )
+        runner._tenant_runtimes["production"] = TenantRuntime(  # noqa: SLF001
+            tenant_name="production",
+            plugin=MagicMock(),
+            storage=runtime_backend,
+            orchestrator=MagicMock(),
+            config_hash="stable",
+            created_at=datetime(2026, 8, 4, tzinfo=UTC),
+        )
+        return runner
+
+    delegate_store = LocalPreviewArtifactStore(artifact_root)
+    failing_store = _FailingDeleteArtifactStore(delegate_store)
+    initial_service = PreviewRevisionService(
+        artifact_store=failing_store,
+        package_generator=PreviewPackageGenerator(max_csv_file_bytes=None),
+        clock=lambda: datetime(2026, 8, 4, tzinfo=UTC),
+        revision_id_factory=lambda: "revision-restart",
+    )
+    initial_runner = runner_for(
+        manager=initial_service,
+        runtime_backend=backend,
+        store=failing_store,
+    )
+    _run_periodic_cycle(
+        initial_runner,
+        _result(),
+        now=datetime(2026, 8, 4, tzinfo=UTC),
+    )
+
+    boundary = datetime(2027, 4, 8, tzinfo=UTC)
+    with backend.create_preview_write_unit_of_work() as write_uow:
+        claimed_before_crash = write_uow.revisions.mark_retention_due(
+            ecosystem="confluent_cloud",
+            tenant_id="tenant-1",
+            cutoff_date=date(2026, 8, 1),
+            pending_at=boundary,
+            limit=100,
+        )
+        write_uow.commit()
+    assert [candidate.revision_id for candidate in claimed_before_crash] == ["revision-restart"]
+
+    initial_backend = backend
+    initial_runner.close()
+    initial_backend.dispose()
+    backend = SQLModelBackend(
+        connection_string,
+        CCloudStorageModule(),
+        use_migrations=False,
+    )
+    assert backend is not initial_backend
+
+    with backend.create_preview_read_unit_of_work() as read_uow:
+        recovered_claim = read_uow.revisions.list_retention_pending(
+            ecosystem="confluent_cloud",
+            tenant_id="tenant-1",
+            limit=100,
+        )
+    assert len(recovered_claim) == 1
+    assert recovered_claim[0].revision_id == "revision-restart"
+    assert recovered_claim[0].retention_pending_at == boundary
+    assert recovered_claim[0].retention_pending_at.tzinfo is UTC
+
+    restarted_store = _FailingDeleteArtifactStore(LocalPreviewArtifactStore(artifact_root))
+    restarted_store.fail_deletes = True
+    restarted_service = PreviewRevisionService(
+        artifact_store=restarted_store,
+        package_generator=PreviewPackageGenerator(max_csv_file_bytes=None),
+    )
+    restarted_runner = runner_for(
+        manager=restarted_service,
+        runtime_backend=backend,
+        store=restarted_store,
+    )
+    _run_periodic_cycle(
+        restarted_runner,
+        _result(errors=["skip publication"]),
+        now=boundary,
+    )
+
+    first_reopened_backend = backend
+    restarted_runner.close()
+    first_reopened_backend.dispose()
+    backend = SQLModelBackend(
+        connection_string,
+        CCloudStorageModule(),
+        use_migrations=False,
+    )
+    assert backend is not first_reopened_backend
+    with backend.create_preview_read_unit_of_work() as read_uow:
+        pending = read_uow.revisions.list_retention_pending(
+            ecosystem="confluent_cloud",
+            tenant_id="tenant-1",
+            limit=100,
+        )
+    assert len(pending) == 1
+    assert pending[0].retention_pending_at == boundary + timedelta(microseconds=1)
+    assert pending[0].retention_pending_at.tzinfo is UTC
+    with backend.create_preview_read_unit_of_work() as read_uow:
+        assert (
+            read_uow.revisions.get_for_owner(
+                ecosystem="confluent_cloud",
+                tenant_id="tenant-1",
+                revision_id="revision-restart",
+            )
+            is None
+        )
+        assert (
+            read_uow.revisions.list_for_owner_month(
+                ecosystem="confluent_cloud",
+                tenant_id="tenant-1",
+                month_start=date(2026, 7, 1),
+                limit=20,
+                cursor_revision_id=None,
+            ).items
+            == ()
+        )
+
+    post_restart_store = LocalPreviewArtifactStore(artifact_root)
+    assert post_restart_store.delete_package(storage_key=pending[0].storage_key) is True
+    commit_failing_backend = _FinalDeleteCommitFailingBackend(backend)
+    retry_store = LocalPreviewArtifactStore(artifact_root)
+    retry_service = PreviewRevisionService(
+        artifact_store=retry_store,
+        package_generator=PreviewPackageGenerator(max_csv_file_bytes=None),
+    )
+    retry_runner = runner_for(
+        manager=retry_service,
+        runtime_backend=commit_failing_backend,
+        store=retry_store,
+    )
+    _run_periodic_cycle(
+        retry_runner,
+        _result(errors=["skip publication"]),
+        now=boundary,
+    )
+    assert commit_failing_backend.fail_final_delete_commit_once is False
+
+    with backend.create_preview_read_unit_of_work() as read_uow:
+        after_commit_failure = read_uow.revisions.list_retention_pending(
+            ecosystem="confluent_cloud",
+            tenant_id="tenant-1",
+            limit=100,
+        )
+    assert len(after_commit_failure) == 1
+    assert after_commit_failure[0].retention_pending_at == boundary + timedelta(microseconds=2)
+
+    recovered_store = LocalPreviewArtifactStore(artifact_root)
+    recovered_service = PreviewRevisionService(
+        artifact_store=recovered_store,
+        package_generator=PreviewPackageGenerator(max_csv_file_bytes=None),
+    )
+    recovered_runner = runner_for(
+        manager=recovered_service,
+        runtime_backend=backend,
+        store=recovered_store,
+    )
+    _run_periodic_cycle(
+        recovered_runner,
+        _result(errors=["skip publication"]),
+        now=boundary,
+    )
+
+    with backend.create_preview_read_unit_of_work() as read_uow:
+        assert (
+            read_uow.revisions.list_retention_pending(
+                ecosystem="confluent_cloud",
+                tenant_id="tenant-1",
+                limit=100,
+            )
+            == ()
+        )
+        assert (
+            read_uow.revisions.get_for_owner(
+                ecosystem="confluent_cloud",
+                tenant_id="tenant-1",
+                revision_id="revision-restart",
+            )
+            is None
+        )
+
+    recovered_runner.close()
+    retry_runner.close()
 
 
 def test_concurrent_real_publication_deletes_loser_package_and_keeps_winner_readable(
@@ -394,7 +899,7 @@ def test_concurrent_real_publication_deletes_loser_package_and_keeps_winner_read
         runner = WorkflowRunner(
             settings,
             MagicMock(),
-            revision_publisher=publisher,
+            revision_manager=publisher,
             owned_preview_artifact_store=owned_store,
         )
         runner._tenant_runtimes["production"] = TenantRuntime(  # noqa: SLF001
@@ -469,10 +974,15 @@ def test_concurrent_real_publication_deletes_loser_package_and_keeps_winner_read
     probe_publisher = MagicMock()
     probe_runner = scheduled_runner(probe_publisher, owned_store=None)
     before = datetime.now(UTC)
-    probe_runner._publish_scheduled_revisions({"production": _result()})  # noqa: SLF001
+    probe_now = datetime.now(UTC)
+    probe_runner._publish_scheduled_revisions(  # noqa: SLF001
+        {"production": _result()},
+        now=probe_now,
+    )
     after = datetime.now(UTC)
     observed_now = probe_publisher.publish_eligible_months.call_args.kwargs["now"]
     assert before <= observed_now <= after
+    assert observed_now == probe_now
     assert "revision publication failed tenant=production month=2026-07" in caplog.text
     assert "error_type=PreviewRevisionConflictError" in caplog.text
 
@@ -486,9 +996,9 @@ def test_concurrent_real_publication_deletes_loser_package_and_keeps_winner_read
     assert current.revision_id in {"revision-race-a", "revision-race-b"}
     assert current.supersedes_revision_id == "revision-race-initial"
     assert local_store.read_manifest(initial.package.storage_key, initial.package.manifest) == initial_manifest
-    assert reader.read_manifest(current)
-    assert reader.read_file(current, current.package.files[0].name)[1]
-    archive = reader.open_archive(current)
+    assert reader.read_manifest(revision=current)
+    assert reader.read_file(revision=current, file_name=current.package.files[0].name)[1]
+    archive = reader.open_archive(revision=current)
     try:
         assert b"".join(archive.iter_chunks())
     finally:
@@ -554,7 +1064,7 @@ def test_periodic_real_generator_seeds_every_header_only_month_without_request_r
     runner = WorkflowRunner(
         settings,
         MagicMock(),
-        revision_publisher=publisher,
+        revision_manager=publisher,
         owned_preview_artifact_store=store,
     )
     runner._tenant_runtimes["production"] = TenantRuntime(  # noqa: SLF001
@@ -651,8 +1161,8 @@ def test_real_header_only_publication_keeps_two_storage_owners_isolated(
     )
     assert a is not None and a.revision_id == "revision-owner-a"
     assert b is not None and b.revision_id == "revision-owner-b"
-    assert b.revision_id not in reader.read_manifest(a).decode()
-    assert a.revision_id not in reader.read_manifest(b).decode()
+    assert b.revision_id not in reader.read_manifest(revision=a).decode()
+    assert a.revision_id not in reader.read_manifest(revision=b).decode()
     backend.dispose()
 
 
@@ -702,12 +1212,15 @@ def test_real_physical_artifact_damage_is_redacted_across_http_delivery(
         TestClient(app) as client,
     ):
         app.state.backends["production"] = backend
-        current = client.get("/api/v1/tenants/production/focus-preview/revisions/current?month=2026-07").json()
+        current_response = client.get("/api/v1/tenants/production/focus-preview/revisions/current?month=2026-07")
+        base = "/api/v1/tenants/production/focus-preview/revisions/current"
+        guard = f"month=2026-07&revision_id={revision.revision_id}"
         responses = {
-            "manifest": client.get(current["package"]["manifest"]["download_url"]),
-            "file": client.get(current["package"]["files"][0]["download_url"]),
-            "archive": client.get(current["package"]["download_all_url"]),
+            "manifest": client.get(f"{base}/manifest?{guard}"),
+            "file": client.get(f"{base}/files/{revision.package.files[0].name}?{guard}"),
+            "archive": client.get(f"{base}/archive?{guard}"),
         }
+    assert current_response.status_code == (500 if artifact == "manifest" else 200)
     expected_failures = {"manifest", "file", "archive"} if artifact == "manifest" else {"file", "archive"}
     for operation, response in responses.items():
         assert response.status_code == (500 if operation in expected_failures else 200)
@@ -779,7 +1292,7 @@ def test_canonical_manifest_corruption_is_redacted_across_real_http_delivery(
     runner = WorkflowRunner(
         settings,
         MagicMock(),
-        revision_publisher=service,
+        revision_manager=service,
         owned_preview_artifact_store=store,
     )
     runner._tenant_runtimes["production"] = TenantRuntime(  # noqa: SLF001
@@ -852,12 +1365,15 @@ def test_canonical_manifest_corruption_is_redacted_across_real_http_delivery(
         TestClient(app) as client,
     ):
         app.state.backends["production"] = backend
-        current = client.get("/api/v1/tenants/production/focus-preview/revisions/current?month=2026-07").json()
+        current_response = client.get("/api/v1/tenants/production/focus-preview/revisions/current?month=2026-07")
+        base = "/api/v1/tenants/production/focus-preview/revisions/current"
+        guard = f"month=2026-07&revision_id={revision.revision_id}"
         responses = (
-            client.get(current["package"]["manifest"]["download_url"]),
-            client.get(current["package"]["files"][0]["download_url"]),
-            client.get(current["package"]["download_all_url"]),
+            client.get(f"{base}/manifest?{guard}"),
+            client.get(f"{base}/files/{revision.package.files[0].name}?{guard}"),
+            client.get(f"{base}/archive?{guard}"),
         )
+    assert current_response.status_code == 500
     for response in responses:
         assert response.status_code == 500
         assert response.json() == {"detail": "Stored FOCUS Mapping Preview revision artifact is unavailable"}
@@ -897,7 +1413,7 @@ def test_builder_supplied_material_mismatch_is_rejected_through_periodic_publish
     runner = WorkflowRunner(
         settings,
         MagicMock(),
-        revision_publisher=service,
+        revision_manager=service,
         owned_preview_artifact_store=store,
     )
     runner._tenant_runtimes["production"] = TenantRuntime(  # noqa: SLF001
@@ -1031,7 +1547,7 @@ def test_real_layered_publication_failures_preserve_current_row_and_artifact(
     runner = WorkflowRunner(
         settings,
         MagicMock(),
-        revision_publisher=service,
+        revision_manager=service,
         owned_preview_artifact_store=store,
     )
     runner._tenant_runtimes["production"] = TenantRuntime(  # noqa: SLF001

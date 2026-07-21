@@ -152,7 +152,16 @@ class FocusPreviewResponse(BaseModel):
 FocusPreviewStatusResponse = FocusPreviewResponse
 
 
-class FocusPreviewRevisionResponse(BaseModel):
+class FocusPreviewRevisionValidationSummaryResponse(BaseModel):
+    status: Literal["passed"]
+    mapping_profile_version: str
+    source_records: int
+    rows: int
+    mapping_errors: Literal[0]
+    artifact_integrity: Literal["passed"]
+
+
+class FocusPreviewRevisionSummaryResponse(BaseModel):
     revision_id: str
     tenant_name: str
     month: str
@@ -161,10 +170,26 @@ class FocusPreviewRevisionResponse(BaseModel):
     monthly_status: Literal["provisional", "settled"]
     published_at: datetime
     supersedes_revision_id: str | None
+    superseded_by_revision_id: str | None
+    lifecycle: Literal["current", "superseded"]
     material_sha256: str
     source_snapshot: FocusPreviewSourceSnapshotResponse
+    validation: FocusPreviewRevisionValidationSummaryResponse
+    replacement_semantics: Literal["complete_replacement"]
+    consumer_action: Literal["replace_do_not_aggregate"]
+    detail_url: str
+
+
+class FocusPreviewRevisionResponse(FocusPreviewRevisionSummaryResponse):
     self_url: str
     package: FocusPreviewPackageResponse
+
+
+class FocusPreviewRevisionListResponse(BaseModel):
+    items: list[FocusPreviewRevisionSummaryResponse]
+    next_cursor: str | None
+    replacement_semantics: Literal["complete_replacement"]
+    consumer_action: Literal["replace_do_not_aggregate"]
 
 
 class FocusPreviewRequestListResponse(BaseModel):

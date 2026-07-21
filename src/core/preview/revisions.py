@@ -7,8 +7,9 @@ import re
 import threading
 import uuid
 from collections.abc import Callable
-from datetime import UTC, date, datetime
-from typing import Protocol, runtime_checkable
+from dataclasses import dataclass
+from datetime import UTC, date, datetime, timedelta
+from typing import Literal, Protocol, cast, runtime_checkable
 
 from core.config.models import TenantConfig  # noqa: TC001 - resolved by runtime protocol tests
 from core.preview.artifacts import (  # noqa: TC001 - resolved by runtime protocol tests
@@ -29,10 +30,13 @@ from core.preview.models import (
     PreviewRequestStatus,
     PreviewRevision,
     PreviewRevisionCandidate,
+    PreviewRevisionValidationSummary,
     validate_preview_revision_invariant,
 )
 from core.preview.persistence import (
+    PreviewRetentionCandidate,
     PreviewRevisionConflictError,
+    PreviewRevisionPage,
     PreviewStorageBackend,  # noqa: TC001 - resolved by runtime protocol tests
 )
 from core.preview.request import canonicalize_monthly_interval
@@ -46,8 +50,24 @@ class PreviewRevisionArtifactUnavailableError(RuntimeError):
     """A stored revision package failed validation or retrieval."""
 
 
+@dataclass(frozen=True)
+class PreviewRevisionCleanupResult:
+    claimed_count: int
+    deleted_count: int
+    deferred_count: int
+
+    def __post_init__(self) -> None:
+        for field, value in (
+            ("claimed_count", self.claimed_count),
+            ("deleted_count", self.deleted_count),
+            ("deferred_count", self.deferred_count),
+        ):
+            if type(value) is not int or value < 0:
+                raise ValueError(f"{field} must be a non-negative integer")
+
+
 @runtime_checkable
-class PreviewScheduledRevisionPublisher(Protocol):
+class PreviewScheduledRevisionManager(Protocol):
     def publish_eligible_months(
         self,
         *,
@@ -57,9 +77,18 @@ class PreviewScheduledRevisionPublisher(Protocol):
         now: datetime,
     ) -> tuple[PreviewRevision, ...]: ...
 
+    def cleanup_retention(
+        self,
+        *,
+        tenant_name: str,
+        tenant_config: TenantConfig,
+        backend: PreviewStorageBackend,
+        now: datetime,
+    ) -> PreviewRevisionCleanupResult: ...
+
 
 @runtime_checkable
-class PreviewCurrentRevisionReader(Protocol):
+class PreviewRevisionReader(Protocol):
     def get_current(
         self,
         *,
@@ -69,15 +98,42 @@ class PreviewCurrentRevisionReader(Protocol):
         month_start: date,
     ) -> PreviewRevision | None: ...
 
-    def read_manifest(self, revision: PreviewRevision) -> bytes: ...
+    def get_for_owner(
+        self,
+        *,
+        backend: PreviewStorageBackend,
+        ecosystem: str,
+        tenant_id: str,
+        revision_id: str,
+    ) -> PreviewRevision | None: ...
+
+    def list_for_owner_month(
+        self,
+        *,
+        backend: PreviewStorageBackend,
+        ecosystem: str,
+        tenant_id: str,
+        month_start: date,
+        limit: int,
+        cursor_revision_id: str | None,
+    ) -> PreviewRevisionPage: ...
+
+    def validation_summary(
+        self,
+        *,
+        revision: PreviewRevision,
+    ) -> PreviewRevisionValidationSummary: ...
+
+    def read_manifest(self, *, revision: PreviewRevision) -> bytes: ...
 
     def read_file(
         self,
+        *,
         revision: PreviewRevision,
         file_name: str,
     ) -> tuple[PreviewArtifactMetadata, bytes]: ...
 
-    def open_archive(self, revision: PreviewRevision) -> PreviewArchiveStream: ...
+    def open_archive(self, *, revision: PreviewRevision) -> PreviewArchiveStream: ...
 
 
 def masked_preview_owner(*, ecosystem: str, tenant_id: str) -> str:
@@ -96,6 +152,9 @@ def _month_start(value: date) -> date:
 
 
 class PreviewRevisionService:
+    RETENTION_ATTEMPT_LIMIT = 100
+    RETENTION_LANE_RESERVE = 50
+
     def __init__(
         self,
         *,
@@ -159,6 +218,9 @@ class PreviewRevisionService:
         for month in self._eligible_months(tenant_config, normalized_now):
             try:
                 interval = canonicalize_monthly_interval(month=month)
+                cutoff_date = (normalized_now - timedelta(days=tenant_config.retention_days)).date()
+                if interval.end_date <= cutoff_date:
+                    continue
                 request = PreviewRequest(
                     request_id=f"revision-generation-{uuid.uuid4()}",
                     tenant_name=tenant_name,
@@ -188,11 +250,13 @@ class PreviewRevisionService:
                     raise ValueError("scheduled monthly generation requires monthly status")
                 material = preview_revision_content_sha256(logical_data_sha256=draft.logical_data_sha256)
                 with backend.create_preview_read_unit_of_work() as read_uow:
-                    current = read_uow.revisions.get_current_for_owner(
+                    current = read_uow.revisions.get_current_for_publication(
                         ecosystem=tenant_config.ecosystem,
                         tenant_id=tenant_config.tenant_id,
                         month_start=interval.start_date,
                     )
+                if current is not None and current.retention_pending_at is not None:
+                    continue
                 if current is not None:
                     if current.monthly_status == "settled" and snapshot.monthly_status == "provisional":
                         continue
@@ -273,6 +337,105 @@ class PreviewRevisionService:
                 )
         return tuple(published)
 
+    def cleanup_retention(
+        self,
+        *,
+        tenant_name: str,
+        tenant_config: TenantConfig,
+        backend: PreviewStorageBackend,
+        now: datetime,
+    ) -> PreviewRevisionCleanupResult:
+        if now.tzinfo is None or now.utcoffset() is None:
+            raise ValueError("now must be timezone-aware")
+        normalized_now = now.astimezone(UTC)
+        ecosystem = tenant_config.ecosystem
+        tenant_id = tenant_config.tenant_id
+        cutoff_date = (normalized_now - timedelta(days=tenant_config.retention_days)).date()
+
+        with backend.create_preview_read_unit_of_work() as read_uow:
+            retry_snapshot = read_uow.revisions.list_retention_pending(
+                ecosystem=ecosystem,
+                tenant_id=tenant_id,
+                limit=self.RETENTION_ATTEMPT_LIMIT,
+            )
+        retry_reserve = min(self.RETENTION_LANE_RESERVE, len(retry_snapshot))
+        new_capacity = self.RETENTION_ATTEMPT_LIMIT - retry_reserve
+        with backend.create_preview_write_unit_of_work() as write_uow:
+            new_candidates = write_uow.revisions.mark_retention_due(
+                ecosystem=ecosystem,
+                tenant_id=tenant_id,
+                cutoff_date=cutoff_date,
+                pending_at=normalized_now,
+                limit=new_capacity,
+            )
+            write_uow.commit()
+
+        retry_capacity = self.RETENTION_ATTEMPT_LIMIT - len(new_candidates)
+        retries = retry_snapshot[:retry_capacity]
+        with backend.create_preview_read_unit_of_work() as read_uow:
+            pending_tail = read_uow.revisions.get_retention_pending_tail(
+                ecosystem=ecosystem,
+                tenant_id=tenant_id,
+            )
+        retry_at = max(normalized_now, pending_tail or normalized_now) + timedelta(microseconds=1)
+
+        attempts: list[PreviewRetentionCandidate] = []
+        retry_iter = iter(retries)
+        new_iter = iter(new_candidates)
+        while True:
+            retry_candidate = next(retry_iter, None)
+            new_candidate = next(new_iter, None)
+            if retry_candidate is None and new_candidate is None:
+                break
+            if retry_candidate is not None:
+                attempts.append(retry_candidate)
+            if new_candidate is not None:
+                attempts.append(new_candidate)
+
+        deleted_count = 0
+        deferred_count = 0
+        for candidate in attempts:
+            try:
+                self._artifact_store.delete_package(storage_key=candidate.storage_key)
+                with backend.create_preview_write_unit_of_work() as write_uow:
+                    deleted = write_uow.revisions.delete_retention_pending(candidate=candidate)
+                    if not deleted:
+                        raise PreviewRevisionConflictError("retention candidate changed")
+                    write_uow.commit()
+                deleted_count += 1
+            except Exception as exc:
+                logger.error(
+                    "FOCUS Mapping Preview revision retention deferred tenant=%s owner=%s revision_id=%s error_type=%s",
+                    tenant_name,
+                    masked_preview_owner(ecosystem=ecosystem, tenant_id=tenant_id),
+                    candidate.revision_id,
+                    type(exc).__name__,
+                )
+                try:
+                    with backend.create_preview_write_unit_of_work() as write_uow:
+                        deferred = write_uow.revisions.defer_retention_pending(
+                            candidate=candidate,
+                            retry_at=retry_at,
+                        )
+                        write_uow.commit()
+                    if deferred:
+                        deferred_count += 1
+                except Exception as defer_error:
+                    logger.error(
+                        "FOCUS Mapping Preview revision retention deferral failed tenant=%s owner=%s "
+                        "revision_id=%s error_type=%s",
+                        tenant_name,
+                        masked_preview_owner(ecosystem=ecosystem, tenant_id=tenant_id),
+                        candidate.revision_id,
+                        type(defer_error).__name__,
+                    )
+
+        return PreviewRevisionCleanupResult(
+            claimed_count=len(new_candidates),
+            deleted_count=deleted_count,
+            deferred_count=deferred_count,
+        )
+
 
 def _artifact_declarations(revision: PreviewRevision) -> list[dict[str, object]]:
     return [
@@ -306,7 +469,44 @@ class PreviewRevisionReadService:
                 month_start=month_start,
             )
 
-    def _validated_manifest(self, revision: PreviewRevision) -> bytes:
+    def get_for_owner(
+        self,
+        *,
+        backend: PreviewStorageBackend,
+        ecosystem: str,
+        tenant_id: str,
+        revision_id: str,
+    ) -> PreviewRevision | None:
+        with backend.create_preview_read_unit_of_work() as uow:
+            return uow.revisions.get_for_owner(
+                ecosystem=ecosystem,
+                tenant_id=tenant_id,
+                revision_id=revision_id,
+            )
+
+    def list_for_owner_month(
+        self,
+        *,
+        backend: PreviewStorageBackend,
+        ecosystem: str,
+        tenant_id: str,
+        month_start: date,
+        limit: int,
+        cursor_revision_id: str | None,
+    ) -> PreviewRevisionPage:
+        with backend.create_preview_read_unit_of_work() as uow:
+            return uow.revisions.list_for_owner_month(
+                ecosystem=ecosystem,
+                tenant_id=tenant_id,
+                month_start=month_start,
+                limit=limit,
+                cursor_revision_id=cursor_revision_id,
+            )
+
+    def _validated_manifest(
+        self,
+        revision: PreviewRevision,
+    ) -> tuple[bytes, dict[str, object], PreviewRevisionValidationSummary]:
         try:
             validate_preview_revision_invariant(
                 month=revision.month,
@@ -359,7 +559,36 @@ class PreviewRevisionReadService:
             for key, value in expected.items():
                 if manifest.get(key) != value:
                     raise ValueError("manifest correlation mismatch")
-            return body
+            validation = manifest.get("validation")
+            if not isinstance(validation, dict):
+                raise ValueError("manifest validation must be an object")
+            if validation.get("status") != "passed":
+                raise ValueError("validation status must be passed")
+            mapping_profile_version = validation.get("mapping_profile_version")
+            source_records = validation.get("source_records")
+            rows = validation.get("rows")
+            mapping_errors = validation.get("mapping_errors")
+            if not isinstance(mapping_profile_version, str):
+                raise ValueError("validation mapping profile must be a string")
+            if not isinstance(source_records, int) or isinstance(source_records, bool):
+                raise ValueError("validation source records must be an integer")
+            if not isinstance(rows, int) or isinstance(rows, bool):
+                raise ValueError("validation rows must be an integer")
+            if type(mapping_errors) is not int or mapping_errors != 0:
+                raise ValueError("validation mapping errors must be zero")
+            if validation.get("artifact_integrity") != "passed":
+                raise ValueError("validation artifact integrity must be passed")
+            summary = PreviewRevisionValidationSummary(
+                status="passed",
+                mapping_profile_version=mapping_profile_version,
+                source_records=source_records,
+                rows=rows,
+                mapping_errors=cast("Literal[0]", mapping_errors),
+                artifact_integrity="passed",
+            )
+            if summary.mapping_profile_version != manifest["mapping_profile_version"]:
+                raise ValueError("validation mapping profile mismatch")
+            return body, manifest, summary
         except PreviewRevisionArtifactUnavailableError:
             raise
         except Exception:
@@ -367,11 +596,17 @@ class PreviewRevisionReadService:
                 "Stored FOCUS Mapping Preview revision artifact is unavailable"
             ) from None
 
-    def read_manifest(self, revision: PreviewRevision) -> bytes:
-        return self._validated_manifest(revision)
+    def validation_summary(self, *, revision: PreviewRevision) -> PreviewRevisionValidationSummary:
+        _body, _manifest, summary = self._validated_manifest(revision)
+        return summary
+
+    def read_manifest(self, *, revision: PreviewRevision) -> bytes:
+        body, _manifest, _summary = self._validated_manifest(revision)
+        return body
 
     def read_file(
         self,
+        *,
         revision: PreviewRevision,
         file_name: str,
     ) -> tuple[PreviewArtifactMetadata, bytes]:
@@ -386,7 +621,7 @@ class PreviewRevisionReadService:
                 "Stored FOCUS Mapping Preview revision artifact is unavailable"
             ) from None
 
-    def open_archive(self, revision: PreviewRevision) -> PreviewArchiveStream:
+    def open_archive(self, *, revision: PreviewRevision) -> PreviewArchiveStream:
         self._validated_manifest(revision)
         try:
             return self._artifact_store.open_archive(

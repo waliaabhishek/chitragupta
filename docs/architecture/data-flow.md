@@ -161,8 +161,9 @@ flowchart LR
     API --> ZIP[Deterministic Download All stream]
     CALC --> SCHED[Successful periodic cycle]
     SCHED --> REV[Validate eligible Monthly Full revisions]
-    REV --> CURRENT[(Atomic current revision per tenant and month)]
-    CURRENT --> CAPI[Guarded current revision API]
+    REV --> HISTORY[(Immutable revision history and atomic current pointer)]
+    HISTORY --> CAPI[Current and retained revision API]
+    HISTORY --> RET[Periodic billing-scope retention]
 ```
 
 Preview is read-only with respect to collected business data. It does not call a
@@ -239,9 +240,14 @@ current pointer changes. Replacing a revision and linking its superseded
 revision are one transaction. Any generation, validation, artifact, persistence,
 or concurrent-publication failure leaves the prior current revision unchanged.
 The read path exposes one current revision per configured storage owner and UTC
-month. Manifest, file, and archive URLs carry a revision guard so a replacement
-between metadata discovery and download returns a retryable conflict instead of
-serving mixed revisions.
+month plus newest-first retained history. Current manifest, file, and archive
+URLs carry a revision guard so a replacement between metadata discovery and
+download returns a retryable conflict instead of serving mixed revisions.
+Direct retained-revision URLs are immutable and expose the same validated
+manifest, files, and archive. History metadata records whether a revision is
+current or superseded, its predecessor/successor relationship, source freshness,
+and its validation summary. Revisions are complete replacements and are never
+intended to be aggregated.
 
 Expected failures travel through the initialized diagnostic path and atomically
 mark the request failed without a source snapshot or package. Source diagnostics
@@ -268,6 +274,14 @@ cutoff, the database transition blocks all downloads before the artifact
 directory is removed. Expired request and source-snapshot metadata remain
 visible in recent history, while `package` becomes null. This fixed package
 lifecycle is independent of tenant and topic-attribution retention.
+
+Published revision retention follows the tenant billing-data `retention_days`
+calendar cutoff instead. Periodic cleanup first hides every revision for an
+out-of-policy month, then removes its immutable package and finally its metadata.
+Failed package removal remains pending and is retried on later periodic cycles,
+including after restart. Current revisions are protected only while their month
+remains inside the retention window. Ad-hoc requested packages continue to use
+their separate fixed seven-day lifecycle.
 
 All accepted native line types can consume persisted lineage. Multiple billing
 origins and their actual identity/resource/`UNALLOCATED` portions are supported;

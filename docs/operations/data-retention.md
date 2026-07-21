@@ -1,8 +1,9 @@
 # Data Retention
 
-Chitragupta has separate retention policies for tenant pipeline data, topic
-attribution data, and requested FOCUS Preview packages. Changing one does not
-change the others.
+Chitragupta has separate lifecycles for tenant pipeline data, topic attribution
+data, requested FOCUS Preview packages, and published FOCUS revisions. Published
+revision retention follows the tenant billing-data cutoff; requested packages
+keep a fixed seven-day lifetime.
 
 ## Tenant pipeline data
 
@@ -80,13 +81,34 @@ for package behavior.
 ## Published monthly revisions
 
 Published monthly revisions are separate from seven-day requested packages.
-The current revision for each configured storage owner and UTC month remains
-available through the guarded current-revision API. Superseded revisions are not
-available through a public history or direct-revision endpoint.
+Current and superseded revisions remain available through the revision-history
+UI, API, and CLI while their billing month is inside the tenant's
+`retention_days` window. Each revision is a complete replacement for its month;
+consumers must select the current revision and must not aggregate revisions.
 
-There is currently no configurable revision cleanup window, revision-history
-browser, or selective revision deletion command. Do not treat
-`retention_days`, `lookback_days`, requested-package expiry, or the absence of a
-cleanup setting as an archival guarantee. Back up the tenant database and
-`preview.artifact_root` together when current published revisions must survive
-an upgrade or restore.
+Revision retention uses calendar-month boundaries. At a cleanup time `now`, the
+cutoff is:
+
+```text
+cutoff_date = (now in UTC - retention_days).date()
+```
+
+A month is eligible for removal when its exclusive month end is on or before
+`cutoff_date`. This includes the exact boundary. All revisions for such a month,
+including its current revision, are eligible; newer current revisions remain
+protected.
+
+Cleanup runs only as part of scheduled periodic processing. It first makes each
+eligible revision unavailable to public history and direct downloads, then
+removes its package, and finally removes its metadata. If package removal fails,
+the revision stays unavailable and pending cleanup. Later periodic runs retry
+it, including after a service restart. An already-absent package is treated as
+success so cleanup can finish.
+
+Scheduled publication does not seed months that are already outside this
+retention window. `lookback_days` still controls acquisition and recalculation;
+it does not extend revision retention. Requested ad-hoc packages keep their
+fixed seven-day availability independently of `retention_days`.
+
+Back up the tenant database and Preview packages together when retained
+published revisions must survive an upgrade or restore.

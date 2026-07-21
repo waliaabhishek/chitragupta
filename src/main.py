@@ -117,14 +117,14 @@ def _create_runner(settings: AppSettings) -> WorkflowRunner:
     package_generator = PreviewPackageGenerator(
         max_csv_file_bytes=settings.preview.max_csv_file_bytes,
     )
-    publisher = PreviewRevisionService(
+    revision_manager = PreviewRevisionService(
         artifact_store=artifact_store,
         package_generator=package_generator,
     )
     return WorkflowRunner(
         settings,
         _build_registry(settings),
-        revision_publisher=publisher,
+        revision_manager=revision_manager,
         owned_preview_artifact_store=artifact_store,
     )
 

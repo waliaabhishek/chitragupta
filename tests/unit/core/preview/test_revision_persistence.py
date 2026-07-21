@@ -50,8 +50,33 @@ def test_revision_table_registers_complete_immutable_replacement_metadata() -> N
         table.c.storage_key,
         table.c.manifest_metadata_json,
         table.c.file_metadata_json,
+        table.c.retention_pending_at,
     }
     assert tuple(column.name for column in table.primary_key.columns) == ("revision_id",)
+    assert {index.name: tuple(column.name for column in index.columns) for index in table.indexes}.items() >= {
+        "ix_preview_revisions_owner_month_visible_history": (
+            "ecosystem",
+            "tenant_id",
+            "month_start",
+            "retention_pending_at",
+            "published_at",
+            "revision_id",
+        ),
+        "ix_preview_revisions_owner_retention_due": (
+            "ecosystem",
+            "tenant_id",
+            "retention_pending_at",
+            "month_end",
+            "published_at",
+            "revision_id",
+        ),
+        "ix_preview_revisions_owner_retention_pending": (
+            "ecosystem",
+            "tenant_id",
+            "retention_pending_at",
+            "revision_id",
+        ),
+    }.items()
 
 
 def test_current_revision_partial_index_compiles_for_sqlite_and_postgresql() -> None:
@@ -100,7 +125,14 @@ def test_current_lookup_compiles_to_partial_index_predicate_and_uses_index(tmp_p
     assert "preview_revisions.is_current = 1" in sql
     with engine.connect() as connection:
         plan = connection.execute(text(f"EXPLAIN QUERY PLAN {sql}")).all()
-    assert any("ux_preview_revisions_owner_month_current" in str(row) for row in plan)
+    assert any(
+        index_name in str(row)
+        for row in plan
+        for index_name in (
+            "ux_preview_revisions_owner_month_current",
+            "ix_preview_revisions_owner_month_visible_history",
+        )
+    )
     engine.dispose()
 
 
@@ -133,6 +165,74 @@ def test_postgresql_current_lookup_compiles_to_partial_index_is_true_predicate()
     sql = str(statements[-1].compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}))
     assert "preview_revisions.is_current IS true" in sql
     assert "preview_revisions.is_current = true" not in sql
+
+
+def test_postgresql_retention_queries_compile_with_index_matched_predicates_and_order() -> None:
+    persistence = _persistence()
+    statements: list[Any] = []
+
+    class Result:
+        def all(self) -> list[Any]:
+            return []
+
+        def first(self) -> None:
+            return None
+
+    class PostgreSQLSession:
+        def get_bind(self) -> Any:
+            return SimpleNamespace(dialect=postgresql.dialect())
+
+        def exec(self, statement: Any) -> Result:
+            statements.append(statement)
+            return Result()
+
+    repository = persistence.SQLModelPreviewRevisionRepository(PostgreSQLSession())
+    assert (
+        repository.mark_retention_due(
+            ecosystem="confluent_cloud",
+            tenant_id="tenant-1",
+            cutoff_date=date(2026, 8, 1),
+            pending_at=datetime(2026, 8, 5, tzinfo=UTC),
+            limit=100,
+        )
+        == ()
+    )
+    assert (
+        repository.list_retention_pending(
+            ecosystem="confluent_cloud",
+            tenant_id="tenant-1",
+            limit=100,
+        )
+        == ()
+    )
+    assert (
+        repository.get_retention_pending_tail(
+            ecosystem="confluent_cloud",
+            tenant_id="tenant-1",
+        )
+        is None
+    )
+
+    sql = [
+        str(
+            statement.compile(
+                dialect=postgresql.dialect(),
+                compile_kwargs={"literal_binds": True},
+            )
+        )
+        for statement in statements
+    ]
+    due, pending, tail = sql
+    assert "retention_pending_at IS NULL" in due
+    assert "month_end <= '2026-08-01'" in due
+    assert "ORDER BY preview_revisions.month_end, preview_revisions.published_at, preview_revisions.revision_id" in due
+    assert "LIMIT 100" in due
+    assert "retention_pending_at IS NOT NULL" in pending
+    assert "ORDER BY preview_revisions.retention_pending_at, preview_revisions.revision_id" in pending
+    assert "LIMIT 100" in pending
+    assert "retention_pending_at IS NOT NULL" in tail
+    assert "ORDER BY preview_revisions.retention_pending_at DESC, preview_revisions.revision_id DESC" in tail
+    assert "LIMIT 1" in tail
 
 
 def test_repository_rejects_supersedes_mismatch_before_sql() -> None:
@@ -457,11 +557,10 @@ def test_table_hydration_revalidates_shared_revision_invariant(tmp_path: Path, m
     engine.dispose()
 
 
-def test_migration_024_upgrade_downgrade_and_create_all_parity(tmp_path: Path) -> None:
+def test_migration_024_upgrade_and_downgrade(tmp_path: Path) -> None:
     from alembic import command
 
     migrated_url = f"sqlite:///{tmp_path / 'migrated.db'}"
-    direct_url = f"sqlite:///{tmp_path / 'direct.db'}"
     command.upgrade(_alembic_config(migrated_url), "024")
     migrated = create_engine(migrated_url)
     migrated_inspector = inspect(migrated)
@@ -470,25 +569,9 @@ def test_migration_024_upgrade_downgrade_and_create_all_parity(tmp_path: Path) -
         index["name"] for index in migrated_inspector.get_indexes("preview_revisions")
     }
 
-    backend_module = import_module("core.storage.backends.sqlmodel.unit_of_work")
-    storage_module = import_module("plugins.confluent_cloud.storage.module")
-    direct_backend = backend_module.SQLModelBackend(
-        direct_url, storage_module.CCloudStorageModule(), use_migrations=False
-    )
-    direct_backend.create_tables()
-    direct = create_engine(direct_url)
-    assert {column["name"] for column in inspect(migrated).get_columns("preview_revisions")} == {
-        column["name"] for column in inspect(direct).get_columns("preview_revisions")
-    }
-    assert {index["name"] for index in inspect(migrated).get_indexes("preview_revisions")} == {
-        index["name"] for index in inspect(direct).get_indexes("preview_revisions")
-    }
-
     command.downgrade(_alembic_config(migrated_url), "023")
     assert "preview_revisions" not in inspect(migrated).get_table_names()
     migrated.dispose()
-    direct.dispose()
-    direct_backend.dispose()
 
 
 def test_migration_024_revision_chain_is_exact() -> None:

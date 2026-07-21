@@ -70,6 +70,6 @@ def test_create_runner_wires_one_owned_worker_store_generator_and_revision_servi
     runner_type.assert_called_once_with(
         settings,
         registry,
-        revision_publisher=publisher,
+        revision_manager=publisher,
         owned_preview_artifact_store=store,
     )
