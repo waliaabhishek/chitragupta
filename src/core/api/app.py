@@ -243,7 +243,8 @@ def create_app(
     app.include_router(tags.router, prefix="/api/v1")
     app.include_router(pipeline.router, prefix="/api/v1")
     app.include_router(export.router, prefix="/api/v1")
-    app.include_router(focus_preview.router, prefix="/api/v1")
+    if mode in {"api", "both"}:
+        app.include_router(focus_preview.router, prefix="/api/v1")
     app.include_router(topic_attributions.router, prefix="/api/v1")
     app.include_router(graph.router, prefix="/api/v1")
 

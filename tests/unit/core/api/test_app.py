@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from fastapi import FastAPI
+from fastapi.routing import APIRoute
 
 from core.api import get_version
 from core.api.app import create_app
@@ -24,6 +25,25 @@ def _make_settings(enable_cors: bool = False, cors_origins: list[str] | None = N
             )
         },
     )
+
+
+def _focus_preview_contract(app: FastAPI) -> set[tuple[str, frozenset[str]]]:
+    return {
+        (route.path, frozenset(route.methods or ()))
+        for route in app.routes
+        if isinstance(route, APIRoute) and "/focus-preview" in route.path
+    }
+
+
+def _focus_preview_openapi_contract(app: FastAPI) -> set[tuple[str, str]]:
+    http_methods = {"delete", "get", "head", "options", "patch", "post", "put", "trace"}
+    return {
+        (path, method)
+        for path, path_item in app.openapi()["paths"].items()
+        if "/focus-preview" in path
+        for method in path_item
+        if method in http_methods
+    }
 
 
 class TestCreateApp:
@@ -58,6 +78,34 @@ class TestCreateApp:
         assert "/api/v1/tenants/{tenant_name}/pipeline/status" in routes
         assert "/api/v1/tenants/{tenant_name}/chargebacks/aggregate" in routes
         assert "/api/v1/tenants/{tenant_name}/export" in routes
+
+    def test_worker_mode_has_no_focus_preview_routes_or_openapi_operations(self) -> None:
+        app = create_app(_make_settings(), mode="worker")
+
+        assert _focus_preview_contract(app) == set()
+        assert _focus_preview_openapi_contract(app) == set()
+
+    def test_api_and_both_modes_have_the_same_focus_preview_contract(self) -> None:
+        api_app = create_app(_make_settings(), mode="api")
+        both_app = create_app(_make_settings(), mode="both")
+
+        api_contract = _focus_preview_contract(api_app)
+        both_contract = _focus_preview_contract(both_app)
+        api_openapi_contract = _focus_preview_openapi_contract(api_app)
+        both_openapi_contract = _focus_preview_openapi_contract(both_app)
+
+        request_path = "/api/v1/tenants/{tenant_name}/focus-preview/requests"
+        artifact_path = "/api/v1/tenants/{tenant_name}/focus-preview/requests/{request_id}/files/{file_name}"
+
+        assert api_contract
+        assert (request_path, frozenset({"POST"})) in api_contract
+        assert (artifact_path, frozenset({"GET"})) in api_contract
+        assert both_contract == api_contract
+
+        assert api_openapi_contract
+        assert (request_path, "post") in api_openapi_contract
+        assert (artifact_path, "get") in api_openapi_contract
+        assert both_openapi_contract == api_openapi_contract
 
     def test_cors_disabled_by_default(self) -> None:
         settings = _make_settings(enable_cors=False)

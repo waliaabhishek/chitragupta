@@ -81,6 +81,19 @@ For the continuously running worker and API backend:
 uv run python src/main.py --config-file config.yaml --mode both
 ```
 
+### Choose a run mode
+
+| Mode | FOCUS Mapping Preview behavior |
+|---|---|
+| `worker` | Runs the ordinary pipeline, scheduled monthly publication, and revision retention. It exposes no Preview HTTP routes. |
+| `api` | Serves ad-hoc requests, request history, published revision history, and downloads. It does not run periodic publication. |
+| `both` | Serves the same Preview HTTP contract as `api` and also runs the periodic worker. |
+
+When API and worker run as separate processes, they must use the same tenant
+database and the same durable `preview.artifact_root`. The database identifies
+requests and revisions; the shared artifact root holds the immutable bytes that
+the API serves.
+
 The backend command does not start the frontend. For local development, the
 repository Makefile starts the worker/API backend and Vite frontend together:
 
@@ -501,3 +514,21 @@ revision is published.
   validation does not claim FOCUS conformance.
 
 The generic chargeback export is a separate API and is not changed by Preview.
+
+## When this can become FOCUS Export
+
+FOCUS Mapping Preview remains non-conforming and must not be presented as a
+FOCUS Export until all of these gates are met:
+
+- provider-authoritative `SkuId` and `SkuPriceId` values, including their
+  authoritative price-list relationship;
+- invoice-issuer-assigned `InvoiceId` and `InvoiceDetailId` values after the
+  source charges have been associated with an invoice;
+- authoritative invoice-issuer semantics;
+- complete coverage of every applicable FOCUS field and its native source
+  semantics;
+- official FOCUS metadata; and
+- conformance validation appropriate to the target FOCUS version.
+
+Passing Preview mapping validation, publishing a Settled revision, or using
+deterministic Chitragupta-derived keys does not satisfy those gates.

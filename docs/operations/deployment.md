@@ -2,11 +2,11 @@
 
 ## Run modes
 
-| `--mode` | Use case |
-|---|---|
-| `worker` | Background pipeline only. API served separately. |
-| `api` | REST API only. No pipeline. Query existing data. |
-| `both` | Pipeline + API in one process. Simplest deployment. |
+| `--mode` | General behavior | FOCUS Mapping Preview |
+|---|---|---|
+| `worker` | Background pipeline only. API served separately. | Runs scheduled monthly publication and revision retention. Exposes no Preview HTTP routes. |
+| `api` | REST API only. No periodic pipeline. | Serves ad-hoc requests, history, revisions, and downloads. Does not publish scheduled revisions. |
+| `both` | Pipeline + API in one process. Simplest deployment. | Serves the same Preview HTTP contract as `api` and runs scheduled publication and retention. |
 
 ## Systemd unit (worker)
 
@@ -85,6 +85,20 @@ api:
 ```
 
 Health endpoint: `GET /health` — returns `{"status": "ok", "version": "..."}`
+
+### FOCUS Mapping Preview boundary
+
+Chitragupta does not provide Preview-specific users, roles, API keys, or
+tokens. Protect the complete
+`/api/v1/tenants/{tenant_name}/focus-preview` prefix with the deployment's
+existing authenticated reverse proxy or API gateway, and configure credentials
+at that external boundary.
+
+Do not expose `preview.artifact_root` as a static directory or public volume.
+Preview downloads must go through the API so artifact identity and checksums
+are verified before delivery. When `api` and `worker` run separately, configure
+both with the same tenant database and the same durable artifact root. Use a
+database deployment suitable for the expected process and write concurrency.
 
 ## Storage
 
