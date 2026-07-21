@@ -256,9 +256,9 @@ def test_unexpected_generation_failure_logs_request_and_leaves_no_package(
     _seed(backend, source=_source(), aggregate=_aggregate(), allocation=_allocation())
     executor = ControlledExecutor()
     runtime = _runtime(tmp_path, backend, executor)
-    service = preview_module("service")
+    generator = preview_module("generator")
     monkeypatch.setattr(
-        service,
+        generator,
         "build_preview_data_package",
         lambda **_kwargs: (_ for _ in ()).throw(OSError("disk")),
     )
@@ -444,6 +444,7 @@ def test_worker_ready_path_preserves_validation_artifact_and_compare_and_set_ord
     mapping = preview_module("mapping")
     models = preview_module("models")
     persistence = preview_module("persistence")
+    generator = preview_module("generator")
     service = preview_module("service")
     events: list[str] = []
 
@@ -451,8 +452,8 @@ def test_worker_ready_path_preserves_validation_artifact_and_compare_and_set_ord
     real_mark_ready = persistence.SQLModelPreviewRequestRepository.mark_ready
     real_validate_columns = mapping.validate_preview_effective_columns
     real_candidate_validate = mapping.validate_preview_request_snapshot
-    real_build_data = service.build_preview_data_package
-    real_build_manifest = service.build_preview_manifest
+    real_build_data = generator.build_preview_data_package
+    real_build_manifest = service.build_requested_preview_manifest
     real_stage = runtime._artifact_store.stage_data_files
     real_replace = persistence.replace
     real_post_init = models.PreviewRequest.__post_init__
@@ -550,8 +551,8 @@ def test_worker_ready_path_preserves_validation_artifact_and_compare_and_set_ord
     monkeypatch.setattr(persistence.SQLModelPreviewRequestRepository, "mark_ready", mark_ready)
     monkeypatch.setattr(mapping, "validate_preview_effective_columns", validate_columns)
     monkeypatch.setattr(mapping, "validate_preview_request_snapshot", candidate_validate)
-    monkeypatch.setattr(service, "build_preview_data_package", build_data)
-    monkeypatch.setattr(service, "build_preview_manifest", build_manifest)
+    monkeypatch.setattr(generator, "build_preview_data_package", build_data)
+    monkeypatch.setattr(service, "build_requested_preview_manifest", build_manifest)
     monkeypatch.setattr(runtime._artifact_store, "stage_data_files", stage)
     monkeypatch.setattr(persistence, "replace", replace_candidate)
     monkeypatch.setattr(models.PreviewRequest, "__post_init__", post_init)
@@ -602,6 +603,7 @@ def test_rendering_and_data_fsync_finish_before_retention_clock_starts(
     _seed(backend, source=_source(), aggregate=_aggregate(), allocation=_allocation())
     executor = ControlledExecutor()
     artifacts = preview_module("artifacts")
+    generator = preview_module("generator")
     service = preview_module("service")
 
     class AdvancingClock:
@@ -619,7 +621,7 @@ def test_rendering_and_data_fsync_finish_before_retention_clock_starts(
         request_id_factory=lambda: "request-retention",
         executor=executor,
     )
-    real_build = service.build_preview_data_package
+    real_build = generator.build_preview_data_package
     real_stage = store.stage_data_files
 
     def slow_build(**kwargs: object) -> object:
@@ -632,7 +634,7 @@ def test_rendering_and_data_fsync_finish_before_retention_clock_starts(
         clock.now += timedelta(hours=4)
         return result
 
-    monkeypatch.setattr(service, "build_preview_data_package", slow_build)
+    monkeypatch.setattr(generator, "build_preview_data_package", slow_build)
     monkeypatch.setattr(store, "stage_data_files", slow_stage)
     try:
         queued = _submit_range(runtime, backend, date(2026, 7, 2))

@@ -129,6 +129,19 @@ manifest schema, and package lifetime are code-owned and have no YAML override.
 See [FOCUS Mapping Preview](../focus-mapping-preview.md) for request and download
 examples.
 
+When `features.enable_periodic_refresh` is enabled, each successful periodic
+tenant cycle also evaluates current Monthly Full revisions. Eligible months are
+the calendar months inside both the acquisition window and this tenant's
+effective interval. The initial pass includes every month that validates,
+including a header-only no-cost month. `cutoff_days` participates in
+provisional/settled evidence timing; it is not a revision-retention setting.
+
+The configured `tenant_id` remains the stable storage owner for current-revision
+isolation. It is not emitted as `BillingAccountId`; the mapped report continues
+to use the provider organization identity gathered through the ordinary
+inventory pipeline. Allocation, tag, resource, and identity configuration take
+effect only after the ordinary pipeline persists a new calculated result.
+
 ## plugin_settings fields (CCloud)
 
 | Field | Type | Default | Description |

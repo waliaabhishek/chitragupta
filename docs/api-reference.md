@@ -623,6 +623,75 @@ Requested packages are available from ready publication until, but not
 including, `expires_at`, exactly seven days later. At the cutoff, status remains
 available as `expired`, while manifest, file, and archive endpoints return 410.
 
+### Published monthly revisions
+
+Successful periodic worker cycles automatically evaluate eligible Monthly Full
+output. The first validated result publishes a complete revision. A provisional
+logical change, the first validated settled result, or a later settled logical
+correction atomically replaces the current revision. Failed calculation,
+eligibility, reconciliation, validation, artifact, or persistence work leaves
+the prior current revision unchanged.
+
+Material identity covers the canonical projected rows and mapping semantics.
+Physical CSV partitioning, file names, row counts, provenance, and timestamps do
+not independently trigger replacement. The first successful scheduled pass also
+seeds every valid eligible month in the configured lookback, including a valid
+header-only no-cost month.
+
+Automatic publication requires `features.enable_periodic_refresh: true`. It
+runs after the ordinary pipeline cycle; `--run-once`, direct tenant runs, and
+ad-hoc request endpoints do not publish revisions.
+
+#### `GET /api/v1/tenants/{tenant_name}/focus-preview/revisions/current`
+
+Return the current published revision for required query `month=YYYY-MM`.
+`revision_id` is optional on this metadata route and acts as a current-revision
+guard when supplied.
+
+The response contains `revision_id`, `tenant_name`, `month`, inclusive
+`start_date`, exclusive `end_date`, `monthly_status`, `published_at`, nullable
+`supersedes_revision_id`, `material_sha256`, `source_snapshot`, `self_url`, and
+`package`. Package metadata contains the manifest, ordered CSV files, and ZIP
+download URL. Every returned artifact URL includes both `month` and
+`revision_id`.
+
+#### Current revision artifact endpoints
+
+| Endpoint | Result |
+|---|---|
+| `GET /revisions/current/manifest?month=YYYY-MM&revision_id=...` | Exact validated `manifest.json` bytes. |
+| `GET /revisions/current/files/{file_name}?month=YYYY-MM&revision_id=...` | Exact validated bytes for one declared CSV part. |
+| `GET /revisions/current/archive?month=YYYY-MM&revision_id=...` | `application/zip` stream named `focus-mapping-preview-{month}-{revision_id}.zip`. |
+
+The table paths are relative to the tenant Preview prefix. Artifact
+`revision_id` is required. Each request re-reads the current revision before
+delivery. If the guard no longer matches, the API returns:
+
+```json
+{
+  "detail": {
+    "code": "focus_preview_current_changed",
+    "message": "The current FOCUS Mapping Preview revision changed; fetch the current revision and retry.",
+    "retryable": true
+  }
+}
+```
+
+Clients should fetch metadata, follow its URLs, and repeat that sequence after
+this 409 response. The routes expose only the current revision; there is no
+retained-revision listing or direct historical-revision endpoint.
+
+| Condition | Status | Detail |
+|---|---:|---|
+| Missing required `month` or artifact `revision_id` | 422 | FastAPI missing-field response |
+| Invalid or unrepresentable month | 400 | `month must use YYYY-MM` |
+| No current revision for this tenant/month | 404 | `Current FOCUS Mapping Preview revision not found` |
+| Unknown file on the matching current revision | 404 | `FOCUS Mapping Preview file not found for current revision` |
+| Guard differs from the current revision | 409 | `focus_preview_current_changed` retry response shown above |
+| Stored revision artifact is missing, corrupt, or inconsistent | 500 | `Stored FOCUS Mapping Preview revision artifact is unavailable` |
+| Revision service is unavailable | 503 | `FOCUS Mapping Preview revision service is unavailable` |
+| Revision storage is unavailable | 503 | `FOCUS Mapping Preview revision storage is unavailable` |
+
 ### Preview errors
 
 | Condition | Status | Detail |

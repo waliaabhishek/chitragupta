@@ -589,6 +589,7 @@ def test_primary_api_seam_transports_exact_billing_account_diagnostic(
 
 
 def test_primary_api_seam_transports_exact_row_validation_diagnostic(tmp_path: Path) -> None:
+    generator = import_module("core.preview.generator")
     mapping = import_module("core.preview.mapping")
     settings = _settings(tmp_path)
     backend = SQLModelBackend(
@@ -602,7 +603,7 @@ def test_primary_api_seam_transports_exact_row_validation_diagnostic(tmp_path: P
     validation_error = mapping.PreviewRowValidationError(mapping.PreviewRowRuleId.TYPE, column="BillingAccountId")
     with (
         patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"),
-        patch("core.preview.service.build_preview_data_package", side_effect=validation_error),
+        patch.object(generator, "build_preview_data_package", side_effect=validation_error),
         client,
     ):
         app.state.backends["production"] = backend
@@ -2048,17 +2049,23 @@ def test_api_observes_running_between_queued_and_ready(tmp_path: Path) -> None:
     _seed(backend, source=_source(), aggregate=_aggregate(), allocation=_allocation())
     service = import_module("core.preview.service")
     artifacts = import_module("core.preview.artifacts")
+    generator = import_module("core.preview.generator")
     executor = BlockingExecutor()
+    package_generator = generator.PreviewPackageGenerator(
+        max_csv_file_bytes=None,
+        clock=lambda: datetime(2026, 7, 4, tzinfo=UTC),
+    )
     runtime = service.PreviewRuntime(
         artifact_store=artifacts.LocalPreviewArtifactStore(tmp_path / "running-artifacts"),
         max_workers=1,
         executor=executor,
         request_id_factory=lambda: "request-running",
         clock=lambda: datetime(2026, 7, 4, tzinfo=UTC),
+        package_generator=package_generator,
     )
     entered = Event()
     release = Event()
-    original_generate = runtime._generate
+    original_generate = package_generator.generate
 
     def blocked_generate(*args: object, **kwargs: object) -> object:
         entered.set()
@@ -2072,7 +2079,7 @@ def test_api_observes_running_between_queued_and_ready(tmp_path: Path) -> None:
             app.state.preview_runtime.close()
             app.state.preview_runtime = runtime
             app.state.backends["production"] = backend
-            with patch.object(runtime, "_generate", side_effect=blocked_generate):
+            with patch.object(package_generator, "generate", side_effect=blocked_generate):
                 queued = client.post("/api/v1/tenants/production/focus-preview/requests", json=_body())
                 assert queued.status_code == 202
                 assert queued.json()["status"] == "queued"

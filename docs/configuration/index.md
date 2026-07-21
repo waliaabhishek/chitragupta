@@ -57,16 +57,35 @@ preview:
 | Field | Type | Default | Constraints | Description |
 |---|---|---|---|---|
 | `preview.artifact_root` | path | `data/focus-preview` | writable directory | Durable local root for immutable Preview packages. Relative paths resolve from the process working directory. |
-| `preview.max_workers` | int | `2` | 1–16 | Maximum Preview generation jobs in this API process. |
+| `preview.max_workers` | int | `2` | 1–16 | Maximum ad-hoc Preview request jobs in this API process. Scheduled publication does not use this pool. |
 | `preview.max_csv_file_bytes` | int or null | `null` | positive integer or null | Maximum bytes per CSV part, including its repeated header and LF record terminators. `null` emits one `cost-and-usage.csv`; a positive value enables deterministic row-boundary partitioning. |
 
-The artifact root must be on durable storage and writable by the API process.
-For containers, mount it into the data volume. The database stores request and
-artifact metadata; artifact bytes remain under this root and are served through
-the Preview API. The REST API has no built-in authentication. Put the complete
-Preview route prefix, including request history, status, manifest, file, and
-archive routes, behind an authenticated reverse proxy or API gateway. Changing
-the root does not move existing packages.
+Scheduled current monthly revisions use the ordinary periodic worker settings:
+
+```yaml
+features:
+  enable_periodic_refresh: true
+  refresh_interval: 1800
+```
+
+After each successful periodic tenant cycle, Preview evaluates eligible Monthly
+Full revisions. Disabling periodic refresh disables automatic revision
+publication; run-once and ad-hoc request execution do not replace it.
+
+The artifact root must be on durable storage and writable by both the API and
+periodic worker. If they run separately, mount and configure the same path in
+both processes. The database stores request and artifact metadata; artifact
+bytes remain under this root and are served through the Preview API. The REST
+API has no built-in authentication. Put the complete Preview route prefix,
+including request history, status, manifest, file, and archive routes, behind an
+authenticated reverse proxy or API gateway. Changing the root does not move
+existing packages.
+
+`lookback_days`, `cutoff_days`, and the tenant's `focus_preview` effective dates
+bound the calendar months considered for publication. They remain acquisition
+and eligibility controls, not revision-history retention. Changing only
+`preview.max_csv_file_bytes` changes physical partitioning and does not trigger a
+replacement.
 
 Confluent Cloud tenants can optionally declare the commercial contract required
 for Preview:

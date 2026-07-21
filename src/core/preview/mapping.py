@@ -14,6 +14,7 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import Literal
 
+import core.preview.models as preview_models
 from core.models.identity import Identity  # noqa: TC001 - resolved by contract tests
 from core.models.resource import Resource  # noqa: TC001 - resolved by contract tests
 from core.preview.evidence import (  # noqa: TC001 - resolved by contract tests
@@ -27,6 +28,7 @@ from core.preview.models import (
     PreviewArtifactMetadata,
     PreviewArtifactPayload,
     PreviewColumnProfile,
+    PreviewMonthlyStatus,
     PreviewRequest,
     PreviewRequestStatus,
     PreviewSourceSnapshot,
@@ -2251,6 +2253,7 @@ class PreviewDataPackageDraft:
     source_records: int
     rows: int
     reconciliation: PreviewPackageReconciliation
+    logical_data_sha256: str
 
 
 def _preview_csv_record(values: Iterable[object]) -> bytes:
@@ -2280,6 +2283,7 @@ def build_preview_data_package(
         key=lambda row: tuple(preview_serialize_cell(value) for value in (*row.target_values, *row.custom_values)),
     )
     header = _preview_csv_record(request.effective_columns)
+    logical_hasher = hashlib.sha256(header)
     if max_csv_file_bytes is not None and (max_csv_file_bytes <= 0 or len(header) > max_csv_file_bytes):
         raise PreviewCsvFileSizeError("A Preview CSV header or row exceeds the configured file-size limit.")
     if reconciliation.source_records < 0:
@@ -2301,6 +2305,7 @@ def build_preview_data_package(
     for row in rows:
         values = dict(zip(all_columns, (*row.target_values, *row.custom_values), strict=True))
         record = _preview_csv_record(preview_serialize_cell(values[column]) for column in request.effective_columns)
+        logical_hasher.update(record)
         if max_csv_file_bytes is not None and len(header) + len(record) > max_csv_file_bytes:
             raise PreviewCsvFileSizeError("A Preview CSV header or row exceeds the configured file-size limit.")
         if max_csv_file_bytes is not None and len(current) + len(record) > max_csv_file_bytes:
@@ -2328,10 +2333,31 @@ def build_preview_data_package(
         source_records=reconciliation.source_records,
         rows=len(rows),
         reconciliation=reconciliation,
+        logical_data_sha256=logical_hasher.hexdigest(),
     )
 
 
-def build_preview_manifest(
+def preview_revision_content_sha256(
+    *,
+    logical_data_sha256: str,
+    mapping_profile_version: str = MAPPING_PROFILE_VERSION,
+    target_focus_version: str = "1.4",
+    column_profile: PreviewColumnProfile = "full",
+    effective_columns: tuple[str, ...] = FOCUS_1_4_FULL_PROFILE_COLUMNS,
+) -> str:
+    if re.fullmatch(r"[0-9a-f]{64}", logical_data_sha256) is None:
+        raise PreviewMappingError("logical_data_sha256 must be canonical lowercase hexadecimal")
+    preimage = {
+        "mapping_profile_version": mapping_profile_version,
+        "target_focus_version": target_focus_version,
+        "column_profile": column_profile,
+        "effective_columns": list(effective_columns),
+        "logical_data_sha256": logical_data_sha256,
+    }
+    return hashlib.sha256(preview_canonical_json(preimage).encode()).hexdigest()
+
+
+def build_requested_preview_manifest(
     *,
     request: PreviewRequest,
     snapshot: PreviewSourceSnapshot,
@@ -2439,6 +2465,134 @@ def build_preview_manifest(
             "retention_days": 7,
         },
         "generated_at": preview_utc_text(ready_at),
+        "files": [
+            {
+                "name": item.name,
+                "media_type": item.media_type,
+                "size_bytes": item.size_bytes,
+                "sha256": item.sha256,
+                "order": item.order,
+            }
+            for item in files
+        ],
+    }
+    return (preview_canonical_json(manifest) + "\n").encode()
+
+
+def preview_revision_source_snapshot(snapshot: PreviewSourceSnapshot) -> dict[str, object]:
+    return {
+        "calculation_timestamp": (
+            None if snapshot.calculation_timestamp is None else preview_utc_text(snapshot.calculation_timestamp)
+        ),
+        "calculation_coverage": [
+            {
+                "tracking_date": entry.tracking_date.isoformat(),
+                "calculation_id": entry.calculation_id,
+                "calculation_completed_at": preview_utc_text(entry.calculation_completed_at),
+                "calculation_run_id": entry.calculation_run_id,
+            }
+            for entry in snapshot.calculation_coverage
+        ],
+        "source_through": None if snapshot.source_through is None else preview_utc_text(snapshot.source_through),
+        "effective_coverage_start_date": snapshot.effective_coverage_start_date.isoformat(),
+        "effective_coverage_end_date": snapshot.effective_coverage_end_date.isoformat(),
+        "availability_cutoff_end_date": (
+            None if snapshot.availability_cutoff_end_date is None else snapshot.availability_cutoff_end_date.isoformat()
+        ),
+        "monthly_status": snapshot.monthly_status,
+    }
+
+
+def build_preview_revision_manifest(
+    *,
+    revision_id: str,
+    tenant_name_at_publication: str,
+    month: str,
+    start_date: date,
+    end_date: date,
+    monthly_status: PreviewMonthlyStatus,
+    material_sha256: str,
+    supersedes_revision_id: str | None,
+    snapshot: PreviewSourceSnapshot,
+    draft: PreviewDataPackageDraft,
+    files: tuple[PreviewArtifactMetadata, ...],
+    published_at: datetime,
+) -> bytes:
+    preview_models.validate_preview_revision_invariant(
+        month=month,
+        start_date=start_date,
+        end_date=end_date,
+        monthly_status=monthly_status,
+        source_snapshot=snapshot,
+    )
+    if published_at.tzinfo is None or published_at.utcoffset() is None:
+        raise PreviewMappingError("published_at must be timezone-aware")
+    expected = tuple(
+        PreviewArtifactMetadata(
+            name=item.name,
+            media_type=item.media_type,
+            size_bytes=len(item.body),
+            sha256=hashlib.sha256(item.body).hexdigest(),
+            order=item.order,
+        )
+        for item in draft.data_files
+    )
+    if files != expected:
+        raise PreviewMappingError("artifact metadata does not match rendered package bytes")
+    mapping_profile_version = MAPPING_PROFILE_VERSION
+    target_focus_version = "1.4"
+    column_profile: PreviewColumnProfile = "full"
+    effective_columns = FOCUS_1_4_FULL_PROFILE_COLUMNS
+    recomputed = preview_revision_content_sha256(
+        mapping_profile_version=mapping_profile_version,
+        target_focus_version=target_focus_version,
+        column_profile=column_profile,
+        effective_columns=effective_columns,
+        logical_data_sha256=draft.logical_data_sha256,
+    )
+    if material_sha256 != recomputed:
+        raise PreviewMappingError("revision material digest does not match canonical preimage")
+    reconciliation = draft.reconciliation
+    manifest = {
+        "schema_version": "chitragupta.preview-manifest.v2",
+        "package_type": "published_preview_revision",
+        "revision_id": revision_id,
+        "tenant_name": tenant_name_at_publication,
+        "grain": "monthly",
+        "month": month,
+        "start_date": start_date.isoformat(),
+        "end_date": end_date.isoformat(),
+        "monthly_status": monthly_status,
+        "supersedes_revision_id": supersedes_revision_id,
+        "published_at": preview_utc_text(published_at),
+        "mapping_profile_version": mapping_profile_version,
+        "target_focus_version": target_focus_version,
+        "column_profile": column_profile,
+        "effective_columns": list(effective_columns),
+        "logical_data_sha256": draft.logical_data_sha256,
+        "material_sha256": material_sha256,
+        "conformance_status": "non_conforming",
+        "source_snapshot": preview_revision_source_snapshot(snapshot),
+        "validation": {
+            "status": "passed",
+            "mapping_profile_version": mapping_profile_version,
+            "source_records": draft.source_records,
+            "rows": draft.rows,
+            "mapping_errors": 0,
+            "artifact_integrity": "passed",
+        },
+        "reconciliation": {
+            "source_cost": preview_decimal_text(reconciliation.source_cost),
+            "allocated_cost": preview_decimal_text(reconciliation.allocated_cost),
+            "difference": preview_decimal_text(
+                preview_subtract_decimals(reconciliation.source_cost, reconciliation.allocated_cost)
+            ),
+            "source_quantity": preview_decimal_text(reconciliation.source_quantity),
+            "allocated_quantity": preview_decimal_text(reconciliation.allocated_quantity),
+            "quantity_difference": preview_decimal_text(
+                preview_subtract_decimals(reconciliation.source_quantity, reconciliation.allocated_quantity)
+            ),
+        },
         "files": [
             {
                 "name": item.name,

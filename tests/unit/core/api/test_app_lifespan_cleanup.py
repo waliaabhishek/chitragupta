@@ -150,6 +150,34 @@ def _patch_owned_resources(store: ControlledStore, runtime: ControlledRuntime) -
     )
 
 
+def test_lifespan_wires_borrowed_current_revision_reader_to_owned_api_store(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+    store = ControlledStore(events)
+    runtime = ControlledRuntime(events)
+    reader = object()
+    monkeypatch.setattr("core.api.app.asyncio.to_thread", _run_inline)
+    store_patch, runtime_patch = _patch_owned_resources(store, runtime)
+    with (
+        store_patch,
+        runtime_patch,
+        patch("core.preview.revisions.PreviewRevisionReadService", return_value=reader) as reader_type,
+    ):
+        app = create_app(_settings(tmp_path))
+
+        async def exercise() -> None:
+            async with app.router.lifespan_context(app):
+                assert app.state.preview_artifact_store is store
+                assert app.state.preview_revision_reader is reader
+
+        _run(exercise())
+
+    reader_type.assert_called_once_with(artifact_store=store)
+    assert events == ["runtime.close(wait=True)", "store.close"]
+
+
 def test_lifespan_body_exception_propagates_after_exact_ordered_cleanup(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

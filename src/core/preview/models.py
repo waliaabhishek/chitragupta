@@ -394,3 +394,152 @@ class PreviewStoredPackage:
         if not isinstance(self.storage_key, str) or not self.storage_key.strip():
             raise ValueError("storage_key must not be blank")
         PreviewPackageMetadata(manifest=self.manifest, files=self.files)
+
+
+def validate_preview_revision_invariant(
+    *,
+    month: str,
+    start_date: date,
+    end_date: date,
+    monthly_status: PreviewMonthlyStatus,
+    source_snapshot: PreviewSourceSnapshot,
+) -> None:
+    if start_date.day != 1 or end_date != canonical_next_month_boundary(start_date):
+        raise ValueError("revision month bounds must cover one exact calendar month")
+    if month != f"{start_date.year:04d}-{start_date.month:02d}":
+        raise ValueError("revision month does not match its bounds")
+    if monthly_status not in {"provisional", "settled"}:
+        raise ValueError(f"unsupported monthly_status: {monthly_status!r}")
+    if source_snapshot.monthly_status != monthly_status:
+        raise ValueError("revision status does not match source snapshot")
+    if source_snapshot.effective_coverage_start_date != start_date:
+        raise ValueError("revision source coverage must start at the month boundary")
+    cutoff = source_snapshot.availability_cutoff_end_date
+    if cutoff is None:
+        raise ValueError("revision source snapshot requires an availability cutoff")
+    coverage_end = source_snapshot.effective_coverage_end_date
+    if coverage_end > end_date:
+        raise ValueError("revision source coverage exceeds month bounds")
+    if coverage_end > cutoff:
+        raise ValueError("revision source coverage exceeds availability cutoff")
+    if monthly_status == "settled":
+        if cutoff < end_date:
+            raise ValueError("settled revision availability cutoff precedes month end")
+        if coverage_end != end_date:
+            raise ValueError("settled revision requires complete month coverage")
+
+
+def _validate_revision_identity(
+    *,
+    revision_id: object,
+    tenant_name_at_publication: object,
+    ecosystem: object,
+    tenant_id: object,
+    material_sha256: object,
+    published_at: datetime,
+    supersedes_revision_id: object,
+) -> datetime:
+    for field, value in (
+        ("revision_id", revision_id),
+        ("tenant_name_at_publication", tenant_name_at_publication),
+        ("ecosystem", ecosystem),
+        ("tenant_id", tenant_id),
+    ):
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"{field} must not be blank")
+    if ecosystem != "confluent_cloud":
+        raise ValueError(f"unsupported preview ecosystem: {ecosystem!r}")
+    if not isinstance(material_sha256, str) or re.fullmatch(r"[0-9a-f]{64}", material_sha256) is None:
+        raise ValueError("material_sha256 must be canonical lowercase hexadecimal")
+    normalized = _require_aware(published_at, "published_at")
+    if supersedes_revision_id is not None and (
+        not isinstance(supersedes_revision_id, str) or not supersedes_revision_id.strip()
+    ):
+        raise ValueError("supersedes_revision_id must be a nonblank string or None")
+    if supersedes_revision_id == revision_id:
+        raise ValueError("a revision cannot supersede itself")
+    return normalized
+
+
+@dataclass(frozen=True)
+class PreviewRevisionCandidate:
+    revision_id: str
+    tenant_name_at_publication: str
+    ecosystem: str
+    tenant_id: str
+    month: str
+    start_date: date
+    end_date: date
+    monthly_status: PreviewMonthlyStatus
+    material_sha256: str
+    source_snapshot: PreviewSourceSnapshot
+    published_at: datetime
+    supersedes_revision_id: str | None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "published_at",
+            _validate_revision_identity(
+                revision_id=self.revision_id,
+                tenant_name_at_publication=self.tenant_name_at_publication,
+                ecosystem=self.ecosystem,
+                tenant_id=self.tenant_id,
+                material_sha256=self.material_sha256,
+                published_at=self.published_at,
+                supersedes_revision_id=self.supersedes_revision_id,
+            ),
+        )
+        validate_preview_revision_invariant(
+            month=self.month,
+            start_date=self.start_date,
+            end_date=self.end_date,
+            monthly_status=self.monthly_status,
+            source_snapshot=self.source_snapshot,
+        )
+
+
+@dataclass(frozen=True)
+class PreviewRevision:
+    revision_id: str
+    tenant_name_at_publication: str
+    ecosystem: str
+    tenant_id: str
+    month: str
+    start_date: date
+    end_date: date
+    monthly_status: PreviewMonthlyStatus
+    material_sha256: str
+    source_snapshot: PreviewSourceSnapshot
+    published_at: datetime
+    supersedes_revision_id: str | None
+    superseded_by_revision_id: str | None
+    is_current: bool
+    package: PreviewStoredPackage
+
+    def __post_init__(self) -> None:
+        candidate = PreviewRevisionCandidate(
+            revision_id=self.revision_id,
+            tenant_name_at_publication=self.tenant_name_at_publication,
+            ecosystem=self.ecosystem,
+            tenant_id=self.tenant_id,
+            month=self.month,
+            start_date=self.start_date,
+            end_date=self.end_date,
+            monthly_status=self.monthly_status,
+            material_sha256=self.material_sha256,
+            source_snapshot=self.source_snapshot,
+            published_at=self.published_at,
+            supersedes_revision_id=self.supersedes_revision_id,
+        )
+        object.__setattr__(self, "published_at", candidate.published_at)
+        if self.superseded_by_revision_id is not None and (
+            not isinstance(self.superseded_by_revision_id, str) or not self.superseded_by_revision_id.strip()
+        ):
+            raise ValueError("superseded_by_revision_id must be a nonblank string or None")
+        if self.superseded_by_revision_id == self.revision_id:
+            raise ValueError("a revision cannot be superseded by itself")
+        if self.is_current and self.superseded_by_revision_id is not None:
+            raise ValueError("a current revision cannot identify a successor")
+        if not self.is_current and self.superseded_by_revision_id is None:
+            raise ValueError("a non-current revision must identify its successor")

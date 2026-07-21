@@ -109,7 +109,24 @@ def _build_registry(settings: AppSettings) -> PluginRegistry:
 
 def _create_runner(settings: AppSettings) -> WorkflowRunner:
     """Create a WorkflowRunner with all plugins discovered from configured plugins path."""
-    return WorkflowRunner(settings, _build_registry(settings))
+    from core.preview.artifacts import LocalPreviewArtifactStore
+    from core.preview.generator import PreviewPackageGenerator
+    from core.preview.revisions import PreviewRevisionService
+
+    artifact_store = LocalPreviewArtifactStore(settings.preview.artifact_root)
+    package_generator = PreviewPackageGenerator(
+        max_csv_file_bytes=settings.preview.max_csv_file_bytes,
+    )
+    publisher = PreviewRevisionService(
+        artifact_store=artifact_store,
+        package_generator=package_generator,
+    )
+    return WorkflowRunner(
+        settings,
+        _build_registry(settings),
+        revision_publisher=publisher,
+        owned_preview_artifact_store=artifact_store,
+    )
 
 
 def _validate_plugin_configs(settings: AppSettings) -> None:
@@ -160,7 +177,7 @@ def run_api(settings: AppSettings, runner: WorkflowRunner | None = None, mode: s
     )
 
 
-def run_worker(
+def _run_worker_execution(
     settings: AppSettings,
     *,
     run_once: bool = False,
@@ -227,6 +244,25 @@ def run_worker(
     logger.info("Starting chargeback engine worker...")
     runner.run_loop(shutdown_event)
     logger.info("Chargeback engine worker stopped.")
+
+
+def run_worker(
+    settings: AppSettings,
+    *,
+    run_once: bool = False,
+    runner: WorkflowRunner | None = None,
+    shutdown_event: threading.Event | None = None,
+) -> None:
+    owned_runner = runner if runner is not None else _create_runner(settings)
+    try:
+        _run_worker_execution(
+            settings,
+            run_once=run_once,
+            runner=owned_runner,
+            shutdown_event=shutdown_event,
+        )
+    finally:
+        owned_runner.close()
 
 
 def main(argv: list[str] | None = None) -> None:

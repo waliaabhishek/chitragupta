@@ -5,15 +5,19 @@ from concurrent.futures import Future
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Never
+from unittest.mock import MagicMock
 
 import pytest
 
 from core.preview.artifacts import PreviewArtifactStore
 from core.preview.persistence import (
     PreviewInterruptionRecoveryResult,
+    PreviewReadUnitOfWork,
     PreviewRequestRepository,
+    PreviewRevisionRepository,
     PreviewStaleLeaseRecoveryResult,
     PreviewStorageBackend,
+    PreviewWriteUnitOfWork,
 )
 from core.preview.service import PreviewExecutor, PreviewRuntime
 from tests.unit.core.preview.conftest import preview_module
@@ -27,7 +31,7 @@ if TYPE_CHECKING:
         PreviewSourceSnapshot,
         PreviewStoredPackage,
     )
-    from core.preview.persistence import PreviewExpiredArtifact, PreviewWriteUnitOfWork
+    from core.preview.persistence import PreviewExpiredArtifact
 
 
 class ImmediateExecutor:
@@ -227,6 +231,7 @@ class RecordingRequests:
 @dataclass
 class RecordingWriteUow:
     requests: PreviewRequestRepository
+    revisions: PreviewRevisionRepository = field(default_factory=lambda: MagicMock(spec=PreviewRevisionRepository))
     commits: int = 0
 
     def __enter__(self) -> RecordingWriteUow:
@@ -251,11 +256,35 @@ class RecordingWriteUow:
 class RecordingBackend:
     requests: RecordingRequests
 
-    def create_preview_write_unit_of_work(self) -> PreviewWriteUnitOfWork:
-        return RecordingWriteUow(self.requests)
+    def __post_init__(self) -> None:
+        self.write_uow = RecordingWriteUow(self.requests)
+        self.read_uow = RecordingReadUow(self.requests)
 
-    def create_preview_read_unit_of_work(self) -> Never:
-        raise AssertionError("not used")
+    def create_preview_write_unit_of_work(self) -> PreviewWriteUnitOfWork:
+        return self.write_uow
+
+    def create_preview_read_unit_of_work(self) -> PreviewReadUnitOfWork:
+        return self.read_uow
+
+
+class RecordingReadUow:
+    def __init__(self, requests: PreviewRequestRepository) -> None:
+        persistence = preview_module("persistence")
+        storage = __import__("core.storage.interface", fromlist=["ResourceRepository"])
+        self.requests = requests
+        self.revisions = MagicMock(spec=PreviewRevisionRepository)
+        self.calculations = MagicMock(spec=persistence.PreviewCalculationRepository)
+        self.cost_evidence = MagicMock(spec=persistence.PreviewCostEvidenceReader)
+        self.allocation_evidence = MagicMock(spec=persistence.PreviewAllocationEvidenceReader)
+        self.resources = MagicMock(spec=storage.ResourceRepository)
+        self.identities = MagicMock(spec=storage.IdentityRepository)
+        self.tags = MagicMock(spec=storage.EntityTagRepository)
+
+    def __enter__(self) -> RecordingReadUow:
+        return self
+
+    def __exit__(self, exc_type: object, exc_value: object, traceback: object) -> None:
+        del exc_type, exc_value, traceback
 
 
 def _runtime(store: RecordingStore) -> PreviewRuntime:
@@ -281,6 +310,11 @@ def test_delivery_recovery_doubles_satisfy_full_production_protocols() -> None:
     assert isinstance(store, PreviewArtifactStore)
     assert isinstance(requests, PreviewRequestRepository)
     assert isinstance(backend, PreviewStorageBackend)
+    assert isinstance(backend.write_uow, PreviewWriteUnitOfWork)
+    assert isinstance(backend.read_uow, PreviewReadUnitOfWork)
+    assert not isinstance(backend.read_uow, PreviewWriteUnitOfWork)
+    assert isinstance(backend.write_uow.revisions, PreviewRevisionRepository)
+    assert isinstance(backend.read_uow.revisions, PreviewRevisionRepository)
     assert isinstance(ImmediateExecutor(), PreviewExecutor)
 
 

@@ -13,6 +13,7 @@ import pytest
 from alembic import command
 from sqlalchemy import create_engine, text
 
+import core.preview.mapping as preview_mapping
 from core.api.app import create_app
 from core.config.models import ApiConfig, AppSettings, PreviewConfig, StorageConfig, TenantConfig
 from core.preview.artifacts import LocalPreviewArtifactStore
@@ -21,7 +22,6 @@ from core.preview.mapping import (
     LEGACY_DAILY_FULL_V4_COLUMNS,
     PreviewDataPackageDraft,
     PreviewPackageReconciliation,
-    build_preview_manifest,
 )
 from core.preview.models import (
     PreviewArtifactPayload,
@@ -177,6 +177,7 @@ def _persist_ready_request(
             source_quantity=Decimal("1"),
             allocated_quantity=Decimal("1"),
         ),
+        logical_data_sha256=hashlib.sha256(csv_body).hexdigest(),
     )
     ready_at = created_at + timedelta(minutes=2)
     expires_at = ready_at + timedelta(days=7)
@@ -186,7 +187,7 @@ def _persist_ready_request(
             status=PreviewRequestStatus.RUNNING,
             started_at=created_at + timedelta(minutes=1),
         )
-        manifest_body = build_preview_manifest(
+        manifest_body = preview_mapping.build_requested_preview_manifest(
             request=running_request,
             snapshot=snapshot,
             draft=draft,
@@ -215,7 +216,7 @@ def _persist_ready_request(
     return package
 
 
-def test_revision_021_ready_daily_full_artifacts_survive_023_and_hydrate_through_api(
+def test_revision_021_ready_daily_full_artifacts_survive_024_and_hydrate_through_api(
     tmp_path: Path,
 ) -> None:
     connection_string = f"sqlite:///{tmp_path / 'legacy-ready.db'}"
@@ -296,7 +297,7 @@ def test_revision_021_ready_daily_full_artifacts_survive_023_and_hydrate_through
         )
     engine.dispose()
 
-    command.upgrade(migration, "023")
+    command.upgrade(migration, "024")
     engine = create_engine(connection_string)
     with engine.connect() as connection:
         upgraded = connection.execute(
@@ -451,6 +452,7 @@ def test_v5_daily_and_monthly_ready_rows_round_trip_through_sqlite_and_api(
             ),
             {"request_id": request_id},
         ).one()
+        revision_count = connection.execute(text("SELECT COUNT(*) FROM preview_revisions")).scalar_one()
     engine.dispose()
     assert persisted.grain == grain
     assert str(persisted.start_date) == start.isoformat()
@@ -470,6 +472,7 @@ def test_v5_daily_and_monthly_ready_rows_round_trip_through_sqlite_and_api(
         None if persisted.availability_cutoff_end_date is None else str(persisted.availability_cutoff_end_date)
     ) == (None if cutoff_end is None else cutoff_end.isoformat())
     assert persisted.monthly_status == monthly_status
+    assert revision_count == 0
     assert json.loads(persisted.manifest_metadata_json)["sha256"] == hashlib.sha256(package.manifest_body).hexdigest()
     assert json.loads(persisted.data_files_json)[0]["sha256"] == hashlib.sha256(package.data_files[0].body).hexdigest()
 

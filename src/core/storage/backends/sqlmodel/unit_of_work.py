@@ -21,7 +21,11 @@ if TYPE_CHECKING:
     from core.emitters.repository import EmissionRepository
     from core.plugin.protocols import StorageModule
     from core.preview.evidence import PreviewAllocationEvidenceReader, PreviewCostEvidenceReader
-    from core.preview.persistence import PreviewCalculationRepository, PreviewRequestRepository
+    from core.preview.persistence import (
+        PreviewCalculationRepository,
+        PreviewRequestRepository,
+        PreviewRevisionRepository,
+    )
     from core.storage.interface import (
         BillingRepository,
         ChargebackRepository,
@@ -133,13 +137,15 @@ class PreviewWriteSQLModelUnitOfWork:
         self._engine = get_or_create_engine(connection_string)
         self._session: Session | None = None
         self.requests: PreviewRequestRepository = None  # type: ignore[assignment]
+        self.revisions: PreviewRevisionRepository = None  # type: ignore[assignment]
 
     def __enter__(self) -> Self:
-        from core.preview.persistence import SQLModelPreviewRequestRepository
+        from core.preview.persistence import SQLModelPreviewRequestRepository, SQLModelPreviewRevisionRepository
 
         self._session = Session(self._engine)
         self._committed = False
         self.requests = SQLModelPreviewRequestRepository(self._session)
+        self.revisions = SQLModelPreviewRevisionRepository(self._session)
         return self
 
     def __exit__(
@@ -174,6 +180,7 @@ class PreviewReadSQLModelUnitOfWork:
         self._storage_module = storage_module
         self._session: Session | None = None
         self.requests: PreviewRequestRepository = None  # type: ignore[assignment]
+        self.revisions: PreviewRevisionRepository = None  # type: ignore[assignment]
         self.calculations: PreviewCalculationRepository = None  # type: ignore[assignment]
         self.cost_evidence: PreviewCostEvidenceReader = None  # type: ignore[assignment]
         self.allocation_evidence: PreviewAllocationEvidenceReader = None  # type: ignore[assignment]
@@ -186,11 +193,13 @@ class PreviewReadSQLModelUnitOfWork:
         from core.preview.persistence import (
             SQLModelPreviewCalculationRepository,
             SQLModelPreviewRequestRepository,
+            SQLModelPreviewRevisionRepository,
         )
 
         self._session = Session(self._engine)
         try:
             self.requests = SQLModelPreviewRequestRepository(self._session)
+            self.revisions = SQLModelPreviewRevisionRepository(self._session)
             self.calculations = SQLModelPreviewCalculationRepository(self._session)
             self.resources = self._storage_module.create_resource_repository(self._session)
             self.identities = self._storage_module.create_identity_repository(self._session)

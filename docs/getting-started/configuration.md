@@ -65,11 +65,25 @@ preview:
   max_csv_file_bytes: null
 ```
 
-The artifact root must be durable and writable by the API process.
-`max_csv_file_bytes` is either null for one CSV or a positive byte ceiling for
-deterministic row-boundary parts. See
+The artifact root must be durable and writable by the API and periodic worker;
+separate processes must use the same mounted path. `max_csv_file_bytes` is
+either null for one CSV or a positive byte ceiling for deterministic
+row-boundary parts. See
 [FOCUS Mapping Preview](../focus-mapping-preview.md) for the complete user
 workflow and supported customization boundary.
+
+To publish current Monthly Full revisions automatically, keep the ordinary
+worker in periodic mode:
+
+```yaml
+features:
+  enable_periodic_refresh: true
+  refresh_interval: 1800
+```
+
+Publication follows successful periodic cycles. Run-once execution and ad-hoc
+Preview requests never publish revisions. Eligible months are bounded by
+`lookback_days`, `cutoff_days`, and the `focus_preview` effective interval.
 
 Tenant `lookback_days` is capped at 364 and controls acquisition/recalculation,
 not retention or guaranteed historical reconstruction.

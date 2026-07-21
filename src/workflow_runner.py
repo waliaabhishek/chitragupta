@@ -25,6 +25,8 @@ if TYPE_CHECKING:
     from core.models.pipeline import PipelineRun
     from core.plugin.protocols import EcosystemPlugin, OverlayConfig
     from core.plugin.registry import PluginRegistry
+    from core.preview.artifacts import PreviewArtifactStore
+    from core.preview.revisions import PreviewScheduledRevisionPublisher
     from core.storage.interface import StorageBackend
 
 logger = logging.getLogger(__name__)
@@ -173,7 +175,14 @@ def cleanup_orphaned_runs_for_all_tenants(
 class WorkflowRunner:
     """Periodic execution loop. Runs orchestrator for all tenants concurrently."""
 
-    def __init__(self, settings: AppSettings, plugin_registry: PluginRegistry) -> None:
+    def __init__(
+        self,
+        settings: AppSettings,
+        plugin_registry: PluginRegistry,
+        *,
+        revision_publisher: PreviewScheduledRevisionPublisher | None = None,
+        owned_preview_artifact_store: PreviewArtifactStore | None = None,
+    ) -> None:
         self._settings = settings
         self._plugin_registry = plugin_registry
         self._bootstrapped = False
@@ -183,6 +192,11 @@ class WorkflowRunner:
         self._failed_tenants: dict[str, str] = {}  # name -> error message
         self._failed_tenants_lock = threading.Lock()
         self._shutdown_event: threading.Event | None = None
+        self._revision_publisher = revision_publisher
+        self._owned_preview_artifact_store = owned_preview_artifact_store
+        self._periodic_cycle_lock = threading.Lock()
+        self._close_lock = threading.Lock()
+        self._closed = False
 
     def set_shutdown_event(self, event: threading.Event) -> None:
         """Register the shutdown event so run_once() can exit early on signal."""
@@ -214,9 +228,25 @@ class WorkflowRunner:
 
     def close(self) -> None:
         """Clean up all tenant runtimes."""
-        for runtime in self._tenant_runtimes.values():
-            runtime.close()
-        self._tenant_runtimes.clear()
+        with self._periodic_cycle_lock, self._close_lock:
+            if self._closed:
+                return
+            self._closed = True
+            failures: list[BaseException] = []
+            runtimes = tuple(self._tenant_runtimes.values())
+            self._tenant_runtimes.clear()
+            for runtime in runtimes:
+                try:
+                    runtime.close()
+                except BaseException as exc:
+                    failures.append(exc)
+            if self._owned_preview_artifact_store is not None:
+                try:
+                    self._owned_preview_artifact_store.close()
+                except BaseException as exc:
+                    failures.append(exc)
+            if failures:
+                raise failures[0]
 
     def _get_or_create_runtime(self, tenant_name: str, config: TenantConfig) -> TenantRuntime:
         """Get cached runtime or create new one. Recreates if unhealthy or config changed."""
@@ -599,6 +629,40 @@ class WorkflowRunner:
             except Exception:
                 logger.exception("Tenant %s: retention cleanup failed", name)
 
+    def _publish_scheduled_revisions(self, results: dict[str, PipelineRunResult]) -> None:
+        publisher = self._revision_publisher
+        if publisher is None:
+            return
+        from core.preview.persistence import PreviewStorageBackend
+
+        for tenant_name, result in results.items():
+            if result.errors or result.already_running or result.fatal:
+                continue
+            config = self._settings.tenants.get(tenant_name)
+            runtime = self._tenant_runtimes.get(tenant_name)
+            if (
+                config is None
+                or runtime is None
+                or config.ecosystem != "confluent_cloud"
+                or config.focus_preview is None
+                or config.focus_preview.commercial_profile != "direct_payg"
+                or not isinstance(runtime.storage, PreviewStorageBackend)
+            ):
+                continue
+            try:
+                publisher.publish_eligible_months(
+                    tenant_name=tenant_name,
+                    tenant_config=config,
+                    backend=runtime.storage,
+                    now=datetime.now(UTC),
+                )
+            except Exception as exc:
+                logger.error(
+                    "Tenant %s: scheduled FOCUS Mapping Preview publication failed error_type=%s",
+                    tenant_name,
+                    type(exc).__name__,
+                )
+
     def run_loop(self, shutdown_event: threading.Event) -> None:
         """Run orchestrator loop until shutdown_event is set."""
         # GAP-005: honor enable_periodic_refresh flag
@@ -609,24 +673,29 @@ class WorkflowRunner:
 
         interval = self._settings.features.refresh_interval
         while not shutdown_event.is_set():
-            try:
-                self._log_results(self.run_once())
-                self._cleanup_retention()  # TD-016: Retention cleanup after each cycle
+            with self._periodic_cycle_lock:
+                if shutdown_event.is_set():
+                    break
+                try:
+                    results = self.run_once()
+                    self._log_results(results)
+                    self._publish_scheduled_revisions(results)
+                    self._cleanup_retention()  # TD-016: Retention cleanup after each cycle
 
-                # Alert if all configured tenants are permanently failed
-                all_tenants = set(self._settings.tenants)
-                with self._failed_tenants_lock:
-                    failed_set = set(self._failed_tenants)
-                if all_tenants and all_tenants == failed_set:
-                    logger.critical(
-                        "ALERT: All %d tenant(s) have been permanently suspended. "
-                        "No work will be performed. Operator intervention required. "
-                        "Failed tenants: %s",
-                        len(all_tenants),
-                        list(failed_set),
-                    )
-            except Exception:
-                logger.exception("Unexpected error in run_loop")
+                    # Alert if all configured tenants are permanently failed
+                    all_tenants = set(self._settings.tenants)
+                    with self._failed_tenants_lock:
+                        failed_set = set(self._failed_tenants)
+                    if all_tenants and all_tenants == failed_set:
+                        logger.critical(
+                            "ALERT: All %d tenant(s) have been permanently suspended. "
+                            "No work will be performed. Operator intervention required. "
+                            "Failed tenants: %s",
+                            len(all_tenants),
+                            list(failed_set),
+                        )
+                except Exception:
+                    logger.exception("Unexpected error in run_loop")
 
             # Sleep in small increments to check shutdown_event
             for _ in range(interval):

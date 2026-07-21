@@ -2,11 +2,29 @@ from __future__ import annotations
 
 import json
 import logging
+import sqlite3
 from dataclasses import asdict, dataclass, replace
 from datetime import date, datetime, timedelta
 from typing import Literal, Protocol, Self, runtime_checkable
 
-from sqlalchemy import Column, Date, DateTime, Index, String, Text, and_, case, cast, func, or_, update
+from sqlalchemy import (
+    Boolean,
+    Column,
+    Date,
+    DateTime,
+    Index,
+    String,
+    Text,
+    and_,
+    case,
+    cast,
+    func,
+    or_,
+    text,
+    true,
+    update,
+)
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlmodel import Field, Session, SQLModel, col, select
 
 from core.preview.eligibility import capped_correlations
@@ -22,10 +40,13 @@ from core.preview.models import (
     PreviewPackageMetadata,
     PreviewRequest,
     PreviewRequestStatus,
+    PreviewRevision,
+    PreviewRevisionCandidate,
     PreviewSourceSnapshot,
     PreviewStoredPackage,
     preview_request_status,
     validate_preview_request_snapshot,
+    validate_preview_revision_invariant,
 )
 from core.storage.backends.sqlmodel.mappers import ensure_utc, ensure_utc_strict
 from core.storage.backends.sqlmodel.tables import PipelineStateTable
@@ -264,6 +285,40 @@ class PreviewRequestTable(SQLModel, table=True):
     effective_coverage_end_date: date | None = Field(default=None, sa_column=Column(Date(), nullable=True))
     availability_cutoff_end_date: date | None = Field(default=None, sa_column=Column(Date(), nullable=True))
     monthly_status: str | None = None
+
+
+class PreviewRevisionTable(SQLModel, table=True):
+    __tablename__ = "preview_revisions"
+    __table_args__ = (
+        Index("ix_preview_revisions_supersedes", "supersedes_revision_id"),
+        Index("ix_preview_revisions_superseded_by", "superseded_by_revision_id"),
+        Index(
+            "ux_preview_revisions_owner_month_current",
+            "ecosystem",
+            "tenant_id",
+            "month_start",
+            unique=True,
+            sqlite_where=text("is_current = 1"),
+            postgresql_where=text("is_current IS TRUE"),
+        ),
+    )
+
+    revision_id: str = Field(primary_key=True)
+    tenant_name_at_publication: str
+    ecosystem: str
+    tenant_id: str
+    month_start: date = Field(sa_column=Column(Date(), nullable=False))
+    month_end: date = Field(sa_column=Column(Date(), nullable=False))
+    monthly_status: str
+    material_sha256: str
+    source_snapshot_json: str = Field(sa_column=Column(Text(), nullable=False))
+    published_at: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))
+    supersedes_revision_id: str | None = Field(default=None, sa_column=Column(String(), nullable=True))
+    superseded_by_revision_id: str | None = Field(default=None, sa_column=Column(String(), nullable=True))
+    is_current: bool = Field(sa_column=Column(Boolean(), nullable=False))
+    storage_key: str
+    manifest_metadata_json: str = Field(sa_column=Column(Text(), nullable=False))
+    file_metadata_json: str = Field(sa_column=Column(Text(), nullable=False))
 
 
 def _canonical_json(value: object) -> str:
@@ -1057,9 +1112,234 @@ class SQLModelPreviewRequestRepository:
         return getattr(result, "rowcount", 0) == 1
 
 
+class PreviewRevisionConflictError(RuntimeError):
+    """A concurrent publisher changed the current revision."""
+
+
+@runtime_checkable
+class PreviewRevisionRepository(Protocol):
+    def get_current_for_owner(
+        self,
+        *,
+        ecosystem: str,
+        tenant_id: str,
+        month_start: date,
+    ) -> PreviewRevision | None: ...
+
+    def replace_current(
+        self,
+        *,
+        candidate: PreviewRevisionCandidate,
+        package: PreviewStoredPackage,
+        expected_current_revision_id: str | None,
+    ) -> PreviewRevision: ...
+
+
+def _revision_snapshot_dict(snapshot: PreviewSourceSnapshot) -> dict[str, object]:
+    return {
+        "calculation_timestamp": (
+            None if snapshot.calculation_timestamp is None else snapshot.calculation_timestamp.isoformat()
+        ),
+        "calculation_coverage": [
+            {
+                "tracking_date": entry.tracking_date.isoformat(),
+                "calculation_id": entry.calculation_id,
+                "calculation_completed_at": entry.calculation_completed_at.isoformat(),
+                "calculation_run_id": entry.calculation_run_id,
+            }
+            for entry in snapshot.calculation_coverage
+        ],
+        "source_through": None if snapshot.source_through is None else snapshot.source_through.isoformat(),
+        "effective_coverage_start_date": snapshot.effective_coverage_start_date.isoformat(),
+        "effective_coverage_end_date": snapshot.effective_coverage_end_date.isoformat(),
+        "availability_cutoff_end_date": (
+            None if snapshot.availability_cutoff_end_date is None else snapshot.availability_cutoff_end_date.isoformat()
+        ),
+        "monthly_status": snapshot.monthly_status,
+    }
+
+
+def _revision_snapshot_from_json(body: str) -> PreviewSourceSnapshot:
+    raw = json.loads(body)
+    if not isinstance(raw, dict):
+        raise ValueError("persisted revision source snapshot must be an object")
+    coverage_raw = raw.get("calculation_coverage")
+    if not isinstance(coverage_raw, list):
+        raise ValueError("persisted revision calculation coverage must be a list")
+    coverage = tuple(
+        PreviewCalculationCoverageEntry(
+            tracking_date=date.fromisoformat(item["tracking_date"]),
+            calculation_id=item["calculation_id"],
+            calculation_completed_at=datetime.fromisoformat(item["calculation_completed_at"]),
+            calculation_run_id=item.get("calculation_run_id"),
+        )
+        for item in coverage_raw
+    )
+    cutoff = raw.get("availability_cutoff_end_date")
+    status = _supported_monthly_status(raw.get("monthly_status"))
+    return PreviewSourceSnapshot(
+        calculation_timestamp=(
+            None if raw.get("calculation_timestamp") is None else datetime.fromisoformat(raw["calculation_timestamp"])
+        ),
+        calculation_coverage=coverage,
+        source_through=(None if raw.get("source_through") is None else datetime.fromisoformat(raw["source_through"])),
+        effective_coverage_start_date=date.fromisoformat(raw["effective_coverage_start_date"]),
+        effective_coverage_end_date=date.fromisoformat(raw["effective_coverage_end_date"]),
+        availability_cutoff_end_date=None if cutoff is None else date.fromisoformat(cutoff),
+        monthly_status=status,
+    )
+
+
+def _revision_to_table(
+    candidate: PreviewRevisionCandidate,
+    package: PreviewStoredPackage,
+) -> PreviewRevisionTable:
+    return PreviewRevisionTable(
+        revision_id=candidate.revision_id,
+        tenant_name_at_publication=candidate.tenant_name_at_publication,
+        ecosystem=candidate.ecosystem,
+        tenant_id=candidate.tenant_id,
+        month_start=candidate.start_date,
+        month_end=candidate.end_date,
+        monthly_status=candidate.monthly_status,
+        material_sha256=candidate.material_sha256,
+        source_snapshot_json=_canonical_json(_revision_snapshot_dict(candidate.source_snapshot)),
+        published_at=ensure_utc_strict(candidate.published_at),
+        supersedes_revision_id=candidate.supersedes_revision_id,
+        superseded_by_revision_id=None,
+        is_current=True,
+        storage_key=package.storage_key,
+        manifest_metadata_json=_canonical_json(_artifact_dict(package.manifest)),
+        file_metadata_json=_canonical_json([_artifact_dict(item) for item in package.files]),
+    )
+
+
+def _revision_to_domain(row: PreviewRevisionTable) -> PreviewRevision:
+    snapshot = _revision_snapshot_from_json(row.source_snapshot_json)
+    status = _supported_monthly_status(row.monthly_status)
+    if status is None:
+        raise ValueError("persisted revision monthly status is required")
+    validate_preview_revision_invariant(
+        month=f"{row.month_start.year:04d}-{row.month_start.month:02d}",
+        start_date=row.month_start,
+        end_date=row.month_end,
+        monthly_status=status,
+        source_snapshot=snapshot,
+    )
+    manifest_raw = json.loads(row.manifest_metadata_json)
+    files_raw = json.loads(row.file_metadata_json)
+    if not isinstance(manifest_raw, dict) or not isinstance(files_raw, list):
+        raise ValueError("persisted revision artifact metadata is invalid")
+    return PreviewRevision(
+        revision_id=row.revision_id,
+        tenant_name_at_publication=row.tenant_name_at_publication,
+        ecosystem=row.ecosystem,
+        tenant_id=row.tenant_id,
+        month=f"{row.month_start.year:04d}-{row.month_start.month:02d}",
+        start_date=row.month_start,
+        end_date=row.month_end,
+        monthly_status=status,
+        material_sha256=row.material_sha256,
+        source_snapshot=snapshot,
+        published_at=ensure_utc(row.published_at),
+        supersedes_revision_id=row.supersedes_revision_id,
+        superseded_by_revision_id=row.superseded_by_revision_id,
+        is_current=row.is_current,
+        package=PreviewStoredPackage(
+            storage_key=row.storage_key,
+            manifest=_artifact_from_dict(manifest_raw),
+            files=tuple(_artifact_from_dict(item) for item in files_raw),
+        ),
+    )
+
+
+def _is_revision_conflict(exc: IntegrityError | OperationalError) -> bool:
+    original = exc.orig
+    if isinstance(exc, IntegrityError) and isinstance(original, sqlite3.IntegrityError):
+        code = getattr(original, "sqlite_errorcode", None)
+        return code in {sqlite3.SQLITE_CONSTRAINT_UNIQUE, sqlite3.SQLITE_CONSTRAINT_PRIMARYKEY}
+    if isinstance(exc, OperationalError) and isinstance(original, sqlite3.OperationalError):
+        code = getattr(original, "sqlite_errorcode", None)
+        return isinstance(code, int) and code & 0xFF in {sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED}
+    if isinstance(exc, IntegrityError):
+        diag = getattr(original, "diag", None)
+        return getattr(original, "pgcode", None) == "23505" and getattr(diag, "constraint_name", None) in {
+            "ux_preview_revisions_owner_month_current",
+            "preview_revisions_pkey",
+        }
+    return False
+
+
+class SQLModelPreviewRevisionRepository:
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def get_current_for_owner(
+        self,
+        *,
+        ecosystem: str,
+        tenant_id: str,
+        month_start: date,
+    ) -> PreviewRevision | None:
+        is_current = col(PreviewRevisionTable.is_current)
+        current_predicate = (
+            is_current.is_(True) if self._session.get_bind().dialect.name == "postgresql" else is_current == true()
+        )
+        row = self._session.exec(
+            select(PreviewRevisionTable).where(
+                col(PreviewRevisionTable.ecosystem) == ecosystem,
+                col(PreviewRevisionTable.tenant_id) == tenant_id,
+                col(PreviewRevisionTable.month_start) == month_start,
+                current_predicate,
+            )
+        ).first()
+        return None if row is None else _revision_to_domain(row)
+
+    def replace_current(
+        self,
+        *,
+        candidate: PreviewRevisionCandidate,
+        package: PreviewStoredPackage,
+        expected_current_revision_id: str | None,
+    ) -> PreviewRevision:
+        if candidate.supersedes_revision_id != expected_current_revision_id:
+            raise ValueError("candidate supersedes identity does not match expected current revision")
+        candidate_row = _revision_to_table(candidate, package)
+        try:
+            with self._session.no_autoflush:
+                if expected_current_revision_id is not None:
+                    result = self._session.execute(
+                        update(PreviewRevisionTable)
+                        .where(
+                            col(PreviewRevisionTable.ecosystem) == candidate.ecosystem,
+                            col(PreviewRevisionTable.tenant_id) == candidate.tenant_id,
+                            col(PreviewRevisionTable.month_start) == candidate.start_date,
+                            col(PreviewRevisionTable.revision_id) == expected_current_revision_id,
+                            col(PreviewRevisionTable.is_current) == true(),
+                            col(PreviewRevisionTable.superseded_by_revision_id).is_(None),
+                        )
+                        .values(is_current=False, superseded_by_revision_id=candidate.revision_id)
+                    )
+                    if getattr(result, "rowcount", 0) != 1:
+                        raise PreviewRevisionConflictError("current preview revision changed")
+                self._session.add(candidate_row)
+                self._session.flush([candidate_row])
+        except (IntegrityError, OperationalError) as exc:
+            if _is_revision_conflict(exc):
+                raise PreviewRevisionConflictError("current preview revision changed") from exc
+            raise
+        return PreviewRevision(
+            **candidate.__dict__,
+            superseded_by_revision_id=None,
+            is_current=True,
+            package=package,
+        )
+
+
 @runtime_checkable
 class PreviewWriteUnitOfWork(Protocol):
     requests: PreviewRequestRepository
+    revisions: PreviewRevisionRepository
 
     def __enter__(self) -> Self: ...
     def __exit__(
@@ -1075,6 +1355,7 @@ class PreviewWriteUnitOfWork(Protocol):
 @runtime_checkable
 class PreviewReadUnitOfWork(Protocol):
     requests: PreviewRequestRepository
+    revisions: PreviewRevisionRepository
     calculations: PreviewCalculationRepository
     cost_evidence: PreviewCostEvidenceReader
     allocation_evidence: PreviewAllocationEvidenceReader

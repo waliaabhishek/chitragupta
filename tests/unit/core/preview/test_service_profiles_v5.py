@@ -106,40 +106,34 @@ def _policy(*, cutoff: date) -> Any:
 
 
 def test_future_month_maps_to_existing_retryable_pending_diagnostic_before_storage() -> None:
-    service = import_module("core.preview.service")
+    generator = import_module("core.preview.generator")
     request = _request(
         grain="monthly",
         created_at=datetime(2026, 6, 30, 23, 59, tzinfo=UTC),
         started_at=datetime(2026, 6, 30, 23, 59, 1, tzinfo=UTC),
     )
-    runtime = service.PreviewRuntime(
-        artifact_store=object(),
-        max_workers=1,
-        executor=NeverExecutor(),
-    )
+    package_generator = generator.PreviewPackageGenerator(max_csv_file_bytes=None)
 
-    with pytest.raises(service._PreviewFailureError) as exc_info:
-        runtime._generate(NeverBackend(), request, _policy(cutoff=date(2026, 7, 1)))
+    with pytest.raises(generator.PreviewGenerationError) as exc_info:
+        package_generator.generate(backend=NeverBackend(), request=request, policy=_policy(cutoff=date(2026, 7, 1)))
 
     assert exc_info.value.diagnostic.code == "calculation_pending_cutoff_window"
     assert exc_info.value.diagnostic.retryable is True
 
 
 def test_empty_started_month_builds_header_only_provisional_package_without_storage() -> None:
-    service = import_module("core.preview.service")
+    generator = import_module("core.preview.generator")
     mapping = import_module("core.preview.mapping")
     request = _request(
         grain="monthly",
         created_at=datetime(2026, 7, 1, tzinfo=UTC),
         started_at=datetime(2026, 7, 1, 0, 0, 1, tzinfo=UTC),
     )
-    runtime = service.PreviewRuntime(
-        artifact_store=object(),
-        max_workers=1,
-        executor=NeverExecutor(),
-    )
+    package_generator = generator.PreviewPackageGenerator(max_csv_file_bytes=None)
 
-    snapshot, draft = runtime._generate(NeverBackend(), request, _policy(cutoff=date(2026, 7, 1)))
+    snapshot, draft = package_generator.generate(
+        backend=NeverBackend(), request=request, policy=_policy(cutoff=date(2026, 7, 1))
+    )
 
     assert snapshot.monthly_status == "provisional"
     assert snapshot.effective_coverage_start_date == snapshot.effective_coverage_end_date == date(2026, 7, 1)

@@ -7,7 +7,9 @@ some provider-authoritative FOCUS fields are unavailable.
 
 Preview does not call Confluent Cloud, gather data, calculate allocations, edit
 stored records, or recreate historical evidence. Run the ordinary pipeline
-first, then request a Preview from the web UI, CLI, or API.
+first. You can then create an ad-hoc package from the web UI, CLI, or request
+API, while the periodic worker automatically publishes the current validated
+Full monthly revision for eligible months.
 
 ## 1. Configure the tenant and package storage
 
@@ -48,18 +50,18 @@ billing account. Preview obtains the Confluent organization through the normal
 inventory pipeline and uses that provider organization ID as
 `BillingAccountId`.
 
-`preview.artifact_root` must be durable and writable by the API process. Mount
-it into the same persistent volume as application data in container
-deployments. The database holds request and package metadata; the immutable
-manifest and CSV bytes live under this root and are served only through the
-Preview API.
+`preview.artifact_root` must be durable and writable by both the API and
+periodic worker. When those run as separate processes, configure the same
+mounted path for both. The database holds request and package metadata; the
+immutable manifest and CSV bytes live under this root and are served only
+through the Preview API.
 
 The process-wide Preview settings are:
 
 | Setting | Default | Valid values | Effect |
 |---|---:|---|---|
-| `preview.artifact_root` | `data/focus-preview` | Writable local path | Stores immutable requested packages. Changing it does not move existing packages. |
-| `preview.max_workers` | `2` | 1–16 | Maximum concurrent Preview jobs in one API process. |
+| `preview.artifact_root` | `data/focus-preview` | Writable local path | Stores immutable requested packages and published monthly revisions. Changing it does not move existing packages. |
+| `preview.max_workers` | `2` | 1–16 | Maximum concurrent ad-hoc Preview request jobs in one API process. |
 | `preview.max_csv_file_bytes` | `null` | `null` or a positive integer | `null` produces one CSV. A byte limit splits output into deterministic parts without splitting rows. |
 
 See the [Confluent Cloud configuration reference](configuration/ccloud-reference.md)
@@ -113,6 +115,10 @@ records, billing rows, allocation lineage, organization inventory, and relevant
 resource/identity inventory for the requested evidence interval. It fails the
 whole request when required evidence is missing or inconsistent; it never emits
 a partial package.
+
+Automatic monthly publication runs only after a successful cycle of the
+continuously running periodic worker. `--run-once`, direct tenant runs, and
+ad-hoc Daily or Monthly Preview requests do not publish revisions.
 
 ## 3. Generate and download from the web UI
 
@@ -272,6 +278,10 @@ All paths are under `/api/v1/tenants/{tenant_name}/focus-preview`.
 | `GET /requests/{request_id}/manifest` | Download exact `manifest.json` bytes. |
 | `GET /requests/{request_id}/files/{file_name}` | Download one enumerated CSV part. |
 | `GET /requests/{request_id}/archive` | Stream the complete deterministic ZIP. |
+| `GET /revisions/current?month=YYYY-MM` | Return the current published monthly revision and guarded artifact URLs. |
+| `GET /revisions/current/manifest?month=YYYY-MM&revision_id=...` | Download the guarded current revision manifest. |
+| `GET /revisions/current/files/{file_name}?month=YYYY-MM&revision_id=...` | Download one guarded current revision CSV part. |
+| `GET /revisions/current/archive?month=YYYY-MM&revision_id=...` | Stream the guarded current revision ZIP. |
 
 Daily request:
 
@@ -313,6 +323,64 @@ snapshot and expiry but return `package: null`.
 See the [API reference](api-reference.md#focus-mapping-preview) for response
 fields, pagination, status behavior, errors, and diagnostic codes.
 
+## 6. Retrieve the current published monthly revision
+
+The periodic worker evaluates every calendar-month scope whose start is inside
+both the tenant's current `lookback_days` acquisition window and the configured
+`focus_preview` effective interval. On the first successful pass it publishes
+every month that validates, including a valid header-only month with no cost
+rows. A failure for one month publishes nothing for that month and does not
+replace its current revision.
+
+Published revisions use the Full profile. A month can have these transitions:
+
+- no current revision to an initial `provisional` or `settled` revision;
+- `provisional` to another `provisional` revision when logical report content
+  or mapping semantics change;
+- `provisional` to the first validated `settled` revision, even when logical
+  content is unchanged; and
+- `settled` to another `settled` revision when a later correction changes
+  logical content or mapping semantics.
+
+A settled month never regresses to provisional. CSV part size, part names,
+source-row counts, timestamps, provenance, and other physical package layout do
+not by themselves create a replacement. Each successful replacement identifies
+the revision it superseded, but the public API exposes only the current revision
+for a tenant and UTC month.
+
+Fetch current metadata first:
+
+```bash
+curl -sS \
+  'https://chitragupta.example/api/v1/tenants/production/focus-preview/revisions/current?month=2026-07' \
+  -H 'Authorization: Bearer <token>'
+```
+
+The response includes `revision_id`, `month`, `monthly_status`, `published_at`,
+`supersedes_revision_id`, `material_sha256`, the validated source snapshot, and
+guarded manifest, file, and archive URLs. Follow those returned URLs rather
+than constructing an unguarded download URL.
+
+Every artifact URL includes the month and current `revision_id`. If publication
+replaces the revision after metadata discovery, the old URL returns 409 with
+`focus_preview_current_changed`. Fetch current metadata again and retry with its
+new URLs. Missing months and months belonging to another configured storage
+owner return the same 404 response.
+
+For example, use the `revision_id` returned above to download the current ZIP:
+
+```bash
+curl -fSs \
+  'https://chitragupta.example/api/v1/tenants/production/focus-preview/revisions/current/archive?month=2026-07&revision_id=<revision_id>' \
+  -H 'Authorization: Bearer <token>' \
+  -o focus-mapping-preview-2026-07.zip
+```
+
+Published revisions are separate from ad-hoc Preview requests: they do not
+appear in request history, do not have a seven-day request expiry, and cannot be
+selected by retained revision ID. The API currently provides current-only
+retrieval, not revision-history browsing or revision-retention controls.
+
 ## Package contents and lifecycle
 
 Every package contains:
@@ -327,19 +395,23 @@ header. Rows are never split between parts. Part ordering, names, bytes, sizes,
 and SHA-256 values are deterministic for the same source snapshot and request
 parameters.
 
-The manifest records request scope, mapping profile, effective columns, source
-and calculation coverage, known gaps, validation counts, cost and quantity
-reconciliation, lifecycle timestamps, and ordered file metadata. Its `files`
-list contains data files only. The status response separately supplies the
-manifest's own size and checksum. The ZIP is a transport wrapper containing
-`manifest.json` followed by the CSV files in manifest order; it is not another
-data artifact in the manifest.
+The manifest's `package_type` distinguishes `requested_preview_package` from
+`published_preview_revision`. Both record mapping profile, effective columns,
+source/calculation coverage, validation, reconciliation, and ordered file
+metadata. Requested manifests include request scope and seven-day lifecycle;
+revision manifests include revision identity, publication time, monthly status,
+and the superseded revision ID. The `files` list contains data files only. The
+status or revision metadata response separately supplies the manifest's own size
+and checksum. The ZIP is a transport wrapper containing `manifest.json` followed
+by the CSV files in manifest order; it is not another data artifact in the
+manifest.
 
 A requested package is downloadable for exactly seven days from durable ready
 publication. At `expires_at`, status becomes `expired` and all downloads return
 410 before filesystem cleanup. The request and audit metadata remain visible.
 Creating a new request after expiry reads the then-current persisted source
-snapshot; it does not recreate the expired bytes.
+snapshot; it does not recreate the expired bytes. Published monthly revisions
+use the separate current-only lifecycle described above.
 
 This fixed seven-day package lifecycle is independent of tenant
 `retention_days`, topic-attribution retention, and `lookback_days`.
@@ -351,9 +423,12 @@ This fixed seven-day package lifecycle is independent of tenant
 | Choose reporting period | Daily `start_date`/`end_date` or Monthly `month` | Daily cannot span more than one UTC calendar month. |
 | Choose columns | Full, Summary, or Custom profile | Full emits 65 FOCUS columns plus 12 evidence columns; Summary emits its fixed 20-column subset; Custom uses only names returned by `GET /profile`. |
 | Choose physical part size | `preview.max_csv_file_bytes` | Changes filenames and part boundaries only; rows and totals are unchanged. |
-| Choose package storage/concurrency | `preview.artifact_root`, `preview.max_workers` | Process-wide operational settings. |
+| Choose package storage/concurrency | `preview.artifact_root`, `preview.max_workers` | The root stores both package kinds; worker count applies to ad-hoc request jobs. |
 | Declare Preview commercial scope | Tenant `focus_preview` block | Currently Direct-billed PAYG and USD only. |
 | Change allocation inputs | Existing Confluent allocator/identity settings | Takes effect through a later ordinary calculation; Preview reads the persisted result and never recalculates ratios. |
+| Enable automatic monthly publication | `features.enable_periodic_refresh` | Publication occurs after successful periodic cycles only. |
+| Control when periodic cycles run | `features.refresh_interval` | Interval in seconds; this is not a separate revision schedule. |
+| Control eligible publication months | Tenant `lookback_days`, `cutoff_days`, and `focus_preview` effective dates | These bound source acquisition and eligible calendar months; they are not archival-retention settings. |
 
 The mapping profile itself is code-owned. Changing FOCUS field mappings,
 service/charge classification, derived SKU rules, canonical row ordering,
@@ -361,6 +436,11 @@ manifest schema, validation, reconciliation, the Summary column set, the
 seven-day lifetime, or adding another provider/commercial profile requires a
 code change and a new release. There is no YAML mapping override or client-side
 remapping hook.
+
+Automatic monthly revisions always use Full. Summary and Custom remain ad-hoc
+request choices. Changing `preview.max_csv_file_bytes` alone does not publish a
+replacement; the new partition setting is used when a later logically material
+revision is published.
 
 ## Current output boundaries
 

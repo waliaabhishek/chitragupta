@@ -45,14 +45,19 @@ class TestCCloudExamples:
 
 def test_ccloud_reference_documents_currency_authority_and_retention_limit() -> None:
     source = (Path(__file__).parents[4] / "docs" / "configuration" / "ccloud-reference.md").read_text(encoding="utf-8")
+    normalized = " ".join(source.split())
 
     assert "focus_preview.commercial_profile" in source
     assert "focus_preview.billing_currency" in source
     assert "USD" in source
     assert "does not return" in source and "ISO currency" in source
     assert "no currency conversion" in source.casefold()
+    assert "explicit customer/operator contract" in source
+    assert "not provider-supplied record evidence" in source
+    assert "Compatibility aggregate currency is not treated as commercial authority" in normalized
     assert "lookback_days" in source and "not retention" in source
-    assert "TASK-256" in source
+    assert "`retention_days` is separate" in source
+    assert "TASK-" not in source
 
 
 class TestSelfManagedExamples:

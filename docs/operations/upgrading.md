@@ -180,6 +180,21 @@ null, so existing configuration remains valid. Set it only when deterministic
 multi-part CSV output is required. Back up the artifact root before upgrade and
 verify that it remains mounted at the same configured path after restart.
 
+### Migration 024: published monthly revisions
+
+Migration 024 adds storage for immutable published Monthly Full revisions and
+enforces one current revision per configured storage owner and UTC month. It
+does not convert requested Preview packages or backfill revision rows. The first
+successful periodic cycle after upgrade evaluates every eligible month in the
+current acquisition/effective window and publishes only months that fully
+validate.
+
+Before upgrading, back up each tenant database and the matching
+`preview.artifact_root` together. Restoring only one side can leave revision
+metadata without its immutable manifest/CSV bytes, or bytes without their
+current metadata. Automatic publication requires periodic refresh; existing
+run-once and ad-hoc request behavior is unchanged.
+
 ## Rollback
 
 If an upgrade fails or the new version misbehaves:

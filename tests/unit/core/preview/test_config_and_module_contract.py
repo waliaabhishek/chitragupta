@@ -57,6 +57,8 @@ def test_preview_cli_entry_point_is_registered() -> None:
         "persistence",
         "mapping",
         "artifacts",
+        "generator",
+        "revisions",
         "service",
         "cli",
     ],
@@ -97,7 +99,7 @@ def test_mapping_exposes_split_typed_data_and_manifest_contracts() -> None:
     mapping = preview_module("mapping")
     models = preview_module("models")
     data_hints = get_type_hints(mapping.build_preview_data_package)
-    manifest_hints = get_type_hints(mapping.build_preview_manifest)
+    manifest_hints = get_type_hints(mapping.build_requested_preview_manifest)
 
     assert data_hints == {
         "request": models.PreviewRequest,

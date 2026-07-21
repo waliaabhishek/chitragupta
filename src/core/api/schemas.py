@@ -152,6 +152,21 @@ class FocusPreviewResponse(BaseModel):
 FocusPreviewStatusResponse = FocusPreviewResponse
 
 
+class FocusPreviewRevisionResponse(BaseModel):
+    revision_id: str
+    tenant_name: str
+    month: str
+    start_date: date
+    end_date: date
+    monthly_status: Literal["provisional", "settled"]
+    published_at: datetime
+    supersedes_revision_id: str | None
+    material_sha256: str
+    source_snapshot: FocusPreviewSourceSnapshotResponse
+    self_url: str
+    package: FocusPreviewPackageResponse
+
+
 class FocusPreviewRequestListResponse(BaseModel):
     items: list[FocusPreviewResponse]
     next_cursor: str | None

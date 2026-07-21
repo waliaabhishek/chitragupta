@@ -159,6 +159,10 @@ flowchart LR
     API --> UI[Web UI]
     API --> CLI[Remote CLI]
     API --> ZIP[Deterministic Download All stream]
+    CALC --> SCHED[Successful periodic cycle]
+    SCHED --> REV[Validate eligible Monthly Full revisions]
+    REV --> CURRENT[(Atomic current revision per tenant and month)]
+    CURRENT --> CAPI[Guarded current revision API]
 ```
 
 Preview is read-only with respect to collected business data. It does not call a
@@ -220,6 +224,24 @@ ordinary regather followed by ordinary calculation.
 Older Daily/Full rows retain their original requested coverage and immutable
 stored artifacts; new requests persist their exact effective columns and
 evidence coverage.
+
+After a successful periodic pipeline cycle, the worker separately evaluates
+eligible calendar months for scheduled publication. It uses the same persisted
+calculation, source, allocation-lineage, enrichment, mapping, and reconciliation
+path as Monthly Full generation. The initial pass publishes every valid month
+inside the acquisition/effective window, including a valid header-only month.
+Later publication is driven by logical projected content and mapping semantics,
+plus the first provisional-to-settled transition. Physical CSV partitioning
+alone is not material.
+
+Data files and the revision manifest become immutable before the database
+current pointer changes. Replacing a revision and linking its superseded
+revision are one transaction. Any generation, validation, artifact, persistence,
+or concurrent-publication failure leaves the prior current revision unchanged.
+The read path exposes one current revision per configured storage owner and UTC
+month. Manifest, file, and archive URLs carry a revision guard so a replacement
+between metadata discovery and download returns a retryable conflict instead of
+serving mixed revisions.
 
 Expected failures travel through the initialized diagnostic path and atomically
 mark the request failed without a source snapshot or package. Source diagnostics

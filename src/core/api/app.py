@@ -93,6 +93,7 @@ def create_app(
         app.state.workflow_runner = workflow_runner
         app.state.mode = mode
         from core.preview.artifacts import LocalPreviewArtifactStore
+        from core.preview.revisions import PreviewRevisionReadService
         from core.preview.service import PreviewRecoveryUnavailable, PreviewRuntime
 
         preview_artifact_store: LocalPreviewArtifactStore | None = None
@@ -112,6 +113,9 @@ def create_app(
             )
             app.state.preview_artifact_store = preview_artifact_store
             app.state.preview_runtime = preview_runtime
+            app.state.preview_revision_reader = PreviewRevisionReadService(
+                artifact_store=preview_artifact_store,
+            )
             staging_recovered = False
             try:
                 await asyncio.to_thread(preview_runtime.ensure_staging_recovered)

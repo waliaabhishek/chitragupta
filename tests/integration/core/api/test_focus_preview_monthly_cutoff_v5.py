@@ -10,7 +10,7 @@ from unittest.mock import patch
 import anyio.to_thread
 import pytest
 import respx
-from sqlalchemy import text
+from sqlalchemy import create_engine, text
 
 from core.api.app import create_app
 from core.config.models import ApiConfig, AppSettings, PreviewConfig, StorageConfig, TenantConfig
@@ -378,6 +378,45 @@ def test_complete_zero_portion_lineage_is_ready_without_enrichment_reads_for_all
             assert manifest.status_code == 200
             assert manifest.json()["mapping_profile_version"] == "focus-1.4-preview-v5"
             assert len(list(csv.reader(io.StringIO(_csv(client, ready).decode())))) == 1
+        engine = create_engine(backend._connection_string)
+        with engine.connect() as connection:
+            assert connection.execute(text("SELECT COUNT(*) FROM preview_requests")).scalar_one() == 1
+            assert connection.execute(text("SELECT COUNT(*) FROM preview_revisions")).scalar_one() == 0
+        engine.dispose()
+    finally:
+        backend.dispose()
+        plugin.close()
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"grain": "daily", "start_date": "2026-07-01", "end_date": "2026-08-01", "column_profile": "full"},
+        {"grain": "monthly", "month": "2026-07", "column_profile": "full"},
+    ],
+    ids=["daily-post", "monthly-post"],
+)
+def test_daily_and_monthly_post_create_request_rows_but_never_revision_rows(
+    tmp_path: Path,
+    body: dict[str, str],
+) -> None:
+    backend, settings, _tenant, plugin = _zero_lineage_backend(tmp_path)
+    executor = ControlledExecutor()
+    app = create_app(settings)
+    try:
+        with patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"), SameThreadApiClient(app) as client:
+            app.state.backends["production"] = backend
+            app.state.preview_runtime._executor = executor
+            app.state.preview_runtime._owns_executor = False
+            app.state.preview_runtime._clock = lambda: datetime(2026, 8, 5, tzinfo=UTC)
+            ready = _submit(client, executor, body)
+            assert ready["status"] == "ready", ready["diagnostic"]
+
+        engine = create_engine(backend._connection_string)
+        with engine.connect() as connection:
+            assert connection.execute(text("SELECT COUNT(*) FROM preview_requests")).scalar_one() == 1
+            assert connection.execute(text("SELECT COUNT(*) FROM preview_revisions")).scalar_one() == 0
+        engine.dispose()
     finally:
         backend.dispose()
         plugin.close()

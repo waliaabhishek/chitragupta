@@ -68,7 +68,7 @@ def _manifest(
         )
         for item in draft.data_files
     )
-    body = mapping.build_preview_manifest(
+    body = mapping.build_requested_preview_manifest(
         request=request,
         snapshot=snapshot,
         draft=draft,

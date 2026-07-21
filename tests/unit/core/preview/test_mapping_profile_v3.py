@@ -569,7 +569,7 @@ def _package_row(
             )
             for item in draft.data_files
         )
-        manifest = mapping.build_preview_manifest(
+        manifest = mapping.build_requested_preview_manifest(
             request=request,
             snapshot=snapshot,
             draft=draft,
@@ -768,12 +768,12 @@ def test_profile_self_validation_rejects_native_line_readiness_drift(
 
 def test_preview_service_consumes_native_line_readiness_authority_without_a_private_set() -> None:
     mapping = preview_module("mapping")
-    service = preview_module("service")
-    generate_source = inspect.getsource(service.PreviewRuntime._generate)
+    generator = preview_module("generator")
+    generate_source = inspect.getsource(generator.PreviewPackageGenerator.generate)
 
-    assert service.FOCUS_1_4_NATIVE_LINE_READINESS_V1 is mapping.FOCUS_1_4_NATIVE_LINE_READINESS_V1
+    assert generator.FOCUS_1_4_NATIVE_LINE_READINESS_V1 is mapping.FOCUS_1_4_NATIVE_LINE_READINESS_V1
     assert "FOCUS_1_4_NATIVE_LINE_READINESS_V1" in generate_source
-    assert not hasattr(service, "_TASK_254_05_DEFERRED_NATIVE_LINE_TYPES")
+    assert not hasattr(generator, "_TASK_254_05_DEFERRED_NATIVE_LINE_TYPES")
     assert "_TASK_254_05_DEFERRED_NATIVE_LINE_TYPES" not in generate_source
 
 
@@ -2013,7 +2013,7 @@ def test_mapping_failure_exhaustively_transports_each_typed_mapping_error(
     message: str,
 ) -> None:
     mapping = preview_module("mapping")
-    service = preview_module("service")
+    generator = preview_module("generator")
     error_type = getattr(mapping, error_name)
     error = (
         error_type(mapping.PreviewRowRuleId.TYPE, column="BilledCost")
@@ -2021,7 +2021,7 @@ def test_mapping_failure_exhaustively_transports_each_typed_mapping_error(
         else error_type("private detail")
     )
 
-    failure = service._mapping_failure(error, ("corr-1", "corr-2"))
+    failure = generator._mapping_failure(error, ("corr-1", "corr-2"))
 
     assert failure.diagnostic.code == code
     assert failure.diagnostic.message == message
@@ -2030,8 +2030,8 @@ def test_mapping_failure_exhaustively_transports_each_typed_mapping_error(
 
 
 def test_mapping_failure_has_no_assertion_based_catch_all() -> None:
-    service = preview_module("service")
-    function = ast.parse(inspect.getsource(service._mapping_failure))
+    generator = preview_module("generator")
+    function = ast.parse(inspect.getsource(generator._mapping_failure))
 
     assert not any(isinstance(node, ast.Assert) for node in ast.walk(function))
 

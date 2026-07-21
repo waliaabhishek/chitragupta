@@ -76,3 +76,17 @@ Back up both each tenant database and `preview.artifact_root` when preserving
 currently downloadable packages during an upgrade or restore. See
 [FOCUS Mapping Preview](../focus-mapping-preview.md#package-contents-and-lifecycle)
 for package behavior.
+
+## Published monthly revisions
+
+Published monthly revisions are separate from seven-day requested packages.
+The current revision for each configured storage owner and UTC month remains
+available through the guarded current-revision API. Superseded revisions are not
+available through a public history or direct-revision endpoint.
+
+There is currently no configurable revision cleanup window, revision-history
+browser, or selective revision deletion command. Do not treat
+`retention_days`, `lookback_days`, requested-package expiry, or the absence of a
+cleanup setting as an archival guarantee. Back up the tenant database and
+`preview.artifact_root` together when current published revisions must survive
+an upgrade or restore.
