@@ -11,9 +11,11 @@ memory/
 node_modules/
 graphify-out/
 docs/agents/
+docs/adr/
 
 CLAUDE.md
 AGENTS.md
+CONTEXT.md
 
 # MkDocs build output
 site/
