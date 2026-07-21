@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -8,6 +9,17 @@ import pytest
 
 from tests.unit.core.preview.conftest import preview_module
 from tests.unit.core.preview.test_cli import RecordingTransport
+
+
+def _manifest_body() -> bytes:
+    file_metadata = {
+        "name": "cost-and-usage.csv",
+        "media_type": "text/csv",
+        "size_bytes": len(b"a,b\n"),
+        "sha256": hashlib.sha256(b"a,b\n").hexdigest(),
+        "order": 1,
+    }
+    return (json.dumps({"request_id": "request-1", "files": [file_metadata]}, separators=(",", ":")) + "\n").encode()
 
 
 def _ready(profile: str, columns: list[str]) -> dict[str, object]:
@@ -30,8 +42,8 @@ def _ready(profile: str, columns: list[str]) -> dict[str, object]:
             "manifest": {
                 "name": "manifest.json",
                 "media_type": "application/json",
-                "size_bytes": 3,
-                "sha256": "a" * 64,
+                "size_bytes": len(_manifest_body()),
+                "sha256": hashlib.sha256(_manifest_body()).hexdigest(),
                 "download_url": "/api/v1/tenants/production/focus-preview/requests/request-1/manifest",
             },
             "files": [
@@ -39,7 +51,7 @@ def _ready(profile: str, columns: list[str]) -> dict[str, object]:
                     "name": "cost-and-usage.csv",
                     "media_type": "text/csv",
                     "size_bytes": 4,
-                    "sha256": "b" * 64,
+                    "sha256": hashlib.sha256(b"a,b\n").hexdigest(),
                     "order": 1,
                     "download_url": (
                         "/api/v1/tenants/production/focus-preview/requests/request-1/files/cost-and-usage.csv"
@@ -136,7 +148,7 @@ def test_request_command_serializes_grain_profile_and_custom_order(
             assert json.loads(request.content) == expected_body
             return httpx.Response(202, json=_ready(str(expected_body["column_profile"]), effective))
         if request.url.path.endswith("manifest"):
-            return httpx.Response(200, content=b"{}\n")
+            return httpx.Response(200, content=_manifest_body())
         return httpx.Response(200, content=b"a,b\n")
 
     transport = RecordingTransport(respond)

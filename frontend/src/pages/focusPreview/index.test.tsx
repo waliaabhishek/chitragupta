@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FocusPreviewPage } from ".";
@@ -6,12 +6,17 @@ import {
   fetchFocusPreviewProfile,
   fetchFocusPreviewStatus,
   fetchPreviewArtifact,
+  listFocusPreviewRequests,
   submitFocusPreview,
 } from "../../api/focusPreview";
 
+const tenantState = vi.hoisted(() => ({
+  current: { tenant_name: "production", tenant_id: "tenant-1" },
+}));
+
 vi.mock("../../providers/TenantContext", () => ({
   useTenant: vi.fn(() => ({
-    currentTenant: { tenant_name: "production", tenant_id: "tenant-1" },
+    currentTenant: tenantState.current,
     tenants: [],
     setCurrentTenant: vi.fn(),
     isLoading: false,
@@ -26,6 +31,7 @@ vi.mock("../../api/focusPreview", () => ({
   fetchFocusPreviewProfile: vi.fn(),
   fetchFocusPreviewStatus: vi.fn(),
   fetchPreviewArtifact: vi.fn(),
+  listFocusPreviewRequests: vi.fn(),
 }));
 
 const baseRequest = {
@@ -41,6 +47,7 @@ const baseRequest = {
   created_at: "2026-07-03T00:00:00Z",
   started_at: null,
   completed_at: null,
+  expires_at: null,
   diagnostic: null,
   source_snapshot: null,
   package: null,
@@ -51,9 +58,25 @@ async function submitForm(): Promise<void> {
   await user.click(screen.getByRole("button", { name: /generate preview/i }));
 }
 
+function deferred<T>(): {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+} {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((complete) => {
+    resolve = complete;
+  });
+  return { promise, resolve };
+}
+
 describe("FOCUS Mapping Preview page delegation", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    tenantState.current = { tenant_name: "production", tenant_id: "tenant-1" };
+    vi.mocked(listFocusPreviewRequests).mockResolvedValue({
+      items: [],
+      next_cursor: null,
+    });
     vi.mocked(fetchFocusPreviewProfile).mockResolvedValue({
       mapping_profile_version: "focus-1.4-preview-v5",
       full_columns: ["BilledCost", "Tags", "AllocatedResourceId"],
@@ -91,7 +114,10 @@ describe("FOCUS Mapping Preview page delegation", () => {
     expect(screen.getByRole("option", { name: "Full" })).toBeTruthy();
     expect(screen.getByRole("option", { name: "Summary" })).toBeTruthy();
     expect(screen.getByRole("option", { name: "Custom" })).toBeTruthy();
-    await waitFor(() => expect(fetchFocusPreviewProfile).toHaveBeenCalledWith("production"));
+    await waitFor(() => expect(fetchFocusPreviewProfile).toHaveBeenCalledWith(
+      "production",
+      expect.any(AbortSignal),
+    ));
     expect(screen.getByText(/non-conforming/i)).toBeTruthy();
     for (const description of [
       "Confluent Costs records do not carry a per-record billing currency.",
@@ -116,6 +142,8 @@ describe("FOCUS Mapping Preview page delegation", () => {
     vi.mocked(fetchFocusPreviewStatus).mockResolvedValue({
       ...baseRequest,
       status: "ready",
+      completed_at: "2026-07-03T00:01:00Z",
+      expires_at: "2026-07-10T00:01:00Z",
       package: {
         manifest: {
           name: "manifest.json",
@@ -134,6 +162,8 @@ describe("FOCUS Mapping Preview page delegation", () => {
             download_url: "/api/v1/cost-and-usage.csv",
           },
         ],
+        download_all_name: "focus-mapping-preview-request-1.zip",
+        download_all_url: "/api/v1/archive",
       },
     });
     vi.mocked(fetchPreviewArtifact).mockResolvedValue(new Blob(["bytes"]));
@@ -150,11 +180,15 @@ describe("FOCUS Mapping Preview page delegation", () => {
       screen.getByRole("button", { name: /download cost and usage/i }),
     );
 
-    expect(submitFocusPreview).toHaveBeenCalledWith("production", {
-      grain: "monthly",
-      month: expectedMonth,
-      column_profile: "full",
-    });
+    expect(submitFocusPreview).toHaveBeenCalledWith(
+      "production",
+      {
+        grain: "monthly",
+        month: expectedMonth,
+        column_profile: "full",
+      },
+      expect.any(AbortSignal),
+    );
     expect(fetchFocusPreviewStatus).toHaveBeenCalledWith(
       "production",
       "request-1",
@@ -163,18 +197,24 @@ describe("FOCUS Mapping Preview page delegation", () => {
     expect(fetchPreviewArtifact).toHaveBeenNthCalledWith(
       1,
       "/api/v1/manifest",
+      expect.any(AbortSignal),
     );
     expect(fetchPreviewArtifact).toHaveBeenNthCalledWith(
       2,
       "/api/v1/cost-and-usage.csv",
+      expect.any(AbortSignal),
     );
+    await waitFor(() => expect(listFocusPreviewRequests).toHaveBeenCalledTimes(2));
   });
 
   it("submits Daily Custom bounds and columns in caller selection order", async () => {
     render(<FocusPreviewPage />);
     const user = userEvent.setup();
 
-    await waitFor(() => expect(fetchFocusPreviewProfile).toHaveBeenCalledWith("production"));
+    await waitFor(() => expect(fetchFocusPreviewProfile).toHaveBeenCalledWith(
+      "production",
+      expect.any(AbortSignal),
+    ));
     await user.selectOptions(screen.getByLabelText(/^grain$/i), "daily");
 
     const startDate = screen.getByLabelText(/start date/i);
@@ -192,13 +232,17 @@ describe("FOCUS Mapping Preview page delegation", () => {
     await user.selectOptions(columns, "BilledCost");
     await user.click(screen.getByRole("button", { name: /generate preview/i }));
 
-    expect(submitFocusPreview).toHaveBeenCalledWith("production", {
-      grain: "daily",
-      start_date: "2026-07-05",
-      end_date: "2026-07-12",
-      column_profile: "custom",
-      columns: ["Tags", "BilledCost"],
-    });
+    expect(submitFocusPreview).toHaveBeenCalledWith(
+      "production",
+      {
+        grain: "daily",
+        start_date: "2026-07-05",
+        end_date: "2026-07-12",
+        column_profile: "custom",
+        columns: ["Tags", "BilledCost"],
+      },
+      expect.any(AbortSignal),
+    );
   });
 
   it("renders provisional Monthly evidence coverage from persisted status", async () => {
@@ -209,6 +253,8 @@ describe("FOCUS Mapping Preview page delegation", () => {
       end_date: "2026-08-01",
       month: "2026-07",
       status: "ready",
+      completed_at: "2026-07-03T00:01:00Z",
+      expires_at: "2026-07-10T00:01:00Z",
       source_snapshot: {
         calculation_timestamp: "2026-07-15T02:00:00Z",
         calculation_coverage: [],
@@ -276,6 +322,8 @@ describe("FOCUS Mapping Preview page delegation", () => {
           download_url: "/api/v1/manifest",
         },
         files: [],
+        download_all_name: "focus-mapping-preview-request-1.zip",
+        download_all_url: "/api/v1/archive",
       },
     });
     vi.mocked(fetchPreviewArtifact).mockRejectedValue(new Error("download unavailable"));
@@ -352,5 +400,265 @@ describe("FOCUS Mapping Preview page delegation", () => {
     expect(await screen.findByText(correlations[0])).toBeTruthy();
     expect(screen.getByText(correlations[1])).toBeTruthy();
     expect(screen.queryByText(/provider payload|storage path|credential/i)).toBeNull();
+  });
+
+  it("loads recent requests in API order and follows the Load more cursor", async () => {
+    vi.mocked(listFocusPreviewRequests)
+      .mockResolvedValueOnce({
+        items: [
+          { ...baseRequest, request_id: "request-3", created_at: "2026-07-03T03:00:00Z" },
+          { ...baseRequest, request_id: "request-2", created_at: "2026-07-03T02:00:00Z" },
+        ],
+        next_cursor: "request-2",
+      })
+      .mockResolvedValueOnce({
+        items: [
+          { ...baseRequest, request_id: "request-1", created_at: "2026-07-03T01:00:00Z" },
+        ],
+        next_cursor: null,
+      });
+    render(<FocusPreviewPage />);
+
+    const newest = await screen.findByText("request-3");
+    const middle = screen.getByText("request-2");
+    expect(newest.compareDocumentPosition(middle) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    await userEvent.click(screen.getByRole("button", { name: /load more/i }));
+
+    expect(await screen.findByText("request-1")).toBeTruthy();
+    expect(listFocusPreviewRequests).toHaveBeenNthCalledWith(1, "production", {
+      signal: expect.any(AbortSignal),
+    });
+    expect(listFocusPreviewRequests).toHaveBeenNthCalledWith(2, "production", {
+      cursor: "request-2",
+      signal: expect.any(AbortSignal),
+    });
+    expect(screen.queryByRole("button", { name: /load more/i })).toBeNull();
+  });
+
+  it("clears recent requests and aborts the old tenant poll when tenant changes", async () => {
+    let oldPollAborted = false;
+    vi.mocked(listFocusPreviewRequests).mockImplementation(async (tenantName: string) => ({
+      items: [{
+        ...baseRequest,
+        tenant_name: tenantName,
+        request_id: `${tenantName}-request`,
+      }],
+      next_cursor: null,
+    }));
+    vi.mocked(fetchFocusPreviewStatus).mockImplementation(
+      (_tenant, _request, signal) => new Promise((_resolve, reject) => {
+        signal?.addEventListener("abort", () => {
+          oldPollAborted = true;
+          reject(new DOMException("aborted", "AbortError"));
+        });
+      }),
+    );
+    const { rerender } = render(<FocusPreviewPage />);
+    expect(await screen.findByText("production-request")).toBeTruthy();
+    await submitForm();
+
+    tenantState.current = { tenant_name: "staging", tenant_id: "tenant-2" };
+    rerender(<FocusPreviewPage />);
+
+    expect(await screen.findByText("staging-request")).toBeTruthy();
+    expect(screen.queryByText("production-request")).toBeNull();
+    expect(listFocusPreviewRequests).toHaveBeenLastCalledWith("staging", {
+      signal: expect.any(AbortSignal),
+    });
+    expect(oldPollAborted).toBe(true);
+  });
+
+  it("ignores a deferred POST result after the tenant changes", async () => {
+    const submitted = deferred<typeof baseRequest>();
+    vi.mocked(submitFocusPreview).mockReturnValue(submitted.promise);
+    vi.mocked(listFocusPreviewRequests).mockImplementation(async (tenantName: string) => ({
+      items: [{
+        ...baseRequest,
+        tenant_name: tenantName,
+        request_id: `${tenantName}-history`,
+      }],
+      next_cursor: null,
+    }));
+    const { rerender } = render(<FocusPreviewPage />);
+    expect(await screen.findByText("production-history")).toBeTruthy();
+    await submitForm();
+    expect(submitFocusPreview).toHaveBeenCalledWith(
+      "production",
+      expect.any(Object),
+      expect.any(AbortSignal),
+    );
+
+    tenantState.current = { tenant_name: "staging", tenant_id: "tenant-2" };
+    rerender(<FocusPreviewPage />);
+    expect(await screen.findByText("staging-history")).toBeTruthy();
+
+    await act(async () => {
+      submitted.resolve({ ...baseRequest, request_id: "late-production-request" });
+      await submitted.promise;
+    });
+
+    await waitFor(() => expect(screen.queryByText("late-production-request")).toBeNull());
+    expect(screen.getByText("staging-history")).toBeTruthy();
+    expect(fetchFocusPreviewStatus).not.toHaveBeenCalled();
+  });
+
+  it("ignores a deferred Load more page after the tenant changes", async () => {
+    const oldPage = deferred<{
+      items: Array<typeof baseRequest>;
+      next_cursor: string | null;
+    }>();
+    vi.mocked(listFocusPreviewRequests).mockImplementation(
+      (tenantName: string, options?: { cursor?: string; signal?: AbortSignal }) => {
+        if (tenantName === "production" && options?.cursor) return oldPage.promise;
+        return Promise.resolve({
+          items: [{
+            ...baseRequest,
+            tenant_name: tenantName,
+            request_id: `${tenantName}-history`,
+          }],
+          next_cursor: tenantName === "production" ? "production-cursor" : null,
+        });
+      },
+    );
+    const { rerender } = render(<FocusPreviewPage />);
+    expect(await screen.findByText("production-history")).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: /load more/i }));
+
+    tenantState.current = { tenant_name: "staging", tenant_id: "tenant-2" };
+    rerender(<FocusPreviewPage />);
+    expect(await screen.findByText("staging-history")).toBeTruthy();
+
+    await act(async () => {
+      oldPage.resolve({
+        items: [{ ...baseRequest, request_id: "late-production-page" }],
+        next_cursor: "stale-cursor",
+      });
+      await oldPage.promise;
+    });
+
+    await waitFor(() => expect(screen.queryByText("late-production-page")).toBeNull());
+    expect(screen.getByText("staging-history")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /load more/i })).toBeNull();
+  });
+
+  it("shows persisted freshness and the exact ready expiry timestamp", async () => {
+    vi.mocked(listFocusPreviewRequests).mockResolvedValue({
+      items: [{
+        ...baseRequest,
+        status: "ready",
+        completed_at: "2026-07-03T00:01:00Z",
+        expires_at: "2026-07-10T00:01:00Z",
+        source_snapshot: {
+          calculation_timestamp: "2026-07-02T23:55:00Z",
+          calculation_coverage: [],
+          source_through: "2026-07-02T23:50:00Z",
+          effective_coverage_start_date: "2026-07-01",
+          effective_coverage_end_date: "2026-07-02",
+          evidence_through_date: "2026-07-01",
+          availability_cutoff_end_date: "2026-07-02",
+          monthly_status: null,
+        },
+      }],
+      next_cursor: null,
+    });
+    render(<FocusPreviewPage />);
+
+    expect(await screen.findByText(/calculation.*2026-07-02T23:55:00Z/i)).toBeTruthy();
+    expect(screen.getByText(/source through.*2026-07-02T23:50:00Z/i)).toBeTruthy();
+    expect(screen.getByText("Expires 2026-07-10T00:01:00Z")).toBeTruthy();
+  });
+
+  it("downloads the manifest, every actual part name, and Download All from API URLs", async () => {
+    vi.mocked(listFocusPreviewRequests).mockResolvedValue({
+      items: [{
+        ...baseRequest,
+        status: "ready",
+        completed_at: "2026-07-03T00:01:00Z",
+        expires_at: "2026-07-10T00:01:00Z",
+        package: {
+          manifest: {
+            name: "manifest.json",
+            media_type: "application/json",
+            size_bytes: 3,
+            sha256: "a".repeat(64),
+            download_url: "/api/v1/request-1/manifest",
+          },
+          files: [
+            {
+              name: "cost-and-usage-part-00001-of-00002.csv",
+              media_type: "text/csv",
+              size_bytes: 4,
+              sha256: "b".repeat(64),
+              order: 1,
+              download_url: "/api/v1/request-1/files/part-1",
+            },
+            {
+              name: "cost-and-usage-part-00002-of-00002.csv",
+              media_type: "text/csv",
+              size_bytes: 4,
+              sha256: "c".repeat(64),
+              order: 2,
+              download_url: "/api/v1/request-1/files/part-2",
+            },
+          ],
+          download_all_name: "focus-mapping-preview-request-1.zip",
+          download_all_url: "/api/v1/request-1/archive",
+        },
+      }],
+      next_cursor: null,
+    });
+    vi.mocked(fetchPreviewArtifact).mockResolvedValue(new Blob(["bytes"]));
+    render(<FocusPreviewPage />);
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole("button", { name: /download manifest\.json/i }));
+    await user.click(screen.getByRole("button", { name: /download cost-and-usage-part-00001-of-00002\.csv/i }));
+    await user.click(screen.getByRole("button", { name: /download cost-and-usage-part-00002-of-00002\.csv/i }));
+    await user.click(screen.getByRole("button", { name: /download all/i }));
+
+    expect(vi.mocked(fetchPreviewArtifact).mock.calls.map(([url]) => url)).toEqual([
+      "/api/v1/request-1/manifest",
+      "/api/v1/request-1/files/part-1",
+      "/api/v1/request-1/files/part-2",
+      "/api/v1/request-1/archive",
+    ]);
+  });
+
+  it("shows exact expiry without downloads for an expired recent request", async () => {
+    vi.mocked(listFocusPreviewRequests).mockResolvedValue({
+      items: [{
+        ...baseRequest,
+        status: "expired",
+        completed_at: "2026-07-03T00:01:00Z",
+        expires_at: "2026-07-10T00:01:00Z",
+        package: null,
+      }],
+      next_cursor: null,
+    });
+    render(<FocusPreviewPage />);
+
+    expect(await screen.findByText("Expired 2026-07-10T00:01:00Z")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /download/i })).toBeNull();
+  });
+
+  it("keeps the exact persisted diagnostic for a failed recent request", async () => {
+    vi.mocked(listFocusPreviewRequests).mockResolvedValue({
+      items: [{
+        ...baseRequest,
+        status: "failed",
+        diagnostic: {
+          code: "preview_csv_row_exceeds_file_size_limit",
+          message: "A Preview CSV header or row exceeds the configured file-size limit.",
+          retryable: false,
+        },
+      }],
+      next_cursor: null,
+    });
+    render(<FocusPreviewPage />);
+
+    expect(await screen.findByText("preview_csv_row_exceeds_file_size_limit")).toBeTruthy();
+    expect(screen.getByText("A Preview CSV header or row exceeds the configured file-size limit.")).toBeTruthy();
+    expect(screen.getByText(/retryable: no/i)).toBeTruthy();
   });
 });

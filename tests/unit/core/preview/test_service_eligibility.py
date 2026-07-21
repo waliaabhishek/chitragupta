@@ -237,6 +237,8 @@ def test_worker_uses_submission_clock_for_policy_even_when_queue_starts_later(tm
     times = iter(
         [
             datetime(2026, 7, 4, tzinfo=UTC),
+            datetime(2026, 7, 4, tzinfo=UTC),
+            datetime(2026, 8, 4, tzinfo=UTC),
             datetime(2026, 8, 4, tzinfo=UTC),
             datetime(2026, 8, 4, 1, tzinfo=UTC),
         ]

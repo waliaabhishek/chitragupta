@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import csv
+import hashlib
 import inspect
 import io
 import json
@@ -495,6 +496,7 @@ def _package_row(
         created_at=datetime(2026, 7, 1, tzinfo=UTC),
         started_at=datetime(2026, 7, 1, tzinfo=UTC),
         completed_at=None,
+        expires_at=None,
         source_snapshot=None,
         diagnostic=None,
         storage_key=None,
@@ -542,7 +544,7 @@ def _package_row(
         prepared=prepared,
         provider_context=provider_context,
     )
-    package = mapping.build_preview_package(
+    draft = mapping.build_preview_data_package(
         request=request,
         snapshot=snapshot,
         full_rows=(full_row,),
@@ -550,12 +552,32 @@ def _package_row(
             source_records=1,
             source_cost=source.amount,
             allocated_cost=allocation.allocated_cost,
+            source_quantity=source.quantity or Decimal(0),
+            allocated_quantity=source.quantity or Decimal(0),
         ),
-        generated_at=datetime(2026, 7, 4, tzinfo=UTC),
+        max_csv_file_bytes=None,
     )
-    row = next(csv.DictReader(io.StringIO(package.data_files[0].body.decode())))
+    row = next(csv.DictReader(io.StringIO(draft.data_files[0].body.decode())))
     if include_manifest:
-        return row, json.loads(package.manifest_body)
+        metadata = tuple(
+            models.PreviewArtifactMetadata(
+                name=item.name,
+                media_type=item.media_type,
+                size_bytes=len(item.body),
+                sha256=hashlib.sha256(item.body).hexdigest(),
+                order=item.order,
+            )
+            for item in draft.data_files
+        )
+        manifest = mapping.build_preview_manifest(
+            request=request,
+            snapshot=snapshot,
+            draft=draft,
+            files=metadata,
+            ready_at=datetime(2026, 7, 4, tzinfo=UTC),
+            expires_at=datetime(2026, 7, 11, tzinfo=UTC),
+        )
+        return row, json.loads(manifest)
     return row
 
 
@@ -1903,6 +1925,7 @@ def test_package_manifest_reports_the_complete_validated_v3_profile(
     )
 
     assert manifest["mapping_profile_version"] == "focus-1.4-preview-v5"
+    assert manifest["schema_version"] == "chitragupta.preview-manifest.v2"
     assert manifest["conformance_status"] == "non_conforming"
     assert manifest["validation"] == {
         "mapping_errors": 0,
@@ -1910,7 +1933,23 @@ def test_package_manifest_reports_the_complete_validated_v3_profile(
         "rows": 1,
         "source_records": 1,
         "status": "passed",
+        "artifact_integrity": "passed",
     }
+    assert manifest["generated_at"] == "2026-07-04T00:00:00Z"
+    assert manifest["lifecycle"] == {
+        "ready_at": "2026-07-04T00:00:00Z",
+        "expires_at": "2026-07-11T00:00:00Z",
+        "retention_days": 7,
+    }
+    assert manifest["files"] == [
+        {
+            "name": "cost-and-usage.csv",
+            "media_type": "text/csv",
+            "size_bytes": manifest["files"][0]["size_bytes"],
+            "sha256": manifest["files"][0]["sha256"],
+            "order": 1,
+        }
+    ]
     assert manifest["profile_not_applicable_columns"] == list(mapping.PROFILE_NOT_APPLICABLE_COLUMNS)
     assert manifest["known_gaps"] == [
         {

@@ -8,7 +8,7 @@ import logging
 import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import Context, Decimal, localcontext
 from enum import StrEnum
 from types import MappingProxyType
@@ -24,9 +24,9 @@ from core.preview.evidence import (  # noqa: TC001 - resolved by contract tests
     decode_lineage_method_details,
 )
 from core.preview.models import (
+    PreviewArtifactMetadata,
     PreviewArtifactPayload,
     PreviewColumnProfile,
-    PreviewPackagePayload,
     PreviewRequest,
     PreviewRequestStatus,
     PreviewSourceSnapshot,
@@ -43,6 +43,10 @@ logger = logging.getLogger(__name__)
 
 class PreviewMappingError(ValueError):
     """Base error raised by the Daily Full mapping boundary."""
+
+
+class PreviewCsvFileSizeError(PreviewMappingError):
+    """A complete canonical CSV record cannot fit in the configured part size."""
 
 
 class PreviewEffectiveColumnsError(PreviewMappingError):
@@ -2237,16 +2241,33 @@ class PreviewPackageReconciliation:
     source_records: int
     source_cost: Decimal
     allocated_cost: Decimal
+    source_quantity: Decimal
+    allocated_quantity: Decimal
 
 
-def build_preview_package(
+@dataclass(frozen=True)
+class PreviewDataPackageDraft:
+    data_files: tuple[PreviewArtifactPayload, ...]
+    source_records: int
+    rows: int
+    reconciliation: PreviewPackageReconciliation
+
+
+def _preview_csv_record(values: Iterable[object]) -> bytes:
+    buffer = io.StringIO(newline="")
+    writer = csv.writer(buffer, lineterminator="\n")
+    writer.writerow(values)
+    return buffer.getvalue().encode()
+
+
+def build_preview_data_package(
     *,
     request: PreviewRequest,
     snapshot: PreviewSourceSnapshot,
     full_rows: Iterable[PreviewFullRow],
     reconciliation: PreviewPackageReconciliation,
-    generated_at: datetime,
-) -> PreviewPackagePayload:
+    max_csv_file_bytes: int | None,
+) -> PreviewDataPackageDraft:
     validate_preview_effective_columns(request.column_profile, request.effective_columns)
     validate_preview_request_snapshot(
         request=request,
@@ -2254,7 +2275,13 @@ def build_preview_package(
         resulting_status=PreviewRequestStatus.READY,
         mode="candidate_ready",
     )
-    rows = tuple(full_rows)
+    rows = sorted(
+        full_rows,
+        key=lambda row: tuple(preview_serialize_cell(value) for value in (*row.target_values, *row.custom_values)),
+    )
+    header = _preview_csv_record(request.effective_columns)
+    if max_csv_file_bytes is not None and (max_csv_file_bytes <= 0 or len(header) > max_csv_file_bytes):
+        raise PreviewCsvFileSizeError("A Preview CSV header or row exceeds the configured file-size limit.")
     if reconciliation.source_records < 0:
         raise PreviewMappingError("source record count cannot be negative")
     if reconciliation.source_records == 0:
@@ -2269,20 +2296,67 @@ def build_preview_package(
         raise PreviewMappingError("positive-source package state is inconsistent")
 
     all_columns = FOCUS_1_4_FULL_PROFILE_COLUMNS
-    buffer = io.StringIO(newline="")
-    writer = csv.writer(buffer, lineterminator="\n")
-    writer.writerow(request.effective_columns)
+    parts: list[bytes] = []
+    current = bytearray(header)
     for row in rows:
         values = dict(zip(all_columns, (*row.target_values, *row.custom_values), strict=True))
-        writer.writerow(preview_serialize_cell(values[column]) for column in request.effective_columns)
-    csv_body = buffer.getvalue().encode()
-    file_metadata = {
-        "name": "cost-and-usage.csv",
-        "media_type": "text/csv",
-        "size_bytes": len(csv_body),
-        "sha256": hashlib.sha256(csv_body).hexdigest(),
-        "order": 1,
-    }
+        record = _preview_csv_record(preview_serialize_cell(values[column]) for column in request.effective_columns)
+        if max_csv_file_bytes is not None and len(header) + len(record) > max_csv_file_bytes:
+            raise PreviewCsvFileSizeError("A Preview CSV header or row exceeds the configured file-size limit.")
+        if max_csv_file_bytes is not None and len(current) + len(record) > max_csv_file_bytes:
+            parts.append(bytes(current))
+            current = bytearray(header)
+        current.extend(record)
+    parts.append(bytes(current))
+    part_count = len(parts)
+    width = max(5, len(str(part_count)))
+    data_files = tuple(
+        PreviewArtifactPayload(
+            name=(
+                "cost-and-usage.csv"
+                if part_count == 1
+                else f"cost-and-usage-part-{index:0{width}d}-of-{part_count:0{width}d}.csv"
+            ),
+            media_type="text/csv",
+            order=index,
+            body=body,
+        )
+        for index, body in enumerate(parts, start=1)
+    )
+    return PreviewDataPackageDraft(
+        data_files=data_files,
+        source_records=reconciliation.source_records,
+        rows=len(rows),
+        reconciliation=reconciliation,
+    )
+
+
+def build_preview_manifest(
+    *,
+    request: PreviewRequest,
+    snapshot: PreviewSourceSnapshot,
+    draft: PreviewDataPackageDraft,
+    files: tuple[PreviewArtifactMetadata, ...],
+    ready_at: datetime,
+    expires_at: datetime,
+) -> bytes:
+    if ready_at.tzinfo is None or ready_at.utcoffset() is None:
+        raise PreviewMappingError("ready_at must be timezone-aware")
+    if expires_at != ready_at + timedelta(days=7):
+        raise PreviewMappingError("expires_at must be exactly seven days after ready_at")
+    expected = tuple(
+        PreviewArtifactMetadata(
+            name=item.name,
+            media_type=item.media_type,
+            size_bytes=len(item.body),
+            sha256=hashlib.sha256(item.body).hexdigest(),
+            order=item.order,
+        )
+        for item in draft.data_files
+    )
+    if files != expected:
+        raise PreviewMappingError("artifact metadata does not match rendered package bytes")
+    reconciliation = draft.reconciliation
     evidence_start = snapshot.effective_coverage_start_date
     evidence_end = snapshot.effective_coverage_end_date
     assert evidence_start is not None and evidence_end is not None
@@ -2303,7 +2377,7 @@ def build_preview_package(
         "source_through": None if snapshot.source_through is None else preview_utc_text(snapshot.source_through),
     }
     manifest = {
-        "schema_version": "chitragupta.preview-manifest.v1",
+        "schema_version": "chitragupta.preview-manifest.v2",
         "package_type": "requested_preview_package",
         "request_id": request.request_id,
         "tenant_name": request.tenant_name,
@@ -2342,9 +2416,10 @@ def build_preview_package(
         "validation": {
             "status": "passed",
             "mapping_profile_version": MAPPING_PROFILE_VERSION,
-            "source_records": reconciliation.source_records,
-            "rows": len(rows),
+            "source_records": draft.source_records,
+            "rows": draft.rows,
             "mapping_errors": 0,
+            "artifact_integrity": "passed",
         },
         "reconciliation": {
             "source_cost": preview_decimal_text(reconciliation.source_cost),
@@ -2352,14 +2427,30 @@ def build_preview_package(
             "difference": preview_decimal_text(
                 preview_subtract_decimals(reconciliation.source_cost, reconciliation.allocated_cost)
             ),
+            "source_quantity": preview_decimal_text(reconciliation.source_quantity),
+            "allocated_quantity": preview_decimal_text(reconciliation.allocated_quantity),
+            "quantity_difference": preview_decimal_text(
+                preview_subtract_decimals(reconciliation.source_quantity, reconciliation.allocated_quantity)
+            ),
         },
-        "generated_at": preview_utc_text(generated_at),
-        "files": [file_metadata],
+        "lifecycle": {
+            "ready_at": preview_utc_text(ready_at),
+            "expires_at": preview_utc_text(expires_at),
+            "retention_days": 7,
+        },
+        "generated_at": preview_utc_text(ready_at),
+        "files": [
+            {
+                "name": item.name,
+                "media_type": item.media_type,
+                "size_bytes": item.size_bytes,
+                "sha256": item.sha256,
+                "order": item.order,
+            }
+            for item in files
+        ],
     }
-    return PreviewPackagePayload(
-        manifest_body=(preview_canonical_json(manifest) + "\n").encode(),
-        data_files=(PreviewArtifactPayload("cost-and-usage.csv", "text/csv", 1, csv_body),),
-    )
+    return (preview_canonical_json(manifest) + "\n").encode()
 
 
 def _validate_profile_definition() -> None:

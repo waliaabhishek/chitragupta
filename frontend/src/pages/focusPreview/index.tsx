@@ -6,8 +6,8 @@ import {
   fetchFocusPreviewProfile,
   fetchFocusPreviewStatus,
   fetchPreviewArtifact,
+  listFocusPreviewRequests,
   submitFocusPreview,
-  type FocusPreviewArtifact,
   type FocusPreviewRequest,
   type FocusPreviewColumnProfile,
 } from "../../api/focusPreview";
@@ -21,6 +21,99 @@ const DOWNLOAD_ERROR_MESSAGE = "FOCUS Mapping Preview download failed. Try again
 
 function isAbortError(error: unknown): boolean {
   return typeof error === "object" && error !== null && "name" in error && error.name === "AbortError";
+}
+
+interface PreviewRequestDetailsProps {
+  request: FocusPreviewRequest;
+  onDownload: (downloadUrl: string, fileName: string) => void;
+}
+
+function PreviewRequestDetails({
+  request,
+  onDownload,
+}: PreviewRequestDetailsProps): React.JSX.Element {
+  const interval = request.month ?? `${request.start_date} to ${request.end_date}`;
+  const snapshot = request.source_snapshot;
+  const downloadable = request.status === "ready" && request.package !== null;
+
+  return (
+    <section aria-label={`Preview request ${request.request_id}`}>
+      <Space direction="vertical" style={{ width: "100%" }}>
+        <Title level={4}>{request.request_id}</Title>
+        <Text>Status {request.status}</Text>
+        <Text>{request.grain} {interval}</Text>
+        <Text>Column profile {request.column_profile}</Text>
+        <Text>Created {request.created_at}</Text>
+        {request.completed_at && <Text>Completed {request.completed_at}</Text>}
+        {snapshot?.calculation_timestamp && (
+          <Text>Calculation timestamp {snapshot.calculation_timestamp}</Text>
+        )}
+        {snapshot?.source_through && (
+          <Text>Source through {snapshot.source_through}</Text>
+        )}
+        {request.status === "expired" && request.expires_at ? (
+          <Text>Expired {request.expires_at}</Text>
+        ) : request.expires_at ? (
+          <Text>Expires {request.expires_at}</Text>
+        ) : null}
+        {request.diagnostic && (
+          <Alert
+            type="error"
+            message={request.diagnostic.code}
+            description={
+              <Space direction="vertical">
+                <Text>{request.diagnostic.message}</Text>
+                <Text>Retryable: {request.diagnostic.retryable ? "Yes" : "No"}</Text>
+                {request.diagnostic.source_correlation_ids?.map((correlation) => (
+                  <Text code key={correlation}>{correlation}</Text>
+                ))}
+              </Space>
+            }
+          />
+        )}
+        {snapshot?.monthly_status && (
+          <Alert
+            type={snapshot.monthly_status === "provisional" ? "warning" : "success"}
+            message={`Monthly status: ${snapshot.monthly_status}`}
+            description={
+              snapshot.evidence_through_date
+                ? `Evidence through ${snapshot.evidence_through_date}`
+                : "No complete daily evidence is available yet."
+            }
+          />
+        )}
+        {downloadable && (
+          <Space wrap>
+            <Button
+              onClick={() => onDownload(
+                request.package!.manifest.download_url,
+                request.package!.manifest.name,
+              )}
+            >
+              Download {request.package!.manifest.name}
+            </Button>
+            {request.package!.files.map((item) => (
+              <Button
+                key={item.name}
+                aria-label={`Download cost and usage; Download ${item.name}`}
+                onClick={() => onDownload(item.download_url, item.name)}
+              >
+                Download {item.name}
+              </Button>
+            ))}
+            <Button
+              onClick={() => onDownload(
+                request.package!.download_all_url,
+                request.package!.download_all_name,
+              )}
+            >
+              Download All
+            </Button>
+          </Space>
+        )}
+      </Space>
+    </section>
+  );
 }
 
 const CURRENT_AUTHORITY_GAPS = [
@@ -71,40 +164,95 @@ export function FocusPreviewPage({ now = () => new Date() }: FocusPreviewPagePro
   const [startDate, setStartDate] = useState(initialRange.startDate);
   const [endDate, setEndDate] = useState(initialRange.endDate);
   const [preview, setPreview] = useState<FocusPreviewRequest | null>(null);
+  const [recentRequests, setRecentRequests] = useState<FocusPreviewRequest[]>([]);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [historyBusy, setHistoryBusy] = useState(false);
   const [operationError, setOperationError] = useState<string | null>(null);
-  const abortRef = useRef<AbortController | null>(null);
-
-  useEffect(
-    () => () => {
-      abortRef.current?.abort();
-      abortRef.current = null;
-    },
-    [],
-  );
+  const submitAbortRef = useRef<AbortController | null>(null);
+  const controllersRef = useRef(new Set<AbortController>());
+  const tenantGenerationRef = useRef(0);
+  const tenantNameRef = useRef<string | null>(currentTenant?.tenant_name ?? null);
+  tenantNameRef.current = currentTenant?.tenant_name ?? null;
 
   useEffect(() => {
+    tenantGenerationRef.current += 1;
+    const generation = tenantGenerationRef.current;
+    const controllers = controllersRef.current;
+    for (const controller of controllers) controller.abort();
+    controllers.clear();
+    submitAbortRef.current = null;
+    setPreview(null);
+    setRecentRequests([]);
+    setNextCursor(null);
+    setBusy(false);
+    setHistoryBusy(false);
+    setOperationError(null);
     if (!currentTenant) return;
-    let active = true;
-    void fetchFocusPreviewProfile(currentTenant.tenant_name)
+
+    const tenantName = currentTenant.tenant_name;
+    const profileController = new AbortController();
+    const historyController = new AbortController();
+    controllers.add(profileController);
+    controllers.add(historyController);
+    const active = (controller: AbortController): boolean =>
+      !controller.signal.aborted &&
+      tenantGenerationRef.current === generation &&
+      tenantNameRef.current === tenantName;
+
+    void fetchFocusPreviewProfile(tenantName, profileController.signal)
       .then((profile) => {
-        if (active) setFullColumns(profile.full_columns);
+        if (active(profileController)) setFullColumns(profile.full_columns);
       })
-      .catch(() => {
-        if (active) setOperationError(REQUEST_ERROR_MESSAGE);
-      });
+      .catch((error: unknown) => {
+        if (active(profileController) && !isAbortError(error)) {
+          setOperationError(REQUEST_ERROR_MESSAGE);
+        }
+      })
+      .finally(() => controllers.delete(profileController));
+    void listFocusPreviewRequests(tenantName, { signal: historyController.signal })
+      .then((page) => {
+        if (!active(historyController)) return;
+        setRecentRequests(page.items);
+        setNextCursor(page.next_cursor);
+      })
+      .catch((error: unknown) => {
+        if (active(historyController) && !isAbortError(error)) {
+          setOperationError(REQUEST_ERROR_MESSAGE);
+        }
+      })
+      .finally(() => controllers.delete(historyController));
     return () => {
-      active = false;
+      profileController.abort();
+      historyController.abort();
+      controllers.delete(profileController);
+      controllers.delete(historyController);
     };
   }, [currentTenant]);
 
+  useEffect(() => {
+    const controllers = controllersRef.current;
+    return () => {
+      for (const controller of controllers) controller.abort();
+      controllers.clear();
+      submitAbortRef.current = null;
+    };
+  }, []);
+
   async function submit(): Promise<void> {
     if (!currentTenant) return;
+    const tenantName = currentTenant.tenant_name;
+    const generation = tenantGenerationRef.current;
     setBusy(true);
     setOperationError(null);
-    abortRef.current?.abort();
+    submitAbortRef.current?.abort();
     const controller = new AbortController();
-    abortRef.current = controller;
+    submitAbortRef.current = controller;
+    controllersRef.current.add(controller);
+    const active = (): boolean =>
+      !controller.signal.aborted &&
+      tenantGenerationRef.current === generation &&
+      tenantNameRef.current === tenantName;
     try {
       const selection =
         columnProfile === "custom"
@@ -114,48 +262,106 @@ export function FocusPreviewPage({ now = () => new Date() }: FocusPreviewPagePro
         grain === "monthly"
           ? { grain, month, ...selection } as const
           : { grain, start_date: startDate, end_date: endDate, ...selection } as const;
-      const queued = await submitFocusPreview(currentTenant.tenant_name, body);
+      const queued = await submitFocusPreview(tenantName, body, controller.signal);
+      if (!active()) return;
       setPreview(queued);
       let status = queued;
       while (status.status === "queued" || status.status === "running") {
         status = await fetchFocusPreviewStatus(
-          currentTenant.tenant_name,
+          tenantName,
           queued.request_id,
           controller.signal,
         );
+        if (!active()) return;
         setPreview(status);
         if (status.status === "queued" || status.status === "running") {
           await new Promise((resolve) => window.setTimeout(resolve, 1000));
+          if (!active()) return;
         }
       }
+      const recent = await listFocusPreviewRequests(tenantName, { signal: controller.signal });
+      if (active()) {
+        setRecentRequests(recent.items);
+        setNextCursor(recent.next_cursor);
+      }
     } catch (error) {
-      if (!isAbortError(error)) {
+      if (active() && !isAbortError(error)) {
         setOperationError(REQUEST_ERROR_MESSAGE);
       }
     } finally {
-      if (abortRef.current === controller) {
+      controllersRef.current.delete(controller);
+      if (submitAbortRef.current === controller) {
+        submitAbortRef.current = null;
+      }
+      if (active()) {
         setBusy(false);
       }
     }
   }
 
-  async function download(item: FocusPreviewArtifact): Promise<void> {
+  async function loadMore(): Promise<void> {
+    if (!currentTenant || !nextCursor) return;
+    const tenantName = currentTenant.tenant_name;
+    const generation = tenantGenerationRef.current;
+    const cursor = nextCursor;
+    const controller = new AbortController();
+    controllersRef.current.add(controller);
+    const active = (): boolean =>
+      !controller.signal.aborted &&
+      tenantGenerationRef.current === generation &&
+      tenantNameRef.current === tenantName;
+    setHistoryBusy(true);
     setOperationError(null);
     try {
-      const blob = await fetchPreviewArtifact(item.download_url);
-      if (typeof URL.createObjectURL !== "function") return;
+      const page = await listFocusPreviewRequests(tenantName, {
+        cursor,
+        signal: controller.signal,
+      });
+      if (!active()) return;
+      setRecentRequests((current) => [...current, ...page.items]);
+      setNextCursor(page.next_cursor);
+    } catch (error) {
+      if (active() && !isAbortError(error)) {
+        setOperationError(REQUEST_ERROR_MESSAGE);
+      }
+    } finally {
+      controllersRef.current.delete(controller);
+      if (active()) setHistoryBusy(false);
+    }
+  }
+
+  async function download(downloadUrl: string, fileName: string): Promise<void> {
+    const tenantName = currentTenant?.tenant_name;
+    if (!tenantName) return;
+    const generation = tenantGenerationRef.current;
+    const controller = new AbortController();
+    controllersRef.current.add(controller);
+    const active = (): boolean =>
+      !controller.signal.aborted &&
+      tenantGenerationRef.current === generation &&
+      tenantNameRef.current === tenantName;
+    setOperationError(null);
+    try {
+      const blob = await fetchPreviewArtifact(downloadUrl, controller.signal);
+      if (!active() || typeof URL.createObjectURL !== "function") return;
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
       anchor.href = url;
-      anchor.download = item.name;
+      anchor.download = fileName;
       anchor.click();
       URL.revokeObjectURL(url);
     } catch (error) {
-      if (!isAbortError(error)) {
+      if (active() && !isAbortError(error)) {
         setOperationError(DOWNLOAD_ERROR_MESSAGE);
       }
+    } finally {
+      controllersRef.current.delete(controller);
     }
   }
+
+  const displayedRequests = preview
+    ? [preview, ...recentRequests.filter((item) => item.request_id !== preview.request_id)]
+    : recentRequests;
 
   return (
     <Space direction="vertical" size="large" style={{ width: "100%" }}>
@@ -248,42 +454,25 @@ export function FocusPreviewPage({ now = () => new Date() }: FocusPreviewPagePro
           Generate preview
         </Button>
       </Space>
-      {preview?.diagnostic && (
-        <Alert
-          type="error"
-          message={preview.diagnostic.code}
-          description={
-            <Space direction="vertical">
-              <Text>{preview.diagnostic.message}</Text>
-              <Text>Retryable: {preview.diagnostic.retryable ? "Yes" : "No"}</Text>
-              {preview.diagnostic.source_correlation_ids?.map((correlation) => (
-                <Text code key={correlation}>{correlation}</Text>
-              ))}
-            </Space>
-          }
-        />
-      )}
-      {preview?.source_snapshot?.monthly_status && (
-        <Alert
-          type={preview.source_snapshot.monthly_status === "provisional" ? "warning" : "success"}
-          message={`Monthly status: ${preview.source_snapshot.monthly_status}`}
-          description={
-            preview.source_snapshot.evidence_through_date
-              ? `Evidence through ${preview.source_snapshot.evidence_through_date}`
-              : "No complete daily evidence is available yet."
-          }
-        />
-      )}
-      {preview?.package && (
-        <Space>
-          <Button onClick={() => void download(preview.package!.manifest)}>Download manifest</Button>
-          {preview.package.files.map((item) => (
-            <Button key={item.name} onClick={() => void download(item)}>
-              Download cost and usage
-            </Button>
+      <section aria-labelledby="focus-preview-recent-requests">
+        <Space direction="vertical" size="large" style={{ width: "100%" }}>
+          <Title id="focus-preview-recent-requests" level={3}>Recent requests</Title>
+          {displayedRequests.map((request) => (
+            <PreviewRequestDetails
+              key={request.request_id}
+              request={request}
+              onDownload={(downloadUrl, fileName) => {
+                void download(downloadUrl, fileName);
+              }}
+            />
           ))}
+          {nextCursor && (
+            <Button loading={historyBusy} onClick={() => void loadMore()}>
+              Load more
+            </Button>
+          )}
         </Space>
-      )}
+      </section>
     </Space>
   );
 }

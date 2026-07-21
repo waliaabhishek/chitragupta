@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from concurrent.futures import Future
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -229,12 +230,18 @@ def test_unexpected_scheduler_failure_is_logged_and_persists_redacted_diagnostic
             pytest.raises(service.PreviewWorkerUnavailable),
         ):
             _submit_range(runtime, backend, date(2026, 7, 2))
-        assert any(
-            record.levelname == "ERROR"
-            and "worker scheduling failed" in record.getMessage().casefold()
-            and record.exc_info is not None
+        records = [
+            record
             for record in caplog.records
-        )
+            if record.levelname == "ERROR" and "worker scheduling failed" in record.getMessage().casefold()
+        ]
+        assert len(records) == 1
+        assert "tenant=production" in records[0].getMessage()
+        assert "request_id=request-logged" in records[0].getMessage()
+        assert "error_type=RuntimeError" in records[0].getMessage()
+        assert records[0].exc_info is None
+        assert "scheduler offline" not in caplog.text
+        assert "Traceback" not in caplog.text
     finally:
         runtime.close()
         backend.dispose()
@@ -252,7 +259,7 @@ def test_unexpected_generation_failure_logs_request_and_leaves_no_package(
     service = preview_module("service")
     monkeypatch.setattr(
         service,
-        "build_preview_package",
+        "build_preview_data_package",
         lambda **_kwargs: (_ for _ in ()).throw(OSError("disk")),
     )
     try:
@@ -271,10 +278,84 @@ def test_unexpected_generation_failure_logs_request_and_leaves_no_package(
         assert failed.package is None
         assert failed.storage_key is None
         assert not (tmp_path / "artifacts").exists() or list((tmp_path / "artifacts").iterdir()) == []
-        assert any(
-            record.levelname == "ERROR" and queued.request_id in record.getMessage() and record.exc_info is not None
+        records = [
+            record
             for record in caplog.records
+            if record.levelname == "ERROR" and queued.request_id in record.getMessage()
+        ]
+        assert len(records) == 1
+        assert "tenant=production" in records[0].getMessage()
+        assert "error_type=OSError" in records[0].getMessage()
+        assert records[0].exc_info is None
+        assert "disk" not in caplog.text
+        assert "Traceback" not in caplog.text
+    finally:
+        runtime.close()
+        backend.dispose()
+
+
+@pytest.mark.parametrize("failure_point", ["stage", "publish"])
+def test_stage_or_publish_failure_leaves_failed_request_and_no_ready_package(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure_point: str,
+) -> None:
+    backend = _backend(tmp_path)
+    _seed(backend, source=_source(), aggregate=_aggregate(), allocation=_allocation())
+    executor = ControlledExecutor()
+    runtime = _runtime(tmp_path, backend, executor)
+    store = runtime._artifact_store
+
+    if failure_point == "stage":
+        monkeypatch.setattr(
+            store,
+            "stage_data_files",
+            lambda **_kwargs: (_ for _ in ()).throw(OSError("stage failed")),
         )
+    else:
+        real_stage = store.stage_data_files
+
+        class PublishFailure:
+            def __init__(self, staged: object) -> None:
+                self.staged = staged
+
+            @property
+            def files(self) -> object:
+                return self.staged.files
+
+            def publish(self, *, manifest_body: bytes) -> object:
+                del manifest_body
+                raise OSError("publish failed")
+
+            def close(self) -> None:
+                self.staged.close()
+
+            def __enter__(self) -> PublishFailure:
+                self.staged.__enter__()
+                return self
+
+            def __exit__(self, *args: object) -> None:
+                self.staged.__exit__(*args)
+
+        monkeypatch.setattr(
+            store,
+            "stage_data_files",
+            lambda **kwargs: PublishFailure(real_stage(**kwargs)),
+        )
+    try:
+        queued = _submit_range(runtime, backend, date(2026, 7, 2))
+        executor.run_all()
+        failed = runtime.get_request(
+            backend=backend,
+            request_id=queued.request_id,
+            ecosystem="confluent_cloud",
+            tenant_id="tenant-1",
+        )
+        assert failed.status.value == "failed"
+        assert failed.diagnostic.code == "preview_generation_failed"
+        assert failed.storage_key is None
+        assert failed.package is None
+        assert not list((tmp_path / "artifacts").glob("*.staging"))
     finally:
         runtime.close()
         backend.dispose()
@@ -363,14 +444,16 @@ def test_worker_ready_path_preserves_validation_artifact_and_compare_and_set_ord
     mapping = preview_module("mapping")
     models = preview_module("models")
     persistence = preview_module("persistence")
+    service = preview_module("service")
     events: list[str] = []
 
     real_mark_running = persistence.SQLModelPreviewRequestRepository.mark_running
     real_mark_ready = persistence.SQLModelPreviewRequestRepository.mark_ready
     real_validate_columns = mapping.validate_preview_effective_columns
     real_candidate_validate = mapping.validate_preview_request_snapshot
-    real_payload = mapping.PreviewPackagePayload
-    real_finalize = runtime._artifact_store.finalize_package
+    real_build_data = service.build_preview_data_package
+    real_build_manifest = service.build_preview_manifest
+    real_stage = runtime._artifact_store.stage_data_files
     real_replace = persistence.replace
     real_post_init = models.PreviewRequest.__post_init__
     real_strict_validate = persistence.validate_preview_request_snapshot
@@ -390,13 +473,44 @@ def test_worker_ready_path_preserves_validation_artifact_and_compare_and_set_ord
             events.append("candidate-snapshot")
         real_candidate_validate(**kwargs)
 
-    def package_payload(*args: object, **kwargs: object) -> object:
-        events.append("package-rendered")
-        return real_payload(*args, **kwargs)
+    def build_data(*args: object, **kwargs: object) -> object:
+        result = real_build_data(*args, **kwargs)
+        events.append("data-draft-built")
+        return result
 
-    def finalize(*args: object, **kwargs: object) -> object:
-        events.append("artifact-finalized")
-        return real_finalize(*args, **kwargs)
+    class RecordingStaged:
+        def __init__(self, staged: object) -> None:
+            self._staged = staged
+
+        @property
+        def files(self) -> object:
+            return self._staged.files
+
+        def publish(self, *, manifest_body: bytes) -> object:
+            events.append("published")
+            return self._staged.publish(manifest_body=manifest_body)
+
+        def close(self) -> None:
+            self._staged.close()
+
+        def __enter__(self) -> RecordingStaged:
+            self._staged.__enter__()
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            self._staged.__exit__(*args)
+
+    def stage(*args: object, **kwargs: object) -> object:
+        staged = real_stage(*args, **kwargs)
+        events.append("data-staged-fsynced")
+        return RecordingStaged(staged)
+
+    captured_manifest_times: list[tuple[datetime, datetime]] = []
+
+    def build_manifest(*args: object, **kwargs: object) -> bytes:
+        captured_manifest_times.append((kwargs["ready_at"], kwargs["expires_at"]))
+        events.append("manifest-built")
+        return real_build_manifest(*args, **kwargs)
 
     def replace_candidate(instance: object, /, **changes: object) -> object:
         if changes.get("status") is models.PreviewRequestStatus.READY:
@@ -424,7 +538,10 @@ def test_worker_ready_path_preserves_validation_artifact_and_compare_and_set_ord
         if events and events[-1] == "ready-strict-validation" and statement.lstrip().upper().startswith("UPDATE"):
             events.append("ready-cas-sql")
 
+    captured_ready_times: list[tuple[datetime, datetime]] = []
+
     def mark_ready(*args: object, **kwargs: object) -> bool:
+        captured_ready_times.append((args[2], args[3]))
         result = real_mark_ready(*args, **kwargs)
         events.append(f"ready-cas-result:{result}")
         return result
@@ -433,8 +550,9 @@ def test_worker_ready_path_preserves_validation_artifact_and_compare_and_set_ord
     monkeypatch.setattr(persistence.SQLModelPreviewRequestRepository, "mark_ready", mark_ready)
     monkeypatch.setattr(mapping, "validate_preview_effective_columns", validate_columns)
     monkeypatch.setattr(mapping, "validate_preview_request_snapshot", candidate_validate)
-    monkeypatch.setattr(mapping, "PreviewPackagePayload", package_payload)
-    monkeypatch.setattr(runtime._artifact_store, "finalize_package", finalize)
+    monkeypatch.setattr(service, "build_preview_data_package", build_data)
+    monkeypatch.setattr(service, "build_preview_manifest", build_manifest)
+    monkeypatch.setattr(runtime._artifact_store, "stage_data_files", stage)
     monkeypatch.setattr(persistence, "replace", replace_candidate)
     monkeypatch.setattr(models.PreviewRequest, "__post_init__", post_init)
     monkeypatch.setattr(persistence, "validate_preview_request_snapshot", strict_validate)
@@ -451,20 +569,91 @@ def test_worker_ready_path_preserves_validation_artifact_and_compare_and_set_ord
             tenant_id="tenant-1",
         )
         assert ready is not None and ready.status.value == "ready"
-        assert events[:10] == [
+        assert events[:12] == [
             "running-candidate",
             "effective-columns",
             "candidate-snapshot",
-            "package-rendered",
-            "artifact-finalized",
+            "data-draft-built",
+            "data-staged-fsynced",
+            "manifest-built",
+            "published",
             "ready-construction",
             "ready-post-init",
             "ready-strict-validation",
             "ready-cas-sql",
             "ready-cas-result:True",
         ]
+        assert captured_manifest_times == captured_ready_times
+        assert len(captured_ready_times) == 1
+        ready_at, expires_at = captured_ready_times[0]
+        assert ready_at.microsecond == 0
+        assert expires_at == ready_at + timedelta(days=7)
     finally:
         event.remove(backend._engine, "before_cursor_execute", capture_sql)
+        runtime.close()
+        backend.dispose()
+
+
+def test_rendering_and_data_fsync_finish_before_retention_clock_starts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend = _backend(tmp_path)
+    _seed(backend, source=_source(), aggregate=_aggregate(), allocation=_allocation())
+    executor = ControlledExecutor()
+    artifacts = preview_module("artifacts")
+    service = preview_module("service")
+
+    class AdvancingClock:
+        now = datetime(2026, 7, 4, tzinfo=UTC)
+
+        def __call__(self) -> datetime:
+            return self.now
+
+    clock = AdvancingClock()
+    store = artifacts.LocalPreviewArtifactStore(tmp_path / "artifacts")
+    runtime = service.PreviewRuntime(
+        artifact_store=store,
+        max_workers=1,
+        clock=clock,
+        request_id_factory=lambda: "request-retention",
+        executor=executor,
+    )
+    real_build = service.build_preview_data_package
+    real_stage = store.stage_data_files
+
+    def slow_build(**kwargs: object) -> object:
+        result = real_build(**kwargs)
+        clock.now += timedelta(hours=3)
+        return result
+
+    def slow_stage(**kwargs: object) -> object:
+        result = real_stage(**kwargs)
+        clock.now += timedelta(hours=4)
+        return result
+
+    monkeypatch.setattr(service, "build_preview_data_package", slow_build)
+    monkeypatch.setattr(store, "stage_data_files", slow_stage)
+    try:
+        queued = _submit_range(runtime, backend, date(2026, 7, 2))
+        executor.run_all()
+        ready = runtime.get_request(
+            backend=backend,
+            request_id=queued.request_id,
+            ecosystem="confluent_cloud",
+            tenant_id="tenant-1",
+        )
+
+        assert ready.status.value == "ready"
+        assert ready.completed_at == datetime(2026, 7, 4, 7, tzinfo=UTC)
+        assert ready.expires_at == datetime(2026, 7, 11, 7, tzinfo=UTC)
+        manifest = json.loads(runtime.read_manifest_bytes(ready))
+        assert manifest["lifecycle"] == {
+            "ready_at": "2026-07-04T07:00:00Z",
+            "expires_at": "2026-07-11T07:00:00Z",
+            "retention_days": 7,
+        }
+    finally:
         runtime.close()
         backend.dispose()
 

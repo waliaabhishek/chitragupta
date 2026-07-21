@@ -22,6 +22,7 @@ def test_preview_config_defaults_and_app_ownership() -> None:
     assert isinstance(settings.preview, config.PreviewConfig)
     assert settings.preview.artifact_root == Path("data/focus-preview")
     assert settings.preview.max_workers == 2
+    assert settings.preview.max_csv_file_bytes is None
 
 
 @pytest.mark.parametrize("max_workers", [0, 17])
@@ -30,6 +31,14 @@ def test_preview_config_rejects_invalid_worker_counts(max_workers: int) -> None:
 
     with pytest.raises(ValidationError):
         config.PreviewConfig(max_workers=max_workers)
+
+
+@pytest.mark.parametrize("max_csv_file_bytes", [0, -1])
+def test_preview_config_rejects_nonpositive_csv_limits(max_csv_file_bytes: int) -> None:
+    config = import_module("core.config.models")
+
+    with pytest.raises(ValidationError):
+        config.PreviewConfig(max_csv_file_bytes=max_csv_file_bytes)
 
 
 def test_preview_cli_entry_point_is_registered() -> None:
@@ -84,19 +93,52 @@ def test_migration_020_uses_postponed_annotations() -> None:
     assert meaningful_lines[0] == "from __future__ import annotations"
 
 
-def test_mapping_exposes_the_typed_v5_package_and_full_row_contract() -> None:
+def test_mapping_exposes_split_typed_data_and_manifest_contracts() -> None:
     mapping = preview_module("mapping")
     models = preview_module("models")
-    hints = get_type_hints(mapping.build_preview_package)
+    data_hints = get_type_hints(mapping.build_preview_data_package)
+    manifest_hints = get_type_hints(mapping.build_preview_manifest)
 
-    assert hints == {
+    assert data_hints == {
         "request": models.PreviewRequest,
         "snapshot": models.PreviewSourceSnapshot,
         "full_rows": Iterable[mapping.PreviewFullRow],
         "reconciliation": mapping.PreviewPackageReconciliation,
-        "generated_at": datetime,
-        "return": models.PreviewPackagePayload,
+        "max_csv_file_bytes": int | None,
+        "return": mapping.PreviewDataPackageDraft,
     }
+    assert manifest_hints == {
+        "request": models.PreviewRequest,
+        "snapshot": models.PreviewSourceSnapshot,
+        "draft": mapping.PreviewDataPackageDraft,
+        "files": tuple[models.PreviewArtifactMetadata, ...],
+        "ready_at": datetime,
+        "expires_at": datetime,
+        "return": bytes,
+    }
+    assert mapping.PreviewDataPackageDraft.__module__ == "core.preview.mapping"
+    assert not hasattr(models, "PreviewDataPackageDraft")
+
+
+def test_artifact_store_exposes_staged_publication_contract_without_mapping_dependency() -> None:
+    artifacts = preview_module("artifacts")
+    models = preview_module("models")
+    hints = get_type_hints(artifacts.PreviewArtifactStore.stage_data_files)
+    publish_hints = get_type_hints(artifacts.PreviewStagedPackage.publish)
+
+    assert hints == {
+        "request_id": str,
+        "data_files": tuple[models.PreviewArtifactPayload, ...],
+        "return": artifacts.PreviewStagedPackage,
+    }
+    assert publish_hints == {
+        "manifest_body": bytes,
+        "return": models.PreviewStoredPackage,
+    }
+    assert "core.preview.mapping" not in inspect.getsource(artifacts)
+    assert "core.preview.mapping" not in inspect.getsource(models)
+    assert not hasattr(models, "PreviewPackagePayload")
+    assert not hasattr(artifacts.PreviewArtifactStore, "finalize_package")
 
 
 def test_mapping_helpers_expose_the_typed_v4_boundary_contracts() -> None:

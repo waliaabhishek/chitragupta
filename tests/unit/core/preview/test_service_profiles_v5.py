@@ -139,16 +139,17 @@ def test_empty_started_month_builds_header_only_provisional_package_without_stor
         executor=NeverExecutor(),
     )
 
-    snapshot, package = runtime._generate(NeverBackend(), request, _policy(cutoff=date(2026, 7, 1)))
+    snapshot, draft = runtime._generate(NeverBackend(), request, _policy(cutoff=date(2026, 7, 1)))
 
     assert snapshot.monthly_status == "provisional"
     assert snapshot.effective_coverage_start_date == snapshot.effective_coverage_end_date == date(2026, 7, 1)
     assert snapshot.calculation_timestamp is None
     assert snapshot.source_through is None
-    assert package.data_files[0].body == (",".join(mapping.FOCUS_1_4_FULL_PROFILE_COLUMNS) + "\n").encode()
-    manifest = __import__("json").loads(package.manifest_body)
-    assert manifest["reconciliation"] == {
-        "source_cost": str(Decimal(0)),
-        "allocated_cost": str(Decimal(0)),
-        "difference": str(Decimal(0)),
-    }
+    assert draft.data_files[0].body == (",".join(mapping.FOCUS_1_4_FULL_PROFILE_COLUMNS) + "\n").encode()
+    assert draft.reconciliation == mapping.PreviewPackageReconciliation(
+        source_records=0,
+        source_cost=Decimal(0),
+        allocated_cost=Decimal(0),
+        source_quantity=Decimal(0),
+        allocated_quantity=Decimal(0),
+    )

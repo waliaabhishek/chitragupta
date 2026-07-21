@@ -86,6 +86,7 @@ def _request(*, status: str = "running", grain: str = "daily", **overrides: obje
         "created_at": datetime(2026, 7, 3, tzinfo=UTC),
         "started_at": datetime(2026, 7, 3, 1, tzinfo=UTC) if status != "queued" else None,
         "completed_at": None,
+        "expires_at": None,
         "source_snapshot": None,
         "diagnostic": None,
         "storage_key": None,
@@ -187,8 +188,9 @@ def test_candidate_ready_rejects_every_materialized_state_except_running(materia
         request = _request(
             status=materialized_status,
             completed_at=datetime(2026, 7, 3, 2, tzinfo=UTC),
+            expires_at=datetime(2026, 7, 10, 2, tzinfo=UTC),
             source_snapshot=snapshot,
-            storage_key="request-1",
+            storage_key=None if materialized_status == "expired" else "request-1",
             package=_package(),
         )
 
@@ -207,6 +209,7 @@ def test_strict_materialized_requires_result_status_and_snapshot_identity() -> N
     ready = _request(
         status="ready",
         completed_at=datetime(2026, 7, 3, 2, tzinfo=UTC),
+        expires_at=datetime(2026, 7, 10, 2, tzinfo=UTC),
         source_snapshot=snapshot,
         storage_key="request-1",
         package=_package(),

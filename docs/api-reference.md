@@ -470,6 +470,16 @@ block must establish a `direct_payg` commercial profile over the complete
 request interval. `billing_currency` defaults to normalized `USD`; any other
 configured currency fails closed without conversion.
 
+For setup and complete UI/CLI workflows, start with
+[FOCUS Mapping Preview](focus-mapping-preview.md). This section is the HTTP
+contract reference.
+
+The API has no built-in authentication. Protect the entire Preview route prefix
+behind an authenticated reverse proxy or API gateway, including profile,
+submission, recent history, status, manifest, individual-file, and archive
+routes. The remote CLI's repeatable `--header NAME=VALUE` option forwards the
+deployment's external authentication headers on every request.
+
 ### `GET /api/v1/tenants/{tenant_name}/focus-preview/profile`
 
 Return static metadata for the current `focus-1.4-preview-v5` mapping profile:
@@ -513,15 +523,30 @@ Supported names retain first-occurrence caller order; unknown and duplicate
 entries are logged and ignored. Full and Summary reject `columns`, and Custom
 rejects a selection with no supported Full-profile columns.
 
+### `GET /api/v1/tenants/{tenant_name}/focus-preview/requests`
+
+Return recent requests newest first, including queued, running, ready, failed,
+and expired requests. Ordering is descending by the immutable
+`(created_at, request_id)` pair.
+
+| Query | Default | Constraints | Meaning |
+|---|---:|---|---|
+| `limit` | `20` | 1–100 | Maximum items returned. |
+| `cursor` | none | Non-empty request ID | Continue after the prior page's `next_cursor`. |
+
+The response is `{"items":[...],"next_cursor":"..."}`. `next_cursor` is null
+when no later page exists. A missing cursor and a cursor owned by another tenant
+both return 400 `Preview request cursor is invalid`.
+
 ### `GET /api/v1/tenants/{tenant_name}/focus-preview/requests/{request_id}`
 
-Return the tenant-scoped request. The active lifecycle is `queued`, `running`,
-then `ready` or `failed`.
+Return the tenant-scoped request. The lifecycle is `queued`, `running`, then
+`ready` or `failed`; a ready request becomes `expired` at its fixed cutoff.
 
 Common response fields are `request_id`, `tenant_name`, `grain`, `start_date`,
 `end_date`, derived nullable `month`, `column_profile`, ordered
 `effective_columns`, `status`, `created_at`, `started_at`,
-`completed_at`, `diagnostic`, `source_snapshot`, and `package`.
+`completed_at`, `expires_at`, `diagnostic`, `source_snapshot`, and `package`.
 
 - Queued/running responses have no diagnostic, source snapshot, or package.
 - Failed responses contain `{code, message, retryable}` and no package. Source-
@@ -529,6 +554,8 @@ Common response fields are `request_id`, `tenant_name`, `grain`, `start_date`,
   maximum-20 list of opaque `src:v1:<64 lowercase hex>` values. These values do
   not reveal provider record IDs, tenant IDs, raw fields, secrets, or paths.
 - Ready responses contain a source snapshot and package metadata.
+- Expired responses retain source snapshot and expiry metadata but return
+  `package: null`.
 
 The source snapshot contains nullable `calculation_timestamp`, date-ordered
 `calculation_coverage` entries, nullable `source_through`,
@@ -536,9 +563,10 @@ The source snapshot contains nullable `calculation_timestamp`, date-ordered
 `evidence_through_date`, nullable `availability_cutoff_end_date`, and nullable
 `monthly_status`. Each coverage entry has
 `tracking_date`, `calculation_id`, `calculation_completed_at`, and optional
-`calculation_run_id`. Package metadata contains public name, media type, size,
-SHA-256, order (data files only), and API download URL. It contains no artifact
-root, storage key, or server path.
+`calculation_run_id`. A ready package contains `manifest`, ordered `files`,
+`download_all_name`, and `download_all_url`. Each artifact contains public
+`name`, `media_type`, `size_bytes`, `sha256`, optional `order`, and
+`download_url`. It contains no artifact root, storage key, or server path.
 
 A ready package stores `focus-1.4-preview-v5` output using the exact ordered
 effective columns. Full is the legacy-compatible 65 ordered FOCUS columns plus
@@ -546,10 +574,18 @@ effective columns. Full is the legacy-compatible 65 ordered FOCUS columns plus
 validated rows. The stored manifest declares `conformance_status:
 non_conforming`, profile version, grain, requested bounds, derived month,
 column profile, effective columns,
-calculation/source coverage, exact known gaps, validation status/counts,
-reconciliation, and file checksums. Mapping/profile validation completes before
-atomic finalization. Manifest and CSV downloads return the stored bytes; the
-API, UI, and CLI do not remap them.
+calculation/source coverage, exact known gaps, validation status/counts, cost
+and quantity reconciliation, seven-day lifecycle, and ordered file checksums.
+Mapping/profile validation completes before atomic publication. Manifest and
+CSV downloads return verified stored bytes; the API, UI, and CLI do not remap
+them.
+
+With `preview.max_csv_file_bytes: null`, the package has one
+`cost-and-usage.csv`. A positive byte limit may produce ordered names such as
+`cost-and-usage-part-00001-of-00003.csv`. Every part repeats the header, no row
+is split, and the limit includes the header and LF record terminators. A header
+or single row that cannot fit fails generation with
+`preview_csv_row_exceeds_file_size_limit`.
 
 The package may contain multiple persisted billing origins and multiple actual
 allocation portions per origin. `CCloudBillingLineItem` remains the sole
@@ -573,7 +609,19 @@ Return the exact stored `manifest.json` bytes for a ready request.
 ### `GET /api/v1/tenants/{tenant_name}/focus-preview/requests/{request_id}/files/{file_name}`
 
 Return the exact stored bytes for a file enumerated by a ready request. The
-current package contains `cost-and-usage.csv`.
+package contains one or more ordered CSV files declared by `package.files`.
+
+### `GET /api/v1/tenants/{tenant_name}/focus-preview/requests/{request_id}/archive`
+
+Stream a deterministic ZIP for a ready request. The archive contains
+`manifest.json` followed by data files in manifest order and is returned as
+`application/zip` with filename
+`focus-mapping-preview-{request_id}.zip`. The archive is a transport wrapper and
+is not listed as a manifest data artifact.
+
+Requested packages are available from ready publication until, but not
+including, `expires_at`, exactly seven days later. At the cutoff, status remains
+available as `expired`, while manifest, file, and archive endpoints return 410.
 
 ### Preview errors
 
@@ -589,9 +637,12 @@ current package contains `cost-and-usage.csv`.
 | Custom has no supported columns | 400 | `Custom column selection must contain at least one supported Full-profile column` |
 | Runtime unavailable | 503 | `FOCUS Mapping Preview runtime is unavailable` |
 | Storage unavailable | 503 | `FOCUS Mapping Preview storage is unavailable` |
+| Recovery unavailable | 503 | `FOCUS Mapping Preview recovery is unavailable` |
 | Worker scheduling unavailable | 503 | `FOCUS Mapping Preview worker is unavailable` |
+| Invalid or foreign recent-list cursor | 400 | `Preview request cursor is invalid` |
 | Request absent or owned by another tenant | 404 | `Preview request '<request_id>' not found` |
-| Manifest/file requested before ready | 409 | Status-specific not-ready detail |
+| Manifest/file/archive requested before ready or after failure | 409 | Status-specific not-ready detail |
+| Manifest/file/archive requested after expiry | 410 | `Preview request '<request_id>' expired at <UTC timestamp>` |
 | File not enumerated by a ready package | 404 | File-specific not-found detail |
 | Stored bytes unavailable | 500 | `Stored preview artifact is unavailable` |
 
@@ -652,7 +703,6 @@ commercial, currency, source, and mapping diagnostics. `lookback_days` is capped
 at 364 and classifies the current acquisition/recalculation window; it is not a
 retention or reconstruction promise. The API provides no data-editing,
 historical reconstruction, or correlation-repair endpoint.
-See [FOCUS Mapping Preview](focus-mapping-preview.md) for UI and CLI usage.
 
 ---
 

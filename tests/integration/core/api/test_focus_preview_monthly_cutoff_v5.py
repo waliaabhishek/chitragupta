@@ -309,6 +309,9 @@ def test_settled_monthly_positive_sources_use_real_calculate_lineage_and_persist
                 "source_cost": "6",
                 "allocated_cost": "6",
                 "difference": "0",
+                "source_quantity": "2",
+                "allocated_quantity": "2",
+                "quantity_difference": "0",
             }
             assert len(respx.calls) == 0
 

@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
 import json
+import tempfile
 import time
+import zipfile
 from datetime import UTC, date, datetime
 from decimal import Decimal
+from importlib import import_module
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -19,6 +23,7 @@ from core.engine.orchestrator import ChargebackOrchestrator
 from core.models.identity import CoreIdentity
 from core.models.pipeline import PipelineState
 from core.models.resource import CoreResource, ResourceStatus
+from core.preview.models import PreviewArtifactMetadata
 from core.storage.backends.sqlmodel.repositories import SQLModelEntityTagRepository
 from core.storage.backends.sqlmodel.unit_of_work import SQLModelBackend
 from plugins.confluent_cloud import ConfluentCloudPlugin
@@ -82,7 +87,11 @@ def _settings(tmp_path: Path, connection_string: str) -> tuple[AppSettings, Tena
     return (
         AppSettings(
             api=ApiConfig(host="127.0.0.1", port=8080),
-            preview=PreviewConfig(artifact_root=tmp_path / "artifacts", max_workers=1),
+            preview=PreviewConfig(
+                artifact_root=tmp_path / "artifacts",
+                max_workers=1,
+                max_csv_file_bytes=3200,
+            ),
             tenants={"production": tenant},
         ),
         tenant,
@@ -148,10 +157,23 @@ def _seed_context(backend: SQLModelBackend) -> tuple[int, int, int]:
 
 
 def _csv_rows(client: PipelineApiClient, ready: dict[str, Any]) -> tuple[bytes, list[dict[str, str]]]:
-    response = client.get(ready["package"]["files"][0]["download_url"])
-    assert response.status_code == 200
-    body = response.content
-    return body, list(csv.DictReader(io.StringIO(body.decode())))
+    bodies = []
+    rows: list[dict[str, str]] = []
+    header: bytes | None = None
+    for artifact in ready["package"]["files"]:
+        response = client.get(artifact["download_url"])
+        assert response.status_code == 200
+        body = response.content
+        bodies.append(body)
+        part_header, _separator, part_rows = body.partition(b"\n")
+        if header is None:
+            header = part_header
+        else:
+            assert part_header == header
+        rows.extend(csv.DictReader(io.StringIO(body.decode())))
+    assert header is not None
+    logical_body = header + b"\n" + b"".join(body.partition(b"\n")[2] for body in bodies)
+    return logical_body, rows
 
 
 def _profile_request(client: PipelineApiClient, body: dict[str, object]) -> dict[str, Any]:
@@ -328,12 +350,65 @@ def test_real_production_lineage_projects_multiple_origins_actual_portions_and_f
             "source_records": 4,
             "rows": 6,
             "mapping_errors": 0,
+            "artifact_integrity": "passed",
         }
         assert manifest["reconciliation"] == {
             "source_cost": "18",
             "allocated_cost": "18",
             "difference": "0",
+            "source_quantity": "7",
+            "allocated_quantity": "7",
+            "quantity_difference": "0",
         }
+        files = ready["package"]["files"]
+        assert len(files) > 1
+        assert [item["order"] for item in files] == list(range(1, len(files) + 1))
+        assert [item["name"] for item in files] == [
+            f"cost-and-usage-part-{index:05d}-of-{len(files):05d}.csv" for index in range(1, len(files) + 1)
+        ]
+        assert manifest["files"] == [
+            {key: item[key] for key in ("name", "media_type", "size_bytes", "sha256", "order")} for item in files
+        ]
+        retrieved_parts = [client.get(item["download_url"]).content for item in files]
+        assert [len(body) for body in retrieved_parts] == [item["size_bytes"] for item in files]
+        assert [hashlib.sha256(body).hexdigest() for body in retrieved_parts] == [item["sha256"] for item in files]
+        with backend.create_preview_read_unit_of_work() as uow:
+            persisted = uow.requests.get_for_owner(
+                ready["request_id"],
+                "confluent_cloud",
+                "org-1",
+            )
+        assert persisted is not None and persisted.package is not None
+        assert persisted.package.files == tuple(
+            PreviewArtifactMetadata(
+                item["name"],
+                item["media_type"],
+                item["size_bytes"],
+                item["sha256"],
+                item["order"],
+            )
+            for item in files
+        )
+        artifact_module = import_module("core.preview.artifacts")
+        real_spooled_temporary_file = tempfile.SpooledTemporaryFile
+        server_spools: list[object] = []
+
+        def recording_spool(*args: object, **kwargs: object) -> object:
+            spool = real_spooled_temporary_file(*args, **kwargs)
+            server_spools.append(spool)
+            return spool
+
+        monkeypatch.setattr(artifact_module, "_ARCHIVE_SPOOL_BYTES", 1)
+        monkeypatch.setattr(artifact_module.tempfile, "SpooledTemporaryFile", recording_spool)
+        archive_response = client.get(ready["package"]["download_all_url"])
+        assert archive_response.status_code == 200
+        assert len(server_spools) == 1
+        assert server_spools[0]._rolled is True  # type: ignore[attr-defined]
+        assert server_spools[0].closed is True  # type: ignore[attr-defined]
+        with zipfile.ZipFile(io.BytesIO(archive_response.content)) as archive:
+            assert archive.namelist() == ["manifest.json", *[item["name"] for item in files]]
+            assert archive.read("manifest.json") == manifest_response.content
+            assert [archive.read(item["name"]) for item in files] == retrieved_parts
         first_bytes, rows = _csv_rows(client, ready)
         assert len(rows) == 6
         first_row_order = [

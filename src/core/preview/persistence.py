@@ -6,7 +6,7 @@ from dataclasses import asdict, dataclass, replace
 from datetime import date, datetime, timedelta
 from typing import Literal, Protocol, Self, runtime_checkable
 
-from sqlalchemy import Column, Date, DateTime, Index, String, Text, cast, update
+from sqlalchemy import Column, Date, DateTime, Index, String, Text, and_, case, cast, func, or_, update
 from sqlmodel import Field, Session, SQLModel, col, select
 
 from core.preview.eligibility import capped_correlations
@@ -61,6 +61,57 @@ PreviewCalculationCoverageResult = (
 )
 
 
+def _require_safe_identifier(value: str, field: str) -> None:
+    if not value or not value.strip() or "/" in value or "\\" in value or value in {".", ".."}:
+        raise ValueError(f"{field} must be a safe nonblank identifier")
+
+
+@dataclass(frozen=True)
+class PreviewRequestPage:
+    items: tuple[PreviewRequest, ...]
+    next_cursor: str | None
+
+    def __post_init__(self) -> None:
+        if self.next_cursor is not None:
+            _require_safe_identifier(self.next_cursor, "next_cursor")
+
+
+@dataclass(frozen=True)
+class PreviewExpiredArtifact:
+    request_id: str
+    storage_key: str
+
+    def __post_init__(self) -> None:
+        _require_safe_identifier(self.request_id, "request_id")
+        _require_safe_identifier(self.storage_key, "storage_key")
+
+
+@dataclass(frozen=True)
+class PreviewInterruptionRecoveryResult:
+    failed_count: int
+    protected_count: int
+
+    def __post_init__(self) -> None:
+        if self.failed_count < 0 or self.protected_count < 0:
+            raise ValueError("preview interruption recovery counts must be non-negative")
+
+
+@dataclass(frozen=True)
+class PreviewStaleLeaseRecoveryResult:
+    failed_count: int
+    has_more: bool
+
+    def __post_init__(self) -> None:
+        if self.failed_count < 0:
+            raise ValueError("preview stale-lease recovery count must be non-negative")
+
+
+class PreviewRequestCursorError(ValueError):
+    def __init__(self, cursor_request_id: str) -> None:
+        self.cursor_request_id = cursor_request_id
+        super().__init__("preview request cursor is invalid")
+
+
 @runtime_checkable
 class PreviewCalculationRepository(Protocol):
     def find_current_coverage(
@@ -70,21 +121,90 @@ class PreviewCalculationRepository(Protocol):
 
 @runtime_checkable
 class PreviewRequestRepository(Protocol):
-    def create_queued(self, request: PreviewRequest) -> PreviewRequest: ...
+    def create_queued(
+        self,
+        request: PreviewRequest,
+        *,
+        worker_id: str | None = None,
+        lease_expires_at: datetime | None = None,
+    ) -> PreviewRequest: ...
 
     def get_for_owner(self, request_id: str, ecosystem: str, tenant_id: str) -> PreviewRequest | None: ...
 
-    def mark_running(self, request_id: str, started_at: datetime) -> PreviewRequest | None: ...
+    def list_recent_for_owner(
+        self,
+        *,
+        ecosystem: str,
+        tenant_id: str,
+        limit: int,
+        cursor_request_id: str | None,
+    ) -> PreviewRequestPage: ...
+
+    def mark_running(
+        self,
+        request_id: str,
+        started_at: datetime,
+        *,
+        worker_id: str | None = None,
+        lease_expires_at: datetime | None = None,
+    ) -> PreviewRequest | None: ...
+
+    def renew_lease(self, request_id: str, worker_id: str, lease_expires_at: datetime) -> bool: ...
 
     def mark_ready(
         self,
         request_id: str,
         completed_at: datetime,
+        expires_at: datetime,
         source_snapshot: PreviewSourceSnapshot,
         stored_package: PreviewStoredPackage,
+        *,
+        worker_id: str | None = None,
     ) -> bool: ...
 
-    def mark_failed(self, request_id: str, completed_at: datetime, diagnostic: PreviewDiagnostic) -> bool: ...
+    def mark_failed(
+        self,
+        request_id: str,
+        completed_at: datetime,
+        diagnostic: PreviewDiagnostic,
+        *,
+        worker_id: str | None = None,
+    ) -> bool: ...
+
+    def expire_ready_due(
+        self, *, ecosystem: str, tenant_id: str, now: datetime, limit: int
+    ) -> tuple[PreviewExpiredArtifact, ...]: ...
+
+    def expire_ready_request(
+        self, *, request_id: str, ecosystem: str, tenant_id: str, now: datetime
+    ) -> PreviewExpiredArtifact | None: ...
+
+    def list_expired_artifacts(
+        self, *, ecosystem: str, tenant_id: str, limit: int
+    ) -> tuple[PreviewExpiredArtifact, ...]: ...
+
+    def clear_expired_storage_key(self, request_id: str, storage_key: str) -> bool: ...
+
+    def fail_interrupted_before(
+        self,
+        *,
+        ecosystem: str,
+        tenant_id: str,
+        startup_at: datetime,
+        lease_stale_at: datetime,
+        diagnostic: PreviewDiagnostic,
+    ) -> PreviewInterruptionRecoveryResult: ...
+
+    def fail_stale_foreign_leases(
+        self,
+        *,
+        ecosystem: str,
+        tenant_id: str,
+        current_worker_id: str,
+        lease_stale_at: datetime,
+        limit: int,
+        diagnostic: PreviewDiagnostic,
+    ) -> PreviewStaleLeaseRecoveryResult: ...
 
 
 class PreviewRequestTable(SQLModel, table=True):
@@ -92,6 +212,23 @@ class PreviewRequestTable(SQLModel, table=True):
     __table_args__ = (
         Index("ix_preview_requests_owner_created", "ecosystem", "tenant_id", "created_at"),
         Index("ix_preview_requests_owner_status", "ecosystem", "tenant_id", "status"),
+        Index("ix_preview_requests_owner_expiry", "ecosystem", "tenant_id", "status", "expires_at"),
+        Index(
+            "ix_preview_requests_owner_recovery",
+            "ecosystem",
+            "tenant_id",
+            "status",
+            "created_at",
+            "lease_expires_at",
+        ),
+        Index(
+            "ix_preview_requests_owner_lease",
+            "ecosystem",
+            "tenant_id",
+            "status",
+            "lease_expires_at",
+            "worker_id",
+        ),
     )
 
     request_id: str = Field(primary_key=True)
@@ -106,6 +243,9 @@ class PreviewRequestTable(SQLModel, table=True):
     created_at: datetime = Field(sa_column=Column(DateTime(timezone=True)))
     started_at: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True)))
     completed_at: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True)))
+    expires_at: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True)))
+    worker_id: str | None = Field(default=None, sa_column=Column(String(), nullable=True))
+    lease_expires_at: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True))
     calculation_timestamp: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True)))
     source_through: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True)))
     calculation_coverage_json: str | None = None
@@ -172,6 +312,9 @@ def request_to_table(request: PreviewRequest) -> PreviewRequestTable:
         created_at=ensure_utc_strict(request.created_at),
         started_at=ensure_utc_strict(request.started_at),
         completed_at=ensure_utc_strict(request.completed_at),
+        expires_at=ensure_utc_strict(request.expires_at),
+        worker_id=None,
+        lease_expires_at=None,
         calculation_timestamp=ensure_utc_strict(
             request.source_snapshot.calculation_timestamp if request.source_snapshot else None
         ),
@@ -310,9 +453,12 @@ def request_to_domain(row: PreviewRequestTable) -> PreviewRequest:
         )
     package = None
     if row.manifest_metadata_json is not None and row.data_files_json is not None:
+        raw_files = json.loads(row.data_files_json)
+        if legacy_v4:
+            raw_files = [{**item, "order": index} for index, item in enumerate(raw_files, start=1)]
         package = PreviewPackageMetadata(
             manifest=_artifact_from_dict(json.loads(row.manifest_metadata_json)),
-            files=tuple(_artifact_from_dict(item) for item in json.loads(row.data_files_json)),
+            files=tuple(_artifact_from_dict(item) for item in raw_files),
         )
     request = PreviewRequest(
         request_id=row.request_id,
@@ -327,6 +473,7 @@ def request_to_domain(row: PreviewRequestTable) -> PreviewRequest:
         created_at=ensure_utc(row.created_at),
         started_at=ensure_utc(row.started_at),
         completed_at=ensure_utc(row.completed_at),
+        expires_at=ensure_utc(row.expires_at),
         source_snapshot=snapshot,
         diagnostic=diagnostic,
         storage_key=row.storage_key,
@@ -409,10 +556,23 @@ class SQLModelPreviewRequestRepository:
     def __init__(self, session: Session) -> None:
         self._session = session
 
-    def create_queued(self, request: PreviewRequest) -> PreviewRequest:
+    def create_queued(
+        self,
+        request: PreviewRequest,
+        *,
+        worker_id: str | None = None,
+        lease_expires_at: datetime | None = None,
+    ) -> PreviewRequest:
         if request.status is not PreviewRequestStatus.QUEUED:
             raise ValueError("new preview request must be queued")
-        self._session.add(request_to_table(request))
+        if (worker_id is None) != (lease_expires_at is None):
+            raise ValueError("preview worker ownership requires both worker_id and lease_expires_at")
+        if worker_id is not None:
+            _require_safe_identifier(worker_id, "worker_id")
+        row = request_to_table(request)
+        row.worker_id = worker_id
+        row.lease_expires_at = ensure_utc_strict(lease_expires_at)
+        self._session.add(row)
         self._session.flush()
         return request
 
@@ -425,11 +585,66 @@ class SQLModelPreviewRequestRepository:
         row = self._session.exec(statement).first()
         return request_to_domain(row) if row else None
 
+    def list_recent_for_owner(
+        self,
+        *,
+        ecosystem: str,
+        tenant_id: str,
+        limit: int,
+        cursor_request_id: str | None,
+    ) -> PreviewRequestPage:
+        if limit < 1 or limit > 100:
+            raise ValueError("preview request page limit must be between 1 and 100")
+        statement = select(PreviewRequestTable).where(
+            col(PreviewRequestTable.ecosystem) == ecosystem,
+            col(PreviewRequestTable.tenant_id) == tenant_id,
+        )
+        if cursor_request_id is not None:
+            cursor = self._session.exec(
+                select(PreviewRequestTable).where(
+                    col(PreviewRequestTable.request_id) == cursor_request_id,
+                    col(PreviewRequestTable.ecosystem) == ecosystem,
+                    col(PreviewRequestTable.tenant_id) == tenant_id,
+                )
+            ).first()
+            if cursor is None:
+                raise PreviewRequestCursorError(cursor_request_id)
+            statement = statement.where(
+                or_(
+                    col(PreviewRequestTable.created_at) < cursor.created_at,
+                    and_(
+                        col(PreviewRequestTable.created_at) == cursor.created_at,
+                        col(PreviewRequestTable.request_id) < cursor.request_id,
+                    ),
+                )
+            )
+        rows = self._session.exec(
+            statement.order_by(
+                col(PreviewRequestTable.created_at).desc(),
+                col(PreviewRequestTable.request_id).desc(),
+            ).limit(limit + 1)
+        ).all()
+        has_more = len(rows) > limit
+        emitted = rows[:limit]
+        items = tuple(request_to_domain(row) for row in emitted)
+        return PreviewRequestPage(items=items, next_cursor=items[-1].request_id if has_more and items else None)
+
     def _current(self, request_id: str) -> PreviewRequest | None:
         row = self._session.get(PreviewRequestTable, request_id)
         return None if row is None else request_to_domain(row)
 
-    def mark_running(self, request_id: str, started_at: datetime) -> PreviewRequest | None:
+    def mark_running(
+        self,
+        request_id: str,
+        started_at: datetime,
+        *,
+        worker_id: str | None = None,
+        lease_expires_at: datetime | None = None,
+    ) -> PreviewRequest | None:
+        if (worker_id is None) != (lease_expires_at is None):
+            raise ValueError("preview worker ownership requires both worker_id and lease_expires_at")
+        if worker_id is not None:
+            _require_safe_identifier(worker_id, "worker_id")
         current = self._current(request_id)
         if current is None or current.status is not PreviewRequestStatus.QUEUED:
             return None
@@ -444,23 +659,48 @@ class SQLModelPreviewRequestRepository:
             resulting_status=candidate.status,
             mode="strict_materialized",
         )
+        statement = update(PreviewRequestTable).where(
+            col(PreviewRequestTable.request_id) == request_id,
+            col(PreviewRequestTable.status) == PreviewRequestStatus.QUEUED.value,
+        )
+        if worker_id is not None:
+            statement = statement.where(col(PreviewRequestTable.worker_id) == worker_id)
+        result = self._session.execute(
+            statement.values(
+                status=candidate.status.value,
+                started_at=ensure_utc_strict(candidate.started_at),
+                lease_expires_at=ensure_utc_strict(lease_expires_at),
+            )
+        )
+        return candidate if getattr(result, "rowcount", 0) == 1 else None
+
+    def renew_lease(self, request_id: str, worker_id: str, lease_expires_at: datetime) -> bool:
+        _require_safe_identifier(worker_id, "worker_id")
         result = self._session.execute(
             update(PreviewRequestTable)
             .where(
                 col(PreviewRequestTable.request_id) == request_id,
-                col(PreviewRequestTable.status) == PreviewRequestStatus.QUEUED.value,
+                col(PreviewRequestTable.worker_id) == worker_id,
+                col(PreviewRequestTable.status).in_(
+                    [PreviewRequestStatus.QUEUED.value, PreviewRequestStatus.RUNNING.value]
+                ),
             )
-            .values(status=candidate.status.value, started_at=ensure_utc_strict(candidate.started_at))
+            .values(lease_expires_at=ensure_utc_strict(lease_expires_at))
         )
-        return candidate if getattr(result, "rowcount", 0) == 1 else None
+        return getattr(result, "rowcount", 0) == 1
 
     def mark_ready(
         self,
         request_id: str,
         completed_at: datetime,
+        expires_at: datetime,
         source_snapshot: PreviewSourceSnapshot,
         stored_package: PreviewStoredPackage,
+        *,
+        worker_id: str | None = None,
     ) -> bool:
+        if worker_id is not None:
+            _require_safe_identifier(worker_id, "worker_id")
         current = self._current(request_id)
         if current is None or current.status is not PreviewRequestStatus.RUNNING:
             return False
@@ -469,6 +709,7 @@ class SQLModelPreviewRequestRepository:
             current,
             status=PreviewRequestStatus.READY,
             completed_at=completed_at,
+            expires_at=expires_at,
             source_snapshot=source_snapshot,
             storage_key=stored_package.storage_key,
             package=package,
@@ -479,15 +720,17 @@ class SQLModelPreviewRequestRepository:
             resulting_status=candidate.status,
             mode="strict_materialized",
         )
+        statement = update(PreviewRequestTable).where(
+            col(PreviewRequestTable.request_id) == request_id,
+            col(PreviewRequestTable.status) == PreviewRequestStatus.RUNNING.value,
+        )
+        if worker_id is not None:
+            statement = statement.where(col(PreviewRequestTable.worker_id) == worker_id)
         result = self._session.execute(
-            update(PreviewRequestTable)
-            .where(
-                col(PreviewRequestTable.request_id) == request_id,
-                col(PreviewRequestTable.status) == PreviewRequestStatus.RUNNING.value,
-            )
-            .values(
+            statement.values(
                 status=PreviewRequestStatus.READY.value,
                 completed_at=ensure_utc_strict(candidate.completed_at),
+                expires_at=ensure_utc_strict(candidate.expires_at),
                 calculation_timestamp=ensure_utc_strict(source_snapshot.calculation_timestamp),
                 source_through=ensure_utc_strict(source_snapshot.source_through),
                 calculation_coverage_json=_coverage_json(source_snapshot),
@@ -498,11 +741,281 @@ class SQLModelPreviewRequestRepository:
                 storage_key=candidate.storage_key,
                 manifest_metadata_json=_canonical_json(_artifact_dict(package.manifest)),
                 data_files_json=_canonical_json([_artifact_dict(item) for item in package.files]),
+                worker_id=None,
+                lease_expires_at=None,
             )
         )
         return getattr(result, "rowcount", 0) == 1
 
-    def mark_failed(self, request_id: str, completed_at: datetime, diagnostic: PreviewDiagnostic) -> bool:
+    def expire_ready_request(
+        self,
+        *,
+        request_id: str,
+        ecosystem: str,
+        tenant_id: str,
+        now: datetime,
+    ) -> PreviewExpiredArtifact | None:
+        now = ensure_utc_strict(now)
+        current = self.get_for_owner(request_id, ecosystem, tenant_id)
+        if (
+            current is None
+            or current.status is not PreviewRequestStatus.READY
+            or current.expires_at is None
+            or current.expires_at > now
+            or current.storage_key is None
+        ):
+            return None
+        result = self._session.execute(
+            update(PreviewRequestTable)
+            .where(
+                col(PreviewRequestTable.request_id) == request_id,
+                col(PreviewRequestTable.ecosystem) == ecosystem,
+                col(PreviewRequestTable.tenant_id) == tenant_id,
+                col(PreviewRequestTable.status) == PreviewRequestStatus.READY.value,
+                col(PreviewRequestTable.expires_at) <= now,
+            )
+            .values(status=PreviewRequestStatus.EXPIRED.value)
+            .execution_options(synchronize_session=False)
+        )
+        if getattr(result, "rowcount", 0) != 1:
+            return None
+        return PreviewExpiredArtifact(request_id=request_id, storage_key=current.storage_key)
+
+    def expire_ready_due(
+        self,
+        *,
+        ecosystem: str,
+        tenant_id: str,
+        now: datetime,
+        limit: int,
+    ) -> tuple[PreviewExpiredArtifact, ...]:
+        if limit < 1 or limit > 100:
+            raise ValueError("expiry limit must be between 1 and 100")
+        due = self._session.execute(
+            select(PreviewRequestTable.request_id, PreviewRequestTable.storage_key)
+            .where(
+                col(PreviewRequestTable.ecosystem) == ecosystem,
+                col(PreviewRequestTable.tenant_id) == tenant_id,
+                col(PreviewRequestTable.status) == PreviewRequestStatus.READY.value,
+                col(PreviewRequestTable.expires_at) <= ensure_utc_strict(now),
+            )
+            .order_by(col(PreviewRequestTable.expires_at), col(PreviewRequestTable.request_id))
+            .limit(limit)
+        ).all()
+        selected = tuple((request_id, storage_key) for request_id, storage_key in due)
+        if not selected:
+            return ()
+        result = self._session.execute(
+            update(PreviewRequestTable)
+            .where(
+                col(PreviewRequestTable.request_id).in_(request_id for request_id, _ in selected),
+                col(PreviewRequestTable.ecosystem) == ecosystem,
+                col(PreviewRequestTable.tenant_id) == tenant_id,
+                col(PreviewRequestTable.status) == PreviewRequestStatus.READY.value,
+                col(PreviewRequestTable.expires_at) <= ensure_utc_strict(now),
+            )
+            .values(status=PreviewRequestStatus.EXPIRED.value)
+            .returning(col(PreviewRequestTable.request_id))
+            .execution_options(synchronize_session=False)
+        )
+        updated_ids = {request_id for (request_id,) in result}
+        return tuple(
+            PreviewExpiredArtifact(request_id, storage_key)
+            for request_id, storage_key in selected
+            if request_id in updated_ids and storage_key is not None
+        )
+
+    def list_expired_artifacts(
+        self,
+        *,
+        ecosystem: str,
+        tenant_id: str,
+        limit: int,
+    ) -> tuple[PreviewExpiredArtifact, ...]:
+        if limit < 1 or limit > 100:
+            raise ValueError("expiry limit must be between 1 and 100")
+        rows = self._session.exec(
+            select(PreviewRequestTable)
+            .where(
+                col(PreviewRequestTable.ecosystem) == ecosystem,
+                col(PreviewRequestTable.tenant_id) == tenant_id,
+                col(PreviewRequestTable.status) == PreviewRequestStatus.EXPIRED.value,
+                col(PreviewRequestTable.storage_key).is_not(None),
+            )
+            .order_by(col(PreviewRequestTable.expires_at), col(PreviewRequestTable.request_id))
+            .limit(limit)
+        ).all()
+        return tuple(
+            PreviewExpiredArtifact(row.request_id, row.storage_key) for row in rows if row.storage_key is not None
+        )
+
+    def clear_expired_storage_key(self, request_id: str, storage_key: str) -> bool:
+        result = self._session.execute(
+            update(PreviewRequestTable)
+            .where(
+                col(PreviewRequestTable.request_id) == request_id,
+                col(PreviewRequestTable.status) == PreviewRequestStatus.EXPIRED.value,
+                col(PreviewRequestTable.storage_key) == storage_key,
+            )
+            .values(storage_key=None)
+        )
+        return getattr(result, "rowcount", 0) == 1
+
+    def fail_interrupted_before(
+        self,
+        *,
+        ecosystem: str,
+        tenant_id: str,
+        startup_at: datetime,
+        lease_stale_at: datetime,
+        diagnostic: PreviewDiagnostic,
+    ) -> PreviewInterruptionRecoveryResult:
+        cutoff = ensure_utc_strict(startup_at)
+        stale = ensure_utc_strict(lease_stale_at)
+        result = self._session.execute(
+            update(PreviewRequestTable)
+            .where(
+                col(PreviewRequestTable.ecosystem) == ecosystem,
+                col(PreviewRequestTable.tenant_id) == tenant_id,
+                col(PreviewRequestTable.status).in_(
+                    [PreviewRequestStatus.QUEUED.value, PreviewRequestStatus.RUNNING.value]
+                ),
+                col(PreviewRequestTable.created_at) < cutoff,
+                or_(
+                    col(PreviewRequestTable.worker_id).is_(None),
+                    col(PreviewRequestTable.lease_expires_at).is_(None),
+                ),
+            )
+            .values(
+                status=PreviewRequestStatus.FAILED.value,
+                completed_at=case(
+                    (
+                        and_(
+                            col(PreviewRequestTable.started_at).is_not(None),
+                            col(PreviewRequestTable.started_at) > cutoff,
+                        ),
+                        col(PreviewRequestTable.started_at),
+                    ),
+                    else_=cutoff,
+                ),
+                diagnostic_code=diagnostic.code,
+                diagnostic_message=diagnostic.message,
+                diagnostic_retryable=diagnostic.retryable,
+                diagnostic_source_correlation_ids_json=_canonical_json(
+                    capped_correlations(diagnostic.source_correlation_ids)
+                ),
+                worker_id=None,
+                lease_expires_at=None,
+            )
+        )
+        failed_count = int(getattr(result, "rowcount", 0))
+        protected_count = int(
+            self._session.execute(
+                select(func.count())
+                .select_from(PreviewRequestTable)
+                .where(
+                    col(PreviewRequestTable.ecosystem) == ecosystem,
+                    col(PreviewRequestTable.tenant_id) == tenant_id,
+                    col(PreviewRequestTable.status).in_(
+                        [PreviewRequestStatus.QUEUED.value, PreviewRequestStatus.RUNNING.value]
+                    ),
+                    col(PreviewRequestTable.created_at) < cutoff,
+                    col(PreviewRequestTable.worker_id).is_not(None),
+                    col(PreviewRequestTable.lease_expires_at).is_not(None),
+                    col(PreviewRequestTable.lease_expires_at) > stale,
+                )
+            ).scalar_one()
+        )
+        return PreviewInterruptionRecoveryResult(
+            failed_count=failed_count,
+            protected_count=protected_count,
+        )
+
+    def fail_stale_foreign_leases(
+        self,
+        *,
+        ecosystem: str,
+        tenant_id: str,
+        current_worker_id: str,
+        lease_stale_at: datetime,
+        limit: int,
+        diagnostic: PreviewDiagnostic,
+    ) -> PreviewStaleLeaseRecoveryResult:
+        _require_safe_identifier(current_worker_id, "current_worker_id")
+        if limit < 1 or limit > 100:
+            raise ValueError("stale lease recovery limit must be between 1 and 100")
+        stale = ensure_utc_strict(lease_stale_at)
+        due = self._session.execute(
+            select(PreviewRequestTable.request_id)
+            .where(
+                col(PreviewRequestTable.ecosystem) == ecosystem,
+                col(PreviewRequestTable.tenant_id) == tenant_id,
+                col(PreviewRequestTable.status).in_(
+                    [PreviewRequestStatus.QUEUED.value, PreviewRequestStatus.RUNNING.value]
+                ),
+                col(PreviewRequestTable.worker_id).is_not(None),
+                col(PreviewRequestTable.worker_id) != current_worker_id,
+                col(PreviewRequestTable.lease_expires_at).is_not(None),
+                col(PreviewRequestTable.lease_expires_at) <= stale,
+            )
+            .order_by(col(PreviewRequestTable.lease_expires_at), col(PreviewRequestTable.request_id))
+            .limit(limit + 1)
+        ).all()
+        request_ids = tuple(request_id for (request_id,) in due[:limit])
+        if not request_ids:
+            return PreviewStaleLeaseRecoveryResult(failed_count=0, has_more=False)
+        result = self._session.execute(
+            update(PreviewRequestTable)
+            .where(
+                col(PreviewRequestTable.request_id).in_(request_ids),
+                col(PreviewRequestTable.ecosystem) == ecosystem,
+                col(PreviewRequestTable.tenant_id) == tenant_id,
+                col(PreviewRequestTable.status).in_(
+                    [PreviewRequestStatus.QUEUED.value, PreviewRequestStatus.RUNNING.value]
+                ),
+                col(PreviewRequestTable.worker_id).is_not(None),
+                col(PreviewRequestTable.worker_id) != current_worker_id,
+                col(PreviewRequestTable.lease_expires_at).is_not(None),
+                col(PreviewRequestTable.lease_expires_at) <= stale,
+            )
+            .values(
+                status=PreviewRequestStatus.FAILED.value,
+                completed_at=case(
+                    (
+                        and_(
+                            col(PreviewRequestTable.started_at).is_not(None),
+                            col(PreviewRequestTable.started_at) > stale,
+                        ),
+                        col(PreviewRequestTable.started_at),
+                    ),
+                    (col(PreviewRequestTable.created_at) > stale, col(PreviewRequestTable.created_at)),
+                    else_=stale,
+                ),
+                diagnostic_code=diagnostic.code,
+                diagnostic_message=diagnostic.message,
+                diagnostic_retryable=diagnostic.retryable,
+                diagnostic_source_correlation_ids_json=_canonical_json(
+                    capped_correlations(diagnostic.source_correlation_ids)
+                ),
+                worker_id=None,
+                lease_expires_at=None,
+            )
+        )
+        return PreviewStaleLeaseRecoveryResult(
+            failed_count=int(getattr(result, "rowcount", 0)),
+            has_more=len(due) > limit,
+        )
+
+    def mark_failed(
+        self,
+        request_id: str,
+        completed_at: datetime,
+        diagnostic: PreviewDiagnostic,
+        *,
+        worker_id: str | None = None,
+    ) -> bool:
+        if worker_id is not None:
+            _require_safe_identifier(worker_id, "worker_id")
         current = self._current(request_id)
         if current is None or current.status not in {PreviewRequestStatus.QUEUED, PreviewRequestStatus.RUNNING}:
             return False
@@ -519,15 +1032,16 @@ class SQLModelPreviewRequestRepository:
             mode="strict_materialized",
         )
         assert candidate.diagnostic is not None
+        statement = update(PreviewRequestTable).where(
+            col(PreviewRequestTable.request_id) == request_id,
+            col(PreviewRequestTable.status).in_(
+                [PreviewRequestStatus.QUEUED.value, PreviewRequestStatus.RUNNING.value]
+            ),
+        )
+        if worker_id is not None:
+            statement = statement.where(col(PreviewRequestTable.worker_id) == worker_id)
         result = self._session.execute(
-            update(PreviewRequestTable)
-            .where(
-                col(PreviewRequestTable.request_id) == request_id,
-                col(PreviewRequestTable.status).in_(
-                    [PreviewRequestStatus.QUEUED.value, PreviewRequestStatus.RUNNING.value]
-                ),
-            )
-            .values(
+            statement.values(
                 status=PreviewRequestStatus.FAILED.value,
                 completed_at=ensure_utc_strict(candidate.completed_at),
                 diagnostic_code=candidate.diagnostic.code,
@@ -536,6 +1050,8 @@ class SQLModelPreviewRequestRepository:
                 diagnostic_source_correlation_ids_json=_canonical_json(
                     capped_correlations(candidate.diagnostic.source_correlation_ids)
                 ),
+                worker_id=None,
+                lease_expires_at=None,
             )
         )
         return getattr(result, "rowcount", 0) == 1

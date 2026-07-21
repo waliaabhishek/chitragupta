@@ -44,24 +44,29 @@ All tenants share these `TenantConfig` fields:
 
 ## FOCUS Mapping Preview
 
-Preview artifact storage and worker concurrency are process-wide settings, not
-tenant settings:
+Preview artifact storage, worker concurrency, and CSV part sizing are
+process-wide settings, not tenant settings:
 
 ```yaml
 preview:
   artifact_root: /var/lib/chitragupta/focus-preview
   max_workers: 2
+  max_csv_file_bytes: null
 ```
 
 | Field | Type | Default | Constraints | Description |
 |---|---|---|---|---|
 | `preview.artifact_root` | path | `data/focus-preview` | writable directory | Durable local root for immutable Preview packages. Relative paths resolve from the process working directory. |
 | `preview.max_workers` | int | `2` | 1–16 | Maximum Preview generation jobs in this API process. |
+| `preview.max_csv_file_bytes` | int or null | `null` | positive integer or null | Maximum bytes per CSV part, including its repeated header and LF record terminators. `null` emits one `cost-and-usage.csv`; a positive value enables deterministic row-boundary partitioning. |
 
 The artifact root must be on durable storage and writable by the API process.
 For containers, mount it into the data volume. The database stores request and
-artifact metadata; artifact bytes remain under this root and are served only by
-the protected Preview API. Changing the root does not move existing packages.
+artifact metadata; artifact bytes remain under this root and are served through
+the Preview API. The REST API has no built-in authentication. Put the complete
+Preview route prefix, including request history, status, manifest, file, and
+archive routes, behind an authenticated reverse proxy or API gateway. Changing
+the root does not move existing packages.
 
 Confluent Cloud tenants can optionally declare the commercial contract required
 for Preview:
@@ -90,8 +95,8 @@ the manifest identifies the provider-field limitation. See the
 [Confluent Cloud reference](ccloud-reference.md#focus-mapping-preview-eligibility)
 for the fail-closed rules and retention boundary.
 
-See [FOCUS Mapping Preview](../focus-mapping-preview.md) for request behavior and
-client usage.
+See [FOCUS Mapping Preview](../focus-mapping-preview.md) for the complete setup,
+request, download, package, expiry, and customization workflow.
 
 ## Emitters
 

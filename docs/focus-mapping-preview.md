@@ -1,252 +1,156 @@
 # FOCUS Mapping Preview
 
-FOCUS Mapping Preview creates an immutable, explicitly non-conforming FOCUS 1.4
-Cost and Usage package from data Chitragupta has already collected and
-calculated. The current tracer supports Confluent Cloud, Daily and Monthly
-grain, and Full, Summary, or Custom column profiles. Monthly is the UI default;
-Full remains the default column profile.
+FOCUS Mapping Preview turns Confluent Cloud billing, inventory, and calculated
+allocation data already stored by Chitragupta into an immutable FOCUS 1.4 Cost
+and Usage package. Packages are explicitly marked `non_conforming` because
+some provider-authoritative FOCUS fields are unavailable.
 
-Preview is an exposition path, not a data-editing path. Submitting a request:
+Preview does not call Confluent Cloud, gather data, calculate allocations, edit
+stored records, or recreate historical evidence. Run the ordinary pipeline
+first, then request a Preview from the web UI, CLI, or API.
 
-- reads the latest persisted successful calculation for every date in the
-  effective evidence interval;
-- does not call Confluent Cloud or trigger the pipeline;
-- does not edit, backfill, approve, or repair collected data; and
-- produces no partial package when the persisted scope is unsupported or
-  incomplete.
+## 1. Configure the tenant and package storage
 
-Run the API in `api` or `both` mode and configure durable artifact storage before
-using Preview. See [Configuration](configuration/index.md#focus-mapping-preview)
-and the [API Reference](api-reference.md#focus-mapping-preview).
-
-## Tenant eligibility configuration
-
-The tenant-level `focus_preview` block is optional so existing configurations
-continue to load. Omission does not make a tenant eligible: a submitted request
-fails asynchronously with `preview_commercial_profile_unavailable`.
+Preview currently supports Confluent Cloud tenants with a Direct-billed PAYG
+commercial profile and USD billing contract. The complete requested interval
+must fit inside the configured half-open effective interval.
 
 ```yaml
+preview:
+  artifact_root: data/focus-preview
+  max_workers: 2
+  max_csv_file_bytes: null
+
 tenants:
   production:
+    ecosystem: confluent_cloud
+    tenant_id: production
+    lookback_days: 200
+    cutoff_days: 5
+    retention_days: 250
     focus_preview:
       commercial_profile: direct_payg
       billing_currency: USD
       effective_start_date: 2026-01-01
       effective_end_date: 2027-01-01
+    storage:
+      connection_string: sqlite:///data/ccloud.db
+    plugin_settings:
+      ccloud_api:
+        key: ${CCLOUD_API_KEY}
+        secret: ${CCLOUD_API_SECRET}
+      billing_api:
+        days_per_query: 15
 ```
 
-When the block is present, `commercial_profile` must be `direct_payg` and the
-effective dates define a non-empty half-open interval that contains the complete
-request. `billing_currency` defaults to `USD`; surrounding whitespace and case
-are normalized. A valid non-USD value can load configuration, but Preview fails
-closed with `preview_billing_currency_unsupported`. There is no currency
-conversion or relabeling.
+`tenant_id` is Chitragupta's storage partition key. It is not used as the FOCUS
+billing account. Preview obtains the Confluent organization through the normal
+inventory pipeline and uses that provider organization ID as
+`BillingAccountId`.
 
-Confluent's Costs API currently does not return a per-record ISO currency value.
-Configured/default USD is therefore the supported commercial contract, not a
-claim that the provider supplied record-level currency. The generated FOCUS
-`BillingCurrency` remains null and the manifest reports
-`provider_billing_currency_field_unavailable`. A future provider currency field
-can close that limitation without silently rewriting historical values.
+`preview.artifact_root` must be durable and writable by the API process. Mount
+it into the same persistent volume as application data in container
+deployments. The database holds request and package metadata; the immutable
+manifest and CSV bytes live under this root and are served only through the
+Preview API.
 
-## Request scope
+The process-wide Preview settings are:
 
-Daily requests use explicit inclusive-start, exclusive-end UTC dates and must
-contain 1–31 days within one UTC calendar month. The exclusive end may be the
-first day of the following month. Monthly requests use an explicit `YYYY-MM`
-and persist the canonical first day and exclusive first day of the next month.
-Requests never fan out across months.
+| Setting | Default | Valid values | Effect |
+|---|---:|---|---|
+| `preview.artifact_root` | `data/focus-preview` | Writable local path | Stores immutable requested packages. Changing it does not move existing packages. |
+| `preview.max_workers` | `2` | 1–16 | Maximum concurrent Preview jobs in one API process. |
+| `preview.max_csv_file_bytes` | `null` | `null` or a positive integer | `null` produces one CSV. A byte limit splits output into deterministic parts without splitting rows. |
 
-A ready package may contain multiple persisted billing
-origins and every actual allocation portion produced for those origins. Each
-origin must have exactly one accepted raw Cost source, complete calculation
-lineage, and exact cost and quantity reconciliation. Multiple native/tier Cost
-sources mapped to one billing origin remain outside the current scope.
+See the [Confluent Cloud configuration reference](configuration/ccloud-reference.md)
+for the remaining collection and allocation settings.
 
-The package contains:
+## 2. Gather and calculate source data
 
-- `manifest.json`, a Chitragupta manifest declaring target FOCUS version 1.4,
-  `non_conforming` status, source coverage, validation, reconciliation, file
-  metadata, and known gaps; and
-- `cost-and-usage.csv`, one deterministic UTF-8 data file using the requested
-  grain and effective column selection.
-
-The manifest and CSV are stored as immutable bytes. API responses expose public
-filenames, sizes, SHA-256 values, and download URLs, but never the artifact root,
-opaque storage key, or server filesystem path.
-
-## Mapping profile v5
-
-`focus-1.4-preview-v5` is the code-owned mapping profile. It defines
-all 65 FOCUS 1.4 Full columns and 12 ordered custom evidence columns, including
-feature level, applicability, nullability, source, transformation, allowed
-values, validator, and gap ownership. Startup validation rejects incomplete,
-overlapping, reordered, or inconsistent profile/readiness definitions. Every
-row is validated against the complete profile before artifact finalization.
-Passing this validation means only that the row matches this declared Preview
-profile; the manifest remains `non_conforming`. The Full column sequence is
-identical to the frozen `focus-1.4-daily-full-v4` sequence, so persisted legacy
-Daily/Full requests without v5 column metadata continue to hydrate and download
-their original immutable bytes.
-
-Version 4 resolves the prior `allocation_lineage_and_tag_projection_pending`,
-`allocation_ratio_deferred`, and `allocation_method_version_deferred` gaps.
-Persisted method details, method version, realized ratio, origin tags, and
-Allocation Target tags are now mapped and validated.
-
-The ordinary pipeline gathers the Confluent organization from
-`GET /org/v2/organizations` as isolated supplemental inventory. Preview reads
-the persisted immutable binding: `BillingAccountId` is the provider
-organization ID, `BillingAccountName` is its optional display name, and
-`BillingAccountType` is `Organization`. The tenant ID is only Chitragupta's
-partition key and is never used as a billing account. Missing or conflicting
-organization authority fails the request; Preview does not call the provider.
-The containing UTC month supplies `BillingPeriodStart` and
-`BillingPeriodEnd`.
-
-Charge and financial behavior is fail-closed:
-
-- ordinary metered usage is `Usage` / `Usage-Based`;
-- Support is `Purchase` / `Recurring`;
-- a non-refund native `PROMO_CREDIT` is `Credit` / `One-Time`, including when
-  the provider supplies null product, unit, price, and quantity; those native
-  nulls remain null in source evidence and output;
-- an unambiguous refund retains the original native product's `Usage` /
-  `Usage-Based` or `Purchase` / `Recurring` semantics, including signed cost,
-  price, and quantity values that reconcile exactly; and
-- ambiguous classification, invalid signs, non-finite numbers, or failed exact
-  `Decimal` arithmetic blocks the whole request.
-
-For each ready allocation portion, its persisted cost supplies `BilledCost` and
-`EffectiveCost`; source `original_amount` multiplied by the persisted realized
-allocation ratio supplies `ListCost` and `ContractedCost`. Price, allocated
-quantity, unit, and tier evidence are emitted only when their arithmetic and
-charge semantics are valid. `SkuId` and
-`SkuPriceId` are deterministic namespaced v1 hashes over closed canonical
-component schemas; `SkuPriceDetails` and `x_ChitraguptaSkuComponents` preserve
-the exact canonical components. These values are Chitragupta-derived, not
-provider-issued SKU authority.
-
-`InvoiceId`, `InvoiceDetailId`, and `InvoiceIssuerName` remain null. Provider
-cloud and region inventory is retained twice: normalized operational fields
-continue to serve allocation code, while Preview copies the exact raw
-`provider_cloud` into `HostProviderName` and raw `provider_region` into
-`RegionId`. It does not trim, title-case, canonicalize, or synthesize display
-names. `RegionName` remains null.
-
-The persisted `CCloudBillingLineItem` is the sole allocation origin.
-`CalculatePhase` records lineage from that existing billing natural key to the
-actual chargeback portions it produced, including exact cost, derived quantity,
-realized ratio, target kind, method, calculation identity, and completion time.
-It does not reconstruct billing from chargebacks, redistribute costs, synthesize
-a remainder, or change handlers, allocators, metrics, identity resolution, or
-generic exports.
-
-Raw Confluent Cost rows remain the classification and coverage authority. Each
-row stores a lossless association to its already mapped billing key while
-retaining native values independently. Migration 021 adds this association and
-Confluent-owned lineage run/portion storage. Migrated rows with no association
-or calculation lineage are not guessed or backfilled: regather the ordinary
-provider source and run the ordinary calculation before retrying Preview.
-
-All currently accepted native line types can consume persisted lineage.
-Organization-wide `AUDIT_LOG_READ`, `SUPPORT`, and promotional credits retain
-null origin resource/provider fields. `TABLEFLOW_DATA_PROCESSED`,
-`TABLEFLOW_NUM_TOPICS`, and `TABLEFLOW_STORAGE` still fail
-`preview_provider_context_incomplete` because current inventory cannot prove
-provider-authoritative TABLEFLOW context. Multiple native/tier sources under one
-billing origin still fail `preview_mapping_scope_unsupported`; Preview never
-invents a native-origin allocation matrix.
-
-An actual `UNALLOCATED` portion is emitted with null `AllocatedResourceId`,
-`AllocatedResourceName`, and `AllocatedTags`. Other actual identity/resource
-targets retain their typed IDs and names. `Tags` contains package-time origin
-resource tags, while `AllocatedTags` contains package-time target tags; the two
-sets are never overlaid. They are frozen into the stored CSV bytes, so later tag
-edits cannot change an already-ready package.
-
-## Monthly aggregation and column profiles
-
-Monthly generation first validates the same persisted daily billing, source,
-and TASK-254.05 allocation-lineage evidence as Daily generation. It then groups
-only rows whose non-additive mapping, Allocation Target, classification, tier,
-pricing, tags, SKU, and allocation method/ratio evidence match. Monetary and
-quantity measures are summed under the Preview decimal context;
-`x_ConfluentDiscountAmount` remains additive. Monthly never recalculates an
-allocation ratio, invokes an allocator, or calls Confluent Cloud.
-
-A requested month always retains its full canonical bounds. Its effective
-evidence interval is frozen from the request creation time and configured
-acquisition cutoff:
-
-- `provisional` uses complete daily evidence before the cutoff, which can be
-  empty early in a started month;
-- `settled` requires both complete full-month evidence and at least 72 hours
-  after the exclusive month end; and
-- a future month fails with the existing retryable cutoff diagnostic.
-
-An early started month can have an empty effective evidence interval. If the
-tenant remains commercially eligible, this is a valid provisional result: the
-package contains only the selected CSV header, retains zero reconciliation, and
-performs no calculation-coverage lookup. It is not treated as partial output.
-
-The status response and manifest expose effective coverage, evidence-through
-date, the frozen availability cutoff, and Monthly status. Daily uses its
-requested bounds as effective coverage and has no Monthly status or availability
-cutoff.
-
-Column selection happens after mapping, Monthly aggregation, row validation,
-ordering, and reconciliation:
-
-- Full emits the canonical 77-column v5 sequence (65 FOCUS plus 12 custom
-  evidence columns).
-- Summary emits the fixed 20-column reporting subset in canonical Full order.
-- Custom emits supported Full-profile columns in the caller's first-occurrence
-  order. Unknown and duplicate entries are logged and ignored; an empty
-  effective selection is rejected.
-
-The manifest records `column_profile` and the exact ordered
-`effective_columns`. Summary and Custom cannot change hidden row identity,
-diagnostics, or financial reconciliation.
-
-## Web UI
-
-Open **FOCUS Mapping Preview** from the sidebar (`/focus-preview`). The page:
-
-- uses the currently selected tenant;
-- defaults to Monthly and the current UTC month, with Daily as an explicit
-  inclusive-start/exclusive-end alternative;
-- offers Full, Summary, and Custom profiles and loads the Custom allowlist from
-  the tenant profile endpoint;
-- submits one asynchronous request and polls queued/running state;
-- shows provisional/settled Monthly status and the current evidence-through
-  date;
-- displays the persisted diagnostic message and retryability on failure; and
-- downloads the stored manifest and CSV through the configured API origin.
-
-The page declares these current authority gaps before submission:
-
-| Code | Gap | Owner |
-|---|---|---|
-| `provider_billing_currency_field_unavailable` | The provider Costs API omits a per-record ISO currency; `BillingCurrency` remains null | TASK-254.03 |
-| `invoice_identity_unavailable` | Post-issuance invoice identity | TASK-254.04 |
-| `invoice_issuer_name_unavailable` | Provider legal invoice-issuer evidence is unavailable | TASK-254.04 |
-| `provider_host_display_name_unavailable` | `HostProviderName` contains the raw provider cloud code, not a provider display name | TASK-254.04 |
-| `provider_region_display_name_unavailable` | Confluent inventory does not provide a distinct region display name; `RegionName` remains null | TASK-254.04 |
-| `derived_sku_identity_not_provider_authoritative` | Deterministic SKU values are Chitragupta-derived, not provider-issued identifiers | TASK-254.04 |
-
-Request, polling, and download transport failures produce a generic safe UI
-error. Cancelling or leaving the page aborts polling without showing an error.
-The UI does not generate CSV, map fields, run the collector, or offer a data
-editing/repair control.
-
-## Remote CLI
-
-`chitragupta-preview` is an HTTP client for a remote Chitragupta API. Include the
-API version prefix in `--api-url`:
+Run the worker before requesting output:
 
 ```bash
-chitragupta-preview request \
+uv run python src/main.py --config-file config.yaml --run-once
+```
+
+For the continuously running worker and API backend:
+
+```bash
+uv run python src/main.py --config-file config.yaml --mode both
+```
+
+The backend command does not start the frontend. For local development, the
+repository Makefile starts the worker/API backend and Vite frontend together:
+
+```bash
+make dev
+```
+
+For the deployed full stack, use the repository Docker Compose setup:
+
+In `examples/ccloud-full/config.yaml`, set the top-level Preview artifact root
+to `/app/data/focus-preview`. The Compose service mounts its persistent named
+volume at `/app/data`:
+
+```yaml
+preview:
+  artifact_root: /app/data/focus-preview
+  max_workers: 2
+  max_csv_file_bytes: null
+```
+
+```bash
+cd examples/ccloud-full
+docker compose up -d
+```
+
+The default Compose URLs are API `http://localhost:8080` and frontend UI
+`http://localhost:8081`. See the [Quickstart](getting-started/quickstart.md) and
+[Deployment](operations/deployment.md) guides for environment-specific setup.
+
+Preview requires persisted successful calculation metadata, raw Confluent Cost
+records, billing rows, allocation lineage, organization inventory, and relevant
+resource/identity inventory for the requested evidence interval. It fails the
+whole request when required evidence is missing or inconsistent; it never emits
+a partial package.
+
+## 3. Generate and download from the web UI
+
+Open **FOCUS Mapping Preview** at `/focus-preview` and select a tenant. The page:
+
+- defaults to Monthly and the current UTC month;
+- offers Daily with an inclusive start date and exclusive end date;
+- offers Full, Summary, and Custom column profiles;
+- loads the supported Custom column allowlist from the API;
+- submits and polls the asynchronous request;
+- lists recent requests and supports cursor-based **Load more**;
+- shows calculation time, source-through time, Monthly provisional/settled
+  state, completion time, and expiry; and
+- downloads `manifest.json`, any individual CSV part, or the complete ZIP.
+
+Ready packages show download controls. Expired requests remain in history but
+show no downloads. Failed requests show their persisted diagnostic and whether
+retrying can succeed after the underlying data condition changes.
+
+## 4. Use the remote CLI
+
+`chitragupta-preview` is an HTTP client. The examples below run it from a source
+checkout with `uv run`. Include `/api/v1` in `--api-url` and repeat
+`--header NAME=VALUE` for deployment-specific authentication or proxy headers.
+Duplicate header names are preserved on submission, polling, and downloads.
+
+Chitragupta's REST API has no built-in authentication. Deployments must protect
+the complete Preview route prefix—including submission, history, status,
+manifest, file, and archive routes—behind an authenticated reverse proxy or API
+gateway. The CLI forwards every supplied `--header` on submission, status polls,
+and artifact downloads so it can use that external authentication boundary.
+
+### Request and download a package
+
+Monthly Summary package as individual files:
+
+```bash
+uv run chitragupta-preview request \
   --api-url https://chitragupta.example/api/v1 \
   --tenant production \
   --month 2026-07 \
@@ -255,89 +159,228 @@ chitragupta-preview request \
   --header 'Authorization=Bearer <token>'
 ```
 
-For Daily, replace `--month` with both `--start-date` and `--end-date`.
-Custom requests repeat `--column <name>` in the desired order with
-`--column-profile custom`. The original `daily-full` command remains a
-compatibility alias for a Daily Full request.
+Daily Custom package as a ZIP:
 
-Repeat `--header NAME=VALUE` for every header required by the deployment's
-reverse proxy or API gateway. Duplicate names are preserved. The CLI forwards
-all supplied headers on submission, every status poll, and every artifact
-download. Header values and response bodies are omitted from HTTP errors.
-
-The CLI polls once per second until the request is ready or failed. On success it
-creates the local output directory and writes `manifest.json` and
-`cost-and-usage.csv`. On a failed request it writes:
-
-```text
-Preview failed [<code>]: <message>
-Source correlation: src:v1:<hash>
+```bash
+uv run chitragupta-preview request \
+  --api-url https://chitragupta.example/api/v1 \
+  --tenant production \
+  --start-date 2026-07-01 \
+  --end-date 2026-07-08 \
+  --column-profile custom \
+  --column BilledCost \
+  --column ResourceId \
+  --archive ./focus-preview.zip
 ```
 
-and exits non-zero. It does not automatically resubmit, run the pipeline, or
-change server data. API-provided cross-origin download URLs are rejected before
-credentials are forwarded. The correlation line appears only when the API
-returns safe source correlations; raw provider identifiers are never printed.
+Daily dates are UTC, inclusive-start/exclusive-end, 1–31 days, and must stay
+within one UTC calendar month; the exclusive end may be the first day of the
+next month. Monthly accepts one `YYYY-MM`. `--column-profile` defaults to
+`full`; repeat `--column` only with `custom`. The `daily-full` command remains a
+compatibility alias that requires Daily dates and `--output-dir`.
 
-## Lifecycle and diagnostics
+Without an output option, `request` waits and prints `<request_id> ready`.
+`--json` prints the exact terminal API status document.
 
-The persisted lifecycle is:
+### Submit now and retrieve later
 
-```text
-queued -> running -> ready
-                  -> failed
-queued ----------------> failed
+```bash
+request_id=$(uv run chitragupta-preview request \
+  --api-url https://chitragupta.example/api/v1 \
+  --tenant production \
+  --month 2026-07 \
+  --no-wait)
+
+uv run chitragupta-preview status \
+  --api-url https://chitragupta.example/api/v1 \
+  --tenant production \
+  --wait \
+  --json \
+  "$request_id"
 ```
 
-`ready` is recorded only after the complete artifact directory has been
-atomically finalized. The status response includes exact per-date calculation
-identity, nullable `source_through`, and effective evidence coverage. Monthly
-responses additionally expose the frozen availability cutoff,
-evidence-through date, and `provisional` or `settled` status.
+`--no-wait` performs only the POST. It prints the request ID, or the complete
+queued response with `--json`, and cannot be combined with a download output.
+`status` performs one GET unless `--wait` is present.
 
-Calculation coverage failures are:
+Download an existing ready request:
 
-| Code | Retryable | Meaning |
-|---|---:|---|
-| `calculation_metadata_unavailable` | no | A calculated date lacks usable persisted calculation identity/completion metadata. No edit or repair action is implied. |
-| `calculation_before_acquisition_lookback` | no | Required retained calculation evidence is outside the current acquisition window. Increasing lookback or reconstructing provider data is not promised. |
-| `calculation_pending_cutoff_window` | yes | At least one missing date is still inside the recent cutoff window; wait for it to enter the acquisition window, run the ordinary pipeline, and retry. |
-| `calculation_unavailable` | yes | No requested date has a usable persisted calculation; run the ordinary pipeline and retry. |
-| `calculation_coverage_incomplete` | yes | Some, but not all, requested dates have usable persisted calculations; run the ordinary pipeline and retry. |
+```bash
+# Manifest plus every CSV part
+uv run chitragupta-preview download \
+  --api-url https://chitragupta.example/api/v1 \
+  --tenant production \
+  "$request_id" \
+  --output-dir ./focus-preview
 
-Commercial/currency policy precedes a complete streamed source scan. Structural,
-classification, and financial source issues are resolved globally before keyed
-TABLEFLOW provider context, complete source/aggregate coverage, and the current
-one-source-per-billing-origin cardinality gate. Aggregate currency checks and
-source/aggregate equality precede complete lineage run/portion structure; every
-origin is structurally valid before any allocation cost/quantity total is
-reconciled. Input ordering cannot change the winning diagnostic.
+# One file enumerated by the package
+uv run chitragupta-preview download \
+  --api-url https://chitragupta.example/api/v1 \
+  --tenant production \
+  "$request_id" \
+  --file cost-and-usage.csv \
+  --output ./cost-and-usage.csv
 
-Missing or invalid persisted lineage fails non-retryably with
-`preview_allocation_lineage_incomplete`. A source/aggregate mismatch or any
-allocation cost/quantity shortfall or overage fails non-retryably with
-`preview_source_reconciliation_failed`. A legacy source without the complete
-billing association fails `preview_source_coverage_incomplete`.
-Where a source can be implicated, the API/UI/CLI can display up to 20 sorted,
-unique safe `src:v1:<64 lowercase hex>` correlations. Correlations are
-tenant-scoped hashes and contain no provider IDs or raw source values. Failed
-requests have no source snapshot, package, staging path, or downloadable
-artifact.
+# Complete archive to a local file
+uv run chitragupta-preview download \
+  --api-url https://chitragupta.example/api/v1 \
+  --tenant production \
+  "$request_id" \
+  --archive ./focus-preview.zip
 
-`lookback_days` remains capped at 364. It controls the current provider
-acquisition/recalculation window and Preview's lifecycle classification; it is
-not retention, an archive, or a guarantee that billing plus Metrics API evidence
-can be reconstructed. `retention_days` is a separate current-data cleanup
-setting. Independent multi-year completed-chargeback retention/archive is owned
-by TASK-256 and is outside this release.
+# Complete verified archive to stdout
+uv run chitragupta-preview download \
+  --api-url https://chitragupta.example/api/v1 \
+  --tenant production \
+  "$request_id" \
+  --archive - > focus-preview.zip
+```
 
-## Current boundaries
+For `--file`, `--output` is required and the file name must be present in the
+manifest. Output paths are local-only. `--json` cannot be combined with archive
+stdout because both use stdout. On other successful `download` modes, `--json`
+prints the ready status document after the verified local output is published.
 
-This release does not provide Preview data editing, approval, manual metadata
-correction, request-triggered collection, historical correlation backfill,
-partial output, request listing, automatic expiry, or a Download All archive.
-It does not add TABLEFLOW provider authority, support native tier/multi-source
-projection under one billing origin, or claim FOCUS 1.4 conformance. The generic
-chargeback export remains a separate API and is unchanged.
-Scheduled Monthly publication, revisions, replacement history, and retention
-remain outside this requested-preview release.
+The CLI verifies the manifest, file metadata, byte sizes, SHA-256 checksums,
+archive member order, and every archived file before publishing local output.
+An individual file or local archive replaces its target atomically with
+`os.replace` only after verification. Directory mode verifies the complete
+package in a same-parent staging directory, moves an existing target directory
+to a backup, swaps in the verified staging directory, and restores the backup
+if publication fails. API-provided cross-origin URLs are rejected before
+headers are forwarded.
+
+CLI exit codes are:
+
+| Code | Meaning |
+|---:|---|
+| 0 | Success |
+| 1 | HTTP, request-state, generation, or expiry failure |
+| 2 | Invalid CLI usage |
+| 3 | Manifest, checksum, or archive-integrity failure |
+
+## 5. Use the API
+
+All paths are under `/api/v1/tenants/{tenant_name}/focus-preview`.
+
+| Method and path | Purpose |
+|---|---|
+| `GET /profile` | Return the mapping profile version and ordered Full/Summary column allowlists. |
+| `POST /requests` | Create an asynchronous Daily or Monthly request. |
+| `GET /requests?limit=20&cursor={request_id}` | List requests newest first. `limit` is 1–100; `next_cursor` continues the list. |
+| `GET /requests/{request_id}` | Read status, freshness, diagnostics, expiry, and ready package metadata. |
+| `GET /requests/{request_id}/manifest` | Download exact `manifest.json` bytes. |
+| `GET /requests/{request_id}/files/{file_name}` | Download one enumerated CSV part. |
+| `GET /requests/{request_id}/archive` | Stream the complete deterministic ZIP. |
+
+Daily request:
+
+```json
+{
+  "grain": "daily",
+  "start_date": "2026-07-01",
+  "end_date": "2026-07-08",
+  "column_profile": "full"
+}
+```
+
+Monthly Custom request:
+
+```json
+{
+  "grain": "monthly",
+  "month": "2026-07",
+  "column_profile": "custom",
+  "columns": ["BilledCost", "ResourceId"]
+}
+```
+
+Unknown and duplicate Custom columns are logged and ignored. Supported columns
+retain first-occurrence order. A Custom request fails when no supported columns
+remain. Full and Summary reject `columns`.
+
+Every status/list item contains `request_id`, `tenant_name`, `grain`,
+`start_date`, `end_date`, nullable `month`, `column_profile`, ordered
+`effective_columns`, `status`, `created_at`, nullable `started_at`, nullable
+`completed_at`, nullable `expires_at`, nullable `diagnostic`, nullable
+`source_snapshot`, and nullable `package`.
+
+Ready `package` contains `manifest`, ordered `files`, `download_all_name`, and
+`download_all_url`. Each artifact has `name`, `media_type`, `size_bytes`,
+`sha256`, optional `order`, and `download_url`. Expired responses keep their
+snapshot and expiry but return `package: null`.
+
+See the [API reference](api-reference.md#focus-mapping-preview) for response
+fields, pagination, status behavior, errors, and diagnostic codes.
+
+## Package contents and lifecycle
+
+Every package contains:
+
+- `manifest.json`, using schema `chitragupta.preview-manifest.v2`; and
+- one `cost-and-usage.csv` by default, or ordered files named
+  `cost-and-usage-part-00001-of-00003.csv` and so on when the configured byte
+  limit requires partitioning.
+
+Each CSV part is UTF-8 with LF line endings and repeats the same selected
+header. Rows are never split between parts. Part ordering, names, bytes, sizes,
+and SHA-256 values are deterministic for the same source snapshot and request
+parameters.
+
+The manifest records request scope, mapping profile, effective columns, source
+and calculation coverage, known gaps, validation counts, cost and quantity
+reconciliation, lifecycle timestamps, and ordered file metadata. Its `files`
+list contains data files only. The status response separately supplies the
+manifest's own size and checksum. The ZIP is a transport wrapper containing
+`manifest.json` followed by the CSV files in manifest order; it is not another
+data artifact in the manifest.
+
+A requested package is downloadable for exactly seven days from durable ready
+publication. At `expires_at`, status becomes `expired` and all downloads return
+410 before filesystem cleanup. The request and audit metadata remain visible.
+Creating a new request after expiry reads the then-current persisted source
+snapshot; it does not recreate the expired bytes.
+
+This fixed seven-day package lifecycle is independent of tenant
+`retention_days`, topic-attribution retention, and `lookback_days`.
+
+## Supported customization
+
+| Need | Supported control | Notes |
+|---|---|---|
+| Choose reporting period | Daily `start_date`/`end_date` or Monthly `month` | Daily cannot span more than one UTC calendar month. |
+| Choose columns | Full, Summary, or Custom profile | Full emits 65 FOCUS columns plus 12 evidence columns; Summary emits its fixed 20-column subset; Custom uses only names returned by `GET /profile`. |
+| Choose physical part size | `preview.max_csv_file_bytes` | Changes filenames and part boundaries only; rows and totals are unchanged. |
+| Choose package storage/concurrency | `preview.artifact_root`, `preview.max_workers` | Process-wide operational settings. |
+| Declare Preview commercial scope | Tenant `focus_preview` block | Currently Direct-billed PAYG and USD only. |
+| Change allocation inputs | Existing Confluent allocator/identity settings | Takes effect through a later ordinary calculation; Preview reads the persisted result and never recalculates ratios. |
+
+The mapping profile itself is code-owned. Changing FOCUS field mappings,
+service/charge classification, derived SKU rules, canonical row ordering,
+manifest schema, validation, reconciliation, the Summary column set, the
+seven-day lifetime, or adding another provider/commercial profile requires a
+code change and a new release. There is no YAML mapping override or client-side
+remapping hook.
+
+## Current output boundaries
+
+- `BillingAccountId` comes from the persisted Confluent organization ID.
+- Native promotional-credit rows are retained as `Credit` / `One-Time`, even
+  when provider product, unit, price, and quantity fields are null. Supported
+  refunds retain their source classification and signed financial values.
+- Preview projects the persisted allocation portions produced by the ordinary
+  calculation. It does not reconstruct billing rows from chargebacks or
+  recalculate allocation ratios.
+- Confluent Cost records do not provide per-record ISO currency, so
+  `BillingCurrency` is null even though USD is the required commercial
+  contract. No currency conversion occurs.
+- `HostProviderName` and `RegionId` preserve the provider values; a separate
+  provider region display name is unavailable, so `RegionName` is null.
+- Invoice identity and issuer fields are unavailable.
+- SKU identities are deterministic Chitragupta-derived values, not
+  provider-issued identifiers.
+- TABLEFLOW rows currently fail closed when provider context cannot be proven.
+- The package declares `conformance_status: non_conforming`; passing Preview's
+  validation does not claim FOCUS conformance.
+
+The generic chargeback export is a separate API and is not changed by Preview.

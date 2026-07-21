@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from enum import StrEnum
@@ -151,6 +152,26 @@ class PreviewArtifactMetadata:
     sha256: str
     order: int | None
 
+    def __post_init__(self) -> None:
+        if (
+            not isinstance(self.name, str)
+            or not self.name
+            or self.name in {".", ".."}
+            or "/" in self.name
+            or "\\" in self.name
+        ):
+            raise ValueError("artifact name must be a safe basename")
+        if not isinstance(self.media_type, str) or not self.media_type.strip():
+            raise ValueError("artifact media_type must not be blank")
+        if not isinstance(self.size_bytes, int) or isinstance(self.size_bytes, bool) or self.size_bytes < 0:
+            raise ValueError("artifact size_bytes must be a non-negative integer")
+        if not isinstance(self.sha256, str) or re.fullmatch(r"[0-9a-f]{64}", self.sha256) is None:
+            raise ValueError("artifact sha256 must be canonical lowercase hexadecimal")
+        if self.order is not None and (
+            not isinstance(self.order, int) or isinstance(self.order, bool) or self.order <= 0
+        ):
+            raise ValueError("artifact order must be a positive integer or None")
+
 
 @dataclass(frozen=True)
 class PreviewSourceSnapshot:
@@ -201,6 +222,15 @@ class PreviewPackageMetadata:
     manifest: PreviewArtifactMetadata
     files: tuple[PreviewArtifactMetadata, ...]
 
+    def __post_init__(self) -> None:
+        if self.manifest.order is not None:
+            raise ValueError("manifest order must be None")
+        names = (self.manifest.name, *(item.name for item in self.files))
+        if len(names) != len(set(names)):
+            raise ValueError("package artifact names must be unique")
+        if tuple(item.order for item in self.files) != tuple(range(1, len(self.files) + 1)):
+            raise ValueError("package file order must be contiguous")
+
 
 @dataclass(frozen=True)
 class PreviewRequest:
@@ -216,6 +246,7 @@ class PreviewRequest:
     created_at: datetime
     started_at: datetime | None
     completed_at: datetime | None
+    expires_at: datetime | None
     source_snapshot: PreviewSourceSnapshot | None
     diagnostic: PreviewDiagnostic | None
     storage_key: str | None
@@ -235,8 +266,10 @@ class PreviewRequest:
         object.__setattr__(self, "created_at", created)
         started = None if self.started_at is None else _require_aware(self.started_at, "started_at")
         completed = None if self.completed_at is None else _require_aware(self.completed_at, "completed_at")
+        expires = None if self.expires_at is None else _require_aware(self.expires_at, "expires_at")
         object.__setattr__(self, "started_at", started)
         object.__setattr__(self, "completed_at", completed)
+        object.__setattr__(self, "expires_at", expires)
         if started is not None and started < created:
             raise ValueError("started_at must not precede created_at")
         if completed is not None and completed < created:
@@ -252,20 +285,21 @@ class PreviewRequest:
         elif status in {PreviewRequestStatus.READY, PreviewRequestStatus.EXPIRED}:
             if started is None or completed is None:
                 raise ValueError("ready request timestamps are incomplete")
+            if expires is None or expires != completed + timedelta(days=7):
+                raise ValueError("ready and expired requests require expires_at exactly seven days after completed_at")
         elif status is PreviewRequestStatus.FAILED and completed is None:
             raise ValueError("failed request requires completed_at")
+        if status not in {PreviewRequestStatus.READY, PreviewRequestStatus.EXPIRED} and expires is not None:
+            raise ValueError("non-ready request expires_at must be null")
 
         ready_payload = self.source_snapshot is not None or self.storage_key is not None or self.package is not None
         if status in {PreviewRequestStatus.QUEUED, PreviewRequestStatus.RUNNING}:
             if ready_payload or self.diagnostic is not None:
                 raise ValueError("pending request payload is invalid")
         elif status in {PreviewRequestStatus.READY, PreviewRequestStatus.EXPIRED}:
-            if (
-                self.source_snapshot is None
-                or self.storage_key is None
-                or self.package is None
-                or self.diagnostic is not None
-            ):
+            if self.source_snapshot is None or self.package is None or self.diagnostic is not None:
+                raise ValueError("ready request payload is incomplete")
+            if status is PreviewRequestStatus.READY and self.storage_key is None:
                 raise ValueError("ready request payload is incomplete")
         elif status is PreviewRequestStatus.FAILED and (self.diagnostic is None or ready_payload):
             raise ValueError("failed request payload is invalid")
@@ -351,13 +385,12 @@ class PreviewArtifactPayload:
 
 
 @dataclass(frozen=True)
-class PreviewPackagePayload:
-    manifest_body: bytes
-    data_files: tuple[PreviewArtifactPayload, ...]
-
-
-@dataclass(frozen=True)
 class PreviewStoredPackage:
     storage_key: str
     manifest: PreviewArtifactMetadata
     files: tuple[PreviewArtifactMetadata, ...]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.storage_key, str) or not self.storage_key.strip():
+            raise ValueError("storage_key must not be blank")
+        PreviewPackageMetadata(manifest=self.manifest, files=self.files)

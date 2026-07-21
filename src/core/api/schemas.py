@@ -126,6 +126,8 @@ class FocusPreviewArtifactResponse(BaseModel):
 class FocusPreviewPackageResponse(BaseModel):
     manifest: FocusPreviewArtifactResponse
     files: list[FocusPreviewArtifactResponse]
+    download_all_name: str
+    download_all_url: str
 
 
 class FocusPreviewResponse(BaseModel):
@@ -141,12 +143,18 @@ class FocusPreviewResponse(BaseModel):
     created_at: datetime
     started_at: datetime | None
     completed_at: datetime | None
+    expires_at: datetime | None
     diagnostic: FocusPreviewDiagnosticResponse | None
     source_snapshot: FocusPreviewSourceSnapshotResponse | None
     package: FocusPreviewPackageResponse | None
 
 
 FocusPreviewStatusResponse = FocusPreviewResponse
+
+
+class FocusPreviewRequestListResponse(BaseModel):
+    items: list[FocusPreviewResponse]
+    next_cursor: str | None
 
 
 class TenantStatusDetailResponse(BaseModel):

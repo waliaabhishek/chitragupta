@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import logging
-from datetime import timedelta
+from collections.abc import Iterator
+from datetime import UTC, timedelta
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import Response, StreamingResponse
+from starlette.background import BackgroundTask
 
 from core.api.dependencies import get_or_create_backend, get_tenant_config
 from core.api.schemas import (  # noqa: TC001  # FastAPI evaluates annotations
@@ -15,6 +17,7 @@ from core.api.schemas import (  # noqa: TC001  # FastAPI evaluates annotations
     FocusPreviewPackageResponse,
     FocusPreviewProfileResponse,
     FocusPreviewRequestBody,
+    FocusPreviewRequestListResponse,
     FocusPreviewSourceSnapshotResponse,
     FocusPreviewStatusResponse,
 )
@@ -31,7 +34,7 @@ from core.preview.models import (
     preview_month,
     validate_preview_request_snapshot,
 )
-from core.preview.persistence import PreviewStorageBackend
+from core.preview.persistence import PreviewRequestCursorError, PreviewStorageBackend
 from core.preview.request import (
     PreviewColumnSelectionEmptyError,
     PreviewRequestValidationError,
@@ -39,7 +42,12 @@ from core.preview.request import (
     canonicalize_monthly_interval,
     normalize_column_selection,
 )
-from core.preview.service import PreviewArtifactUnavailable, PreviewRuntime, PreviewWorkerUnavailable
+from core.preview.service import (
+    PreviewArtifactUnavailable,
+    PreviewRecoveryUnavailable,
+    PreviewRuntime,
+    PreviewWorkerUnavailable,
+)
 
 router = APIRouter(prefix="/tenants/{tenant_name}/focus-preview", tags=["focus-preview"])
 logger = logging.getLogger(__name__)
@@ -60,8 +68,12 @@ def _backend(request: Request, tenant_name: str, tenant_config: TenantConfig) ->
             tenant_config.storage,
             tenant_config.ecosystem,
         )
-    except Exception:
-        logger.exception("FOCUS Mapping Preview backend creation failed")
+    except Exception as exc:
+        logger.error(
+            "FOCUS Mapping Preview backend creation failed tenant=%s error_type=%s",
+            tenant_name,
+            type(exc).__name__,
+        )
         raise HTTPException(503, detail="FOCUS Mapping Preview storage is unavailable") from None
     if not isinstance(backend, PreviewStorageBackend):
         raise HTTPException(503, detail="FOCUS Mapping Preview storage is unavailable")
@@ -119,10 +131,12 @@ def _serialize(request: PreviewRequest) -> FocusPreviewStatusResponse:
             monthly_status=request.source_snapshot.monthly_status,
         )
     package = None
-    if request.package is not None:
+    if request.package is not None and request.status is PreviewRequestStatus.READY:
         package = FocusPreviewPackageResponse(
             manifest=_artifact_response(request.package.manifest, f"{base}/manifest"),
             files=[_artifact_response(item, f"{base}/files/{item.name}") for item in request.package.files],
+            download_all_name=f"focus-mapping-preview-{request.request_id}.zip",
+            download_all_url=f"{base}/archive",
         )
     diagnostic = None
     if request.diagnostic is not None:
@@ -145,6 +159,7 @@ def _serialize(request: PreviewRequest) -> FocusPreviewStatusResponse:
         created_at=request.created_at,
         started_at=request.started_at,
         completed_at=request.completed_at,
+        expires_at=request.expires_at,
         diagnostic=diagnostic,
         source_snapshot=snapshot,
         package=package,
@@ -160,6 +175,21 @@ def _lookup(
     _check_ecosystem(tenant_config)
     runtime = _runtime(request)
     backend = _backend(request, tenant_name, tenant_config)
+    try:
+        runtime.ensure_owner_recovered(
+            backend=backend,
+            tenant_name=tenant_name,
+            ecosystem=tenant_config.ecosystem,
+            tenant_id=tenant_config.tenant_id,
+        )
+        runtime.reconcile_expiry(
+            backend=backend,
+            ecosystem=tenant_config.ecosystem,
+            tenant_id=tenant_config.tenant_id,
+            request_id=request_id,
+        )
+    except PreviewRecoveryUnavailable:
+        raise HTTPException(503, detail="FOCUS Mapping Preview recovery is unavailable") from None
     preview = runtime.get_request(
         backend=backend,
         request_id=request_id,
@@ -229,6 +259,12 @@ def submit_preview(
     runtime = _runtime(request)
     backend = _backend(request, tenant_name, tenant_config)
     try:
+        runtime.ensure_owner_recovered(
+            backend=backend,
+            tenant_name=tenant_name,
+            ecosystem=tenant_config.ecosystem,
+            tenant_id=tenant_config.tenant_id,
+        )
         preview = runtime.submit(
             tenant_name=tenant_name,
             tenant_config=tenant_config,
@@ -239,9 +275,45 @@ def submit_preview(
             column_profile=body.column_profile,
             effective_columns=selection.effective_columns,
         )
+    except PreviewRecoveryUnavailable:
+        raise HTTPException(503, detail="FOCUS Mapping Preview recovery is unavailable") from None
     except PreviewWorkerUnavailable:
         raise HTTPException(503, detail="FOCUS Mapping Preview worker is unavailable") from None
     return _serialize(preview)
+
+
+@router.get("/requests", response_model=FocusPreviewRequestListResponse)
+def list_previews(
+    request: Request,
+    tenant_name: str,
+    tenant_config: Annotated[TenantConfig, Depends(get_tenant_config)],
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    cursor: Annotated[str | None, Query(min_length=1)] = None,
+) -> FocusPreviewRequestListResponse:
+    _check_ecosystem(tenant_config)
+    runtime = _runtime(request)
+    backend = _backend(request, tenant_name, tenant_config)
+    try:
+        runtime.ensure_owner_recovered(
+            backend=backend,
+            tenant_name=tenant_name,
+            ecosystem=tenant_config.ecosystem,
+            tenant_id=tenant_config.tenant_id,
+        )
+        page = runtime.list_recent_requests(
+            backend=backend,
+            ecosystem=tenant_config.ecosystem,
+            tenant_id=tenant_config.tenant_id,
+            limit=limit,
+            cursor_request_id=cursor,
+        )
+    except PreviewRecoveryUnavailable:
+        raise HTTPException(503, detail="FOCUS Mapping Preview recovery is unavailable") from None
+    except PreviewRequestCursorError:
+        raise HTTPException(400, detail="Preview request cursor is invalid") from None
+    return FocusPreviewRequestListResponse(
+        items=[_serialize(item) for item in page.items], next_cursor=page.next_cursor
+    )
 
 
 @router.get("/requests/{request_id}", response_model=FocusPreviewStatusResponse)
@@ -263,6 +335,10 @@ def _require_ready(preview: PreviewRequest) -> None:
         )
     if preview.status is PreviewRequestStatus.FAILED:
         raise HTTPException(409, detail=f"Preview request {preview.request_id!r} failed; inspect diagnostics")
+    if preview.status is PreviewRequestStatus.EXPIRED:
+        assert preview.expires_at is not None
+        expires = preview.expires_at.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        raise HTTPException(410, detail=f"Preview request {preview.request_id!r} expired at {expires}")
 
 
 @router.get("/requests/{request_id}/manifest")
@@ -299,3 +375,32 @@ def get_file(
     except PreviewArtifactUnavailable, OSError:
         raise HTTPException(500, detail="Stored preview artifact is unavailable") from None
     return Response(body, media_type=metadata.media_type)
+
+
+@router.get("/requests/{request_id}/archive")
+def get_archive(
+    request: Request,
+    tenant_name: str,
+    request_id: str,
+    tenant_config: Annotated[TenantConfig, Depends(get_tenant_config)],
+) -> StreamingResponse:
+    runtime, preview = _lookup(request, tenant_name, tenant_config, request_id)
+    _require_ready(preview)
+    try:
+        archive = runtime.open_archive(preview)
+    except PreviewArtifactUnavailable, OSError:
+        raise HTTPException(500, detail="Stored preview artifact is unavailable") from None
+
+    def chunks() -> Iterator[bytes]:
+        try:
+            yield from archive.iter_chunks()
+        finally:
+            archive.close()
+
+    filename = f"focus-mapping-preview-{request_id}.zip"
+    return StreamingResponse(
+        chunks(),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        background=BackgroundTask(archive.close),
+    )

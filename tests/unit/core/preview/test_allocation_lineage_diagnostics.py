@@ -881,9 +881,16 @@ def test_package_reconciliation_totals_ignore_ambient_decimal_context_and_stream
         finally:
             backend.dispose()
 
-    assert observed == [{"source_cost": expected, "allocated_cost": expected, "difference": "0"}] * len(
-        _STREAM_PERMUTATIONS
-    )
+    assert observed == [
+        {
+            "source_cost": expected,
+            "allocated_cost": expected,
+            "difference": "0",
+            "source_quantity": "2",
+            "allocated_quantity": "2",
+            "quantity_difference": "0",
+        }
+    ] * len(_STREAM_PERMUTATIONS)
 
 
 def test_recalculation_alone_cannot_recover_legacy_association_but_regather_then_calculation_can(

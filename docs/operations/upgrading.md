@@ -18,8 +18,8 @@ If you have multiple tenants, back up each tenant's database.
 
 If the deployment has generated FOCUS Mapping Preview packages, also back up
 the configured `preview.artifact_root`. The database contains request/package
-metadata, while the immutable manifest and CSV bytes live under that filesystem
-root.
+metadata, while immutable manifest and CSV bytes live under that filesystem
+root. A usable restore requires the matching database and artifact-root backup.
 
 ### PostgreSQL
 
@@ -149,7 +149,36 @@ currency, so `BillingCurrency` remains null in generated output.
 Do not increase `lookback_days` in an attempt to recover absent Preview history.
 Its maximum remains 364 and it defines acquisition/recalculation eligibility,
 not retention, archival history, or guaranteed reconstruction from billing and
-Metrics APIs. TASK-256 owns a future independent archive/retention design.
+Metrics APIs.
+
+### Migrations 021–022: allocation lineage and report profiles
+
+Migration 021 associates retained Confluent Cost source rows with their billing
+origins and adds persisted calculation-lineage runs and portions. Existing rows
+are not guessed or rewritten. Preview requests that encounter legacy rows
+without the association require an ordinary provider gather followed by an
+ordinary calculation.
+
+Migration 022 adds effective-column and evidence-coverage fields used by Daily
+and Monthly Full/Summary/Custom requests. Existing Daily/Full requests retain
+their original immutable package behavior.
+
+### Migration 023: package expiry and worker leases
+
+Migration 023 adds `expires_at`, `worker_id`, and `lease_expires_at` to Preview
+requests plus owner-scoped expiry, recovery, and lease indexes. Existing ready
+and expired requests with a completion timestamp are backfilled to expire seven
+days after completion; queued, running, and failed requests keep null expiry.
+
+On startup, the API cleans interrupted staging directories and reconciles
+interrupted requests through persisted worker leases. Live leases remain
+protected. Ready packages at or beyond their expiry become unavailable before
+filesystem cleanup.
+
+The new process setting `preview.max_csv_file_bytes` is optional and defaults to
+null, so existing configuration remains valid. Set it only when deterministic
+multi-part CSV output is required. Back up the artifact root before upgrade and
+verify that it remains mounted at the same configured path after restart.
 
 ## Rollback
 

@@ -29,7 +29,7 @@ as the config file. Variables already in the environment take precedence.
 logging:       # Optional — log level and format
 features:      # Optional — periodic refresh, parallelism
 api:           # Optional — HTTP server settings
-preview:       # Optional — FOCUS Mapping Preview artifact root and workers
+preview:       # Optional — FOCUS Mapping Preview storage, workers, and CSV part size
 tenants:       # Required — one entry per managed tenant
   <name>:
     ecosystem: ...
@@ -56,9 +56,23 @@ provide per-record ISO currency, so generated FOCUS `BillingCurrency` remains
 null even when configured/default USD makes the request eligible. See the
 [Confluent Cloud reference](../configuration/ccloud-reference.md#focus-mapping-preview-eligibility).
 
+Preview's process-wide package settings are separate from the tenant block:
+
+```yaml
+preview:
+  artifact_root: /var/lib/chitragupta/focus-preview
+  max_workers: 2
+  max_csv_file_bytes: null
+```
+
+The artifact root must be durable and writable by the API process.
+`max_csv_file_bytes` is either null for one CSV or a positive byte ceiling for
+deterministic row-boundary parts. See
+[FOCUS Mapping Preview](../focus-mapping-preview.md) for the complete user
+workflow and supported customization boundary.
+
 Tenant `lookback_days` is capped at 364 and controls acquisition/recalculation,
-not retention or guaranteed historical reconstruction. TASK-256 owns a future
-independent archive/retention design for completed chargeback evidence.
+not retention or guaranteed historical reconstruction.
 
 ## Tenant isolation
 

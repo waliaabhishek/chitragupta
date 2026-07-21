@@ -18,9 +18,60 @@ const queued = {
   created_at: "2026-07-03T00:00:00Z",
   started_at: null,
   completed_at: null,
+  expires_at: null,
   diagnostic: null,
   source_snapshot: null,
   package: null,
+};
+
+const readyPackage = {
+  ...queued,
+  status: "ready",
+  completed_at: "2026-07-03T00:01:00Z",
+  expires_at: "2026-07-10T00:01:00Z",
+  source_snapshot: {
+    calculation_timestamp: "2026-07-02T23:55:00Z",
+    calculation_coverage: [],
+    source_through: "2026-07-02T23:50:00Z",
+    effective_coverage_start_date: "2026-07-01",
+    effective_coverage_end_date: "2026-07-02",
+    evidence_through_date: "2026-07-01",
+    availability_cutoff_end_date: "2026-07-02",
+    monthly_status: null,
+  },
+  package: {
+    manifest: {
+      name: "manifest.json",
+      media_type: "application/json",
+      size_bytes: 321,
+      sha256: "a".repeat(64),
+      download_url:
+        "/api/v1/tenants/production/focus-preview/requests/request-1/manifest",
+    },
+    files: [
+      {
+        name: "cost-and-usage-part-00001-of-00002.csv",
+        media_type: "text/csv",
+        size_bytes: 12,
+        sha256: "b".repeat(64),
+        order: 1,
+        download_url:
+          "/api/v1/tenants/production/focus-preview/requests/request-1/files/cost-and-usage-part-00001-of-00002.csv",
+      },
+      {
+        name: "cost-and-usage-part-00002-of-00002.csv",
+        media_type: "text/csv",
+        size_bytes: 11,
+        sha256: "c".repeat(64),
+        order: 2,
+        download_url:
+          "/api/v1/tenants/production/focus-preview/requests/request-1/files/cost-and-usage-part-00002-of-00002.csv",
+      },
+    ],
+    download_all_name: "focus-mapping-preview-request-1.zip",
+    download_all_url:
+      "/api/v1/tenants/production/focus-preview/requests/request-1/archive",
+  },
 };
 
 const correlatedDiagnostic: import("./focusPreview").FocusPreviewDiagnostic = {
@@ -116,6 +167,67 @@ describe("FOCUS Mapping Preview API delegation", () => {
     expect(requests).toBe(1);
   });
 
+  it("lists recent requests using the server cursor without reordering the response", async () => {
+    let capturedUrl = "";
+    server.use(
+      http.get(
+        `${API_BASE}/tenants/production/focus-preview/requests`,
+        ({ request }) => {
+          capturedUrl = request.url;
+          return HttpResponse.json({
+            items: [
+              { ...readyPackage, request_id: "request-3" },
+              { ...queued, request_id: "request-2", status: "failed" },
+            ],
+            next_cursor: "request-2",
+          });
+        },
+      ),
+    );
+    const { listFocusPreviewRequests } = await loadClient();
+
+    const page = await listFocusPreviewRequests("production", {
+      limit: 2,
+      cursor: "request-4",
+    });
+
+    expect(capturedUrl).toBe(
+      `${API_BASE}/tenants/production/focus-preview/requests?limit=2&cursor=request-4`,
+    );
+    expect(page.items.map((item: { request_id: string }) => item.request_id)).toEqual([
+      "request-3",
+      "request-2",
+    ]);
+    expect(page.next_cursor).toBe("request-2");
+  });
+
+  it("consumes ready status and package bytes exactly as supplied by the API", async () => {
+    const archiveBytes = new Uint8Array([0x50, 0x4b, 0x03, 0x04, 0x07]);
+    server.use(
+      http.get(
+        `${API_BASE}/tenants/production/focus-preview/requests/request-1`,
+        () => HttpResponse.json(readyPackage),
+      ),
+      http.get(
+        `${API_BASE}/tenants/production/focus-preview/requests/request-1/archive`,
+        () => new HttpResponse(archiveBytes),
+      ),
+    );
+    const { fetchFocusPreviewStatus, fetchPreviewArtifact } = await loadClient();
+
+    const status = await fetchFocusPreviewStatus("production", "request-1");
+    const archive = await fetchPreviewArtifact(status.package!.download_all_url);
+
+    expect(status).toEqual(readyPackage);
+    expect(status.package!.files.map((file) => file.name)).toEqual([
+      "cost-and-usage-part-00001-of-00002.csv",
+      "cost-and-usage-part-00002-of-00002.csv",
+    ]);
+    expect([...new Uint8Array(await archive.arrayBuffer())]).toEqual([
+      0x50, 0x4b, 0x03, 0x04, 0x07,
+    ]);
+  });
+
   it("resolves origin-relative manifest and file URLs against an absolute API origin", async () => {
     const { resolvePreviewDownloadUrl } = await loadClient();
 
@@ -184,13 +296,19 @@ describe("FOCUS Mapping Preview API delegation", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it("contains no mapping, CSV generation, checksum, or filesystem logic", async () => {
+  it("contains no mapping, CSV generation, checksum mutation, archive construction, or filesystem logic", async () => {
     const source = await import("./focusPreview?raw");
     const text = source.default;
 
     expect(text).not.toContain("core.preview.mapping");
     expect(text).not.toContain("csv.writer");
-    expect(text).not.toContain("sha256");
+    expect(text).not.toContain("crypto.subtle");
+    expect(text).not.toContain("createHash");
+    expect(text).not.toContain("digest(");
     expect(text).not.toContain("storage_key");
+    expect(text).not.toContain("server_path");
+    expect(text).not.toContain("JSZip");
+    expect(text).not.toContain("ZipWriter");
+    expect(text).not.toContain("createArchive");
   });
 });

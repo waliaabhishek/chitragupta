@@ -11,6 +11,7 @@ export interface FocusPreviewArtifact {
   name: string;
   media_type: string;
   size_bytes: number;
+  sha256: string;
   order?: number;
   download_url: string;
   [key: string]: unknown;
@@ -40,12 +41,26 @@ export interface FocusPreviewRequest {
   created_at: string;
   started_at: string | null;
   completed_at: string | null;
+  expires_at: string | null;
   diagnostic: FocusPreviewDiagnostic | null;
   source_snapshot: FocusPreviewSourceSnapshot | null;
   package: {
     manifest: FocusPreviewArtifact;
     files: FocusPreviewArtifact[];
+    download_all_name: string;
+    download_all_url: string;
   } | null;
+}
+
+export interface FocusPreviewRequestPage {
+  items: FocusPreviewRequest[];
+  next_cursor: string | null;
+}
+
+export interface ListFocusPreviewRequestsOptions {
+  limit?: number;
+  cursor?: string;
+  signal?: AbortSignal;
 }
 
 export type FocusPreviewColumnProfile = "full" | "summary" | "custom";
@@ -86,12 +101,14 @@ async function requireOk(response: Response): Promise<Response> {
 export async function submitFocusPreview(
   tenantName: string,
   body: SubmitFocusPreviewBody,
+  signal?: AbortSignal,
 ): Promise<FocusPreviewRequest> {
   const response = await requireOk(
     await fetch(`${API_URL}/tenants/${tenantName}/focus-preview/requests`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
+      ...(signal ? { signal } : {}),
     }),
   );
   return response.json() as Promise<FocusPreviewRequest>;
@@ -111,11 +128,32 @@ export async function fetchFocusPreviewStatus(
   return response.json() as Promise<FocusPreviewRequest>;
 }
 
+export async function listFocusPreviewRequests(
+  tenantName: string,
+  options: ListFocusPreviewRequestsOptions = {},
+): Promise<FocusPreviewRequestPage> {
+  const params = new URLSearchParams();
+  if (options.limit !== undefined) {
+    params.set("limit", String(options.limit));
+  }
+  if (options.cursor !== undefined) {
+    params.set("cursor", options.cursor);
+  }
+  const query = params.toString();
+  const url = `${API_URL}/tenants/${tenantName}/focus-preview/requests${query ? `?${query}` : ""}`;
+  const response = await requireOk(
+    await (options.signal ? fetch(url, { signal: options.signal }) : fetch(url)),
+  );
+  return response.json() as Promise<FocusPreviewRequestPage>;
+}
+
 export async function fetchFocusPreviewProfile(
   tenantName: string,
+  signal?: AbortSignal,
 ): Promise<FocusPreviewProfile> {
+  const url = `${API_URL}/tenants/${tenantName}/focus-preview/profile`;
   const response = await requireOk(
-    await fetch(`${API_URL}/tenants/${tenantName}/focus-preview/profile`),
+    await (signal ? fetch(url, { signal }) : fetch(url)),
   );
   return response.json() as Promise<FocusPreviewProfile>;
 }
@@ -133,9 +171,11 @@ export function resolvePreviewDownloadUrl(downloadUrl: string): string {
 
 export async function fetchPreviewArtifact(
   downloadUrl: string,
+  signal?: AbortSignal,
 ): Promise<Blob> {
+  const url = resolvePreviewDownloadUrl(downloadUrl);
   const response = await requireOk(
-    await fetch(resolvePreviewDownloadUrl(downloadUrl)),
+    await (signal ? fetch(url, { signal }) : fetch(url)),
   );
   return response.blob();
 }

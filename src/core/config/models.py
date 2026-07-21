@@ -62,6 +62,7 @@ class StorageConfig(BaseModel):
 class PreviewConfig(BaseModel):
     artifact_root: Path = Path("data/focus-preview")
     max_workers: int = Field(default=2, gt=0, le=16)
+    max_csv_file_bytes: int | None = Field(default=None, gt=0)
 
 
 class FocusPreviewTenantConfig(BaseModel):

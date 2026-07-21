@@ -14,6 +14,11 @@ ecosystem: confluent_cloud
 ## Full example
 
 ```yaml
+preview:
+  artifact_root: /var/lib/chitragupta/focus-preview
+  max_workers: 2
+  max_csv_file_bytes: null
+
 tenants:
   my-ccloud-org:
     ecosystem: confluent_cloud
@@ -109,14 +114,20 @@ historical values.
 acquisition and recalculation. `lookback_days` is not retention, archival
 history, or a promise that billing and Metrics API inputs still exist for
 reconstruction. `retention_days` is separate but does not introduce a
-multi-year completed-chargeback archive. TASK-256 owns design of independent
-longer-term chargeback evidence retention/archive.
+multi-year completed-chargeback archive.
 
 Source-related failures can expose at most 20 sorted, unique, tenant-scoped
 `src:v1:<64 lowercase hex>` correlation values. They are safe lookup handles,
 not provider IDs, raw fields, secrets, or storage paths. All commercial,
 currency, calculation, source, and reconciliation failures are fail-closed and
 produce no Preview package.
+
+The top-level `preview.max_csv_file_bytes` setting controls only physical CSV
+part boundaries. Request grain and Full/Summary/Custom profiles control report
+shape. FOCUS field mappings, charge classification, Summary membership,
+manifest schema, and package lifetime are code-owned and have no YAML override.
+See [FOCUS Mapping Preview](../focus-mapping-preview.md) for request and download
+examples.
 
 ## plugin_settings fields (CCloud)
 

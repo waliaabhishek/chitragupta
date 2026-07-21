@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -17,11 +19,13 @@ from core.preview.artifacts import LocalPreviewArtifactStore
 from core.preview.mapping import (
     FOCUS_1_4_SUMMARY_COLUMNS,
     LEGACY_DAILY_FULL_V4_COLUMNS,
+    PreviewDataPackageDraft,
+    PreviewPackageReconciliation,
+    build_preview_manifest,
 )
 from core.preview.models import (
     PreviewArtifactPayload,
     PreviewCalculationCoverageEntry,
-    PreviewPackagePayload,
     PreviewRequest,
     PreviewRequestStatus,
     PreviewSourceSnapshot,
@@ -65,27 +69,33 @@ def _settings(connection_string: str, artifact_root: Path) -> AppSettings:
     )
 
 
-def _artifact_payload(*, request_id: str, manifest_fields: dict[str, object]) -> PreviewPackagePayload:
+@dataclass(frozen=True)
+class ArtifactBodies:
+    manifest_body: bytes
+    data_files: tuple[PreviewArtifactPayload, ...]
+
+
+def _artifact_payload(*, request_id: str, manifest_fields: dict[str, object]) -> ArtifactBodies:
     csv_body = f"request_id,BilledCost\n{request_id},8.00\n".encode()
     file_metadata = {
         "name": "focus.csv",
         "media_type": "text/csv",
         "size_bytes": len(csv_body),
         "sha256": hashlib.sha256(csv_body).hexdigest(),
-        "order": 0,
+        "order": 1,
     }
     manifest_body = json.dumps(
         {**manifest_fields, "files": [file_metadata]},
         sort_keys=True,
         separators=(",", ":"),
     ).encode()
-    return PreviewPackagePayload(
+    return ArtifactBodies(
         manifest_body=manifest_body,
         data_files=(
             PreviewArtifactPayload(
                 name="focus.csv",
                 media_type="text/csv",
-                order=0,
+                order=1,
                 body=csv_body,
             ),
         ),
@@ -123,7 +133,7 @@ def _persist_ready_request(
     effective_end: date,
     cutoff_end: date | None,
     monthly_status: str | None,
-) -> PreviewPackagePayload:
+) -> ArtifactBodies:
     request = PreviewRequest(
         request_id=request_id,
         tenant_name="production",
@@ -137,6 +147,7 @@ def _persist_ready_request(
         created_at=created_at,
         started_at=None,
         completed_at=None,
+        expires_at=None,
         source_snapshot=None,
         diagnostic=None,
         storage_key=None,
@@ -153,21 +164,38 @@ def _persist_ready_request(
         availability_cutoff_end_date=cutoff_end,
         monthly_status=monthly_status,  # type: ignore[arg-type]
     )
-    package = _artifact_payload(
-        request_id=request_id,
-        manifest_fields={
-            "mapping_profile_version": "focus-1.4-preview-v5",
-            "request_id": request_id,
-            "grain": grain,
-            "column_profile": profile,
-            "effective_columns": list(effective_columns),
-            "effective_coverage_start_date": start.isoformat(),
-            "effective_coverage_end_date": effective_end.isoformat(),
-            "availability_cutoff_end_date": cutoff_end.isoformat() if cutoff_end else None,
-            "monthly_status": monthly_status,
-        },
+    csv_body = f"request_id,BilledCost\n{request_id},8.00\n".encode()
+    data_files = (PreviewArtifactPayload("focus.csv", "text/csv", 1, csv_body),)
+    draft = PreviewDataPackageDraft(
+        data_files=data_files,
+        source_records=1,
+        rows=1,
+        reconciliation=PreviewPackageReconciliation(
+            source_records=1,
+            source_cost=Decimal("8"),
+            allocated_cost=Decimal("8"),
+            source_quantity=Decimal("1"),
+            allocated_quantity=Decimal("1"),
+        ),
     )
-    stored = artifact_store.finalize_package(request_id=request_id, package=package)
+    ready_at = created_at + timedelta(minutes=2)
+    expires_at = ready_at + timedelta(days=7)
+    with artifact_store.stage_data_files(request_id=request_id, data_files=data_files) as staged:
+        running_request = replace(
+            request,
+            status=PreviewRequestStatus.RUNNING,
+            started_at=created_at + timedelta(minutes=1),
+        )
+        manifest_body = build_preview_manifest(
+            request=running_request,
+            snapshot=snapshot,
+            draft=draft,
+            files=staged.files,
+            ready_at=ready_at,
+            expires_at=expires_at,
+        )
+        stored = staged.publish(manifest_body=manifest_body)
+    package = ArtifactBodies(manifest_body, data_files)
     with backend.create_preview_write_unit_of_work() as uow:
         uow.requests.create_queued(request)
         uow.commit()
@@ -178,7 +206,8 @@ def _persist_ready_request(
     with backend.create_preview_write_unit_of_work() as uow:
         assert uow.requests.mark_ready(
             request_id,
-            created_at + timedelta(minutes=2),
+            ready_at,
+            expires_at,
             snapshot,
             stored,
         )
@@ -186,7 +215,7 @@ def _persist_ready_request(
     return package
 
 
-def test_revision_021_ready_daily_full_artifacts_survive_022_and_hydrate_through_api(
+def test_revision_021_ready_daily_full_artifacts_survive_023_and_hydrate_through_api(
     tmp_path: Path,
 ) -> None:
     connection_string = f"sqlite:///{tmp_path / 'legacy-ready.db'}"
@@ -248,7 +277,8 @@ def test_revision_021_ready_daily_full_artifacts_survive_022_and_hydrate_through
                 ) VALUES (
                     :request_id, 'production', 'confluent_cloud', 'tenant-1', 'daily',
                     '2026-07-01', '2026-07-02', 'full', 'ready',
-                    '2026-07-02 00:00:00', '2026-07-02 00:01:00', '2026-07-02 00:02:00',
+                        '2026-07-19 00:00:00.111111', '2026-07-19 00:01:00.222222',
+                        '2026-07-19 00:02:00.345678',
                     :calculation_timestamp, '2026-07-02 00:00:00',
                     :calculation_coverage_json, :storage_key,
                     :manifest_metadata_json, :data_files_json
@@ -266,7 +296,7 @@ def test_revision_021_ready_daily_full_artifacts_survive_022_and_hydrate_through
         )
     engine.dispose()
 
-    command.upgrade(migration, "022")
+    command.upgrade(migration, "023")
     engine = create_engine(connection_string)
     with engine.connect() as connection:
         upgraded = connection.execute(
@@ -274,7 +304,8 @@ def test_revision_021_ready_daily_full_artifacts_survive_022_and_hydrate_through
                 """
                 SELECT status, storage_key, manifest_metadata_json, data_files_json,
                        effective_columns_json, effective_coverage_start_date,
-                       effective_coverage_end_date, availability_cutoff_end_date, monthly_status
+                       effective_coverage_end_date, availability_cutoff_end_date, monthly_status,
+                       expires_at
                 FROM preview_requests WHERE request_id = :request_id
                 """
             ),
@@ -287,7 +318,8 @@ def test_revision_021_ready_daily_full_artifacts_survive_022_and_hydrate_through
         json.dumps(manifest_metadata, separators=(",", ":")),
         json.dumps([file_metadata], separators=(",", ":")),
     )
-    assert tuple(upgraded[4:]) == (None, None, None, None, None)
+    assert tuple(upgraded[4:9]) == (None, None, None, None, None)
+    assert str(upgraded.expires_at) == "2026-07-26 00:02:00.345678"
 
     app = create_app(_settings(connection_string, artifact_root))
     with SameThreadApiClient(app) as client:
@@ -295,6 +327,8 @@ def test_revision_021_ready_daily_full_artifacts_survive_022_and_hydrate_through
         assert response.status_code == 200
         status = response.json()
         assert status["status"] == "ready"
+        assert status["completed_at"] == "2026-07-19T00:02:00.345678Z"
+        assert status["expires_at"] == "2026-07-26T00:02:00.345678Z"
         assert status["grain"] == "daily"
         assert status["month"] is None
         assert status["column_profile"] == "full"
@@ -345,7 +379,7 @@ def test_revision_021_ready_daily_full_artifacts_survive_022_and_hydrate_through
             date(2026, 7, 3),
             "custom",
             ("Tags", "BilledCost"),
-            datetime(2026, 7, 3, tzinfo=UTC),
+            datetime(2026, 7, 19, tzinfo=UTC),
             date(2026, 7, 3),
             None,
             None,
@@ -410,7 +444,8 @@ def test_v5_daily_and_monthly_ready_rows_round_trip_through_sqlite_and_api(
                 SELECT grain, start_date, end_date, column_profile, status,
                        effective_columns_json, effective_coverage_start_date,
                        effective_coverage_end_date, availability_cutoff_end_date,
-                       monthly_status, manifest_metadata_json, data_files_json
+                       monthly_status, manifest_metadata_json, data_files_json,
+                       completed_at, expires_at
                 FROM preview_requests WHERE request_id = :request_id
                 """
             ),
@@ -422,6 +457,12 @@ def test_v5_daily_and_monthly_ready_rows_round_trip_through_sqlite_and_api(
     assert str(persisted.end_date) == end.isoformat()
     assert persisted.column_profile == profile
     assert persisted.status == "ready"
+    assert str(persisted.completed_at).startswith(
+        (created_at + timedelta(minutes=2)).replace(tzinfo=None).isoformat(sep=" ")
+    )
+    assert str(persisted.expires_at).startswith(
+        (created_at + timedelta(minutes=2, days=7)).replace(tzinfo=None).isoformat(sep=" ")
+    )
     assert json.loads(persisted.effective_columns_json) == list(effective_columns)
     assert str(persisted.effective_coverage_start_date) == start.isoformat()
     assert str(persisted.effective_coverage_end_date) == effective_end.isoformat()
@@ -438,6 +479,7 @@ def test_v5_daily_and_monthly_ready_rows_round_trip_through_sqlite_and_api(
         assert response.status_code == 200
         status = response.json()
         assert status["status"] == "ready"
+        assert status["expires_at"] == (created_at + timedelta(minutes=2, days=7)).isoformat().replace("+00:00", "Z")
         assert status["grain"] == grain
         assert status["month"] == expected_month
         assert status["column_profile"] == profile

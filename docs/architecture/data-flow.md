@@ -117,7 +117,7 @@ The pipeline loop ends at step 8. Topic overlay (step 9) is a separate pass over
 | `topic_attribution_dimensions` | Unique (cluster, topic, product_type, attribution_method) combinations |
 | `topic_attribution_facts` | Per-topic cost amounts linked to dimensions via `dimension_id` |
 | `pipeline_runs` | Audit trail: run start/end, status, rows written, errors |
-| `preview_requests` | Tenant-scoped Daily/Monthly grain, profile and effective columns, effective evidence coverage/cutoff/Monthly status, lifecycle, diagnostics, source snapshot, and public artifact metadata (never server paths) |
+| `preview_requests` | Tenant-scoped Daily/Monthly scope, effective columns and evidence coverage, status/expiry/worker lease, diagnostics, source snapshot, and public artifact metadata (never server paths) |
 | `custom_tags` | User-defined key/value tags attached to chargeback dimensions |
 | `emission_records` | Per-tenant/emitter/date emission outcome tracking (emitted, failed) with attempt count |
 
@@ -151,10 +151,14 @@ flowchart LR
     READY --> MAP[Reconcile and map Full rows]
     MAP --> MONTH[Optional Monthly aggregation]
     MONTH --> PROJ[Full, Summary, or Custom projection]
-    PROJ --> ART[(Atomic local artifact package)]
-    ART --> API[Protected Preview API]
+    PROJ --> PART[Canonical CSV and optional byte-limited parts]
+    PART --> ART[(Atomic local artifact package)]
+    ART --> META[(Preview request and checksum metadata)]
+    META --> API[Preview API; external authentication required]
+    ART --> API
     API --> UI[Web UI]
     API --> CLI[Remote CLI]
+    API --> ZIP[Deterministic Download All stream]
 ```
 
 Preview is read-only with respect to collected business data. It does not call a
@@ -187,8 +191,12 @@ path builds and validates complete Full rows before optional Monthly
 aggregation. Monthly sums additive measures but retains allocation ratio/method,
 target, classification, tier, pricing, tags, SKU, and provenance as grouping
 dimensions. Full/Summary/Custom projection then selects output columns without
-changing hidden row identity or reconciliation, followed by atomic artifact
-finalization. Iterator order does not change diagnostic precedence. All
+changing hidden row identity or reconciliation. Canonical row serialization
+then produces one CSV by default or deterministic row-boundary parts when
+`preview.max_csv_file_bytes` is configured. Data files are staged and fsynced
+before one ready timestamp is chosen; the manifest and final directory are then
+published atomically before the request is marked ready. Iterator order does
+not change diagnostic precedence. All
 nonempty evidence reads occur in one read-only transaction. Daily retains its
 existing calculation-before-commercial diagnostic precedence.
 
@@ -196,9 +204,9 @@ Monthly requested bounds always cover the complete UTC calendar month. The
 effective evidence end is frozen from request creation time and the acquisition
 cutoff. A month is provisional until full-month evidence is available and the
 72-hour post-month minimum has elapsed; a longer configured cutoff delays
-settlement. Preview reads existing daily calculations and TASK-254.05 lineage
-only: it does not call the provider, rerun allocation, or derive a replacement
-allocation ratio.
+settlement. Preview reads existing daily calculations and persisted allocation
+lineage only: it does not call the provider, rerun allocation, or derive a
+replacement allocation ratio.
 
 The persisted `CCloudBillingLineItem` is the sole allocation origin. During the
 ordinary calculation transaction, `CalculatePhase` stores lineage for the
@@ -206,14 +214,12 @@ actual output portions keyed back to that existing billing row. Raw Cost rows
 remain source/classification/coverage evidence with a lossless association to
 the billing key. The lineage path does not reconstruct billing from chargebacks,
 redistribute costs, create a residual portion, or alter allocation policy.
-Migration 021 adds the nullable raw-source association and Confluent-owned
-lineage run/portion tables. Legacy null associations recover only through an
+Legacy raw-source rows without a billing association recover only through an
 ordinary regather followed by ordinary calculation.
 
-Migration 022 adds effective-column and evidence-coverage metadata to Preview
-requests. Pre-022 Daily/Full rows use the frozen v4 column authority, retain
-their original requested coverage with no synthesized availability cutoff, and
-continue serving their immutable stored artifacts.
+Older Daily/Full rows retain their original requested coverage and immutable
+stored artifacts; new requests persist their exact effective columns and
+evidence coverage.
 
 Expected failures travel through the initialized diagnostic path and atomically
 mark the request failed without a source snapshot or package. Source diagnostics
@@ -225,8 +231,21 @@ USD establishes the eligible commercial contract, but it does not become source
 evidence: mapped `BillingCurrency` remains null and the manifest records
 `provider_billing_currency_field_unavailable`. No currency conversion occurs.
 The maximum 364-day `lookback_days` is an acquisition/recalculation boundary,
-not retention or a reconstruction promise. TASK-256 owns any independent
-longer-term completed-chargeback archive.
+not retention or a reconstruction promise.
+
+Ready request metadata contains public manifest/file names, sizes, hashes, and
+API URLs but never the storage key or filesystem path. The API verifies stored
+bytes before serving the manifest or an individual file and builds Download All
+as a bounded deterministic ZIP stream. Chitragupta provides no built-in REST
+authentication; deployments must protect the entire Preview route prefix with
+an authenticated reverse proxy or API gateway. UI and CLI clients consume
+API-owned bytes and never run mapping or allocation logic.
+
+Requested packages expire exactly seven days after ready publication. At the
+cutoff, the database transition blocks all downloads before the artifact
+directory is removed. Expired request and source-snapshot metadata remain
+visible in recent history, while `package` becomes null. This fixed package
+lifecycle is independent of tenant and topic-attribution retention.
 
 All accepted native line types can consume persisted lineage. Multiple billing
 origins and their actual identity/resource/`UNALLOCATED` portions are supported;

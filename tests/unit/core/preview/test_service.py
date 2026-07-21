@@ -518,7 +518,7 @@ def test_daily_full_package_maps_provider_financial_account_sku_and_invoice_evid
         assert b"\r\n" not in csv_bytes
 
         manifest = json.loads(manifest_bytes)
-        assert manifest["schema_version"] == "chitragupta.preview-manifest.v1"
+        assert manifest["schema_version"] == "chitragupta.preview-manifest.v2"
         assert manifest["target_focus_version"] == "1.4"
         assert manifest["conformance_status"] == "non_conforming"
         assert manifest["mapping_profile_version"] == "focus-1.4-preview-v5"
@@ -547,6 +547,9 @@ def test_daily_full_package_maps_provider_financial_account_sku_and_invoice_evid
             "source_cost": "8",
             "allocated_cost": "8",
             "difference": "0",
+            "source_quantity": "5",
+            "allocated_quantity": "5",
+            "quantity_difference": "0",
         }
     finally:
         runtime.close()

@@ -73,13 +73,13 @@ become ordinary handler success or deletion evidence. Supplemental resource
 types are excluded from ordinary handler deletion scans and reconcile through
 their own per-type path.
 
-TASK-254.04 does not expand global handler or allocator policy. In particular,
+FOCUS Mapping Preview does not change global handler or allocator policy.
 `KAFKA_REST_PRODUCE`, `KAFKA_STREAMS`, `CONNECT_NUM_RECORDS`,
-`USM_CONNECTED_NODE`, and `PROMO_CREDIT` have no new dedicated production
-owner. Cluster Linking remains owned by the existing default handler and keeps
-its existing allocator behavior. Preview lineage consumes the actual output of
-this unchanged global chargeback dispatch; it does not introduce dedicated
-handlers or allocators for these native types.
+`USM_CONNECTED_NODE`, and `PROMO_CREDIT` do not have dedicated handlers.
+Cluster Linking continues through the default handler and existing allocator.
+Preview consumes the persisted output of that ordinary chargeback dispatch; it
+does not introduce alternate handlers, reconstruct billing rows, or recalculate
+allocation ratios.
 
 ## ResolveContext
 

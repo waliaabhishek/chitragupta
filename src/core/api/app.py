@@ -11,6 +11,9 @@ from starlette.responses import JSONResponse, Response
 
 from core.api import API_VERSION
 from core.api.exception_handler import global_exception_handler
+from core.config.models import TenantConfig  # noqa: TC001  # resolved by get_type_hints contract tests
+from core.preview.service import PreviewRuntime
+from core.storage.interface import StorageBackend  # noqa: TC001  # resolved by get_type_hints contract tests
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -45,6 +48,34 @@ class RequestTimeoutMiddleware(BaseHTTPMiddleware):
 logger = logging.getLogger(__name__)
 
 
+def recover_preview_owner(
+    tenant_name: str,
+    tenant_config: TenantConfig,
+    cache: dict[str, StorageBackend],
+    preview_runtime: PreviewRuntime,
+) -> None:
+    from core.api.dependencies import get_or_create_backend
+    from core.preview.persistence import PreviewStorageBackend
+    from core.preview.service import PreviewRecoveryUnavailable
+
+    if not isinstance(preview_runtime, PreviewRuntime):
+        raise PreviewRecoveryUnavailable("FOCUS Mapping Preview recovery is unavailable")
+    backend = get_or_create_backend(
+        cache,
+        tenant_name,
+        tenant_config.storage,
+        tenant_config.ecosystem,
+    )
+    if not isinstance(backend, PreviewStorageBackend):
+        raise PreviewRecoveryUnavailable("FOCUS Mapping Preview recovery is unavailable")
+    preview_runtime.ensure_owner_recovered(
+        backend=backend,
+        tenant_name=tenant_name,
+        ecosystem=tenant_config.ecosystem,
+        tenant_id=tenant_config.tenant_id,
+    )
+
+
 def create_app(
     settings: AppSettings | None = None, workflow_runner: WorkflowRunner | None = None, mode: str = "api"
 ) -> FastAPI:
@@ -62,7 +93,7 @@ def create_app(
         app.state.workflow_runner = workflow_runner
         app.state.mode = mode
         from core.preview.artifacts import LocalPreviewArtifactStore
-        from core.preview.service import PreviewRuntime
+        from core.preview.service import PreviewRecoveryUnavailable, PreviewRuntime
 
         preview_artifact_store: LocalPreviewArtifactStore | None = None
         preview_runtime: PreviewRuntime | None = None
@@ -72,9 +103,42 @@ def create_app(
             preview_runtime = PreviewRuntime(
                 artifact_store=preview_artifact_store,
                 max_workers=settings.preview.max_workers,
+                max_csv_file_bytes=settings.preview.max_csv_file_bytes,
+                configured_owner_keys=tuple(
+                    (tenant_name, tenant.ecosystem, tenant.tenant_id)
+                    for tenant_name, tenant in settings.tenants.items()
+                    if tenant.ecosystem == "confluent_cloud"
+                ),
             )
             app.state.preview_artifact_store = preview_artifact_store
             app.state.preview_runtime = preview_runtime
+            staging_recovered = False
+            try:
+                await asyncio.to_thread(preview_runtime.ensure_staging_recovered)
+                staging_recovered = True
+            except PreviewRecoveryUnavailable as exc:
+                logger.error(
+                    "FOCUS Mapping Preview staging recovery unavailable error_type=%s",
+                    type(exc).__name__,
+                )
+            if staging_recovered:
+                for tenant_name, tenant_config in settings.tenants.items():
+                    if tenant_config.ecosystem != "confluent_cloud":
+                        continue
+                    try:
+                        await asyncio.to_thread(
+                            recover_preview_owner,
+                            tenant_name,
+                            tenant_config,
+                            app.state.backends,
+                            preview_runtime,
+                        )
+                    except Exception as exc:
+                        logger.error(
+                            "FOCUS Mapping Preview owner recovery unavailable tenant=%s error_type=%s",
+                            tenant_name,
+                            type(exc).__name__,
+                        )
             if workflow_runner is None:
                 from workflow_runner import cleanup_orphaned_runs_for_all_tenants
 

@@ -1542,7 +1542,7 @@ def test_migrated_legacy_metadata_failure_preserves_data_when_provider_is_unavai
     migration = _alembic_config(connection_string)
     command.upgrade(migration, "018")
     _seed_legacy_rows(connection_string)
-    command.upgrade(migration, "022")
+    command.upgrade(migration, "023")
 
     route = respx.get("https://api.confluent.cloud/billing/v1/costs")
     route.mock(return_value=httpx.Response(200, json={"data": [], "metadata": {}}))
@@ -1632,7 +1632,7 @@ def test_migrated_legacy_precedence_uses_real_recoverable_lifecycle_without_muta
     migration = _alembic_config(connection_string)
     command.upgrade(migration, "018")
     _seed_legacy_rows(connection_string)
-    command.upgrade(migration, "022")
+    command.upgrade(migration, "023")
     snapshot_engine = create_engine(connection_string)
     legacy_before = _legacy_july_first_snapshot(snapshot_engine)
 
@@ -1757,7 +1757,7 @@ def test_ordinary_gather_and_calculate_lifecycle_replaces_incomplete_legacy_corr
                 {"tracking_timestamp": tracking_timestamp},
             )
     legacy_engine.dispose()
-    command.upgrade(migration, "022")
+    command.upgrade(migration, "023")
     tenant = TenantConfig(
         ecosystem="confluent_cloud",
         tenant_id="tenant-1",

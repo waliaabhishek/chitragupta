@@ -1,52 +1,78 @@
 # Data Retention
 
-## How it works
+Chitragupta has separate retention policies for tenant pipeline data, topic
+attribution data, and requested FOCUS Preview packages. Changing one does not
+change the others.
 
-After each pipeline cycle, the engine deletes records older than `retention_days`
-from all tables for each tenant.
+## Tenant pipeline data
 
-File: `src/workflow_runner.py`, `_cleanup_retention()` method.
-
-Tables affected:
-- `billing_line_items`
-- `resources`
-- `identities`
-- `chargeback_rows`
-- `topic_attribution_facts` and `topic_attribution_dimensions` (when topic attribution is enabled)
-
-## Configuration
+After each pipeline cycle, the engine deletes tenant records older than
+`tenants.*.retention_days` from billing, resource, identity, and chargeback
+storage.
 
 ```yaml
 tenants:
   my-tenant:
-    retention_days: 250    # delete records older than 250 days (default)
+    lookback_days: 200
+    retention_days: 250
 ```
 
-| Field | Default | Range | Notes |
-|---|---|---|---|
-| `retention_days` | 250 | 1–730 | Set 0 to disable (not recommended) |
-| `lookback_days` | 200 | 1–364 | Must be < retention_days for data continuity |
+| Field | Default | Range | Purpose |
+|---|---:|---:|---|
+| `retention_days` | 250 | 1–730 | Age at which tenant pipeline data is deleted. |
+| `lookback_days` | 200 | 1–364 | Provider acquisition/recalculation window; must be greater than `cutoff_days`. |
 
-**Topic attribution retention** is independent of tenant-level `retention_days`:
+Set `retention_days` greater than `lookback_days` when you want recalculation to
+retain all data inside the acquisition window. `lookback_days` is not an
+archive or a guarantee that old provider inputs can be reconstructed.
 
-| Setting | Scope | Default | Range | What it purges |
-|---|---|---|---|---|
-| `tenants.*.retention_days` | Tenant | 250 | 1–730 | `billing_line_items`, `resources`, `identities`, `chargeback_rows` |
-| `plugin_settings.topic_attribution.retention_days` | Topic attribution | 90 | 1–365 | `topic_attribution_facts`, `topic_attribution_dimensions` |
+There is no CLI for selective manual retention cleanup. To remove all data for
+a tenant, stop the service and remove or recreate that tenant's database only
+after taking any required backup.
 
-The two settings are evaluated independently — tenant retention does not affect topic attribution tables and vice versa. Set each according to the relevant reporting needs.
+## Topic attribution data
 
-## Recommendation
+Topic attribution uses its own setting:
 
-Set `retention_days` > `lookback_days`. If `retention_days` < `lookback_days`, the
-engine may attempt to re-fetch data that has already been deleted.
+```yaml
+tenants:
+  my-tenant:
+    plugin_settings:
+      topic_attribution:
+        retention_days: 90
+```
 
-## Manual cleanup
+| Setting | Default | Range | Data affected |
+|---|---:|---:|---|
+| `tenants.*.retention_days` | 250 | 1–730 | Tenant billing, resource, identity, and chargeback data. |
+| `plugin_settings.topic_attribution.retention_days` | 90 | 1–365 | Topic attribution facts and dimensions. |
 
-There is no CLI tool for manual cleanup. To delete all data for a tenant,
-drop and recreate the database file (`storage.connection_string` path).
+The settings are evaluated independently.
 
-## Audit trail
+## Requested FOCUS Preview packages
 
-Chargeback rows are the primary audit trail. Set `retention_days` to match your
-organization's cost accounting retention policy (typically 365–730 days).
+A requested Preview package has a fixed seven-day availability window measured
+from durable ready publication:
+
+```text
+ready_at <= downloadable time < expires_at
+expires_at = ready_at + 7 days
+```
+
+At the exact `expires_at` instant, the request transitions to `expired` and
+manifest, individual-file, and archive downloads return 410. Download access is
+blocked before artifact cleanup, so a cleanup failure cannot extend the
+availability window. The request lifecycle and source snapshot remain visible
+in request history, but expired status responses contain `package: null`.
+Manifest/file metadata and all download URLs are therefore no longer exposed.
+
+The seven-day lifetime is fixed and is not configured by
+`tenants.*.retention_days`, topic-attribution retention,
+`preview.max_csv_file_bytes`, or `lookback_days`. Re-requesting after expiry
+creates a new package from the then-current persisted source snapshot; it does
+not recreate the expired bytes.
+
+Back up both each tenant database and `preview.artifact_root` when preserving
+currently downloadable packages during an upgrade or restore. See
+[FOCUS Mapping Preview](../focus-mapping-preview.md#package-contents-and-lifecycle)
+for package behavior.

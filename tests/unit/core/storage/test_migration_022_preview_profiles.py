@@ -143,7 +143,7 @@ def test_migration_022_revision_chain_and_downgrade_are_narrow(tmp_path: Path) -
     engine.dispose()
 
 
-def test_migration_022_matches_direct_create_all_preview_request_schema(tmp_path: Path) -> None:
+def test_migration_022_matches_direct_create_all_preview_request_schema_before_expiry(tmp_path: Path) -> None:
     migrated_url = f"sqlite:///{tmp_path / 'migrated-022.db'}"
     direct_url = f"sqlite:///{tmp_path / 'direct-022.db'}"
     command.upgrade(_alembic_config(migrated_url), "022")
@@ -153,7 +153,9 @@ def test_migration_022_matches_direct_create_all_preview_request_schema(tmp_path
     direct = create_engine(direct_url)
 
     assert {column["name"] for column in sa_inspect(migrated).get_columns("preview_requests")} == {
-        column["name"] for column in sa_inspect(direct).get_columns("preview_requests")
+        column["name"]
+        for column in sa_inspect(direct).get_columns("preview_requests")
+        if column["name"] not in {"expires_at", "worker_id", "lease_expires_at"}
     }
 
     migrated.dispose()

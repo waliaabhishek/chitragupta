@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import inspect
 import json
 from pathlib import Path
@@ -93,22 +94,36 @@ def test_cli_forwards_duplicate_headers_on_post_every_poll_manifest_and_file(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     secret = "super-secret-token"  # pragma: allowlist secret
+    csv_body = b"a,b\n"
+    file_metadata = {
+        "name": "cost-and-usage.csv",
+        "media_type": "text/csv",
+        "size_bytes": len(csv_body),
+        "sha256": hashlib.sha256(csv_body).hexdigest(),
+        "order": 1,
+    }
+    manifest_body = (
+        json.dumps(
+            {"request_id": "request-1", "files": [file_metadata]},
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n"
+    ).encode()
     package = {
         "manifest": {
             "name": "manifest.json",
             "media_type": "application/json",
-            "size_bytes": 3,
-            "sha256": "a" * 64,
+            "size_bytes": len(manifest_body),
+            "sha256": hashlib.sha256(manifest_body).hexdigest(),
             "download_url": "/api/v1/tenants/production/focus-preview/requests/request-1/manifest",
         },
         "files": [
             {
-                "name": "cost-and-usage.csv",
-                "media_type": "text/csv",
-                "size_bytes": 4,
-                "sha256": "b" * 64,
-                "order": 1,
-                "download_url": "/api/v1/tenants/production/focus-preview/requests/request-1/files/cost-and-usage.csv",
+                **file_metadata,
+                "download_url": (
+                    "/api/v1/tenants/production/focus-preview/requests/request-1/files/cost-and-usage.csv"
+                ),
             }
         ],
     }
@@ -123,9 +138,9 @@ def test_cli_forwards_duplicate_headers_on_post_every_poll_manifest_and_file(
             }
             return httpx.Response(202, json=_status("request-1", "queued"))
         if request.url.path.endswith("/manifest"):
-            return httpx.Response(200, content=b"{}\n", headers={"content-type": "application/json"})
+            return httpx.Response(200, content=manifest_body, headers={"content-type": "application/json"})
         if request.url.path.endswith("cost-and-usage.csv"):
-            return httpx.Response(200, content=b"a,b\n", headers={"content-type": "text/csv"})
+            return httpx.Response(200, content=csv_body, headers={"content-type": "text/csv"})
         status = "running" if sequence == 2 else "ready"
         return httpx.Response(200, json=_status("request-1", status, package=package if status == "ready" else None))
 
@@ -147,8 +162,8 @@ def test_cli_forwards_duplicate_headers_on_post_every_poll_manifest_and_file(
     for request in transport.requests:
         assert request.headers.get_list("x-secret") == [secret]
         assert request.headers.get_list("x-duplicate") == ["first", "second"]
-    assert (tmp_path / "output" / "manifest.json").read_bytes() == b"{}\n"
-    assert (tmp_path / "output" / "cost-and-usage.csv").read_bytes() == b"a,b\n"
+    assert (tmp_path / "output" / "manifest.json").read_bytes() == manifest_body
+    assert (tmp_path / "output" / "cost-and-usage.csv").read_bytes() == csv_body
     captured = capsys.readouterr()
     assert secret not in captured.out
     assert secret not in captured.err

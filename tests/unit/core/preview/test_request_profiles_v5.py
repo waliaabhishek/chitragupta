@@ -59,6 +59,7 @@ def _queued_request(**overrides: object) -> Any:
         "created_at": datetime(2026, 7, 3, tzinfo=UTC),
         "started_at": None,
         "completed_at": None,
+        "expires_at": None,
         "source_snapshot": None,
         "diagnostic": None,
         "storage_key": None,
