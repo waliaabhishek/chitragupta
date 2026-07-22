@@ -208,16 +208,39 @@ describe("FOCUS Mapping Preview page delegation", () => {
       expect.any(AbortSignal),
     ));
     expect(screen.getByText(/non-conforming/i)).toBeTruthy();
-    for (const description of [
-      "Confluent Costs records do not carry a per-record billing currency.",
-      "Post-issuance invoice identity is unavailable.",
-      "Provider legal invoice-issuer evidence is unavailable.",
-      "HostProviderName contains the raw provider cloud code, not a provider display name.",
-      "Confluent inventory does not provide a distinct region display name.",
-      "SKU values are deterministic Chitragupta-derived evidence, not provider-issued identifiers.",
-    ]) {
+    const expectedAuthorityGaps = [
+      [
+        "provider_billing_currency_field_unavailable",
+        "Confluent Costs records do not carry a per-record billing currency.",
+      ],
+      [
+        "invoice_identity_unavailable",
+        "Post-issuance invoice identity is unavailable.",
+      ],
+      [
+        "invoice_issuer_name_unavailable",
+        "Provider legal invoice-issuer evidence is unavailable.",
+      ],
+      [
+        "provider_host_display_name_unavailable",
+        "HostProviderName contains the raw provider cloud code, not a provider display name.",
+      ],
+      [
+        "provider_region_display_name_unavailable",
+        "Confluent inventory does not provide a distinct region display name.",
+      ],
+      [
+        "derived_sku_identity_not_provider_authoritative",
+        "SKU values are deterministic Chitragupta-derived evidence, not provider-issued identifiers.",
+      ],
+    ] as const;
+
+    for (const [code, description] of expectedAuthorityGaps) {
+      expect(screen.getByText(code)).toBeTruthy();
       expect(screen.getByText(description)).toBeTruthy();
     }
+    expect(document.body.textContent).not.toContain("TASK-");
+    expect(screen.queryByText(/^Owner:/i)).toBeNull();
     expect(screen.queryByText("allocation_lineage_and_tag_projection_pending")).toBeNull();
     expect(screen.queryByText("allocation_ratio_deferred")).toBeNull();
     expect(screen.queryByText("allocation_method_version_deferred")).toBeNull();

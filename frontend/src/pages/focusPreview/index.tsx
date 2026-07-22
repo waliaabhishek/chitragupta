@@ -217,32 +217,26 @@ const CURRENT_AUTHORITY_GAPS = [
   {
     code: "provider_billing_currency_field_unavailable",
     description: "Confluent Costs records do not carry a per-record billing currency.",
-    owner: "TASK-254.03",
   },
   {
     code: "invoice_identity_unavailable",
     description: "Post-issuance invoice identity is unavailable.",
-    owner: "TASK-254.04",
   },
   {
     code: "invoice_issuer_name_unavailable",
     description: "Provider legal invoice-issuer evidence is unavailable.",
-    owner: "TASK-254.04",
   },
   {
     code: "provider_host_display_name_unavailable",
     description: "HostProviderName contains the raw provider cloud code, not a provider display name.",
-    owner: "TASK-254.04",
   },
   {
     code: "provider_region_display_name_unavailable",
     description: "Confluent inventory does not provide a distinct region display name.",
-    owner: "TASK-254.04",
   },
   {
     code: "derived_sku_identity_not_provider_authoritative",
     description: "SKU values are deterministic Chitragupta-derived evidence, not provider-issued identifiers.",
-    owner: "TASK-254.04",
   },
 ] as const;
 
@@ -702,8 +696,7 @@ export function FocusPreviewPage({ now = () => new Date() }: FocusPreviewPagePro
           {CURRENT_AUTHORITY_GAPS.map((gap) => (
             <li key={gap.code}>
               <Text code>{gap.code}</Text>{" "}
-              <Text>{gap.description}</Text>{" "}
-              <Text type="secondary">Owner: {gap.owner}</Text>
+              <Text>{gap.description}</Text>
             </li>
           ))}
         </ul>

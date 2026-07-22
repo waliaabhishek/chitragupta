@@ -36,6 +36,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add frontend progressive disclosure to the Cost Explorer graph page (TASK-244). Large clusters render as grouped summary nodes (`topic_group`, `identity_group`) displayed as larger round-rectangles with a double border and a count/cost badge label (e.g. "42 topics\n$1234.56 total"). Click-to-expand: clicking an expandable group node sets `expand=topics|identities` in the URL and re-fetches individual members; a collapse button returns to the grouped view. Zero-cost and capped overflow summary nodes render at reduced opacity and are non-interactive. The `expand` param is encoded in the URL for shareable links and is cleared on breadcrumb navigation, search bar selection, and focus changes.
 - Extend graph explorer grouping to resource and identity views (TASK-245). Environments with more than 20 child resources and identities charged across more than 20 clusters now show grouped summary nodes (`resource_group`, `cluster_group`) with the top-5 highest-cost entities shown individually and expand/collapse support (`expand=resources` or `expand=clusters`), matching the cluster view behavior introduced in TASK-243/244.
 
+### Fixed
+- The FOCUS Mapping Preview authority-gap list no longer exposes internal issue or task ownership metadata, while preserving all six gap explanations and the non-conforming warning.
+
 
 ## [2.1.0] - 2026-04-09
 
