@@ -17,7 +17,12 @@ from tests.unit.core.preview.conftest import preview_module
 
 def _owner() -> object:
     artifacts = preview_module("artifacts")
-    return artifacts.PreviewArtifactOwner("production", "confluent_cloud", "tenant-1")
+    return artifacts.PreviewArtifactOwner(
+        "production",
+        "confluent_cloud",
+        "tenant-1",
+        storage_backend_fingerprint="a" * 64,
+    )
 
 
 def _cross_process_stage_worker(root: str, connection: Any, mode: str = "normal") -> None:
@@ -114,6 +119,14 @@ def _publish(store: object, files: tuple[object, ...] | None = None) -> tuple[ob
         assert staged.files == _declared(files)
         stored = staged.publish(manifest_body=manifest)
     return stored, manifest
+
+
+def _staging_paths(root: Path) -> tuple[Path, ...]:
+    return tuple(path for path in root.rglob("*.staging") if path != root / ".staging")
+
+
+def _lock_paths(root: Path) -> tuple[Path, ...]:
+    return tuple(root.rglob("*.lock"))
 
 
 def test_staged_publication_is_atomic_opaque_and_returns_exact_metadata(
@@ -299,8 +312,8 @@ def test_shared_root_startup_cleanup_skips_live_cross_process_stage_and_it_publi
     process.start()
     child.close()
     assert parent.recv() == "staged"
-    staging = list(preview_artifact_root.rglob(".*.staging"))
-    locks = list(preview_artifact_root.rglob(".*.staging.lock"))
+    staging = list(_staging_paths(preview_artifact_root))
+    locks = list(_lock_paths(preview_artifact_root))
     assert len(staging) == 1
     assert len(locks) == 1
 
@@ -321,7 +334,8 @@ def test_shared_root_startup_cleanup_skips_live_cross_process_stage_and_it_publi
         assert (final_directories[0] / "manifest.json").read_bytes() == _manifest(_data_files())
         assert (final_directories[0] / "part-1.csv").read_bytes() == b"name,cost\na,1\n"
         assert (final_directories[0] / "part-2.csv").read_bytes() == b"name,cost\nb,2\n"
-        assert not list(preview_artifact_root.rglob(".*.staging*"))
+        assert _staging_paths(preview_artifact_root) == ()
+        assert _lock_paths(preview_artifact_root) == ()
     finally:
         parent.close()
         store_b.close()
@@ -344,8 +358,8 @@ def test_root_serialization_prevents_cleanup_race_before_stage_lock_acquisition(
     child.close()
     assert parent.poll(5)
     assert parent.recv() == "lock-visible-before-acquire"
-    assert list(preview_artifact_root.rglob(".*.staging")) == []
-    stage_locks = list(preview_artifact_root.rglob(".*.staging.lock"))
+    assert _staging_paths(preview_artifact_root) == ()
+    stage_locks = list(_lock_paths(preview_artifact_root))
     assert len(stage_locks) == 1
 
     store_b = artifacts.LocalPreviewArtifactStore(preview_artifact_root)
@@ -374,7 +388,7 @@ def test_root_serialization_prevents_cleanup_race_before_stage_lock_acquisition(
         assert parent.recv() == "staged"
         assert cleanup_finished.wait(5)
         assert cleanup_errors == []
-        assert len(list(preview_artifact_root.rglob(".*.staging"))) == 1
+        assert len(_staging_paths(preview_artifact_root)) == 1
         assert stage_locks[0].is_file()
 
         parent.send("publish")
@@ -384,7 +398,8 @@ def test_root_serialization_prevents_cleanup_race_before_stage_lock_acquisition(
         process.join(5)
         assert process.exitcode == 0
         assert (preview_artifact_root / result[1] / "manifest.json").read_bytes() == _manifest(_data_files())
-        assert not list(preview_artifact_root.rglob(".*.staging*"))
+        assert _staging_paths(preview_artifact_root) == ()
+        assert _lock_paths(preview_artifact_root) == ()
     finally:
         parent.close()
         store_b.close()
@@ -407,8 +422,8 @@ def test_shared_root_startup_cleanup_reclaims_stage_after_owner_process_dies(
     process.start()
     child.close()
     assert parent.recv() == "staged"
-    assert len(list(preview_artifact_root.rglob(".*.staging"))) == 1
-    assert len(list(preview_artifact_root.rglob(".*.staging.lock"))) == 1
+    assert len(_staging_paths(preview_artifact_root)) == 1
+    assert len(_lock_paths(preview_artifact_root)) == 1
 
     parent.send("die")
     process.join(5)
@@ -440,9 +455,9 @@ def test_cleanup_reclaims_orphan_lock_after_hard_death_before_staging_directory(
     child.close()
     assert parent.poll(5)
     assert parent.recv() == "lock-acquired-before-staging"
-    orphan_locks = list(preview_artifact_root.rglob(".*.staging.lock"))
+    orphan_locks = list(_lock_paths(preview_artifact_root))
     assert len(orphan_locks) == 1
-    assert list(preview_artifact_root.rglob(".*.staging")) == []
+    assert _staging_paths(preview_artifact_root) == ()
 
     parent.send("die-before-staging")
     process.join(5)
@@ -454,7 +469,8 @@ def test_cleanup_reclaims_orphan_lock_after_hard_death_before_staging_directory(
         assert list(preview_artifact_root.iterdir()) == []
         stored, manifest = _publish(store)
         assert (preview_artifact_root / stored.storage_key / "manifest.json").read_bytes() == manifest
-        assert not list(preview_artifact_root.rglob(".*.staging*"))
+        assert _staging_paths(preview_artifact_root) == ()
+        assert _lock_paths(preview_artifact_root) == ()
     finally:
         parent.close()
         store.close()
@@ -484,7 +500,8 @@ def test_staging_setup_failure_releases_and_removes_cross_process_fence(
     monkeypatch.setattr(artifacts.Path, "mkdir", real_mkdir)
     stored, manifest = _publish(store)
     assert (preview_artifact_root / stored.storage_key / "manifest.json").read_bytes() == manifest
-    assert not list(preview_artifact_root.rglob(".*.staging*"))
+    assert _staging_paths(preview_artifact_root) == ()
+    assert _lock_paths(preview_artifact_root) == ()
 
 
 def test_delete_package_is_exact_idempotent_and_rejects_traversal(preview_artifact_root: Path) -> None:
@@ -608,3 +625,276 @@ def test_artifact_store_rejects_storage_key_traversal(preview_artifact_root: Pat
 
     with pytest.raises(ValueError):
         store.read_file("../outside", metadata)
+
+
+def test_v1_publication_uses_one_stable_lock_until_metadata_transition_scope_closes(
+    preview_artifact_root: Path,
+) -> None:
+    artifacts = preview_module("artifacts")
+    store = artifacts.LocalPreviewArtifactStore(preview_artifact_root)
+    owner = _owner()
+    owner_token = artifacts.preview_storage_owner_token(owner)
+    staged = store.stage_data_files(
+        owner=owner,
+        request_id="request-1",
+        data_files=_data_files(),
+    )
+
+    staging_paths = tuple((preview_artifact_root / ".staging" / "v1" / owner_token).glob("*.staging"))
+    lock_paths = tuple((preview_artifact_root / ".locks" / "v1" / owner_token).glob("*.lock"))
+    assert len(staging_paths) == 1
+    assert len(lock_paths) == 1
+    package_id = staging_paths[0].name.removesuffix(".staging")
+    assert lock_paths[0].name == f"{package_id}.lock"
+
+    stored = staged.publish(manifest_body=_manifest(_data_files()))
+
+    assert stored.storage_key == f"v1-{owner_token}-{package_id}"
+    assert not staging_paths[0].exists()
+    assert lock_paths[0].is_file()
+    assert (preview_artifact_root / stored.storage_key / "manifest.json").is_file()
+
+    with lock_paths[0].open("a+b") as competing_handle, pytest.raises(BlockingIOError):
+        artifacts.fcntl.flock(
+            competing_handle.fileno(),
+            artifacts.fcntl.LOCK_EX | artifacts.fcntl.LOCK_NB,
+        )
+
+    staged.close()
+    assert not lock_paths[0].exists()
+
+
+def test_finalized_recovery_preserves_every_reference_and_ignores_unverifiable_paths(
+    preview_artifact_root: Path,
+) -> None:
+    artifacts = preview_module("artifacts")
+    store = artifacts.LocalPreviewArtifactStore(preview_artifact_root)
+    publishing_owner = _owner()
+    recovery_owner = artifacts.PreviewArtifactOwner(
+        "renamed-production",
+        publishing_owner.ecosystem,
+        publishing_owner.tenant_id,
+        storage_backend_fingerprint=publishing_owner.storage_backend_fingerprint,
+    )
+    owner_token = artifacts.preview_storage_owner_token(publishing_owner)
+    referenced_key = f"v1-{owner_token}-{'1' * 32}"
+    expired_with_key = f"v1-{owner_token}-{'2' * 32}"
+    orphan_key = f"v1-{owner_token}-{'3' * 32}"
+    foreign_key = f"v1-{'b' * 64}-{'4' * 32}"
+    legacy_key = "5" * 32
+    malformed_key = f"v1-{owner_token}-not-hex"
+    for storage_key in (referenced_key, expired_with_key, orphan_key, foreign_key, legacy_key, malformed_key):
+        package = preview_artifact_root / storage_key
+        package.mkdir()
+        (package / "manifest.json").write_bytes(b"{}")
+    symlink_key = f"v1-{owner_token}-{'6' * 32}"
+    (preview_artifact_root / symlink_key).symlink_to(preview_artifact_root / foreign_key, target_is_directory=True)
+    file_key = f"v1-{owner_token}-{'7' * 32}"
+    (preview_artifact_root / file_key).write_bytes(b"not a package")
+    callbacks: list[str] = []
+
+    removed = store.reconcile_finalized(
+        owner=recovery_owner,
+        referenced_storage_keys=frozenset({referenced_key, expired_with_key}),
+        is_referenced=lambda storage_key: callbacks.append(storage_key) is None and False,
+    )
+
+    assert removed == 1
+    assert not (preview_artifact_root / orphan_key).exists()
+    assert (preview_artifact_root / referenced_key).is_dir()
+    assert (preview_artifact_root / expired_with_key).is_dir()
+    assert (preview_artifact_root / foreign_key).is_dir()
+    assert (preview_artifact_root / legacy_key).is_dir()
+    assert (preview_artifact_root / malformed_key).is_dir()
+    assert (preview_artifact_root / symlink_key).is_symlink()
+    assert (preview_artifact_root / file_key).is_file()
+    assert callbacks == [orphan_key]
+
+
+def test_finalized_recovery_rechecks_snapshot_miss_under_stable_lock(
+    preview_artifact_root: Path,
+) -> None:
+    artifacts = preview_module("artifacts")
+    store = artifacts.LocalPreviewArtifactStore(preview_artifact_root)
+    publishing_owner = _owner()
+    recovery_owner = artifacts.PreviewArtifactOwner(
+        "renamed-production",
+        publishing_owner.ecosystem,
+        publishing_owner.tenant_id,
+        storage_backend_fingerprint=publishing_owner.storage_backend_fingerprint,
+    )
+    owner_token = artifacts.preview_storage_owner_token(publishing_owner)
+    storage_key = f"v1-{owner_token}-{'8' * 32}"
+    package = preview_artifact_root / storage_key
+    package.mkdir()
+    (package / "manifest.json").write_bytes(b"{}")
+    callbacks: list[str] = []
+
+    removed = store.reconcile_finalized(
+        owner=recovery_owner,
+        referenced_storage_keys=frozenset(),
+        is_referenced=lambda candidate: callbacks.append(candidate) is None,
+    )
+
+    assert removed == 0
+    assert callbacks == [storage_key]
+    assert package.is_dir()
+
+
+def test_finalized_recovery_preserves_candidate_and_fails_for_retry_when_reference_check_fails(
+    preview_artifact_root: Path,
+) -> None:
+    artifacts = preview_module("artifacts")
+    store = artifacts.LocalPreviewArtifactStore(preview_artifact_root)
+    owner = _owner()
+    owner_token = artifacts.preview_storage_owner_token(owner)
+    storage_key = f"v1-{owner_token}-{'9' * 32}"
+    package = preview_artifact_root / storage_key
+    package.mkdir()
+    (package / "manifest.json").write_bytes(b"{}")
+    calls = 0
+
+    def fail_once(_candidate: str) -> bool:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("reference read failed")
+        return False
+
+    with pytest.raises(RuntimeError, match="reference read failed"):
+        store.reconcile_finalized(
+            owner=owner,
+            referenced_storage_keys=frozenset(),
+            is_referenced=fail_once,
+        )
+
+    assert package.is_dir()
+    assert (
+        store.reconcile_finalized(
+            owner=owner,
+            referenced_storage_keys=frozenset(),
+            is_referenced=fail_once,
+        )
+        == 1
+    )
+    assert calls == 2
+    assert not package.exists()
+
+
+@pytest.mark.parametrize("failure_point", ["delete", "fsync"])
+def test_finalized_recovery_interruption_is_visible_and_retry_converges_without_touching_references(
+    preview_artifact_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure_point: str,
+) -> None:
+    artifacts = preview_module("artifacts")
+    store = artifacts.LocalPreviewArtifactStore(preview_artifact_root)
+    owner = _owner()
+    owner_token = artifacts.preview_storage_owner_token(owner)
+    referenced_id = "a" * 32
+    orphan_id = "b" * 32
+    referenced_key = f"v1-{owner_token}-{referenced_id}"
+    orphan_key = f"v1-{owner_token}-{orphan_id}"
+    referenced_package = preview_artifact_root / referenced_key
+    orphan_package = preview_artifact_root / orphan_key
+    for package in (referenced_package, orphan_package):
+        package.mkdir()
+        (package / "manifest.json").write_bytes(b"{}")
+    referenced_lock = preview_artifact_root / ".locks" / "v1" / owner_token / f"{referenced_id}.lock"
+    referenced_lock.parent.mkdir(parents=True)
+    referenced_lock.write_bytes(b"")
+
+    if failure_point == "delete":
+        real_rmtree = artifacts.shutil.rmtree
+        delete_calls = 0
+
+        def fail_delete_once(path: Path) -> None:
+            nonlocal delete_calls
+            delete_calls += 1
+            if delete_calls == 1:
+                raise OSError("delete interrupted")
+            real_rmtree(path)
+
+        monkeypatch.setattr(artifacts.shutil, "rmtree", fail_delete_once)
+        error = "delete interrupted"
+    else:
+        real_fsync_directory = artifacts._fsync_directory
+        fsync_calls = 0
+
+        def fail_fsync_once(path: Path) -> None:
+            nonlocal fsync_calls
+            fsync_calls += 1
+            if fsync_calls == 1:
+                raise OSError("fsync interrupted")
+            real_fsync_directory(path)
+
+        monkeypatch.setattr(artifacts, "_fsync_directory", fail_fsync_once)
+        error = "fsync interrupted"
+
+    with pytest.raises(OSError, match=error):
+        store.reconcile_finalized(
+            owner=owner,
+            referenced_storage_keys=frozenset({referenced_key}),
+            is_referenced=lambda _candidate: False,
+        )
+
+    if failure_point == "delete":
+        assert orphan_package.is_dir()
+    else:
+        assert not orphan_package.exists()
+    assert referenced_package.is_dir()
+    assert referenced_lock.is_file()
+
+    assert store.reconcile_finalized(
+        owner=owner,
+        referenced_storage_keys=frozenset({referenced_key}),
+        is_referenced=lambda _candidate: False,
+    ) == (1 if failure_point == "delete" else 0)
+    assert not orphan_package.exists()
+    assert referenced_package.is_dir()
+    assert referenced_lock.is_file()
+
+
+def test_finalized_recovery_skips_live_publisher_lock_then_reclaims_after_release(
+    preview_artifact_root: Path,
+) -> None:
+    artifacts = preview_module("artifacts")
+    store = artifacts.LocalPreviewArtifactStore(preview_artifact_root)
+    publishing_owner = _owner()
+    recovery_owner = artifacts.PreviewArtifactOwner(
+        "renamed-production",
+        publishing_owner.ecosystem,
+        publishing_owner.tenant_id,
+        storage_backend_fingerprint=publishing_owner.storage_backend_fingerprint,
+    )
+    owner_token = artifacts.preview_storage_owner_token(publishing_owner)
+    package_id = "c" * 32
+    storage_key = f"v1-{owner_token}-{package_id}"
+    package = preview_artifact_root / storage_key
+    package.mkdir()
+    (package / "manifest.json").write_bytes(b"{}")
+    lock_path = preview_artifact_root / ".locks" / "v1" / owner_token / f"{package_id}.lock"
+    lock_path.parent.mkdir(parents=True)
+
+    with lock_path.open("a+b") as publisher_handle:
+        artifacts.fcntl.flock(publisher_handle.fileno(), artifacts.fcntl.LOCK_EX)
+        assert (
+            store.reconcile_finalized(
+                owner=recovery_owner,
+                referenced_storage_keys=frozenset(),
+                is_referenced=lambda _candidate: False,
+            )
+            == 0
+        )
+        assert package.is_dir()
+
+    assert (
+        store.reconcile_finalized(
+            owner=recovery_owner,
+            referenced_storage_keys=frozenset(),
+            is_referenced=lambda _candidate: False,
+        )
+        == 1
+    )
+    assert not package.exists()
+    assert not lock_path.exists()

@@ -750,7 +750,12 @@ def test_periodic_settled_publication_supersedes_existing_provisional_without_re
         supersedes_revision_id=None,
     )
     with store.stage_data_files(
-        owner=PreviewArtifactOwner("production", "confluent_cloud", "tenant-1"),
+        owner=PreviewArtifactOwner(
+            "production",
+            "confluent_cloud",
+            "tenant-1",
+            storage_backend_fingerprint="a" * 64,
+        ),
         request_id=provisional_candidate.revision_id,
         data_files=draft.data_files,
     ) as staged:
@@ -1315,7 +1320,17 @@ def test_concurrent_real_publication_deletes_loser_package_and_keeps_winner_read
         assert client.get(response.json()["package"]["manifest"]["download_url"]).status_code == 200
     from core.preview.artifacts import PreviewArtifactOwner
 
-    assert local_store.cleanup_staging(PreviewArtifactOwner("production", "confluent_cloud", "tenant-1")) == 0
+    assert (
+        local_store.cleanup_staging(
+            PreviewArtifactOwner(
+                "production",
+                "confluent_cloud",
+                "tenant-1",
+                storage_backend_fingerprint="a" * 64,
+            )
+        )
+        == 0
+    )
     initial_runner.close()
     for runner in runners:
         runner.close()

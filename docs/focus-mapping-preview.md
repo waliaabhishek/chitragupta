@@ -66,6 +66,12 @@ mounted path for both. The database holds request and package metadata; the
 immutable manifest and CSV bytes live under this root and are served only
 through the Preview API.
 
+Artifact directories use an opaque v1 storage identity derived from ecosystem,
+provider tenant ID, and the tenant's configured storage backend. Renaming the
+display tenant does not move its packages. Separate tenant databases remain
+isolated even when they use the same ecosystem and provider tenant ID. Treat
+all directory and lock names below `preview.artifact_root` as internal.
+
 Preview artifact settings and a writable artifact root are operational
 requirements only when at least one tenant has `focus_preview` enabled. To
 leave a tenant disabled, omit its `focus_preview` block. Preview routes for that
@@ -559,6 +565,31 @@ use the separate billing-scope retention lifecycle described above.
 
 This fixed seven-day package lifecycle is independent of tenant
 `retention_days`, topic-attribution retention, and `lookback_days`.
+
+Both requested packages and revisions are written to synchronized staging,
+atomically finalized, and protected by one stable package lock until their
+metadata transaction commits. If publication is interrupted, same-process or
+restart recovery removes abandoned staging work and retries incomplete request
+terminalization, expiry cleanup, and revision retention.
+
+Recovery does not infer ownership from a directory name alone. It takes an
+owner-scoped snapshot of every non-null request and revision storage reference,
+then rechecks each apparent finalized orphan against authoritative metadata
+while holding the package lock. Live publishers, referenced packages, and
+reference checks that cannot be completed are preserved. Referenced packages
+from earlier releases remain available, while unverifiable legacy finalized
+paths are left for operator inspection instead of being automatically deleted.
+Deletion or filesystem-synchronization failures are logged and retried.
+
+Requested-package submission, history, status, and artifact retrieval perform
+owner recovery after their existing tenant, input, feature-enablement, runtime,
+and storage checks and before requested-package metadata actions. While that
+recovery is unavailable, the requested-package operation fails closed with HTTP
+503 detail `FOCUS Mapping Preview recovery is unavailable`. The operator should
+inspect the Preview recovery log, restore database or artifact-root
+availability, and retry the same operation; successful recovery is idempotent.
+Published-revision history, detail, and artifact routes do not invoke this
+requested-package owner-recovery step.
 
 ## Supported customization
 

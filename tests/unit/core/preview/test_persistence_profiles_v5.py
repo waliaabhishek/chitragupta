@@ -675,6 +675,10 @@ def test_multi_instance_recovery_respects_live_heartbeat_recovers_stale_owner_an
     live_clock = [old_created]
     monkeypatch.setattr(service, "_PREVIEW_HEARTBEAT_INTERVAL_SECONDS", 0.01)
     live_provider = FixedTenantBackendProvider({"production": backend})
+    owner = artifacts.preview_artifact_owner(
+        "production",
+        _tenant_config(backend._connection_string),
+    )
     live_runtime = service.PreviewRuntime(
         artifact_store=artifacts.LocalPreviewArtifactStore(tmp_path / "live-artifacts"),
         backend_provider=live_provider,
@@ -690,7 +694,7 @@ def test_multi_instance_recovery_respects_live_heartbeat_recovers_stale_owner_an
         max_workers=1,
         startup_at=startup,
         clock=lambda: startup,
-        configured_owner_keys=(("production", "confluent_cloud", "tenant-1"),),
+        configured_owners=(owner,),
     )
     try:
         live_runtime.submit(
@@ -757,9 +761,7 @@ def test_multi_instance_recovery_respects_live_heartbeat_recovers_stale_owner_an
 
         recovering_runtime.ensure_owner_recovered(
             backend=backend,
-            tenant_name="production",
-            ecosystem="confluent_cloud",
-            tenant_id="tenant-1",
+            owner=owner,
         )
 
         with backend.create_preview_metadata_read_unit_of_work() as uow:

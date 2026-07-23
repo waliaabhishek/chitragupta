@@ -22,6 +22,7 @@ from sqlalchemy import (
     cast,
     delete,
     func,
+    inspect,
     or_,
     text,
     true,
@@ -401,6 +402,79 @@ class PreviewRevisionTable(SQLModel, table=True):
         default=None,
         sa_column=Column(DateTime(timezone=True), nullable=True),
     )
+
+
+@runtime_checkable
+class PreviewArtifactReferenceRepository(Protocol):
+    def list_for_owner(self, *, ecosystem: str, tenant_id: str) -> tuple[str, ...]: ...
+
+    def is_referenced(
+        self,
+        *,
+        ecosystem: str,
+        tenant_id: str,
+        storage_key: str,
+    ) -> bool: ...
+
+
+class SQLModelPreviewArtifactReferenceRepository:
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def list_for_owner(self, *, ecosystem: str, tenant_id: str) -> tuple[str, ...]:
+        request_keys = self._session.exec(
+            select(PreviewRequestTable.storage_key).where(
+                col(PreviewRequestTable.ecosystem) == ecosystem,
+                col(PreviewRequestTable.tenant_id) == tenant_id,
+                col(PreviewRequestTable.storage_key).is_not(None),
+            )
+        ).all()
+        revision_keys: Sequence[str] = ()
+        if self._revision_references_available():
+            revision_keys = self._session.exec(
+                select(PreviewRevisionTable.storage_key).where(
+                    col(PreviewRevisionTable.ecosystem) == ecosystem,
+                    col(PreviewRevisionTable.tenant_id) == tenant_id,
+                )
+            ).all()
+        return tuple(sorted({key for key in (*request_keys, *revision_keys) if key is not None}))
+
+    def is_referenced(
+        self,
+        *,
+        ecosystem: str,
+        tenant_id: str,
+        storage_key: str,
+    ) -> bool:
+        request_reference = self._session.exec(
+            select(PreviewRequestTable.request_id).where(
+                col(PreviewRequestTable.ecosystem) == ecosystem,
+                col(PreviewRequestTable.tenant_id) == tenant_id,
+                col(PreviewRequestTable.storage_key) == storage_key,
+            )
+        ).first()
+        if request_reference is not None:
+            return True
+        if not self._revision_references_available():
+            return False
+        return (
+            self._session.exec(
+                select(PreviewRevisionTable.revision_id).where(
+                    col(PreviewRevisionTable.ecosystem) == ecosystem,
+                    col(PreviewRevisionTable.tenant_id) == tenant_id,
+                    col(PreviewRevisionTable.storage_key) == storage_key,
+                )
+            ).first()
+            is not None
+        )
+
+    def _revision_references_available(self) -> bool:
+        if inspect(self._session.get_bind()).has_table(PreviewRevisionTable.__tablename__):
+            return True
+        version = self._session.execute(text("SELECT version_num FROM alembic_version")).scalar_one_or_none()
+        if version == "023":
+            return False
+        raise RuntimeError("preview_revisions table is unavailable")
 
 
 def _canonical_json(value: object) -> str:
@@ -1862,13 +1936,19 @@ class PreviewAllocationLineageWriter(Protocol):
         self, value: AllocationLineageUnavailableRun
     ) -> AllocationLineageUnavailableRun: ...
 
-    def delete_before(self, ecosystem: str, tenant_id: str, before: date) -> LineageDeletionCount: ...
+    def delete_unretained(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        before: date,
+    ) -> LineageDeletionCount: ...
 
 
 @runtime_checkable
 class PreviewMetadataReadUnitOfWork(Protocol):
     requests: PreviewRequestRepository
     revisions: PreviewRevisionRepository
+    artifact_references: PreviewArtifactReferenceRepository
 
     def __enter__(self) -> Self: ...
     def __exit__(

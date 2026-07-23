@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from core.emitters.repository import EmissionRepository
     from core.plugin.protocols import StorageModule
     from core.preview.persistence import (
+        PreviewArtifactReferenceRepository,
         PreviewEvidenceBootstrap,
         PreviewEvidenceWriteUnitOfWork,
         PreviewGenerationReadUnitOfWork,
@@ -201,13 +202,19 @@ class PreviewMetadataReadSQLModelUnitOfWork:
         self._session: Session | None = None
         self.requests: PreviewRequestRepository = None  # type: ignore[assignment]
         self.revisions: PreviewRevisionRepository = None  # type: ignore[assignment]
+        self.artifact_references: PreviewArtifactReferenceRepository = None  # type: ignore[assignment]
 
     def __enter__(self) -> Self:
-        from core.preview.persistence import SQLModelPreviewRequestRepository, SQLModelPreviewRevisionRepository
+        from core.preview.persistence import (
+            SQLModelPreviewArtifactReferenceRepository,
+            SQLModelPreviewRequestRepository,
+            SQLModelPreviewRevisionRepository,
+        )
 
         self._session = Session(self._engine)
         self.requests = SQLModelPreviewRequestRepository(self._session)
         self.revisions = SQLModelPreviewRevisionRepository(self._session)
+        self.artifact_references = SQLModelPreviewArtifactReferenceRepository(self._session)
         return self
 
     def __exit__(

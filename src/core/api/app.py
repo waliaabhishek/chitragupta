@@ -55,6 +55,7 @@ def recover_preview_owner(
     backend_provider: TenantBackendProvider,
     preview_runtime: PreviewRuntime,
 ) -> None:
+    from core.preview.artifacts import preview_artifact_owner
     from core.preview.persistence import PreviewStorageBackend
     from core.preview.service import PreviewRecoveryUnavailable
 
@@ -65,9 +66,7 @@ def recover_preview_owner(
             raise PreviewRecoveryUnavailable("FOCUS Mapping Preview recovery is unavailable")
         preview_runtime.ensure_owner_recovered(
             backend=backend,
-            tenant_name=tenant_name,
-            ecosystem=tenant_config.ecosystem,
-            tenant_id=tenant_config.tenant_id,
+            owner=preview_artifact_owner(tenant_name, tenant_config),
         )
 
 
@@ -104,7 +103,7 @@ def create_app(
         app.state.preview_revision_reader = None
         app.state.workflow_runner = workflow_runner
         app.state.mode = mode
-        from core.preview.artifacts import LocalPreviewArtifactStore
+        from core.preview.artifacts import LocalPreviewArtifactStore, preview_artifact_owner
         from core.preview.repair import PreviewRepairRunner, PreviewRepairRuntime
         from core.preview.revisions import PreviewRevisionReadService
         from core.preview.service import PreviewRuntime
@@ -117,7 +116,7 @@ def create_app(
             if settings.focus_preview_enabled:
                 preview_artifact_store = LocalPreviewArtifactStore(settings.preview.artifact_root)
                 enabled_owners = tuple(
-                    (tenant_name, tenant.ecosystem, tenant.tenant_id)
+                    preview_artifact_owner(tenant_name, tenant)
                     for tenant_name, tenant in settings.tenants.items()
                     if tenant.focus_preview_enabled
                 )
@@ -126,7 +125,7 @@ def create_app(
                     backend_provider=backend_provider,
                     max_workers=settings.preview.max_workers,
                     max_csv_file_bytes=settings.preview.max_csv_file_bytes,
-                    configured_owner_keys=enabled_owners,
+                    configured_owners=enabled_owners,
                 )
                 app.state.preview_artifact_store = preview_artifact_store
                 app.state.preview_runtime = preview_runtime

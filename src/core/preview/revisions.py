@@ -15,6 +15,7 @@ from core.preview.artifacts import (  # noqa: TC001 - resolved by runtime protoc
     PreviewArchiveStream,
     PreviewArtifactOwner,
     PreviewArtifactStore,
+    preview_artifact_owner,
 )
 from core.preview.eligibility import policy_from_tenant_config
 from core.preview.generator import PreviewGenerationError, PreviewPackageGenerator, utc_now
@@ -169,6 +170,35 @@ class PreviewRevisionService:
         self._clock = clock
         self._revision_id_factory = revision_id_factory
 
+    def _recover_artifacts(
+        self,
+        *,
+        owner: PreviewArtifactOwner,
+        backend: PreviewStorageBackend,
+    ) -> None:
+        self._artifact_store.cleanup_staging(owner)
+        with backend.create_preview_metadata_read_unit_of_work() as read_uow:
+            references = frozenset(
+                read_uow.artifact_references.list_for_owner(
+                    ecosystem=owner.ecosystem,
+                    tenant_id=owner.tenant_id,
+                )
+            )
+
+        def is_referenced(storage_key: str) -> bool:
+            with backend.create_preview_metadata_read_unit_of_work() as read_uow:
+                return read_uow.artifact_references.is_referenced(
+                    ecosystem=owner.ecosystem,
+                    tenant_id=owner.tenant_id,
+                    storage_key=storage_key,
+                )
+
+        self._artifact_store.reconcile_finalized(
+            owner=owner,
+            referenced_storage_keys=references,
+            is_referenced=is_referenced,
+        )
+
     def _eligible_months(self, tenant_config: TenantConfig, now: datetime) -> tuple[str, ...]:
         focus = tenant_config.focus_preview
         if focus is None:
@@ -201,21 +231,24 @@ class PreviewRevisionService:
         backend: PreviewStorageBackend,
         now: datetime,
     ) -> tuple[PreviewRevision, ...]:
+        owner = preview_artifact_owner(tenant_name, tenant_config)
+        normalized_now = now.astimezone(UTC).replace(microsecond=0)
+        eligible_months = self._eligible_months(tenant_config, normalized_now)
+        if not eligible_months:
+            return ()
         try:
-            self._artifact_store.cleanup_staging(
-                PreviewArtifactOwner(tenant_name, tenant_config.ecosystem, tenant_config.tenant_id)
-            )
+            self._recover_artifacts(owner=owner, backend=backend)
         except Exception as exc:
             logger.error(
-                "FOCUS Mapping Preview revision staging recovery failed tenant=%s error_type=%s",
+                "FOCUS Mapping Preview revision publication failed tenant=%s month=%s error_type=%s",
                 tenant_name,
+                eligible_months[0],
                 type(exc).__name__,
             )
             return ()
         published: list[PreviewRevision] = []
-        normalized_now = now.astimezone(UTC).replace(microsecond=0)
         policy = policy_from_tenant_config(tenant_config, created_at=normalized_now)
-        for month in self._eligible_months(tenant_config, normalized_now):
+        for month in eligible_months:
             try:
                 interval = canonicalize_monthly_interval(month=month)
                 cutoff_date = (normalized_now - timedelta(days=tenant_config.retention_days)).date()
@@ -284,11 +317,7 @@ class PreviewRevisionService:
                 stored = None
                 try:
                     with self._artifact_store.stage_data_files(
-                        owner=PreviewArtifactOwner(
-                            tenant_name,
-                            tenant_config.ecosystem,
-                            tenant_config.tenant_id,
-                        ),
+                        owner=owner,
                         request_id=revision_id,
                         data_files=draft.data_files,
                     ) as staged:
@@ -307,18 +336,18 @@ class PreviewRevisionService:
                             published_at=candidate.published_at,
                         )
                         stored = staged.publish(manifest_body=manifest)
-                    with backend.create_preview_write_unit_of_work() as write_uow:
-                        revision = write_uow.revisions.replace_current(
-                            candidate=candidate,
-                            package=stored,
-                            expected_current_revision_id=expected_current,
-                        )
-                        write_uow.commit()
+                        with backend.create_preview_write_unit_of_work() as write_uow:
+                            revision = write_uow.revisions.replace_current(
+                                candidate=candidate,
+                                package=stored,
+                                expected_current_revision_id=expected_current,
+                            )
+                            write_uow.commit()
                     published.append(revision)
                 except Exception as publication_error:
                     if stored is not None:
                         try:
-                            self._artifact_store.delete_package(storage_key=stored.storage_key)
+                            self._recover_artifacts(owner=owner, backend=backend)
                         except Exception as cleanup_error:
                             logger.error(
                                 "FOCUS Mapping Preview revision candidate cleanup failed "
@@ -357,6 +386,20 @@ class PreviewRevisionService:
         ecosystem = tenant_config.ecosystem
         tenant_id = tenant_config.tenant_id
         cutoff_date = (normalized_now - timedelta(days=tenant_config.retention_days)).date()
+        owner = preview_artifact_owner(tenant_name, tenant_config)
+        try:
+            self._recover_artifacts(owner=owner, backend=backend)
+        except Exception as exc:
+            logger.error(
+                "FOCUS Mapping Preview revision recovery failed tenant=%s error_type=%s",
+                tenant_name,
+                type(exc).__name__,
+            )
+            return PreviewRevisionCleanupResult(
+                claimed_count=0,
+                deleted_count=0,
+                deferred_count=0,
+            )
 
         with backend.create_preview_metadata_read_unit_of_work() as read_uow:
             retry_snapshot = read_uow.revisions.list_retention_pending(

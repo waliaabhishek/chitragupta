@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING, Literal
 
-from sqlalchemy import delete, exists, update
+from sqlalchemy import delete, exists, or_, update
 from sqlmodel import Session, col, select
 
 from core.preview.evidence import (
@@ -46,6 +46,7 @@ from core.preview.repair import (
     PreviewRepairFailureStage,
     PreviewRepairStatus,
 )
+from core.storage.backends.sqlmodel.tables import PipelineStateTable
 from plugins.confluent_cloud.storage.preview_tables import (
     CCloudAllocationLineagePortionTable,
     CCloudAllocationLineageRunTable,
@@ -62,6 +63,7 @@ from plugins.confluent_cloud.storage.repositories import (
     CCloudChargebackRepository,
     _source_table_to_preview,
 )
+from plugins.confluent_cloud.storage.tables import CCloudBillingTable
 
 logger = logging.getLogger(__name__)
 
@@ -829,21 +831,64 @@ class SQLModelPreviewAllocationLineageRepository:
         self._session.flush()
         return value
 
-    def delete_before(self, ecosystem: str, tenant_id: str, before: date) -> LineageDeletionCount:
+    def delete_unretained(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        before: date,
+    ) -> LineageDeletionCount:
         from core.preview.persistence import LineageDeletionCount
 
+        matching_calculation = exists().where(
+            col(PipelineStateTable.ecosystem) == col(CCloudAllocationLineageRunTable.ecosystem),
+            col(PipelineStateTable.tenant_id) == col(CCloudAllocationLineageRunTable.tenant_id),
+            col(PipelineStateTable.tracking_date) == col(CCloudAllocationLineageRunTable.tracking_date),
+            col(PipelineStateTable.chargeback_calculated).is_(True),
+            col(PipelineStateTable.calculation_id) == col(CCloudAllocationLineageRunTable.calculation_id),
+        )
+        matching_billing = exists().where(
+            col(CCloudBillingTable.ecosystem) == col(CCloudAllocationLineagePortionTable.ecosystem),
+            col(CCloudBillingTable.tenant_id) == col(CCloudAllocationLineagePortionTable.tenant_id),
+            col(CCloudBillingTable.timestamp) == col(CCloudAllocationLineagePortionTable.origin_timestamp),
+            col(CCloudBillingTable.env_id) == col(CCloudAllocationLineagePortionTable.origin_env_id),
+            col(CCloudBillingTable.resource_id) == col(CCloudAllocationLineagePortionTable.origin_resource_id),
+            col(CCloudBillingTable.product_type) == col(CCloudAllocationLineagePortionTable.origin_product_type),
+            col(CCloudBillingTable.product_category)
+            == col(CCloudAllocationLineagePortionTable.origin_product_category),
+        )
+        missing_origin = exists().where(
+            col(CCloudAllocationLineagePortionTable.ecosystem) == col(CCloudAllocationLineageRunTable.ecosystem),
+            col(CCloudAllocationLineagePortionTable.tenant_id) == col(CCloudAllocationLineageRunTable.tenant_id),
+            col(CCloudAllocationLineagePortionTable.tracking_date)
+            == col(CCloudAllocationLineageRunTable.tracking_date),
+            ~matching_billing,
+        )
+        selected_runs = self._session.exec(
+            select(CCloudAllocationLineageRunTable).where(
+                col(CCloudAllocationLineageRunTable.ecosystem) == ecosystem,
+                col(CCloudAllocationLineageRunTable.tenant_id) == tenant_id,
+                or_(
+                    col(CCloudAllocationLineageRunTable.tracking_date) < before,
+                    ~matching_calculation,
+                    missing_origin,
+                ),
+            )
+        )
+        selected_dates = tuple(run.tracking_date for run in selected_runs)
+        if not selected_dates:
+            return LineageDeletionCount(portions=0, runs=0)
         portions = self._session.execute(
             delete(CCloudAllocationLineagePortionTable).where(
                 col(CCloudAllocationLineagePortionTable.ecosystem) == ecosystem,
                 col(CCloudAllocationLineagePortionTable.tenant_id) == tenant_id,
-                col(CCloudAllocationLineagePortionTable.tracking_date) < before,
+                col(CCloudAllocationLineagePortionTable.tracking_date).in_(selected_dates),
             )
         )
         runs = self._session.execute(
             delete(CCloudAllocationLineageRunTable).where(
                 col(CCloudAllocationLineageRunTable.ecosystem) == ecosystem,
                 col(CCloudAllocationLineageRunTable.tenant_id) == tenant_id,
-                col(CCloudAllocationLineageRunTable.tracking_date) < before,
+                col(CCloudAllocationLineageRunTable.tracking_date).in_(selected_dates),
             )
         )
         return LineageDeletionCount(

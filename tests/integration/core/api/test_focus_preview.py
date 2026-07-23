@@ -1412,7 +1412,12 @@ def test_real_startup_cleans_staging_and_fails_strictly_older_pending_rows(
         uow.commit()
     backend.dispose()
     artifacts = import_module("core.preview.artifacts")
-    owner = artifacts.PreviewArtifactOwner("production", "confluent_cloud", "tenant-1")
+    owner = artifacts.PreviewArtifactOwner(
+        "production",
+        "confluent_cloud",
+        "tenant-1",
+        storage_backend_fingerprint="a" * 64,
+    )
     staging = (
         settings.preview.artifact_root / ".staging" / artifacts.preview_owner_token(owner) / f".{('a' * 32)}.staging"
     )

@@ -91,6 +91,16 @@ class RecordingStore:
             raise OSError("staging unavailable")
         return 0
 
+    def reconcile_finalized(
+        self,
+        *,
+        owner: PreviewArtifactOwner,
+        referenced_storage_keys: frozenset[str],
+        is_referenced: Callable[[str], bool],
+    ) -> int:
+        del owner, referenced_storage_keys, is_referenced
+        return 0
+
     def close(self) -> None:
         return None
 
@@ -99,7 +109,10 @@ class RecordingStore:
 class RecordingRequests:
     owner: str
     fail_recovery: bool = False
+    mark_failed_result: bool = False
+    request_status: object | None = None
     recovery_calls: list[tuple[str, str, datetime, datetime]] = field(default_factory=list)
+    mark_failed_calls: int = 0
 
     def create_queued(
         self,
@@ -113,7 +126,9 @@ class RecordingRequests:
 
     def get_for_owner(self, request_id: str, ecosystem: str, tenant_id: str) -> PreviewRequest | None:
         del request_id, ecosystem, tenant_id
-        return None
+        if self.request_status is None:
+            return None
+        return MagicMock(status=self.request_status)
 
     def list_recent_for_owner(
         self,
@@ -163,7 +178,8 @@ class RecordingRequests:
         worker_id: str | None = None,
     ) -> bool:
         del request_id, completed_at, diagnostic, worker_id
-        return False
+        self.mark_failed_calls += 1
+        return self.mark_failed_result
 
     def expire_ready_due(
         self,
@@ -277,6 +293,9 @@ class RecordingReadUow:
         storage = __import__("core.storage.interface", fromlist=["ResourceRepository"])
         self.requests = requests
         self.revisions = MagicMock(spec=PreviewRevisionRepository)
+        self.artifact_references = MagicMock()
+        self.artifact_references.list_for_owner.return_value = ()
+        self.artifact_references.is_referenced.return_value = False
         self.calculations = MagicMock(spec=persistence.PreviewCalculationRepository)
         self.cost_evidence = MagicMock(spec=persistence.PreviewCostEvidenceReader)
         self.allocation_evidence = MagicMock(spec=persistence.PreviewAllocationEvidenceReader)
@@ -292,6 +311,7 @@ class RecordingReadUow:
 
 
 def _runtime(store: RecordingStore) -> PreviewRuntime:
+    artifacts = preview_module("artifacts")
     return PreviewRuntime(
         artifact_store=store,
         backend_provider=FixedTenantBackendProvider(),
@@ -299,9 +319,19 @@ def _runtime(store: RecordingStore) -> PreviewRuntime:
         max_csv_file_bytes=None,
         startup_at=datetime(2026, 7, 3, 1, 2, 3, 900000, tzinfo=UTC),
         clock=lambda: datetime(2026, 7, 3, 1, 2, 3, tzinfo=UTC),
-        configured_owner_keys=(
-            ("tenant-a", "confluent_cloud", "shared-provider-tenant"),
-            ("tenant-b", "confluent_cloud", "shared-provider-tenant"),
+        configured_owners=(
+            artifacts.PreviewArtifactOwner(
+                "tenant-a",
+                "confluent_cloud",
+                "shared-provider-tenant",
+                storage_backend_fingerprint="a" * 64,
+            ),
+            artifacts.PreviewArtifactOwner(
+                "tenant-b",
+                "confluent_cloud",
+                "shared-provider-tenant",
+                storage_backend_fingerprint="b" * 64,
+            ),
         ),
         executor=ImmediateExecutor(),
     )
@@ -325,6 +355,7 @@ def test_delivery_recovery_doubles_satisfy_full_production_protocols() -> None:
 
 def test_recovery_is_triple_keyed_and_failure_cannot_block_or_clear_same_provider_peer() -> None:
     service = preview_module("service")
+    artifacts = preview_module("artifacts")
     store = RecordingStore()
     runtime = _runtime(store)
     a_requests = RecordingRequests("tenant-a", fail_recovery=True)
@@ -335,28 +366,40 @@ def test_recovery_is_triple_keyed_and_failure_cannot_block_or_clear_same_provide
         with pytest.raises(service.PreviewRecoveryUnavailable):
             runtime.ensure_owner_recovered(
                 backend=backend_a,
-                tenant_name="tenant-a",
-                ecosystem="confluent_cloud",
-                tenant_id="shared-provider-tenant",
+                owner=artifacts.PreviewArtifactOwner(
+                    "tenant-a",
+                    "confluent_cloud",
+                    "shared-provider-tenant",
+                    storage_backend_fingerprint="a" * 64,
+                ),
             )
         runtime.ensure_owner_recovered(
             backend=backend_b,
-            tenant_name="tenant-b",
-            ecosystem="confluent_cloud",
-            tenant_id="shared-provider-tenant",
+            owner=artifacts.PreviewArtifactOwner(
+                "tenant-b",
+                "confluent_cloud",
+                "shared-provider-tenant",
+                storage_backend_fingerprint="b" * 64,
+            ),
         )
         runtime.ensure_owner_recovered(
             backend=backend_b,
-            tenant_name="tenant-b",
-            ecosystem="confluent_cloud",
-            tenant_id="shared-provider-tenant",
+            owner=artifacts.PreviewArtifactOwner(
+                "tenant-b",
+                "confluent_cloud",
+                "shared-provider-tenant",
+                storage_backend_fingerprint="b" * 64,
+            ),
         )
         a_requests.fail_recovery = False
         runtime.ensure_owner_recovered(
             backend=backend_a,
-            tenant_name="tenant-a",
-            ecosystem="confluent_cloud",
-            tenant_id="shared-provider-tenant",
+            owner=artifacts.PreviewArtifactOwner(
+                "tenant-a",
+                "confluent_cloud",
+                "shared-provider-tenant",
+                storage_backend_fingerprint="a" * 64,
+            ),
         )
 
         assert store.cleanup_calls == 4
@@ -374,6 +417,7 @@ def test_recovery_is_triple_keyed_and_failure_cannot_block_or_clear_same_provide
 
 def test_global_staging_failure_keeps_every_owner_pending_until_later_success() -> None:
     service = preview_module("service")
+    artifacts = preview_module("artifacts")
     store = RecordingStore(fail_cleanup=True)
     runtime = _runtime(store)
     backend = RecordingBackend(RecordingRequests("tenant-a"))
@@ -381,20 +425,114 @@ def test_global_staging_failure_keeps_every_owner_pending_until_later_success() 
         with pytest.raises(service.PreviewRecoveryUnavailable):
             runtime.ensure_owner_recovered(
                 backend=backend,
-                tenant_name="tenant-a",
-                ecosystem="confluent_cloud",
-                tenant_id="shared-provider-tenant",
+                owner=artifacts.PreviewArtifactOwner(
+                    "tenant-a",
+                    "confluent_cloud",
+                    "shared-provider-tenant",
+                    storage_backend_fingerprint="a" * 64,
+                ),
             )
         assert backend.requests.recovery_calls == []
 
         store.fail_cleanup = False
         runtime.ensure_owner_recovered(
             backend=backend,
-            tenant_name="tenant-a",
-            ecosystem="confluent_cloud",
-            tenant_id="shared-provider-tenant",
+            owner=artifacts.PreviewArtifactOwner(
+                "tenant-a",
+                "confluent_cloud",
+                "shared-provider-tenant",
+                storage_backend_fingerprint="a" * 64,
+            ),
         )
         assert store.cleanup_calls == 2
         assert len(backend.requests.recovery_calls) == 1
+    finally:
+        runtime.close()
+
+
+def test_local_terminalization_skips_active_request_then_retries_after_untracking() -> None:
+    artifacts = preview_module("artifacts")
+    models = preview_module("models")
+    store = RecordingStore()
+    runtime = _runtime(store)
+    requests = RecordingRequests("tenant-a", mark_failed_result=True)
+    backend = RecordingBackend(requests)
+    owner = artifacts.PreviewArtifactOwner(
+        "tenant-a",
+        "confluent_cloud",
+        "shared-provider-tenant",
+        storage_backend_fingerprint="a" * 64,
+    )
+    diagnostic = models.PreviewDiagnostic("preview_generation_failed", "generation failed", True)
+    request_id = "active-request"
+    try:
+        runtime._remember_terminalization(  # noqa: SLF001
+            request_id=request_id,
+            owner=owner,
+            diagnostic=diagnostic,
+        )
+        with runtime._lease_lock:  # noqa: SLF001
+            runtime._lease_targets[request_id] = ("tenant-a", MagicMock())  # noqa: SLF001
+
+        runtime._retry_local_terminalization(backend=backend, owner=owner)  # noqa: SLF001
+
+        assert requests.mark_failed_calls == 0
+        assert request_id in runtime._local_terminalization_pending  # noqa: SLF001
+
+        runtime._untrack_request(request_id)  # noqa: SLF001
+        runtime._retry_local_terminalization(backend=backend, owner=owner)  # noqa: SLF001
+
+        assert requests.mark_failed_calls == 1
+        assert request_id not in runtime._local_terminalization_pending  # noqa: SLF001
+    finally:
+        runtime.close()
+
+
+@pytest.mark.parametrize(
+    ("persisted_status", "clears_pending"),
+    [
+        ("ready", True),
+        ("failed", True),
+        ("expired", True),
+        ("running", False),
+    ],
+)
+def test_local_terminalization_resolves_only_ambiguous_terminal_outcomes(
+    persisted_status: str,
+    clears_pending: bool,
+) -> None:
+    artifacts = preview_module("artifacts")
+    models = preview_module("models")
+    store = RecordingStore()
+    runtime = _runtime(store)
+    requests = RecordingRequests(
+        "tenant-a",
+        mark_failed_result=False,
+        request_status=models.PreviewRequestStatus(persisted_status),
+    )
+    backend = RecordingBackend(requests)
+    owner = artifacts.PreviewArtifactOwner(
+        "tenant-a",
+        "confluent_cloud",
+        "shared-provider-tenant",
+        storage_backend_fingerprint="a" * 64,
+    )
+    diagnostic = models.PreviewDiagnostic("preview_generation_failed", "generation failed", True)
+    request_id = f"{persisted_status}-request"
+    try:
+        runtime._remember_terminalization(  # noqa: SLF001
+            request_id=request_id,
+            owner=owner,
+            diagnostic=diagnostic,
+        )
+
+        if clears_pending:
+            runtime._retry_local_terminalization(backend=backend, owner=owner)  # noqa: SLF001
+        else:
+            with pytest.raises(RuntimeError, match="terminalization remains pending"):
+                runtime._retry_local_terminalization(backend=backend, owner=owner)  # noqa: SLF001
+
+        assert requests.mark_failed_calls == 1
+        assert (request_id not in runtime._local_terminalization_pending) is clears_pending  # noqa: SLF001
     finally:
         runtime.close()

@@ -9,7 +9,11 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
-from core.preview.artifacts import PreviewArtifactIntegrityError, PreviewArtifactOwner
+from core.preview.artifacts import (
+    PreviewArtifactIntegrityError,
+    PreviewArtifactOwner,
+    preview_artifact_owner,
+)
 from core.preview.eligibility import (
     PreviewEligibilityPolicy,
     policy_from_tenant_config,
@@ -86,7 +90,7 @@ class PreviewRuntime:
         max_workers: int,
         max_csv_file_bytes: int | None = None,
         startup_at: datetime | None = None,
-        configured_owner_keys: tuple[tuple[str, str, str], ...] = (),
+        configured_owners: tuple[PreviewArtifactOwner, ...] = (),
         clock: Callable[[], datetime] = utc_now,
         request_id_factory: Callable[[], str] = new_uuid,
         executor: PreviewExecutor | None = None,
@@ -105,10 +109,16 @@ class PreviewRuntime:
         if process_start.tzinfo is None or process_start.utcoffset() is None:
             raise ValueError("startup_at must be timezone-aware")
         self._startup_at = process_start.astimezone(UTC).replace(microsecond=0)
-        self._owner_recovery_pending = set(configured_owner_keys)
+        owner_keys = tuple(self._owner_key(owner) for owner in configured_owners)
+        self._owner_recovery_pending = set(owner_keys)
         self._owner_recovery_locks: dict[tuple[str, str, str], threading.Lock] = {
-            key: threading.Lock() for key in configured_owner_keys
+            key: threading.Lock() for key in owner_keys
         }
+        self._recovery_state_lock = threading.Lock()
+        self._local_terminalization_pending: dict[
+            str,
+            tuple[PreviewArtifactOwner, PreviewDiagnostic],
+        ] = {}
         self._request_id_factory = request_id_factory
         self._lease_owner_id = lease_owner_id or uuid.uuid4().hex
         if (
@@ -126,15 +136,20 @@ class PreviewRuntime:
         self._executor: PreviewExecutor = executor or ThreadPoolExecutor(max_workers=max_workers)
         self._closed = False
 
+    @staticmethod
+    def _owner_key(owner: PreviewArtifactOwner) -> tuple[str, str, str]:
+        return (owner.ecosystem, owner.tenant_id, owner.storage_backend_fingerprint)
+
     def ensure_owner_recovered(
         self,
         *,
         backend: PreviewStorageBackend,
-        tenant_name: str,
-        ecosystem: str,
-        tenant_id: str,
+        owner: PreviewArtifactOwner,
     ) -> None:
-        key = (tenant_name, ecosystem, tenant_id)
+        key = self._owner_key(owner)
+        tenant_name = owner.tenant_name
+        ecosystem = owner.ecosystem
+        tenant_id = owner.tenant_id
         lock = self._owner_recovery_locks.setdefault(key, threading.Lock())
         with lock:
             startup_recovery_pending = key in self._owner_recovery_pending
@@ -144,7 +159,8 @@ class PreviewRuntime:
                 True,
             )
             try:
-                self._artifact_store.cleanup_staging(PreviewArtifactOwner(tenant_name, ecosystem, tenant_id))
+                self._artifact_store.cleanup_staging(owner)
+                self._retry_local_terminalization(backend=backend, owner=owner)
                 with backend.create_preview_write_unit_of_work() as uow:
                     now = self._clock().astimezone(UTC)
                     startup_recovery = (
@@ -170,6 +186,7 @@ class PreviewRuntime:
                         uow.commit()
                 if startup_recovery_pending:
                     self.reconcile_expiry(backend=backend, ecosystem=ecosystem, tenant_id=tenant_id)
+                self._reconcile_finalized(backend=backend, owner=owner)
             except Exception as exc:
                 logger.error(
                     "FOCUS Mapping Preview owner recovery failed tenant=%s ecosystem=%s tenant_id=%s error_type=%s",
@@ -180,7 +197,84 @@ class PreviewRuntime:
                 )
                 raise PreviewRecoveryUnavailable("FOCUS Mapping Preview recovery is unavailable") from None
             if startup_recovery_pending and startup_recovery is not None and startup_recovery.protected_count == 0:
-                self._owner_recovery_pending.remove(key)
+                self._owner_recovery_pending.discard(key)
+
+    def _retry_local_terminalization(
+        self,
+        *,
+        backend: PreviewStorageBackend,
+        owner: PreviewArtifactOwner,
+    ) -> None:
+        key = self._owner_key(owner)
+        with self._recovery_state_lock:
+            candidates = tuple(
+                (request_id, diagnostic)
+                for request_id, (pending_owner, diagnostic) in self._local_terminalization_pending.items()
+                if self._owner_key(pending_owner) == key
+            )
+        with self._lease_lock:
+            active_request_ids = frozenset(self._lease_targets)
+        for request_id, diagnostic in candidates:
+            if request_id in active_request_ids:
+                continue
+            if self._mark_failed(backend, request_id, diagnostic):
+                with self._recovery_state_lock:
+                    self._local_terminalization_pending.pop(request_id, None)
+                continue
+            with backend.create_preview_metadata_read_unit_of_work() as read_uow:
+                request = read_uow.requests.get_for_owner(
+                    request_id,
+                    owner.ecosystem,
+                    owner.tenant_id,
+                )
+            if request is not None and request.status in {
+                PreviewRequestStatus.READY,
+                PreviewRequestStatus.FAILED,
+                PreviewRequestStatus.EXPIRED,
+            }:
+                with self._recovery_state_lock:
+                    self._local_terminalization_pending.pop(request_id, None)
+                continue
+            raise RuntimeError("preview request terminalization remains pending")
+
+    def _reconcile_finalized(
+        self,
+        *,
+        backend: PreviewStorageBackend,
+        owner: PreviewArtifactOwner,
+    ) -> None:
+        with backend.create_preview_metadata_read_unit_of_work() as read_uow:
+            references = frozenset(
+                read_uow.artifact_references.list_for_owner(
+                    ecosystem=owner.ecosystem,
+                    tenant_id=owner.tenant_id,
+                )
+            )
+
+        def is_referenced(storage_key: str) -> bool:
+            with backend.create_preview_metadata_read_unit_of_work() as read_uow:
+                return read_uow.artifact_references.is_referenced(
+                    ecosystem=owner.ecosystem,
+                    tenant_id=owner.tenant_id,
+                    storage_key=storage_key,
+                )
+
+        self._artifact_store.reconcile_finalized(
+            owner=owner,
+            referenced_storage_keys=references,
+            is_referenced=is_referenced,
+        )
+
+    def _remember_terminalization(
+        self,
+        *,
+        request_id: str,
+        owner: PreviewArtifactOwner,
+        diagnostic: PreviewDiagnostic,
+    ) -> None:
+        with self._recovery_state_lock:
+            self._local_terminalization_pending[request_id] = (owner, diagnostic)
+            self._owner_recovery_pending.add(self._owner_key(owner))
 
     def _lease_expiry(self) -> datetime:
         return self._clock().astimezone(UTC) + _PREVIEW_LEASE_DURATION
@@ -294,7 +388,12 @@ class PreviewRuntime:
             diagnostic = PreviewDiagnostic(
                 "preview_worker_unavailable", "FOCUS Mapping Preview worker is unavailable.", True
             )
-            self._mark_failed(backend, request.request_id, diagnostic)
+            if not self._mark_failed(backend, request.request_id, diagnostic):
+                self._remember_terminalization(
+                    request_id=request.request_id,
+                    owner=preview_artifact_owner(tenant_name, tenant_config),
+                    diagnostic=diagnostic,
+                )
             self._untrack_request(request.request_id)
             raise PreviewWorkerUnavailable("FOCUS Mapping Preview worker is unavailable") from exc
         return request
@@ -305,11 +404,12 @@ class PreviewRuntime:
         policy: PreviewEligibilityPolicy,
         tenant_config: TenantConfig,
     ) -> None:
+        owner = preview_artifact_owner(request.tenant_name, tenant_config)
         try:
             with self._backend_provider.acquire_backend(request.tenant_name, tenant_config) as leased_backend:
                 if not isinstance(leased_backend, PreviewStorageBackend):
                     raise TypeError("tenant backend does not support Preview storage")
-                self._run_worker_with_backend(leased_backend, request, policy)
+                self._run_worker_with_backend(leased_backend, request, policy, owner)
         except Exception as exc:
             logger.error(
                 "FOCUS Mapping Preview backend lease failed tenant=%s request_id=%s error_type=%s",
@@ -317,11 +417,21 @@ class PreviewRuntime:
                 request.request_id,
                 type(exc).__name__,
             )
-            self._mark_failed_with_lease(
+            marked_failed = self._mark_failed_with_lease(
                 request,
                 tenant_config,
                 PreviewDiagnostic("preview_generation_failed", "FOCUS Mapping Preview generation failed.", True),
             )
+            if not marked_failed:
+                self._remember_terminalization(
+                    request_id=request.request_id,
+                    owner=owner,
+                    diagnostic=PreviewDiagnostic(
+                        "preview_generation_failed",
+                        "FOCUS Mapping Preview generation failed.",
+                        True,
+                    ),
+                )
         finally:
             self._untrack_request(request.request_id)
 
@@ -330,7 +440,15 @@ class PreviewRuntime:
         backend: PreviewStorageBackend,
         request: PreviewRequest,
         policy: PreviewEligibilityPolicy,
+        owner: PreviewArtifactOwner,
     ) -> None:
+        stored = None
+        ready_committed = False
+        failure_diagnostic = PreviewDiagnostic(
+            "preview_generation_failed",
+            "FOCUS Mapping Preview generation failed.",
+            True,
+        )
         try:
             with backend.create_preview_write_unit_of_work() as uow:
                 running = uow.requests.mark_running(
@@ -348,7 +466,7 @@ class PreviewRuntime:
                 policy=policy,
             )
             with self._artifact_store.stage_data_files(
-                owner=PreviewArtifactOwner(request.tenant_name, request.ecosystem, request.tenant_id),
+                owner=owner,
                 request_id=request.request_id,
                 data_files=draft.data_files,
             ) as staged:
@@ -363,29 +481,36 @@ class PreviewRuntime:
                     expires_at=expires_at,
                 )
                 stored = staged.publish(manifest_body=manifest_body)
-            with backend.create_preview_write_unit_of_work() as uow:
-                if not uow.requests.mark_ready(
-                    request.request_id,
-                    ready_at,
-                    expires_at,
-                    snapshot,
-                    stored,
-                    worker_id=self._lease_owner_id,
-                ):
-                    raise _PreviewReadyTransitionError(stored.storage_key)
-                uow.commit()
+                with backend.create_preview_write_unit_of_work() as uow:
+                    if not uow.requests.mark_ready(
+                        request.request_id,
+                        ready_at,
+                        expires_at,
+                        snapshot,
+                        stored,
+                        worker_id=self._lease_owner_id,
+                    ):
+                        raise _PreviewReadyTransitionError(stored.storage_key)
+                    uow.commit()
+                    ready_committed = True
         except PreviewGenerationError as exc:
-            self._mark_failed(backend, request.request_id, exc.diagnostic)
+            if not self._mark_failed(backend, request.request_id, exc.diagnostic):
+                self._remember_terminalization(
+                    request_id=request.request_id,
+                    owner=owner,
+                    diagnostic=exc.diagnostic,
+                )
         except _PreviewReadyTransitionError:
             logger.error(
                 "FOCUS Mapping Preview ready transition rejected after artifact finalization request_id=%s",
                 request.request_id,
             )
-            self._mark_failed(
-                backend,
-                request.request_id,
-                PreviewDiagnostic("preview_generation_failed", "FOCUS Mapping Preview generation failed.", True),
-            )
+            if not self._mark_failed(backend, request.request_id, failure_diagnostic):
+                self._remember_terminalization(
+                    request_id=request.request_id,
+                    owner=owner,
+                    diagnostic=failure_diagnostic,
+                )
         except Exception as exc:
             logger.error(
                 "Unexpected FOCUS Mapping Preview worker failure tenant=%s request_id=%s error_type=%s",
@@ -393,11 +518,16 @@ class PreviewRuntime:
                 request.request_id,
                 type(exc).__name__,
             )
-            self._mark_failed(
-                backend,
-                request.request_id,
-                PreviewDiagnostic("preview_generation_failed", "FOCUS Mapping Preview generation failed.", True),
-            )
+            if not self._mark_failed(backend, request.request_id, failure_diagnostic):
+                self._remember_terminalization(
+                    request_id=request.request_id,
+                    owner=owner,
+                    diagnostic=failure_diagnostic,
+                )
+        finally:
+            if stored is not None and not ready_committed:
+                with self._recovery_state_lock:
+                    self._owner_recovery_pending.add(self._owner_key(owner))
 
     def _mark_failed_with_lease(
         self,

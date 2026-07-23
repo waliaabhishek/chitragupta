@@ -83,6 +83,9 @@ class _UnitOfWork:
         repository = backend.repository
         self.revisions = repository
         self.requests = MagicMock()
+        self.artifact_references = MagicMock()
+        self.artifact_references.list_for_owner.return_value = ()
+        self.artifact_references.is_referenced.return_value = False
         self.commits = 0
 
     def __enter__(self) -> Self:
@@ -140,6 +143,16 @@ class _Store:
 
     def cleanup_staging(self, owner: object) -> int:
         del owner
+        return 0
+
+    def reconcile_finalized(
+        self,
+        *,
+        owner: object,
+        referenced_storage_keys: frozenset[str],
+        is_referenced: object,
+    ) -> int:
+        del owner, referenced_storage_keys, is_referenced
         return 0
 
 

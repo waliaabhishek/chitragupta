@@ -7,9 +7,15 @@ keep a fixed seven-day lifetime.
 
 ## Tenant pipeline data
 
-After each pipeline cycle, the engine deletes tenant records older than
-`tenants.*.retention_days` from billing, resource, identity, and chargeback
-storage.
+After each pipeline cycle, the engine applies
+`tenants.*.retention_days` to the cached tenants that ran in that process.
+Resource and identity records use the exact UTC cleanup timestamp minus the
+configured duration. Calculation-owned data uses the start of the UTC calendar
+day containing that cutoff: billing, chargebacks, pipeline state, Preview Cost
+source records, source readiness, and allocation lineage therefore retain that
+whole calculation day rather than deleting part of it. Organization-authority
+attempts use the exact tenant cutoff, and topic attribution keeps its separate
+exact timestamp cutoff described below.
 
 ```yaml
 tenants:
@@ -56,10 +62,17 @@ Preview evidence retention runs only for tenants with `focus_preview` enabled.
 During scheduled retention, Chitragupta removes expired raw Cost evidence,
 source-readiness history, allocation-lineage records, and superseded
 organization-authority attempts using the tenant's `retention_days` cutoff.
+Lineage cleanup also reconciles the retained window: a run is removed when its
+calculation identity no longer matches an authoritative calculated pipeline
+state, or when any of its portions no longer has its complete billing-origin
+key. A retained zero-portion or unavailable run remains valid when its
+calculation identity still matches pipeline state. Repeating cleanup after
+success makes no additional changes.
+
 This cleanup is separate from generic billing and chargeback cleanup. If
-Preview evidence cleanup fails, its transaction is rolled back and retried on a
-later scheduled cycle; generic cleanup and chargeback operation remain
-independent.
+Preview evidence cleanup fails, its transaction is rolled back, the failure is
+logged for operators, and a later scheduled cycle retries it. Generic cleanup
+and chargeback operation remain independent.
 
 While disabled, tenants create or access no new Preview evidence and run no
 Preview retention work. Disabling Preview does not delete evidence that was
@@ -88,6 +101,32 @@ not stop later dates. Interrupted work is marked failed and is not automatically
 resumed; retrying creates a new operation over the requested range. Repair
 creates no requested package or published revision, so their separate retention
 lifecycles remain unchanged.
+
+## Preview artifact recovery
+
+Requested packages and published revisions share one durable artifact root but
+keep separate metadata lifecycles. New packages use an opaque versioned
+namespace derived from ecosystem, provider tenant ID, and the configured
+storage backend. The display tenant name is not part of that storage identity,
+so renaming a configured tenant does not move its packages; two databases with
+the same provider tenant ID remain isolated.
+
+Publication writes and synchronizes a staging package, atomically finalizes it,
+and holds one package lock until the request or revision metadata commit
+finishes. Same-process retries and restart recovery remove interrupted staging
+work. Finalized packages are removed only after an owner-scoped metadata
+snapshot misses the package and a fresh authoritative reference check under the
+same stable package lock also reports it unreferenced. A live publisher,
+reference-query failure, deletion failure, or synchronization failure preserves
+or defers work for a later recovery attempt rather than treating cleanup as
+successful.
+
+Recovery preserves every package referenced by request or revision metadata,
+including referenced packages created by an older release. Legacy or otherwise
+unverifiable finalized paths are not automatically deleted. Request expiry
+still blocks downloads before deleting bytes, and revision retention still
+hides eligible revisions before package deletion and retries pending cleanup
+after later cycles or restarts.
 
 ## Requested FOCUS Preview packages
 

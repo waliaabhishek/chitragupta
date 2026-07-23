@@ -189,7 +189,12 @@ def _persist_ready_request(
     ready_at = created_at + timedelta(minutes=2)
     expires_at = ready_at + timedelta(days=7)
     with artifact_store.stage_data_files(
-        owner=PreviewArtifactOwner("production", "confluent_cloud", "tenant-1"),
+        owner=PreviewArtifactOwner(
+            "production",
+            "confluent_cloud",
+            "tenant-1",
+            storage_backend_fingerprint="a" * 64,
+        ),
         request_id=request_id,
         data_files=data_files,
     ) as staged:

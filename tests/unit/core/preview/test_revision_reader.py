@@ -50,6 +50,19 @@ class _CorruptingStore:
     def cleanup_staging(self, owner: Any) -> int:
         return self.delegate.cleanup_staging(owner)
 
+    def reconcile_finalized(
+        self,
+        *,
+        owner: Any,
+        referenced_storage_keys: frozenset[str],
+        is_referenced: Any,
+    ) -> int:
+        return self.delegate.reconcile_finalized(
+            owner=owner,
+            referenced_storage_keys=referenced_storage_keys,
+            is_referenced=is_referenced,
+        )
+
     def close(self) -> None:
         self.delegate.close()
 
@@ -76,7 +89,12 @@ def _stored_revision(tmp_path: Path) -> tuple[Any, bytes, Any]:
         published_at=datetime(2026, 8, 4, tzinfo=UTC),
     )
     store = artifacts.LocalPreviewArtifactStore(tmp_path)
-    owner = artifacts.PreviewArtifactOwner("old-label", "confluent_cloud", "tenant-1")
+    owner = artifacts.PreviewArtifactOwner(
+        "old-label",
+        "confluent_cloud",
+        "tenant-1",
+        storage_backend_fingerprint="a" * 64,
+    )
     with store.stage_data_files(owner=owner, request_id="revision-1", data_files=draft.data_files) as staged:
         package = staged.publish(manifest_body=body)
     revision = models.PreviewRevision(
@@ -609,4 +627,14 @@ def test_reader_is_a_borrower_and_never_closes_artifact_store(tmp_path: Path) ->
 
     assert not hasattr(reader, "close")
     artifacts = import_module("core.preview.artifacts")
-    assert store.cleanup_staging(artifacts.PreviewArtifactOwner("old-label", "confluent_cloud", "tenant-1")) == 0
+    assert (
+        store.cleanup_staging(
+            artifacts.PreviewArtifactOwner(
+                "old-label",
+                "confluent_cloud",
+                "tenant-1",
+                storage_backend_fingerprint="a" * 64,
+            )
+        )
+        == 0
+    )

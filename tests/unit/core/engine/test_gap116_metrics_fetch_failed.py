@@ -512,6 +512,10 @@ class _MockPipelineStateRepo:
     def get_last_calculated_date(self, ecosystem: str, tenant_id: str) -> date_type | None:
         return None
 
+    def delete_before(self, ecosystem: str, tenant_id: str, before: date_type) -> int:
+        del ecosystem, tenant_id, before
+        return 0
+
 
 def test_pipeline_state_fake_structurally_satisfies_repository_protocol() -> None:
     assert isinstance(_MockPipelineStateRepo(), PipelineStateRepository)

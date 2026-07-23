@@ -41,6 +41,16 @@ class ControlledStore:
             raise RuntimeError("staging cleanup failed")
         return 0
 
+    def reconcile_finalized(
+        self,
+        *,
+        owner: object,
+        referenced_storage_keys: frozenset[str],
+        is_referenced: object,
+    ) -> int:
+        del owner, referenced_storage_keys, is_referenced
+        return 0
+
     def close(self) -> None:
         self.events.append("store.close")
         if _fails(self.failure, "store"):
@@ -58,16 +68,14 @@ class ControlledRuntime:
         self,
         *,
         backend: object,
-        tenant_name: str,
-        ecosystem: str,
-        tenant_id: str,
+        owner: object,
     ) -> None:
         del backend
+        tenant_name = owner.tenant_name
         if self.record_recovery:
             assert self.store is not None
-            artifacts = import_module("core.preview.artifacts")
-            self.store.cleanup_staging(artifacts.PreviewArtifactOwner(tenant_name, ecosystem, tenant_id))
-            self.events.append(f"runtime.recover:{tenant_name}:{ecosystem}:{tenant_id}")
+            self.store.cleanup_staging(owner)
+            self.events.append(f"runtime.recover:{tenant_name}:{owner.ecosystem}:{owner.tenant_id}")
         if _fails(self.failure, tenant_name):
             raise RuntimeError(f"{tenant_name} recovery failed")
 
@@ -480,11 +488,10 @@ def test_combined_startup_recovers_each_enabled_owner_through_runner_leases_in_s
         preview_runtime: ControlledRuntime,
     ) -> None:
         with backend_provider.acquire_backend(tenant_name, tenant_config) as backend:
+            artifacts = import_module("core.preview.artifacts")
             preview_runtime.ensure_owner_recovered(
                 backend=backend,
-                tenant_name=tenant_name,
-                ecosystem=tenant_config.ecosystem,
-                tenant_id=tenant_config.tenant_id,
+                owner=artifacts.preview_artifact_owner(tenant_name, tenant_config),
             )
 
     monkeypatch.setattr(app_module, "recover_preview_owner", recover_preview_owner, raising=False)
@@ -524,7 +531,7 @@ def test_one_owner_recovery_failure_is_nonfatal_and_does_not_skip_other_owner(
     original_recovery = runtime.ensure_owner_recovered
 
     def selective_recovery(**kwargs: object) -> None:
-        if kwargs["tenant_name"] == "tenant-a":
+        if kwargs["owner"].tenant_name == "tenant-a":
             events.append("runtime.recover-failed:tenant-a")
             raise service.PreviewRecoveryUnavailable("recovery")
         original_recovery(**kwargs)
@@ -542,11 +549,10 @@ def test_one_owner_recovery_failure_is_nonfatal_and_does_not_skip_other_owner(
         preview_runtime: ControlledRuntime,
     ) -> None:
         with backend_provider.acquire_backend(tenant_name, tenant_config) as backend:
+            artifacts = import_module("core.preview.artifacts")
             preview_runtime.ensure_owner_recovered(
                 backend=backend,
-                tenant_name=tenant_name,
-                ecosystem=tenant_config.ecosystem,
-                tenant_id=tenant_config.tenant_id,
+                owner=artifacts.preview_artifact_owner(tenant_name, tenant_config),
             )
 
     monkeypatch.setattr("core.api.app.recover_preview_owner", recover_preview_owner)

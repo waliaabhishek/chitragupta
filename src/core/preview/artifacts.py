@@ -9,13 +9,17 @@ import shutil
 import tempfile
 import uuid
 import zipfile
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
-from typing import BinaryIO, Protocol, Self, cast, runtime_checkable
+from typing import TYPE_CHECKING, BinaryIO, Protocol, Self, cast, runtime_checkable
 
+from core.config.fingerprint import storage_backend_fingerprint
 from core.preview.models import PreviewArtifactMetadata, PreviewArtifactPayload, PreviewStoredPackage
+
+if TYPE_CHECKING:
+    from core.config.models import TenantConfig
 
 logger = logging.getLogger(__name__)
 _ARCHIVE_SPOOL_BYTES = 8 * 1024 * 1024
@@ -30,15 +34,41 @@ class PreviewArtifactOwner:
     tenant_name: str
     ecosystem: str
     tenant_id: str
+    storage_backend_fingerprint: str
 
     def __post_init__(self) -> None:
         if not self.tenant_name.strip() or not self.ecosystem.strip() or not self.tenant_id.strip():
             raise ValueError("artifact owner fields must not be blank")
+        fingerprint = self.storage_backend_fingerprint
+        if len(fingerprint) != 64 or any(character not in "0123456789abcdef" for character in fingerprint):
+            raise ValueError("storage backend fingerprint must be 64 lowercase hexadecimal characters")
+
+
+def preview_artifact_owner(tenant_name: str, tenant_config: TenantConfig) -> PreviewArtifactOwner:
+    return PreviewArtifactOwner(
+        tenant_name=tenant_name,
+        ecosystem=tenant_config.ecosystem,
+        tenant_id=tenant_config.tenant_id,
+        storage_backend_fingerprint=storage_backend_fingerprint(tenant_config.storage),
+    )
 
 
 def preview_owner_token(owner: PreviewArtifactOwner) -> str:
     canonical = json.dumps(
         {"ecosystem": owner.ecosystem, "tenant_id": owner.tenant_id, "tenant_name": owner.tenant_name},
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    return hashlib.sha256(canonical).hexdigest()
+
+
+def preview_storage_owner_token(owner: PreviewArtifactOwner) -> str:
+    canonical = json.dumps(
+        {
+            "ecosystem": owner.ecosystem,
+            "storage_backend_fingerprint": owner.storage_backend_fingerprint,
+            "tenant_id": owner.tenant_id,
+        },
         sort_keys=True,
         separators=(",", ":"),
     ).encode()
@@ -109,6 +139,14 @@ class PreviewArtifactStore(Protocol):
 
     def cleanup_staging(self, owner: PreviewArtifactOwner) -> int: ...
 
+    def reconcile_finalized(
+        self,
+        *,
+        owner: PreviewArtifactOwner,
+        referenced_storage_keys: frozenset[str],
+        is_referenced: Callable[[str], bool],
+    ) -> int: ...
+
     def close(self) -> None: ...
 
 
@@ -143,6 +181,16 @@ def _acquire_stage_lock(handle: BinaryIO) -> None:
     fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
 
 
+def _remove_empty_parents(root: Path, path: Path) -> None:
+    current = path
+    while current != root:
+        try:
+            current.rmdir()
+        except OSError:
+            return
+        current = current.parent
+
+
 def _remove_empty_staging_parents(root: Path, owner_root: Path) -> None:
     try:
         owner_root.rmdir()
@@ -150,6 +198,16 @@ def _remove_empty_staging_parents(root: Path, owner_root: Path) -> None:
         return
     with suppress(OSError):
         (root / ".staging").rmdir()
+
+
+def _package_id_from_storage_key(storage_key: str, owner_token: str) -> str | None:
+    prefix = f"v1-{owner_token}-"
+    if not storage_key.startswith(prefix):
+        return None
+    package_id = storage_key.removeprefix(prefix)
+    if len(package_id) != 32 or any(character not in "0123456789abcdef" for character in package_id):
+        return None
+    return package_id
 
 
 class _LocalPreviewStagedPackage:
@@ -165,6 +223,7 @@ class _LocalPreviewStagedPackage:
     ) -> None:
         self._root = root
         self._staging = staging
+        self._staging_owner_root = staging.parent
         self._lock_path = lock_path
         self._lock_handle: BinaryIO | None = lock_handle
         self._storage_key = storage_key
@@ -208,7 +267,6 @@ class _LocalPreviewStagedPackage:
         self._staging.rename(target)
         _fsync_directory(self._root)
         self._published = True
-        self._release_lock()
         manifest_metadata = PreviewArtifactMetadata(
             name="manifest.json",
             media_type="application/json",
@@ -243,7 +301,8 @@ class _LocalPreviewStagedPackage:
             handle.close()
         with _exclusive_root_lock(self._root):
             self._lock_path.unlink(missing_ok=True)
-            _remove_empty_staging_parents(self._root, self._staging.parent)
+            _remove_empty_parents(self._root, self._staging_owner_root)
+            _remove_empty_parents(self._root, self._lock_path.parent)
 
     def __enter__(self) -> Self:
         if self._closed:
@@ -311,15 +370,19 @@ class LocalPreviewArtifactStore:
         data_files: tuple[PreviewArtifactPayload, ...],
     ) -> PreviewStagedPackage:
         del request_id
-        storage_key = uuid.uuid4().hex
-        owner_root = self._root / ".staging" / preview_owner_token(owner)
-        staging = owner_root / f".{storage_key}.staging"
-        lock_path = owner_root / f".{storage_key}.staging.lock"
+        package_id = uuid.uuid4().hex
+        owner_token = preview_storage_owner_token(owner)
+        storage_key = f"v1-{owner_token}-{package_id}"
+        owner_root = self._root / ".staging" / "v1" / owner_token
+        lock_root = self._root / ".locks" / "v1" / owner_token
+        staging = owner_root / f"{package_id}.staging"
+        lock_path = lock_root / f"{package_id}.lock"
         lock_handle: BinaryIO | None = None
         metadata: list[PreviewArtifactMetadata] = []
         try:
             with _exclusive_root_lock(self._root):
                 owner_root.mkdir(parents=True, exist_ok=True)
+                lock_root.mkdir(parents=True, exist_ok=True)
                 lock_handle = lock_path.open("x+b")
                 _acquire_stage_lock(lock_handle)
                 staging.mkdir()
@@ -354,7 +417,8 @@ class LocalPreviewArtifactStore:
                         lock_handle.close()
                 with _exclusive_root_lock(self._root):
                     lock_path.unlink(missing_ok=True)
-                    _remove_empty_staging_parents(self._root, owner_root)
+                    _remove_empty_parents(self._root, owner_root)
+                    _remove_empty_parents(self._root, lock_root)
             raise
         assert lock_handle is not None
         return _LocalPreviewStagedPackage(
@@ -433,6 +497,69 @@ class LocalPreviewArtifactStore:
         return True
 
     def cleanup_staging(self, owner: PreviewArtifactOwner) -> int:
+        removed = self._cleanup_v1_staging(owner)
+        removed += self._cleanup_legacy_staging(owner)
+        return removed
+
+    def _cleanup_v1_staging(self, owner: PreviewArtifactOwner) -> int:
+        removed = 0
+        changed = False
+        owner_token = preview_storage_owner_token(owner)
+        owner_root = self._root / ".staging" / "v1" / owner_token
+        lock_root = self._root / ".locks" / "v1" / owner_token
+        with _exclusive_root_lock(self._root):
+            if not owner_root.exists():
+                return 0
+            for path in owner_root.iterdir():
+                name = path.name
+                if (
+                    path.is_dir()
+                    and name.endswith(".staging")
+                    and len(name) == 32 + len(".staging")
+                    and all(character in "0123456789abcdef" for character in name[:32])
+                ):
+                    package_id = name.removesuffix(".staging")
+                    lock_path = lock_root / f"{package_id}.lock"
+                    lock_path.parent.mkdir(parents=True, exist_ok=True)
+                    lock_handle = lock_path.open("a+b")
+                    try:
+                        try:
+                            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        except BlockingIOError:
+                            continue
+                        if path.exists():
+                            shutil.rmtree(path)
+                            removed += 1
+                            changed = True
+                        lock_path.unlink(missing_ok=True)
+                    finally:
+                        lock_handle.close()
+            for lock_path in lock_root.iterdir() if lock_root.exists() else ():
+                name = lock_path.name
+                if (
+                    lock_path.is_file()
+                    and name.endswith(".lock")
+                    and len(name) == 32 + len(".lock")
+                    and all(character in "0123456789abcdef" for character in name[:32])
+                    and not (owner_root / f"{name.removesuffix('.lock')}.staging").exists()
+                ):
+                    lock_handle = lock_path.open("a+b")
+                    try:
+                        try:
+                            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        except BlockingIOError:
+                            continue
+                        lock_path.unlink(missing_ok=True)
+                        changed = True
+                    finally:
+                        lock_handle.close()
+            if changed:
+                _fsync_directory(self._root)
+            _remove_empty_parents(self._root, owner_root)
+            _remove_empty_parents(self._root, lock_root)
+        return removed
+
+    def _cleanup_legacy_staging(self, owner: PreviewArtifactOwner) -> int:
         removed = 0
         changed = False
         owner_root = self._root / ".staging" / preview_owner_token(owner)
@@ -485,6 +612,53 @@ class LocalPreviewArtifactStore:
             if changed:
                 _fsync_directory(self._root)
             _remove_empty_staging_parents(self._root, owner_root)
+        return removed
+
+    def reconcile_finalized(
+        self,
+        *,
+        owner: PreviewArtifactOwner,
+        referenced_storage_keys: frozenset[str],
+        is_referenced: Callable[[str], bool],
+    ) -> int:
+        owner_token = preview_storage_owner_token(owner)
+        lock_root = self._root / ".locks" / "v1" / owner_token
+        removed = 0
+        candidates: list[tuple[Path, str]] = []
+        for path in self._root.iterdir():
+            if path.is_symlink() or not path.is_dir():
+                continue
+            package_id = _package_id_from_storage_key(path.name, owner_token)
+            if package_id is None or path.name in referenced_storage_keys:
+                continue
+            candidates.append((path, package_id))
+        for path, package_id in candidates:
+            lock_path = lock_root / f"{package_id}.lock"
+            with _exclusive_root_lock(self._root):
+                lock_root.mkdir(parents=True, exist_ok=True)
+                lock_handle = lock_path.open("a+b")
+            acquired = False
+            try:
+                try:
+                    fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    acquired = True
+                except BlockingIOError:
+                    continue
+                if is_referenced(path.name):
+                    continue
+                if path.is_symlink() or not path.is_dir():
+                    continue
+                shutil.rmtree(path)
+                _fsync_directory(self._root)
+                removed += 1
+            finally:
+                if acquired:
+                    fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+                lock_handle.close()
+                if acquired:
+                    with _exclusive_root_lock(self._root):
+                        lock_path.unlink(missing_ok=True)
+                        _remove_empty_parents(self._root, lock_root)
         return removed
 
     def close(self) -> None:

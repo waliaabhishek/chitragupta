@@ -31,7 +31,10 @@ from core.api.schemas import (  # noqa: TC001  # FastAPI evaluates annotations
     FocusPreviewStatusResponse,
 )
 from core.config.models import AppSettings, TenantConfig  # noqa: TC001  # FastAPI evaluates annotations
-from core.preview.artifacts import PreviewArchiveStream  # noqa: TC001 - used by FastAPI route helpers
+from core.preview.artifacts import (  # noqa: TC001 - used by FastAPI route helpers
+    PreviewArchiveStream,
+    preview_artifact_owner,
+)
 from core.preview.eligibility import COMMERCIAL_PROFILE_UNAVAILABLE, diagnostic_detail
 from core.preview.mapping import (
     FOCUS_1_4_FULL_PROFILE_COLUMNS,
@@ -531,9 +534,7 @@ def _lookup(
     try:
         runtime.ensure_owner_recovered(
             backend=backend,
-            tenant_name=tenant_name,
-            ecosystem=tenant_config.ecosystem,
-            tenant_id=tenant_config.tenant_id,
+            owner=preview_artifact_owner(tenant_name, tenant_config),
         )
         runtime.reconcile_expiry(
             backend=backend,
@@ -763,9 +764,7 @@ def submit_preview(
         try:
             runtime.ensure_owner_recovered(
                 backend=backend,
-                tenant_name=tenant_name,
-                ecosystem=tenant_config.ecosystem,
-                tenant_id=tenant_config.tenant_id,
+                owner=preview_artifact_owner(tenant_name, tenant_config),
             )
             preview = runtime.submit(
                 tenant_name=tenant_name,
@@ -800,9 +799,7 @@ def list_previews(
         try:
             runtime.ensure_owner_recovered(
                 backend=backend,
-                tenant_name=tenant_name,
-                ecosystem=tenant_config.ecosystem,
-                tenant_id=tenant_config.tenant_id,
+                owner=preview_artifact_owner(tenant_name, tenant_config),
             )
             page = runtime.list_recent_requests(
                 backend=backend,

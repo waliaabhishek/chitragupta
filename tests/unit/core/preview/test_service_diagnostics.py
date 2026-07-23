@@ -365,7 +365,7 @@ def test_stage_or_publish_failure_leaves_failed_request_and_no_ready_package(
         backend.dispose()
 
 
-def test_post_rename_pre_ready_failure_leaves_inaccessible_orphan(
+def test_post_rename_pre_ready_failure_reclaims_inaccessible_orphan(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -394,8 +394,13 @@ def test_post_rename_pre_ready_failure_leaves_inaccessible_orphan(
         assert failed.diagnostic.code == "preview_generation_failed"
         assert failed.storage_key is None
         assert failed.package is None
-        final_paths = [path for path in (tmp_path / "artifacts").iterdir() if not path.name.endswith(".staging")]
-        assert len(final_paths) == 1
+        owner = preview_module("artifacts").preview_artifact_owner(
+            "production",
+            _tenant_config(backend._connection_string),
+        )
+        runtime.ensure_owner_recovered(backend=backend, owner=owner)
+        final_paths = [path for path in (tmp_path / "artifacts").iterdir() if path.name.startswith("v1-")]
+        assert final_paths == []
         with pytest.raises(FileNotFoundError):
             runtime.read_manifest_bytes(failed)
     finally:
@@ -450,6 +455,7 @@ def test_worker_ready_path_preserves_validation_artifact_and_compare_and_set_ord
     persistence = preview_module("persistence")
     generator = preview_module("generator")
     service = preview_module("service")
+    artifacts = preview_module("artifacts")
     events: list[str] = []
 
     real_mark_running = persistence.SQLModelPreviewRequestRepository.mark_running
@@ -547,6 +553,14 @@ def test_worker_ready_path_preserves_validation_artifact_and_compare_and_set_ord
 
     def mark_ready(*args: object, **kwargs: object) -> bool:
         captured_ready_times.append((args[2], args[3]))
+        lock_paths = tuple((tmp_path / "artifacts" / ".locks").rglob("*.lock"))
+        assert len(lock_paths) == 1
+        with lock_paths[0].open("a+b") as competing_handle, pytest.raises(BlockingIOError):
+            artifacts.fcntl.flock(
+                competing_handle.fileno(),
+                artifacts.fcntl.LOCK_EX | artifacts.fcntl.LOCK_NB,
+            )
+        events.append("stable-lock-held")
         result = real_mark_ready(*args, **kwargs)
         events.append(f"ready-cas-result:{result}")
         return result
@@ -574,7 +588,7 @@ def test_worker_ready_path_preserves_validation_artifact_and_compare_and_set_ord
             tenant_id="tenant-1",
         )
         assert ready is not None and ready.status.value == "ready"
-        assert events[:12] == [
+        assert events[:13] == [
             "running-candidate",
             "effective-columns",
             "candidate-snapshot",
@@ -582,6 +596,7 @@ def test_worker_ready_path_preserves_validation_artifact_and_compare_and_set_ord
             "data-staged-fsynced",
             "manifest-built",
             "published",
+            "stable-lock-held",
             "ready-construction",
             "ready-post-init",
             "ready-strict-validation",
@@ -593,6 +608,7 @@ def test_worker_ready_path_preserves_validation_artifact_and_compare_and_set_ord
         ready_at, expires_at = captured_ready_times[0]
         assert ready_at.microsecond == 0
         assert expires_at == ready_at + timedelta(days=7)
+        assert not tuple((tmp_path / "artifacts").rglob("*.lock"))
     finally:
         event.remove(backend._engine, "before_cursor_execute", capture_sql)
         runtime.close()

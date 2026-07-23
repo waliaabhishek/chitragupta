@@ -4,9 +4,12 @@ import hashlib
 import json
 import logging
 from collections.abc import Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, SecretStr
+
+if TYPE_CHECKING:
+    from core.config.models import StorageConfig
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +36,20 @@ def tenant_config_fingerprint(config: BaseModel) -> str:
     payload = json.dumps(
         _fingerprint_value(config),
         default=str,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    return hashlib.sha256(payload.encode()).hexdigest()
+
+
+def storage_backend_fingerprint(config: StorageConfig) -> str:
+    """Return a stable digest for the configured storage backend identity."""
+    payload = json.dumps(
+        {
+            "backend": "sqlmodel",
+            "connection_string": config.connection_string.get_secret_value(),
+        },
         ensure_ascii=False,
         separators=(",", ":"),
         sort_keys=True,

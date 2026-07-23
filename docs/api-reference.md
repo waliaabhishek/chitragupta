@@ -489,6 +489,21 @@ individual-file, and archive routes. The remote CLI's repeatable
 `--header NAME=VALUE` option forwards the deployment's external authentication
 headers on every request.
 
+Requested-package submission, recent-history, status, and artifact routes
+recover the tenant's artifact owner after their existing tenant, input,
+feature-enablement, runtime, and storage checks and before requested-package
+metadata actions. Recovery removes interrupted staging work, retries incomplete
+terminal transitions and expiry cleanup, and reconciles finalized packages
+against all persisted request and revision references. An apparent orphan is
+deleted only after a fresh authoritative reference check while holding its
+stable package lock. Recovery is safe to repeat in the same process or after
+restart. A failed reference check preserves the candidate; a failed delete or
+filesystem synchronization is logged and retried rather than reported as
+complete. If recovery cannot complete, the requested-package operation returns
+HTTP 503 with exact detail `FOCUS Mapping Preview recovery is unavailable`.
+Published-revision history, detail, and artifact routes do not invoke this
+requested-package owner-recovery step.
+
 ### `GET /api/v1/tenants/{tenant_name}/focus-preview/profile`
 
 Return static metadata for the current `focus-1.4-preview-v5` mapping profile:
@@ -847,6 +862,11 @@ the report.
 | Manifest/file/archive requested after expiry | 410 | `Preview request '<request_id>' expired at <UTC timestamp>` |
 | File not enumerated by a ready package | 404 | File-specific not-found detail |
 | Stored bytes unavailable | 500 | `Stored preview artifact is unavailable` |
+
+The recovery 503 is retryable operationally after restoring tenant database
+and artifact-root availability. It does not expire a ready request, delete a
+referenced requested package or revision, or authorize automatic deletion of
+an unverifiable legacy finalized path.
 
 Calculation diagnostics use these exact public meanings:
 

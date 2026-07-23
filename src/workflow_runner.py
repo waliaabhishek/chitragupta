@@ -1340,29 +1340,36 @@ class WorkflowRunner:
         *,
         cleanup_now: datetime,
     ) -> None:
-        cutoff = cleanup_now - timedelta(days=config.retention_days)
+        exact_cutoff = cleanup_now.astimezone(UTC) - timedelta(days=config.retention_days)
+        calculation_cutoff_date = exact_cutoff.date()
+        calculation_cutoff = datetime.combine(calculation_cutoff_date, datetime.min.time(), tzinfo=UTC)
         try:
             with self._acquire_runtime(name, config) as runtime:
                 with runtime.storage.create_unit_of_work() as uow:
                     deleted_billing = uow.billing.delete_before(
                         config.ecosystem,
                         config.tenant_id,
-                        cutoff,
+                        calculation_cutoff,
                     )
                     deleted_resources = uow.resources.delete_before(
                         config.ecosystem,
                         config.tenant_id,
-                        cutoff,
+                        exact_cutoff,
                     )
                     deleted_identities = uow.identities.delete_before(
                         config.ecosystem,
                         config.tenant_id,
-                        cutoff,
+                        exact_cutoff,
                     )
                     deleted_chargebacks = uow.chargebacks.delete_before(
                         config.ecosystem,
                         config.tenant_id,
-                        cutoff,
+                        calculation_cutoff,
+                    )
+                    deleted_pipeline_state = uow.pipeline_state.delete_before(
+                        config.ecosystem,
+                        config.tenant_id,
+                        calculation_cutoff_date,
                     )
 
                     ta_config = _get_overlay_ta_config(runtime.plugin)
@@ -1385,7 +1392,12 @@ class WorkflowRunner:
                     uow.commit()
 
                 total_deleted = (
-                    deleted_billing + deleted_resources + deleted_identities + deleted_chargebacks + deleted_ta
+                    deleted_billing
+                    + deleted_resources
+                    + deleted_identities
+                    + deleted_chargebacks
+                    + deleted_pipeline_state
+                    + deleted_ta
                 )
                 if config.focus_preview_enabled:
                     from core.preview.persistence import PreviewEvidenceStorageBackend
@@ -1396,22 +1408,22 @@ class WorkflowRunner:
                                 source_deleted = evidence_uow.source_windows.delete_before(
                                     config.ecosystem,
                                     config.tenant_id,
-                                    cutoff,
+                                    calculation_cutoff,
                                 )
                                 readiness_deleted = evidence_uow.source_readiness.delete_orphaned_before(
                                     config.ecosystem,
                                     config.tenant_id,
-                                    cutoff,
+                                    calculation_cutoff,
                                 )
-                                lineage_deleted = evidence_uow.allocation_lineage.delete_before(
+                                lineage_deleted = evidence_uow.allocation_lineage.delete_unretained(
                                     config.ecosystem,
                                     config.tenant_id,
-                                    cutoff.date(),
+                                    calculation_cutoff_date,
                                 )
                                 organization_deleted = evidence_uow.organization_authority.delete_superseded_before(
                                     config.ecosystem,
                                     config.tenant_id,
-                                    cutoff,
+                                    exact_cutoff,
                                 )
                                 evidence_uow.commit()
                             total_deleted += (
@@ -1431,7 +1443,7 @@ class WorkflowRunner:
                     "Tenant %s: retention cleanup deleted %d records (before %s)",
                     name,
                     total_deleted,
-                    cutoff.date(),
+                    calculation_cutoff_date,
                 )
         except Exception:
             logger.exception("Tenant %s: retention cleanup failed", name)

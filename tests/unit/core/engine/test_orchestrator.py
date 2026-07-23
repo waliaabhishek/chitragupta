@@ -558,6 +558,12 @@ class MockPipelineStateRepo:
         ]
         return max(dates, default=None)
 
+    def delete_before(self, ecosystem: str, tenant_id: str, before: date) -> int:
+        keys = [key for key in self._data if key[0] == ecosystem and key[1] == tenant_id and key[2] < before]
+        for key in keys:
+            del self._data[key]
+        return len(keys)
+
 
 def test_pipeline_state_fake_structurally_satisfies_repository_protocol() -> None:
     assert isinstance(MockPipelineStateRepo(), PipelineStateRepository)

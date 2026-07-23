@@ -189,11 +189,27 @@ class _RecordingRequestRepository:
         return unexpected
 
 
+class _ArtifactReferences:
+    def __init__(self, revisions: _RevisionRepository) -> None:
+        self._revisions = revisions
+
+    def list_for_owner(self, *, ecosystem: str, tenant_id: str) -> tuple[str, ...]:
+        return tuple(
+            revision.package.storage_key
+            for revision in self._revisions.rows
+            if revision.ecosystem == ecosystem and revision.tenant_id == tenant_id
+        )
+
+    def is_referenced(self, *, ecosystem: str, tenant_id: str, storage_key: str) -> bool:
+        return storage_key in self.list_for_owner(ecosystem=ecosystem, tenant_id=tenant_id)
+
+
 class _ReadUow:
     def __init__(self, revisions: _RevisionRepository, requests: Any) -> None:
         persistence = import_module("core.preview.persistence")
         self.requests = requests
         self.revisions = revisions
+        self.artifact_references = _ArtifactReferences(revisions)
         self.calculations = MagicMock(spec=persistence.PreviewCalculationRepository)
         self.cost_evidence = MagicMock(spec=persistence.PreviewCostEvidenceReader)
         self.allocation_evidence = MagicMock(spec=persistence.PreviewAllocationEvidenceReader)
@@ -353,7 +369,12 @@ def test_first_settled_revision_supersedes_current_provisional_with_identical_ma
         supersedes_revision_id=None,
     )
     with store.stage_data_files(
-        owner=artifacts.PreviewArtifactOwner("production", "confluent_cloud", "tenant-1"),
+        owner=artifacts.PreviewArtifactOwner(
+            "production",
+            "confluent_cloud",
+            "tenant-1",
+            storage_backend_fingerprint="a" * 64,
+        ),
         request_id=legacy.revision_id,
         data_files=draft.data_files,
     ) as staged:
@@ -414,6 +435,34 @@ def test_generation_and_persistence_failures_preserve_current_revision(tmp_path:
     assert backend.repository.current[("confluent_cloud", "tenant-1", date(2026, 7, 1))] == initial
     assert store.read_manifest(initial.package.storage_key, initial.package.manifest)
     assert [path.name for path in tmp_path.iterdir() if path.is_dir()] == [initial.package.storage_key]
+
+
+def test_revision_metadata_commit_occurs_while_stable_package_lock_is_held(tmp_path: Path) -> None:
+    artifacts = import_module("core.preview.artifacts")
+    generator = _Generator([("settled", "v1")])
+    service, _store = _service(tmp_path, generator)
+    backend = _Backend()
+    real_replace_current = backend.repository.replace_current
+    observed: list[str] = []
+
+    def replace_current(*args: object, **kwargs: object) -> object:
+        lock_paths = tuple((tmp_path / ".locks").rglob("*.lock"))
+        assert len(lock_paths) == 1
+        with lock_paths[0].open("a+b") as competing_handle, pytest.raises(BlockingIOError):
+            artifacts.fcntl.flock(
+                competing_handle.fileno(),
+                artifacts.fcntl.LOCK_EX | artifacts.fcntl.LOCK_NB,
+            )
+        observed.append(lock_paths[0].name)
+        return real_replace_current(*args, **kwargs)
+
+    backend.repository.replace_current = replace_current  # type: ignore[method-assign]
+
+    published = _publish(service, backend)
+
+    assert len(published) == 1
+    assert len(observed) == 1
+    assert not tuple(tmp_path.rglob("*.lock"))
 
 
 @pytest.mark.parametrize(
@@ -622,14 +671,17 @@ def test_retention_mark_wins_replacement_cas_and_only_unpublished_artifact_is_re
     initial = _publish(service, backend)[0]
     candidate_staged = threading.Event()
     retention_committed = threading.Event()
-    deleted_storage_keys: list[str] = []
-    original_delete = store.delete_package
+    reconciliations: list[tuple[frozenset[str], frozenset[str], int]] = []
+    original_reconcile = store.reconcile_finalized
 
-    def record_delete(*, storage_key: str) -> bool:
-        deleted_storage_keys.append(storage_key)
-        return original_delete(storage_key=storage_key)
+    def record_reconcile(**kwargs: Any) -> int:
+        before = frozenset(path.name for path in (tmp_path / "artifacts").iterdir() if path.name.startswith("v1-"))
+        removed = original_reconcile(**kwargs)
+        after = frozenset(path.name for path in (tmp_path / "artifacts").iterdir() if path.name.startswith("v1-"))
+        reconciliations.append((before, after, removed))
+        return removed
 
-    monkeypatch.setattr(store, "delete_package", record_delete)
+    monkeypatch.setattr(store, "reconcile_finalized", record_reconcile)
 
     class RacingBackend:
         def create_preview_metadata_read_unit_of_work(self) -> Any:
@@ -663,10 +715,15 @@ def test_retention_mark_wins_replacement_cas_and_only_unpublished_artifact_is_re
 
     assert not publication.is_alive()
     assert publication_results == [()]
-    assert len(deleted_storage_keys) == 1
-    assert deleted_storage_keys[0] != initial.package.storage_key
+    orphan_reconciliations = [entry for entry in reconciliations if entry[2] == 1]
+    assert len(orphan_reconciliations) == 1
+    before_recovery, after_recovery, _removed = orphan_reconciliations[0]
+    removed_storage_keys = before_recovery - after_recovery
+    assert len(removed_storage_keys) == 1
+    removed_storage_key = next(iter(removed_storage_keys))
+    assert removed_storage_key != initial.package.storage_key
     assert store.read_manifest(initial.package.storage_key, initial.package.manifest)
-    assert not (tmp_path / "artifacts" / deleted_storage_keys[0]).exists()
+    assert not (tmp_path / "artifacts" / removed_storage_key).exists()
 
     with backend.create_preview_metadata_read_unit_of_work() as uow:
         pending_current = uow.revisions.get_current_for_publication(
@@ -706,4 +763,14 @@ def test_revision_service_borrows_generator_and_artifact_store(tmp_path: Path) -
 
     assert not hasattr(service, "close")
     artifacts = import_module("core.preview.artifacts")
-    assert store.cleanup_staging(artifacts.PreviewArtifactOwner("production", "confluent_cloud", "tenant-1")) == 0
+    assert (
+        store.cleanup_staging(
+            artifacts.PreviewArtifactOwner(
+                "production",
+                "confluent_cloud",
+                "tenant-1",
+                storage_backend_fingerprint="a" * 64,
+            )
+        )
+        == 0
+    )

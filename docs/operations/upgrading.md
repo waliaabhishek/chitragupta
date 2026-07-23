@@ -297,6 +297,36 @@ makes the same bounded retry deterministic without duplicate current lineage.
 API-only deployments can read retained repair status but return 503 for new
 submissions. Disabled tenants cannot submit or read repair operations.
 
+## Preview artifact recovery and retention hardening
+
+This release requires no new database migration for the Preview artifact
+namespace, publication locking, finalized-package reconciliation, or
+calculation-day retention behavior. Existing configuration remains valid.
+
+New requested packages and published revisions use a storage-backend-isolated
+opaque v1 namespace. The stable package lock is held from staging through the
+request or revision metadata commit. On same-process retry and service restart,
+recovery removes interrupted staging work and considers a finalized package for
+deletion only after both an owner-scoped reference snapshot and a fresh
+authoritative reference check under that lock report it unreferenced.
+
+Recovery never automatically deletes a package still referenced by request or
+revision metadata. Referenced packages created by older releases remain
+available, and unverifiable legacy finalized paths are preserved for operator
+inspection. A reference-query, deletion, or filesystem-synchronization failure
+is logged and retried rather than being reported as completed.
+Requested-package submission, list, status, and download operations perform
+recovery after their existing tenant, input, feature-enablement, runtime, and
+storage checks and before requested-package metadata actions. If recovery
+cannot complete, those operations return HTTP 503 with detail
+`FOCUS Mapping Preview recovery is unavailable`. Published-revision history,
+detail, and download routes do not invoke this requested-package owner-recovery
+step.
+
+Keep the tenant database and `preview.artifact_root` together during backup,
+restore, or storage moves. Do not rename or reorganize opaque artifact
+directories manually.
+
 ## Rollback
 
 If an upgrade fails or the new version misbehaves:

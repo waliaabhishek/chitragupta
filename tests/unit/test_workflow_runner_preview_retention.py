@@ -65,6 +65,7 @@ def _generic_uow() -> MagicMock:
     uow.resources.delete_before.return_value = 0
     uow.identities.delete_before.return_value = 0
     uow.chargebacks.delete_before.return_value = 0
+    uow.pipeline_state.delete_before.return_value = 0
     return uow
 
 
@@ -106,9 +107,14 @@ def test_enabled_retention_runs_all_evidence_deletes_in_documented_order_after_g
     storage.create_preview_evidence_unit_of_work.return_value = _Context(evidence_uow)
     events: list[str] = []
     generic_uow.commit.side_effect = lambda: events.append("generic:commit")
+    generic_uow.pipeline_state.delete_before.side_effect = lambda *args: events.append("pipeline") or 1
     evidence_uow.source_windows.delete_before.side_effect = lambda *args: events.append("source") or 1
     evidence_uow.source_readiness.delete_orphaned_before.side_effect = lambda *args: events.append("readiness") or 1
-    evidence_uow.allocation_lineage.delete_before.side_effect = lambda *args: (
+    evidence_uow.allocation_lineage.delete_before.return_value = LineageDeletionCount(
+        portions=0,
+        runs=0,
+    )
+    evidence_uow.allocation_lineage.delete_unretained.side_effect = lambda *args: (
         events.append("lineage") or LineageDeletionCount(portions=1, runs=1)
     )
     evidence_uow.organization_authority.delete_superseded_before.side_effect = lambda *args: (
@@ -120,6 +126,7 @@ def test_enabled_retention_runs_all_evidence_deletes_in_documented_order_after_g
     runner._cleanup_retention(now=NOW)
 
     assert events == [
+        "pipeline",
         "generic:commit",
         "source",
         "readiness",
@@ -149,5 +156,79 @@ def test_evidence_retention_failure_rolls_back_only_evidence_after_generic_clean
     generic_uow.commit.assert_called_once_with()
     evidence_uow.rollback.assert_called_once_with()
     evidence_uow.source_readiness.delete_orphaned_before.assert_not_called()
-    evidence_uow.allocation_lineage.delete_before.assert_not_called()
+    evidence_uow.allocation_lineage.delete_unretained.assert_not_called()
     evidence_uow.organization_authority.delete_superseded_before.assert_not_called()
+
+
+def test_retention_uses_whole_utc_calculation_day_and_preserves_exact_noncalculation_cutoffs(
+    tmp_path: Path,
+) -> None:
+    tenant = _tenant(tmp_path, enabled=True)
+    storage = preview_evidence_backend_double()
+    generic_uow = _generic_uow()
+    evidence_uow = MagicMock()
+    storage.create_unit_of_work.return_value = _Context(generic_uow)
+    storage.create_preview_evidence_unit_of_work.return_value = _Context(evidence_uow)
+    evidence_uow.source_windows.delete_before.return_value = 0
+    evidence_uow.source_readiness.delete_orphaned_before.return_value = 0
+    evidence_uow.organization_authority.delete_superseded_before.return_value = 0
+    evidence_uow.allocation_lineage.delete_unretained.return_value = LineageDeletionCount(
+        portions=0,
+        runs=0,
+    )
+    evidence_uow.allocation_lineage.delete_before.return_value = LineageDeletionCount(
+        portions=0,
+        runs=0,
+    )
+    runner = _runner(tenant, storage)
+    cleanup_now = datetime(2026, 7, 22, 15, 30, tzinfo=UTC)
+    exact_cutoff = datetime(2026, 6, 22, 15, 30, tzinfo=UTC)
+    calculation_cutoff = datetime(2026, 6, 22, tzinfo=UTC)
+
+    runner._cleanup_retention(now=cleanup_now)
+
+    generic_uow.billing.delete_before.assert_called_once_with(
+        "confluent_cloud",
+        "tenant-1",
+        calculation_cutoff,
+    )
+    generic_uow.chargebacks.delete_before.assert_called_once_with(
+        "confluent_cloud",
+        "tenant-1",
+        calculation_cutoff,
+    )
+    generic_uow.pipeline_state.delete_before.assert_called_once_with(
+        "confluent_cloud",
+        "tenant-1",
+        calculation_cutoff.date(),
+    )
+    evidence_uow.source_windows.delete_before.assert_called_once_with(
+        "confluent_cloud",
+        "tenant-1",
+        calculation_cutoff,
+    )
+    evidence_uow.source_readiness.delete_orphaned_before.assert_called_once_with(
+        "confluent_cloud",
+        "tenant-1",
+        calculation_cutoff,
+    )
+    evidence_uow.allocation_lineage.delete_unretained.assert_called_once_with(
+        "confluent_cloud",
+        "tenant-1",
+        calculation_cutoff.date(),
+    )
+    generic_uow.resources.delete_before.assert_called_once_with(
+        "confluent_cloud",
+        "tenant-1",
+        exact_cutoff,
+    )
+    generic_uow.identities.delete_before.assert_called_once_with(
+        "confluent_cloud",
+        "tenant-1",
+        exact_cutoff,
+    )
+    evidence_uow.organization_authority.delete_superseded_before.assert_called_once_with(
+        "confluent_cloud",
+        "tenant-1",
+        exact_cutoff,
+    )

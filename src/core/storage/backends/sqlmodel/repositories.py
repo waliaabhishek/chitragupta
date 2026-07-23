@@ -1650,6 +1650,16 @@ class SQLModelPipelineStateRepository:
         )
         return self._session.exec(stmt).one()
 
+    def delete_before(self, ecosystem: str, tenant_id: str, before: date) -> int:
+        result = self._session.execute(
+            delete(PipelineStateTable).where(
+                col(PipelineStateTable.ecosystem) == ecosystem,
+                col(PipelineStateTable.tenant_id) == tenant_id,
+                col(PipelineStateTable.tracking_date) < before,
+            )
+        )
+        return int(getattr(result, "rowcount", 0))
+
 
 # --- PipelineRunRepository ---
 

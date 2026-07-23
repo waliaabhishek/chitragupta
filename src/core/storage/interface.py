@@ -663,6 +663,10 @@ class PipelineStateRepository(Protocol):
         """Return the most recent tracking_date where chargeback_calculated=True, or None."""
         ...
 
+    def delete_before(self, ecosystem: str, tenant_id: str, before: date) -> int:
+        """Delete owner-scoped calculation state before the date boundary."""
+        ...
+
 
 @runtime_checkable
 class EntityTagRepository(Protocol):
