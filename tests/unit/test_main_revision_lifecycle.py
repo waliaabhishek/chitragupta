@@ -9,7 +9,7 @@ from core.config.models import AppSettings
 
 
 @pytest.mark.parametrize("run_once", [True, False])
-def test_run_worker_closes_runner_after_normal_return(run_once: bool) -> None:
+def test_run_worker_leaves_injected_runner_open_after_normal_return(run_once: bool) -> None:
     from main import run_worker
 
     runner = MagicMock()
@@ -22,11 +22,11 @@ def test_run_worker_closes_runner_after_normal_return(run_once: bool) -> None:
         shutdown_event=threading.Event(),
     )
 
-    runner.close.assert_called_once()
+    runner.close.assert_not_called()
 
 
 @pytest.mark.parametrize(("method", "run_once"), [("run_once", True), ("run_loop", False)])
-def test_run_worker_closes_runner_when_execution_raises(method: str, run_once: bool) -> None:
+def test_run_worker_leaves_injected_runner_open_when_execution_raises(method: str, run_once: bool) -> None:
     from main import run_worker
 
     runner = MagicMock()
@@ -40,13 +40,26 @@ def test_run_worker_closes_runner_when_execution_raises(method: str, run_once: b
             shutdown_event=threading.Event(),
         )
 
-    runner.close.assert_called_once()
+    runner.close.assert_not_called()
 
 
 def test_create_runner_wires_one_owned_worker_store_generator_and_revision_service() -> None:
+    from core.config.models import FocusPreviewTenantConfig, TenantConfig
     from main import _create_runner
 
-    settings = AppSettings()
+    settings = AppSettings(
+        tenants={
+            "production": TenantConfig(
+                ecosystem="confluent_cloud",
+                tenant_id="tenant-1",
+                focus_preview=FocusPreviewTenantConfig(
+                    commercial_profile="direct_payg",
+                    effective_start_date="2026-01-01",
+                    effective_end_date="2027-01-01",
+                ),
+            )
+        }
+    )
     store = MagicMock()
     generator = MagicMock()
     publisher = MagicMock()

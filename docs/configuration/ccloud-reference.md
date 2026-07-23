@@ -89,8 +89,11 @@ tenants:
 ## FOCUS Mapping Preview eligibility
 
 `focus_preview` is optional to preserve existing application configurations.
-Omitting it does not imply eligibility: a Preview request is persisted and then
-fails with `preview_commercial_profile_unavailable`. When supplied,
+Omitting it disables Preview for that tenant. Preview routes return HTTP 409
+with `preview_commercial_profile_unavailable` before opening Preview runtime,
+artifact, or evidence storage. The tenant continues normal billing collection,
+chargeback calculation, generic export, and emission without Preview-specific
+organization, raw-source, allocation-lineage, or retention work. When supplied,
 `focus_preview.commercial_profile` is required and must be `direct_payg`.
 The effective dates form a non-empty half-open interval; the request's inclusive
 start and exclusive end must both fit within it.
@@ -121,6 +124,12 @@ Source-related failures can expose at most 20 sorted, unique, tenant-scoped
 not provider IDs, raw fields, secrets, or storage paths. All commercial,
 currency, calculation, source, and reconciliation failures are fail-closed and
 produce no Preview package.
+
+Enabled and disabled tenants can share one deployment. The ordinary pipeline
+captures source evidence, allocation lineage, and Confluent organization
+authority only for enabled tenants. Preview requests and scheduled revisions
+reuse that persisted evidence and do not make provider calls. Preview-only
+capture, schema, or authority failures do not change generic chargeback results.
 
 The top-level `preview.max_csv_file_bytes` setting controls only physical CSV
 part boundaries. Request grain and Full/Summary/Custom profiles control report

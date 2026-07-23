@@ -4,7 +4,6 @@ import hashlib
 import json
 import logging
 import re
-import threading
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -14,6 +13,7 @@ from typing import Literal, Protocol, cast, runtime_checkable
 from core.config.models import TenantConfig  # noqa: TC001 - resolved by runtime protocol tests
 from core.preview.artifacts import (  # noqa: TC001 - resolved by runtime protocol tests
     PreviewArchiveStream,
+    PreviewArtifactOwner,
     PreviewArtifactStore,
 )
 from core.preview.eligibility import policy_from_tenant_config
@@ -167,17 +167,6 @@ class PreviewRevisionService:
         self._package_generator = package_generator
         self._clock = clock
         self._revision_id_factory = revision_id_factory
-        self._staging_recovery_pending = True
-        self._staging_recovery_lock = threading.Lock()
-
-    def ensure_staging_recovered(self) -> None:
-        if not self._staging_recovery_pending:
-            return
-        with self._staging_recovery_lock:
-            if not self._staging_recovery_pending:
-                return
-            self._artifact_store.cleanup_staging()
-            self._staging_recovery_pending = False
 
     def _eligible_months(self, tenant_config: TenantConfig, now: datetime) -> tuple[str, ...]:
         focus = tenant_config.focus_preview
@@ -204,7 +193,9 @@ class PreviewRevisionService:
         now: datetime,
     ) -> tuple[PreviewRevision, ...]:
         try:
-            self.ensure_staging_recovered()
+            self._artifact_store.cleanup_staging(
+                PreviewArtifactOwner(tenant_name, tenant_config.ecosystem, tenant_config.tenant_id)
+            )
         except Exception as exc:
             logger.error(
                 "FOCUS Mapping Preview revision staging recovery failed tenant=%s error_type=%s",
@@ -249,7 +240,7 @@ class PreviewRevisionService:
                 if snapshot.monthly_status is None:
                     raise ValueError("scheduled monthly generation requires monthly status")
                 material = preview_revision_content_sha256(logical_data_sha256=draft.logical_data_sha256)
-                with backend.create_preview_read_unit_of_work() as read_uow:
+                with backend.create_preview_metadata_read_unit_of_work() as read_uow:
                     current = read_uow.revisions.get_current_for_publication(
                         ecosystem=tenant_config.ecosystem,
                         tenant_id=tenant_config.tenant_id,
@@ -283,6 +274,11 @@ class PreviewRevisionService:
                 stored = None
                 try:
                     with self._artifact_store.stage_data_files(
+                        owner=PreviewArtifactOwner(
+                            tenant_name,
+                            tenant_config.ecosystem,
+                            tenant_config.tenant_id,
+                        ),
                         request_id=revision_id,
                         data_files=draft.data_files,
                     ) as staged:
@@ -352,7 +348,7 @@ class PreviewRevisionService:
         tenant_id = tenant_config.tenant_id
         cutoff_date = (normalized_now - timedelta(days=tenant_config.retention_days)).date()
 
-        with backend.create_preview_read_unit_of_work() as read_uow:
+        with backend.create_preview_metadata_read_unit_of_work() as read_uow:
             retry_snapshot = read_uow.revisions.list_retention_pending(
                 ecosystem=ecosystem,
                 tenant_id=tenant_id,
@@ -372,7 +368,7 @@ class PreviewRevisionService:
 
         retry_capacity = self.RETENTION_ATTEMPT_LIMIT - len(new_candidates)
         retries = retry_snapshot[:retry_capacity]
-        with backend.create_preview_read_unit_of_work() as read_uow:
+        with backend.create_preview_metadata_read_unit_of_work() as read_uow:
             pending_tail = read_uow.revisions.get_retention_pending_tail(
                 ecosystem=ecosystem,
                 tenant_id=tenant_id,
@@ -462,7 +458,7 @@ class PreviewRevisionReadService:
         tenant_id: str,
         month_start: date,
     ) -> PreviewRevision | None:
-        with backend.create_preview_read_unit_of_work() as uow:
+        with backend.create_preview_metadata_read_unit_of_work() as uow:
             return uow.revisions.get_current_for_owner(
                 ecosystem=ecosystem,
                 tenant_id=tenant_id,
@@ -477,7 +473,7 @@ class PreviewRevisionReadService:
         tenant_id: str,
         revision_id: str,
     ) -> PreviewRevision | None:
-        with backend.create_preview_read_unit_of_work() as uow:
+        with backend.create_preview_metadata_read_unit_of_work() as uow:
             return uow.revisions.get_for_owner(
                 ecosystem=ecosystem,
                 tenant_id=tenant_id,
@@ -494,7 +490,7 @@ class PreviewRevisionReadService:
         limit: int,
         cursor_revision_id: str | None,
     ) -> PreviewRevisionPage:
-        with backend.create_preview_read_unit_of_work() as uow:
+        with backend.create_preview_metadata_read_unit_of_work() as uow:
             return uow.revisions.list_for_owner_month(
                 ecosystem=ecosystem,
                 tenant_id=tenant_id,

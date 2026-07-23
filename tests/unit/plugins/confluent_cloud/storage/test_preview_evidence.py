@@ -18,7 +18,9 @@ from tests.unit.core.preview.conftest import preview_module
 def _engine(tmp_path: Path):
     engine = create_engine(f"sqlite:///{tmp_path / 'preview-evidence.db'}")
     CoreStorageModule().register_tables(engine)
-    CCloudStorageModule().register_tables(engine)
+    module = CCloudStorageModule()
+    module.register_tables(engine)
+    module.register_preview_evidence_tables(engine)
     return engine
 
 

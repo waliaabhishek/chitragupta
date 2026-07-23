@@ -11,6 +11,14 @@ first. You can then create an ad-hoc package from the web UI, CLI, or request
 API, while the periodic worker automatically publishes the current validated
 Full monthly revision for eligible months.
 
+Preview is opt-in per tenant. If every tenant omits `focus_preview`, Chitragupta
+does not create or access the Preview artifact root, gather the provider
+organization for Preview, capture raw source evidence, or store allocation
+lineage. Billing collection, chargeback calculation, generic CSV export, and
+emitters continue with their existing requirements. A deployment can mix
+enabled and disabled tenants; only enabled tenants use Preview storage and
+evidence.
+
 ## 1. Configure the tenant and package storage
 
 Preview currently supports Confluent Cloud tenants with a Direct-billed PAYG
@@ -55,6 +63,14 @@ periodic worker. When those run as separate processes, configure the same
 mounted path for both. The database holds request and package metadata; the
 immutable manifest and CSV bytes live under this root and are served only
 through the Preview API.
+
+Preview artifact settings and a writable artifact root are operational
+requirements only when at least one tenant has `focus_preview` enabled. To
+leave a tenant disabled, omit its `focus_preview` block. Preview routes for that
+tenant return HTTP 409 with
+`preview_commercial_profile_unavailable` before opening Preview storage. No
+disabled-tenant organization, source-evidence, or allocation-lineage work is
+performed.
 
 The process-wide Preview settings are:
 
@@ -128,6 +144,14 @@ records, billing rows, allocation lineage, organization inventory, and relevant
 resource/identity inventory for the requested evidence interval. It fails the
 whole request when required evidence is missing or inconsistent; it never emits
 a partial package.
+
+For enabled tenants, the ordinary pipeline captures that evidence and provider
+organization authority once as part of its normal refresh/calculation work.
+Package requests and scheduled revisions reuse the persisted values; generation
+does not call Confluent Cloud or recalculate allocations. A Preview evidence or
+authority failure makes Preview fail closed with a Preview-specific diagnostic,
+but does not turn an otherwise successful generic chargeback cycle into a
+failure.
 
 Automatic monthly publication runs only after a successful cycle of the
 continuously running periodic worker. `--run-once`, direct tenant runs, and

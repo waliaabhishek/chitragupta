@@ -184,7 +184,10 @@ def test_create_runner_registers_self_managed_kafka() -> None:
     mock_settings = MagicMock()
     mock_settings.schedule.interval_seconds = 3600
 
-    with patch("main.discover_plugins") as mock_discover, patch("main.PluginRegistry") as mock_reg_cls:
+    with (
+        patch("core.plugin.loader.discover_plugins") as mock_discover,
+        patch("core.plugin.loader.PluginRegistry") as mock_reg_cls,
+    ):
         from plugins.confluent_cloud.plugin import ConfluentCloudPlugin
         from plugins.self_managed_kafka.plugin import SelfManagedKafkaPlugin
 
@@ -209,7 +212,10 @@ def test_create_runner_registers_confluent_cloud(tmp_path: Path) -> None:
 
     mock_settings = MagicMock()
 
-    with patch("main.discover_plugins") as mock_discover, patch("main.PluginRegistry") as mock_reg_cls:
+    with (
+        patch("core.plugin.loader.discover_plugins") as mock_discover,
+        patch("core.plugin.loader.PluginRegistry") as mock_reg_cls,
+    ):
         from plugins.confluent_cloud.plugin import ConfluentCloudPlugin
         from plugins.self_managed_kafka.plugin import SelfManagedKafkaPlugin
 

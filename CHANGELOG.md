@@ -37,6 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Extend graph explorer grouping to resource and identity views (TASK-245). Environments with more than 20 child resources and identities charged across more than 20 clusters now show grouped summary nodes (`resource_group`, `cluster_group`) with the top-5 highest-cost entities shown individually and expand/collapse support (`expand=resources` or `expand=clusters`), matching the cluster view behavior introduced in TASK-243/244.
 
 ### Fixed
+- Make FOCUS Mapping Preview a tenant-level opt-in boundary. Deployments with no enabled tenant no longer initialize or require Preview artifacts, organization authority, native source evidence, allocation lineage, or Preview retention. Mixed deployments apply those requirements only to enabled tenants; package and revision generation reuse persisted provider evidence without new provider calls, and Preview-only evidence failures no longer poison otherwise successful generic chargeback processing.
 - The FOCUS Mapping Preview authority-gap list no longer exposes internal issue or task ownership metadata, while preserving all six gap explanations and the non-conforming warning.
 
 

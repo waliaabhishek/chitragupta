@@ -18,6 +18,7 @@ import core.preview.models as preview_models
 from core.models.identity import Identity  # noqa: TC001 - resolved by contract tests
 from core.models.resource import Resource  # noqa: TC001 - resolved by contract tests
 from core.preview.evidence import (  # noqa: TC001 - resolved by contract tests
+    AllocationLineageRunStatus,
     PreviewAggregateEvidence,
     PreviewAllocationEvidence,
     PreviewAllocationRunEvidence,
@@ -995,6 +996,16 @@ class PreviewFinancialProjection:
 
 type PreviewCell = str | Decimal | datetime | None
 type PreviewOriginKey = tuple[datetime, str, str, str, str]
+type LegacyAggregateCandidateKey = tuple[
+    datetime,
+    str,
+    str | None,
+    str,
+    str,
+    Decimal | None,
+    Decimal | None,
+    Decimal | None,
+]
 
 
 @dataclass(frozen=True)
@@ -1336,17 +1347,53 @@ def reconcile_source_aggregate_evidence(
     aggregate: PreviewAggregateEvidence,
 ) -> None:
     source = selected.source
+    source_amount, source_quantity, source_price = _source_reconciliation_financials(source)
+    if (
+        aggregate.total_cost != source_amount
+        or aggregate.quantity != source_quantity
+        or aggregate.unit_price != source_price
+    ):
+        raise PreviewFinancialReconciliationError("persisted source and aggregate evidence do not reconcile")
+
+
+def _source_reconciliation_financials(
+    source: PreviewSourceEvidence,
+) -> tuple[Decimal | None, Decimal | None, Decimal | None]:
     source_quantity = source.quantity
     source_price = source.price
     if source.native_line_type == "PROMO_CREDIT":
         source_quantity = Decimal(0) if source_quantity is None else source_quantity
         source_price = Decimal(0) if source_price is None else source_price
-    if (
-        aggregate.total_cost != source.amount
-        or aggregate.quantity != source_quantity
-        or aggregate.unit_price != source_price
-    ):
-        raise PreviewFinancialReconciliationError("persisted source and aggregate evidence do not reconcile")
+    return source.amount, source_quantity, source_price
+
+
+def _legacy_source_candidate_key(source: PreviewSourceEvidence) -> LegacyAggregateCandidateKey:
+    return (
+        source.allocation_timestamp,
+        source.environment_id or "",
+        source.resource_id,
+        source.native_product or "",
+        source.native_line_type or "",
+        *_source_reconciliation_financials(source),
+    )
+
+
+def _legacy_aggregate_candidate_keys(
+    aggregate: PreviewAggregateEvidence,
+) -> tuple[LegacyAggregateCandidateKey, LegacyAggregateCandidateKey]:
+    common = (
+        aggregate.timestamp,
+        aggregate.environment_id,
+        aggregate.native_product,
+        aggregate.native_line_type,
+        aggregate.total_cost,
+        aggregate.quantity,
+        aggregate.unit_price,
+    )
+    return (
+        (common[0], common[1], aggregate.resource_id, *common[2:]),
+        (common[0], common[1], None, *common[2:]),
+    )
 
 
 def _source_billing_origin(source: PreviewSourceEvidence) -> PreviewOriginKey | None:
@@ -1398,11 +1445,15 @@ def reconcile_source_aggregate_stream(
 ]:
     """Validate the complete source/aggregate stream in closed stage order."""
     sources_by_origin: dict[PreviewOriginKey, list[SelectedSourceProjection]] = {}
+    legacy_unassociated: list[SelectedSourceProjection] = []
     missing_association = False
     for selected in selected_sources:
         origin = _source_billing_origin(selected.source)
         if origin is None:
-            missing_association = True
+            if (selected.source.capture_id or "").startswith("legacy:v1:"):
+                legacy_unassociated.append(selected)
+            else:
+                missing_association = True
             continue
         sources_by_origin.setdefault(origin, []).append(selected)
 
@@ -1412,6 +1463,19 @@ def reconcile_source_aggregate_stream(
         origin = _aggregate_billing_origin(aggregate)
         duplicate_aggregate = duplicate_aggregate or origin in aggregates_by_origin
         aggregates_by_origin[origin] = aggregate
+
+    legacy_candidates_by_key: dict[LegacyAggregateCandidateKey, list[PreviewOriginKey]] = {}
+    if legacy_unassociated:
+        for origin, aggregate in aggregates_by_origin.items():
+            for candidate_key in _legacy_aggregate_candidate_keys(aggregate):
+                legacy_candidates_by_key.setdefault(candidate_key, []).append(origin)
+
+    for selected in legacy_unassociated:
+        candidates = legacy_candidates_by_key.get(_legacy_source_candidate_key(selected.source), ())
+        if len(candidates) != 1:
+            missing_association = True
+            continue
+        sources_by_origin.setdefault(candidates[0], []).append(selected)
 
     if not sources_by_origin and not aggregates_by_origin and not missing_association and not duplicate_aggregate:
         return {}, {}
@@ -1568,7 +1632,7 @@ def reconcile_allocation_lineage_stream(
         duplicate_run
         or set(runs_by_identity) != set(expected_completion_by_run)
         or any(
-            run.capture_status != "complete"
+            run.capture_status is not AllocationLineageRunStatus.COMPLETE
             or run.capture_reason is not None
             or run.calculation_completed_at != expected_completion_by_run.get(identity)
             or run.portion_count != allocation_count_by_run.get(identity, 0)

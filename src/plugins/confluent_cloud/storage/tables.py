@@ -120,6 +120,7 @@ class CCloudCostSourceTable(SQLModel, table=True):
     malformed: bool = False
     diagnostics_json: str
     raw_payload_json: str
+    capture_id: str | None = Field(default=None, nullable=True)
 
 
 class CCloudAllocationLineageRunTable(SQLModel, table=True):

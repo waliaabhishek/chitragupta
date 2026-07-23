@@ -10,7 +10,8 @@ import tempfile
 import uuid
 import zipfile
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
+from dataclasses import dataclass
 from pathlib import Path
 from typing import BinaryIO, Protocol, Self, cast, runtime_checkable
 
@@ -22,6 +23,26 @@ _ARCHIVE_SPOOL_BYTES = 8 * 1024 * 1024
 
 class PreviewArtifactIntegrityError(OSError):
     """Stored Preview bytes no longer match their immutable metadata."""
+
+
+@dataclass(frozen=True)
+class PreviewArtifactOwner:
+    tenant_name: str
+    ecosystem: str
+    tenant_id: str
+
+    def __post_init__(self) -> None:
+        if not self.tenant_name.strip() or not self.ecosystem.strip() or not self.tenant_id.strip():
+            raise ValueError("artifact owner fields must not be blank")
+
+
+def preview_owner_token(owner: PreviewArtifactOwner) -> str:
+    canonical = json.dumps(
+        {"ecosystem": owner.ecosystem, "tenant_id": owner.tenant_id, "tenant_name": owner.tenant_name},
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    return hashlib.sha256(canonical).hexdigest()
 
 
 @runtime_checkable
@@ -67,6 +88,7 @@ class PreviewArtifactStore(Protocol):
     def stage_data_files(
         self,
         *,
+        owner: PreviewArtifactOwner,
         request_id: str,
         data_files: tuple[PreviewArtifactPayload, ...],
     ) -> PreviewStagedPackage: ...
@@ -85,7 +107,7 @@ class PreviewArtifactStore(Protocol):
 
     def delete_package(self, *, storage_key: str) -> bool: ...
 
-    def cleanup_staging(self) -> int: ...
+    def cleanup_staging(self, owner: PreviewArtifactOwner) -> int: ...
 
     def close(self) -> None: ...
 
@@ -119,6 +141,15 @@ def _exclusive_root_lock(root: Path) -> Iterator[None]:
 
 def _acquire_stage_lock(handle: BinaryIO) -> None:
     fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+
+
+def _remove_empty_staging_parents(root: Path, owner_root: Path) -> None:
+    try:
+        owner_root.rmdir()
+    except OSError:
+        return
+    with suppress(OSError):
+        (root / ".staging").rmdir()
 
 
 class _LocalPreviewStagedPackage:
@@ -210,7 +241,9 @@ class _LocalPreviewStagedPackage:
             fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
         finally:
             handle.close()
-        self._lock_path.unlink(missing_ok=True)
+        with _exclusive_root_lock(self._root):
+            self._lock_path.unlink(missing_ok=True)
+            _remove_empty_staging_parents(self._root, self._staging.parent)
 
     def __enter__(self) -> Self:
         if self._closed:
@@ -273,17 +306,20 @@ class LocalPreviewArtifactStore:
     def stage_data_files(
         self,
         *,
+        owner: PreviewArtifactOwner,
         request_id: str,
         data_files: tuple[PreviewArtifactPayload, ...],
     ) -> PreviewStagedPackage:
         del request_id
         storage_key = uuid.uuid4().hex
-        staging = self._root / f".{storage_key}.staging"
-        lock_path = self._root / f".{storage_key}.staging.lock"
+        owner_root = self._root / ".staging" / preview_owner_token(owner)
+        staging = owner_root / f".{storage_key}.staging"
+        lock_path = owner_root / f".{storage_key}.staging.lock"
         lock_handle: BinaryIO | None = None
         metadata: list[PreviewArtifactMetadata] = []
         try:
             with _exclusive_root_lock(self._root):
+                owner_root.mkdir(parents=True, exist_ok=True)
                 lock_handle = lock_path.open("x+b")
                 _acquire_stage_lock(lock_handle)
                 staging.mkdir()
@@ -316,7 +352,9 @@ class LocalPreviewArtifactStore:
                         fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
                     finally:
                         lock_handle.close()
-                lock_path.unlink(missing_ok=True)
+                with _exclusive_root_lock(self._root):
+                    lock_path.unlink(missing_ok=True)
+                    _remove_empty_staging_parents(self._root, owner_root)
             raise
         assert lock_handle is not None
         return _LocalPreviewStagedPackage(
@@ -394,11 +432,14 @@ class LocalPreviewArtifactStore:
         _fsync_directory(self._root)
         return True
 
-    def cleanup_staging(self) -> int:
+    def cleanup_staging(self, owner: PreviewArtifactOwner) -> int:
         removed = 0
         changed = False
+        owner_root = self._root / ".staging" / preview_owner_token(owner)
         with _exclusive_root_lock(self._root):
-            for path in self._root.iterdir():
+            if not owner_root.exists():
+                return 0
+            for path in owner_root.iterdir():
                 name = path.name
                 if (
                     path.is_dir()
@@ -407,7 +448,7 @@ class LocalPreviewArtifactStore:
                     and len(name) == 1 + 32 + len(".staging")
                     and all(character in "0123456789abcdef" for character in name[1:33])
                 ):
-                    lock_path = self._root / f"{name}.lock"
+                    lock_path = owner_root / f"{name}.lock"
                     lock_handle = lock_path.open("a+b")
                     try:
                         try:
@@ -421,7 +462,7 @@ class LocalPreviewArtifactStore:
                         lock_path.unlink(missing_ok=True)
                     finally:
                         lock_handle.close()
-            for lock_path in self._root.iterdir():
+            for lock_path in owner_root.iterdir():
                 name = lock_path.name
                 if (
                     lock_path.is_file()
@@ -429,7 +470,7 @@ class LocalPreviewArtifactStore:
                     and name.endswith(".staging.lock")
                     and len(name) == 1 + 32 + len(".staging.lock")
                     and all(character in "0123456789abcdef" for character in name[1:33])
-                    and not (self._root / name.removesuffix(".lock")).exists()
+                    and not (owner_root / name.removesuffix(".lock")).exists()
                 ):
                     lock_handle = lock_path.open("a+b")
                     try:
@@ -443,6 +484,7 @@ class LocalPreviewArtifactStore:
                         lock_handle.close()
             if changed:
                 _fsync_directory(self._root)
+            _remove_empty_staging_parents(self._root, owner_root)
         return removed
 
     def close(self) -> None:

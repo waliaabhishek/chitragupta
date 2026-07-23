@@ -15,6 +15,11 @@ import pytest
 from tests.unit.core.preview.conftest import preview_module
 
 
+def _owner() -> object:
+    artifacts = preview_module("artifacts")
+    return artifacts.PreviewArtifactOwner("production", "confluent_cloud", "tenant-1")
+
+
 def _cross_process_stage_worker(root: str, connection: Any, mode: str = "normal") -> None:
     from core.preview import artifacts as artifacts_module
     from core.preview.artifacts import LocalPreviewArtifactStore
@@ -46,7 +51,7 @@ def _cross_process_stage_worker(root: str, connection: Any, mode: str = "normal"
 
         artifacts_module._acquire_stage_lock = die_after_acquire
     store = LocalPreviewArtifactStore(Path(root))
-    with store.stage_data_files(request_id="process-a-request", data_files=files) as staged:
+    with store.stage_data_files(owner=_owner(), request_id="process-a-request", data_files=files) as staged:
         connection.send("staged")
         command = connection.recv()
         if command == "die":
@@ -105,7 +110,7 @@ def _manifest(files: tuple[object, ...], *, mutate_sha: bool = False) -> bytes:
 def _publish(store: object, files: tuple[object, ...] | None = None) -> tuple[object, bytes]:
     files = _data_files() if files is None else files
     manifest = _manifest(files)
-    with store.stage_data_files(request_id="public-request-id", data_files=files) as staged:
+    with store.stage_data_files(owner=_owner(), request_id="public-request-id", data_files=files) as staged:
         assert staged.files == _declared(files)
         stored = staged.publish(manifest_body=manifest)
     return stored, manifest
@@ -157,7 +162,7 @@ def test_staging_fsync_order_is_data_then_directory_then_manifest_then_directory
     monkeypatch.setattr(artifacts.Path, "rename", rename)
 
     files = _data_files()
-    with store.stage_data_files(request_id="request-1", data_files=files) as staged:
+    with store.stage_data_files(owner=_owner(), request_id="request-1", data_files=files) as staged:
         assert events == [
             "file-fsync:part-1.csv",
             "file-fsync:part-2.csv",
@@ -199,11 +204,11 @@ def test_unpublished_staging_is_removed_on_every_failure(
 
     if failure_point in {"data_write", "fsync"}:
         with pytest.raises(OSError, match="failed"):
-            store.stage_data_files(request_id="request-1", data_files=files)
+            store.stage_data_files(owner=_owner(), request_id="request-1", data_files=files)
     else:
         with (
             pytest.raises(ValueError),
-            store.stage_data_files(request_id="request-1", data_files=files) as staged,
+            store.stage_data_files(owner=_owner(), request_id="request-1", data_files=files) as staged,
         ):
             staged.publish(manifest_body=_manifest(files, mutate_sha=True))
 
@@ -215,7 +220,10 @@ def test_publish_rejects_manifest_metadata_drift_before_rename(preview_artifact_
     store = artifacts.LocalPreviewArtifactStore(preview_artifact_root)
     files = _data_files()
 
-    with pytest.raises(ValueError), store.stage_data_files(request_id="request-1", data_files=files) as staged:
+    with (
+        pytest.raises(ValueError),
+        store.stage_data_files(owner=_owner(), request_id="request-1", data_files=files) as staged,
+    ):
         staged.publish(manifest_body=_manifest(files, mutate_sha=True))
 
     assert not list(preview_artifact_root.iterdir())
@@ -233,7 +241,7 @@ def test_publish_rejects_non_object_json_manifest_and_removes_staging(
 
     with (
         pytest.raises(ValueError, match="manifest"),
-        store.stage_data_files(request_id="request-1", data_files=files) as staged,
+        store.stage_data_files(owner=_owner(), request_id="request-1", data_files=files) as staged,
     ):
         staged.publish(manifest_body=manifest_body)
 
@@ -262,24 +270,25 @@ def test_cleanup_staging_removes_only_owned_staging_names_and_is_idempotent(
 ) -> None:
     artifacts = preview_module("artifacts")
     store = artifacts.LocalPreviewArtifactStore(preview_artifact_root)
-    owned = preview_artifact_root / f".{('a' * 32)}.staging"
+    owner_root = preview_artifact_root / ".staging" / artifacts.preview_owner_token(_owner())
+    owner_root.mkdir(parents=True)
+    owned = owner_root / f".{('a' * 32)}.staging"
     final = preview_artifact_root / ("b" * 32)
-    unrelated = preview_artifact_root / ".notes.staging"
+    unrelated = owner_root / ".notes.staging"
     owned.mkdir()
     final.mkdir()
     unrelated.mkdir()
 
-    assert store.cleanup_staging() == 1
+    assert store.cleanup_staging(_owner()) == 1
     assert not owned.exists()
     assert final.exists()
     assert unrelated.exists()
-    assert store.cleanup_staging() == 0
+    assert store.cleanup_staging(_owner()) == 0
 
 
 def test_shared_root_startup_cleanup_skips_live_cross_process_stage_and_it_publishes(
     preview_artifact_root: Path,
 ) -> None:
-    service = preview_module("service")
     artifacts = preview_module("artifacts")
     context = multiprocessing.get_context("spawn")
     parent, child = context.Pipe()
@@ -290,15 +299,14 @@ def test_shared_root_startup_cleanup_skips_live_cross_process_stage_and_it_publi
     process.start()
     child.close()
     assert parent.recv() == "staged"
-    staging = list(preview_artifact_root.glob(".*.staging"))
-    locks = list(preview_artifact_root.glob(".*.staging.lock"))
+    staging = list(preview_artifact_root.rglob(".*.staging"))
+    locks = list(preview_artifact_root.rglob(".*.staging.lock"))
     assert len(staging) == 1
     assert len(locks) == 1
 
     store_b = artifacts.LocalPreviewArtifactStore(preview_artifact_root)
-    runtime_b = service.PreviewRuntime(artifact_store=store_b, max_workers=1)
     try:
-        runtime_b.ensure_staging_recovered()
+        store_b.cleanup_staging(_owner())
         assert staging[0].is_dir()
         assert locks[0].is_file()
 
@@ -313,10 +321,10 @@ def test_shared_root_startup_cleanup_skips_live_cross_process_stage_and_it_publi
         assert (final_directories[0] / "manifest.json").read_bytes() == _manifest(_data_files())
         assert (final_directories[0] / "part-1.csv").read_bytes() == b"name,cost\na,1\n"
         assert (final_directories[0] / "part-2.csv").read_bytes() == b"name,cost\nb,2\n"
-        assert not list(preview_artifact_root.glob(".*.staging*"))
+        assert not list(preview_artifact_root.rglob(".*.staging*"))
     finally:
         parent.close()
-        runtime_b.close()
+        store_b.close()
         if process.is_alive():
             process.terminate()
             process.join(5)
@@ -325,7 +333,6 @@ def test_shared_root_startup_cleanup_skips_live_cross_process_stage_and_it_publi
 def test_root_serialization_prevents_cleanup_race_before_stage_lock_acquisition(
     preview_artifact_root: Path,
 ) -> None:
-    service = preview_module("service")
     artifacts = preview_module("artifacts")
     context = multiprocessing.get_context("spawn")
     parent, child = context.Pipe()
@@ -337,12 +344,11 @@ def test_root_serialization_prevents_cleanup_race_before_stage_lock_acquisition(
     child.close()
     assert parent.poll(5)
     assert parent.recv() == "lock-visible-before-acquire"
-    assert list(preview_artifact_root.glob(".*.staging")) == []
-    stage_locks = list(preview_artifact_root.glob(".*.staging.lock"))
+    assert list(preview_artifact_root.rglob(".*.staging")) == []
+    stage_locks = list(preview_artifact_root.rglob(".*.staging.lock"))
     assert len(stage_locks) == 1
 
     store_b = artifacts.LocalPreviewArtifactStore(preview_artifact_root)
-    runtime_b = service.PreviewRuntime(artifact_store=store_b, max_workers=1)
     cleanup_started = Event()
     cleanup_finished = Event()
     cleanup_errors: list[BaseException] = []
@@ -350,7 +356,7 @@ def test_root_serialization_prevents_cleanup_race_before_stage_lock_acquisition(
     def cleanup_from_process_b() -> None:
         cleanup_started.set()
         try:
-            runtime_b.ensure_staging_recovered()
+            store_b.cleanup_staging(_owner())
         except BaseException as exc:
             cleanup_errors.append(exc)
         finally:
@@ -368,7 +374,7 @@ def test_root_serialization_prevents_cleanup_race_before_stage_lock_acquisition(
         assert parent.recv() == "staged"
         assert cleanup_finished.wait(5)
         assert cleanup_errors == []
-        assert len(list(preview_artifact_root.glob(".*.staging"))) == 1
+        assert len(list(preview_artifact_root.rglob(".*.staging"))) == 1
         assert stage_locks[0].is_file()
 
         parent.send("publish")
@@ -378,10 +384,10 @@ def test_root_serialization_prevents_cleanup_race_before_stage_lock_acquisition(
         process.join(5)
         assert process.exitcode == 0
         assert (preview_artifact_root / result[1] / "manifest.json").read_bytes() == _manifest(_data_files())
-        assert not list(preview_artifact_root.glob(".*.staging*"))
+        assert not list(preview_artifact_root.rglob(".*.staging*"))
     finally:
         parent.close()
-        runtime_b.close()
+        store_b.close()
         cleanup_thread.join(5)
         if process.is_alive():
             process.terminate()
@@ -391,7 +397,6 @@ def test_root_serialization_prevents_cleanup_race_before_stage_lock_acquisition(
 def test_shared_root_startup_cleanup_reclaims_stage_after_owner_process_dies(
     preview_artifact_root: Path,
 ) -> None:
-    service = preview_module("service")
     artifacts = preview_module("artifacts")
     context = multiprocessing.get_context("spawn")
     parent, child = context.Pipe()
@@ -402,21 +407,20 @@ def test_shared_root_startup_cleanup_reclaims_stage_after_owner_process_dies(
     process.start()
     child.close()
     assert parent.recv() == "staged"
-    assert len(list(preview_artifact_root.glob(".*.staging"))) == 1
-    assert len(list(preview_artifact_root.glob(".*.staging.lock"))) == 1
+    assert len(list(preview_artifact_root.rglob(".*.staging"))) == 1
+    assert len(list(preview_artifact_root.rglob(".*.staging.lock"))) == 1
 
     parent.send("die")
     process.join(5)
     assert process.exitcode == 0
     store_b = artifacts.LocalPreviewArtifactStore(preview_artifact_root)
-    runtime_b = service.PreviewRuntime(artifact_store=store_b, max_workers=1)
     try:
-        runtime_b.ensure_staging_recovered()
+        store_b.cleanup_staging(_owner())
         assert list(preview_artifact_root.iterdir()) == []
-        assert store_b.cleanup_staging() == 0
+        assert store_b.cleanup_staging(_owner()) == 0
     finally:
         parent.close()
-        runtime_b.close()
+        store_b.close()
         if process.is_alive():
             process.terminate()
             process.join(5)
@@ -436,9 +440,9 @@ def test_cleanup_reclaims_orphan_lock_after_hard_death_before_staging_directory(
     child.close()
     assert parent.poll(5)
     assert parent.recv() == "lock-acquired-before-staging"
-    orphan_locks = list(preview_artifact_root.glob(".*.staging.lock"))
+    orphan_locks = list(preview_artifact_root.rglob(".*.staging.lock"))
     assert len(orphan_locks) == 1
-    assert list(preview_artifact_root.glob(".*.staging")) == []
+    assert list(preview_artifact_root.rglob(".*.staging")) == []
 
     parent.send("die-before-staging")
     process.join(5)
@@ -446,11 +450,11 @@ def test_cleanup_reclaims_orphan_lock_after_hard_death_before_staging_directory(
 
     store = artifacts.LocalPreviewArtifactStore(preview_artifact_root)
     try:
-        assert store.cleanup_staging() == 0
+        assert store.cleanup_staging(_owner()) == 0
         assert list(preview_artifact_root.iterdir()) == []
         stored, manifest = _publish(store)
         assert (preview_artifact_root / stored.storage_key / "manifest.json").read_bytes() == manifest
-        assert not list(preview_artifact_root.glob(".*.staging*"))
+        assert not list(preview_artifact_root.rglob(".*.staging*"))
     finally:
         parent.close()
         store.close()
@@ -474,13 +478,13 @@ def test_staging_setup_failure_releases_and_removes_cross_process_fence(
 
     monkeypatch.setattr(artifacts.Path, "mkdir", fail_staging_mkdir)
     with pytest.raises(OSError, match="staging mkdir failed"):
-        store.stage_data_files(request_id="request-1", data_files=_data_files())
+        store.stage_data_files(owner=_owner(), request_id="request-1", data_files=_data_files())
     assert list(preview_artifact_root.iterdir()) == []
 
     monkeypatch.setattr(artifacts.Path, "mkdir", real_mkdir)
     stored, manifest = _publish(store)
     assert (preview_artifact_root / stored.storage_key / "manifest.json").read_bytes() == manifest
-    assert not list(preview_artifact_root.glob(".*.staging*"))
+    assert not list(preview_artifact_root.rglob(".*.staging*"))
 
 
 def test_delete_package_is_exact_idempotent_and_rejects_traversal(preview_artifact_root: Path) -> None:

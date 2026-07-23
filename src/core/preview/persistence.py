@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+from collections.abc import Sequence
+from contextlib import AbstractContextManager
 from dataclasses import asdict, dataclass, replace
 from datetime import date, datetime, timedelta
 from typing import Literal, Protocol, Self, runtime_checkable
@@ -30,9 +32,17 @@ from sqlmodel import Field, Session, SQLModel, col, select
 
 from core.preview.eligibility import capped_correlations
 from core.preview.evidence import (  # noqa: TC001  # resolved by get_type_hints contract test
+    AllocationLineageRun,
+    AllocationLineageUnavailableRun,
     PreviewAllocationEvidenceReader,
     PreviewCostEvidenceReader,
+    PreviewEvidenceBootstrapResult,
+    PreviewSourceAttempt,
+    PreviewSourceReadiness,
+    SourceAttemptFailureReason,
+    SourceAttemptFinalStatus,
 )
+from core.preview.evidence_capture import PreviewSourceWindowWriter, SourceAttemptBeginFailure  # noqa: TC001
 from core.preview.mapping import LEGACY_DAILY_FULL_V4_COLUMNS, validate_preview_effective_columns
 from core.preview.models import (
     PreviewArtifactMetadata,
@@ -49,9 +59,15 @@ from core.preview.models import (
     validate_preview_request_snapshot,
     validate_preview_revision_invariant,
 )
+from core.preview.organization_authority import (  # noqa: TC001
+    PreviewOrganizationAuthorityReader,
+    PreviewOrganizationAuthorityWriter,
+)
+from core.preview.storage_availability import PreviewEvidenceAvailability  # noqa: TC001
 from core.storage.backends.sqlmodel.mappers import ensure_utc, ensure_utc_strict
 from core.storage.backends.sqlmodel.tables import PipelineStateTable
 from core.storage.interface import (  # noqa: TC001  # resolved by get_type_hints contract test
+    AllocationLineageRunCapture,
     EntityTagRepository,
     IdentityRepository,
     ResourceRepository,
@@ -1732,12 +1748,127 @@ class PreviewWriteUnitOfWork(Protocol):
 
 
 @runtime_checkable
-class PreviewReadUnitOfWork(Protocol):
+class PreviewStorageBackend(Protocol):
+    def create_preview_write_unit_of_work(self) -> PreviewWriteUnitOfWork: ...
+    def create_preview_metadata_read_unit_of_work(self) -> PreviewMetadataReadUnitOfWork: ...
+
+
+@runtime_checkable
+class PreviewSourceReadinessWriter(Protocol):
+    def begin_attempt(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        refresh_token: str,
+        refresh_start: datetime,
+        refresh_end: datetime,
+        started_at: datetime,
+    ) -> PreviewSourceAttempt: ...
+
+    def replace_overlapping(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        refresh_start: datetime,
+        refresh_end: datetime,
+        captures: Sequence[PreviewSourceReadiness],
+    ) -> tuple[PreviewSourceReadiness, ...]: ...
+
+    def finalize_attempt(
+        self,
+        attempt_sequence: int,
+        status: SourceAttemptFinalStatus,
+        *,
+        completed_at: datetime,
+        reason: SourceAttemptFailureReason | None,
+    ) -> PreviewSourceAttempt: ...
+
+    def get_current_authority(self, ecosystem: str, tenant_id: str) -> PreviewSourceAttempt | None: ...
+
+    def get_by_token(self, ecosystem: str, tenant_id: str, refresh_token: str) -> PreviewSourceAttempt | None: ...
+
+    def list_covering(
+        self, ecosystem: str, tenant_id: str, start: datetime, end: datetime
+    ) -> tuple[PreviewSourceReadiness, ...]: ...
+
+    def delete_orphaned_before(self, ecosystem: str, tenant_id: str, before: datetime) -> int: ...
+
+
+@runtime_checkable
+class PreviewSourceReadinessReader(Protocol):
+    def get_current_authority(self, ecosystem: str, tenant_id: str) -> PreviewSourceAttempt | None: ...
+
+    def list_covering(
+        self, ecosystem: str, tenant_id: str, start: datetime, end: datetime
+    ) -> tuple[PreviewSourceReadiness, ...]: ...
+
+
+class PreviewSourceAttemptConflictError(RuntimeError):
+    """A source attempt token is bound to different durable state."""
+
+
+@runtime_checkable
+class PreviewSourceAttemptFallbackWriter(Protocol):
+    def ensure_begin_failed(
+        self,
+        value: SourceAttemptBeginFailure,
+        *,
+        completed_at: datetime,
+    ) -> PreviewSourceAttempt: ...
+
+
+@runtime_checkable
+class PreviewSourceAttemptFallbackUnitOfWork(Protocol):
+    source_attempt_fallback: PreviewSourceAttemptFallbackWriter
+
+
+@dataclass(frozen=True)
+class LineageDeletionCount:
+    portions: int
+    runs: int
+
+    def __post_init__(self) -> None:
+        if self.portions < 0 or self.runs < 0:
+            raise ValueError("lineage deletion counts must be nonnegative")
+
+
+@runtime_checkable
+class PreviewAllocationLineageWriter(Protocol):
+    def replace_calculation_lineage(
+        self,
+        capture: AllocationLineageRunCapture,
+        *,
+        calculation_completed_at: datetime,
+    ) -> AllocationLineageRun: ...
+
+    def mark_calculation_lineage_unavailable(
+        self, value: AllocationLineageUnavailableRun
+    ) -> AllocationLineageUnavailableRun: ...
+
+    def delete_before(self, ecosystem: str, tenant_id: str, before: date) -> LineageDeletionCount: ...
+
+
+@runtime_checkable
+class PreviewMetadataReadUnitOfWork(Protocol):
     requests: PreviewRequestRepository
     revisions: PreviewRevisionRepository
+
+    def __enter__(self) -> Self: ...
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: object,
+    ) -> None: ...
+
+
+@runtime_checkable
+class PreviewGenerationReadUnitOfWork(Protocol):
     calculations: PreviewCalculationRepository
     cost_evidence: PreviewCostEvidenceReader
     allocation_evidence: PreviewAllocationEvidenceReader
+    source_readiness: PreviewSourceReadinessReader
+    organization_authority: PreviewOrganizationAuthorityReader
     resources: ResourceRepository
     identities: IdentityRepository
     tags: EntityTagRepository
@@ -1752,6 +1883,42 @@ class PreviewReadUnitOfWork(Protocol):
 
 
 @runtime_checkable
-class PreviewStorageBackend(Protocol):
-    def create_preview_write_unit_of_work(self) -> PreviewWriteUnitOfWork: ...
-    def create_preview_read_unit_of_work(self) -> PreviewReadUnitOfWork: ...
+class PreviewEvidenceWriteUnitOfWork(Protocol):
+    source_windows: PreviewSourceWindowWriter
+    allocation_lineage: PreviewAllocationLineageWriter
+    source_readiness: PreviewSourceReadinessWriter
+    organization_authority: PreviewOrganizationAuthorityWriter
+
+    def __enter__(self) -> Self: ...
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: object,
+    ) -> None: ...
+    def commit(self) -> None: ...
+    def rollback(self) -> None: ...
+    def savepoint(self) -> AbstractContextManager[None]: ...
+
+
+@runtime_checkable
+class PreviewEvidenceBootstrap(Protocol):
+    def bootstrap_owner(
+        self,
+        *,
+        ecosystem: str,
+        tenant_id: str,
+        policy_start: datetime,
+        policy_end: datetime,
+    ) -> PreviewEvidenceBootstrapResult: ...
+
+
+@runtime_checkable
+class PreviewEvidenceStorageBackend(Protocol):
+    @property
+    def preview_evidence_availability(self) -> PreviewEvidenceAvailability: ...
+
+    def create_preview_evidence_unit_of_work(self) -> PreviewEvidenceWriteUnitOfWork: ...
+    def create_preview_generation_read_unit_of_work(self) -> PreviewGenerationReadUnitOfWork: ...
+    def create_preview_evidence_bootstrap(self) -> PreviewEvidenceBootstrap: ...
+    def mark_preview_evidence_bootstrap_unavailable(self, error_type: str) -> None: ...

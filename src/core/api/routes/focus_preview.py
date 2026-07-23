@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, timedelta
 from typing import Annotated
@@ -10,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response, StreamingResponse
 from starlette.background import BackgroundTask
 
-from core.api.dependencies import get_or_create_backend, get_settings, get_tenant_config
+from core.api.dependencies import get_backend_provider, get_settings
 from core.api.schemas import (  # noqa: TC001  # FastAPI evaluates annotations
     FocusPreviewArtifactResponse,
     FocusPreviewCalculationCoverageEntryResponse,
@@ -28,6 +29,7 @@ from core.api.schemas import (  # noqa: TC001  # FastAPI evaluates annotations
 )
 from core.config.models import AppSettings, TenantConfig  # noqa: TC001  # FastAPI evaluates annotations
 from core.preview.artifacts import PreviewArchiveStream  # noqa: TC001 - used by FastAPI route helpers
+from core.preview.eligibility import COMMERCIAL_PROFILE_UNAVAILABLE, diagnostic_detail
 from core.preview.mapping import (
     FOCUS_1_4_FULL_PROFILE_COLUMNS,
     FOCUS_1_4_SUMMARY_COLUMNS,
@@ -65,6 +67,7 @@ from core.preview.service import (
     PreviewRuntime,
     PreviewWorkerUnavailable,
 )
+from core.storage.backend_provider import TenantBackendProvider  # noqa: TC001
 
 router = APIRouter(prefix="/tenants/{tenant_name}/focus-preview", tags=["focus-preview"])
 logger = logging.getLogger(__name__)
@@ -79,7 +82,7 @@ class FocusPreviewRevisionScope:
 def _revision_scope(
     tenant_name: str,
     month: str,
-    settings: Annotated[AppSettings, Depends(get_settings)],
+    settings: AppSettings,
 ) -> FocusPreviewRevisionScope:
     try:
         interval = canonicalize_monthly_interval(month=month)
@@ -89,6 +92,7 @@ def _revision_scope(
     if tenant_config is None:
         raise HTTPException(404, detail=f"Tenant {tenant_name!r} not found")
     _check_ecosystem(tenant_config)
+    _require_focus_preview_enabled(tenant_config)
     return FocusPreviewRevisionScope(tenant_config, interval)
 
 
@@ -128,29 +132,62 @@ def _runtime(request: Request) -> PreviewRuntime:
     return runtime
 
 
-def _backend(request: Request, tenant_name: str, tenant_config: TenantConfig) -> PreviewStorageBackend:
+@contextmanager
+def _preview_backend(
+    provider: TenantBackendProvider,
+    tenant_name: str,
+    tenant_config: TenantConfig,
+) -> Iterator[PreviewStorageBackend]:
     try:
-        backend = get_or_create_backend(
-            request.app.state.backends,
-            tenant_name,
-            tenant_config.storage,
-            tenant_config.ecosystem,
-        )
+        with provider.acquire_backend(tenant_name, tenant_config) as backend:
+            if not isinstance(backend, PreviewStorageBackend):
+                raise HTTPException(503, detail="FOCUS Mapping Preview storage is unavailable")
+            yield backend
     except Exception as exc:
+        if isinstance(exc, HTTPException):
+            raise
         logger.error(
             "FOCUS Mapping Preview backend creation failed tenant=%s error_type=%s",
             tenant_name,
             type(exc).__name__,
         )
         raise HTTPException(503, detail="FOCUS Mapping Preview storage is unavailable") from None
-    if not isinstance(backend, PreviewStorageBackend):
-        raise HTTPException(503, detail="FOCUS Mapping Preview storage is unavailable")
-    return backend
+
+
+@contextmanager
+def _revision_backend(
+    provider: TenantBackendProvider,
+    tenant_name: str,
+    tenant_config: TenantConfig,
+) -> Iterator[PreviewStorageBackend]:
+    try:
+        with _preview_backend(provider, tenant_name, tenant_config) as backend:
+            yield backend
+    except HTTPException as exc:
+        if exc.status_code == 503:
+            raise HTTPException(
+                503,
+                detail="FOCUS Mapping Preview revision storage is unavailable",
+            ) from None
+        raise
 
 
 def _check_ecosystem(tenant_config: TenantConfig) -> None:
     if tenant_config.ecosystem != "confluent_cloud":
         raise HTTPException(400, detail="FOCUS Mapping Preview currently supports only Confluent Cloud tenants")
+
+
+def _require_focus_preview_enabled(tenant_config: TenantConfig) -> None:
+    if not tenant_config.focus_preview_enabled:
+        raise HTTPException(409, detail=diagnostic_detail(COMMERCIAL_PROFILE_UNAVAILABLE))
+
+
+def _get_preview_tenant(settings: AppSettings, tenant_name: str) -> TenantConfig:
+    tenant_config = settings.tenants.get(tenant_name)
+    if tenant_config is None:
+        raise HTTPException(404, detail=f"Tenant {tenant_name!r} not found")
+    _check_ecosystem(tenant_config)
+    return tenant_config
 
 
 def _artifact_response(
@@ -334,19 +371,13 @@ def _serialize_revision(
 
 
 def _current_revision(
-    request: Request,
     tenant_name: str,
     scope: FocusPreviewRevisionScope,
     reader: PreviewRevisionReader,
     revision_id: str | None,
+    backend: PreviewStorageBackend,
 ) -> PreviewRevision:
     tenant_config = scope.tenant_config
-    try:
-        backend = _backend(request, tenant_name, tenant_config)
-    except HTTPException as exc:
-        if exc.status_code == 503:
-            raise HTTPException(503, detail="FOCUS Mapping Preview revision storage is unavailable") from None
-        raise
     try:
         revision = reader.get_current(
             backend=backend,
@@ -400,14 +431,14 @@ def _revision_artifact_unavailable(
 
 
 def _lookup(
-    request: Request,
+    runtime: PreviewRuntime,
     tenant_name: str,
     tenant_config: TenantConfig,
     request_id: str,
+    backend: PreviewStorageBackend,
 ) -> tuple[PreviewRuntime, PreviewRequest]:
     _check_ecosystem(tenant_config)
-    runtime = _runtime(request)
-    backend = _backend(request, tenant_name, tenant_config)
+    _require_focus_preview_enabled(tenant_config)
     try:
         runtime.ensure_owner_recovered(
             backend=backend,
@@ -455,9 +486,11 @@ def _log_ignored_columns(
 
 @router.get("/profile", response_model=FocusPreviewProfileResponse)
 def get_profile(
-    tenant_config: Annotated[TenantConfig, Depends(get_tenant_config)],
+    tenant_name: str,
+    settings: Annotated[AppSettings, Depends(get_settings)],
 ) -> FocusPreviewProfileResponse:
-    _check_ecosystem(tenant_config)
+    tenant_config = _get_preview_tenant(settings, tenant_name)
+    _require_focus_preview_enabled(tenant_config)
     return FocusPreviewProfileResponse(
         mapping_profile_version=MAPPING_PROFILE_VERSION,
         full_columns=list(FOCUS_1_4_FULL_PROFILE_COLUMNS),
@@ -470,9 +503,10 @@ def submit_preview(
     request: Request,
     tenant_name: str,
     body: FocusPreviewRequestBody,
-    tenant_config: Annotated[TenantConfig, Depends(get_tenant_config)],
+    settings: Annotated[AppSettings, Depends(get_settings)],
+    provider: Annotated[TenantBackendProvider, Depends(get_backend_provider)],
 ) -> FocusPreviewStatusResponse:
-    _check_ecosystem(tenant_config)
+    tenant_config = _get_preview_tenant(settings, tenant_name)
     try:
         interval = (
             canonicalize_daily_interval(start_date=body.start_date, end_date=body.end_date)
@@ -489,29 +523,30 @@ def submit_preview(
     except PreviewRequestValidationError as exc:
         raise HTTPException(400, detail=exc.detail) from None
     _log_ignored_columns(tenant_name, selection.ignored_unknown, selection.ignored_duplicates)
+    _require_focus_preview_enabled(tenant_config)
     runtime = _runtime(request)
-    backend = _backend(request, tenant_name, tenant_config)
-    try:
-        runtime.ensure_owner_recovered(
-            backend=backend,
-            tenant_name=tenant_name,
-            ecosystem=tenant_config.ecosystem,
-            tenant_id=tenant_config.tenant_id,
-        )
-        preview = runtime.submit(
-            tenant_name=tenant_name,
-            tenant_config=tenant_config,
-            backend=backend,
-            start_date=interval.start_date,
-            end_date=interval.end_date,
-            grain=interval.grain,
-            column_profile=body.column_profile,
-            effective_columns=selection.effective_columns,
-        )
-    except PreviewRecoveryUnavailable:
-        raise HTTPException(503, detail="FOCUS Mapping Preview recovery is unavailable") from None
-    except PreviewWorkerUnavailable:
-        raise HTTPException(503, detail="FOCUS Mapping Preview worker is unavailable") from None
+    with _preview_backend(provider, tenant_name, tenant_config) as backend:
+        try:
+            runtime.ensure_owner_recovered(
+                backend=backend,
+                tenant_name=tenant_name,
+                ecosystem=tenant_config.ecosystem,
+                tenant_id=tenant_config.tenant_id,
+            )
+            preview = runtime.submit(
+                tenant_name=tenant_name,
+                tenant_config=tenant_config,
+                backend=backend,
+                start_date=interval.start_date,
+                end_date=interval.end_date,
+                grain=interval.grain,
+                column_profile=body.column_profile,
+                effective_columns=selection.effective_columns,
+            )
+        except PreviewRecoveryUnavailable:
+            raise HTTPException(503, detail="FOCUS Mapping Preview recovery is unavailable") from None
+        except PreviewWorkerUnavailable:
+            raise HTTPException(503, detail="FOCUS Mapping Preview worker is unavailable") from None
     return _serialize(preview)
 
 
@@ -519,31 +554,33 @@ def submit_preview(
 def list_previews(
     request: Request,
     tenant_name: str,
-    tenant_config: Annotated[TenantConfig, Depends(get_tenant_config)],
+    settings: Annotated[AppSettings, Depends(get_settings)],
+    provider: Annotated[TenantBackendProvider, Depends(get_backend_provider)],
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
     cursor: Annotated[str | None, Query(min_length=1)] = None,
 ) -> FocusPreviewRequestListResponse:
-    _check_ecosystem(tenant_config)
+    tenant_config = _get_preview_tenant(settings, tenant_name)
+    _require_focus_preview_enabled(tenant_config)
     runtime = _runtime(request)
-    backend = _backend(request, tenant_name, tenant_config)
-    try:
-        runtime.ensure_owner_recovered(
-            backend=backend,
-            tenant_name=tenant_name,
-            ecosystem=tenant_config.ecosystem,
-            tenant_id=tenant_config.tenant_id,
-        )
-        page = runtime.list_recent_requests(
-            backend=backend,
-            ecosystem=tenant_config.ecosystem,
-            tenant_id=tenant_config.tenant_id,
-            limit=limit,
-            cursor_request_id=cursor,
-        )
-    except PreviewRecoveryUnavailable:
-        raise HTTPException(503, detail="FOCUS Mapping Preview recovery is unavailable") from None
-    except PreviewRequestCursorError:
-        raise HTTPException(400, detail="Preview request cursor is invalid") from None
+    with _preview_backend(provider, tenant_name, tenant_config) as backend:
+        try:
+            runtime.ensure_owner_recovered(
+                backend=backend,
+                tenant_name=tenant_name,
+                ecosystem=tenant_config.ecosystem,
+                tenant_id=tenant_config.tenant_id,
+            )
+            page = runtime.list_recent_requests(
+                backend=backend,
+                ecosystem=tenant_config.ecosystem,
+                tenant_id=tenant_config.tenant_id,
+                limit=limit,
+                cursor_request_id=cursor,
+            )
+        except PreviewRecoveryUnavailable:
+            raise HTTPException(503, detail="FOCUS Mapping Preview recovery is unavailable") from None
+        except PreviewRequestCursorError:
+            raise HTTPException(400, detail="Preview request cursor is invalid") from None
     return FocusPreviewRequestListResponse(
         items=[_serialize(item) for item in page.items], next_cursor=page.next_cursor
     )
@@ -553,38 +590,46 @@ def list_previews(
 def get_current_revision(
     request: Request,
     tenant_name: str,
-    scope: Annotated[FocusPreviewRevisionScope, Depends(_revision_scope)],
+    month: str,
+    settings: Annotated[AppSettings, Depends(get_settings)],
+    provider: Annotated[TenantBackendProvider, Depends(get_backend_provider)],
     revision_id: str | None = None,
 ) -> FocusPreviewRevisionResponse:
+    scope = _revision_scope(tenant_name, month, settings)
     reader = _revision_reader(request)
-    revision = _current_revision(request, tenant_name, scope, reader, revision_id)
-    try:
-        return _serialize_revision(revision, tenant_name=tenant_name, reader=reader)
-    except Exception as exc:
-        raise _revision_artifact_unavailable(
-            tenant_name=tenant_name,
-            tenant_config=scope.tenant_config,
-            error=exc,
-        ) from None
+    with _revision_backend(provider, tenant_name, scope.tenant_config) as backend:
+        revision = _current_revision(tenant_name, scope, reader, revision_id, backend)
+        try:
+            return _serialize_revision(revision, tenant_name=tenant_name, reader=reader)
+        except Exception as exc:
+            raise _revision_artifact_unavailable(
+                tenant_name=tenant_name,
+                tenant_config=scope.tenant_config,
+                error=exc,
+            ) from None
 
 
 @router.get("/revisions/current/manifest")
 def get_current_revision_manifest(
     request: Request,
     tenant_name: str,
+    month: str,
     revision_id: str,
-    scope: Annotated[FocusPreviewRevisionScope, Depends(_revision_scope)],
+    settings: Annotated[AppSettings, Depends(get_settings)],
+    provider: Annotated[TenantBackendProvider, Depends(get_backend_provider)],
 ) -> Response:
+    scope = _revision_scope(tenant_name, month, settings)
     reader = _revision_reader(request)
-    revision = _current_revision(request, tenant_name, scope, reader, revision_id)
-    try:
-        body = reader.read_manifest(revision=revision)
-    except Exception as exc:
-        raise _revision_artifact_unavailable(
-            tenant_name=tenant_name,
-            tenant_config=scope.tenant_config,
-            error=exc,
-        ) from None
+    with _revision_backend(provider, tenant_name, scope.tenant_config) as backend:
+        revision = _current_revision(tenant_name, scope, reader, revision_id, backend)
+        try:
+            body = reader.read_manifest(revision=revision)
+        except Exception as exc:
+            raise _revision_artifact_unavailable(
+                tenant_name=tenant_name,
+                tenant_config=scope.tenant_config,
+                error=exc,
+            ) from None
     return Response(body, media_type="application/json")
 
 
@@ -593,21 +638,25 @@ def get_current_revision_file(
     request: Request,
     tenant_name: str,
     file_name: str,
+    month: str,
     revision_id: str,
-    scope: Annotated[FocusPreviewRevisionScope, Depends(_revision_scope)],
+    settings: Annotated[AppSettings, Depends(get_settings)],
+    provider: Annotated[TenantBackendProvider, Depends(get_backend_provider)],
 ) -> Response:
+    scope = _revision_scope(tenant_name, month, settings)
     reader = _revision_reader(request)
-    revision = _current_revision(request, tenant_name, scope, reader, revision_id)
-    if file_name not in {item.name for item in revision.package.files}:
-        raise HTTPException(404, detail="FOCUS Mapping Preview file not found for current revision")
-    try:
-        metadata, body = reader.read_file(revision=revision, file_name=file_name)
-    except Exception as exc:
-        raise _revision_artifact_unavailable(
-            tenant_name=tenant_name,
-            tenant_config=scope.tenant_config,
-            error=exc,
-        ) from None
+    with _revision_backend(provider, tenant_name, scope.tenant_config) as backend:
+        revision = _current_revision(tenant_name, scope, reader, revision_id, backend)
+        if file_name not in {item.name for item in revision.package.files}:
+            raise HTTPException(404, detail="FOCUS Mapping Preview file not found for current revision")
+        try:
+            metadata, body = reader.read_file(revision=revision, file_name=file_name)
+        except Exception as exc:
+            raise _revision_artifact_unavailable(
+                tenant_name=tenant_name,
+                tenant_config=scope.tenant_config,
+                error=exc,
+            ) from None
     return Response(body, media_type=metadata.media_type)
 
 
@@ -615,19 +664,23 @@ def get_current_revision_file(
 def get_current_revision_archive(
     request: Request,
     tenant_name: str,
+    month: str,
     revision_id: str,
-    scope: Annotated[FocusPreviewRevisionScope, Depends(_revision_scope)],
+    settings: Annotated[AppSettings, Depends(get_settings)],
+    provider: Annotated[TenantBackendProvider, Depends(get_backend_provider)],
 ) -> StreamingResponse:
+    scope = _revision_scope(tenant_name, month, settings)
     reader = _revision_reader(request)
-    revision = _current_revision(request, tenant_name, scope, reader, revision_id)
-    try:
-        archive = reader.open_archive(revision=revision)
-    except Exception as exc:
-        raise _revision_artifact_unavailable(
-            tenant_name=tenant_name,
-            tenant_config=scope.tenant_config,
-            error=exc,
-        ) from None
+    with _revision_backend(provider, tenant_name, scope.tenant_config) as backend:
+        revision = _current_revision(tenant_name, scope, reader, revision_id, backend)
+        try:
+            archive = reader.open_archive(revision=revision)
+        except Exception as exc:
+            raise _revision_artifact_unavailable(
+                tenant_name=tenant_name,
+                tenant_config=scope.tenant_config,
+                error=exc,
+            ) from None
 
     def chunks() -> Iterator[bytes]:
         try:
@@ -647,27 +700,13 @@ def get_current_revision_archive(
     )
 
 
-def _revision_backend(
-    request: Request,
-    tenant_name: str,
-    tenant_config: TenantConfig,
-) -> PreviewStorageBackend:
-    try:
-        return _backend(request, tenant_name, tenant_config)
-    except HTTPException as exc:
-        if exc.status_code == 503:
-            raise HTTPException(503, detail="FOCUS Mapping Preview revision storage is unavailable") from None
-        raise
-
-
 def _direct_revision(
-    request: Request,
     tenant_name: str,
     tenant_config: TenantConfig,
     reader: PreviewRevisionReader,
     revision_id: str,
+    backend: PreviewStorageBackend,
 ) -> PreviewRevision:
-    backend = _revision_backend(request, tenant_name, tenant_config)
     try:
         revision = reader.get_for_owner(
             backend=backend,
@@ -693,39 +732,42 @@ def _direct_revision(
 def list_revisions(
     request: Request,
     tenant_name: str,
-    scope: Annotated[FocusPreviewRevisionScope, Depends(_revision_scope)],
+    month: str,
+    settings: Annotated[AppSettings, Depends(get_settings)],
+    provider: Annotated[TenantBackendProvider, Depends(get_backend_provider)],
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
     cursor: Annotated[str | None, Query(min_length=1)] = None,
 ) -> FocusPreviewRevisionListResponse:
+    scope = _revision_scope(tenant_name, month, settings)
     reader = _revision_reader(request)
     tenant_config = scope.tenant_config
-    backend = _revision_backend(request, tenant_name, tenant_config)
-    try:
-        page = reader.list_for_owner_month(
-            backend=backend,
-            ecosystem=tenant_config.ecosystem,
-            tenant_id=tenant_config.tenant_id,
-            month_start=scope.interval.start_date,
-            limit=limit,
-            cursor_revision_id=cursor,
-        )
-        items = [_serialize_revision_summary(item, tenant_name=tenant_name, reader=reader) for item in page.items]
-    except PreviewRevisionCursorError:
-        raise HTTPException(400, detail="FOCUS Mapping Preview revision cursor is invalid") from None
-    except PreviewRevisionArtifactUnavailableError as exc:
-        raise _revision_artifact_unavailable(
-            tenant_name=tenant_name,
-            tenant_config=tenant_config,
-            error=exc,
-        ) from None
-    except Exception as exc:
-        logger.error(
-            "FOCUS Mapping Preview revision history read failed tenant=%s owner=%s error_type=%s",
-            tenant_name,
-            masked_preview_owner(ecosystem=tenant_config.ecosystem, tenant_id=tenant_config.tenant_id),
-            type(exc).__name__,
-        )
-        raise HTTPException(503, detail="FOCUS Mapping Preview revision storage is unavailable") from None
+    with _revision_backend(provider, tenant_name, tenant_config) as backend:
+        try:
+            page = reader.list_for_owner_month(
+                backend=backend,
+                ecosystem=tenant_config.ecosystem,
+                tenant_id=tenant_config.tenant_id,
+                month_start=scope.interval.start_date,
+                limit=limit,
+                cursor_revision_id=cursor,
+            )
+            items = [_serialize_revision_summary(item, tenant_name=tenant_name, reader=reader) for item in page.items]
+        except PreviewRevisionCursorError:
+            raise HTTPException(400, detail="FOCUS Mapping Preview revision cursor is invalid") from None
+        except PreviewRevisionArtifactUnavailableError as exc:
+            raise _revision_artifact_unavailable(
+                tenant_name=tenant_name,
+                tenant_config=tenant_config,
+                error=exc,
+            ) from None
+        except Exception as exc:
+            logger.error(
+                "FOCUS Mapping Preview revision history read failed tenant=%s owner=%s error_type=%s",
+                tenant_name,
+                masked_preview_owner(ecosystem=tenant_config.ecosystem, tenant_id=tenant_config.tenant_id),
+                type(exc).__name__,
+            )
+            raise HTTPException(503, detail="FOCUS Mapping Preview revision storage is unavailable") from None
     return FocusPreviewRevisionListResponse(
         items=items,
         next_cursor=page.next_cursor,
@@ -739,24 +781,27 @@ def get_revision(
     request: Request,
     tenant_name: str,
     revision_id: str,
-    tenant_config: Annotated[TenantConfig, Depends(get_tenant_config)],
+    settings: Annotated[AppSettings, Depends(get_settings)],
+    provider: Annotated[TenantBackendProvider, Depends(get_backend_provider)],
 ) -> FocusPreviewRevisionResponse:
-    _check_ecosystem(tenant_config)
+    tenant_config = _get_preview_tenant(settings, tenant_name)
+    _require_focus_preview_enabled(tenant_config)
     reader = _revision_reader(request)
-    revision = _direct_revision(request, tenant_name, tenant_config, reader, revision_id)
-    try:
-        return _serialize_revision(
-            revision,
-            tenant_name=tenant_name,
-            reader=reader,
-            direct=True,
-        )
-    except Exception as exc:
-        raise _revision_artifact_unavailable(
-            tenant_name=tenant_name,
-            tenant_config=tenant_config,
-            error=exc,
-        ) from None
+    with _revision_backend(provider, tenant_name, tenant_config) as backend:
+        revision = _direct_revision(tenant_name, tenant_config, reader, revision_id, backend)
+        try:
+            return _serialize_revision(
+                revision,
+                tenant_name=tenant_name,
+                reader=reader,
+                direct=True,
+            )
+        except Exception as exc:
+            raise _revision_artifact_unavailable(
+                tenant_name=tenant_name,
+                tenant_config=tenant_config,
+                error=exc,
+            ) from None
 
 
 @router.get("/revisions/{revision_id}/manifest")
@@ -764,19 +809,22 @@ def get_revision_manifest(
     request: Request,
     tenant_name: str,
     revision_id: str,
-    tenant_config: Annotated[TenantConfig, Depends(get_tenant_config)],
+    settings: Annotated[AppSettings, Depends(get_settings)],
+    provider: Annotated[TenantBackendProvider, Depends(get_backend_provider)],
 ) -> Response:
-    _check_ecosystem(tenant_config)
+    tenant_config = _get_preview_tenant(settings, tenant_name)
+    _require_focus_preview_enabled(tenant_config)
     reader = _revision_reader(request)
-    revision = _direct_revision(request, tenant_name, tenant_config, reader, revision_id)
-    try:
-        return Response(reader.read_manifest(revision=revision), media_type="application/json")
-    except Exception as exc:
-        raise _revision_artifact_unavailable(
-            tenant_name=tenant_name,
-            tenant_config=tenant_config,
-            error=exc,
-        ) from None
+    with _revision_backend(provider, tenant_name, tenant_config) as backend:
+        revision = _direct_revision(tenant_name, tenant_config, reader, revision_id, backend)
+        try:
+            return Response(reader.read_manifest(revision=revision), media_type="application/json")
+        except Exception as exc:
+            raise _revision_artifact_unavailable(
+                tenant_name=tenant_name,
+                tenant_config=tenant_config,
+                error=exc,
+            ) from None
 
 
 @router.get("/revisions/{revision_id}/files/{file_name}")
@@ -785,22 +833,25 @@ def get_revision_file(
     tenant_name: str,
     revision_id: str,
     file_name: str,
-    tenant_config: Annotated[TenantConfig, Depends(get_tenant_config)],
+    settings: Annotated[AppSettings, Depends(get_settings)],
+    provider: Annotated[TenantBackendProvider, Depends(get_backend_provider)],
 ) -> Response:
-    _check_ecosystem(tenant_config)
+    tenant_config = _get_preview_tenant(settings, tenant_name)
+    _require_focus_preview_enabled(tenant_config)
     reader = _revision_reader(request)
-    revision = _direct_revision(request, tenant_name, tenant_config, reader, revision_id)
-    try:
-        metadata, body = reader.read_file(revision=revision, file_name=file_name)
-        return Response(body, media_type=metadata.media_type)
-    except FileNotFoundError, StopIteration:
-        raise HTTPException(404, detail="FOCUS Mapping Preview file not found for revision") from None
-    except Exception as exc:
-        raise _revision_artifact_unavailable(
-            tenant_name=tenant_name,
-            tenant_config=tenant_config,
-            error=exc,
-        ) from None
+    with _revision_backend(provider, tenant_name, tenant_config) as backend:
+        revision = _direct_revision(tenant_name, tenant_config, reader, revision_id, backend)
+        try:
+            metadata, body = reader.read_file(revision=revision, file_name=file_name)
+            return Response(body, media_type=metadata.media_type)
+        except FileNotFoundError, StopIteration:
+            raise HTTPException(404, detail="FOCUS Mapping Preview file not found for revision") from None
+        except Exception as exc:
+            raise _revision_artifact_unavailable(
+                tenant_name=tenant_name,
+                tenant_config=tenant_config,
+                error=exc,
+            ) from None
 
 
 @router.get("/revisions/{revision_id}/archive")
@@ -808,19 +859,22 @@ def get_revision_archive(
     request: Request,
     tenant_name: str,
     revision_id: str,
-    tenant_config: Annotated[TenantConfig, Depends(get_tenant_config)],
+    settings: Annotated[AppSettings, Depends(get_settings)],
+    provider: Annotated[TenantBackendProvider, Depends(get_backend_provider)],
 ) -> StreamingResponse:
-    _check_ecosystem(tenant_config)
+    tenant_config = _get_preview_tenant(settings, tenant_name)
+    _require_focus_preview_enabled(tenant_config)
     reader = _revision_reader(request)
-    revision = _direct_revision(request, tenant_name, tenant_config, reader, revision_id)
-    try:
-        archive = reader.open_archive(revision=revision)
-    except Exception as exc:
-        raise _revision_artifact_unavailable(
-            tenant_name=tenant_name,
-            tenant_config=tenant_config,
-            error=exc,
-        ) from None
+    with _revision_backend(provider, tenant_name, tenant_config) as backend:
+        revision = _direct_revision(tenant_name, tenant_config, reader, revision_id, backend)
+        try:
+            archive = reader.open_archive(revision=revision)
+        except Exception as exc:
+            raise _revision_artifact_unavailable(
+                tenant_name=tenant_name,
+                tenant_config=tenant_config,
+                error=exc,
+            ) from None
 
     def chunks() -> Iterator[bytes]:
         try:
@@ -845,9 +899,14 @@ def get_preview(
     request: Request,
     tenant_name: str,
     request_id: str,
-    tenant_config: Annotated[TenantConfig, Depends(get_tenant_config)],
+    settings: Annotated[AppSettings, Depends(get_settings)],
+    provider: Annotated[TenantBackendProvider, Depends(get_backend_provider)],
 ) -> FocusPreviewStatusResponse:
-    _runtime_value, preview = _lookup(request, tenant_name, tenant_config, request_id)
+    tenant_config = _get_preview_tenant(settings, tenant_name)
+    _require_focus_preview_enabled(tenant_config)
+    runtime = _runtime(request)
+    with _preview_backend(provider, tenant_name, tenant_config) as backend:
+        _runtime_value, preview = _lookup(runtime, tenant_name, tenant_config, request_id, backend)
     return _serialize(preview)
 
 
@@ -870,14 +929,19 @@ def get_manifest(
     request: Request,
     tenant_name: str,
     request_id: str,
-    tenant_config: Annotated[TenantConfig, Depends(get_tenant_config)],
+    settings: Annotated[AppSettings, Depends(get_settings)],
+    provider: Annotated[TenantBackendProvider, Depends(get_backend_provider)],
 ) -> Response:
-    runtime, preview = _lookup(request, tenant_name, tenant_config, request_id)
-    _require_ready(preview)
-    try:
-        body = runtime.read_manifest_bytes(preview)
-    except PreviewArtifactUnavailable, OSError:
-        raise HTTPException(500, detail="Stored preview artifact is unavailable") from None
+    tenant_config = _get_preview_tenant(settings, tenant_name)
+    _require_focus_preview_enabled(tenant_config)
+    runtime = _runtime(request)
+    with _preview_backend(provider, tenant_name, tenant_config) as backend:
+        runtime, preview = _lookup(runtime, tenant_name, tenant_config, request_id, backend)
+        _require_ready(preview)
+        try:
+            body = runtime.read_manifest_bytes(preview)
+        except PreviewArtifactUnavailable, OSError:
+            raise HTTPException(500, detail="Stored preview artifact is unavailable") from None
     return Response(body, media_type="application/json")
 
 
@@ -887,17 +951,22 @@ def get_file(
     tenant_name: str,
     request_id: str,
     file_name: str,
-    tenant_config: Annotated[TenantConfig, Depends(get_tenant_config)],
+    settings: Annotated[AppSettings, Depends(get_settings)],
+    provider: Annotated[TenantBackendProvider, Depends(get_backend_provider)],
 ) -> Response:
-    runtime, preview = _lookup(request, tenant_name, tenant_config, request_id)
-    _require_ready(preview)
-    if preview.package is None or file_name not in {item.name for item in preview.package.files}:
-        raise HTTPException(404, detail=f"Preview file {file_name!r} not found for request {request_id!r}")
-    metadata = next(item for item in preview.package.files if item.name == file_name)
-    try:
-        body = runtime.read_file_bytes(preview, file_name)
-    except PreviewArtifactUnavailable, OSError:
-        raise HTTPException(500, detail="Stored preview artifact is unavailable") from None
+    tenant_config = _get_preview_tenant(settings, tenant_name)
+    _require_focus_preview_enabled(tenant_config)
+    runtime = _runtime(request)
+    with _preview_backend(provider, tenant_name, tenant_config) as backend:
+        runtime, preview = _lookup(runtime, tenant_name, tenant_config, request_id, backend)
+        _require_ready(preview)
+        if preview.package is None or file_name not in {item.name for item in preview.package.files}:
+            raise HTTPException(404, detail=f"Preview file {file_name!r} not found for request {request_id!r}")
+        metadata = next(item for item in preview.package.files if item.name == file_name)
+        try:
+            body = runtime.read_file_bytes(preview, file_name)
+        except PreviewArtifactUnavailable, OSError:
+            raise HTTPException(500, detail="Stored preview artifact is unavailable") from None
     return Response(body, media_type=metadata.media_type)
 
 
@@ -906,14 +975,19 @@ def get_archive(
     request: Request,
     tenant_name: str,
     request_id: str,
-    tenant_config: Annotated[TenantConfig, Depends(get_tenant_config)],
+    settings: Annotated[AppSettings, Depends(get_settings)],
+    provider: Annotated[TenantBackendProvider, Depends(get_backend_provider)],
 ) -> StreamingResponse:
-    runtime, preview = _lookup(request, tenant_name, tenant_config, request_id)
-    _require_ready(preview)
-    try:
-        archive = runtime.open_archive(preview)
-    except PreviewArtifactUnavailable, OSError:
-        raise HTTPException(500, detail="Stored preview artifact is unavailable") from None
+    tenant_config = _get_preview_tenant(settings, tenant_name)
+    _require_focus_preview_enabled(tenant_config)
+    runtime = _runtime(request)
+    with _preview_backend(provider, tenant_name, tenant_config) as backend:
+        runtime, preview = _lookup(runtime, tenant_name, tenant_config, request_id, backend)
+        _require_ready(preview)
+        try:
+            archive = runtime.open_archive(preview)
+        except PreviewArtifactUnavailable, OSError:
+            raise HTTPException(500, detail="Stored preview artifact is unavailable") from None
 
     def chunks() -> Iterator[bytes]:
         try:

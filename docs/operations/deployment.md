@@ -88,6 +88,13 @@ Health endpoint: `GET /health` — returns `{"status": "ok", "version": "..."}`
 
 ### FOCUS Mapping Preview boundary
 
+FOCUS Mapping Preview is opt-in per tenant. When no tenant has a
+`focus_preview` block, API and worker startup do not create or access
+`preview.artifact_root`, initialize Preview recovery, gather Preview
+organization authority, or require Preview evidence/lineage storage. The
+ordinary pipeline, emitters, and generic export keep their existing deployment
+requirements.
+
 Chitragupta does not provide Preview-specific users, roles, API keys, or
 tokens. Protect the complete
 `/api/v1/tenants/{tenant_name}/focus-preview` prefix with the deployment's
@@ -99,6 +106,12 @@ Preview downloads must go through the API so artifact identity and checksums
 are verified before delivery. When `api` and `worker` run separately, configure
 both with the same tenant database and the same durable artifact root. Use a
 database deployment suitable for the expected process and write concurrency.
+
+Mixed deployments are supported. Only enabled tenants use the shared Preview
+artifact root and evidence schema; disabled tenants do not acquire Preview
+organization/source/lineage data. An enabled tenant's Preview storage,
+bootstrap, or evidence failure is reported through Preview diagnostics while
+generic chargeback collection and calculation continue.
 
 ## Storage
 

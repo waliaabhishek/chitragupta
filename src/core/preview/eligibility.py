@@ -16,6 +16,16 @@ logger = logging.getLogger(__name__)
 
 MAX_DIAGNOSTIC_SOURCE_CORRELATIONS = 20
 
+COMMERCIAL_PROFILE_UNAVAILABLE = PreviewDiagnostic(
+    "preview_commercial_profile_unavailable",
+    "An explicit Direct-billed PAYG profile does not cover the requested interval.",
+    False,
+)
+
+
+def diagnostic_detail(value: PreviewDiagnostic) -> dict[str, str | bool]:
+    return {"code": value.code, "message": value.message, "retryable": value.retryable}
+
 
 @dataclass(frozen=True)
 class PreviewEligibilityPolicy:
@@ -59,11 +69,7 @@ def request_eligibility_diagnostic(
         or request.start_date < policy.effective_start_date
         or request.end_date > policy.effective_end_date
     ):
-        return PreviewDiagnostic(
-            "preview_commercial_profile_unavailable",
-            "An explicit Direct-billed PAYG profile does not cover the requested interval.",
-            False,
-        )
+        return COMMERCIAL_PROFILE_UNAVAILABLE
     if policy.billing_currency != "USD":
         return PreviewDiagnostic(
             "preview_billing_currency_unsupported",

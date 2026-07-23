@@ -581,15 +581,9 @@ class TestMigration015RemoveAmountServerDefault:
 class TestMigration018CCloudCostSourceRecords:
     @staticmethod
     def _config(connection_string: str) -> Config:
-        import pathlib
+        from tests.unit.core.storage.test_migration_019_focus_preview import _alembic_config
 
-        from alembic.config import Config
-
-        migrations_dir = pathlib.Path(__file__).resolve().parents[4] / "src" / "core" / "storage" / "migrations"
-        config = Config(str(migrations_dir / "alembic.ini"))
-        config.set_main_option("script_location", str(migrations_dir))
-        config.set_main_option("sqlalchemy.url", connection_string)
-        return config
+        return _alembic_config(connection_string)
 
     def test_upgrade_creates_source_table_primary_key_and_indexes(self, tmp_path) -> None:
         from alembic import command

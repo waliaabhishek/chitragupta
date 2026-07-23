@@ -18,12 +18,13 @@ if TYPE_CHECKING:
     from plugins.confluent_cloud.connections import CCloudConnection
 
 from core.plugin.protocols import CostInput
+from core.preview.evidence_capture import NativeSourceGatherResult, NativeSourceWindow, SourceCaptureFailure
 from plugins.confluent_cloud.models.billing import (
     CCloudBillingLineItem,
     CCloudCostSourceRecord,
-    CCloudSourceWindowWriter,
     billing_natural_key,
 )
+from plugins.confluent_cloud.source_capture import CCloudNativeSourceEvidenceCapture
 
 logger = logging.getLogger(__name__)
 BILLING_API_PATH = "/billing/v1/costs"
@@ -446,40 +447,80 @@ class CCloudBillingCostInput(CostInput):
         Yields BillingLineItem for each billing record in the period.
         Splits large date ranges into smaller windows per days_per_query config.
         """
-        writer = uow.billing
-        if not isinstance(writer, CCloudSourceWindowWriter):
-            raise RuntimeError("CCloud billing repository does not satisfy CCloudSourceWindowWriter")
-
         overall_start = _normalize_gather_bound(start)
         overall_end = _normalize_gather_bound(end)
         if overall_start >= overall_end:
             return
 
-        candidates: list[_SourceCandidate] = []
-        aggregates: list[CCloudBillingLineItem] = []
         days_per_query = self._config.billing_api.days_per_query
         for window_start, window_end in _generate_date_windows(overall_start, overall_end, days_per_query):
-            window_aggregates, window_candidates = self._fetch_window(tenant_id, window_start, window_end)
+            window_aggregates, _ = self._fetch_window(tenant_id, window_start, window_end, capture_source=False)
+            yield from window_aggregates
+
+    def gather_with_native_source_evidence(
+        self,
+        tenant_id: str,
+        start: datetime,
+        end: datetime,
+    ) -> NativeSourceGatherResult:
+        overall_start = _normalize_gather_bound(start)
+        overall_end = _normalize_gather_bound(end)
+        if overall_start >= overall_end:
+            raise ValueError("Billing gather bounds must contain a nonempty interval")
+        aggregates: list[CCloudBillingLineItem] = []
+        candidates: list[_SourceCandidate] = []
+        windows: list[NativeSourceWindow] = []
+        for window_start, window_end in _generate_date_windows(
+            overall_start, overall_end, self._config.billing_api.days_per_query
+        ):
+            window_aggregates, window_candidates = self._fetch_window(
+                tenant_id, window_start, window_end, capture_source=True
+            )
             aggregates.extend(window_aggregates)
             candidates.extend(window_candidates)
-
-        source_records = _assign_source_records(candidates, tenant_id, overall_start, overall_end)
-        writer.replace_source_window(ECOSYSTEM, tenant_id, overall_start, overall_end, source_records)
-        yield from aggregates
+            windows.append(NativeSourceWindow(window_start, window_end))
+        try:
+            records = tuple(_assign_source_records(candidates, tenant_id, overall_start, overall_end))
+            capture = CCloudNativeSourceEvidenceCapture(
+                ecosystem=ECOSYSTEM,
+                tenant_id=tenant_id,
+                refresh_start=overall_start,
+                refresh_end=overall_end,
+                windows=tuple(windows),
+                records=records,
+            )
+        except (TypeError, ValueError) as exc:
+            logger.warning(
+                "Native source evidence construction failed tenant=%s error_type=%s",
+                tenant_id,
+                type(exc).__name__,
+            )
+            return NativeSourceGatherResult(
+                billing_lines=tuple(aggregates),
+                capture=None,
+                capture_failure=SourceCaptureFailure.CONSTRUCTION_FAILED,
+            )
+        return NativeSourceGatherResult(
+            billing_lines=tuple(aggregates),
+            capture=capture,
+            capture_failure=None,
+        )
 
     def _fetch_window(
         self,
         tenant_id: str,
         start: datetime,
         end: datetime,
+        *,
+        capture_source: bool = True,
     ) -> tuple[list[CCloudBillingLineItem], list[_SourceCandidate]]:
         """Fetch billing items for a single date window.
 
         Collects all rows per window, then aggregates rows that share the same
         7-field billing key (tiered pricing produces multiple rows per key).
-        Each HTTP subwindow is grouped independently, while gather() retains all
-        subwindow aggregates and source candidates for the tenant lookback interval
-        until the authoritative source-window replacement succeeds.
+        Ordinary gather streams each completed subwindow immediately. Native
+        evidence gather retains the subwindow aggregates and source candidates
+        across the complete refresh interval to construct one capture.
         """
         params = {
             "start_date": start.strftime("%Y-%m-%d"),
@@ -497,15 +538,16 @@ class CCloudBillingCostInput(CostInput):
             except (AttributeError, KeyError, TypeError, ValueError) as exc:
                 logger.debug("Preserving malformed billing item %d as sentinel row: %s", idx, exc)
                 item = _map_malformed_item(raw_item, ECOSYSTEM, tenant_id, idx, exc)
-            candidates.append(
-                _SourceCandidate(
-                    raw_payload=deepcopy(raw_item),
-                    collection_window_start=start,
-                    collection_window_end=end,
-                    ordinal=idx,
-                    billing_key=billing_natural_key(item),
+            if capture_source:
+                candidates.append(
+                    _SourceCandidate(
+                        raw_payload=deepcopy(raw_item),
+                        collection_window_start=start,
+                        collection_window_end=end,
+                        ordinal=idx,
+                        billing_key=billing_natural_key(item),
+                    )
                 )
-            )
             groups[billing_natural_key(item)].append(item)
 
         return [_aggregate_tiers(group) for group in groups.values()], candidates

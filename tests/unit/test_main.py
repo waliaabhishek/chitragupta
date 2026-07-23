@@ -45,7 +45,7 @@ class TestSetupLogging:
 class TestMain:
     @patch("main.WorkflowRunner")
     @patch("main.PluginRegistry")
-    @patch("main.discover_plugins")
+    @patch("core.plugin.loader.discover_plugins")
     @patch("main.load_config")
     def test_run_once(
         self,
@@ -70,7 +70,7 @@ class TestMain:
 
     @patch("main.WorkflowRunner")
     @patch("main.PluginRegistry")
-    @patch("main.discover_plugins")
+    @patch("core.plugin.loader.discover_plugins")
     @patch("main.load_config")
     def test_run_once_with_results(
         self,
@@ -111,7 +111,7 @@ class TestMain:
 
     @patch("main.WorkflowRunner")
     @patch("main.PluginRegistry")
-    @patch("main.discover_plugins")
+    @patch("core.plugin.loader.discover_plugins")
     @patch("main.load_config")
     def test_run_loop_mode(
         self,
@@ -139,7 +139,7 @@ class TestMain:
 
     @patch("main.WorkflowRunner")
     @patch("main.PluginRegistry")
-    @patch("main.discover_plugins")
+    @patch("core.plugin.loader.discover_plugins")
     @patch("main.load_config")
     def test_run_once_logs_pending_count(
         self,
@@ -184,7 +184,7 @@ class TestBothModeSingleRunner:
     @patch("main.run_api")
     @patch("main.WorkflowRunner")
     @patch("main.PluginRegistry")
-    @patch("main.discover_plugins")
+    @patch("core.plugin.loader.discover_plugins")
     @patch("main.load_config")
     def test_both_mode_single_runner_created(
         self,
@@ -211,7 +211,7 @@ class TestBothModeSingleRunner:
 
     @patch("main.WorkflowRunner")
     @patch("main.PluginRegistry")
-    @patch("main.discover_plugins")
+    @patch("core.plugin.loader.discover_plugins")
     @patch("main.load_config")
     def test_run_worker_uses_injected_runner(
         self,
@@ -239,7 +239,7 @@ class TestBothModeSingleRunner:
 
     @patch("main.WorkflowRunner")
     @patch("main.PluginRegistry")
-    @patch("main.discover_plugins")
+    @patch("core.plugin.loader.discover_plugins")
     def test_run_worker_standalone_creates_runner(
         self,
         mock_discover: MagicMock,
@@ -265,7 +265,7 @@ class TestBothModeSingleRunner:
     @patch("main.signal")
     @patch("main.WorkflowRunner")
     @patch("main.PluginRegistry")
-    @patch("main.discover_plugins")
+    @patch("core.plugin.loader.discover_plugins")
     def test_run_worker_pre_set_shutdown_event_skips_signals(
         self,
         mock_discover: MagicMock,
@@ -298,7 +298,7 @@ class TestBothModeSingleRunner:
     @patch("main.run_worker")
     @patch("main.WorkflowRunner")
     @patch("main.PluginRegistry")
-    @patch("main.discover_plugins")
+    @patch("core.plugin.loader.discover_plugins")
     @patch("main.load_config")
     def test_both_mode_api_and_worker_share_same_runner(
         self,
@@ -347,16 +347,17 @@ class TestCreateRunnerPluginPath:
 
     @patch("main.WorkflowRunner")
     @patch("main.PluginRegistry")
-    @patch("main.discover_plugins")
+    @patch("core.plugin.loader.discover_plugins")
     def test_create_runner_no_override_uses_default_plugins_path(
         self,
         mock_discover: MagicMock,
         mock_registry_cls: MagicMock,
         mock_runner_cls: MagicMock,
     ) -> None:
-        """settings.plugins_path=None → discover_plugins called with _DEFAULT_PLUGINS_PATH."""
+        """settings.plugins_path=None uses the loader's default plugins path."""
         from core.config.models import AppSettings
-        from main import _DEFAULT_PLUGINS_PATH, _create_runner
+        from core.plugin.loader import _DEFAULT_PLUGINS_PATH
+        from main import _create_runner
 
         settings = AppSettings()
         assert settings.plugins_path is None
@@ -369,7 +370,7 @@ class TestCreateRunnerPluginPath:
 
     @patch("main.WorkflowRunner")
     @patch("main.PluginRegistry")
-    @patch("main.discover_plugins")
+    @patch("core.plugin.loader.discover_plugins")
     def test_create_runner_absolute_override_resolves_correctly(
         self,
         mock_discover: MagicMock,
@@ -392,7 +393,7 @@ class TestCreateRunnerPluginPath:
 
     @patch("main.WorkflowRunner")
     @patch("main.PluginRegistry")
-    @patch("main.discover_plugins")
+    @patch("core.plugin.loader.discover_plugins")
     def test_create_runner_relative_override_joins_cwd(
         self,
         mock_discover: MagicMock,
@@ -413,12 +414,12 @@ class TestCreateRunnerPluginPath:
         mock_discover.assert_called_once_with(expected)
 
     def test_default_plugins_path_is_absolute_and_cwd_independent(self) -> None:
-        """_DEFAULT_PLUGINS_PATH is absolute and equals Path(main.__file__).parent / "plugins"."""
-        import main as main_module
-        from main import _DEFAULT_PLUGINS_PATH
+        """The loader default is absolute and points at the built-in plugins."""
+        from core.plugin import loader
+        from core.plugin.loader import _DEFAULT_PLUGINS_PATH
 
-        main_file = Path(main_module.__file__).resolve()
-        expected = main_file.parent / "plugins"
+        loader_file = Path(loader.__file__).resolve()
+        expected = loader_file.parents[2] / "plugins"
         assert _DEFAULT_PLUGINS_PATH.is_absolute()
         assert expected == _DEFAULT_PLUGINS_PATH
 
@@ -733,7 +734,7 @@ class TestValidatePluginConfigs:
     """TASK-132: _validate_plugin_configs() catches plugin-specific config errors."""
 
     # ------------------------------------------------------------------ test 1
-    @patch("main.discover_plugins")
+    @patch("core.plugin.loader.discover_plugins")
     @patch("main.load_config")
     def test_cku_ratio_sum_failure_caught(
         self,
@@ -769,7 +770,7 @@ class TestValidatePluginConfigs:
         assert "sum to 1.0" in capsys.readouterr().err
 
     # ------------------------------------------------------------------ test 2
-    @patch("main.discover_plugins")
+    @patch("core.plugin.loader.discover_plugins")
     @patch("main.load_config")
     def test_missing_ccloud_api_field_caught(
         self,
@@ -799,7 +800,7 @@ class TestValidatePluginConfigs:
         assert "ccloud_api" in capsys.readouterr().err
 
     # ------------------------------------------------------------------ test 3
-    @patch("main.discover_plugins")
+    @patch("core.plugin.loader.discover_plugins")
     @patch("main.load_config")
     def test_valid_config_exits_0(
         self,
@@ -831,7 +832,7 @@ class TestValidatePluginConfigs:
         assert "Config is valid." in capsys.readouterr().out
 
     # ------------------------------------------------------------------ test 4
-    @patch("main.discover_plugins")
+    @patch("core.plugin.loader.discover_plugins")
     @patch("main.load_config")
     def test_self_managed_kafka_invalid_config_caught(
         self,
@@ -862,7 +863,7 @@ class TestValidatePluginConfigs:
         assert "kafka-prod" in capsys.readouterr().err
 
     # ------------------------------------------------------------------ test 5
-    @patch("main.discover_plugins")
+    @patch("core.plugin.loader.discover_plugins")
     @patch("main.load_config")
     def test_generic_metrics_only_empty_cost_types_caught(
         self,
@@ -897,7 +898,7 @@ class TestValidatePluginConfigs:
         assert exc_info.value.code == 1
 
     # ------------------------------------------------------------------ test 6
-    @patch("main.discover_plugins")
+    @patch("core.plugin.loader.discover_plugins")
     @patch("main.load_config")
     def test_unknown_ecosystem_exits_1(
         self,
@@ -926,7 +927,7 @@ class TestValidatePluginConfigs:
         assert "unknown ecosystem" in capsys.readouterr().err.lower()
 
     # ------------------------------------------------------------------ test 7
-    @patch("main.discover_plugins")
+    @patch("core.plugin.loader.discover_plugins")
     @patch("main.load_config")
     def test_multiple_tenant_errors_all_reported(
         self,
@@ -965,7 +966,7 @@ class TestValidatePluginConfigs:
         assert "beta" in err
 
     # ------------------------------------------------------------------ test 8
-    @patch("main.discover_plugins")
+    @patch("core.plugin.loader.discover_plugins")
     @patch("main.load_config")
     def test_plugin_without_validate_method_skipped_silently(
         self,
@@ -1004,7 +1005,7 @@ class TestValidatePluginConfigs:
         )
 
     # ------------------------------------------------------------------ test 10
-    @patch("main.discover_plugins")
+    @patch("core.plugin.loader.discover_plugins")
     def test_build_registry_importable_and_populates_registry(
         self,
         mock_discover: MagicMock,
@@ -1109,3 +1110,112 @@ class TestEmitOnce:
 
         args = parse_args(["--config-file", "c.yaml"])
         assert args.emit_once is False
+
+    @patch("main.load_config")
+    def test_emit_once_initializes_plugin_before_flagged_storage_and_closes_in_reverse_order(
+        self,
+        mock_load: MagicMock,
+    ) -> None:
+        from core.config.models import AppSettings, StorageConfig, TenantConfig
+        from main import main
+
+        events: list[str] = []
+        module = object()
+
+        class Plugin:
+            ecosystem = "confluent_cloud"
+
+            def initialize(self, config: object) -> None:
+                del config
+                events.append("plugin.initialize")
+
+            def get_storage_module(self) -> object:
+                events.append("plugin.storage_module")
+                return module
+
+            def get_service_handlers(self) -> dict[str, object]:
+                return {}
+
+            def get_fallback_allocator(self) -> None:
+                return None
+
+            def close(self) -> None:
+                events.append("plugin.close")
+
+        plugin = Plugin()
+        registry = MagicMock()
+        registry.create.side_effect = lambda _ecosystem: events.append("registry.create") or plugin
+        storage = MagicMock()
+        storage.create_tables.side_effect = lambda: events.append("storage.create_tables")
+        storage.dispose.side_effect = lambda: events.append("storage.dispose")
+        mock_load.return_value = AppSettings(
+            tenants={
+                "production": TenantConfig(
+                    ecosystem="confluent_cloud",
+                    tenant_id="tenant-1",
+                    storage=StorageConfig(connection_string="sqlite:///emit-once.db"),
+                )
+            }
+        )
+
+        def build_storage(*args: object, **kwargs: object) -> object:
+            events.append("storage.create")
+            assert kwargs["storage_module"] is module
+            assert kwargs["focus_preview_enabled"] is False
+            return storage
+
+        with (
+            patch("main._build_registry", return_value=registry),
+            patch("main.create_storage_backend", side_effect=build_storage),
+            patch("main.EmitterRunner") as runner_type,
+        ):
+            runner_type.return_value.run.side_effect = lambda _tenant_id: events.append("emit")
+            main(["--config-file", "dummy.yaml", "--emit-once"])
+
+        assert events == [
+            "registry.create",
+            "plugin.initialize",
+            "plugin.storage_module",
+            "storage.create",
+            "storage.create_tables",
+            "emit",
+            "storage.dispose",
+            "plugin.close",
+        ]
+
+    @patch("main.load_config")
+    def test_emit_once_preserves_emit_error_and_attempts_storage_and_plugin_cleanup_once(
+        self,
+        mock_load: MagicMock,
+    ) -> None:
+        from core.config.models import AppSettings, StorageConfig, TenantConfig
+        from main import main
+
+        plugin = MagicMock()
+        plugin.get_storage_module.return_value = object()
+        plugin.close.side_effect = RuntimeError("plugin cleanup failed")
+        registry = MagicMock()
+        registry.create.return_value = plugin
+        storage = MagicMock()
+        storage.dispose.side_effect = RuntimeError("storage cleanup failed")
+        mock_load.return_value = AppSettings(
+            tenants={
+                "production": TenantConfig(
+                    ecosystem="confluent_cloud",
+                    tenant_id="tenant-1",
+                    storage=StorageConfig(connection_string="sqlite:///emit-once-failure.db"),
+                )
+            }
+        )
+
+        with (
+            patch("main._build_registry", return_value=registry),
+            patch("main.create_storage_backend", return_value=storage),
+            patch("main.EmitterRunner") as runner_type,
+            pytest.raises(ValueError, match="original emit failure"),
+        ):
+            runner_type.return_value.run.side_effect = ValueError("original emit failure")
+            main(["--config-file", "dummy.yaml", "--emit-once"])
+
+        storage.dispose.assert_called_once_with()
+        plugin.close.assert_called_once_with()

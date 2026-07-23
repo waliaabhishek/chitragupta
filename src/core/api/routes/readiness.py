@@ -8,11 +8,12 @@ from typing import TYPE_CHECKING, Annotated
 from fastapi import APIRouter, Depends, Request
 
 if TYPE_CHECKING:
-    from core.config.models import StorageConfig
+    from core.config.models import TenantConfig
+    from core.storage.backend_provider import TenantBackendProvider
     from workflow_runner import WorkflowRunner
 
 from core.api import API_VERSION
-from core.api.dependencies import get_or_create_backend, get_settings
+from core.api.dependencies import get_backend_provider, get_settings
 from core.api.schemas import ReadinessResponse, TenantReadiness
 from core.api.topic_attribution_status import TopicAttributionStatus, resolve_topic_attribution_status
 from core.config.models import AppSettings  # noqa: TC001  # FastAPI evaluates annotations at runtime
@@ -27,18 +28,10 @@ _readiness_cache: tuple[ReadinessResponse, float] | None = None
 _READINESS_CACHE_TTL: float = 2.0  # seconds
 
 
-def _get_backends(request: Request) -> dict[str, object]:
-    if not hasattr(request.app.state, "backends"):
-        request.app.state.backends = {}
-    return request.app.state.backends  # type: ignore[no-any-return]  # app.state is untyped
-
-
 def _check_tenant_readiness(
     tenant_name: str,
-    ecosystem: str,
-    tenant_id: str,
-    storage_config: StorageConfig,
-    backends: dict[str, object],
+    tenant_config: TenantConfig,
+    backend_provider: TenantBackendProvider,
     workflow_runner: WorkflowRunner | None,
     failed_tenants: dict[str, str],
     topic_attribution_status: TopicAttributionStatus,
@@ -54,10 +47,11 @@ def _check_tenant_readiness(
     permanent_failure = failed_tenants.get(tenant_name)
 
     try:
-        backend = get_or_create_backend(backends, tenant_name, storage_config, ecosystem)  # type: ignore[arg-type]  # backends dict is untyped from app.state
-
-        with backend.create_read_only_unit_of_work() as uow:
-            has_data = uow.pipeline_state.count_calculated(ecosystem, tenant_id) > 0
+        with (
+            backend_provider.acquire_backend(tenant_name, tenant_config) as backend,
+            backend.create_read_only_unit_of_work() as uow,
+        ):
+            has_data = uow.pipeline_state.count_calculated(tenant_config.ecosystem, tenant_config.tenant_id) > 0
 
             latest_run = uow.pipeline_runs.get_latest_run(tenant_name)
             if latest_run is not None:
@@ -125,7 +119,7 @@ def readiness(
 
     mode: str = getattr(request.app.state, "mode", "api")
     workflow_runner = getattr(request.app.state, "workflow_runner", None)
-    backends = _get_backends(request)
+    backend_provider = get_backend_provider(request)
 
     failed_tenants: dict[str, str] = {}
     if workflow_runner is not None:
@@ -134,10 +128,8 @@ def readiness(
     tenant_statuses = [
         _check_tenant_readiness(
             tenant_name=name,
-            ecosystem=cfg.ecosystem,
-            tenant_id=cfg.tenant_id,
-            storage_config=cfg.storage,
-            backends=backends,
+            tenant_config=cfg,
+            backend_provider=backend_provider,
             workflow_runner=workflow_runner,
             failed_tenants=failed_tenants,
             topic_attribution_status=resolve_topic_attribution_status(cfg.plugin_settings, cfg.ecosystem),

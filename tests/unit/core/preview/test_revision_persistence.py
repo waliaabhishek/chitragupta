@@ -273,7 +273,7 @@ def test_sqlmodel_preview_read_and_write_uows_expose_revision_repository(tmp_pat
 
     with backend.create_preview_write_unit_of_work() as write_uow:
         assert isinstance(write_uow.revisions, _persistence().PreviewRevisionRepository)
-    with backend.create_preview_read_unit_of_work() as read_uow:
+    with backend.create_preview_metadata_read_unit_of_work() as read_uow:
         assert isinstance(read_uow.revisions, _persistence().PreviewRevisionRepository)
     backend.dispose()
 

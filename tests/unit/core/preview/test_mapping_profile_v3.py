@@ -448,6 +448,28 @@ def _validate(mapping: Any, row: Any, **overrides: object) -> None:
     )
 
 
+def _selected_source(mapping: Any, source: Any) -> Any:
+    classifiable_source = (
+        source if source.resource_id is not None else replace(source, resource_id="legacy-unassociated-resource")
+    )
+    classification = mapping.classify_daily_full_source(
+        request_start=REQUEST_START,
+        request_end=REQUEST_END,
+        source=classifiable_source,
+    )
+    assert isinstance(classification, mapping.AcceptedPreviewSource)
+    assert source.amount is not None
+    return mapping.SelectedSourceProjection(
+        source,
+        classification.semantics,
+        mapping.project_financials(
+            source=source,
+            semantics=classification.semantics,
+            billed_share=source.amount,
+        ),
+    )
+
+
 def _package_row(
     mapping: Any,
     *,
@@ -579,6 +601,116 @@ def _package_row(
         )
         return row, json.loads(manifest)
     return row
+
+
+def test_legacy_unassociated_source_matches_its_exact_aggregate_candidate(
+    valid_source_evidence: Any,
+    valid_aggregate_evidence: Any,
+) -> None:
+    mapping = preview_module("mapping")
+    source = replace(
+        valid_source_evidence,
+        capture_id="legacy:v1:capture",
+        billing_timestamp=None,
+        billing_env_id=None,
+        billing_resource_id=None,
+        billing_product_type=None,
+        billing_product_category=None,
+    )
+    selected = _selected_source(mapping, source)
+    expected_origin = mapping._aggregate_billing_origin(valid_aggregate_evidence)
+
+    selected_by_origin, aggregates_by_origin = mapping.reconcile_source_aggregate_stream(
+        selected_sources=(selected,),
+        aggregates=(valid_aggregate_evidence,),
+    )
+
+    assert selected_by_origin == {expected_origin: selected}
+    assert aggregates_by_origin == {expected_origin: valid_aggregate_evidence}
+
+
+def test_legacy_unassociated_source_rejects_multiple_exact_candidates(
+    valid_source_evidence: Any,
+    valid_aggregate_evidence: Any,
+) -> None:
+    mapping = preview_module("mapping")
+    source = replace(
+        valid_source_evidence,
+        capture_id="legacy:v1:capture",
+        resource_id=None,
+        billing_timestamp=None,
+        billing_env_id=None,
+        billing_resource_id=None,
+        billing_product_type=None,
+        billing_product_category=None,
+    )
+    selected = _selected_source(mapping, source)
+    aggregates = (
+        replace(valid_aggregate_evidence, resource_id="lkc-1"),
+        replace(valid_aggregate_evidence, resource_id="lkc-2"),
+    )
+
+    with pytest.raises(mapping.PreviewSourceCoverageError):
+        mapping.reconcile_source_aggregate_stream(
+            selected_sources=(selected,),
+            aggregates=aggregates,
+        )
+
+
+def test_legacy_candidate_matching_does_not_reconcile_every_aggregate_per_source(
+    valid_source_evidence: Any,
+    valid_aggregate_evidence: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mapping = preview_module("mapping")
+    count = 40
+    sources = []
+    aggregates = []
+    for index in range(count):
+        amount = Decimal(index + 1)
+        source = replace(
+            valid_source_evidence,
+            source_record_id=f"legacy-source-{index}",
+            capture_id="legacy:v1:capture",
+            resource_id=None,
+            amount=amount,
+            original_amount=amount,
+            discount_amount=Decimal(0),
+            price=amount,
+            quantity=Decimal(1),
+            billing_timestamp=None,
+            billing_env_id=None,
+            billing_resource_id=None,
+            billing_product_type=None,
+            billing_product_category=None,
+        )
+        sources.append(_selected_source(mapping, source))
+        aggregates.append(
+            replace(
+                valid_aggregate_evidence,
+                resource_id=f"lkc-{index}",
+                total_cost=amount,
+                unit_price=amount,
+                quantity=Decimal(1),
+            )
+        )
+    original_reconcile = mapping.reconcile_source_aggregate_evidence
+    reconciliation_calls = 0
+
+    def count_reconciliation(*, selected: Any, aggregate: Any) -> None:
+        nonlocal reconciliation_calls
+        reconciliation_calls += 1
+        original_reconcile(selected=selected, aggregate=aggregate)
+
+    monkeypatch.setattr(mapping, "reconcile_source_aggregate_evidence", count_reconciliation)
+
+    selected_by_origin, aggregates_by_origin = mapping.reconcile_source_aggregate_stream(
+        selected_sources=sources,
+        aggregates=aggregates,
+    )
+
+    assert len(selected_by_origin) == len(aggregates_by_origin) == count
+    assert reconciliation_calls <= count * 2
 
 
 def test_nonterminating_persisted_ratio_uses_fixed_precision_for_contracted_and_list_cost(

@@ -4,6 +4,7 @@ from collections.abc import Sequence
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Self
+from unittest.mock import patch
 
 import httpx
 import pytest
@@ -448,6 +449,69 @@ class TestCCloudBillingCostInput:
     """Tests for CCloudBillingCostInput.gather()."""
 
     @respx.mock
+    def test_generic_gather_requires_no_preview_source_repository_capability(self) -> None:
+        raw = _valid_cost()
+        route = respx.get("https://api.confluent.cloud/billing/v1/costs").mock(return_value=_billing_response([raw]))
+        ordinary_billing = _BillingRepositoryProxy()
+        uow = _SourceUow(ordinary_billing)
+
+        with patch(
+            "plugins.confluent_cloud.cost_input.deepcopy",
+            side_effect=AssertionError("disabled generic gather constructed native source evidence"),
+        ):
+            items = tuple(
+                _cost_input().gather(
+                    "org-123",
+                    datetime(2026, 7, 1, tzinfo=UTC),
+                    datetime(2026, 7, 2, tzinfo=UTC),
+                    uow,
+                )
+            )
+
+        assert route.call_count == 1
+        assert len(items) == 1
+        assert items[0].total_cost == Decimal("12.3400")
+        assert not isinstance(ordinary_billing, CCloudSourceWindowWriter)
+
+    @respx.mock
+    def test_native_source_gather_maps_provider_rows_once_without_persistence(self) -> None:
+        from core.preview.evidence_capture import NativeSourceEvidenceCapture
+
+        raw = _valid_cost()
+        route = respx.get("https://api.confluent.cloud/billing/v1/costs").mock(return_value=_billing_response([raw]))
+
+        result = _cost_input().gather_with_native_source_evidence(
+            "org-123",
+            datetime(2026, 7, 1, tzinfo=UTC),
+            datetime(2026, 7, 2, tzinfo=UTC),
+        )
+
+        assert route.call_count == 1
+        assert len(result.billing_lines) == 1
+        assert isinstance(result.capture, NativeSourceEvidenceCapture)
+        assert result.capture_failure is None
+        assert result.capture.refresh_start == datetime(2026, 7, 1, tzinfo=UTC)
+        assert result.capture.refresh_end == datetime(2026, 7, 2, tzinfo=UTC)
+        assert len(result.capture.windows) == 1
+
+    @respx.mock
+    def test_native_source_empty_response_still_returns_partitioned_zero_capture(self) -> None:
+        route = respx.get("https://api.confluent.cloud/billing/v1/costs").mock(return_value=_billing_response([]))
+
+        result = _cost_input().gather_with_native_source_evidence(
+            "org-123",
+            datetime(2026, 7, 1, tzinfo=UTC),
+            datetime(2026, 7, 3, tzinfo=UTC),
+        )
+
+        assert route.call_count == 1
+        assert result.billing_lines == ()
+        assert result.capture is not None
+        assert result.capture_failure is None
+        assert result.capture.windows[0].start == datetime(2026, 7, 1, tzinfo=UTC)
+        assert result.capture.windows[-1].end == datetime(2026, 7, 3, tzinfo=UTC)
+
+    @respx.mock
     def test_gather_single_window(self):
         from plugins.confluent_cloud.config import CCloudPluginConfig
         from plugins.confluent_cloud.connections import CCloudConnection
@@ -544,6 +608,47 @@ class TestCCloudBillingCostInput:
 
         assert len(items) == 3
         assert len(respx.calls) == 3
+
+    @respx.mock
+    def test_generic_gather_fetches_each_subwindow_only_as_the_iterator_advances(self) -> None:
+        billing_response = {
+            "data": [
+                {
+                    "start_date": "2024-01-01",
+                    **_required_provider_fields("cost-lazy-window", "2024-01-02", 10),
+                    "resource": {"id": "lkc-1"},
+                    "product": "KAFKA",
+                    "line_type": "KAFKA_BASE",
+                    "quantity": 1,
+                    "price": 10,
+                    "amount": 10,
+                }
+            ],
+            "metadata": {},
+        }
+        route = respx.get("https://api.confluent.cloud/billing/v1/costs")
+        route.side_effect = [
+            httpx.Response(200, json=billing_response),
+            httpx.Response(200, json=billing_response),
+            httpx.Response(200, json=billing_response),
+        ]
+        cost_input = _cost_input(days_per_query=1)
+
+        gathered = iter(
+            cost_input.gather(
+                "org-123",
+                datetime(2024, 1, 1, tzinfo=UTC),
+                datetime(2024, 1, 4, tzinfo=UTC),
+                uow=_SourceUow(),
+            )
+        )
+
+        assert route.call_count == 0
+        first = next(gathered)
+        assert first.resource_id == "lkc-1"
+        assert route.call_count == 1
+        assert len(list(gathered)) == 2
+        assert route.call_count == 3
 
     @respx.mock
     def test_gather_empty_range(self):
@@ -1253,25 +1358,20 @@ class TestCostSourceEvidenceMapping:
     def test_complete_cost_maps_every_native_field_exactly(self) -> None:
         raw = _valid_cost(extra_provider_field="retained")
         respx.get("https://api.confluent.cloud/billing/v1/costs").mock(return_value=_billing_response([raw]))
-        writer = _SourceWriter()
-
-        aggregates = list(
-            _cost_input().gather(
-                "org-123",
-                datetime(2026, 7, 1, tzinfo=UTC),
-                datetime(2026, 7, 2, tzinfo=UTC),
-                _SourceUow(writer),
-            )
-        )
-
-        assert len(aggregates) == 1
-        assert len(writer.calls) == 1
-        ecosystem, tenant_id, refresh_start, refresh_end, records = writer.calls[0]
-        assert (ecosystem, tenant_id) == ("confluent_cloud", "org-123")
-        assert (refresh_start, refresh_end) == (
+        result = _cost_input().gather_with_native_source_evidence(
+            "org-123",
             datetime(2026, 7, 1, tzinfo=UTC),
             datetime(2026, 7, 2, tzinfo=UTC),
         )
+
+        assert len(result.billing_lines) == 1
+        assert result.capture is not None
+        assert (result.capture.ecosystem, result.capture.tenant_id) == ("confluent_cloud", "org-123")
+        assert (result.capture.refresh_start, result.capture.refresh_end) == (
+            datetime(2026, 7, 1, tzinfo=UTC),
+            datetime(2026, 7, 2, tzinfo=UTC),
+        )
+        records = result.capture.records
         assert len(records) == 1
         record = records[0]
         assert record.source_record_id == "provider:cost-1"
@@ -1311,27 +1411,25 @@ class TestCostSourceEvidenceMapping:
         respx.get("https://api.confluent.cloud/billing/v1/costs").mock(
             side_effect=[_billing_response([raw, raw]), _billing_response([raw, raw])]
         )
-        writer = _SourceWriter()
         cost_input = _cost_input()
-        uow = _SourceUow(writer)
         bounds = (
             "org-123",
             datetime(2026, 7, 1, tzinfo=UTC),
             datetime(2026, 7, 2, tzinfo=UTC),
-            uow,
         )
 
-        list(cost_input.gather(*bounds))
-        list(cost_input.gather(*bounds))
+        first = cost_input.gather_with_native_source_evidence(*bounds)
+        second = cost_input.gather_with_native_source_evidence(*bounds)
 
-        first_ids = [record.source_record_id for record in writer.calls[0][4]]
-        second_ids = [record.source_record_id for record in writer.calls[1][4]]
+        assert first.capture is not None and second.capture is not None
+        first_ids = [record.source_record_id for record in first.capture.records]
+        second_ids = [record.source_record_id for record in second.capture.records]
         assert len(set(first_ids)) == 2
         assert first_ids == second_ids
         assert all(source_id.startswith("composite:v1:") for source_id in first_ids)
-        assert all(record.provider_cost_id is None for record in writer.calls[0][4])
-        assert all(record.identity_scheme == "composite_v1" for record in writer.calls[0][4])
-        assert all("missing_required:id" in record.diagnostics for record in writer.calls[0][4])
+        assert all(record.provider_cost_id is None for record in first.capture.records)
+        assert all(record.identity_scheme == "composite_v1" for record in first.capture.records)
+        assert all("missing_required:id" in record.diagnostics for record in first.capture.records)
 
     @respx.mock
     def test_provider_id_collisions_are_partition_independent(self) -> None:
@@ -1348,28 +1446,20 @@ class TestCostSourceEvidenceMapping:
             _billing_response([second]),
             _billing_response([first, second]),
         ]
-        partitioned_writer = _SourceWriter()
-        single_writer = _SourceWriter()
-
-        list(
-            _cost_input(days_per_query=1).gather(
-                "org-123",
-                datetime(2026, 7, 1, tzinfo=UTC),
-                datetime(2026, 7, 3, tzinfo=UTC),
-                _SourceUow(partitioned_writer),
-            )
+        partitioned_result = _cost_input(days_per_query=1).gather_with_native_source_evidence(
+            "org-123",
+            datetime(2026, 7, 1, tzinfo=UTC),
+            datetime(2026, 7, 3, tzinfo=UTC),
         )
-        list(
-            _cost_input(days_per_query=2).gather(
-                "org-123",
-                datetime(2026, 7, 1, tzinfo=UTC),
-                datetime(2026, 7, 3, tzinfo=UTC),
-                _SourceUow(single_writer),
-            )
+        single_result = _cost_input(days_per_query=2).gather_with_native_source_evidence(
+            "org-123",
+            datetime(2026, 7, 1, tzinfo=UTC),
+            datetime(2026, 7, 3, tzinfo=UTC),
         )
 
-        partitioned = partitioned_writer.calls[0][4]
-        unpartitioned = single_writer.calls[0][4]
+        assert partitioned_result.capture is not None and single_result.capture is not None
+        partitioned = partitioned_result.capture.records
+        unpartitioned = single_result.capture.records
         assert {r.source_record_id for r in partitioned} == {r.source_record_id for r in unpartitioned}
         assert len({r.source_record_id for r in partitioned}) == 2
         assert all(r.identity_scheme == "provider_id_collision_v1" for r in partitioned)
@@ -1391,22 +1481,18 @@ class TestCostSourceEvidenceMapping:
             "tier_dimensions": {"tier": 1},
         }
         respx.get("https://api.confluent.cloud/billing/v1/costs").mock(return_value=_billing_response([raw]))
-        writer = _SourceWriter()
-
-        aggregates = list(
-            _cost_input().gather(
-                "org-123",
-                datetime(2026, 7, 1, tzinfo=UTC),
-                datetime(2026, 7, 2, tzinfo=UTC),
-                _SourceUow(writer),
-            )
+        result = _cost_input().gather_with_native_source_evidence(
+            "org-123",
+            datetime(2026, 7, 1, tzinfo=UTC),
+            datetime(2026, 7, 2, tzinfo=UTC),
         )
 
-        assert len(aggregates) == 1
-        assert aggregates[0].resource_id == "malformed_billing_0"
-        assert aggregates[0].metadata["malformed"] is True
-        assert "parse_error" in aggregates[0].metadata
-        record = writer.calls[0][4][0]
+        assert len(result.billing_lines) == 1
+        assert result.billing_lines[0].resource_id == "malformed_billing_0"
+        assert result.billing_lines[0].metadata["malformed"] is True
+        assert "parse_error" in result.billing_lines[0].metadata
+        assert result.capture is not None
+        record = result.capture.records[0]
         assert record.raw_payload == raw
         assert record.source_period_start is None
         assert record.amount is None
@@ -1455,24 +1541,20 @@ class TestCostSourceEvidenceMapping:
             raw["resource"]["environment"] = "not-an-object"
 
         respx.get("https://api.confluent.cloud/billing/v1/costs").mock(return_value=_billing_response([raw]))
-        writer = _SourceWriter()
-
-        aggregates = list(
-            _cost_input().gather(
-                "org-123",
-                datetime(2026, 7, 1, tzinfo=UTC),
-                datetime(2026, 7, 2, tzinfo=UTC),
-                _SourceUow(writer),
-            )
+        result = _cost_input().gather_with_native_source_evidence(
+            "org-123",
+            datetime(2026, 7, 1, tzinfo=UTC),
+            datetime(2026, 7, 2, tzinfo=UTC),
         )
 
-        record = writer.calls[0][4][0]
+        assert result.capture is not None
+        record = result.capture.records[0]
         assert expected_diagnostic in record.diagnostics
         assert record.malformed is True
         if case == "invalid_environment":
-            assert aggregates[0].resource_id == "malformed_billing_0"
-            assert aggregates[0].metadata["malformed"] is True
-            assert "parse_error" in aggregates[0].metadata
+            assert result.billing_lines[0].resource_id == "malformed_billing_0"
+            assert result.billing_lines[0].metadata["malformed"] is True
+            assert "parse_error" in result.billing_lines[0].metadata
 
     @respx.mock
     def test_missing_optional_values_remain_null_without_schema_diagnostics(self) -> None:
@@ -1484,18 +1566,14 @@ class TestCostSourceEvidenceMapping:
             "original_amount": "0",
         }
         respx.get("https://api.confluent.cloud/billing/v1/costs").mock(return_value=_billing_response([raw]))
-        writer = _SourceWriter()
-
-        list(
-            _cost_input().gather(
-                "org-123",
-                datetime(2026, 7, 1, tzinfo=UTC),
-                datetime(2026, 7, 2, tzinfo=UTC),
-                _SourceUow(writer),
-            )
+        result = _cost_input().gather_with_native_source_evidence(
+            "org-123",
+            datetime(2026, 7, 1, tzinfo=UTC),
+            datetime(2026, 7, 2, tzinfo=UTC),
         )
 
-        record = writer.calls[0][4][0]
+        assert result.capture is not None
+        record = result.capture.records[0]
         assert record.malformed is False
         assert record.diagnostics == ()
         assert record.amount is None
@@ -1516,23 +1594,18 @@ class TestCostSourceEvidenceMapping:
             _billing_response([_valid_cost("cost-1", start_date="2026-07-01", end_date="2026-07-02")]),
             _billing_response([_valid_cost("cost-2", start_date="2026-07-02", end_date="2026-07-03")]),
         ]
-        writer = _SourceWriter()
-
-        list(
-            _cost_input(days_per_query=1).gather(
-                "org-123",
-                datetime(2026, 7, 1, 18, 30, tzinfo=UTC),
-                datetime(2026, 7, 3, 9, 45, tzinfo=UTC),
-                _SourceUow(writer),
-            )
+        result = _cost_input(days_per_query=1).gather_with_native_source_evidence(
+            "org-123",
+            datetime(2026, 7, 1, 18, 30, tzinfo=UTC),
+            datetime(2026, 7, 3, 9, 45, tzinfo=UTC),
         )
 
-        assert len(writer.calls) == 1
-        assert writer.calls[0][2:4] == (
+        assert result.capture is not None
+        assert (result.capture.refresh_start, result.capture.refresh_end) == (
             datetime(2026, 7, 1, tzinfo=UTC),
             datetime(2026, 7, 3, tzinfo=UTC),
         )
-        assert len(writer.calls[0][4]) == 2
+        assert len(result.capture.records) == 2
         assert [call.request.url.params["start_date"] for call in respx.calls] == [
             "2026-07-01",
             "2026-07-02",
@@ -1541,7 +1614,7 @@ class TestCostSourceEvidenceMapping:
             "2026-07-02",
             "2026-07-03",
         ]
-        assert [(r.collection_window_start, r.collection_window_end) for r in writer.calls[0][4]] == [
+        assert [(r.collection_window_start, r.collection_window_end) for r in result.capture.records] == [
             (datetime(2026, 7, 1, tzinfo=UTC), datetime(2026, 7, 2, tzinfo=UTC)),
             (datetime(2026, 7, 2, tzinfo=UTC), datetime(2026, 7, 3, tzinfo=UTC)),
         ]
@@ -1553,34 +1626,31 @@ class TestCostSourceEvidenceMapping:
             _billing_response([_valid_cost()]),
             httpx.Response(500, json={"message": "failed"}),
         ]
-        writer = _SourceWriter()
-
-        import pytest
-
         from plugins.confluent_cloud.exceptions import CCloudApiError
 
         with pytest.raises(CCloudApiError):
-            list(
-                _cost_input(days_per_query=1).gather(
-                    "org-123",
-                    datetime(2026, 7, 1, tzinfo=UTC),
-                    datetime(2026, 7, 3, tzinfo=UTC),
-                    _SourceUow(writer),
-                )
+            _cost_input(days_per_query=1).gather_with_native_source_evidence(
+                "org-123",
+                datetime(2026, 7, 1, tzinfo=UTC),
+                datetime(2026, 7, 3, tzinfo=UTC),
             )
-
-        assert writer.calls == []
 
     @respx.mock
-    def test_gather_rejects_repository_without_source_writer_before_http(self) -> None:
-        with pytest.raises(RuntimeError, match="source.*writer|CCloudSourceWindowWriter"):
-            list(
-                _cost_input().gather(
-                    "org-123",
-                    datetime(2026, 7, 1, tzinfo=UTC),
-                    datetime(2026, 7, 2, tzinfo=UTC),
-                    _SourceUow(_BillingRepositoryProxy()),
-                )
-            )
+    def test_generic_gather_does_not_require_or_touch_source_writer(self) -> None:
+        route = respx.get("https://api.confluent.cloud/billing/v1/costs").mock(
+            return_value=_billing_response([_valid_cost()])
+        )
+        writer = _SourceWriter()
 
-        assert len(respx.calls) == 0
+        rows = list(
+            _cost_input().gather(
+                "org-123",
+                datetime(2026, 7, 1, tzinfo=UTC),
+                datetime(2026, 7, 2, tzinfo=UTC),
+                _SourceUow(writer),
+            )
+        )
+
+        assert route.call_count == 1
+        assert len(rows) == 1
+        assert writer.calls == []

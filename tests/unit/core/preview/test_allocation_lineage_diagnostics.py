@@ -21,16 +21,21 @@ from core.storage.backends.sqlmodel.engine import get_or_create_engine
 from core.storage.backends.sqlmodel.unit_of_work import SQLModelBackend
 from plugins.confluent_cloud.plugin import ConfluentCloudPlugin
 from plugins.confluent_cloud.storage.module import CCloudStorageModule
+from tests.integration.core.api.backend_provider import FixedTenantBackendProvider
 from tests.unit.core.preview.conftest import preview_module
 from tests.unit.core.preview.test_service import (
     ControlledExecutor,
     _aggregate,
+    _allocation,
     _context_resource,
     _runtime,
     _seed,
     _source,
     _submit,
     _tenant_config,
+)
+from tests.unit.plugins.confluent_cloud.storage.test_allocation_lineage_repository import (
+    _set_persisted_run_codec,
 )
 
 
@@ -39,6 +44,7 @@ def _backend(tmp_path: Path, name: str = "preview.db") -> SQLModelBackend:
         f"sqlite:///{tmp_path / name}",
         CCloudStorageModule(),
         use_migrations=False,
+        focus_preview_enabled=True,
     )
     backend.create_tables()
     return backend
@@ -61,6 +67,53 @@ def _persist_legacy_source(backend: SQLModelBackend) -> None:
             )
         )
         session.commit()
+
+
+def _bootstrap_legacy_source(backend: SQLModelBackend) -> None:
+    from core.preview.evidence import PreviewEvidenceBootstrapStatus
+
+    result = backend.create_preview_evidence_bootstrap().bootstrap_owner(
+        ecosystem="confluent_cloud",
+        tenant_id="tenant-1",
+        policy_start=datetime(2020, 1, 1, tzinfo=UTC),
+        policy_end=datetime(2030, 1, 1, tzinfo=UTC),
+    )
+    assert result.status is PreviewEvidenceBootstrapStatus.BOOTSTRAPPED
+
+
+def _persist_source_capture(
+    backend: SQLModelBackend,
+    records: list[Any],
+    *,
+    refresh_end: datetime = datetime(2026, 7, 3, tzinfo=UTC),
+) -> None:
+    from core.preview.evidence_capture import NativeSourceWindow
+    from plugins.confluent_cloud.source_capture import CCloudNativeSourceEvidenceCapture
+
+    refresh_start = datetime(2026, 6, 30, tzinfo=UTC)
+    with backend.create_preview_evidence_unit_of_work() as uow:
+        attempt = uow.source_readiness.begin_attempt(
+            "confluent_cloud",
+            "tenant-1",
+            f"fixture-source-{refresh_end.date().isoformat()}",
+            refresh_start,
+            refresh_end,
+            datetime(2026, 7, 3, tzinfo=UTC),
+        )
+        CCloudNativeSourceEvidenceCapture(
+            ecosystem="confluent_cloud",
+            tenant_id="tenant-1",
+            refresh_start=refresh_start,
+            refresh_end=refresh_end,
+            windows=(NativeSourceWindow(refresh_start, refresh_end),),
+            records=tuple(records),
+        ).persist(
+            uow.source_windows,
+            uow.source_readiness,
+            attempt_sequence=attempt.attempt_sequence,
+            captured_at=datetime(2026, 7, 3, 0, 0, 1, tzinfo=UTC),
+        )
+        uow.commit()
 
 
 def _associated_source(**overrides: object) -> Any:
@@ -110,6 +163,22 @@ def _run_failure(
         assert failed.package is None
         assert failed.storage_key is None
         return failed
+    finally:
+        runtime.close()
+
+
+def _run_terminal(tmp_path: Path, backend: SQLModelBackend) -> Any:
+    executor = ControlledExecutor()
+    runtime = _runtime(tmp_path, backend, executor)
+    try:
+        queued = _submit(runtime, backend)
+        executor.run_all()
+        return runtime.get_request(
+            backend=backend,
+            request_id=queued.request_id,
+            ecosystem="confluent_cloud",
+            tenant_id="tenant-1",
+        )
     finally:
         runtime.close()
 
@@ -205,29 +274,12 @@ def _seed_two_day_origins(
                 created_at=datetime(2026, 1, 1, tzinfo=UTC),
             )
         )
-        uow.billing.replace_source_window(
-            "confluent_cloud",
-            "tenant-1",
-            datetime(2026, 6, 30, tzinfo=UTC),
-            datetime(2026, 7, 4, tzinfo=UTC),
-            [first_source, second_source],
-        )
         uow.billing.upsert(first_aggregate)
         uow.billing.upsert(second_aggregate)
-        for tracking_date, calculation_id, aggregate, row in (
-            (date(2026, 7, 1), "calculation-1", first_aggregate, first_row),
-            (date(2026, 7, 2), "calculation-2", second_aggregate, second_row),
+        for tracking_date, calculation_id in (
+            (date(2026, 7, 1), "calculation-1"),
+            (date(2026, 7, 2), "calculation-2"),
         ):
-            uow.chargebacks.replace_calculation_lineage(  # type: ignore[attr-defined]
-                AllocationLineageRunCapture(
-                    ecosystem="confluent_cloud",
-                    tenant_id="tenant-1",
-                    tracking_date=tracking_date,
-                    calculation_id=calculation_id,
-                    captures=(build_allocation_lineage_capture(origin=aggregate, rows=(row,)),),
-                ),
-                calculation_completed_at=completed_at,
-            )
             uow.pipeline_state.upsert(
                 PipelineState(
                     ecosystem="confluent_cloud",
@@ -242,6 +294,23 @@ def _seed_two_day_origins(
                 )
             )
         uow.commit()
+    _persist_source_capture(backend, [first_source, second_source])
+    with backend.create_preview_evidence_unit_of_work() as evidence_uow:
+        for tracking_date, calculation_id, aggregate, row in (
+            (date(2026, 7, 1), "calculation-1", first_aggregate, first_row),
+            (date(2026, 7, 2), "calculation-2", second_aggregate, second_row),
+        ):
+            evidence_uow.allocation_lineage.replace_calculation_lineage(
+                AllocationLineageRunCapture(
+                    ecosystem="confluent_cloud",
+                    tenant_id="tenant-1",
+                    tracking_date=tracking_date,
+                    calculation_id=calculation_id,
+                    captures=(build_allocation_lineage_capture(origin=aggregate, rows=(row,)),),
+                ),
+                calculation_completed_at=completed_at,
+            )
+        evidence_uow.commit()
     if second_method_version != "v1":
         engine = get_or_create_engine(backend._connection_string)
         with engine.begin() as connection:
@@ -444,18 +513,18 @@ def _persist_invalid_lineage(backend: SQLModelBackend) -> None:
         uow.commit()
 
 
-def test_legacy_source_without_billing_association_fails_coverage_before_missing_lineage(tmp_path: Path) -> None:
+def test_bootstrapped_legacy_source_association_reaches_missing_lineage_diagnostic(tmp_path: Path) -> None:
     backend = _backend(tmp_path)
     _seed(backend, aggregate=_aggregate())
     _persist_legacy_source(backend)
+    _bootstrap_legacy_source(backend)
 
     failed = _run_failure(tmp_path, backend)
 
-    assert failed.diagnostic.code == "preview_source_coverage_incomplete"
-    assert (
-        failed.diagnostic.message == "Persisted source evidence does not completely cover the calculated Preview scope."
-    )
+    assert failed.diagnostic.code == "preview_allocation_lineage_incomplete"
+    assert failed.diagnostic.message == "Persisted allocation lineage is incomplete for one or more billing origins."
     assert failed.diagnostic.retryable is False
+    assert len(failed.diagnostic.source_correlation_ids) == 1
     backend.dispose()
 
 
@@ -486,6 +555,78 @@ def test_invalid_run_uses_closed_lineage_diagnostic_without_exposing_safe_captur
     backend.dispose()
 
 
+@pytest.mark.parametrize(
+    ("status", "reason", "expected_code"),
+    [
+        ("complete", None, None),
+        ("unavailable", "capture_failed", "preview_allocation_lineage_unavailable"),
+        ("unavailable", "persistence_failed", "preview_allocation_lineage_unavailable"),
+        ("unknown", None, "preview_allocation_lineage_incomplete"),
+        (None, None, "preview_allocation_lineage_incomplete"),
+        ("invalid", "invalid_metadata", "preview_allocation_lineage_incomplete"),
+        ("complete", "capture_failed", "preview_allocation_lineage_incomplete"),
+        ("unavailable", None, "preview_allocation_lineage_incomplete"),
+        ("unavailable", "unknown_reason", "preview_allocation_lineage_incomplete"),
+        ("unavailable", "invalid_metadata", "preview_allocation_lineage_incomplete"),
+    ],
+    ids=[
+        "available",
+        "capture-failed",
+        "persistence-failed",
+        "unknown-status",
+        "null-status",
+        "legacy-invalid-status",
+        "complete-with-reason",
+        "unavailable-without-reason",
+        "unavailable-with-unknown-reason",
+        "unavailable-with-legacy-reason",
+    ],
+)
+def test_persisted_lineage_status_reason_codec_maps_to_closed_production_outcome(
+    tmp_path: Path,
+    status: str | None,
+    reason: str | None,
+    expected_code: str | None,
+) -> None:
+    backend = _backend(tmp_path, f"codec-{status}-{reason}.db")
+    _seed(
+        backend,
+        source=_associated_source(),
+        aggregate=_aggregate(),
+        allocation=_allocation(),
+    )
+    if (status, reason) != ("complete", None):
+        _set_persisted_run_codec(
+            backend,
+            status=status,
+            reason=reason,
+            portion_count=0 if status == "unavailable" else None,
+        )
+
+    terminal = _run_terminal(tmp_path, backend)
+
+    assert terminal.status.value == ("ready" if expected_code is None else "failed")
+    if expected_code is None:
+        assert terminal.diagnostic is None
+        assert terminal.package is not None
+    else:
+        assert terminal.diagnostic.code == expected_code
+        if expected_code == "preview_allocation_lineage_unavailable":
+            assert terminal.diagnostic.message == (
+                "Allocation lineage capture is unavailable for one or more requested calculations."
+            )
+            assert terminal.diagnostic.retryable is True
+        else:
+            assert terminal.diagnostic.message == (
+                "Persisted allocation lineage is incomplete for one or more billing origins."
+            )
+            assert terminal.diagnostic.retryable is False
+        assert len(terminal.diagnostic.source_correlation_ids) == 1
+        assert terminal.package is None
+        assert terminal.source_snapshot is None
+    backend.dispose()
+
+
 def test_lineage_calculation_identity_mismatch_fails_closed(tmp_path: Path) -> None:
     backend = _backend(tmp_path)
     _seed(backend, source=_associated_source(), aggregate=_aggregate())
@@ -507,15 +648,7 @@ def test_multiple_native_tier_sources_for_one_billing_origin_still_fail_scope_be
         raw_payload={"id": "tier-2"},
     )
     _seed(backend, aggregate=_aggregate())
-    with backend.create_unit_of_work() as uow:
-        uow.billing.replace_source_window(
-            "confluent_cloud",
-            "tenant-1",
-            datetime(2026, 6, 30, tzinfo=UTC),
-            datetime(2026, 7, 3, tzinfo=UTC),
-            [first, second],
-        )
-        uow.commit()
+    _persist_source_capture(backend, [first, second])
 
     failed = _run_failure(tmp_path, backend)
 
@@ -730,15 +863,7 @@ def test_source_issue_precedence_is_independent_of_complete_stream_iterator_orde
             raw_payload={"id": "structural"},
         ),
     ]
-    with backend.create_unit_of_work() as uow:
-        uow.billing.replace_source_window(
-            "confluent_cloud",
-            "tenant-1",
-            datetime(2026, 6, 30, tzinfo=UTC),
-            datetime(2026, 7, 3, tzinfo=UTC),
-            sources,
-        )
-        uow.commit()
+    _persist_source_capture(backend, sources)
     original_sources = CCloudBillingRepository.iter_preview_sources
     original_aggregates = CCloudBillingRepository.iter_preview_aggregates
 
@@ -893,12 +1018,13 @@ def test_package_reconciliation_totals_ignore_ambient_decimal_context_and_stream
     ] * len(_STREAM_PERMUTATIONS)
 
 
-def test_recalculation_alone_cannot_recover_legacy_association_but_regather_then_calculation_can(
+def test_bootstrapped_legacy_association_then_lineage_recalculation_recovers_without_regather(
     tmp_path: Path,
 ) -> None:
     backend = _backend(tmp_path, "legacy-recovery.db")
     _seed(backend, aggregate=_aggregate())
     _persist_legacy_source(backend)
+    _bootstrap_legacy_source(backend)
     plugin = ConfluentCloudPlugin()
     plugin.initialize({"ccloud_api": {"key": "key", "secret": "secret"}})  # pragma: allowlist secret
     calculation_ids = iter(("recalculation-only", "regather-calculation"))
@@ -920,16 +1046,9 @@ def test_recalculation_alone_cannot_recover_legacy_association_but_regather_then
         uow.commit()
 
     failed = _run_failure(tmp_path, backend)
-    assert failed.diagnostic.code == "preview_source_coverage_incomplete"
+    assert failed.diagnostic.code == "preview_allocation_lineage_incomplete"
 
     with backend.create_unit_of_work() as uow:
-        uow.billing.replace_source_window(
-            "confluent_cloud",
-            "tenant-1",
-            datetime(2026, 6, 30, tzinfo=UTC),
-            datetime(2026, 7, 3, tzinfo=UTC),
-            [_associated_source()],
-        )
         uow.pipeline_state.mark_needs_recalculation(
             "confluent_cloud", "tenant-1", datetime(2026, 7, 1, tzinfo=UTC).date()
         )
@@ -940,14 +1059,23 @@ def test_recalculation_alone_cannot_recover_legacy_association_but_regather_then
             "tenant-1",
             datetime(2026, 7, 1, tzinfo=UTC).date(),
         )
-        assert phase.run(uow, datetime(2026, 7, 1, tzinfo=UTC).date()) == 1
+        calculation = phase.run_with_lineage_capture(uow, datetime(2026, 7, 1, tzinfo=UTC).date())
+        assert calculation.rows_written == 1
         uow.commit()
+    assert calculation.lineage_capture is not None
+    with backend.create_preview_evidence_unit_of_work() as evidence_uow:
+        evidence_uow.allocation_lineage.replace_calculation_lineage(
+            calculation.lineage_capture,
+            calculation_completed_at=calculation.calculation_completed_at,
+        )
+        evidence_uow.commit()
 
     artifacts = preview_module("artifacts")
     service = preview_module("service")
     executor = ControlledExecutor()
     runtime = service.PreviewRuntime(
         artifact_store=artifacts.LocalPreviewArtifactStore(tmp_path / "recovered-artifacts"),
+        backend_provider=FixedTenantBackendProvider({"production": backend}),
         max_workers=1,
         clock=lambda: datetime(2026, 7, 4, tzinfo=UTC),
         request_id_factory=lambda: "request-recovered",
@@ -962,7 +1090,7 @@ def test_recalculation_alone_cannot_recover_legacy_association_but_regather_then
             ecosystem="confluent_cloud",
             tenant_id="tenant-1",
         )
-        assert ready.status.value == "ready"
+        assert ready.status.value == "ready", ready.diagnostic
         assert len(runtime.read_file_bytes(ready, "cost-and-usage.csv")) > 0
     finally:
         runtime.close()

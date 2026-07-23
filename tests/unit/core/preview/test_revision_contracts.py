@@ -71,6 +71,7 @@ def test_generator_preserves_single_use_projection_iterables(
         f"sqlite:///{tmp_path / f'{grain}.db'}",
         CCloudStorageModule(),
         use_migrations=False,
+        focus_preview_enabled=True,
     )
     backend.create_tables()
     _seed(backend, source=_source(), aggregate=_aggregate(), allocation=_allocation())
@@ -244,7 +245,7 @@ def test_revision_repository_and_uow_contracts_expose_history_and_retention() ->
         "return": datetime | None,
     }
     assert "revisions" in persistence.PreviewWriteUnitOfWork.__annotations__
-    assert "revisions" in persistence.PreviewReadUnitOfWork.__annotations__
+    assert "revisions" in persistence.PreviewMetadataReadUnitOfWork.__annotations__
 
 
 def test_revision_exceptions_follow_error_suffix_convention() -> None:

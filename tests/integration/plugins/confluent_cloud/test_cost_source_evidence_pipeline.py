@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
+from uuid import uuid4
 
 import httpx
 import pytest
@@ -54,6 +55,12 @@ def _phase(
                 tenant_id="org-1",
                 lookback_days=lookback_days,
                 cutoff_days=cutoff_days,
+                focus_preview={
+                    "commercial_profile": "direct_payg",
+                    "billing_currency": "USD",
+                    "effective_start_date": "2020-01-01",
+                    "effective_end_date": "2030-01-01",
+                },
             ),
             bundle=EcosystemBundle.build(plugin),
         ),
@@ -63,9 +70,49 @@ def _phase(
 
 def _backend(tmp_path: Any, plugin: ConfluentCloudPlugin) -> tuple[SQLModelBackend, str]:
     connection_string = f"sqlite:///{tmp_path / 'pipeline.db'}"
-    backend = SQLModelBackend(connection_string, plugin.get_storage_module(), use_migrations=False)
+    backend = SQLModelBackend(
+        connection_string,
+        plugin.get_storage_module(),
+        use_migrations=False,
+        focus_preview_enabled=True,
+    )
     backend.create_tables()
     return backend, connection_string
+
+
+def _gather_billing(
+    phase: GatherPhase,
+    backend: SQLModelBackend,
+    now: datetime,
+    *,
+    fail_after_gather: bool = False,
+) -> frozenset[Any]:
+    plan = phase.plan_refresh(now)
+    with backend.create_preview_evidence_unit_of_work() as evidence_uow:
+        attempt = evidence_uow.source_readiness.begin_attempt(
+            "confluent_cloud",
+            "org-1",
+            str(uuid4()),
+            plan.refresh_start,
+            plan.refresh_end,
+            plan.now,
+        )
+        evidence_uow.commit()
+    with backend.create_unit_of_work() as uow:
+        result = phase._gather_billing(uow, plan, source_attempt=attempt)
+        if fail_after_gather:
+            raise RuntimeError("after replacement")
+        uow.commit()
+    assert result.source_capture is not None
+    with backend.create_preview_evidence_unit_of_work() as evidence_uow:
+        result.source_capture.persist(
+            evidence_uow.source_windows,
+            evidence_uow.source_readiness,
+            attempt_sequence=attempt.attempt_sequence,
+            captured_at=now,
+        )
+        evidence_uow.commit()
+    return result.dates
 
 
 def _cost(
@@ -137,8 +184,7 @@ class TestProductionCostSourceEvidencePipeline:
 
         with backend.create_unit_of_work() as uow:
             assert isinstance(uow.billing, CCloudSourceWindowWriter)
-            gathered_dates = phase._gather_billing(uow, datetime(2026, 7, 3, 12, tzinfo=UTC))
-            uow.commit()
+        gathered_dates = _gather_billing(phase, backend, datetime(2026, 7, 3, 12, tzinfo=UTC))
 
         source_rows = _source_rows(connection_string)
         assert gathered_dates == {datetime(2026, 7, 1, tzinfo=UTC).date()}
@@ -171,14 +217,10 @@ class TestProductionCostSourceEvidencePipeline:
         phase, plugin = _phase()
         backend, connection_string = _backend(tmp_path, plugin)
 
-        with backend.create_unit_of_work() as uow:
-            phase._gather_billing(uow, datetime(2026, 7, 3, 12, tzinfo=UTC))
-            uow.commit()
+        _gather_billing(phase, backend, datetime(2026, 7, 3, 12, tzinfo=UTC))
         first = _source_rows(connection_string)[0]
 
-        with backend.create_unit_of_work() as uow:
-            phase._gather_billing(uow, datetime(2026, 7, 3, 22, tzinfo=UTC))
-            uow.commit()
+        _gather_billing(phase, backend, datetime(2026, 7, 3, 22, tzinfo=UTC))
         second = _source_rows(connection_string)[0]
 
         assert [call.request.url.params["start_date"] for call in respx.calls] == [
@@ -205,13 +247,15 @@ class TestProductionCostSourceEvidencePipeline:
         phase, plugin = _phase()
         backend, connection_string = _backend(tmp_path, plugin)
 
-        with backend.create_unit_of_work() as uow:
-            phase._gather_billing(uow, datetime(2026, 7, 3, 12, tzinfo=UTC))
-            uow.commit()
+        _gather_billing(phase, backend, datetime(2026, 7, 3, 12, tzinfo=UTC))
 
-        with pytest.raises(RuntimeError, match="after replacement"), backend.create_unit_of_work() as uow:
-            phase._gather_billing(uow, datetime(2026, 7, 3, 12, tzinfo=UTC))
-            raise RuntimeError("after replacement")
+        with pytest.raises(RuntimeError, match="after replacement"):
+            _gather_billing(
+                phase,
+                backend,
+                datetime(2026, 7, 3, 12, tzinfo=UTC),
+                fail_after_gather=True,
+            )
 
         assert [row.source_record_id for row in _source_rows(connection_string)] == ["provider:prior"]
         backend.dispose()
@@ -224,14 +268,10 @@ class TestProductionCostSourceEvidencePipeline:
         phase, plugin = _phase()
         backend, connection_string = _backend(tmp_path, plugin)
 
-        with backend.create_unit_of_work() as uow:
-            phase._gather_billing(uow, datetime(2026, 7, 3, 12, tzinfo=UTC))
-            uow.commit()
+        _gather_billing(phase, backend, datetime(2026, 7, 3, 12, tzinfo=UTC))
         assert [row.source_record_id for row in _source_rows(connection_string)] == ["provider:prior"]
 
-        with backend.create_unit_of_work() as uow:
-            gathered_dates = phase._gather_billing(uow, datetime(2026, 7, 3, 12, tzinfo=UTC))
-            uow.commit()
+        gathered_dates = _gather_billing(phase, backend, datetime(2026, 7, 3, 12, tzinfo=UTC))
 
         assert gathered_dates == set()
         assert _source_rows(connection_string) == []
@@ -257,12 +297,8 @@ class TestProductionCostSourceEvidencePipeline:
         phase, plugin = _phase(lookback_days=16)
         backend, connection_string = _backend(tmp_path, plugin)
 
-        with backend.create_unit_of_work() as uow:
-            phase._gather_billing(uow, datetime(2026, 7, 17, 12, tzinfo=UTC))
-            uow.commit()
-        with backend.create_unit_of_work() as uow:
-            phase._gather_billing(uow, datetime(2026, 7, 18, 12, tzinfo=UTC))
-            uow.commit()
+        _gather_billing(phase, backend, datetime(2026, 7, 17, 12, tzinfo=UTC))
+        _gather_billing(phase, backend, datetime(2026, 7, 18, 12, tzinfo=UTC))
 
         rows = _source_rows(connection_string)
         by_id = {row.source_record_id: row for row in rows}
@@ -308,14 +344,10 @@ class TestProductionCostSourceEvidencePipeline:
         first_phase, first_plugin = _phase(days_per_query=5, lookback_days=16)
         backend, connection_string = _backend(tmp_path, first_plugin)
 
-        with backend.create_unit_of_work() as uow:
-            first_phase._gather_billing(uow, datetime(2026, 7, 17, 12, tzinfo=UTC))
-            uow.commit()
+        _gather_billing(first_phase, backend, datetime(2026, 7, 17, 12, tzinfo=UTC))
 
         second_phase, second_plugin = _phase(days_per_query=7, lookback_days=16)
-        with backend.create_unit_of_work() as uow:
-            second_phase._gather_billing(uow, datetime(2026, 7, 18, 12, tzinfo=UTC))
-            uow.commit()
+        _gather_billing(second_phase, backend, datetime(2026, 7, 18, 12, tzinfo=UTC))
 
         assert [
             (call.request.url.params["start_date"], call.request.url.params["end_date"]) for call in respx.calls

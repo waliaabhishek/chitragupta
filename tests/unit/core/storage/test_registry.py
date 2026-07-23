@@ -1,14 +1,10 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from core.config.models import StorageConfig
-
-if TYPE_CHECKING:
-    from core.storage.interface import StorageBackend
 
 
 class TestCreateStorageBackendFunction:
@@ -106,65 +102,56 @@ class TestWorkflowRunnerNoPrivateFunction:
         )
 
 
-class TestGetOrCreateBackendAcceptsStorageConfig:
-    @patch("core.api.dependencies.create_storage_backend")
-    @patch("core.api.dependencies.get_storage_module_for_ecosystem")
-    def test_respects_storage_config_backend(self, mock_get_module: MagicMock, mock_create: MagicMock) -> None:
-        from core.api.dependencies import get_or_create_backend
+def test_get_storage_backend_leases_the_request_provider_for_the_dependency_lifetime() -> None:
+    from core.api.dependencies import get_storage_backend
+    from core.storage.backend_provider import TenantBackendProvider
 
-        mock_module = MagicMock()
-        mock_get_module.return_value = mock_module
-        mock_backend = MagicMock()
-        mock_create.return_value = mock_backend
+    backend = MagicMock()
+    lease = MagicMock()
+    lease.__enter__.return_value = backend
+    provider = MagicMock(spec=TenantBackendProvider)
+    provider.acquire_backend.return_value = lease
+    request = MagicMock()
+    request.app.state.backend_provider = provider
+    tenant_config = MagicMock()
 
-        storage_config = StorageConfig(backend="sqlmodel", connection_string="sqlite:///:memory:")
-        backends: dict[str, StorageBackend] = {}
+    dependency = get_storage_backend(request, "tenant-a", tenant_config)
+    assert next(dependency) is backend
+    with pytest.raises(StopIteration):
+        next(dependency)
 
-        result = get_or_create_backend(backends, "tenant-a", storage_config, "confluent_cloud")
+    provider.acquire_backend.assert_called_once_with("tenant-a", tenant_config)
+    lease.__exit__.assert_called_once()
 
-        mock_get_module.assert_called_once_with("confluent_cloud")
-        mock_create.assert_called_once_with(storage_config, storage_module=mock_module, use_migrations=False)
-        assert result is mock_backend
 
-    @patch("core.api.dependencies.create_storage_backend")
-    @patch("core.api.dependencies.get_storage_module_for_ecosystem")
-    def test_caches_backend_per_tenant(self, mock_get_module: MagicMock, mock_create: MagicMock) -> None:
-        from core.api.dependencies import get_or_create_backend
+def test_generic_read_only_uow_never_constructs_preview_repository(tmp_path: object) -> None:
+    from pathlib import Path
 
-        mock_module = MagicMock()
-        mock_get_module.return_value = mock_module
-        mock_backend = MagicMock()
-        mock_create.return_value = mock_backend
+    from core.storage.backends.sqlmodel.unit_of_work import ReadOnlySQLModelUnitOfWork, SQLModelBackend
+    from plugins.confluent_cloud.storage.module import CCloudStorageModule
 
-        storage_config = StorageConfig(backend="sqlmodel", connection_string="sqlite:///:memory:")
-        backends: dict[str, StorageBackend] = {}
+    database = Path(str(tmp_path)) / "generic-read-only.db"
+    connection_string = f"sqlite:///{database}"
+    module = CCloudStorageModule()
+    backend = SQLModelBackend(
+        connection_string,
+        module,
+        use_migrations=False,
+        focus_preview_enabled=True,
+    )
+    backend.create_tables()
 
-        result1 = get_or_create_backend(backends, "tenant-a", storage_config, "confluent_cloud")
-        result2 = get_or_create_backend(backends, "tenant-a", storage_config, "confluent_cloud")
-
-        assert mock_create.call_count == 1
-        assert result1 is result2
-
-    def test_get_storage_backend_passes_ecosystem(self) -> None:
-        from unittest.mock import patch as _patch
-
-        from core.api.dependencies import get_storage_backend
-
-        storage_config = StorageConfig(backend="sqlmodel", connection_string="sqlite:///:memory:")
-        mock_backend = MagicMock()
-
-        request = MagicMock()
-        request.app.state.backends = {}
-        tenant_config = MagicMock()
-        tenant_config.storage = storage_config
-        tenant_config.ecosystem = "confluent_cloud"
-
-        with _patch("core.api.dependencies.get_or_create_backend", return_value=mock_backend) as mock_fn:
-            result = get_storage_backend(request, "tenant-a", tenant_config)
-
-        mock_fn.assert_called_once()
-        call_args = mock_fn.call_args
-        # Fourth positional arg is ecosystem
-        passed_ecosystem = call_args.args[3] if len(call_args.args) > 3 else call_args.kwargs.get("ecosystem")
-        assert passed_ecosystem == "confluent_cloud"
-        assert result is mock_backend
+    try:
+        with (
+            patch.object(
+                module,
+                "create_preview_source_attempt_fallback_repository",
+                side_effect=AssertionError("Preview repository constructed"),
+            ) as preview_repository,
+            ReadOnlySQLModelUnitOfWork(connection_string, module) as uow,
+        ):
+            assert uow.preview_evidence_enabled is False
+            assert uow.resources is not None
+        preview_repository.assert_not_called()
+    finally:
+        backend.dispose()

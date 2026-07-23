@@ -103,6 +103,12 @@ curl http://localhost:8080/health
 
 Migrations run automatically on startup. When the engine calls `bootstrap_storage()`, it executes `alembic upgrade head` against each tenant's database. No manual migration step is needed.
 
+Preview evidence migrations are selected per tenant. A tenant without
+`focus_preview` runs the ordinary migration chain without creating or repairing
+the optional Confluent Preview evidence schema. An enabled Confluent Cloud
+tenant prepares that schema online during startup. In a mixed deployment, this
+selection is independent for each tenant database.
+
 If you want to run migrations manually (e.g., to test before starting the engine):
 
 ```bash
@@ -155,9 +161,12 @@ Metrics APIs.
 
 Migration 021 associates retained Confluent Cost source rows with their billing
 origins and adds persisted calculation-lineage runs and portions. Existing rows
-are not guessed or rewritten. Preview requests that encounter legacy rows
-without the association require an ordinary provider gather followed by an
-ordinary calculation.
+are not guessed or financially rewritten. When Preview is enabled, valid legacy
+source rows are assigned local evidence authority from their retained values;
+this bootstrap does not call Confluent Cloud. Unreadable or inconsistent legacy
+evidence makes Preview unavailable or fail closed without preventing generic
+chargeback access. A later ordinary gather/calculation can establish new
+current evidence.
 
 Migration 022 adds effective-column and evidence-coverage fields used by Daily
 and Monthly Full/Summary/Custom requests. Existing Daily/Full requests retain
@@ -212,6 +221,33 @@ Before this upgrade, stop writers and take a coordinated backup of every tenant
 database and its matching Preview packages. Restore both sides from the same
 backup if rollback is required. Restoring only the database or only the packages
 can leave retained revision metadata and immutable package bytes inconsistent.
+
+### Migration 026: opt-in Preview evidence
+
+Migration 026 adds the source-attempt/readiness and organization-authority
+metadata used to prove that package generation is reading the newest successful
+provider evidence. Automatic startup enables this migration work only for an
+enabled Confluent Cloud tenant. Disabled tenants do not require the optional
+tables, indexes, repositories, or writable Preview artifact root.
+
+Direct Alembic commands default to Preview disabled. To prepare an enabled
+Confluent Cloud database manually, use an online connection and the explicit
+selection:
+
+```bash
+uv run alembic -c src/core/storage/migrations/alembic.ini \
+  -x focus_preview=confluent_cloud upgrade head
+```
+
+Offline SQL generation is not supported for enabled Preview evidence because
+the migration requires a live connection to inspect, prepare, and repair the
+optional schema. Run the command above against the database instead. Retained
+legacy-row bootstrap is separate: it runs when the enabled tenant's backend is
+initialized during application startup, not inside the migration hook. A
+Preview-only schema or bootstrap failure leaves generic billing and chargeback
+storage usable, but new Preview generation—including header-only output—fails
+closed until the evidence problem is repaired and the pipeline runs
+successfully.
 
 ## Rollback
 

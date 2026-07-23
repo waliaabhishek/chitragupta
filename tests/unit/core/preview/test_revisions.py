@@ -157,7 +157,7 @@ class _Backend:
         self.write_uows.append(uow)
         return uow
 
-    def create_preview_read_unit_of_work(self) -> _ReadUow:
+    def create_preview_metadata_read_unit_of_work(self) -> _ReadUow:
         uow = _ReadUow(self.repository, self.request_repository)
         self.read_uows.append(uow)
         return uow
@@ -395,12 +395,12 @@ def test_staging_recovery_failure_is_retried_before_publication(
     calls = 0
     original = store.cleanup_staging
 
-    def flaky_cleanup() -> int:
+    def flaky_cleanup(owner: object) -> int:
         nonlocal calls
         calls += 1
         if calls == 1:
             raise OSError("private path must not escape")
-        return original()
+        return original(owner)
 
     monkeypatch.setattr(store, "cleanup_staging", flaky_cleanup)
 
@@ -513,8 +513,8 @@ def test_retention_mark_wins_replacement_cas_and_only_unpublished_artifact_is_re
     monkeypatch.setattr(store, "delete_package", record_delete)
 
     class RacingBackend:
-        def create_preview_read_unit_of_work(self) -> Any:
-            return backend.create_preview_read_unit_of_work()
+        def create_preview_metadata_read_unit_of_work(self) -> Any:
+            return backend.create_preview_metadata_read_unit_of_work()
 
         def create_preview_write_unit_of_work(self) -> Any:
             candidate_staged.set()
@@ -549,7 +549,7 @@ def test_retention_mark_wins_replacement_cas_and_only_unpublished_artifact_is_re
     assert store.read_manifest(initial.package.storage_key, initial.package.manifest)
     assert not (tmp_path / "artifacts" / deleted_storage_keys[0]).exists()
 
-    with backend.create_preview_read_unit_of_work() as uow:
+    with backend.create_preview_metadata_read_unit_of_work() as uow:
         pending_current = uow.revisions.get_current_for_publication(
             ecosystem="confluent_cloud",
             tenant_id="tenant-1",
@@ -576,7 +576,7 @@ def test_scheduled_publication_never_creates_preview_request_rows(tmp_path: Path
     assert backend.request_repository.created == []
     assert all(uow.requests is backend.request_repository for uow in (*backend.read_uows, *backend.write_uows))
     persistence = import_module("core.preview.persistence")
-    assert all(isinstance(uow, persistence.PreviewReadUnitOfWork) for uow in backend.read_uows)
+    assert all(isinstance(uow, persistence.PreviewMetadataReadUnitOfWork) for uow in backend.read_uows)
     assert all(isinstance(uow, persistence.PreviewWriteUnitOfWork) for uow in backend.write_uows)
     assert all(not isinstance(uow, persistence.PreviewWriteUnitOfWork) for uow in backend.read_uows)
 
@@ -586,4 +586,5 @@ def test_revision_service_borrows_generator_and_artifact_store(tmp_path: Path) -
     service, store = _service(tmp_path, generator)
 
     assert not hasattr(service, "close")
-    assert store.cleanup_staging() == 0
+    artifacts = import_module("core.preview.artifacts")
+    assert store.cleanup_staging(artifacts.PreviewArtifactOwner("production", "confluent_cloud", "tenant-1")) == 0

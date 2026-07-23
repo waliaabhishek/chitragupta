@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from fastapi.testclient import TestClient
 
@@ -34,7 +34,7 @@ def _app_with_mock_uow(mock_uow: MagicMock) -> Iterator[TestClient]:
         yield mock_uow
 
     app.dependency_overrides[get_unit_of_work] = _uow_override
-    with patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"), TestClient(app) as client:
+    with TestClient(app) as client:
         yield client
     app.dependency_overrides.clear()
 

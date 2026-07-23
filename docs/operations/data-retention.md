@@ -50,6 +50,23 @@ tenants:
 
 The settings are evaluated independently.
 
+## FOCUS Preview evidence
+
+Preview evidence retention runs only for tenants with `focus_preview` enabled.
+During scheduled retention, Chitragupta removes expired raw Cost evidence,
+source-readiness history, allocation-lineage records, and superseded
+organization-authority attempts using the tenant's `retention_days` cutoff.
+This cleanup is separate from generic billing and chargeback cleanup. If
+Preview evidence cleanup fails, its transaction is rolled back and retried on a
+later scheduled cycle; generic cleanup and chargeback operation remain
+independent.
+
+While disabled, tenants create or access no new Preview evidence and run no
+Preview retention work. Disabling Preview does not delete evidence that was
+already persisted. Re-enabling may reuse or revalidate retained evidence, but
+does not reconstruct evidence already outside the acquisition or retention
+windows.
+
 ## Requested FOCUS Preview packages
 
 A requested Preview package has a fixed seven-day availability window measured

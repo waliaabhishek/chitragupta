@@ -13,7 +13,7 @@ from core.api import API_VERSION
 from core.api.exception_handler import global_exception_handler
 from core.config.models import TenantConfig  # noqa: TC001  # resolved by get_type_hints contract tests
 from core.preview.service import PreviewRuntime
-from core.storage.interface import StorageBackend  # noqa: TC001  # resolved by get_type_hints contract tests
+from core.storage.backend_provider import ApiTenantBackendProvider, TenantBackendProvider
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from starlette.types import ASGIApp
 
     from core.config.models import AppSettings
+    from core.plugin.registry import PluginRegistry
     from workflow_runner import WorkflowRunner
 
 
@@ -51,33 +52,31 @@ logger = logging.getLogger(__name__)
 def recover_preview_owner(
     tenant_name: str,
     tenant_config: TenantConfig,
-    cache: dict[str, StorageBackend],
+    backend_provider: TenantBackendProvider,
     preview_runtime: PreviewRuntime,
 ) -> None:
-    from core.api.dependencies import get_or_create_backend
     from core.preview.persistence import PreviewStorageBackend
     from core.preview.service import PreviewRecoveryUnavailable
 
     if not isinstance(preview_runtime, PreviewRuntime):
         raise PreviewRecoveryUnavailable("FOCUS Mapping Preview recovery is unavailable")
-    backend = get_or_create_backend(
-        cache,
-        tenant_name,
-        tenant_config.storage,
-        tenant_config.ecosystem,
-    )
-    if not isinstance(backend, PreviewStorageBackend):
-        raise PreviewRecoveryUnavailable("FOCUS Mapping Preview recovery is unavailable")
-    preview_runtime.ensure_owner_recovered(
-        backend=backend,
-        tenant_name=tenant_name,
-        ecosystem=tenant_config.ecosystem,
-        tenant_id=tenant_config.tenant_id,
-    )
+    with backend_provider.acquire_backend(tenant_name, tenant_config) as backend:
+        if not isinstance(backend, PreviewStorageBackend):
+            raise PreviewRecoveryUnavailable("FOCUS Mapping Preview recovery is unavailable")
+        preview_runtime.ensure_owner_recovered(
+            backend=backend,
+            tenant_name=tenant_name,
+            ecosystem=tenant_config.ecosystem,
+            tenant_id=tenant_config.tenant_id,
+        )
 
 
 def create_app(
-    settings: AppSettings | None = None, workflow_runner: WorkflowRunner | None = None, mode: str = "api"
+    settings: AppSettings | None = None,
+    *,
+    workflow_runner: WorkflowRunner | None = None,
+    mode: str = "api",
+    plugin_registry: PluginRegistry | None = None,
 ) -> FastAPI:
     """Factory function for creating the FastAPI application."""
     if settings is None:
@@ -89,52 +88,56 @@ def create_app(
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.info("Chitragupta API starting up version=%s", API_VERSION)
         app.state.settings = settings
-        app.state.backends = {}
+        backend_provider: TenantBackendProvider
+        owns_backend_provider = False
+        if isinstance(workflow_runner, TenantBackendProvider):
+            backend_provider = workflow_runner
+        else:
+            from core.plugin.loader import build_plugin_registry
+
+            backend_provider = ApiTenantBackendProvider(plugin_registry or build_plugin_registry(settings))
+            owns_backend_provider = True
+        app.state.backend_provider = backend_provider
+        app.state.preview_artifact_store = None
+        app.state.preview_runtime = None
+        app.state.preview_revision_reader = None
         app.state.workflow_runner = workflow_runner
         app.state.mode = mode
         from core.preview.artifacts import LocalPreviewArtifactStore
         from core.preview.revisions import PreviewRevisionReadService
-        from core.preview.service import PreviewRecoveryUnavailable, PreviewRuntime
+        from core.preview.service import PreviewRuntime
 
         preview_artifact_store: LocalPreviewArtifactStore | None = None
         preview_runtime: PreviewRuntime | None = None
         original_error: BaseException | None = None
         try:
-            preview_artifact_store = LocalPreviewArtifactStore(settings.preview.artifact_root)
-            preview_runtime = PreviewRuntime(
-                artifact_store=preview_artifact_store,
-                max_workers=settings.preview.max_workers,
-                max_csv_file_bytes=settings.preview.max_csv_file_bytes,
-                configured_owner_keys=tuple(
+            if settings.focus_preview_enabled:
+                preview_artifact_store = LocalPreviewArtifactStore(settings.preview.artifact_root)
+                enabled_owners = tuple(
                     (tenant_name, tenant.ecosystem, tenant.tenant_id)
                     for tenant_name, tenant in settings.tenants.items()
-                    if tenant.ecosystem == "confluent_cloud"
-                ),
-            )
-            app.state.preview_artifact_store = preview_artifact_store
-            app.state.preview_runtime = preview_runtime
-            app.state.preview_revision_reader = PreviewRevisionReadService(
-                artifact_store=preview_artifact_store,
-            )
-            staging_recovered = False
-            try:
-                await asyncio.to_thread(preview_runtime.ensure_staging_recovered)
-                staging_recovered = True
-            except PreviewRecoveryUnavailable as exc:
-                logger.error(
-                    "FOCUS Mapping Preview staging recovery unavailable error_type=%s",
-                    type(exc).__name__,
+                    if tenant.focus_preview_enabled
                 )
-            if staging_recovered:
+                preview_runtime = PreviewRuntime(
+                    artifact_store=preview_artifact_store,
+                    backend_provider=backend_provider,
+                    max_workers=settings.preview.max_workers,
+                    max_csv_file_bytes=settings.preview.max_csv_file_bytes,
+                    configured_owner_keys=enabled_owners,
+                )
+                app.state.preview_artifact_store = preview_artifact_store
+                app.state.preview_runtime = preview_runtime
+                app.state.preview_revision_reader = PreviewRevisionReadService(
+                    artifact_store=preview_artifact_store,
+                )
                 for tenant_name, tenant_config in settings.tenants.items():
-                    if tenant_config.ecosystem != "confluent_cloud":
+                    if not tenant_config.focus_preview_enabled:
                         continue
                     try:
-                        await asyncio.to_thread(
-                            recover_preview_owner,
+                        recover_preview_owner(
                             tenant_name,
                             tenant_config,
-                            app.state.backends,
+                            backend_provider,
                             preview_runtime,
                         )
                     except Exception as exc:
@@ -144,9 +147,12 @@ def create_app(
                             type(exc).__name__,
                         )
             if workflow_runner is None:
-                from workflow_runner import cleanup_orphaned_runs_for_all_tenants
-
-                await asyncio.to_thread(cleanup_orphaned_runs_for_all_tenants, settings, swallow_errors=True)
+                for tenant_name, tenant_config in settings.tenants.items():
+                    try:
+                        with backend_provider.acquire_backend(tenant_name, tenant_config):
+                            pass
+                    except Exception:
+                        logger.warning("Failed to prepare backend for %s", tenant_name, exc_info=True)
             yield
         except BaseException as exc:
             original_error = exc
@@ -173,15 +179,15 @@ def create_app(
                     preview_artifact_store.close()
                 except BaseException as exc:
                     record_cleanup_error("preview_artifact_store", exc)
-            for backend in tuple(app.state.backends.values()):
+            if owns_backend_provider:
                 try:
-                    backend.dispose()
+                    backend_provider.close()
                 except BaseException as exc:
-                    record_cleanup_error("backend", exc)
+                    record_cleanup_error("backend_provider", exc)
             if workflow_runner is not None:
                 logger.debug("Draining workflow runner")
                 try:
-                    await asyncio.to_thread(workflow_runner.drain, 30)
+                    workflow_runner.drain(30)
                 except BaseException as exc:
                     record_cleanup_error("workflow_runner", exc)
             logger.info("Chitragupta API shutdown complete")

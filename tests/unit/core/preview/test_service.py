@@ -20,6 +20,7 @@ from core.models.resource import CoreResource, ResourceStatus
 from core.storage.backends.sqlmodel.unit_of_work import SQLModelBackend
 from plugins.confluent_cloud.models.billing import CCloudBillingLineItem, CCloudCostSourceRecord
 from plugins.confluent_cloud.storage.module import CCloudStorageModule
+from tests.integration.core.api.backend_provider import FixedTenantBackendProvider
 from tests.unit.core.preview.conftest import preview_module
 
 
@@ -340,23 +341,59 @@ def _seed(
                     created_at=datetime(2026, 1, 1, tzinfo=UTC),
                 )
             )
-        if source is not None:
-            uow.billing.replace_source_window(
-                "confluent_cloud",
-                "tenant-1",
-                datetime(2026, 6, 30, tzinfo=UTC),
-                datetime(2026, 7, 3, tzinfo=UTC),
-                [source],
-            )
         if aggregate is not None:
             uow.billing.upsert(aggregate)
         if allocation is not None:
             uow.chargebacks.upsert_batch([allocation])
+        uow.pipeline_state.upsert(pipeline_state)
+        uow.commit()
+    from core.preview.organization_authority import OrganizationAuthorityFinalStatus
+
+    with backend.create_preview_evidence_unit_of_work() as evidence_uow:
+        organization_attempt = evidence_uow.organization_authority.begin(
+            "confluent_cloud",
+            "tenant-1",
+            datetime(2026, 7, 3, tzinfo=UTC),
+        )
+        evidence_uow.organization_authority.finalize(
+            organization_attempt.attempt_sequence,
+            OrganizationAuthorityFinalStatus.AVAILABLE,
+            completed_at=datetime(2026, 7, 3, 0, 0, 1, tzinfo=UTC),
+            organization_id="11111111-2222-4333-8444-555555555555",
+            reason=None,
+        )
+        if source is not None:
+            from core.preview.evidence_capture import NativeSourceWindow
+            from plugins.confluent_cloud.source_capture import CCloudNativeSourceEvidenceCapture
+
+            refresh_start = datetime(2026, 6, 30, tzinfo=UTC)
+            refresh_end = datetime(2026, 7, 3, tzinfo=UTC)
+            source_attempt = evidence_uow.source_readiness.begin_attempt(
+                "confluent_cloud",
+                "tenant-1",
+                "fixture-source-attempt",
+                refresh_start,
+                refresh_end,
+                datetime(2026, 7, 3, tzinfo=UTC),
+            )
+            CCloudNativeSourceEvidenceCapture(
+                ecosystem="confluent_cloud",
+                tenant_id="tenant-1",
+                refresh_start=refresh_start,
+                refresh_end=refresh_end,
+                windows=(NativeSourceWindow(refresh_start, refresh_end),),
+                records=(source,),
+            ).persist(
+                evidence_uow.source_windows,
+                evidence_uow.source_readiness,
+                attempt_sequence=source_attempt.attempt_sequence,
+                captured_at=datetime(2026, 7, 3, 0, 0, 1, tzinfo=UTC),
+            )
         if aggregate is not None and allocation is not None and pipeline_state.calculation_id:
             from core.engine.allocation_lineage import build_allocation_lineage_capture
             from core.storage.interface import AllocationLineageRunCapture
 
-            uow.chargebacks.replace_calculation_lineage(  # type: ignore[attr-defined]
+            evidence_uow.allocation_lineage.replace_calculation_lineage(
                 AllocationLineageRunCapture(
                     ecosystem="confluent_cloud",
                     tenant_id="tenant-1",
@@ -366,7 +403,40 @@ def _seed(
                 ),
                 calculation_completed_at=pipeline_state.calculation_completed_at or datetime(2026, 7, 3, 2, tzinfo=UTC),
             )
-        uow.pipeline_state.upsert(pipeline_state)
+        evidence_uow.commit()
+
+
+def _replace_source_capture(
+    backend: SQLModelBackend,
+    sources: list[CCloudCostSourceRecord],
+) -> None:
+    from core.preview.evidence_capture import NativeSourceWindow
+    from plugins.confluent_cloud.source_capture import CCloudNativeSourceEvidenceCapture
+
+    refresh_start = min(source.collection_window_start for source in sources)
+    refresh_end = max(source.collection_window_end for source in sources)
+    with backend.create_preview_evidence_unit_of_work() as uow:
+        attempt = uow.source_readiness.begin_attempt(
+            "confluent_cloud",
+            "tenant-1",
+            f"fixture-replacement:{refresh_start.isoformat()}:{refresh_end.isoformat()}",
+            refresh_start,
+            refresh_end,
+            datetime(2026, 7, 3, tzinfo=UTC),
+        )
+        CCloudNativeSourceEvidenceCapture(
+            ecosystem="confluent_cloud",
+            tenant_id="tenant-1",
+            refresh_start=refresh_start,
+            refresh_end=refresh_end,
+            windows=(NativeSourceWindow(refresh_start, refresh_end),),
+            records=tuple(sources),
+        ).persist(
+            uow.source_windows,
+            uow.source_readiness,
+            attempt_sequence=attempt.attempt_sequence,
+            captured_at=datetime(2026, 7, 3, 0, 0, 1, tzinfo=UTC),
+        )
         uow.commit()
 
 
@@ -375,6 +445,7 @@ def _runtime(tmp_path: Path, backend: SQLModelBackend, executor: ControlledExecu
     service = preview_module("service")
     return service.PreviewRuntime(
         artifact_store=artifacts.LocalPreviewArtifactStore(tmp_path / "artifacts"),
+        backend_provider=FixedTenantBackendProvider({"production": backend}),
         max_workers=1,
         clock=lambda: datetime(2026, 7, 4, tzinfo=UTC),
         request_id_factory=lambda: "request-1",
@@ -400,6 +471,7 @@ def _ready_request(tmp_path: Path) -> tuple[object, object, SQLModelBackend, Con
         f"sqlite:///{tmp_path / 'preview.db'}",
         CCloudStorageModule(),
         use_migrations=False,
+        focus_preview_enabled=True,
     )
     backend.create_tables()
     _seed(backend, source=_source(), aggregate=_aggregate(), allocation=_allocation())
@@ -421,6 +493,7 @@ def test_controlled_runtime_commits_queued_before_running_and_reaches_ready(tmp_
         f"sqlite:///{tmp_path / 'preview.db'}",
         CCloudStorageModule(),
         use_migrations=False,
+        focus_preview_enabled=True,
     )
     backend.create_tables()
     _seed(backend, source=_source(), aggregate=_aggregate(), allocation=_allocation())
@@ -576,6 +649,7 @@ def test_tableflow_synthetic_topic_cannot_supply_provider_authority(tmp_path: Pa
         f"sqlite:///{tmp_path / 'preview.db'}",
         CCloudStorageModule(),
         use_migrations=False,
+        focus_preview_enabled=True,
     )
     backend.create_tables()
     source = _source(
@@ -640,6 +714,7 @@ def test_concrete_resource_type_mismatch_uses_provider_context_diagnostic(tmp_pa
         f"sqlite:///{tmp_path / 'preview.db'}",
         CCloudStorageModule(),
         use_migrations=False,
+        focus_preview_enabled=True,
     )
     backend.create_tables()
     _seed(backend, source=_source(), aggregate=_aggregate(), allocation=_allocation())
@@ -818,6 +893,7 @@ def test_promo_refund_reaches_provider_context_failures_after_v4_lineage(
         f"sqlite:///{tmp_path / 'preview.db'}",
         CCloudStorageModule(),
         use_migrations=False,
+        focus_preview_enabled=True,
     )
     backend.create_tables()
     source = _source(
@@ -895,6 +971,7 @@ def test_every_task_254_05_native_line_reaches_v4_coverage_without_an_origin(
         f"sqlite:///{tmp_path / 'preview.db'}",
         CCloudStorageModule(),
         use_migrations=False,
+        focus_preview_enabled=True,
     )
     backend.create_tables()
     source = _source(
@@ -941,6 +1018,7 @@ def test_task_254_05_lineage_correlations_are_sorted_unique_and_capped(tmp_path:
         f"sqlite:///{tmp_path / 'preview.db'}",
         CCloudStorageModule(),
         use_migrations=False,
+        focus_preview_enabled=True,
     )
     backend.create_tables()
     _seed(
@@ -957,15 +1035,7 @@ def test_task_254_05_lineage_correlations_are_sorted_unique_and_capped(tmp_path:
         )
         for index in range(25)
     ]
-    with backend.create_unit_of_work() as uow:
-        uow.billing.replace_source_window(
-            "confluent_cloud",
-            "tenant-1",
-            datetime(2026, 6, 30, tzinfo=UTC),
-            datetime(2026, 7, 3, tzinfo=UTC),
-            sources,
-        )
-        uow.commit()
+    _replace_source_capture(backend, sources)
     expected = tuple(
         sorted(
             eligibility.public_source_correlation_id(
@@ -1017,6 +1087,7 @@ def test_complete_source_issue_precedence_wins_before_task_254_05_lineage_gate(
         f"sqlite:///{tmp_path / 'preview.db'}",
         CCloudStorageModule(),
         use_migrations=False,
+        focus_preview_enabled=True,
     )
     backend.create_tables()
     _seed(backend)
@@ -1035,15 +1106,7 @@ def test_complete_source_issue_precedence_wins_before_task_254_05_lineage_gate(
             **issue_overrides,
         ),
     ]
-    with backend.create_unit_of_work() as uow:
-        uow.billing.replace_source_window(
-            "confluent_cloud",
-            "tenant-1",
-            datetime(2026, 6, 30, tzinfo=UTC),
-            datetime(2026, 7, 3, tzinfo=UTC),
-            sources,
-        )
-        uow.commit()
+    _replace_source_capture(backend, sources)
     executor = ControlledExecutor()
     runtime = _runtime(tmp_path, backend, executor)
 
@@ -1076,6 +1139,7 @@ def test_persisted_environment_must_match_current_tenant_environment_resource(
         f"sqlite:///{tmp_path / 'preview.db'}",
         CCloudStorageModule(),
         use_migrations=False,
+        focus_preview_enabled=True,
     )
     backend.create_tables()
     _seed(
@@ -1129,6 +1193,7 @@ def test_equivalent_requests_have_distinct_ids_but_identical_csv(tmp_path: Path)
         f"sqlite:///{tmp_path / 'preview.db'}",
         CCloudStorageModule(),
         use_migrations=False,
+        focus_preview_enabled=True,
     )
     backend.create_tables()
     _seed(backend, source=_source(), aggregate=_aggregate(), allocation=_allocation())
@@ -1138,6 +1203,7 @@ def test_equivalent_requests_have_distinct_ids_but_identical_csv(tmp_path: Path)
     service = preview_module("service")
     runtime = service.PreviewRuntime(
         artifact_store=artifacts.LocalPreviewArtifactStore(tmp_path / "artifacts"),
+        backend_provider=FixedTenantBackendProvider({"production": backend}),
         max_workers=1,
         clock=lambda: datetime(2026, 7, 4, tzinfo=UTC),
         request_id_factory=lambda: next(ids),
@@ -1220,6 +1286,7 @@ def test_v4_profile_rejects_invalid_or_unsupported_financial_evidence(
         f"sqlite:///{tmp_path / 'preview.db'}",
         CCloudStorageModule(),
         use_migrations=False,
+        focus_preview_enabled=True,
     )
     backend.create_tables()
     _seed(
@@ -1278,6 +1345,7 @@ def test_fractional_economics_use_canonical_non_exponent_output(tmp_path: Path) 
         f"sqlite:///{tmp_path / 'preview.db'}",
         CCloudStorageModule(),
         use_migrations=False,
+        focus_preview_enabled=True,
     )
     backend.create_tables()
     _seed(
@@ -1342,6 +1410,7 @@ def test_positive_tracer_rejects_credit_refund_adjustment_and_correction_semanti
         f"sqlite:///{tmp_path / 'preview.db'}",
         CCloudStorageModule(),
         use_migrations=False,
+        focus_preview_enabled=True,
     )
     backend.create_tables()
     source_overrides = {semantic_field: semantic_value}
@@ -1411,6 +1480,7 @@ def test_valid_organization_wide_semantics_reach_coverage_in_v4(
         f"sqlite:///{tmp_path / 'preview.db'}",
         CCloudStorageModule(),
         use_migrations=False,
+        focus_preview_enabled=True,
     )
     backend.create_tables()
     _seed(backend, source=_source(**source_overrides))
@@ -1478,6 +1548,7 @@ def test_early_semantic_boundaries_skip_coverage_candidates_context_and_artifact
         f"sqlite:///{tmp_path / 'preview.db'}",
         CCloudStorageModule(),
         use_migrations=False,
+        focus_preview_enabled=True,
     )
     backend.create_tables()
     _seed(backend, source=_source(**source_overrides))
@@ -1524,6 +1595,7 @@ def test_mixed_stream_precedence_stops_before_coverage(
         f"sqlite:///{tmp_path / 'preview.db'}",
         CCloudStorageModule(),
         use_migrations=False,
+        focus_preview_enabled=True,
     )
     backend.create_tables()
     _seed(backend)
@@ -1559,15 +1631,7 @@ def test_mixed_stream_precedence_stops_before_coverage(
                 raw_payload={"id": "malformed"},
             ),
         )
-    with backend.create_unit_of_work() as uow:
-        uow.billing.replace_source_window(
-            "confluent_cloud",
-            "tenant-1",
-            datetime(2026, 6, 30, tzinfo=UTC),
-            datetime(2026, 7, 3, tzinfo=UTC),
-            sources,
-        )
-        uow.commit()
+    _replace_source_capture(backend, sources)
     executor = ControlledExecutor()
     runtime = _runtime(tmp_path, backend, executor)
 
@@ -1603,6 +1667,7 @@ def test_unknown_native_product_is_ambiguous_even_when_split_fields_do_not_form_
         f"sqlite:///{tmp_path / 'preview.db'}",
         CCloudStorageModule(),
         use_migrations=False,
+        focus_preview_enabled=True,
     )
     backend.create_tables()
     _seed(
@@ -1655,6 +1720,7 @@ def test_positive_tracer_rejects_every_exact_arithmetic_mismatch(
         f"sqlite:///{tmp_path / 'preview.db'}",
         CCloudStorageModule(),
         use_migrations=False,
+        focus_preview_enabled=True,
     )
     backend.create_tables()
     _seed(
@@ -1689,6 +1755,7 @@ def test_overlapping_but_not_contained_source_fails_tracer_scope(tmp_path: Path)
         f"sqlite:///{tmp_path / 'preview.db'}",
         CCloudStorageModule(),
         use_migrations=False,
+        focus_preview_enabled=True,
     )
     backend.create_tables()
     source = _source(
@@ -1720,6 +1787,7 @@ def test_malformed_undated_overlapping_evidence_blocks_even_with_epoch_allocatio
         f"sqlite:///{tmp_path / 'preview.db'}",
         CCloudStorageModule(),
         use_migrations=False,
+        focus_preview_enabled=True,
     )
     backend.create_tables()
     _seed(backend, source=_source(), aggregate=_aggregate(), allocation=_allocation())
@@ -1734,15 +1802,7 @@ def test_malformed_undated_overlapping_evidence_blocks_even_with_epoch_allocatio
         malformed=True,
         diagnostics=("missing_required:start_date",),
     )
-    with backend.create_unit_of_work() as uow:
-        uow.billing.replace_source_window(
-            "confluent_cloud",
-            "tenant-1",
-            datetime(2026, 6, 30, tzinfo=UTC),
-            datetime(2026, 7, 3, tzinfo=UTC),
-            [_source(), malformed],
-        )
-        uow.commit()
+    _replace_source_capture(backend, [_source(), malformed])
     executor = ControlledExecutor()
     runtime = _runtime(tmp_path, backend, executor)
     try:
@@ -1778,6 +1838,7 @@ def test_single_malformed_or_incomplete_source_has_snapshot_diagnostic(
         f"sqlite:///{tmp_path / 'preview.db'}",
         CCloudStorageModule(),
         use_migrations=False,
+        focus_preview_enabled=True,
     )
     backend.create_tables()
     if source.source_period_start is None:
@@ -1829,6 +1890,7 @@ def test_every_bounded_evidence_seam_rejects_zero_or_multiple_candidates(
         f"sqlite:///{tmp_path / 'preview.db'}",
         CCloudStorageModule(),
         use_migrations=False,
+        focus_preview_enabled=True,
     )
     backend.create_tables()
     _seed(backend, source=_source(), aggregate=_aggregate(), allocation=_allocation())
@@ -1929,6 +1991,7 @@ def test_complete_origin_tuple_mismatch_is_rejected_by_runtime_reconciliation(
         f"sqlite:///{tmp_path / 'preview.db'}",
         CCloudStorageModule(),
         use_migrations=False,
+        focus_preview_enabled=True,
     )
     backend.create_tables()
     _seed(backend, source=_source(), aggregate=_aggregate(), allocation=_allocation())
@@ -2009,6 +2072,7 @@ def test_allocation_target_resource_and_identity_gap_scenarios(
         f"sqlite:///{tmp_path / 'preview.db'}",
         CCloudStorageModule(),
         use_migrations=False,
+        focus_preview_enabled=True,
     )
     backend.create_tables()
     _seed(
@@ -2065,6 +2129,7 @@ def test_invalid_or_naive_collection_window_never_reports_freshness(
         f"sqlite:///{tmp_path / 'preview.db'}",
         CCloudStorageModule(),
         use_migrations=False,
+        focus_preview_enabled=True,
     )
     backend.create_tables()
     _seed(backend, source=_source(), aggregate=_aggregate(), allocation=_allocation())
@@ -2095,7 +2160,7 @@ def test_invalid_or_naive_collection_window_never_reports_freshness(
             tenant_id="tenant-1",
         )
         assert failed.status.value == "failed"
-        assert failed.diagnostic.code == "preview_source_scope_unsupported"
+        assert failed.diagnostic.code == "preview_source_evidence_unavailable"
         assert failed.source_snapshot is None
     finally:
         runtime.close()
@@ -2107,6 +2172,7 @@ def test_source_through_tracks_persisted_replacement_window_not_request_end(tmp_
         f"sqlite:///{tmp_path / 'preview.db'}",
         CCloudStorageModule(),
         use_migrations=False,
+        focus_preview_enabled=True,
     )
     backend.create_tables()
     _seed(backend, source=_source(), aggregate=_aggregate(), allocation=_allocation())
@@ -2130,6 +2196,7 @@ def test_source_through_tracks_persisted_replacement_window_not_request_end(tmp_
     service = preview_module("service")
     runtime = service.PreviewRuntime(
         artifact_store=artifacts.LocalPreviewArtifactStore(tmp_path / "artifacts"),
+        backend_provider=FixedTenantBackendProvider({"production": backend}),
         max_workers=1,
         clock=lambda: datetime(2026, 7, 5, tzinfo=UTC),
         request_id_factory=lambda: next(ids),
@@ -2159,20 +2226,15 @@ def test_source_through_tracks_persisted_replacement_window_not_request_end(tmp_
         )
         assert first_ready.source_snapshot.source_through == datetime(2026, 7, 3, tzinfo=UTC)
 
-        with backend.create_unit_of_work() as uow:
-            uow.billing.replace_source_window(
-                "confluent_cloud",
-                "tenant-1",
-                datetime(2026, 6, 29, tzinfo=UTC),
-                datetime(2026, 7, 4, tzinfo=UTC),
-                [
-                    _source(
-                        collection_window_start=datetime(2026, 6, 29, tzinfo=UTC),
-                        collection_window_end=datetime(2026, 7, 4, tzinfo=UTC),
-                    )
-                ],
-            )
-            uow.commit()
+        _replace_source_capture(
+            backend,
+            [
+                _source(
+                    collection_window_start=datetime(2026, 6, 29, tzinfo=UTC),
+                    collection_window_end=datetime(2026, 7, 4, tzinfo=UTC),
+                )
+            ],
+        )
 
         replaced_window = submit(date(2026, 7, 2))
         changed_request_end = submit(date(2026, 7, 3))

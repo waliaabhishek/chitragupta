@@ -119,7 +119,7 @@ class _Backend:
         self.fail_delete_commit_once = False
         self.fail_defer_commit_once = False
 
-    def create_preview_read_unit_of_work(self) -> _UnitOfWork:
+    def create_preview_metadata_read_unit_of_work(self) -> _UnitOfWork:
         return _UnitOfWork(self)
 
     def create_preview_write_unit_of_work(self) -> _UnitOfWork:
@@ -138,7 +138,8 @@ class _Store:
             raise OSError("synthetic artifact failure")
         return storage_key not in self.absent
 
-    def cleanup_staging(self) -> int:
+    def cleanup_staging(self, owner: object) -> int:
+        del owner
         return 0
 
 

@@ -9,7 +9,6 @@ from fastapi import HTTPException
 
 from core.api.dependencies import (
     TemporalParams,
-    get_or_create_backend,
     get_settings,
     get_storage_backend,
     get_tenant_config,
@@ -18,13 +17,12 @@ from core.api.dependencies import (
     validate_datetime_param,
     validate_temporal_params,
 )
-from core.config.models import AppSettings, StorageConfig, TenantConfig
+from core.config.models import AppSettings, TenantConfig
 
 
 def _make_request(settings: AppSettings) -> MagicMock:
     request = MagicMock()
     request.app.state.settings = settings
-    request.app.state.backends = {}
     return request
 
 
@@ -251,75 +249,36 @@ class TestUoWDependencies:
         backend.dispose()
 
 
-class TestGetOrCreateBackend:
-    def test_first_call_creates_and_caches_backend(self) -> None:
-        """get_or_create_backend creates a backend on first call and stores it in the dict."""
-        mock_backend = MagicMock()
-        storage_config = StorageConfig(connection_string="sqlite:///:memory:")
-        backends: dict[str, object] = {}
-
-        with (
-            patch("core.api.dependencies.get_storage_module_for_ecosystem", return_value=MagicMock()),
-            patch("core.api.dependencies.create_storage_backend", return_value=mock_backend),
-        ):
-            result = get_or_create_backend(backends, "acme", storage_config, "ccloud")
-
-        assert result is mock_backend
-        assert "acme" in backends
-        assert backends["acme"] is mock_backend
-        mock_backend.create_tables.assert_called_once()
-
-    def test_second_call_returns_cached_backend(self) -> None:
-        """get_or_create_backend returns the same object on repeated calls without re-creating."""
-        mock_backend = MagicMock()
-        storage_config = StorageConfig(connection_string="sqlite:///:memory:")
-        backends: dict[str, object] = {}
-
-        with (
-            patch("core.api.dependencies.get_storage_module_for_ecosystem", return_value=MagicMock()),
-            patch("core.api.dependencies.create_storage_backend", return_value=mock_backend) as mock_create,
-        ):
-            first = get_or_create_backend(backends, "acme", storage_config, "ccloud")
-            second = get_or_create_backend(backends, "acme", storage_config, "ccloud")
-
-        assert first is second
-        # create_storage_backend called only once — second call hit the cache
-        mock_create.assert_called_once()
-
-
 class TestGetStorageBackend:
-    def test_lazy_init_backends_dict_on_app_state(self) -> None:
-        """get_storage_backend initialises app.state.backends if absent."""
-        mock_backend = MagicMock()
-        tc = TenantConfig(
-            ecosystem="ccloud", tenant_id="t1", storage=StorageConfig(connection_string="sqlite:///:memory:")
-        )
+    def test_leases_backend_from_provider_for_dependency_lifetime(self) -> None:
+        from core.storage.backend_provider import TenantBackendProvider
+
+        backend = MagicMock()
+        lease = MagicMock()
+        lease.__enter__.return_value = backend
+        provider = MagicMock(spec=TenantBackendProvider)
+        provider.acquire_backend.return_value = lease
         request = MagicMock()
-        del request.app.state.backends  # ensure attribute is absent
+        request.app.state.backend_provider = provider
+        tenant_config = MagicMock()
 
-        with (
-            patch("core.api.dependencies.get_storage_module_for_ecosystem", return_value=MagicMock()),
-            patch("core.api.dependencies.create_storage_backend", return_value=mock_backend),
-        ):
-            result = get_storage_backend(request, "acme", tc)
+        dependency = get_storage_backend(request, "acme", tenant_config)
+        assert next(dependency) is backend
+        with pytest.raises(StopIteration):
+            next(dependency)
 
-        assert result is mock_backend
-        assert hasattr(request.app.state, "backends")
+        provider.acquire_backend.assert_called_once_with("acme", tenant_config)
+        lease.__exit__.assert_called_once()
 
-    def test_delegates_to_get_or_create_backend(self) -> None:
-        """get_storage_backend delegates to get_or_create_backend with the right args."""
-        mock_backend = MagicMock()
-        tc = TenantConfig(
-            ecosystem="ccloud", tenant_id="t1", storage=StorageConfig(connection_string="sqlite:///:memory:")
-        )
+    def test_missing_provider_returns_503_without_constructing_storage(self) -> None:
         request = MagicMock()
-        request.app.state.backends = {}
+        request.app.state.backend_provider = None
 
-        with patch("core.api.dependencies.get_or_create_backend", return_value=mock_backend) as mock_goc:
-            result = get_storage_backend(request, "acme", tc)
+        dependency = get_storage_backend(request, "acme", MagicMock())
+        with pytest.raises(HTTPException) as exc_info:
+            next(dependency)
 
-        assert result is mock_backend
-        mock_goc.assert_called_once_with(request.app.state.backends, "acme", tc.storage, tc.ecosystem)
+        assert exc_info.value.status_code == 503
 
 
 class TestResolveDateRange:

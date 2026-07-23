@@ -1,22 +1,23 @@
 from __future__ import annotations
 
-import hashlib
-import json
 import logging
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from concurrent.futures import Future, ThreadPoolExecutor, wait
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
+from core.config.fingerprint import tenant_config_fingerprint
 from core.emitters.runner import EmitterRunner
 from core.emitters.sources import ChargebackDateSource, ChargebackRowFetcher, RegistryEmitterBuilder
 from core.emitters.wiring import create_auxiliary_prometheus_runners
 from core.engine.orchestrator import ChargebackOrchestrator, GatherFailureThresholdError, PipelineRunResult
 from core.plugin.protocols import OverlayPlugin
 from core.plugin.registry import EcosystemBundle
+from core.storage.tenant_lifecycle import cleanup_orphaned_pipeline_run, prepare_tenant_backend
 
 if TYPE_CHECKING:
     from datetime import date as date_type
@@ -26,7 +27,9 @@ if TYPE_CHECKING:
     from core.plugin.protocols import EcosystemPlugin, OverlayConfig
     from core.plugin.registry import PluginRegistry
     from core.preview.artifacts import PreviewArtifactStore
+    from core.preview.evidence import PreviewEvidenceBootstrapResult
     from core.preview.revisions import PreviewScheduledRevisionManager
+    from core.preview.storage_availability import PreviewEvidenceBootstrapUnavailable
     from core.storage.interface import StorageBackend
 
 logger = logging.getLogger(__name__)
@@ -49,6 +52,7 @@ class TenantRuntime:
     orchestrator: ChargebackOrchestrator
     config_hash: str
     created_at: datetime
+    bootstrap_result: PreviewEvidenceBootstrapResult | PreviewEvidenceBootstrapUnavailable | None = None
     last_run_at: datetime | None = field(default=None)
 
     def is_healthy(self) -> bool:
@@ -57,18 +61,22 @@ class TenantRuntime:
 
     def close(self) -> None:
         """Clean up all resources."""
-        self.storage.dispose()
-        self.plugin.close()
+        failures: list[BaseException] = []
+        try:
+            self.storage.dispose()
+        except BaseException as exc:
+            failures.append(exc)
+        try:
+            self.plugin.close()
+        except BaseException as exc:
+            failures.append(exc)
+        if failures:
+            raise failures[0]
 
 
 def _config_hash(config: TenantConfig) -> str:
     """Stable hash of tenant config for change detection."""
-    try:
-        raw = json.dumps(config.model_dump(), sort_keys=True, default=str)
-    except TypeError, ValueError, AttributeError:
-        logger.debug("Failed to JSON-serialize config for hashing; falling back to repr()", exc_info=True)
-        raw = repr(config)
-    return hashlib.sha256(raw.encode()).hexdigest()[:16]
+    return tenant_config_fingerprint(config)
 
 
 class PipelineRunTracker:
@@ -131,45 +139,7 @@ class PipelineRunTracker:
 
     def cleanup_orphaned_runs(self, tenant_name: str) -> None:
         """Mark any 'running' PipelineRuns as failed (stale after restart)."""
-        try:
-            with self._storage.create_unit_of_work() as uow:
-                latest = uow.pipeline_runs.get_latest_run(tenant_name)
-                if latest is not None and latest.status == "running":
-                    latest.status = "failed"
-                    latest.ended_at = datetime.now(UTC)
-                    latest.stage = None
-                    latest.current_date = None
-                    latest.error_message = "Orphaned — process restarted before completion"
-                    uow.pipeline_runs.update_run(latest)
-                    uow.commit()
-                    logger.info(
-                        "Cleaned up orphaned 'running' PipelineRun for tenant %s (id=%s)",
-                        tenant_name,
-                        latest.id,
-                    )
-        except Exception:
-            logger.warning("Failed to clean up orphaned runs for %s", tenant_name, exc_info=True)
-
-
-def cleanup_orphaned_runs_for_all_tenants(
-    settings: AppSettings,
-    *,
-    swallow_errors: bool = False,
-) -> None:
-    """Iterate all tenants: create tables and clean up orphaned pipeline runs."""
-    from core.storage.registry import create_storage_backend
-
-    for tenant_name, config in settings.tenants.items():
-        storage = create_storage_backend(config.storage)
-        try:
-            storage.create_tables()
-            PipelineRunTracker(storage).cleanup_orphaned_runs(tenant_name)
-        except Exception:
-            if not swallow_errors:
-                raise
-            logger.warning("Failed to clean up orphaned runs for %s", tenant_name, exc_info=True)
-        finally:
-            storage.dispose()
+        cleanup_orphaned_pipeline_run(self._storage, tenant_name)
 
 
 class WorkflowRunner:
@@ -187,6 +157,9 @@ class WorkflowRunner:
         self._plugin_registry = plugin_registry
         self._bootstrapped = False
         self._tenant_runtimes: dict[str, TenantRuntime] = {}
+        self._runtime_condition = threading.Condition(threading.RLock())
+        self._runtime_leases: dict[str, int] = {}
+        self._retiring_runtime_names: set[str] = set()
         self._running_tenants: set[str] = set()
         self._running_lock = threading.Lock()
         self._failed_tenants: dict[str, str] = {}  # name -> error message
@@ -231,15 +204,29 @@ class WorkflowRunner:
         with self._periodic_cycle_lock, self._close_lock:
             if self._closed:
                 return
-            self._closed = True
+            with self._runtime_condition:
+                self._closed = True
+                while any(self._runtime_leases.values()):
+                    self._runtime_condition.wait()
             failures: list[BaseException] = []
-            runtimes = tuple(self._tenant_runtimes.values())
-            self._tenant_runtimes.clear()
-            for runtime in runtimes:
-                try:
-                    runtime.close()
-                except BaseException as exc:
-                    failures.append(exc)
+            with self._runtime_condition:
+                while self._tenant_runtimes:
+                    tenant_name, runtime = next(iter(self._tenant_runtimes.items()))
+                    if tenant_name in self._retiring_runtime_names:
+                        self._runtime_condition.wait()
+                        continue
+                    self._retiring_runtime_names.add(tenant_name)
+                    while self._runtime_leases.get(tenant_name, 0):
+                        self._runtime_condition.wait()
+                    if self._tenant_runtimes.get(tenant_name) is runtime:
+                        del self._tenant_runtimes[tenant_name]
+                    try:
+                        runtime.close()
+                    except BaseException as exc:
+                        failures.append(exc)
+                    finally:
+                        self._retiring_runtime_names.remove(tenant_name)
+                        self._runtime_condition.notify_all()
             if self._owned_preview_artifact_store is not None:
                 try:
                     self._owned_preview_artifact_store.close()
@@ -250,36 +237,91 @@ class WorkflowRunner:
 
     def _get_or_create_runtime(self, tenant_name: str, config: TenantConfig) -> TenantRuntime:
         """Get cached runtime or create new one. Recreates if unhealthy or config changed."""
+        with self._runtime_condition:
+            return self._get_or_create_runtime_locked(tenant_name, config)
+
+    def _get_or_create_runtime_locked(self, tenant_name: str, config: TenantConfig) -> TenantRuntime:
         current_hash = _config_hash(config)
 
-        if tenant_name in self._tenant_runtimes:
-            runtime = self._tenant_runtimes[tenant_name]
-            if runtime.config_hash == current_hash and runtime.is_healthy():
+        while True:
+            if self._closed:
+                raise RuntimeError("workflow runner is closed")
+            if tenant_name in self._retiring_runtime_names:
+                self._runtime_condition.wait()
+                continue
+            runtime = self._tenant_runtimes.get(tenant_name)
+            if runtime is None:
+                break
+            healthy = runtime.is_healthy()
+            if runtime.config_hash == current_hash and healthy:
                 return runtime
-            # Config changed or unhealthy — close and recreate
             logger.info(
                 "Tenant %s: recreating runtime (config_changed=%s, healthy=%s)",
                 tenant_name,
                 runtime.config_hash != current_hash,
-                runtime.is_healthy(),
+                healthy,
             )
-            runtime.close()
-            del self._tenant_runtimes[tenant_name]
+            # This thread is the sole owner of retiring this exact cache entry.
+            self._retiring_runtime_names.add(tenant_name)
+            while self._runtime_leases.get(tenant_name, 0):
+                self._runtime_condition.wait()
+            if self._tenant_runtimes.get(tenant_name) is runtime:
+                del self._tenant_runtimes[tenant_name]
+            try:
+                runtime.close()
+            finally:
+                self._retiring_runtime_names.remove(tenant_name)
+                self._runtime_condition.notify_all()
 
         plugin = self._plugin_registry.create(config.ecosystem)
-        plugin.initialize(config.plugin_settings.model_dump())
-        from core.storage.registry import create_storage_backend
+        storage: StorageBackend | None = None
+        try:
+            plugin.initialize(config.plugin_settings.model_dump())
+            from core.storage.registry import create_storage_backend
 
-        storage = create_storage_backend(config.storage, storage_module=plugin.get_storage_module())
-        metrics = plugin.get_metrics_source()
-        orchestrator = ChargebackOrchestrator(
-            tenant_name,
-            config,
-            plugin,
-            storage,
-            metrics,
-            shutdown_check=self._is_shutdown_requested,
-        )
+            storage = create_storage_backend(
+                config.storage,
+                storage_module=plugin.get_storage_module(),
+                focus_preview_enabled=config.focus_preview_enabled,
+            )
+            bootstrap_result = prepare_tenant_backend(storage, tenant_name, config)
+            metrics = plugin.get_metrics_source()
+            orchestrator = ChargebackOrchestrator(
+                tenant_name,
+                config,
+                plugin,
+                storage,
+                metrics,
+                shutdown_check=self._is_shutdown_requested,
+            )
+        except BaseException:
+            if storage is not None:
+                try:
+                    storage.dispose()
+                except BaseException as cleanup_error:
+                    logger.error(
+                        "Tenant runtime construction cleanup failed tenant=%s step=storage error_type=%s",
+                        tenant_name,
+                        type(cleanup_error).__name__,
+                    )
+                try:
+                    plugin.close()
+                except BaseException as cleanup_error:
+                    logger.error(
+                        "Tenant runtime construction cleanup failed tenant=%s step=plugin error_type=%s",
+                        tenant_name,
+                        type(cleanup_error).__name__,
+                    )
+            else:
+                try:
+                    plugin.close()
+                except BaseException as cleanup_error:
+                    logger.error(
+                        "Tenant runtime construction cleanup failed tenant=%s step=plugin error_type=%s",
+                        tenant_name,
+                        type(cleanup_error).__name__,
+                    )
+            raise
 
         runtime = TenantRuntime(
             tenant_name=tenant_name,
@@ -288,20 +330,41 @@ class WorkflowRunner:
             orchestrator=orchestrator,
             config_hash=current_hash,
             created_at=datetime.now(UTC),
+            bootstrap_result=bootstrap_result,
         )
         self._tenant_runtimes[tenant_name] = runtime
         logger.debug("Tenant %s: created new runtime", tenant_name)
         return runtime
 
-    def bootstrap_storage(self) -> None:
-        """Create tables for all tenant storage backends and clean up orphaned runs.
+    @contextmanager
+    def _acquire_runtime(self, tenant_name: str, config: TenantConfig) -> Iterator[TenantRuntime]:
+        with self._runtime_condition:
+            runtime = self._get_or_create_runtime_locked(tenant_name, config)
+            self._runtime_leases[tenant_name] = self._runtime_leases.get(tenant_name, 0) + 1
+        try:
+            yield runtime
+        finally:
+            with self._runtime_condition:
+                remaining = self._runtime_leases[tenant_name] - 1
+                if remaining:
+                    self._runtime_leases[tenant_name] = remaining
+                else:
+                    del self._runtime_leases[tenant_name]
+                self._runtime_condition.notify_all()
 
-        Call once at startup. After table creation, marks any PipelineRuns stuck
-        in 'running' status (from a previous process crash) as failed.
-        """
+    @contextmanager
+    def acquire_backend(self, tenant_name: str, tenant_config: TenantConfig) -> Iterator[StorageBackend]:
+        """Lease the persistent tenant runtime backend for API or worker use."""
+        with self._acquire_runtime(tenant_name, tenant_config) as runtime:
+            yield runtime.storage
+
+    def bootstrap_storage(self) -> None:
+        """Construct and prepare every configured tenant backend once at startup."""
         if self._bootstrapped:
             return
-        cleanup_orphaned_runs_for_all_tenants(self._settings, swallow_errors=False)
+        for tenant_name, config in self._settings.tenants.items():
+            with self._acquire_runtime(tenant_name, config):
+                pass
         self._bootstrapped = True
 
     def run_tenant(self, tenant_name: str) -> PipelineRunResult:
@@ -443,8 +506,12 @@ class WorkflowRunner:
                 )
             self._running_tenants.add(name)
 
+        runtime_lease = None
+        runtime_lease_entered = False
         try:
-            runtime = self._get_or_create_runtime(name, config)
+            runtime_lease = self._acquire_runtime(name, config)
+            runtime = runtime_lease.__enter__()
+            runtime_lease_entered = True
             tracker = PipelineRunTracker(runtime.storage)
 
             pipeline_run = tracker.create(name)
@@ -531,6 +598,8 @@ class WorkflowRunner:
                 tracker.fail(pipeline_run)
                 raise
         finally:
+            if runtime_lease is not None and runtime_lease_entered:
+                runtime_lease.__exit__(None, None, None)
             with self._running_lock:
                 self._running_tenants.discard(name)
 
@@ -589,37 +658,68 @@ class WorkflowRunner:
         backend is created.
         """
         cleanup_now = datetime.now(UTC) if now is None else now
-        for name, runtime in self._tenant_runtimes.items():
+        with self._runtime_condition:
+            cached_names = tuple(self._tenant_runtimes)
+        for name in cached_names:
             config = self._settings.tenants.get(name)
             if config is None or config.retention_days <= 0:
                 continue  # tenant removed from config, or retention disabled
 
             cutoff = cleanup_now - timedelta(days=config.retention_days)
             try:
-                with runtime.storage.create_unit_of_work() as uow:
-                    deleted_billing = uow.billing.delete_before(config.ecosystem, config.tenant_id, cutoff)
-                    deleted_resources = uow.resources.delete_before(config.ecosystem, config.tenant_id, cutoff)
-                    deleted_identities = uow.identities.delete_before(config.ecosystem, config.tenant_id, cutoff)
-                    deleted_chargebacks = uow.chargebacks.delete_before(config.ecosystem, config.tenant_id, cutoff)
+                with self._acquire_runtime(name, config) as runtime:
+                    with runtime.storage.create_unit_of_work() as uow:
+                        deleted_billing = uow.billing.delete_before(config.ecosystem, config.tenant_id, cutoff)
+                        deleted_resources = uow.resources.delete_before(config.ecosystem, config.tenant_id, cutoff)
+                        deleted_identities = uow.identities.delete_before(config.ecosystem, config.tenant_id, cutoff)
+                        deleted_chargebacks = uow.chargebacks.delete_before(config.ecosystem, config.tenant_id, cutoff)
 
-                    ta_config = _get_overlay_ta_config(runtime.plugin)
-                    deleted_ta = 0
-                    if ta_config and ta_config.enabled:
-                        from core.engine.topic_attribution_models import TopicAttributionConfigProtocol
+                        ta_config = _get_overlay_ta_config(runtime.plugin)
+                        deleted_ta = 0
+                        if ta_config and ta_config.enabled:
+                            from core.engine.topic_attribution_models import TopicAttributionConfigProtocol
 
-                        if isinstance(ta_config, TopicAttributionConfigProtocol):
-                            retention_days = getattr(ta_config, "retention_days", None)
-                            if retention_days:
-                                ta_cutoff = cleanup_now - timedelta(days=retention_days)
-                                deleted_ta = uow.topic_attributions.delete_before(
-                                    config.ecosystem, config.tenant_id, ta_cutoff
+                            if isinstance(ta_config, TopicAttributionConfigProtocol):
+                                retention_days = getattr(ta_config, "retention_days", None)
+                                if retention_days:
+                                    ta_cutoff = cleanup_now - timedelta(days=retention_days)
+                                    deleted_ta = uow.topic_attributions.delete_before(
+                                        config.ecosystem, config.tenant_id, ta_cutoff
+                                    )
+
+                        uow.commit()
+
+                    total_deleted = (
+                        deleted_billing + deleted_resources + deleted_identities + deleted_chargebacks + deleted_ta
+                    )
+                    if config.focus_preview_enabled:
+                        from core.preview.persistence import PreviewEvidenceStorageBackend
+
+                        if isinstance(runtime.storage, PreviewEvidenceStorageBackend):
+                            try:
+                                with runtime.storage.create_preview_evidence_unit_of_work() as evidence_uow:
+                                    source_deleted = evidence_uow.source_windows.delete_before(
+                                        config.ecosystem, config.tenant_id, cutoff
+                                    )
+                                    readiness_deleted = evidence_uow.source_readiness.delete_orphaned_before(
+                                        config.ecosystem, config.tenant_id, cutoff
+                                    )
+                                    lineage_deleted = evidence_uow.allocation_lineage.delete_before(
+                                        config.ecosystem, config.tenant_id, cutoff.date()
+                                    )
+                                    organization_deleted = evidence_uow.organization_authority.delete_superseded_before(
+                                        config.ecosystem, config.tenant_id, cutoff
+                                    )
+                                    evidence_uow.commit()
+                                total_deleted += (
+                                    source_deleted
+                                    + readiness_deleted
+                                    + lineage_deleted.portions
+                                    + lineage_deleted.runs
+                                    + organization_deleted
                                 )
-
-                    uow.commit()
-
-                total_deleted = (
-                    deleted_billing + deleted_resources + deleted_identities + deleted_chargebacks + deleted_ta
-                )
+                            except Exception:
+                                logger.exception("Tenant %s: Preview evidence retention cleanup failed", name)
                 if total_deleted > 0:
                     logger.info(
                         "Tenant %s: retention cleanup deleted %d records (before %s)",
@@ -645,7 +745,8 @@ class WorkflowRunner:
             if result.errors or result.already_running or result.fatal:
                 continue
             config = self._settings.tenants.get(tenant_name)
-            runtime = self._tenant_runtimes.get(tenant_name)
+            with self._runtime_condition:
+                runtime = self._tenant_runtimes.get(tenant_name)
             if (
                 config is None
                 or runtime is None
@@ -656,12 +757,15 @@ class WorkflowRunner:
             ):
                 continue
             try:
-                manager.publish_eligible_months(
-                    tenant_name=tenant_name,
-                    tenant_config=config,
-                    backend=runtime.storage,
-                    now=now,
-                )
+                with self._acquire_runtime(tenant_name, config) as leased_runtime:
+                    if not isinstance(leased_runtime.storage, PreviewStorageBackend):
+                        continue
+                    manager.publish_eligible_months(
+                        tenant_name=tenant_name,
+                        tenant_config=config,
+                        backend=leased_runtime.storage,
+                        now=now,
+                    )
             except Exception as exc:
                 logger.error(
                     "Tenant %s: scheduled FOCUS Mapping Preview publication failed error_type=%s",
@@ -676,20 +780,24 @@ class WorkflowRunner:
         from core.preview.persistence import PreviewStorageBackend
 
         for tenant_name, config in self._settings.tenants.items():
-            runtime = self._tenant_runtimes.get(tenant_name)
+            with self._runtime_condition:
+                runtime = self._tenant_runtimes.get(tenant_name)
             if (
-                config.ecosystem != "confluent_cloud"
+                not config.focus_preview_enabled
                 or runtime is None
                 or not isinstance(runtime.storage, PreviewStorageBackend)
             ):
                 continue
             try:
-                manager.cleanup_retention(
-                    tenant_name=tenant_name,
-                    tenant_config=config,
-                    backend=runtime.storage,
-                    now=now,
-                )
+                with self._acquire_runtime(tenant_name, config) as leased_runtime:
+                    if not isinstance(leased_runtime.storage, PreviewStorageBackend):
+                        continue
+                    manager.cleanup_retention(
+                        tenant_name=tenant_name,
+                        tenant_config=config,
+                        backend=leased_runtime.storage,
+                        now=now,
+                    )
             except Exception as exc:
                 logger.error(
                     "Tenant %s: FOCUS Mapping Preview revision retention failed error_type=%s",

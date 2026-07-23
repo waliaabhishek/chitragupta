@@ -832,7 +832,7 @@ class TestGatherPhase:
         deleted_ids = [rid for rid, _ in uow.resources._deletions]
         assert "r-old" in deleted_ids
 
-    def test_supplemental_organization_runs_once_after_ordinary_resources(self) -> None:
+    def test_disabled_tenant_never_runs_organization_gather_after_ordinary_resources(self) -> None:
         handler = MockServiceHandler(
             resources=[_make_resource("r1")],
             identities=[_make_identity("i1")],
@@ -847,14 +847,13 @@ class TestGatherPhase:
             storage,
         )
 
-        orchestrator.run()
+        result = orchestrator.run()
 
         uow = storage.create_unit_of_work()
-        assert plugin.supplemental_calls == [(TENANT_ID, "organization")]
+        assert plugin.supplemental_calls == []
         assert "r1" in uow.resources._data
-        organization = uow.resources._data["11111111-2222-4333-8444-555555555555"]
-        assert organization.resource_type == "organization"
-        assert organization.metadata["organization_binding_state"] == "bound"
+        assert not any(resource.resource_type == "organization" for resource in uow.resources._data.values())
+        assert result.errors == []
 
     def test_gather_bookkeeping_does_not_issue_one_repository_get_per_resource(self) -> None:
         ordinary = [_make_resource(f"cluster-{index}") for index in range(64)]
@@ -891,220 +890,9 @@ class TestGatherPhase:
         result = orchestrator.run()
 
         assert result.errors == []
-        assert len(storage._uow.resources._data) == 129
+        assert len(storage._uow.resources._data) == 128
+        assert plugin.supplemental_calls == [(TENANT_ID, "catalog")]
         assert storage._uow.resources.get_calls == []
-
-    def test_failed_organization_gather_does_not_delete_binding_or_block_ordinary_resources(self) -> None:
-        handler = MockServiceHandler(
-            resources=[_make_resource("r1")],
-            identities=[_make_identity("i1")],
-            gathered_resource_types=["kafka_cluster"],
-        )
-        plugin = MockSupplementalPlugin(handlers={"kafka": handler}, fail_organization=True)
-        storage = MockStorageBackend()
-        uow = storage.create_unit_of_work()
-        uow.resources.upsert(
-            CoreResource(
-                ecosystem=ECOSYSTEM,
-                tenant_id=TENANT_ID,
-                resource_id="11111111-2222-4333-8444-555555555555",
-                resource_type="organization",
-                metadata={"organization_binding_state": "bound"},
-            )
-        )
-        orchestrator = ChargebackOrchestrator(
-            TENANT_NAME,
-            _make_tenant_config(),
-            plugin,
-            storage,
-        )
-
-        result = orchestrator.run()
-
-        assert plugin.supplemental_calls == [(TENANT_ID, "organization")]
-        assert "r1" in uow.resources._data
-        assert "11111111-2222-4333-8444-555555555555" in uow.resources._data
-        deleted_ids = [resource_id for resource_id, _deleted_at in uow.resources._deletions]
-        assert "11111111-2222-4333-8444-555555555555" not in deleted_ids
-        assert any("organization endpoint unavailable" in error for error in result.errors)
-
-    @pytest.mark.parametrize(
-        "observed",
-        [
-            (),
-            (_organization("org-a"), _organization("org-b")),
-        ],
-        ids=("zero", "multiple"),
-    )
-    def test_invalid_initial_organization_cardinality_never_creates_a_binding(
-        self,
-        observed: tuple[CoreResource, ...],
-    ) -> None:
-        plugin = MockSupplementalPlugin(
-            handlers={"kafka": MockServiceHandler(resources=[_make_resource()])},
-            supplemental_responses={"organization": [observed]},
-        )
-        storage = MockStorageBackend()
-        orchestrator = ChargebackOrchestrator(
-            TENANT_NAME,
-            _make_tenant_config(),
-            plugin,
-            storage,
-        )
-
-        result = orchestrator.run()
-
-        active, _ = storage._uow.resources.find_active_at(ECOSYSTEM, TENANT_ID, NOW)
-        assert not any(
-            resource.resource_type == "organization" and resource.metadata.get("organization_binding_state") == "bound"
-            for resource in active
-        )
-        assert any("must return exactly one nonblank ID" in error for error in result.errors)
-
-    def test_valid_and_blank_organization_observations_fail_without_binding_or_deletion(self) -> None:
-        plugin = MockSupplementalPlugin(
-            handlers={"kafka": MockServiceHandler(resources=[_make_resource()])},
-            supplemental_responses={
-                "organization": [
-                    (_organization("org-valid"), _organization("")),
-                ]
-            },
-        )
-        storage = MockStorageBackend()
-        orchestrator = ChargebackOrchestrator(
-            TENANT_NAME,
-            _make_tenant_config(),
-            plugin,
-            storage,
-        )
-
-        result = orchestrator.run()
-
-        assert any("must return exactly one nonblank ID" in error for error in result.errors)
-        valid = storage._uow.resources._data["org-valid"]
-        assert valid.metadata["organization_binding_state"] == "conflicting_observation"
-        assert valid.deleted_at is None
-        assert not any(
-            resource.metadata.get("organization_binding_state") == "bound"
-            for resource in storage._uow.resources._data.values()
-            if resource.resource_type == "organization"
-        )
-        assert "org-valid" not in {resource_id for resource_id, _deleted_at in storage._uow.resources._deletions}
-
-    def test_same_organization_id_refreshes_name_without_rebinding(self) -> None:
-        plugin = MockSupplementalPlugin(
-            handlers={"kafka": MockServiceHandler(resources=[_make_resource()])},
-            supplemental_responses={
-                "organization": [
-                    (_organization("org-a", display_name="Old name"),),
-                    (_organization("org-a", display_name="New name"),),
-                ]
-            },
-        )
-        storage = MockStorageBackend()
-        orchestrator = ChargebackOrchestrator(
-            TENANT_NAME,
-            _make_tenant_config(plugin_settings={"min_refresh_gap_seconds": 0}),
-            plugin,
-            storage,
-        )
-
-        first = orchestrator.run()
-        second = orchestrator.run()
-
-        organization = storage._uow.resources._data["org-a"]
-        assert first.errors == []
-        assert second.errors == []
-        assert organization.display_name == "New name"
-        assert organization.metadata["organization_binding_state"] == "bound"
-        assert organization.deleted_at is None
-
-    def test_conflicting_organization_is_retained_until_bound_id_recovers(self) -> None:
-        plugin = MockSupplementalPlugin(
-            handlers={"kafka": MockServiceHandler(resources=[_make_resource()])},
-            supplemental_responses={
-                "organization": [
-                    (_organization("org-bound"),),
-                    (_organization("org-other"),),
-                    (_organization("org-bound", display_name="Recovered"),),
-                ]
-            },
-        )
-        storage = MockStorageBackend()
-        orchestrator = ChargebackOrchestrator(
-            TENANT_NAME,
-            _make_tenant_config(plugin_settings={"min_refresh_gap_seconds": 0}),
-            plugin,
-            storage,
-        )
-
-        first = orchestrator.run()
-        conflicting = orchestrator.run()
-        conflict_resource = storage._uow.resources._data["org-other"]
-        assert first.errors == []
-        assert any("conflicts with the immutable binding" in error for error in conflicting.errors)
-        assert conflict_resource.metadata["organization_binding_state"] == "conflicting_observation"
-        assert conflict_resource.deleted_at is None
-
-        recovered = orchestrator.run()
-
-        bound = storage._uow.resources._data["org-bound"]
-        assert recovered.errors == []
-        assert bound.display_name == "Recovered"
-        assert bound.metadata["organization_binding_state"] == "bound"
-        assert bound.deleted_at is None
-        assert storage._uow.resources._data["org-other"].deleted_at is not None
-
-    def test_initial_multiple_observations_can_recover_to_first_single_binding(self) -> None:
-        plugin = MockSupplementalPlugin(
-            handlers={"kafka": MockServiceHandler(resources=[_make_resource()])},
-            supplemental_responses={
-                "organization": [
-                    (_organization("org-a"), _organization("org-b")),
-                    (_organization("org-b"),),
-                ]
-            },
-        )
-        storage = MockStorageBackend()
-        orchestrator = ChargebackOrchestrator(
-            TENANT_NAME,
-            _make_tenant_config(plugin_settings={"min_refresh_gap_seconds": 0}),
-            plugin,
-            storage,
-        )
-
-        first = orchestrator.run()
-        second = orchestrator.run()
-
-        assert first.errors
-        assert second.errors == []
-        assert storage._uow.resources._data["org-b"].metadata["organization_binding_state"] == "bound"
-        assert storage._uow.resources._data["org-b"].deleted_at is None
-        assert storage._uow.resources._data["org-a"].deleted_at is not None
-
-    def test_distinct_tenant_partitions_can_bind_different_organizations(self) -> None:
-        bindings: list[tuple[str, str]] = []
-        for tenant_id, organization_id in (("tenant-a", "org-a"), ("tenant-b", "org-b")):
-            plugin = MockSupplementalPlugin(
-                supplemental_responses={"organization": [(_organization(organization_id, tenant_id=tenant_id),)]}
-            )
-            storage = MockStorageBackend()
-            orchestrator = ChargebackOrchestrator(
-                TENANT_NAME,
-                _make_tenant_config(tenant_id=tenant_id),
-                plugin,
-                storage,
-            )
-
-            result = orchestrator.run()
-
-            assert result.errors == []
-            organization = storage._uow.resources._data[organization_id]
-            assert organization.tenant_id == tenant_id
-            assert organization.metadata["organization_binding_state"] == "bound"
-            bindings.append((tenant_id, organization.resource_id))
-
-        assert bindings == [("tenant-a", "org-a"), ("tenant-b", "org-b")]
 
     def test_successful_supplemental_type_deletes_only_missing_resources_of_that_type(self) -> None:
         catalog = CoreResource(
@@ -1115,9 +903,8 @@ class TestGatherPhase:
         )
         plugin = MockSupplementalPlugin(
             handlers={"kafka": MockServiceHandler(resources=[_make_resource()])},
-            supplemental_types=("organization", "catalog"),
+            supplemental_types=("catalog",),
             supplemental_responses={
-                "organization": [(_organization("org-a"),), (_organization("org-a"),)],
                 "catalog": [(catalog,), ()],
             },
         )
@@ -1134,7 +921,6 @@ class TestGatherPhase:
 
         assert first.errors == []
         assert second.errors == []
-        assert storage._uow.resources._data["org-a"].deleted_at is None
         assert storage._uow.resources._data["catalog-1"].deleted_at is not None
 
     def test_failed_supplemental_type_skips_only_its_deletion_scan(self) -> None:
@@ -1146,9 +932,8 @@ class TestGatherPhase:
         )
         plugin = MockSupplementalPlugin(
             handlers={"kafka": MockServiceHandler(resources=[_make_resource()])},
-            supplemental_types=("organization", "catalog"),
+            supplemental_types=("catalog",),
             supplemental_responses={
-                "organization": [(_organization("org-a"),), (_organization("org-a"),)],
                 "catalog": [(catalog,), RuntimeError("catalog unavailable")],
             },
         )
@@ -1165,7 +950,6 @@ class TestGatherPhase:
 
         assert any("catalog unavailable" in error for error in failed.errors)
         assert storage._uow.resources._data["catalog-1"].deleted_at is None
-        assert storage._uow.resources._data["org-a"].deleted_at is None
 
 
 class TestZeroGatherProtection:

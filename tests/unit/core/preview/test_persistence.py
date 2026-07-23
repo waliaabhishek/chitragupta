@@ -15,11 +15,12 @@ from plugins.confluent_cloud.storage.module import CCloudStorageModule
 from tests.unit.core.preview.conftest import preview_module
 
 
-def _backend(tmp_path: Path) -> SQLModelBackend:
+def _backend(tmp_path: Path, *, focus_preview_enabled: bool = False) -> SQLModelBackend:
     backend = SQLModelBackend(
         f"sqlite:///{tmp_path / 'preview.db'}",
         CCloudStorageModule(),
         use_migrations=False,
+        focus_preview_enabled=focus_preview_enabled,
     )
     backend.create_tables()
     return backend
@@ -393,7 +394,7 @@ def test_request_repository_enforces_transitions_and_tenant_isolation(tmp_path: 
             assert uow.requests.mark_running("request-1", datetime(2026, 7, 3, 2, tzinfo=UTC)) is None
             uow.commit()
 
-        with backend.create_preview_read_unit_of_work() as uow:
+        with backend.create_preview_metadata_read_unit_of_work() as uow:
             assert uow.requests.get_for_owner("request-1", "confluent_cloud", "tenant-1") is not None
             assert uow.requests.get_for_owner("request-1", "confluent_cloud", "tenant-2") is None
     finally:
@@ -548,19 +549,25 @@ def test_calculation_coverage_entry_rejects_empty_identity_and_naive_completion(
 
 
 def test_preview_uows_expose_full_protocol_shape_and_close_sessions(tmp_path: Path) -> None:
-    backend = _backend(tmp_path)
+    backend = _backend(tmp_path, focus_preview_enabled=True)
     persistence = preview_module("persistence")
     try:
-        read_uow = backend.create_preview_read_unit_of_work()
-        assert isinstance(read_uow, persistence.PreviewReadUnitOfWork)
-        with read_uow as opened:
+        metadata_uow = backend.create_preview_metadata_read_unit_of_work()
+        assert isinstance(metadata_uow, persistence.PreviewMetadataReadUnitOfWork)
+        with metadata_uow as opened:
             assert opened.requests is not None
+            assert opened.revisions is not None
+        assert metadata_uow._session is None
+
+        generation_uow = backend.create_preview_generation_read_unit_of_work()
+        with generation_uow as opened:
+            assert isinstance(opened, persistence.PreviewGenerationReadUnitOfWork)
             assert opened.calculations is not None
             assert opened.cost_evidence is not None
             assert opened.allocation_evidence is not None
             assert opened.resources is not None
             assert opened.identities is not None
-        assert read_uow._session is None
+        assert generation_uow._session is None
 
         write_uow = backend.create_preview_write_unit_of_work()
         assert isinstance(write_uow, persistence.PreviewWriteUnitOfWork)
@@ -573,36 +580,38 @@ def test_preview_uows_expose_full_protocol_shape_and_close_sessions(tmp_path: Pa
 
 
 def test_preview_repository_uow_and_backend_contracts_are_structural(tmp_path: Path) -> None:
-    backend = _backend(tmp_path)
+    backend = _backend(tmp_path, focus_preview_enabled=True)
     persistence = preview_module("persistence")
     try:
         with backend.create_preview_write_unit_of_work() as write_uow:
             assert isinstance(write_uow.requests, persistence.PreviewRequestRepository)
-        with backend.create_preview_read_unit_of_work() as read_uow:
+        with backend.create_preview_metadata_read_unit_of_work() as read_uow:
             assert isinstance(read_uow.requests, persistence.PreviewRequestRepository)
-            assert isinstance(read_uow.calculations, persistence.PreviewCalculationRepository)
+            assert isinstance(read_uow.revisions, persistence.PreviewRevisionRepository)
+        with backend.create_preview_generation_read_unit_of_work() as generation_uow:
+            assert isinstance(generation_uow.calculations, persistence.PreviewCalculationRepository)
 
         assert isinstance(backend, persistence.PreviewStorageBackend)
         assert get_type_hints(persistence.PreviewWriteUnitOfWork)["requests"] is persistence.PreviewRequestRepository
-        read_hints = get_type_hints(persistence.PreviewReadUnitOfWork)
+        read_hints = get_type_hints(persistence.PreviewMetadataReadUnitOfWork)
         assert read_hints["requests"] is persistence.PreviewRequestRepository
-        assert read_hints["calculations"] is persistence.PreviewCalculationRepository
+        assert read_hints["revisions"] is persistence.PreviewRevisionRepository
+        generation_hints = get_type_hints(persistence.PreviewGenerationReadUnitOfWork)
+        assert generation_hints["calculations"] is persistence.PreviewCalculationRepository
     finally:
         backend.dispose()
 
 
-def test_preview_read_uow_closes_session_when_repository_validation_fails(tmp_path: Path) -> None:
+def test_preview_generation_uow_is_unavailable_without_opt_in_plugin_support(tmp_path: Path) -> None:
+    storage_availability = preview_module("storage_availability")
     backend = SQLModelBackend(
         f"sqlite:///{tmp_path / 'unsupported.db'}",
         CoreStorageModule(),
         use_migrations=False,
     )
     backend.create_tables()
-    read_uow = backend.create_preview_read_unit_of_work()
     try:
-        with pytest.raises(TypeError, match="preview evidence support"):
-            read_uow.__enter__()
-        assert read_uow._session is None
+        with pytest.raises(storage_availability.PreviewEvidenceUnavailableError):
+            backend.create_preview_generation_read_unit_of_work()
     finally:
-        read_uow.__exit__(None, None, None)
         backend.dispose()

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from fastapi.testclient import TestClient
 
@@ -10,6 +10,7 @@ from core.api.topic_attribution_status import TopicAttributionStatus, resolve_to
 from core.config.models import AppSettings, PluginSettingsBase, StorageConfig, TenantConfig
 from core.metrics.config import MetricsConnectionConfig
 from plugins.confluent_cloud.config import CCloudCredentials, CCloudPluginConfig, TopicAttributionConfig
+from tests.integration.core.api.backend_provider import install_backend
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -216,11 +217,8 @@ class TestListTenantsTopicAttributionStatus:
         app = create_app(settings, mode="api")
         backend = _make_backend()
 
-        with (
-            patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"),
-            patch("core.api.routes.tenants.get_or_create_backend", return_value=backend),
-            TestClient(app) as client,
-        ):
+        with TestClient(app) as client:
+            install_backend(app, "acme", backend)
             response = client.get("/api/v1/tenants")
 
         assert response.status_code == 200
@@ -239,11 +237,8 @@ class TestListTenantsTopicAttributionStatus:
         app = create_app(settings, mode="api")
         backend = _make_backend()
 
-        with (
-            patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"),
-            patch("core.api.routes.tenants.get_or_create_backend", return_value=backend),
-            TestClient(app) as client,
-        ):
+        with TestClient(app) as client:
+            install_backend(app, "acme", backend)
             response = client.get("/api/v1/tenants")
 
         assert response.status_code == 200
@@ -273,11 +268,8 @@ class TestListTenantsTopicAttributionStatus:
         app = create_app(settings, mode="api")
         backend = _make_backend()
 
-        with (
-            patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"),
-            patch("core.api.routes.tenants.get_or_create_backend", return_value=backend),
-            TestClient(app) as client,
-        ):
+        with TestClient(app) as client:
+            install_backend(app, "acme", backend)
             response = client.get("/api/v1/tenants")
 
         assert response.status_code == 200
@@ -303,11 +295,8 @@ class TestTenantStatusTopicAttributionStatus:
         app = create_app(settings, mode="api")
         backend = _make_backend()
 
-        with (
-            patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"),
-            patch("core.api.dependencies.get_or_create_backend", return_value=backend),
-            TestClient(app) as client,
-        ):
+        with TestClient(app) as client:
+            install_backend(app, "acme", backend)
             response = client.get("/api/v1/tenants/acme/status")
 
         assert response.status_code == 200
@@ -324,11 +313,8 @@ class TestTenantStatusTopicAttributionStatus:
         app = create_app(settings, mode="api")
         backend = _make_backend()
 
-        with (
-            patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"),
-            patch("core.api.dependencies.get_or_create_backend", return_value=backend),
-            TestClient(app) as client,
-        ):
+        with TestClient(app) as client:
+            install_backend(app, "acme", backend)
             response = client.get("/api/v1/tenants/acme/status")
 
         assert response.status_code == 200
@@ -353,11 +339,8 @@ class TestReadinessTopicAttributionStatus:
         backend = _make_readiness_backend()
 
         readiness_module._readiness_cache = None  # reset TTL cache to avoid ordering dependency
-        with (
-            patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"),
-            patch("core.api.routes.readiness.get_or_create_backend", return_value=backend),
-            TestClient(app) as client,
-        ):
+        with TestClient(app) as client:
+            install_backend(app, "acme", backend)
             response = client.get("/api/v1/readiness")
 
         assert response.status_code == 200

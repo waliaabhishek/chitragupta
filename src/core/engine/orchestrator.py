@@ -4,13 +4,13 @@ import calendar
 import logging
 import time
 import uuid
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from datetime import date as date_type
 from decimal import Decimal
-from inspect import getattr_static
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from core.engine.allocation import AllocationContext, AllocatorRegistry
@@ -20,12 +20,34 @@ from core.engine.loading import load_protocol_callable
 from core.models.chargeback import ChargebackRow, CostType
 from core.models.identity import SENTINEL_IDENTITY_TYPES, CoreIdentity, IdentityResolution, IdentitySet
 from core.models.pipeline import PipelineState
-from core.plugin.protocols import OverlayPlugin, SupplementalResourceGatherer, TopicDiscoveryPlugin
-from core.plugin.registry import EcosystemBundle
-from core.storage.interface import (
-    AllocationLineageRepository,
-    AllocationLineageRunCapture,
+from core.plugin.protocols import (
+    OverlayPlugin,
+    PreviewOrganizationGatherer,
+    SupplementalResourceGatherer,
+    TopicDiscoveryPlugin,
 )
+from core.plugin.registry import EcosystemBundle
+from core.preview.evidence import (
+    AllocationLineageRunStatus,
+    AllocationLineageUnavailableReason,
+    AllocationLineageUnavailableRun,
+    PreviewSourceAttempt,
+    SourceAttemptFailureReason,
+    SourceAttemptFinalStatus,
+    SourceAttemptStatus,
+)
+from core.preview.evidence_capture import (
+    NativeSourceEvidenceCapture,
+    NativeSourceEvidenceCostInput,
+    SourceAttemptBeginFailure,
+    SourceCaptureFailure,
+    SourceEvidenceStorageUnavailable,
+)
+from core.preview.organization_authority import (
+    OrganizationAuthorityFailureReason,
+    OrganizationAuthorityFinalStatus,
+)
+from core.storage.interface import AllocationLineageRunCapture
 
 if TYPE_CHECKING:
     from core.config.models import PluginSettingsBase, TenantConfig
@@ -65,18 +87,46 @@ def _calculation_utc_now() -> datetime:
     return datetime.now(UTC)
 
 
-def _allocation_lineage_repository(value: object) -> AllocationLineageRepository | None:
-    """Resolve the optional writer without triggering dynamic mock attributes."""
-    try:
-        getattr_static(value, "replace_calculation_lineage")
-    except AttributeError:
-        return None
-    writer = getattr(value, "replace_calculation_lineage", None)
-    return cast("AllocationLineageRepository", value) if callable(writer) else None
-
-
 class GatherFailureThresholdError(Exception):
     """Raised when consecutive gather failures exceed threshold."""
+
+
+class LineageCaptureFailureReason(StrEnum):
+    CONSTRUCTION_FAILED = "construction_failed"
+
+
+@dataclass(frozen=True)
+class CalculationPhaseResult:
+    ecosystem: str
+    tenant_id: str
+    tracking_date: date_type
+    rows_written: int
+    calculation_id: str
+    calculation_completed_at: datetime
+    lineage_capture: AllocationLineageRunCapture | None
+    lineage_failure: LineageCaptureFailureReason | None
+
+    def __post_init__(self) -> None:
+        if not self.ecosystem.strip() or not self.tenant_id.strip() or not self.calculation_id.strip():
+            raise ValueError("calculation identity must not be blank")
+        if (
+            self.rows_written < 0
+            or self.calculation_completed_at.tzinfo is None
+            or self.calculation_completed_at.utcoffset() is None
+        ):
+            raise ValueError("invalid calculation result")
+        if (self.lineage_capture is None) == (self.lineage_failure is None):
+            raise ValueError("calculation result requires exactly one lineage outcome")
+        if self.lineage_failure is not None and not isinstance(self.lineage_failure, LineageCaptureFailureReason):
+            raise ValueError("calculation result has an invalid lineage failure")
+        capture = self.lineage_capture
+        if capture is not None and (
+            capture.ecosystem != self.ecosystem
+            or capture.tenant_id != self.tenant_id
+            or capture.tracking_date != self.tracking_date
+            or capture.calculation_id != self.calculation_id
+        ):
+            raise ValueError("lineage capture identity does not match calculation")
 
 
 _DEFAULT_GRANULARITY_DURATION: dict[str, timedelta] = {
@@ -131,6 +181,13 @@ class PipelineRunResult:
     fatal: bool = False  # True when tenant is permanently failed
 
 
+class SourceGatherDisposition(StrEnum):
+    NOT_ATTEMPTED = "not_attempted"
+    ATTEMPTED = "attempted"
+    BEGIN_FAILED = "begin_failed"
+    STORAGE_UNAVAILABLE = "storage_unavailable"
+
+
 @dataclass
 class GatherResult:
     """Result from a single GatherPhase.run() call."""
@@ -138,6 +195,95 @@ class GatherResult:
     dates_gathered: int
     errors: list[str]
     skipped: bool = False  # True when throttled — no gather performed
+    source_disposition: SourceGatherDisposition = SourceGatherDisposition.NOT_ATTEMPTED
+    source_refresh_token: str | None = None
+    source_attempt_sequence: int | None = None
+    source_capture: NativeSourceEvidenceCapture | None = None
+    source_failure: SourceCaptureFailure | None = None
+
+    def __post_init__(self) -> None:
+        if self.skipped and (
+            self.dates_gathered != 0
+            or self.errors
+            or self.source_disposition is not SourceGatherDisposition.NOT_ATTEMPTED
+            or self.source_refresh_token is not None
+            or self.source_attempt_sequence is not None
+            or self.source_capture is not None
+            or self.source_failure is not None
+        ):
+            raise ValueError("skipped gather result must have an empty not-attempted outcome")
+        BillingGatherResult(
+            dates=frozenset(),
+            source_disposition=self.source_disposition,
+            source_refresh_token=self.source_refresh_token,
+            source_attempt_sequence=self.source_attempt_sequence,
+            source_capture=self.source_capture,
+            source_failure=self.source_failure,
+        )
+
+
+@dataclass(frozen=True)
+class GatherPlan:
+    now: datetime
+    refresh_start: datetime
+    refresh_end: datetime
+    should_refresh: bool
+
+    def __post_init__(self) -> None:
+        if not all(
+            value.tzinfo is not None and value.utcoffset() is not None
+            for value in (
+                self.now,
+                self.refresh_start,
+                self.refresh_end,
+            )
+        ):
+            raise ValueError("gather plan timestamps must be timezone-aware")
+        if self.refresh_start >= self.refresh_end:
+            raise ValueError("gather plan bounds must be ordered")
+
+
+class PreviewOrganizationBindingConflictError(RuntimeError):
+    """A provider organization observation conflicts with the immutable binding."""
+
+
+@dataclass(frozen=True)
+class BillingGatherResult:
+    dates: frozenset[date_type]
+    source_disposition: SourceGatherDisposition = SourceGatherDisposition.NOT_ATTEMPTED
+    source_refresh_token: str | None = None
+    source_attempt_sequence: int | None = None
+    source_capture: NativeSourceEvidenceCapture | None = None
+    source_failure: SourceCaptureFailure | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.source_disposition, SourceGatherDisposition):
+            raise ValueError("invalid source gather disposition")
+        if self.source_failure is not None and not isinstance(self.source_failure, SourceCaptureFailure):
+            raise ValueError("invalid source gather failure")
+        payload_empty = (
+            self.source_refresh_token is None
+            and self.source_attempt_sequence is None
+            and self.source_capture is None
+            and self.source_failure is None
+        )
+        if self.source_disposition in {
+            SourceGatherDisposition.NOT_ATTEMPTED,
+            SourceGatherDisposition.STORAGE_UNAVAILABLE,
+        }:
+            if not payload_empty:
+                raise ValueError("source gather disposition cannot carry source payload")
+            return
+        if not self.source_refresh_token or not self.source_attempt_sequence or self.source_attempt_sequence <= 0:
+            raise ValueError("attempted source gather requires durable attempt identity")
+        if self.source_disposition is SourceGatherDisposition.BEGIN_FAILED:
+            if self.source_capture is not None or self.source_failure is not SourceCaptureFailure.ATTEMPT_BEGIN_FAILED:
+                raise ValueError("begin-failed source gather requires its closed failure")
+            return
+        if (self.source_capture is None) == (self.source_failure is None):
+            raise ValueError("attempted source gather requires exactly one capture outcome")
+        if self.source_failure is SourceCaptureFailure.ATTEMPT_BEGIN_FAILED:
+            raise ValueError("attempted source gather cannot carry begin failure")
 
 
 class RetryChecker(Protocol):
@@ -204,7 +350,16 @@ class GatherPhase:
         ta_config = _get_ta_config(bundle.plugin)
         self._topic_attribution_enabled: bool = bool(ta_config and ta_config.enabled)
 
-    def run(self, uow: UnitOfWork | None = None) -> GatherResult:
+    def run(
+        self,
+        uow: UnitOfWork | None = None,
+        *,
+        plan: GatherPlan | None = None,
+        source_attempt: PreviewSourceAttempt
+        | SourceAttemptBeginFailure
+        | SourceEvidenceStorageUnavailable
+        | None = None,
+    ) -> GatherResult:
         """Execute full gather cycle.
 
         When called without uow (new path): runs Phase 1 (build_shared_context) +
@@ -213,8 +368,45 @@ class GatherPhase:
         detection and billing. Caller owns UoW lifecycle (open + commit).
         """
         if uow is None:
+            if plan is not None or source_attempt is not None:
+                raise ValueError("resource-only gather does not accept a plan or source state")
             return self._run_gather_only()
-        return self._run_full(uow)
+        if plan is None:
+            if source_attempt is not None:
+                raise ValueError("source state requires an explicit gather plan")
+            effective_plan = self.plan_refresh(datetime.now(UTC))
+            accept_direct_refresh = True
+        else:
+            effective_plan = plan
+            accept_direct_refresh = False
+        if not effective_plan.should_refresh:
+            return GatherResult(dates_gathered=0, errors=[], skipped=True)
+        result = self._run_full(uow, plan=effective_plan, source_attempt=source_attempt)
+        if accept_direct_refresh:
+            self.accept_refresh(effective_plan)
+        return result
+
+    def plan_refresh(self, now: datetime) -> GatherPlan:
+        normalized = _ensure_utc(now)
+        raw_start = normalized - timedelta(days=self._tenant_config.lookback_days)
+        raw_end = normalized - timedelta(days=self._tenant_config.cutoff_days)
+        if self._tenant_config.focus_preview_enabled:
+            start = datetime(raw_start.year, raw_start.month, raw_start.day, tzinfo=UTC)
+            end = datetime(raw_end.year, raw_end.month, raw_end.day, tzinfo=UTC)
+        else:
+            start = raw_start
+            end = raw_end
+        return GatherPlan(
+            now=normalized,
+            refresh_start=start,
+            refresh_end=end,
+            should_refresh=self._should_refresh(normalized),
+        )
+
+    def accept_refresh(self, plan: GatherPlan) -> None:
+        if not plan.should_refresh:
+            raise ValueError("cannot accept a throttled gather plan")
+        self._last_resource_gather_at = plan.now
 
     def _run_gather_only(self) -> GatherResult:
         """Phase 1 + Phase 2 gather only. Used when run() called without uow.
@@ -246,17 +438,17 @@ class GatherPhase:
 
         return GatherResult(dates_gathered=0, errors=gather_errors)
 
-    def _run_full(self, uow: UnitOfWork) -> GatherResult:
+    def _run_full(
+        self,
+        uow: UnitOfWork,
+        *,
+        plan: GatherPlan,
+        source_attempt: PreviewSourceAttempt | SourceAttemptBeginFailure | SourceEvidenceStorageUnavailable | None,
+    ) -> GatherResult:
         """Full gather cycle with deletion detection and billing. Caller owns UoW."""
-        now = datetime.now(UTC)
-
-        if not self._should_refresh(now):
-            assert self._last_resource_gather_at is not None  # guaranteed by _should_refresh logic
-            logger.debug(
-                "Skipping resource/billing refresh — last gather was %s ago",
-                now - self._last_resource_gather_at,
-            )
-            return GatherResult(dates_gathered=0, errors=[], skipped=True)
+        if not plan.should_refresh:
+            raise ValueError("throttled gather plan cannot execute")
+        now = plan.now
 
         handlers = tuple(self._bundle.handlers.items())
         declared_handlers_by_type: dict[str, set[str]] = {}
@@ -332,7 +524,8 @@ class GatherPhase:
         else:
             logger.warning("Skipping identity deletion detection — incomplete gather for %s", self._tenant_id)
 
-        gathered_billing_dates = self._gather_billing(uow, now)
+        billing_result = self._gather_billing(uow, plan, source_attempt=source_attempt)
+        gathered_billing_dates = set(billing_result.dates)
 
         for billing_date in gathered_billing_dates:
             _ensure_pipeline_state(uow, self._ecosystem, self._tenant_id, billing_date)
@@ -364,9 +557,15 @@ class GatherPhase:
                 )
 
         self._apply_recalculation_window(uow, gathered_billing_dates, now)
-        self._last_resource_gather_at = now
-
-        return GatherResult(dates_gathered=len(gathered_billing_dates), errors=gather_errors)
+        return GatherResult(
+            dates_gathered=len(gathered_billing_dates),
+            errors=gather_errors,
+            source_disposition=billing_result.source_disposition,
+            source_refresh_token=billing_result.source_refresh_token,
+            source_attempt_sequence=billing_result.source_attempt_sequence,
+            source_capture=billing_result.source_capture,
+            source_failure=billing_result.source_failure,
+        )
 
     def _should_refresh(self, now: datetime) -> bool:
         return self._last_resource_gather_at is None or (now - self._last_resource_gather_at) >= self._min_refresh_gap
@@ -402,31 +601,30 @@ class GatherPhase:
         if not isinstance(plugin, SupplementalResourceGatherer):
             return
         for resource_type in plugin.supplemental_resource_types:
+            if resource_type == "organization":
+                continue
             try:
                 resources = list(plugin.gather_supplemental_resources(self._tenant_id, resource_type, uow))
                 if any(resource.resource_type != resource_type for resource in resources):
                     raise ValueError(f"supplemental {resource_type} gather returned another resource type")
-                if resource_type == "organization":
-                    self._reconcile_organization_resources(uow, resources, now)
-                else:
-                    for resource in resources:
-                        uow.resources.upsert(resource)
-                    observed_ids = {resource.resource_id for resource in resources}
-                    active, _ = uow.resources.find_active_at(
-                        self._ecosystem,
-                        self._tenant_id,
-                        now,
-                        resource_type=resource_type,
-                        count=False,
-                    )
-                    for existing in active:
-                        if existing.resource_type == resource_type and existing.resource_id not in observed_ids:
-                            uow.resources.mark_deleted(
-                                self._ecosystem,
-                                self._tenant_id,
-                                existing.resource_id,
-                                now,
-                            )
+                for resource in resources:
+                    uow.resources.upsert(resource)
+                observed_ids = {resource.resource_id for resource in resources}
+                active, _ = uow.resources.find_active_at(
+                    self._ecosystem,
+                    self._tenant_id,
+                    now,
+                    resource_type=resource_type,
+                    count=False,
+                )
+                for existing in active:
+                    if existing.resource_type == resource_type and existing.resource_id not in observed_ids:
+                        uow.resources.mark_deleted(
+                            self._ecosystem,
+                            self._tenant_id,
+                            existing.resource_id,
+                            now,
+                        )
             except Exception as exc:
                 logger.exception("Supplemental %s gather failed: %s", resource_type, exc)
                 gather_errors.append(f"Supplemental {resource_type} gather failed: {exc}")
@@ -451,8 +649,11 @@ class GatherPhase:
             for resource in active_organizations
             if resource.metadata.get("organization_binding_state") == "bound"
         ]
+        legacy_unclassified = [
+            resource for resource in active_organizations if "organization_binding_state" not in resource.metadata
+        ]
         if len(bound) > 1:
-            raise ValueError("multiple provider organization bindings are active")
+            raise PreviewOrganizationBindingConflictError("multiple provider organization bindings are active")
         observed_by_id = {resource.resource_id: resource for resource in observed if resource.resource_id.strip()}
         bound_id = bound[0].resource_id if bound else None
         if len(observed) != 1 or len(observed_by_id) != 1:
@@ -472,7 +673,24 @@ class GatherPhase:
                     resource, metadata={**resource.metadata, "organization_binding_state": "conflicting_observation"}
                 )
             )
-            raise ValueError("provider organization observation conflicts with the immutable binding")
+            raise PreviewOrganizationBindingConflictError(
+                "provider organization observation conflicts with the immutable binding"
+            )
+        if (
+            not bound
+            and legacy_unclassified
+            and (len(active_organizations) != 1 or observed_id != legacy_unclassified[0].resource_id)
+        ):
+            if observed_id not in {item.resource_id for item in legacy_unclassified}:
+                uow.resources.upsert(
+                    replace(  # type: ignore[type-var]  # runtime Resource implementations are dataclasses
+                        resource,
+                        metadata={**resource.metadata, "organization_binding_state": "conflicting_observation"},
+                    )
+                )
+            raise PreviewOrganizationBindingConflictError(
+                "provider organization observation conflicts with legacy organization state"
+            )
         uow.resources.upsert(
             replace(  # type: ignore[type-var]  # runtime Resource implementations are dataclasses
                 resource,
@@ -602,16 +820,65 @@ class GatherPhase:
             )
         self._detect_entity_deletions(uow.identities, gathered_identity_ids, "identities", lambda i: i.identity_id, now)
 
-    def _gather_billing(self, uow: UnitOfWork, now: datetime) -> set[date_type]:
-        start = now - timedelta(days=self._tenant_config.lookback_days)
-        end = now - timedelta(days=self._tenant_config.cutoff_days)
+    def _gather_billing(
+        self,
+        uow: UnitOfWork,
+        plan: GatherPlan,
+        *,
+        source_attempt: PreviewSourceAttempt | SourceAttemptBeginFailure | SourceEvidenceStorageUnavailable | None,
+    ) -> BillingGatherResult:
+        start = plan.refresh_start
+        end = plan.refresh_end
         cost_input = self._bundle.plugin.get_cost_input()
         gathered: set[date_type] = set()
-        for line in cost_input.gather(self._tenant_id, start, end, uow):
+        source_capture = None
+        source_failure = None
+        lines: Iterable[BillingLineItem]
+        if isinstance(source_attempt, PreviewSourceAttempt) and isinstance(cost_input, NativeSourceEvidenceCostInput):
+            native_result = cost_input.gather_with_native_source_evidence(self._tenant_id, start, end)
+            lines = native_result.billing_lines
+            source_capture = native_result.capture
+            source_failure = native_result.capture_failure
+        else:
+            lines = cost_input.gather(self._tenant_id, start, end, uow)
+            if isinstance(source_attempt, PreviewSourceAttempt):
+                source_failure = SourceCaptureFailure.CAPABILITY_UNAVAILABLE
+        for line in lines:
             line = replace(line, timestamp=_ensure_utc(line.timestamp))  # type: ignore[type-var]  # runtime objects are dataclasses behind BillingLineItem Protocol
             uow.billing.upsert(line)
             gathered.add(line.timestamp.date())
-        return gathered
+        if source_attempt is None:
+            return BillingGatherResult(dates=frozenset(gathered))
+        if isinstance(source_attempt, SourceEvidenceStorageUnavailable):
+            return BillingGatherResult(
+                dates=frozenset(gathered),
+                source_disposition=SourceGatherDisposition.STORAGE_UNAVAILABLE,
+            )
+        if isinstance(source_attempt, SourceAttemptBeginFailure):
+            from core.preview.persistence import PreviewSourceAttemptFallbackUnitOfWork
+
+            if not isinstance(uow, PreviewSourceAttemptFallbackUnitOfWork):
+                raise RuntimeError("source attempt fallback storage is unavailable")
+            fallback = uow.source_attempt_fallback.ensure_begin_failed(
+                source_attempt,
+                completed_at=datetime.now(UTC),
+            )
+            return BillingGatherResult(
+                dates=frozenset(gathered),
+                source_disposition=SourceGatherDisposition.BEGIN_FAILED,
+                source_refresh_token=source_attempt.refresh_token,
+                source_attempt_sequence=fallback.attempt_sequence,
+                source_capture=None,
+                source_failure=SourceCaptureFailure.ATTEMPT_BEGIN_FAILED,
+            )
+        return BillingGatherResult(
+            dates=frozenset(gathered),
+            source_disposition=SourceGatherDisposition.ATTEMPTED,
+            source_refresh_token=source_attempt.refresh_token,
+            source_attempt_sequence=source_attempt.attempt_sequence,
+            source_capture=source_capture,
+            source_failure=source_failure,
+        )
 
     def _apply_recalculation_window(
         self, uow: UnitOfWork, gathered_billing_dates: set[date_type], now: datetime
@@ -674,69 +941,73 @@ class CalculatePhase:
         calculation_run_id: int | None = None,
     ) -> int:
         """Calculate chargebacks for a single date. Returns rows written."""
+        result = self._calculate(
+            uow,
+            tracking_date,
+            calculation_run_id=calculation_run_id,
+            capture_lineage=False,
+        )
+        assert isinstance(result, int)
+        return result
+
+    def run_with_lineage_capture(
+        self,
+        uow: UnitOfWork,
+        tracking_date: date_type,
+        *,
+        calculation_run_id: int | None = None,
+    ) -> CalculationPhaseResult:
+        """Calculate normally and return Preview lineage without persisting it."""
+        result = self._calculate(
+            uow,
+            tracking_date,
+            calculation_run_id=calculation_run_id,
+            capture_lineage=True,
+        )
+        assert isinstance(result, CalculationPhaseResult)
+        return result
+
+    def _calculate(
+        self,
+        uow: UnitOfWork,
+        tracking_date: date_type,
+        *,
+        calculation_run_id: int | None,
+        capture_lineage: bool,
+    ) -> int | CalculationPhaseResult:
         calculation_id = self._calculation_id_factory()
         if not calculation_id:
             raise ValueError("calculation_id must not be empty")
-        lineage_repo = _allocation_lineage_repository(getattr(uow, "chargebacks", None))
         billing_lines = uow.billing.find_by_date(self._ecosystem, self._tenant_id, tracking_date)
-
-        if not billing_lines:
-            completed_at = self._completion_time()
-            if lineage_repo is not None:
-                lineage_repo.replace_calculation_lineage(
-                    AllocationLineageRunCapture(
-                        ecosystem=self._ecosystem,
-                        tenant_id=self._tenant_id,
-                        tracking_date=tracking_date,
-                        calculation_id=calculation_id,
-                        captures=(),
-                    ),
-                    calculation_completed_at=completed_at,
-                )
-            self._mark_success(
-                uow,
-                tracking_date,
-                calculation_run_id,
-                calculation_id=calculation_id,
-                completed_at=completed_at,
-            )
-            return 0
-
-        line_window_cache = self._compute_line_window_cache(billing_lines)
-        billing_windows = self._compute_billing_windows(billing_lines, line_window_cache)
-        prefetched_metrics, failed_metric_keys = self._prefetch_metrics(billing_lines, line_window_cache)
-        tenant_period_cache = self._build_tenant_period_cache(uow, billing_windows)
-        resource_cache = self._build_resource_cache(uow, billing_windows)
-
-        all_rows: list[ChargebackRow] = []
         lineage_captures = []
-        for line in billing_lines:
-            rows = self._collect_billing_line_rows(
-                line,
-                uow,
-                prefetched_metrics,
-                failed_metric_keys,
-                tenant_period_cache,
-                resource_cache,
-                line_window_cache,
-            )
-            all_rows.extend(rows)
-            if lineage_repo is not None:
-                lineage_captures.append(build_allocation_lineage_capture(origin=line, rows=tuple(rows)))
-
-        total_rows = uow.chargebacks.upsert_batch(all_rows)
+        lineage_failure = None
+        if not billing_lines:
+            total_rows = 0
+        else:
+            line_window_cache = self._compute_line_window_cache(billing_lines)
+            billing_windows = self._compute_billing_windows(billing_lines, line_window_cache)
+            prefetched_metrics, failed_metric_keys = self._prefetch_metrics(billing_lines, line_window_cache)
+            tenant_period_cache = self._build_tenant_period_cache(uow, billing_windows)
+            resource_cache = self._build_resource_cache(uow, billing_windows)
+            all_rows: list[ChargebackRow] = []
+            for line in billing_lines:
+                rows = self._collect_billing_line_rows(
+                    line,
+                    uow,
+                    prefetched_metrics,
+                    failed_metric_keys,
+                    tenant_period_cache,
+                    resource_cache,
+                    line_window_cache,
+                )
+                all_rows.extend(rows)
+                if capture_lineage:
+                    try:
+                        lineage_captures.append(build_allocation_lineage_capture(origin=line, rows=tuple(rows)))
+                    except TypeError, ValueError:
+                        lineage_failure = LineageCaptureFailureReason.CONSTRUCTION_FAILED
+            total_rows = uow.chargebacks.upsert_batch(all_rows)
         completed_at = self._completion_time()
-        if lineage_repo is not None:
-            lineage_repo.replace_calculation_lineage(
-                AllocationLineageRunCapture(
-                    ecosystem=self._ecosystem,
-                    tenant_id=self._tenant_id,
-                    tracking_date=tracking_date,
-                    calculation_id=calculation_id,
-                    captures=tuple(lineage_captures),
-                ),
-                calculation_completed_at=completed_at,
-            )
         self._mark_success(
             uow,
             tracking_date,
@@ -744,7 +1015,29 @@ class CalculatePhase:
             calculation_id=calculation_id,
             completed_at=completed_at,
         )
-        return total_rows
+        if not capture_lineage:
+            return total_rows
+        capture = (
+            None
+            if lineage_failure is not None
+            else AllocationLineageRunCapture(
+                ecosystem=self._ecosystem,
+                tenant_id=self._tenant_id,
+                tracking_date=tracking_date,
+                calculation_id=calculation_id,
+                captures=tuple(lineage_captures),
+            )
+        )
+        return CalculationPhaseResult(
+            ecosystem=self._ecosystem,
+            tenant_id=self._tenant_id,
+            tracking_date=tracking_date,
+            rows_written=total_rows,
+            calculation_id=calculation_id,
+            calculation_completed_at=completed_at,
+            lineage_capture=capture,
+            lineage_failure=lineage_failure,
+        )
 
     def _completion_time(self) -> datetime:
         completed_at = self._calculation_clock()
@@ -1188,6 +1481,306 @@ class ChargebackOrchestrator:
         if self._progress_callback is not None:
             self._progress_callback(stage, current_date)
 
+    def _prepare_preview_source_state(
+        self,
+        plan: GatherPlan,
+    ) -> PreviewSourceAttempt | SourceAttemptBeginFailure | SourceEvidenceStorageUnavailable | None:
+        if not self._tenant_config.focus_preview_enabled:
+            return None
+        from core.preview.persistence import PreviewEvidenceStorageBackend
+        from core.preview.storage_availability import PreviewEvidenceAvailabilityState
+
+        if (
+            not isinstance(self._storage_backend, PreviewEvidenceStorageBackend)
+            or self._storage_backend.preview_evidence_availability.state is not PreviewEvidenceAvailabilityState.READY
+        ):
+            return SourceEvidenceStorageUnavailable(
+                ecosystem=self._ecosystem,
+                tenant_id=self._tenant_id,
+                refresh_start=plan.refresh_start,
+                refresh_end=plan.refresh_end,
+            )
+        token = str(uuid.uuid4())
+        try:
+            with self._storage_backend.create_preview_evidence_unit_of_work() as evidence_uow:
+                attempt = evidence_uow.source_readiness.begin_attempt(
+                    self._ecosystem,
+                    self._tenant_id,
+                    token,
+                    plan.refresh_start,
+                    plan.refresh_end,
+                    plan.now,
+                )
+                evidence_uow.commit()
+            return attempt
+        except Exception as exc:
+            logger.warning(
+                "Preview source attempt begin failed tenant=%s error_type=%s",
+                self._tenant_id,
+                type(exc).__name__,
+            )
+            return SourceAttemptBeginFailure(
+                refresh_token=token,
+                ecosystem=self._ecosystem,
+                tenant_id=self._tenant_id,
+                refresh_start=plan.refresh_start,
+                refresh_end=plan.refresh_end,
+                started_at=plan.now,
+            )
+
+    def _finalize_preview_source_failure(
+        self,
+        attempt_sequence: int,
+        *,
+        status: SourceAttemptFinalStatus,
+        reason: SourceAttemptFailureReason,
+    ) -> None:
+        from core.preview.persistence import PreviewEvidenceStorageBackend
+
+        if not isinstance(self._storage_backend, PreviewEvidenceStorageBackend):
+            return
+        try:
+            with self._storage_backend.create_preview_evidence_unit_of_work() as evidence_uow:
+                evidence_uow.source_readiness.finalize_attempt(
+                    attempt_sequence,
+                    status,
+                    completed_at=datetime.now(UTC),
+                    reason=reason,
+                )
+                evidence_uow.commit()
+        except Exception as exc:
+            logger.warning(
+                "Preview source attempt finalization failed tenant=%s error_type=%s",
+                self._tenant_id,
+                type(exc).__name__,
+            )
+
+    def _persist_preview_source_capture(self, result: GatherResult) -> None:
+        if result.source_disposition is not SourceGatherDisposition.ATTEMPTED:
+            return
+        assert result.source_attempt_sequence is not None
+        if result.source_capture is None:
+            assert result.source_failure is not None
+            reason = {
+                SourceCaptureFailure.CONSTRUCTION_FAILED: SourceAttemptFailureReason.CONSTRUCTION_FAILED,
+                SourceCaptureFailure.CAPABILITY_UNAVAILABLE: SourceAttemptFailureReason.CAPABILITY_UNAVAILABLE,
+                SourceCaptureFailure.ATTEMPT_BEGIN_FAILED: SourceAttemptFailureReason.ATTEMPT_BEGIN_FAILED,
+            }[result.source_failure]
+            self._finalize_preview_source_failure(
+                result.source_attempt_sequence,
+                status=SourceAttemptFinalStatus.FAILED,
+                reason=reason,
+            )
+            return
+        from core.preview.persistence import PreviewEvidenceStorageBackend
+
+        if not isinstance(self._storage_backend, PreviewEvidenceStorageBackend):
+            return
+        try:
+            with self._storage_backend.create_preview_evidence_unit_of_work() as evidence_uow:
+                result.source_capture.persist(
+                    evidence_uow.source_windows,
+                    evidence_uow.source_readiness,
+                    attempt_sequence=result.source_attempt_sequence,
+                    captured_at=datetime.now(UTC),
+                )
+                evidence_uow.commit()
+        except Exception as exc:
+            logger.warning(
+                "Preview source capture persistence failed tenant=%s error_type=%s",
+                self._tenant_id,
+                type(exc).__name__,
+            )
+            self._finalize_preview_source_failure(
+                result.source_attempt_sequence,
+                status=SourceAttemptFinalStatus.FAILED,
+                reason=SourceAttemptFailureReason.PERSISTENCE_FAILED,
+            )
+
+    def _abort_preview_source_state(
+        self,
+        source_state: PreviewSourceAttempt | SourceAttemptBeginFailure | SourceEvidenceStorageUnavailable | None,
+        *,
+        reason: SourceAttemptFailureReason,
+    ) -> None:
+        from core.preview.persistence import PreviewEvidenceStorageBackend
+
+        if not isinstance(self._storage_backend, PreviewEvidenceStorageBackend):
+            return
+        try:
+            with self._storage_backend.create_preview_evidence_unit_of_work() as evidence_uow:
+                attempt: PreviewSourceAttempt | None
+                if isinstance(source_state, PreviewSourceAttempt):
+                    attempt = source_state
+                elif isinstance(source_state, SourceAttemptBeginFailure):
+                    attempt = evidence_uow.source_readiness.get_by_token(
+                        source_state.ecosystem,
+                        source_state.tenant_id,
+                        source_state.refresh_token,
+                    )
+                    if attempt is None or attempt.status is not SourceAttemptStatus.PENDING:
+                        return
+                else:
+                    return
+                evidence_uow.source_readiness.finalize_attempt(
+                    attempt.attempt_sequence,
+                    SourceAttemptFinalStatus.ABORTED,
+                    completed_at=datetime.now(UTC),
+                    reason=reason,
+                )
+                evidence_uow.commit()
+        except Exception as exc:
+            logger.warning(
+                "Preview source attempt abort failed tenant=%s error_type=%s",
+                self._tenant_id,
+                type(exc).__name__,
+            )
+
+    def _refresh_preview_organization_authority(self) -> None:
+        if not self._tenant_config.focus_preview_enabled:
+            return
+        from core.preview.persistence import PreviewEvidenceStorageBackend
+
+        if not isinstance(self._storage_backend, PreviewEvidenceStorageBackend):
+            return
+        evidence_backend = self._storage_backend
+        started_at = datetime.now(UTC)
+        try:
+            with evidence_backend.create_preview_evidence_unit_of_work() as evidence_uow:
+                attempt = evidence_uow.organization_authority.begin(self._ecosystem, self._tenant_id, started_at)
+                evidence_uow.commit()
+        except Exception as exc:
+            logger.warning(
+                "Preview organization authority begin failed tenant=%s error_type=%s",
+                self._tenant_id,
+                type(exc).__name__,
+            )
+            return
+
+        status = OrganizationAuthorityFinalStatus.UNAVAILABLE
+        reason: OrganizationAuthorityFailureReason | None = OrganizationAuthorityFailureReason.CAPABILITY_UNAVAILABLE
+        organization_id = None
+        plugin = self._bundle.plugin
+        if isinstance(plugin, PreviewOrganizationGatherer):
+            try:
+                resources = plugin.gather_preview_organizations(self._tenant_id)
+            except Exception as exc:
+                reason = OrganizationAuthorityFailureReason.PROVIDER_ERROR
+                logger.warning(
+                    "Preview organization provider call failed tenant=%s error_type=%s",
+                    self._tenant_id,
+                    type(exc).__name__,
+                )
+            else:
+                valid = tuple(resource for resource in resources if resource.resource_id.strip())
+                if len(resources) > 1:
+                    status = OrganizationAuthorityFinalStatus.CONFLICTING
+                    reason = OrganizationAuthorityFailureReason.INVALID_CARDINALITY
+                elif len(valid) != 1:
+                    reason = OrganizationAuthorityFailureReason.INVALID_CARDINALITY
+                else:
+                    binding_conflict = False
+                    try:
+                        with self._storage_backend.create_unit_of_work() as resource_uow:
+                            try:
+                                self._gather_phase._reconcile_organization_resources(
+                                    resource_uow, valid, datetime.now(UTC)
+                                )
+                            except PreviewOrganizationBindingConflictError:
+                                binding_conflict = True
+                            resource_uow.commit()
+                    except Exception as exc:
+                        reason = OrganizationAuthorityFailureReason.RESOURCE_PERSISTENCE_FAILED
+                        logger.warning(
+                            "Preview organization resource persistence failed tenant=%s error_type=%s",
+                            self._tenant_id,
+                            type(exc).__name__,
+                        )
+                    else:
+                        if binding_conflict:
+                            status = OrganizationAuthorityFinalStatus.CONFLICTING
+                            reason = OrganizationAuthorityFailureReason.BINDING_CONFLICT
+                        else:
+                            status = OrganizationAuthorityFinalStatus.AVAILABLE
+                            reason = None
+                            organization_id = valid[0].resource_id
+        completed_at = datetime.now(UTC)
+        for finalize_attempt in range(2):
+            try:
+                with evidence_backend.create_preview_evidence_unit_of_work() as evidence_uow:
+                    evidence_uow.organization_authority.finalize(
+                        attempt.attempt_sequence,
+                        status,
+                        completed_at=completed_at,
+                        organization_id=organization_id,
+                        reason=reason,
+                    )
+                    evidence_uow.commit()
+                break
+            except Exception as exc:
+                if finalize_attempt == 0:
+                    continue
+                logger.warning(
+                    "Preview organization authority finalization failed tenant=%s error_type=%s",
+                    self._tenant_id,
+                    type(exc).__name__,
+                )
+
+    def _lineage_unavailable(
+        self,
+        result: CalculationPhaseResult,
+        reason: AllocationLineageUnavailableReason,
+    ) -> AllocationLineageUnavailableRun:
+        return AllocationLineageUnavailableRun(
+            ecosystem=result.ecosystem,
+            tenant_id=result.tenant_id,
+            tracking_date=result.tracking_date,
+            calculation_id=result.calculation_id,
+            calculation_completed_at=result.calculation_completed_at,
+            status=AllocationLineageRunStatus.UNAVAILABLE,
+            reason=reason,
+        )
+
+    def _persist_preview_lineage(self, result: CalculationPhaseResult) -> None:
+        from core.preview.persistence import PreviewEvidenceStorageBackend
+
+        if not isinstance(self._storage_backend, PreviewEvidenceStorageBackend):
+            return
+        evidence_backend = self._storage_backend
+        try:
+            with evidence_backend.create_preview_evidence_unit_of_work() as evidence_uow:
+                if result.lineage_capture is not None:
+                    evidence_uow.allocation_lineage.replace_calculation_lineage(
+                        result.lineage_capture,
+                        calculation_completed_at=result.calculation_completed_at,
+                    )
+                else:
+                    evidence_uow.allocation_lineage.mark_calculation_lineage_unavailable(
+                        self._lineage_unavailable(result, AllocationLineageUnavailableReason.CAPTURE_FAILED)
+                    )
+                evidence_uow.commit()
+            return
+        except Exception as exc:
+            logger.warning(
+                "Preview allocation lineage persistence failed tenant=%s date=%s error_type=%s",
+                self._tenant_id,
+                result.tracking_date,
+                type(exc).__name__,
+            )
+        try:
+            with evidence_backend.create_preview_evidence_unit_of_work() as evidence_uow:
+                evidence_uow.allocation_lineage.mark_calculation_lineage_unavailable(
+                    self._lineage_unavailable(result, AllocationLineageUnavailableReason.PERSISTENCE_FAILED)
+                )
+                evidence_uow.commit()
+        except Exception as exc:
+            logger.warning(
+                "Preview allocation lineage unavailable marker failed tenant=%s date=%s error_type=%s",
+                self._tenant_id,
+                result.tracking_date,
+                type(exc).__name__,
+            )
+
     def run(self, *, calculation_run_id: int | None = None) -> PipelineRunResult:
         errors: list[str] = []
         dates_gathered = 0
@@ -1195,14 +1788,38 @@ class ChargebackOrchestrator:
         chargeback_rows_written = 0
 
         self._report_progress("gathering")
+        plan = self._gather_phase.plan_refresh(datetime.now(UTC))
+        source_state: PreviewSourceAttempt | SourceAttemptBeginFailure | SourceEvidenceStorageUnavailable | None = None
+        gather_completed = False
         try:
-            with self._storage_backend.create_unit_of_work() as uow:
-                gather_result = self._gather_phase.run(uow)
-                dates_gathered = gather_result.dates_gathered
-                errors.extend(gather_result.errors)
-                uow.commit()
+            if plan.should_refresh:
+                source_state = self._prepare_preview_source_state(plan)
+                with self._storage_backend.create_unit_of_work() as uow:
+                    gather_result = self._gather_phase.run(
+                        uow,
+                        plan=plan,
+                        source_attempt=source_state,
+                    )
+                    dates_gathered = gather_result.dates_gathered
+                    errors.extend(gather_result.errors)
+                    gather_completed = True
+                    uow.commit()
+                self._gather_phase.accept_refresh(plan)
+                self._persist_preview_source_capture(gather_result)
+            else:
+                gather_result = GatherResult(dates_gathered=0, errors=[], skipped=True)
             self._consecutive_gather_failures = 0
+            if not gather_result.skipped:
+                self._refresh_preview_organization_authority()
         except Exception as exc:
+            self._abort_preview_source_state(
+                source_state,
+                reason=(
+                    SourceAttemptFailureReason.GENERIC_COMMIT_FAILED
+                    if gather_completed
+                    else SourceAttemptFailureReason.GENERIC_GATHER_FAILED
+                ),
+            )
             logger.exception("Gather phase failed for %s: %s", self._tenant_name, exc)
             errors.append(f"Gather phase failed: {exc}")
             self._consecutive_gather_failures += 1
@@ -1238,8 +1855,16 @@ class ChargebackOrchestrator:
             logger.info("Processing billing date: %s", tracking_date)
             start_time = time.time()
             try:
+                calculation_result: CalculationPhaseResult | None = None
                 with self._storage_backend.create_unit_of_work() as uow:
-                    if calculation_run_id is None:
+                    if self._tenant_config.focus_preview_enabled:
+                        calculation_result = self._calculate_phase.run_with_lineage_capture(
+                            uow,
+                            tracking_date,
+                            calculation_run_id=calculation_run_id,
+                        )
+                        rows = calculation_result.rows_written
+                    elif calculation_run_id is None:
                         rows = self._calculate_phase.run(uow, tracking_date)
                     else:
                         rows = self._calculate_phase.run(
@@ -1250,6 +1875,8 @@ class ChargebackOrchestrator:
                     chargeback_rows_written += rows
                     dates_calculated += 1
                     uow.commit()
+                if calculation_result is not None:
+                    self._persist_preview_lineage(calculation_result)
                 elapsed = int(time.time() - start_time)
                 logger.info(
                     "Processed %d chargeback rows for billing date: %s in %d seconds",

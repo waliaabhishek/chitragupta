@@ -21,7 +21,6 @@ if TYPE_CHECKING:
     from core.metrics.protocol import MetricsSource
     from core.models.resource import Resource
     from core.plugin.protocols import CostAllocator, CostInput, OverlayConfig, ServiceHandler
-    from core.storage.interface import UnitOfWork
     from plugins.confluent_cloud.shared_context import CCloudSharedContext
     from plugins.confluent_cloud.storage.module import CCloudStorageModule
 
@@ -86,25 +85,13 @@ class ConfluentCloudPlugin:
         logger.debug("get_cost_input building CCloudBillingCostInput")
         return CCloudBillingCostInput(self._connection, self._config)
 
-    @property
-    def supplemental_resource_types(self) -> tuple[str, ...]:
-        return ("organization",)
-
-    def gather_supplemental_resources(
-        self,
-        tenant_id: str,
-        resource_type: str,
-        uow: UnitOfWork,
-    ) -> Iterable[Resource]:
-        """Gather isolated provider account authority without shared-context coupling."""
-        del uow
+    def gather_preview_organizations(self, tenant_id: str) -> tuple[Resource, ...]:
+        """Gather organization authority for enabled Preview tenants."""
         if self._connection is None:
             raise RuntimeError("Plugin not initialized. Call initialize() first.")
-        if resource_type != "organization":
-            raise ValueError(f"Unsupported supplemental resource type: {resource_type}")
         from plugins.confluent_cloud.gathering import gather_organizations
 
-        return gather_organizations(self._connection, self.ecosystem, tenant_id)
+        return tuple(gather_organizations(self._connection, self.ecosystem, tenant_id))
 
     def get_metrics_source(self) -> MetricsSource | None:
         """Return metrics source if configured, None otherwise."""

@@ -7,6 +7,12 @@ from unittest.mock import MagicMock
 import pytest
 
 
+def _billing_result(*dates: date):
+    from core.engine.orchestrator import BillingGatherResult
+
+    return BillingGatherResult(frozenset(dates))
+
+
 def _make_config(**overrides):
     from plugins.confluent_cloud.config import TopicAttributionConfig
 
@@ -387,12 +393,12 @@ class TestGatherPhaseTopicDiscovery:
         # _gather_billing returns a date so the discovery block is triggered;
         # _detect_deletions patched to avoid find_active_at unpack errors.
         with (
-            patch.object(phase, "_gather_billing", return_value={billing_date}),
+            patch.object(phase, "_gather_billing", return_value=_billing_result(billing_date)),
             patch.object(phase, "_gather_resources_and_identities", return_value=(set(), set())),
             patch.object(phase, "_apply_recalculation_window"),
             patch.object(phase, "_detect_deletions"),
         ):
-            phase._run_full(mock_uow)
+            phase.run(mock_uow, plan=phase.plan_refresh(datetime(2026, 1, 31, tzinfo=UTC)))
 
         mock_plugin.gather_topic_resources.assert_called_once_with("t1", [])
         mock_uow.resources.upsert.assert_called_once_with(discovered)
@@ -436,12 +442,12 @@ class TestGatherPhaseTopicDiscovery:
 
         mock_uow = MagicMock()
         with (
-            patch.object(phase, "_gather_billing", return_value={date(2026, 1, 1)}),
+            patch.object(phase, "_gather_billing", return_value=_billing_result(date(2026, 1, 1))),
             patch.object(phase, "_gather_resources_and_identities", return_value=(set(), set())),
             patch.object(phase, "_apply_recalculation_window"),
             patch.object(phase, "_detect_deletions"),
         ):
-            phase._run_full(mock_uow)
+            phase.run(mock_uow, plan=phase.plan_refresh(datetime(2026, 1, 31, tzinfo=UTC)))
 
         mock_plugin.gather_topic_resources.assert_not_called()
 
@@ -1197,12 +1203,12 @@ class TestGatherPhaseEmptyTopicList:
         billing_date = date(2026, 1, 1)
 
         with (
-            patch.object(phase, "_gather_billing", return_value={billing_date}),
+            patch.object(phase, "_gather_billing", return_value=_billing_result(billing_date)),
             patch.object(phase, "_gather_resources_and_identities", return_value=(set(), set())),
             patch.object(phase, "_apply_recalculation_window"),
             patch.object(phase, "_detect_deletions"),
         ):
-            phase._run_full(mock_uow)
+            phase.run(mock_uow, plan=phase.plan_refresh(datetime(2026, 1, 31, tzinfo=UTC)))
 
         mock_uow.pipeline_state.mark_topic_overlay_gathered.assert_called_once_with(
             "eco",
@@ -1219,12 +1225,12 @@ class TestGatherPhaseEmptyTopicList:
         billing_date = date(2026, 1, 1)
 
         with (
-            patch.object(phase, "_gather_billing", return_value={billing_date}),
+            patch.object(phase, "_gather_billing", return_value=_billing_result(billing_date)),
             patch.object(phase, "_gather_resources_and_identities", return_value=(set(), set())),
             patch.object(phase, "_apply_recalculation_window"),
             patch.object(phase, "_detect_deletions"),
         ):
-            phase._run_full(mock_uow)
+            phase.run(mock_uow, plan=phase.plan_refresh(datetime(2026, 1, 31, tzinfo=UTC)))
 
         mock_uow.resources.upsert.assert_not_called()
 
@@ -1237,12 +1243,12 @@ class TestGatherPhaseEmptyTopicList:
         billing_date = date(2026, 1, 1)
 
         with (
-            patch.object(phase, "_gather_billing", return_value={billing_date}),
+            patch.object(phase, "_gather_billing", return_value=_billing_result(billing_date)),
             patch.object(phase, "_gather_resources_and_identities", return_value=(set(), set())),
             patch.object(phase, "_apply_recalculation_window"),
             patch.object(phase, "_detect_deletions"),
         ):
-            phase._run_full(mock_uow)
+            phase.run(mock_uow, plan=phase.plan_refresh(datetime(2026, 1, 31, tzinfo=UTC)))
 
         mock_uow.pipeline_state.mark_topic_overlay_gathered.assert_not_called()
 

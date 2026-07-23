@@ -6,7 +6,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
-from core.api.dependencies import get_or_create_backend, get_tenant_config
+from core.api.dependencies import get_storage_backend, get_tenant_config
 from core.api.schemas import PipelineResultSummary, PipelineRunResponse, PipelineStatusResponse
 from core.config.models import TenantConfig  # noqa: TC001  # FastAPI evaluates annotations at runtime
 from core.storage.interface import StorageBackend  # noqa: TC001
@@ -20,12 +20,6 @@ def _get_pipeline_tasks(request: Request) -> dict[str, asyncio.Task[None]]:
     if not hasattr(request.app.state, "pipeline_tasks"):
         request.app.state.pipeline_tasks = {}
     return request.app.state.pipeline_tasks  # type: ignore[no-any-return]  # app.state is untyped Starlette state dict
-
-
-def _get_backends(request: Request) -> dict[str, StorageBackend]:
-    if not hasattr(request.app.state, "backends"):
-        request.app.state.backends = {}
-    return request.app.state.backends  # type: ignore[no-any-return]  # app.state is untyped Starlette state dict
 
 
 async def _run_pipeline(
@@ -108,10 +102,9 @@ async def trigger_pipeline(
 async def pipeline_status(
     request: Request,
     tenant_config: Annotated[TenantConfig, Depends(get_tenant_config)],
+    backend: Annotated[StorageBackend, Depends(get_storage_backend)],
     tenant_name: str,
 ) -> PipelineStatusResponse:
-    backend = get_or_create_backend(_get_backends(request), tenant_name, tenant_config.storage, tenant_config.ecosystem)
-
     with backend.create_read_only_unit_of_work() as uow:
         latest = uow.pipeline_runs.get_latest_run(tenant_name)
 

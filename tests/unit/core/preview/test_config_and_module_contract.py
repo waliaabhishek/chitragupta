@@ -129,6 +129,7 @@ def test_artifact_store_exposes_staged_publication_contract_without_mapping_depe
     publish_hints = get_type_hints(artifacts.PreviewStagedPackage.publish)
 
     assert hints == {
+        "owner": artifacts.PreviewArtifactOwner,
         "request_id": str,
         "data_files": tuple[models.PreviewArtifactPayload, ...],
         "return": artifacts.PreviewStagedPackage,

@@ -183,6 +183,10 @@ class TenantConfig(BaseModel):
     plugin_settings: PluginSettingsBase = Field(default_factory=PluginSettingsBase)
     focus_preview: FocusPreviewTenantConfig | None = None
 
+    @property
+    def focus_preview_enabled(self) -> bool:
+        return self.ecosystem == "confluent_cloud" and self.focus_preview is not None
+
     @model_validator(mode="after")
     def validate_lookback_gt_cutoff(self) -> TenantConfig:
         if self.lookback_days <= self.cutoff_days:
@@ -205,6 +209,10 @@ class AppSettings(BaseModel):
             "Defaults to the 'plugins/' sibling of the src/ package root."
         ),
     )
+
+    @property
+    def focus_preview_enabled(self) -> bool:
+        return any(tenant.focus_preview_enabled for tenant in self.tenants.values())
 
     @model_validator(mode="after")
     def validate_unique_connection_strings(self) -> AppSettings:

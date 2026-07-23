@@ -2,16 +2,23 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Coroutine
+from contextlib import contextmanager
 from dataclasses import dataclass
 from importlib import import_module
 from pathlib import Path
-from typing import Any
-from unittest.mock import patch
+from typing import TYPE_CHECKING, Any
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from core.api.app import create_app
 from core.config.models import AppSettings, PreviewConfig, StorageConfig, TenantConfig
+from core.plugin.protocols import CostAllocator, CostInput, EcosystemPlugin, ServiceHandler, StorageModule
+from core.storage.interface import ReadOnlyUnitOfWork, StorageBackend, UnitOfWork
+from plugins.confluent_cloud.storage.module import CCloudStorageModule
+
+if TYPE_CHECKING:
+    from core.metrics.protocol import MetricsSource
 
 
 class BodyError(RuntimeError):
@@ -27,7 +34,8 @@ class ControlledStore:
     events: list[str]
     failure: str | set[str] | None = None
 
-    def cleanup_staging(self) -> int:
+    def cleanup_staging(self, owner: object) -> int:
+        del owner
         self.events.append("store.cleanup_staging")
         if _fails(self.failure, "staging"):
             raise RuntimeError("staging cleanup failed")
@@ -46,11 +54,6 @@ class ControlledRuntime:
     store: ControlledStore | None = None
     record_recovery: bool = False
 
-    def ensure_staging_recovered(self) -> None:
-        if self.record_recovery:
-            assert self.store is not None
-            self.store.cleanup_staging()
-
     def ensure_owner_recovered(
         self,
         *,
@@ -61,6 +64,9 @@ class ControlledRuntime:
     ) -> None:
         del backend
         if self.record_recovery:
+            assert self.store is not None
+            artifacts = import_module("core.preview.artifacts")
+            self.store.cleanup_staging(artifacts.PreviewArtifactOwner(tenant_name, ecosystem, tenant_id))
             self.events.append(f"runtime.recover:{tenant_name}:{ecosystem}:{tenant_id}")
         if _fails(self.failure, tenant_name):
             raise RuntimeError(f"{tenant_name} recovery failed")
@@ -77,6 +83,16 @@ class ControlledBackend:
     events: list[str]
     failure: str | set[str] | None = None
 
+    def create_tables(self) -> None:
+        self.events.append(f"{self.name}.create_tables")
+
+    def create_unit_of_work(self) -> UnitOfWork:
+        self.events.append("orphan-cleanup")
+        raise RuntimeError("startup cleanup failed")
+
+    def create_read_only_unit_of_work(self) -> ReadOnlyUnitOfWork:
+        raise AssertionError("read-only storage is outside this lifecycle test")
+
     def dispose(self) -> None:
         self.events.append(f"{self.name}.dispose")
         if _fails(self.failure, self.name):
@@ -84,9 +100,85 @@ class ControlledBackend:
 
 
 @dataclass
+class ControlledPlugin:
+    events: list[str]
+
+    def initialize(self, config: dict[str, Any]) -> None:
+        del config
+        self.events.append("plugin.initialize")
+
+    def get_service_handlers(self) -> dict[str, ServiceHandler]:
+        return {}
+
+    def get_cost_input(self) -> CostInput:
+        return MagicMock(spec=CostInput)
+
+    def get_metrics_source(self) -> MetricsSource | None:
+        return None
+
+    def get_fallback_allocator(self) -> CostAllocator | None:
+        return None
+
+    def build_shared_context(self, tenant_id: str) -> None:
+        del tenant_id
+
+    @property
+    def ecosystem(self) -> str:
+        return "confluent_cloud"
+
+    def get_storage_module(self) -> StorageModule:
+        return CCloudStorageModule()
+
+    def close(self) -> None:
+        self.events.append("plugin.close")
+
+
+@dataclass
+class ControlledRegistry:
+    plugin: ControlledPlugin
+
+    def create(self, ecosystem: str) -> ControlledPlugin:
+        assert ecosystem == "confluent_cloud"
+        return self.plugin
+
+
+def test_lifespan_backend_and_plugin_doubles_satisfy_production_protocols() -> None:
+    events: list[str] = []
+
+    assert isinstance(ControlledBackend("backend", events), StorageBackend)
+    assert isinstance(ControlledPlugin(events), EcosystemPlugin)
+
+
+@dataclass
+class ControlledProvider:
+    events: list[str]
+    backends: dict[str, object]
+
+    @contextmanager
+    def acquire_backend(self, tenant_name: str, tenant_config: TenantConfig) -> Any:
+        del tenant_config
+        self.events.append(f"provider.acquire:{tenant_name}")
+        yield self.backends[tenant_name]
+
+    def close(self) -> None:
+        self.events.append("provider.close")
+
+
+@dataclass
 class ControlledRunner:
     events: list[str]
     failure: str | set[str] | None = None
+    backends: dict[str, object] | None = None
+
+    @contextmanager
+    def acquire_backend(self, tenant_name: str, tenant_config: TenantConfig) -> Any:
+        del tenant_config
+        backend = (self.backends or {}).get(tenant_name, object())
+        self.events.append(f"runner.acquire:{tenant_name}")
+        yield backend
+
+    def close(self) -> None:
+        raise AssertionError("combined-mode lifespan must delegate closure to drain")
 
     def drain(self, timeout: float) -> None:
         self.events.append(f"runner.drain({timeout})")
@@ -95,7 +187,22 @@ class ControlledRunner:
 
 
 def _settings(tmp_path: Path) -> AppSettings:
-    return AppSettings(preview=PreviewConfig(artifact_root=tmp_path / "artifacts", max_workers=1))
+    return AppSettings(
+        preview=PreviewConfig(artifact_root=tmp_path / "artifacts", max_workers=1),
+        tenants={
+            "production": TenantConfig(
+                ecosystem="confluent_cloud",
+                tenant_id="tenant-1",
+                storage=StorageConfig(connection_string=f"sqlite:///{tmp_path / 'preview.db'}"),
+                focus_preview={
+                    "commercial_profile": "direct_payg",
+                    "billing_currency": "USD",
+                    "effective_start_date": "2020-01-01",
+                    "effective_end_date": "2030-01-01",
+                },
+            )
+        },
+    )
 
 
 def _multi_tenant_settings(tmp_path: Path) -> AppSettings:
@@ -185,7 +292,6 @@ def test_lifespan_body_exception_propagates_after_exact_ordered_cleanup(
     events: list[str] = []
     store = ControlledStore(events)
     runtime = ControlledRuntime(events)
-    backends = [ControlledBackend("backend-one", events), ControlledBackend("backend-two", events)]
     runner = ControlledRunner(events)
     monkeypatch.setattr("core.api.app.asyncio.to_thread", _run_inline)
     store_patch, runtime_patch = _patch_owned_resources(store, runtime)
@@ -194,7 +300,6 @@ def test_lifespan_body_exception_propagates_after_exact_ordered_cleanup(
 
         async def exercise() -> None:
             async with app.router.lifespan_context(app):
-                app.state.backends = {"one": backends[0], "two": backends[1]}
                 raise BodyError("body sentinel")
 
         with pytest.raises(BodyError, match="body sentinel"):
@@ -203,8 +308,6 @@ def test_lifespan_body_exception_propagates_after_exact_ordered_cleanup(
     assert events == [
         "runtime.close(wait=True)",
         "store.close",
-        "backend-one.dispose",
-        "backend-two.dispose",
         "runner.drain(30)",
     ]
 
@@ -216,7 +319,6 @@ def test_lifespan_cancellation_propagates_after_exact_ordered_cleanup(
     events: list[str] = []
     store = ControlledStore(events)
     runtime = ControlledRuntime(events)
-    backends = [ControlledBackend("backend-one", events), ControlledBackend("backend-two", events)]
     runner = ControlledRunner(events)
     monkeypatch.setattr("core.api.app.asyncio.to_thread", _run_inline)
     store_patch, runtime_patch = _patch_owned_resources(store, runtime)
@@ -225,7 +327,6 @@ def test_lifespan_cancellation_propagates_after_exact_ordered_cleanup(
 
         async def exercise() -> None:
             async with app.router.lifespan_context(app):
-                app.state.backends = {"one": backends[0], "two": backends[1]}
                 raise asyncio.CancelledError("cancel sentinel")
 
         with pytest.raises(asyncio.CancelledError, match="cancel sentinel"):
@@ -234,8 +335,6 @@ def test_lifespan_cancellation_propagates_after_exact_ordered_cleanup(
     assert events == [
         "runtime.close(wait=True)",
         "store.close",
-        "backend-one.dispose",
-        "backend-two.dispose",
         "runner.drain(30)",
     ]
 
@@ -245,13 +344,9 @@ def test_lifespan_body_exception_survives_multiple_cleanup_failures(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     events: list[str] = []
-    failures = {"runtime", "store", "backend-one", "runner"}
+    failures = {"runtime", "store", "runner"}
     store = ControlledStore(events, failures)
     runtime = ControlledRuntime(events, failures)
-    backends = [
-        ControlledBackend("backend-one", events, failures),
-        ControlledBackend("backend-two", events, failures),
-    ]
     runner = ControlledRunner(events, failures)
     monkeypatch.setattr("core.api.app.asyncio.to_thread", _run_inline)
     store_patch, runtime_patch = _patch_owned_resources(store, runtime)
@@ -260,7 +355,6 @@ def test_lifespan_body_exception_survives_multiple_cleanup_failures(
 
         async def exercise() -> None:
             async with app.router.lifespan_context(app):
-                app.state.backends = {"one": backends[0], "two": backends[1]}
                 raise BodyError("body sentinel")
 
         with pytest.raises(BodyError, match="body sentinel"):
@@ -269,13 +363,11 @@ def test_lifespan_body_exception_survives_multiple_cleanup_failures(
     assert events == [
         "runtime.close(wait=True)",
         "store.close",
-        "backend-one.dispose",
-        "backend-two.dispose",
         "runner.drain(30)",
     ]
 
 
-@pytest.mark.parametrize("failure", ["runtime", "store", "backend-one", "backend-two", "runner"])
+@pytest.mark.parametrize("failure", ["runtime", "store", "runner"])
 def test_each_cleanup_failure_surfaces_and_all_later_cleanup_steps_are_attempted(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -284,10 +376,6 @@ def test_each_cleanup_failure_surfaces_and_all_later_cleanup_steps_are_attempted
     events: list[str] = []
     store = ControlledStore(events, failure)
     runtime = ControlledRuntime(events, failure)
-    backends = [
-        ControlledBackend("backend-one", events, failure),
-        ControlledBackend("backend-two", events, failure),
-    ]
     runner = ControlledRunner(events, failure)
     monkeypatch.setattr("core.api.app.asyncio.to_thread", _run_inline)
     store_patch, runtime_patch = _patch_owned_resources(store, runtime)
@@ -296,7 +384,7 @@ def test_each_cleanup_failure_surfaces_and_all_later_cleanup_steps_are_attempted
 
         async def exercise() -> None:
             async with app.router.lifespan_context(app):
-                app.state.backends = {"one": backends[0], "two": backends[1]}
+                pass
 
         with pytest.raises(RuntimeError, match=rf"{failure} cleanup failed"):
             _run(exercise())
@@ -304,38 +392,46 @@ def test_each_cleanup_failure_surfaces_and_all_later_cleanup_steps_are_attempted
     assert events == [
         "runtime.close(wait=True)",
         "store.close",
-        "backend-one.dispose",
-        "backend-two.dispose",
         "runner.drain(30)",
     ]
 
 
-def test_startup_orphan_cleanup_failure_closes_constructed_resources_and_propagates(
+def test_api_only_orphan_cleanup_failure_is_nonfatal_and_provider_closes_once(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     events: list[str] = []
     store = ControlledStore(events)
     runtime = ControlledRuntime(events)
-
-    def fail_startup(*_args: object, **_kwargs: object) -> None:
-        events.append("startup.orphan-cleanup")
-        raise RuntimeError("startup cleanup failed")
+    backend = ControlledBackend("backend", events)
+    plugin = ControlledPlugin(events)
 
     monkeypatch.setattr("core.api.app.asyncio.to_thread", _run_inline)
-    monkeypatch.setattr("workflow_runner.cleanup_orphaned_runs_for_all_tenants", fail_startup)
     store_patch, runtime_patch = _patch_owned_resources(store, runtime)
-    with store_patch, runtime_patch:
-        app = create_app(_settings(tmp_path))
+    with (
+        store_patch,
+        runtime_patch,
+        patch("core.storage.backend_provider.create_storage_backend", return_value=backend),
+    ):
+        app = create_app(
+            _settings(tmp_path),
+            plugin_registry=ControlledRegistry(plugin),  # type: ignore[arg-type]
+        )
 
         async def exercise() -> None:
             async with app.router.lifespan_context(app):
-                raise AssertionError("startup failure must prevent entering the lifespan body")
+                events.append("body")
 
-        with pytest.raises(RuntimeError, match="startup cleanup failed"):
-            _run(exercise())
+        _run(exercise())
 
-    assert events == ["startup.orphan-cleanup", "runtime.close(wait=True)", "store.close"]
+    assert events[-5:] == [
+        "body",
+        "runtime.close(wait=True)",
+        "store.close",
+        "backend.dispose",
+        "plugin.close",
+    ]
+    assert events.count("orphan-cleanup") == 1
 
 
 def test_lifespan_normal_exit_keeps_exact_cleanup_order(
@@ -345,7 +441,6 @@ def test_lifespan_normal_exit_keeps_exact_cleanup_order(
     events: list[str] = []
     store = ControlledStore(events)
     runtime = ControlledRuntime(events)
-    backends = [ControlledBackend("backend-one", events), ControlledBackend("backend-two", events)]
     runner = ControlledRunner(events)
     monkeypatch.setattr("core.api.app.asyncio.to_thread", _run_inline)
     store_patch, runtime_patch = _patch_owned_resources(store, runtime)
@@ -354,20 +449,18 @@ def test_lifespan_normal_exit_keeps_exact_cleanup_order(
 
         async def exercise() -> None:
             async with app.router.lifespan_context(app):
-                app.state.backends = {"one": backends[0], "two": backends[1]}
+                assert not hasattr(app.state, "backends")
 
         _run(exercise())
 
     assert events == [
         "runtime.close(wait=True)",
         "store.close",
-        "backend-one.dispose",
-        "backend-two.dispose",
         "runner.drain(30)",
     ]
 
 
-def test_normal_startup_offloads_global_then_each_supported_tenant_in_settings_order(
+def test_combined_startup_recovers_each_enabled_owner_through_runner_leases_in_settings_order(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -380,36 +473,25 @@ def test_normal_startup_offloads_global_then_each_supported_tenant_in_settings_o
         "tenant-b": ControlledBackend("backend-b", events),
     }
 
-    async def recording_to_thread(function: Any, *args: object, **kwargs: object) -> object:
-        tenant = f":{args[0]}" if function.__name__ == "recover_preview_owner" else ""
-        events.append(f"to_thread:{function.__name__}{tenant}")
-        return function(*args, **kwargs)
-
     def recover_preview_owner(
         tenant_name: str,
         tenant_config: TenantConfig,
-        cache: dict[str, object],
+        backend_provider: ControlledRunner,
         preview_runtime: ControlledRuntime,
     ) -> None:
-        backend = backends[tenant_name]
-        cache[tenant_name] = backend
-        events.append(f"{backend.name}.create")
-        preview_runtime.ensure_owner_recovered(
-            backend=backend,
-            tenant_name=tenant_name,
-            ecosystem=tenant_config.ecosystem,
-            tenant_id=tenant_config.tenant_id,
-        )
+        with backend_provider.acquire_backend(tenant_name, tenant_config) as backend:
+            preview_runtime.ensure_owner_recovered(
+                backend=backend,
+                tenant_name=tenant_name,
+                ecosystem=tenant_config.ecosystem,
+                tenant_id=tenant_config.tenant_id,
+            )
 
-    def orphan_cleanup(*_args: object, **_kwargs: object) -> None:
-        events.append("startup.orphan-cleanup")
-
-    monkeypatch.setattr("core.api.app.asyncio.to_thread", recording_to_thread)
-    monkeypatch.setattr("workflow_runner.cleanup_orphaned_runs_for_all_tenants", orphan_cleanup)
     monkeypatch.setattr(app_module, "recover_preview_owner", recover_preview_owner, raising=False)
     store_patch, runtime_patch = _patch_owned_resources(store, runtime)
+    runner = ControlledRunner(events, backends=backends)
     with store_patch, runtime_patch:
-        app = create_app(_multi_tenant_settings(tmp_path))
+        app = create_app(_multi_tenant_settings(tmp_path), workflow_runner=runner)  # type: ignore[arg-type]
 
         async def exercise() -> None:
             async with app.router.lifespan_context(app):
@@ -418,50 +500,59 @@ def test_normal_startup_offloads_global_then_each_supported_tenant_in_settings_o
         _run(exercise())
 
     assert events == [
-        "to_thread:ensure_staging_recovered",
+        "runner.acquire:tenant-a",
         "store.cleanup_staging",
-        "to_thread:recover_preview_owner:tenant-a",
-        "backend-a.create",
         "runtime.recover:tenant-a:confluent_cloud:shared-provider-tenant",
-        "to_thread:recover_preview_owner:tenant-b",
-        "backend-b.create",
+        "runner.acquire:tenant-b",
+        "store.cleanup_staging",
         "runtime.recover:tenant-b:confluent_cloud:shared-provider-tenant",
-        "to_thread:orphan_cleanup",
-        "startup.orphan-cleanup",
         "body",
         "runtime.close(wait=True)",
         "store.close",
-        "backend-a.dispose",
-        "backend-b.dispose",
+        "runner.drain(30)",
     ]
 
 
-def test_global_recovery_failure_is_nonfatal_and_skips_owner_attempts(
+def test_one_owner_recovery_failure_is_nonfatal_and_does_not_skip_other_owner(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     service = import_module("core.preview.service")
     events: list[str] = []
-    store = ControlledStore(events, "staging")
+    store = ControlledStore(events)
     runtime = ControlledRuntime(events, store=store, record_recovery=True)
-    original_staging = runtime.ensure_staging_recovered
+    original_recovery = runtime.ensure_owner_recovered
 
-    def translated_staging() -> None:
-        try:
-            original_staging()
-        except RuntimeError as exc:
-            raise service.PreviewRecoveryUnavailable("recovery") from exc
+    def selective_recovery(**kwargs: object) -> None:
+        if kwargs["tenant_name"] == "tenant-a":
+            events.append("runtime.recover-failed:tenant-a")
+            raise service.PreviewRecoveryUnavailable("recovery")
+        original_recovery(**kwargs)
 
-    runtime.ensure_staging_recovered = translated_staging  # type: ignore[method-assign]
+    runtime.ensure_owner_recovered = selective_recovery  # type: ignore[method-assign]
+    runner = ControlledRunner(
+        events,
+        backends={"tenant-a": object(), "tenant-b": object()},
+    )
 
-    async def recording_to_thread(function: Any, *args: object, **kwargs: object) -> object:
-        events.append(f"to_thread:{function.__name__}")
-        return function(*args, **kwargs)
+    def recover_preview_owner(
+        tenant_name: str,
+        tenant_config: TenantConfig,
+        backend_provider: ControlledRunner,
+        preview_runtime: ControlledRuntime,
+    ) -> None:
+        with backend_provider.acquire_backend(tenant_name, tenant_config) as backend:
+            preview_runtime.ensure_owner_recovered(
+                backend=backend,
+                tenant_name=tenant_name,
+                ecosystem=tenant_config.ecosystem,
+                tenant_id=tenant_config.tenant_id,
+            )
 
-    monkeypatch.setattr("core.api.app.asyncio.to_thread", recording_to_thread)
+    monkeypatch.setattr("core.api.app.recover_preview_owner", recover_preview_owner)
     store_patch, runtime_patch = _patch_owned_resources(store, runtime)
     with store_patch, runtime_patch:
-        app = create_app(_multi_tenant_settings(tmp_path), workflow_runner=ControlledRunner(events))  # type: ignore[arg-type]
+        app = create_app(_multi_tenant_settings(tmp_path), workflow_runner=runner)  # type: ignore[arg-type]
 
         async def exercise() -> None:
             async with app.router.lifespan_context(app):
@@ -469,5 +560,6 @@ def test_global_recovery_failure_is_nonfatal_and_skips_owner_attempts(
 
         _run(exercise())
 
-    assert events[:3] == ["to_thread:translated_staging", "store.cleanup_staging", "body"]
-    assert not any("recover_preview_owner" in event for event in events)
+    assert "runtime.recover-failed:tenant-a" in events
+    assert "runtime.recover:tenant-b:confluent_cloud:shared-provider-tenant" in events
+    assert "body" in events

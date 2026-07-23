@@ -30,7 +30,12 @@ def clean_engine_cache() -> Any:
 @pytest.fixture
 def source_backend(tmp_path: Any) -> tuple[SQLModelBackend, str]:
     connection_string = f"sqlite:///{tmp_path / 'source-evidence.db'}"
-    backend = SQLModelBackend(connection_string, CCloudStorageModule(), use_migrations=False)
+    backend = SQLModelBackend(
+        connection_string,
+        CCloudStorageModule(),
+        use_migrations=False,
+        focus_preview_enabled=True,
+    )
     backend.create_tables()
     yield backend, connection_string
     backend.dispose()
@@ -507,8 +512,12 @@ class TestSourceRetention:
                 )
             deleted = uow.billing.delete_before("confluent_cloud", "org-1", _dt(3))
             uow.commit()
+        with backend.create_preview_evidence_unit_of_work() as evidence_uow:
+            source_deleted = evidence_uow.source_windows.delete_before("confluent_cloud", "org-1", _dt(3))
+            evidence_uow.commit()
 
         assert deleted == 1
+        assert source_deleted == 1
         assert [row.source_record_id for row in _rows(connection_string)] == ["provider:equal"]
         with backend.create_unit_of_work() as uow:
             aggregate_rows = uow.billing.find_by_range("confluent_cloud", "org-1", _dt(1), _dt(4))
@@ -524,16 +533,16 @@ class TestSourceRetention:
         _replace(backend, _dt(1), _dt(3), [source])
 
         for cutoff in [datetime(2026, 6, 30, tzinfo=UTC), _dt(1), _dt(2, hour=12), _dt(3)]:
-            with backend.create_unit_of_work() as uow:
-                assert uow.billing.delete_before("confluent_cloud", "org-1", cutoff) == 0
+            with backend.create_preview_evidence_unit_of_work() as uow:
+                assert uow.source_windows.delete_before("confluent_cloud", "org-1", cutoff) == 0
                 uow.commit()
             rows = _rows(connection_string)
             assert len(rows) == 1
             assert (_aware(rows[0].evidence_scope_start), _aware(rows[0].evidence_scope_end)) == (_dt(1), _dt(3))
             assert json.loads(rows[0].raw_payload_json) == {"a": {"b": 2}, "z": 1}
 
-        with backend.create_unit_of_work() as uow:
-            assert uow.billing.delete_before("confluent_cloud", "org-1", _dt(3, microsecond=1)) == 0
+        with backend.create_preview_evidence_unit_of_work() as uow:
+            assert uow.source_windows.delete_before("confluent_cloud", "org-1", _dt(3, microsecond=1)) == 1
             uow.commit()
         assert _rows(connection_string) == []
 
@@ -542,8 +551,8 @@ class TestSourceRetention:
         _replace(backend, _dt(1), _dt(5), [_undated()])
         _replace(backend, _dt(2), _dt(4), [])
 
-        with backend.create_unit_of_work() as uow:
-            uow.billing.delete_before("confluent_cloud", "org-1", _dt(3))
+        with backend.create_preview_evidence_unit_of_work() as uow:
+            uow.source_windows.delete_before("confluent_cloud", "org-1", _dt(3))
             uow.commit()
 
         rows = _rows(connection_string)

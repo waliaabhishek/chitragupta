@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, Protocol, TypedDict, runtime_checkable
 if TYPE_CHECKING:
     # Runtime import not needed — protocols use string annotations via
     # __future__.annotations.
-    from sqlalchemy import Engine
+    from sqlalchemy import Connection, Engine
     from sqlmodel import Session
 
     from core.engine.allocation import AllocationContext, AllocationResult
@@ -23,6 +23,14 @@ if TYPE_CHECKING:
         MetricRow,
         Resource,
     )
+    from core.preview.persistence import (
+        PreviewEvidenceBootstrap,
+        PreviewEvidenceStorageBackend,
+        PreviewEvidenceWriteUnitOfWork,
+        PreviewGenerationReadUnitOfWork,
+        PreviewSourceAttemptFallbackWriter,
+    )
+    from core.preview.storage_availability import PreviewEvidenceAvailability
     from core.storage.interface import (
         BillingRepository,
         ChargebackRepository,
@@ -53,6 +61,49 @@ class StorageModule(Protocol):
     def create_chargeback_repository(self, session: Session) -> ChargebackRepository: ...
 
     def register_tables(self, engine: Engine) -> None: ...
+
+
+@runtime_checkable
+class PreviewEvidenceStorageModule(Protocol):
+    def prepare_preview_evidence_migration(
+        self,
+        connection: Connection,
+        *,
+        target_revision: str,
+    ) -> None: ...
+
+    def downgrade_preview_evidence_migration(
+        self,
+        connection: Connection,
+        *,
+        target_revision: str,
+    ) -> None: ...
+
+    def register_preview_evidence_tables(self, engine: Engine) -> None: ...
+
+    def create_preview_evidence_unit_of_work(
+        self,
+        connection_string: str,
+        availability: PreviewEvidenceAvailability,
+    ) -> PreviewEvidenceWriteUnitOfWork: ...
+
+    def create_preview_generation_read_unit_of_work(
+        self,
+        connection_string: str,
+        availability: PreviewEvidenceAvailability,
+    ) -> PreviewGenerationReadUnitOfWork: ...
+
+    def create_preview_evidence_bootstrap(
+        self,
+        backend: PreviewEvidenceStorageBackend,
+    ) -> PreviewEvidenceBootstrap: ...
+
+
+@runtime_checkable
+class PreviewSourceAttemptFallbackStorageModule(Protocol):
+    def create_preview_source_attempt_fallback_repository(
+        self, session: Session
+    ) -> PreviewSourceAttemptFallbackWriter: ...
 
 
 @runtime_checkable
@@ -169,6 +220,13 @@ class SupplementalResourceGatherer(Protocol):
         resource_type: str,
         uow: UnitOfWork,
     ) -> Iterable[Resource]: ...
+
+
+@runtime_checkable
+class PreviewOrganizationGatherer(Protocol):
+    """Optional provider capability for Preview organization authority."""
+
+    def gather_preview_organizations(self, tenant_id: str) -> tuple[Resource, ...]: ...
 
 
 @runtime_checkable

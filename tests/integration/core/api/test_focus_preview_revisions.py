@@ -8,12 +8,11 @@ from importlib import import_module
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import patch
 
 import anyio
+import anyio.to_thread
 import httpx
 import pytest
-from fastapi.testclient import TestClient
 
 from core.api.app import create_app
 from core.config.models import (
@@ -23,7 +22,21 @@ from core.config.models import (
     StorageConfig,
     TenantConfig,
 )
+from tests.integration.core.api.backend_provider import FixedTenantBackendProvider, install_backend
+from tests.integration.core.api.test_focus_preview import SameThreadApiClient
 from tests.unit.core.preview.test_revision_models import _revision
+
+
+@pytest.fixture(autouse=True)
+def _inline_api_threads(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def to_thread_inline(function: Any, *args: object, **kwargs: object) -> object:
+        return function(*args, **kwargs)
+
+    async def run_sync_inline(function: Any, *args: object, **_kwargs: object) -> object:
+        return function(*args)
+
+    monkeypatch.setattr("core.api.app.asyncio.to_thread", to_thread_inline)
+    monkeypatch.setattr(anyio.to_thread, "run_sync", run_sync_inline)
 
 
 class _Backend:
@@ -33,7 +46,7 @@ class _Backend:
     def create_read_only_unit_of_work(self) -> Any:
         raise AssertionError("API current reads are read-only")
 
-    def create_preview_read_unit_of_work(self) -> Any:
+    def create_preview_metadata_read_unit_of_work(self) -> Any:
         raise AssertionError("fake reader owns current lookup")
 
     def create_preview_write_unit_of_work(self) -> Any:
@@ -175,11 +188,11 @@ def _client(
     *,
     current: Any | None = None,
     history: tuple[Any, ...] | None = None,
-) -> Iterator[tuple[TestClient, _Reader]]:
+) -> Iterator[tuple[SameThreadApiClient, _Reader]]:
     app = create_app(_settings(tmp_path))
     reader = _Reader(current, history)
-    with patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"), TestClient(app) as client:
-        app.state.backends["new-label"] = _Backend()
+    with SameThreadApiClient(app) as client:
+        install_backend(app, "new-label", _Backend())
         app.state.preview_revision_reader = reader
         yield client, reader
 
@@ -238,22 +251,18 @@ def test_revision_routes_preserve_exact_missing_query_contract(
 
 
 def test_invalid_month_wins_over_unknown_tenant_before_backend_creation(tmp_path: Path) -> None:
-    with (
-        _client(tmp_path) as (client, _reader),
-        patch("core.api.routes.focus_preview.get_or_create_backend") as backend_factory,
-    ):
+    with _client(tmp_path) as (client, _reader):
+        provider = client.app.state.backend_provider
         response = client.get("/api/v1/tenants/missing/focus-preview/revisions/current?month=2026-7")
 
     assert response.status_code == 400
     assert response.json() == {"detail": "month must use YYYY-MM"}
-    backend_factory.assert_not_called()
+    assert provider.acquisitions == []
 
 
 def test_unknown_tenant_and_unsupported_ecosystem_are_cheap_failures(tmp_path: Path) -> None:
-    with (
-        _client(tmp_path) as (client, _reader),
-        patch("core.api.routes.focus_preview.get_or_create_backend") as backend_factory,
-    ):
+    with _client(tmp_path) as (client, _reader):
+        provider = client.app.state.backend_provider
         missing = client.get("/api/v1/tenants/missing/focus-preview/revisions/current?month=2026-07")
         unsupported = client.get("/api/v1/tenants/unsupported/focus-preview/revisions/current?month=2026-07")
 
@@ -261,7 +270,7 @@ def test_unknown_tenant_and_unsupported_ecosystem_are_cheap_failures(tmp_path: P
     assert missing.json() == {"detail": "Tenant 'missing' not found"}
     assert unsupported.status_code == 400
     assert unsupported.json() == {"detail": "FOCUS Mapping Preview currently supports only Confluent Cloud tenants"}
-    backend_factory.assert_not_called()
+    assert provider.acquisitions == []
 
 
 @pytest.mark.parametrize("reader_state", ["missing", "wrong-type"])
@@ -270,11 +279,9 @@ def test_missing_or_wrong_type_reader_is_reported_before_backend_creation(
     reader_state: str,
 ) -> None:
     app = create_app(_settings(tmp_path))
-    with (
-        patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"),
-        TestClient(app) as client,
-        patch("core.api.routes.focus_preview.get_or_create_backend") as backend_factory,
-    ):
+    with SameThreadApiClient(app) as client:
+        provider = FixedTenantBackendProvider()
+        app.state.backend_provider = provider
         if reader_state == "missing":
             del app.state.preview_revision_reader
         else:
@@ -283,7 +290,7 @@ def test_missing_or_wrong_type_reader_is_reported_before_backend_creation(
 
     assert response.status_code == 503
     assert response.json() == {"detail": "FOCUS Mapping Preview revision service is unavailable"}
-    backend_factory.assert_not_called()
+    assert provider.acquisitions == []
 
 
 def test_current_not_found_is_owner_masked(tmp_path: Path) -> None:
@@ -506,7 +513,7 @@ def test_direct_immutable_artifact_failure_translation_without_testclient_portal
     reader = _Reader(None, history=(_revision(),))
     reader.failures[operation] = failure
     app.state.settings = _settings(tmp_path)
-    app.state.backends = {"new-label": _Backend()}
+    install_backend(app, "new-label", _Backend())
     app.state.preview_revision_reader = reader
 
     async def run_sync_inline(
@@ -618,16 +625,14 @@ def test_invalid_history_query_short_circuits_wrong_reader_and_backend_creation(
     query: str,
 ) -> None:
     app = create_app(_settings(tmp_path))
-    with (
-        patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"),
-        TestClient(app) as client,
-        patch("core.api.routes.focus_preview.get_or_create_backend") as backend_factory,
-    ):
+    with SameThreadApiClient(app) as client:
+        provider = FixedTenantBackendProvider()
+        app.state.backend_provider = provider
         app.state.preview_revision_reader = object()
         response = client.get(f"/api/v1/tenants/new-label/focus-preview/revisions{query}")
 
     assert response.status_code == 422
-    backend_factory.assert_not_called()
+    assert provider.acquisitions == []
 
 
 @pytest.mark.parametrize(
@@ -665,22 +670,20 @@ def test_history_and_direct_repository_exceptions_share_exact_storage_503(
     ],
     ids=["history", "direct"],
 )
-@pytest.mark.parametrize("backend_failure", ["factory", "cached-incompatible"])
+@pytest.mark.parametrize("backend_failure", ["unavailable", "incompatible"])
 def test_history_and_direct_backend_failures_short_circuit_with_exact_storage_503(
     tmp_path: Path,
     path: str,
     backend_failure: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    route = import_module("core.api.routes.focus_preview")
     settings = _settings(tmp_path)
     app = create_app(settings)
     reader = _Reader(None, history=(_revision(),))
     app.state.settings = settings
-    app.state.backends = {}
     app.state.preview_revision_reader = reader
-    if backend_failure == "cached-incompatible":
-        app.state.backends["new-label"] = object()
+    provider = FixedTenantBackendProvider({"new-label": object()} if backend_failure == "incompatible" else None)
+    app.state.backend_provider = provider
 
     async def run_sync_inline(
         function: Any,
@@ -698,31 +701,19 @@ def test_history_and_direct_backend_failures_short_circuit_with_exact_storage_50
             return await client.get(target)
 
     monkeypatch.setattr(anyio.to_thread, "run_sync", run_sync_inline)
-    backend_patch = (
-        patch(
-            "core.api.routes.focus_preview.get_or_create_backend",
-            side_effect=RuntimeError("private /srv/backend tenant-1"),
-        )
-        if backend_failure == "factory"
-        else patch(
-            "core.api.routes.focus_preview.get_or_create_backend",
-            wraps=route.get_or_create_backend,
-        )
-    )
-    with backend_patch as backend_factory:
-        if "?month=" in path:
-            invalid = asyncio.run(request("/api/v1/tenants/new-label/focus-preview/revisions?month=2026-7"))
-            assert invalid.status_code == 400
-            assert invalid.json() == {"detail": "month must use YYYY-MM"}
-            backend_factory.assert_not_called()
-        response = asyncio.run(request())
+    if "?month=" in path:
+        invalid = asyncio.run(request("/api/v1/tenants/new-label/focus-preview/revisions?month=2026-7"))
+        assert invalid.status_code == 400
+        assert invalid.json() == {"detail": "month must use YYYY-MM"}
+        assert provider.acquisitions == []
+    response = asyncio.run(request())
 
     assert response.status_code == 503
     assert response.json() == {"detail": "FOCUS Mapping Preview revision storage is unavailable"}
     assert "private" not in response.text
     assert "/srv/backend" not in response.text
     assert "tenant-1" not in response.text
-    backend_factory.assert_called_once()
+    assert provider.acquisitions == ["new-label"]
     assert reader.calls == []
 
 
@@ -752,17 +743,15 @@ def test_invalid_history_cursor_maps_to_exact_400(tmp_path: Path) -> None:
 
 def test_invalid_history_scope_wins_before_reader_and_backend_creation(tmp_path: Path) -> None:
     app = create_app(_settings(tmp_path))
-    with (
-        patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"),
-        TestClient(app) as client,
-        patch("core.api.routes.focus_preview.get_or_create_backend") as backend_factory,
-    ):
+    with SameThreadApiClient(app) as client:
+        provider = FixedTenantBackendProvider()
+        app.state.backend_provider = provider
         app.state.preview_revision_reader = object()
         response = client.get("/api/v1/tenants/missing/focus-preview/revisions?month=2026-7")
 
     assert response.status_code == 400
     assert response.json() == {"detail": "month must use YYYY-MM"}
-    backend_factory.assert_not_called()
+    assert provider.acquisitions == []
 
 
 @pytest.mark.parametrize("suffix", ["manifest", "files/unknown.csv", "archive"])
@@ -837,23 +826,23 @@ def test_all_corrupt_revision_artifacts_share_one_redacted_500(
 
 
 def test_backend_creation_failure_has_exact_storage_503(tmp_path: Path) -> None:
-    with (
-        _client(tmp_path, current=_revision()) as (client, _reader),
-        patch("core.api.routes.focus_preview.get_or_create_backend", side_effect=RuntimeError("secret")),
-    ):
+    with _client(tmp_path, current=_revision()) as (client, _reader):
+        provider = FixedTenantBackendProvider()
+        client.app.state.backend_provider = provider
         response = client.get("/api/v1/tenants/new-label/focus-preview/revisions/current?month=2026-07")
 
     assert response.status_code == 503
     assert response.json() == {"detail": "FOCUS Mapping Preview revision storage is unavailable"}
+    assert provider.acquisitions == ["new-label"]
 
 
 def test_backend_protocol_narrowing_and_current_read_failure_share_storage_503(tmp_path: Path) -> None:
     app = create_app(_settings(tmp_path))
-    with patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"), TestClient(app) as client:
+    with SameThreadApiClient(app) as client:
         app.state.preview_revision_reader = _Reader(_revision())
-        app.state.backends["new-label"] = object()
+        install_backend(app, "new-label", object())
         wrong_backend = client.get("/api/v1/tenants/new-label/focus-preview/revisions/current?month=2026-07")
-        app.state.backends["new-label"] = _Backend()
+        install_backend(app, "new-label", _Backend())
         app.state.preview_revision_reader.failures["get_current"] = RuntimeError("private database detail")
         failed_read = client.get("/api/v1/tenants/new-label/focus-preview/revisions/current?month=2026-07")
 

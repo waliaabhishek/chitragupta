@@ -9,7 +9,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
-from core.preview.artifacts import PreviewArtifactIntegrityError
+from core.preview.artifacts import PreviewArtifactIntegrityError, PreviewArtifactOwner
 from core.preview.eligibility import (
     PreviewEligibilityPolicy,
     policy_from_tenant_config,
@@ -31,6 +31,9 @@ from core.preview.persistence import (
     PreviewExpiredArtifact,
     PreviewRequestPage,
     PreviewStorageBackend,
+)
+from core.storage.backend_provider import (  # noqa: TC001 - public runtime constructor annotation is resolvable
+    TenantBackendProvider,
 )
 
 if TYPE_CHECKING:
@@ -79,6 +82,7 @@ class PreviewRuntime:
         self,
         *,
         artifact_store: PreviewArtifactStore,
+        backend_provider: TenantBackendProvider,
         max_workers: int,
         max_csv_file_bytes: int | None = None,
         startup_at: datetime | None = None,
@@ -90,6 +94,7 @@ class PreviewRuntime:
         package_generator: PreviewPackageGenerator | None = None,
     ) -> None:
         self._artifact_store = artifact_store
+        self._backend_provider = backend_provider
         self._clock = clock
         self._max_csv_file_bytes = max_csv_file_bytes
         self._package_generator = package_generator or PreviewPackageGenerator(
@@ -100,8 +105,6 @@ class PreviewRuntime:
         if process_start.tzinfo is None or process_start.utcoffset() is None:
             raise ValueError("startup_at must be timezone-aware")
         self._startup_at = process_start.astimezone(UTC).replace(microsecond=0)
-        self._staging_recovery_pending = True
-        self._staging_recovery_lock = threading.Lock()
         self._owner_recovery_pending = set(configured_owner_keys)
         self._owner_recovery_locks: dict[tuple[str, str, str], threading.Lock] = {
             key: threading.Lock() for key in configured_owner_keys
@@ -116,28 +119,12 @@ class PreviewRuntime:
         ):
             raise ValueError("lease_owner_id must be a safe nonblank identifier")
         self._lease_lock = threading.Lock()
-        self._lease_targets: dict[str, PreviewStorageBackend] = {}
+        self._lease_targets: dict[str, tuple[str, TenantConfig]] = {}
         self._heartbeat_stop = threading.Event()
         self._heartbeat_thread: threading.Thread | None = None
         self._owns_executor = executor is None
         self._executor: PreviewExecutor = executor or ThreadPoolExecutor(max_workers=max_workers)
         self._closed = False
-
-    def ensure_staging_recovered(self) -> None:
-        if not self._staging_recovery_pending:
-            return
-        with self._staging_recovery_lock:
-            if not self._staging_recovery_pending:
-                return
-            try:
-                self._artifact_store.cleanup_staging()
-            except Exception as exc:
-                logger.error(
-                    "FOCUS Mapping Preview staging recovery failed error_type=%s",
-                    type(exc).__name__,
-                )
-                raise PreviewRecoveryUnavailable("FOCUS Mapping Preview recovery is unavailable") from None
-            self._staging_recovery_pending = False
 
     def ensure_owner_recovered(
         self,
@@ -147,7 +134,6 @@ class PreviewRuntime:
         ecosystem: str,
         tenant_id: str,
     ) -> None:
-        self.ensure_staging_recovered()
         key = (tenant_name, ecosystem, tenant_id)
         lock = self._owner_recovery_locks.setdefault(key, threading.Lock())
         with lock:
@@ -158,6 +144,7 @@ class PreviewRuntime:
                 True,
             )
             try:
+                self._artifact_store.cleanup_staging(PreviewArtifactOwner(tenant_name, ecosystem, tenant_id))
                 with backend.create_preview_write_unit_of_work() as uow:
                     now = self._clock().astimezone(UTC)
                     startup_recovery = (
@@ -198,9 +185,14 @@ class PreviewRuntime:
     def _lease_expiry(self) -> datetime:
         return self._clock().astimezone(UTC) + _PREVIEW_LEASE_DURATION
 
-    def _track_request(self, request_id: str, backend: PreviewStorageBackend) -> None:
+    def _track_request(
+        self,
+        request_id: str,
+        tenant_name: str,
+        tenant_config: TenantConfig,
+    ) -> None:
         with self._lease_lock:
-            self._lease_targets[request_id] = backend
+            self._lease_targets[request_id] = (tenant_name, tenant_config)
             if self._heartbeat_thread is None:
                 self._heartbeat_thread = threading.Thread(
                     target=self._heartbeat_loop,
@@ -217,15 +209,18 @@ class PreviewRuntime:
         while not self._heartbeat_stop.wait(_PREVIEW_HEARTBEAT_INTERVAL_SECONDS):
             with self._lease_lock:
                 targets = tuple(self._lease_targets.items())
-            for request_id, backend in targets:
+            for request_id, (tenant_name, tenant_config) in targets:
                 try:
-                    with backend.create_preview_write_unit_of_work() as uow:
-                        renewed = uow.requests.renew_lease(
-                            request_id,
-                            self._lease_owner_id,
-                            self._lease_expiry(),
-                        )
-                        uow.commit()
+                    with self._backend_provider.acquire_backend(tenant_name, tenant_config) as leased_backend:
+                        if not isinstance(leased_backend, PreviewStorageBackend):
+                            raise TypeError("tenant backend does not support Preview storage")
+                        with leased_backend.create_preview_write_unit_of_work() as uow:
+                            renewed = uow.requests.renew_lease(
+                                request_id,
+                                self._lease_owner_id,
+                                self._lease_expiry(),
+                            )
+                            uow.commit()
                 except Exception as exc:
                     logger.error(
                         "FOCUS Mapping Preview lease heartbeat failed request_id=%s error_type=%s",
@@ -286,9 +281,9 @@ class PreviewRuntime:
                 lease_expires_at=self._lease_expiry(),
             )
             uow.commit()
-        self._track_request(request.request_id, backend)
+        self._track_request(request.request_id, tenant_name, tenant_config)
         try:
-            self._executor.submit(lambda: self._run_worker(backend, request, policy))
+            self._executor.submit(lambda: self._run_worker(request, policy, tenant_config))
         except Exception as exc:
             logger.error(
                 "FOCUS Mapping Preview worker scheduling failed tenant=%s request_id=%s error_type=%s",
@@ -305,6 +300,32 @@ class PreviewRuntime:
         return request
 
     def _run_worker(
+        self,
+        request: PreviewRequest,
+        policy: PreviewEligibilityPolicy,
+        tenant_config: TenantConfig,
+    ) -> None:
+        try:
+            with self._backend_provider.acquire_backend(request.tenant_name, tenant_config) as leased_backend:
+                if not isinstance(leased_backend, PreviewStorageBackend):
+                    raise TypeError("tenant backend does not support Preview storage")
+                self._run_worker_with_backend(leased_backend, request, policy)
+        except Exception as exc:
+            logger.error(
+                "FOCUS Mapping Preview backend lease failed tenant=%s request_id=%s error_type=%s",
+                request.tenant_name,
+                request.request_id,
+                type(exc).__name__,
+            )
+            self._mark_failed_with_lease(
+                request,
+                tenant_config,
+                PreviewDiagnostic("preview_generation_failed", "FOCUS Mapping Preview generation failed.", True),
+            )
+        finally:
+            self._untrack_request(request.request_id)
+
+    def _run_worker_with_backend(
         self,
         backend: PreviewStorageBackend,
         request: PreviewRequest,
@@ -327,6 +348,7 @@ class PreviewRuntime:
                 policy=policy,
             )
             with self._artifact_store.stage_data_files(
+                owner=PreviewArtifactOwner(request.tenant_name, request.ecosystem, request.tenant_id),
                 request_id=request.request_id,
                 data_files=draft.data_files,
             ) as staged:
@@ -376,8 +398,25 @@ class PreviewRuntime:
                 request.request_id,
                 PreviewDiagnostic("preview_generation_failed", "FOCUS Mapping Preview generation failed.", True),
             )
-        finally:
-            self._untrack_request(request.request_id)
+
+    def _mark_failed_with_lease(
+        self,
+        request: PreviewRequest,
+        tenant_config: TenantConfig,
+        diagnostic: PreviewDiagnostic,
+    ) -> bool:
+        try:
+            with self._backend_provider.acquire_backend(request.tenant_name, tenant_config) as leased_backend:
+                if not isinstance(leased_backend, PreviewStorageBackend):
+                    return False
+                return self._mark_failed(leased_backend, request.request_id, diagnostic)
+        except Exception as exc:
+            logger.error(
+                "FOCUS Mapping Preview failure backend lease failed request_id=%s error_type=%s",
+                request.request_id,
+                type(exc).__name__,
+            )
+            return False
 
     def _mark_failed(self, backend: PreviewStorageBackend, request_id: str, diagnostic: PreviewDiagnostic) -> bool:
         try:
@@ -407,7 +446,7 @@ class PreviewRuntime:
     def get_request(
         self, *, backend: PreviewStorageBackend, request_id: str, ecosystem: str, tenant_id: str
     ) -> PreviewRequest | None:
-        with backend.create_preview_read_unit_of_work() as uow:
+        with backend.create_preview_metadata_read_unit_of_work() as uow:
             return uow.requests.get_for_owner(request_id, ecosystem, tenant_id)
 
     def list_recent_requests(
@@ -420,7 +459,7 @@ class PreviewRuntime:
         cursor_request_id: str | None,
     ) -> PreviewRequestPage:
         self.reconcile_expiry(backend=backend, ecosystem=ecosystem, tenant_id=tenant_id)
-        with backend.create_preview_read_unit_of_work() as uow:
+        with backend.create_preview_metadata_read_unit_of_work() as uow:
             return uow.requests.list_recent_for_owner(
                 ecosystem=ecosystem,
                 tenant_id=tenant_id,

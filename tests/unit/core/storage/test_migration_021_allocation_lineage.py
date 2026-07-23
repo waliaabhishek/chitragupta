@@ -183,7 +183,12 @@ def test_migration_021_matches_direct_create_all_for_owned_tables(tmp_path: Path
     migration_connection = f"sqlite:///{tmp_path / 'migration-021-parity.db'}"
     direct_connection = f"sqlite:///{tmp_path / 'direct-021-parity.db'}"
     command.upgrade(_alembic_config(migration_connection), "021")
-    direct_backend = SQLModelBackend(direct_connection, CCloudStorageModule(), use_migrations=False)
+    direct_backend = SQLModelBackend(
+        direct_connection,
+        CCloudStorageModule(),
+        use_migrations=False,
+        focus_preview_enabled=True,
+    )
     direct_backend.create_tables()
     migrated = create_engine(migration_connection)
     direct = create_engine(direct_connection)
@@ -195,9 +200,10 @@ def test_migration_021_matches_direct_create_all_for_owned_tables(tmp_path: Path
         "ccloud_allocation_lineage_runs",
         "ccloud_allocation_lineage_portions",
     ):
-        assert {column["name"] for column in migrated_inspector.get_columns(table)} == {
-            column["name"] for column in direct_inspector.get_columns(table)
-        }
+        direct_columns = {column["name"] for column in direct_inspector.get_columns(table)}
+        if table == "ccloud_cost_source_records":
+            direct_columns.remove("capture_id")
+        assert {column["name"] for column in migrated_inspector.get_columns(table)} == direct_columns
         assert {index["name"] for index in migrated_inspector.get_indexes(table)} == {
             index["name"] for index in direct_inspector.get_indexes(table)
         }

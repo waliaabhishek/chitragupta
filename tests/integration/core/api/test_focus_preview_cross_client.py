@@ -7,7 +7,6 @@ import os
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
-from unittest.mock import patch
 
 import anyio.to_thread
 import pytest
@@ -16,6 +15,7 @@ from core.api.app import create_app
 from core.preview import cli
 from core.storage.backends.sqlmodel.unit_of_work import SQLModelBackend
 from plugins.confluent_cloud.storage.module import CCloudStorageModule
+from tests.integration.core.api.backend_provider import install_backend
 from tests.integration.core.api.test_focus_preview import (
     SameThreadApiClient,
     SameThreadCliClient,
@@ -50,13 +50,14 @@ def test_one_real_stored_package_has_identical_api_cli_frontend_and_persisted_ha
         settings.tenants["production"].storage.connection_string.get_secret_value(),
         CCloudStorageModule(),
         use_migrations=False,
+        focus_preview_enabled=True,
     )
     backend.create_tables()
     _seed(backend, source=_source(), aggregate=_aggregate(), allocation=_allocation())
     app = create_app(settings)
     output_dir = tmp_path / "cli-output"
-    with patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"), SameThreadApiClient(app) as client:
-        app.state.backends["production"] = backend
+    with SameThreadApiClient(app) as client:
+        install_backend(app, "production", backend)
         submitted = client.post("/api/v1/tenants/production/focus-preview/requests", json=_body())
         status = _wait_for_terminal(client, submitted.json()["request_id"])
         assert status["status"] == "ready"
@@ -85,7 +86,7 @@ def test_one_real_stored_package_has_identical_api_cli_frontend_and_persisted_ha
             == 0
         )
 
-        with backend.create_preview_read_unit_of_work() as uow:
+        with backend.create_preview_metadata_read_unit_of_work() as uow:
             persisted = uow.requests.get_for_owner(status["request_id"], "confluent_cloud", "tenant-1")
         assert persisted is not None and persisted.package is not None
         persisted_metadata = {item.name: item.sha256 for item in (persisted.package.manifest, *persisted.package.files)}

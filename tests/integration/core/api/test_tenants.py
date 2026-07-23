@@ -9,6 +9,7 @@ from core.config.models import ApiConfig, AppSettings, LoggingConfig, StorageCon
 from core.models.pipeline import PipelineState
 from core.storage.backends.sqlmodel.module import CoreStorageModule
 from core.storage.backends.sqlmodel.unit_of_work import SQLModelBackend
+from tests.integration.core.api.backend_provider import install_backend
 
 
 class TestListTenants:
@@ -34,8 +35,6 @@ class TestListTenants:
         # Create tables first
         backend = SQLModelBackend(temp_db_path, CoreStorageModule(), use_migrations=False)
         backend.create_tables()
-        backend.dispose()
-
         settings = AppSettings(
             api=ApiConfig(host="127.0.0.1", port=8080),
             logging=LoggingConfig(),
@@ -43,6 +42,7 @@ class TestListTenants:
         )
         app = create_app(settings)
         with TestClient(app) as client:
+            install_backend(app, "test-tenant", backend)
             response = client.get("/api/v1/tenants")
             assert response.status_code == 200
             data = response.json()
@@ -50,6 +50,7 @@ class TestListTenants:
             assert data["tenants"][0]["tenant_name"] == "test-tenant"
             assert data["tenants"][0]["tenant_id"] == "t-1"
             assert data["tenants"][0]["ecosystem"] == "test-eco"
+        backend.dispose()
 
     def test_list_tenants_includes_status_summary(self, temp_db_path: str) -> None:
         tenant_config = TenantConfig(
@@ -73,8 +74,6 @@ class TestListTenants:
                 )
             )
             uow.commit()
-        backend.dispose()
-
         settings = AppSettings(
             api=ApiConfig(host="127.0.0.1", port=8080),
             logging=LoggingConfig(),
@@ -82,12 +81,14 @@ class TestListTenants:
         )
         app = create_app(settings)
         with TestClient(app) as client:
+            install_backend(app, "test-tenant", backend)
             response = client.get("/api/v1/tenants")
             assert response.status_code == 200
             data = response.json()
             summary = data["tenants"][0]
             assert summary["dates_calculated"] == 1
             assert summary["last_calculated_date"] == "2026-02-15"
+        backend.dispose()
 
 
 class TestGetTenantStatus:
@@ -436,8 +437,6 @@ class TestGetTenantStatusDefaultLookbackWindow:
                     )
                 )
             uow.commit()
-        backend.dispose()
-
         settings = AppSettings(
             api=ApiConfig(host="127.0.0.1", port=8080),
             logging=LoggingConfig(),
@@ -452,7 +451,9 @@ class TestGetTenantStatusDefaultLookbackWindow:
         )
         app = create_app(settings)
         with TestClient(app) as client:
+            install_backend(app, "test-tenant", backend)
             response = client.get("/api/v1/tenants/test-tenant/status")
+        backend.dispose()
 
         assert response.status_code == 200
         data = response.json()

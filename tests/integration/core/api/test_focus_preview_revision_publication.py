@@ -11,10 +11,11 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+import anyio.to_thread
 import pytest
-from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text
 
+import workflow_runner
 from core.api.app import create_app
 from core.config.models import AppSettings, FeaturesConfig, PreviewConfig
 from core.engine.orchestrator import PipelineRunResult
@@ -23,6 +24,7 @@ from core.models.resource import CoreResource, ResourceStatus
 from core.storage.backends.sqlmodel.unit_of_work import SQLModelBackend
 from core.storage.interface import AllocationLineageRunCapture
 from plugins.confluent_cloud.storage.module import CCloudStorageModule
+from tests.integration.core.api.backend_provider import install_backend
 from tests.integration.core.api.test_focus_preview import SameThreadApiClient, _body, _wait_for_terminal
 from tests.unit.core.preview.test_revision_models import _candidate, _package
 from tests.unit.core.preview.test_revisions import _tenant_config
@@ -30,14 +32,26 @@ from tests.unit.core.preview.test_service import _aggregate, _allocation, _seed,
 from workflow_runner import TenantRuntime, WorkflowRunner
 
 
+@pytest.fixture(autouse=True)
+def _inline_api_threads(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def to_thread_inline(function: Any, *args: object, **kwargs: object) -> object:
+        return function(*args, **kwargs)
+
+    async def run_sync_inline(function: Any, *args: object, **_kwargs: object) -> object:
+        return function(*args)
+
+    monkeypatch.setattr("core.api.app.asyncio.to_thread", to_thread_inline)
+    monkeypatch.setattr(anyio.to_thread, "run_sync", run_sync_inline)
+
+
 class _BarrierArtifactStore:
     def __init__(self, delegate: Any, barrier: threading.Barrier) -> None:
         self.delegate = delegate
         self.barrier = barrier
 
-    def stage_data_files(self, *, request_id: str, data_files: tuple[Any, ...]) -> Any:
+    def stage_data_files(self, *, owner: Any, request_id: str, data_files: tuple[Any, ...]) -> Any:
         self.barrier.wait(timeout=10)
-        return self.delegate.stage_data_files(request_id=request_id, data_files=data_files)
+        return self.delegate.stage_data_files(owner=owner, request_id=request_id, data_files=data_files)
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self.delegate, name)
@@ -104,8 +118,8 @@ class _FinalDeleteCommitFailingBackend:
         self.delegate = delegate
         self.fail_final_delete_commit_once = True
 
-    def create_preview_read_unit_of_work(self) -> Any:
-        return self.delegate.create_preview_read_unit_of_work()
+    def create_preview_metadata_read_unit_of_work(self) -> Any:
+        return self.delegate.create_preview_metadata_read_unit_of_work()
 
     def create_preview_write_unit_of_work(self) -> _CommitFailingUnitOfWork:
         return _CommitFailingUnitOfWork(self.delegate.create_preview_write_unit_of_work(), self)
@@ -155,6 +169,7 @@ def _seed_month(
     *,
     billed_cost: Decimal,
     billing_account_name: str = "Provider billing organization",
+    capture_source: bool = True,
 ) -> None:
     from core.engine.allocation_lineage import build_allocation_lineage_capture
 
@@ -255,6 +270,35 @@ def _seed_month(
             )
             uow.pipeline_state.upsert(state)
         uow.commit()
+    if capture_source:
+        from core.preview.evidence_capture import NativeSourceWindow
+        from plugins.confluent_cloud.source_capture import CCloudNativeSourceEvidenceCapture
+
+        refresh_start = datetime(2026, 6, 30, tzinfo=UTC)
+        refresh_end = datetime(2026, 8, 3, tzinfo=UTC)
+        with backend.create_preview_evidence_unit_of_work() as evidence_uow:
+            attempt = evidence_uow.source_readiness.begin_attempt(
+                "confluent_cloud",
+                "tenant-1",
+                f"capture:{billing_account_name}",
+                refresh_start,
+                refresh_end,
+                datetime(2026, 8, 3, tzinfo=UTC),
+            )
+            CCloudNativeSourceEvidenceCapture(
+                ecosystem="confluent_cloud",
+                tenant_id="tenant-1",
+                refresh_start=refresh_start,
+                refresh_end=refresh_end,
+                windows=(NativeSourceWindow(refresh_start, refresh_end),),
+                records=tuple(sources),
+            ).persist(
+                evidence_uow.source_windows,
+                evidence_uow.source_readiness,
+                attempt_sequence=attempt.attempt_sequence,
+                captured_at=datetime(2026, 8, 3, 0, 0, 1, tzinfo=UTC),
+            )
+            evidence_uow.commit()
 
 
 def _seed_calculation_days(
@@ -310,7 +354,12 @@ def test_requested_package_expires_at_seven_days_independently_of_revision_reten
         preview=PreviewConfig(artifact_root=artifact_root, max_workers=1),
         tenants={"production": tenant},
     )
-    backend = SQLModelBackend(connection_string, CCloudStorageModule(), use_migrations=False)
+    backend = SQLModelBackend(
+        connection_string,
+        CCloudStorageModule(),
+        use_migrations=False,
+        focus_preview_enabled=True,
+    )
     backend.create_tables()
     _seed_month(backend, billed_cost=Decimal("8"))
     controlled_now = [datetime(2026, 8, 1, 12, tzinfo=UTC)]
@@ -335,8 +384,8 @@ def test_requested_package_expires_at_seven_days_independently_of_revision_reten
         assert [revision.revision_id for revision in published] == ["revision-short-retention"]
 
         app = create_app(settings)
-        with patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"), SameThreadApiClient(app) as client:
-            app.state.backends["production"] = backend
+        with SameThreadApiClient(app) as client:
+            install_backend(app, "production", backend)
             app.state.preview_runtime._clock = lambda: controlled_now[0]  # noqa: SLF001
             submitted = client.post(
                 "/api/v1/tenants/production/focus-preview/requests",
@@ -386,10 +435,20 @@ def test_requested_package_expires_at_seven_days_independently_of_revision_reten
 
 def test_periodic_publication_lifecycle_is_visible_through_real_current_api(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from core.preview.artifacts import LocalPreviewArtifactStore
     from core.preview.generator import PreviewPackageGenerator
     from core.preview.revisions import PreviewRevisionService
+
+    async def to_thread_inline(function: Any, *args: object, **kwargs: object) -> object:
+        return function(*args, **kwargs)
+
+    async def run_sync_inline(function: Any, *args: object, **_kwargs: object) -> object:
+        return function(*args)
+
+    monkeypatch.setattr("core.api.app.asyncio.to_thread", to_thread_inline)
+    monkeypatch.setattr(anyio.to_thread, "run_sync", run_sync_inline)
 
     connection_string = f"sqlite:///{tmp_path / 'tenant.db'}"
     artifact_root = tmp_path / "artifacts"
@@ -399,9 +458,13 @@ def test_periodic_publication_lifecycle_is_visible_through_real_current_api(
         preview=PreviewConfig(artifact_root=artifact_root, max_workers=1),
         tenants={"production": tenant},
     )
-    backend = SQLModelBackend(connection_string, CCloudStorageModule(), use_migrations=False)
-    backend.create_tables()
-    _seed_month(backend, billed_cost=Decimal("8"))
+    seed_backend = SQLModelBackend(
+        connection_string,
+        CCloudStorageModule(),
+        focus_preview_enabled=True,
+    )
+    seed_backend.create_tables()
+    _seed_month(seed_backend, billed_cost=Decimal("8"))
     worker_store = LocalPreviewArtifactStore(artifact_root)
     generator = PreviewPackageGenerator(
         max_csv_file_bytes=None,
@@ -414,27 +477,37 @@ def test_periodic_publication_lifecycle_is_visible_through_real_current_api(
         clock=lambda: datetime(2026, 8, 4, tzinfo=UTC),
         revision_id_factory=lambda: next(identifiers),
     )
+    plugin = MagicMock()
+    plugin.get_storage_module.return_value = CCloudStorageModule()
+    plugin.get_metrics_source.return_value = None
+    plugin.gather_preview_organizations.side_effect = AssertionError(
+        "revision publication must not call the organization provider"
+    )
+    registry = MagicMock()
+    registry.create.return_value = plugin
     runner = WorkflowRunner(
         settings,
-        MagicMock(),
+        registry,
         revision_manager=publisher,
         owned_preview_artifact_store=worker_store,
     )
-    runner._tenant_runtimes["production"] = TenantRuntime(  # noqa: SLF001
-        tenant_name="production",
-        plugin=MagicMock(),
-        storage=backend,
-        orchestrator=MagicMock(),
-        config_hash="stable",
-        created_at=datetime(2026, 8, 4, tzinfo=UTC),
-    )
 
+    runner.bootstrap_storage()
+    seed_backend.dispose()
+    with runner.acquire_backend("production", tenant) as acquired_backend:
+        assert isinstance(acquired_backend, SQLModelBackend)
+        backend = acquired_backend
     _run_periodic_cycle(runner, _result(), now=datetime(2026, 8, 4, tzinfo=UTC))
+    registry.create.assert_called_once_with("confluent_cloud")
+    plugin.initialize.assert_called_once()
+    with runner.acquire_backend("production", tenant) as cached_backend:
+        assert cached_backend is backend
     _run_periodic_cycle(runner, _result(), now=datetime(2026, 8, 4, tzinfo=UTC))
     _seed_month(
         backend,
         billed_cost=Decimal("8"),
         billing_account_name="Revised billing organization",
+        capture_source=True,
     )
     _run_periodic_cycle(runner, _result(), now=datetime(2026, 8, 4, tzinfo=UTC))
     _run_periodic_cycle(runner, _result(), now=datetime(2026, 8, 7, tzinfo=UTC))
@@ -442,6 +515,7 @@ def test_periodic_publication_lifecycle_is_visible_through_real_current_api(
         backend,
         billed_cost=Decimal("8"),
         billing_account_name="Final billing organization",
+        capture_source=True,
     )
     _run_periodic_cycle(runner, _result(), now=datetime(2026, 8, 7, tzinfo=UTC))
     _run_periodic_cycle(runner, _result(errors=["failed"]), now=datetime(2026, 8, 7, tzinfo=UTC))
@@ -485,13 +559,14 @@ def test_periodic_publication_lifecycle_is_visible_through_real_current_api(
         None,
     ]
     assert request_count == 0
+    plugin.gather_preview_organizations.assert_not_called()
 
     app = create_app(settings)
     first_manifest_body = b""
     first_file_body = b""
     first_archive_body = b""
-    with patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"), TestClient(app) as client:
-        app.state.backends["production"] = backend
+    with SameThreadApiClient(app) as client:
+        install_backend(app, "production", backend)
         metadata = client.get("/api/v1/tenants/production/focus-preview/revisions/current?month=2026-07")
         assert metadata.status_code == 200
         body = metadata.json()
@@ -530,8 +605,8 @@ def test_periodic_publication_lifecycle_is_visible_through_real_current_api(
 
     renamed_settings = settings.model_copy(update={"tenants": {"renamed": tenant}})
     renamed_app = create_app(renamed_settings)
-    with patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"), TestClient(renamed_app) as client:
-        renamed_app.state.backends["renamed"] = backend
+    with SameThreadApiClient(renamed_app) as client:
+        install_backend(renamed_app, "renamed", backend)
         renamed = client.get("/api/v1/tenants/renamed/focus-preview/revisions/current?month=2026-07")
         assert renamed.status_code == 200
         renamed_body = renamed.json()
@@ -555,8 +630,8 @@ def test_periodic_publication_lifecycle_is_visible_through_real_current_api(
     assert cleanup.deferred_count == 0
 
     cleaned_app = create_app(settings)
-    with patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"), TestClient(cleaned_app) as client:
-        cleaned_app.state.backends["production"] = backend
+    with SameThreadApiClient(cleaned_app) as client:
+        install_backend(cleaned_app, "production", backend)
         history = client.get("/api/v1/tenants/production/focus-preview/revisions?month=2026-07")
         assert history.status_code == 200
         assert history.json()["items"] == []
@@ -573,7 +648,9 @@ def test_real_direct_api_masks_distinct_foreign_pending_and_removed_rows(tmp_pat
         preview=PreviewConfig(artifact_root=tmp_path / "direct-masking-artifacts"),
         tenants={"production": tenant},
     )
-    backend = SQLModelBackend(connection_string, CCloudStorageModule(), use_migrations=False)
+    backend = SQLModelBackend(
+        connection_string, CCloudStorageModule(), use_migrations=False, focus_preview_enabled=True
+    )
     backend.create_tables()
     pending_at = datetime(2026, 8, 5, tzinfo=UTC)
 
@@ -615,7 +692,7 @@ def test_real_direct_api_masks_distinct_foreign_pending_and_removed_rows(tmp_pat
         assert [candidate.revision_id for candidate in pending] == ["revision-pending"]
         uow.commit()
 
-    with backend.create_preview_read_unit_of_work() as uow:
+    with backend.create_preview_metadata_read_unit_of_work() as uow:
         assert (
             uow.revisions.get_for_owner(
                 ecosystem="confluent_cloud",
@@ -642,8 +719,8 @@ def test_real_direct_api_masks_distinct_foreign_pending_and_removed_rows(tmp_pat
         )
 
     app = create_app(settings)
-    with patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"), TestClient(app) as client:
-        app.state.backends["production"] = backend
+    with SameThreadApiClient(app) as client:
+        install_backend(app, "production", backend)
         responses = {
             revision_id: client.get(f"/api/v1/tenants/production/focus-preview/revisions/{revision_id}")
             for revision_id in ("revision-foreign", "revision-pending", "revision-removed")
@@ -679,6 +756,7 @@ def test_periodic_retention_crash_restart_recovery_is_durable_and_api_masked(
         connection_string,
         CCloudStorageModule(),
         use_migrations=False,
+        focus_preview_enabled=True,
     )
     backend.create_tables()
     _seed_month(backend, billed_cost=Decimal("8"))
@@ -695,7 +773,7 @@ def test_periodic_retention_crash_restart_recovery_is_durable_and_api_masked(
             plugin=MagicMock(),
             storage=runtime_backend,
             orchestrator=MagicMock(),
-            config_hash="stable",
+            config_hash=workflow_runner._config_hash(settings.tenants["production"]),  # noqa: SLF001
             created_at=datetime(2026, 8, 4, tzinfo=UTC),
         )
         return runner
@@ -738,10 +816,11 @@ def test_periodic_retention_crash_restart_recovery_is_durable_and_api_masked(
         connection_string,
         CCloudStorageModule(),
         use_migrations=False,
+        focus_preview_enabled=True,
     )
     assert backend is not initial_backend
 
-    with backend.create_preview_read_unit_of_work() as read_uow:
+    with backend.create_preview_metadata_read_unit_of_work() as read_uow:
         recovered_claim = read_uow.revisions.list_retention_pending(
             ecosystem="confluent_cloud",
             tenant_id="tenant-1",
@@ -776,9 +855,10 @@ def test_periodic_retention_crash_restart_recovery_is_durable_and_api_masked(
         connection_string,
         CCloudStorageModule(),
         use_migrations=False,
+        focus_preview_enabled=True,
     )
     assert backend is not first_reopened_backend
-    with backend.create_preview_read_unit_of_work() as read_uow:
+    with backend.create_preview_metadata_read_unit_of_work() as read_uow:
         pending = read_uow.revisions.list_retention_pending(
             ecosystem="confluent_cloud",
             tenant_id="tenant-1",
@@ -787,7 +867,7 @@ def test_periodic_retention_crash_restart_recovery_is_durable_and_api_masked(
     assert len(pending) == 1
     assert pending[0].retention_pending_at == boundary + timedelta(microseconds=1)
     assert pending[0].retention_pending_at.tzinfo is UTC
-    with backend.create_preview_read_unit_of_work() as read_uow:
+    with backend.create_preview_metadata_read_unit_of_work() as read_uow:
         assert (
             read_uow.revisions.get_for_owner(
                 ecosystem="confluent_cloud",
@@ -827,7 +907,7 @@ def test_periodic_retention_crash_restart_recovery_is_durable_and_api_masked(
     )
     assert commit_failing_backend.fail_final_delete_commit_once is False
 
-    with backend.create_preview_read_unit_of_work() as read_uow:
+    with backend.create_preview_metadata_read_unit_of_work() as read_uow:
         after_commit_failure = read_uow.revisions.list_retention_pending(
             ecosystem="confluent_cloud",
             tenant_id="tenant-1",
@@ -852,7 +932,7 @@ def test_periodic_retention_crash_restart_recovery_is_durable_and_api_masked(
         now=boundary,
     )
 
-    with backend.create_preview_read_unit_of_work() as read_uow:
+    with backend.create_preview_metadata_read_unit_of_work() as read_uow:
         assert (
             read_uow.revisions.list_retention_pending(
                 ecosystem="confluent_cloud",
@@ -883,7 +963,9 @@ def test_concurrent_real_publication_deletes_loser_package_and_keeps_winner_read
     from core.preview.revisions import PreviewRevisionReadService, PreviewRevisionService
 
     connection_string = f"sqlite:///{tmp_path / 'race.db'}"
-    backend = SQLModelBackend(connection_string, CCloudStorageModule(), use_migrations=False)
+    backend = SQLModelBackend(
+        connection_string, CCloudStorageModule(), use_migrations=False, focus_preview_enabled=True
+    )
     backend.create_tables()
     _seed_month(backend, billed_cost=Decimal("8"))
     root = tmp_path / "race-artifacts"
@@ -907,7 +989,7 @@ def test_concurrent_real_publication_deletes_loser_package_and_keeps_winner_read
             plugin=MagicMock(),
             storage=backend,
             orchestrator=MagicMock(),
-            config_hash="stable",
+            config_hash=workflow_runner._config_hash(settings.tenants["production"]),  # noqa: SLF001
             created_at=datetime(2026, 8, 7, tzinfo=UTC),
         )
         return runner
@@ -1011,13 +1093,15 @@ def test_concurrent_real_publication_deletes_loser_package_and_keeps_winner_read
         assert connection.execute(text("SELECT COUNT(*) FROM preview_revisions")).scalar_one() == 2
     engine.dispose()
     app = create_app(settings)
-    with patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"), TestClient(app) as client:
-        app.state.backends["production"] = backend
+    with SameThreadApiClient(app) as client:
+        install_backend(app, "production", backend)
         response = client.get("/api/v1/tenants/production/focus-preview/revisions/current?month=2026-07")
         assert response.status_code == 200
         assert response.json()["revision_id"] == current.revision_id
         assert client.get(response.json()["package"]["manifest"]["download_url"]).status_code == 200
-    assert local_store.cleanup_staging() == 0
+    from core.preview.artifacts import PreviewArtifactOwner
+
+    assert local_store.cleanup_staging(PreviewArtifactOwner("production", "confluent_cloud", "tenant-1")) == 0
     initial_runner.close()
     for runner in runners:
         runner.close()
@@ -1033,7 +1117,9 @@ def test_periodic_real_generator_seeds_every_header_only_month_without_request_r
     from core.preview.revisions import PreviewRevisionService
 
     connection_string = f"sqlite:///{tmp_path / 'header-only.db'}"
-    backend = SQLModelBackend(connection_string, CCloudStorageModule(), use_migrations=False)
+    backend = SQLModelBackend(
+        connection_string, CCloudStorageModule(), use_migrations=False, focus_preview_enabled=True
+    )
     backend.create_tables()
     _seed_calculation_days(backend, start=date(2026, 4, 1), end=date(2026, 7, 1))
     base_tenant = _tenant_config(connection_string)
@@ -1072,7 +1158,7 @@ def test_periodic_real_generator_seeds_every_header_only_month_without_request_r
         plugin=MagicMock(),
         storage=backend,
         orchestrator=MagicMock(),
-        config_hash="stable",
+        config_hash=workflow_runner._config_hash(settings.tenants["production"]),  # noqa: SLF001
         created_at=datetime(2026, 8, 4, tzinfo=UTC),
     )
 
@@ -1093,8 +1179,8 @@ def test_periodic_real_generator_seeds_every_header_only_month_without_request_r
     assert all(row["is_current"] for row in rows)
 
     app = create_app(settings)
-    with patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"), TestClient(app) as client:
-        app.state.backends["production"] = backend
+    with SameThreadApiClient(app) as client:
+        install_backend(app, "production", backend)
         for month in ("2026-04", "2026-05", "2026-06"):
             response = client.get(f"/api/v1/tenants/production/focus-preview/revisions/current?month={month}")
             assert response.status_code == 200
@@ -1112,7 +1198,9 @@ def test_real_header_only_publication_keeps_two_storage_owners_isolated(
     from core.preview.revisions import PreviewRevisionReadService, PreviewRevisionService
 
     connection_string = f"sqlite:///{tmp_path / 'owners.db'}"
-    backend = SQLModelBackend(connection_string, CCloudStorageModule(), use_migrations=False)
+    backend = SQLModelBackend(
+        connection_string, CCloudStorageModule(), use_migrations=False, focus_preview_enabled=True
+    )
     backend.create_tables()
     for tenant_id in ("tenant-1", "tenant-2"):
         _seed_calculation_days(
@@ -1179,7 +1267,9 @@ def test_real_physical_artifact_damage_is_redacted_across_http_delivery(
     from core.preview.revisions import PreviewRevisionService
 
     connection_string = f"sqlite:///{tmp_path / f'{artifact}-{damage}.db'}"
-    backend = SQLModelBackend(connection_string, CCloudStorageModule(), use_migrations=False)
+    backend = SQLModelBackend(
+        connection_string, CCloudStorageModule(), use_migrations=False, focus_preview_enabled=True
+    )
     backend.create_tables()
     _seed_calculation_days(backend, start=date(2026, 7, 1), end=date(2026, 8, 1))
     tenant = _tenant_config(connection_string)
@@ -1208,10 +1298,9 @@ def test_real_physical_artifact_damage_is_redacted_across_http_delivery(
     app = create_app(settings)
     with (
         caplog.at_level(logging.ERROR, logger="core.api.routes.focus_preview"),
-        patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"),
-        TestClient(app) as client,
+        SameThreadApiClient(app) as client,
     ):
-        app.state.backends["production"] = backend
+        install_backend(app, "production", backend)
         current_response = client.get("/api/v1/tenants/production/focus-preview/revisions/current?month=2026-07")
         base = "/api/v1/tenants/production/focus-preview/revisions/current"
         guard = f"month=2026-07&revision_id={revision.revision_id}"
@@ -1273,7 +1362,9 @@ def test_canonical_manifest_corruption_is_redacted_across_real_http_delivery(
     from core.preview.revisions import PreviewRevisionReadService, PreviewRevisionService
 
     connection_string = f"sqlite:///{tmp_path / f'canonical-{corruption}.db'}"
-    backend = SQLModelBackend(connection_string, CCloudStorageModule(), use_migrations=False)
+    backend = SQLModelBackend(
+        connection_string, CCloudStorageModule(), use_migrations=False, focus_preview_enabled=True
+    )
     backend.create_tables()
     _seed_calculation_days(backend, start=date(2026, 7, 1), end=date(2026, 8, 1))
     tenant = _tenant_config(connection_string)
@@ -1300,7 +1391,7 @@ def test_canonical_manifest_corruption_is_redacted_across_real_http_delivery(
         plugin=MagicMock(),
         storage=backend,
         orchestrator=MagicMock(),
-        config_hash="stable",
+        config_hash=workflow_runner._config_hash(settings.tenants["production"]),  # noqa: SLF001
         created_at=datetime(2026, 8, 7, tzinfo=UTC),
     )
     _run_periodic_cycle(runner, _result(), now=datetime(2026, 8, 7, tzinfo=UTC))
@@ -1361,10 +1452,9 @@ def test_canonical_manifest_corruption_is_redacted_across_real_http_delivery(
     app = create_app(settings)
     with (
         caplog.at_level(logging.ERROR, logger="core.api.routes.focus_preview"),
-        patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"),
-        TestClient(app) as client,
+        SameThreadApiClient(app) as client,
     ):
-        app.state.backends["production"] = backend
+        install_backend(app, "production", backend)
         current_response = client.get("/api/v1/tenants/production/focus-preview/revisions/current?month=2026-07")
         base = "/api/v1/tenants/production/focus-preview/revisions/current"
         guard = f"month=2026-07&revision_id={revision.revision_id}"
@@ -1394,7 +1484,9 @@ def test_builder_supplied_material_mismatch_is_rejected_through_periodic_publish
     from core.preview.generator import PreviewPackageGenerator
 
     connection_string = f"sqlite:///{tmp_path / 'builder-material.db'}"
-    backend = SQLModelBackend(connection_string, CCloudStorageModule(), use_migrations=False)
+    backend = SQLModelBackend(
+        connection_string, CCloudStorageModule(), use_migrations=False, focus_preview_enabled=True
+    )
     backend.create_tables()
     _seed_month(backend, billed_cost=Decimal("8"))
     tenant = _tenant_config(connection_string)
@@ -1421,7 +1513,7 @@ def test_builder_supplied_material_mismatch_is_rejected_through_periodic_publish
         plugin=MagicMock(),
         storage=backend,
         orchestrator=MagicMock(),
-        config_hash="stable",
+        config_hash=workflow_runner._config_hash(settings.tenants["production"]),  # noqa: SLF001
         created_at=datetime(2026, 8, 7, tzinfo=UTC),
     )
     original_builder = revision_module.build_preview_revision_manifest
@@ -1443,8 +1535,8 @@ def test_builder_supplied_material_mismatch_is_rejected_through_periodic_publish
     _run_periodic_cycle(runner, _result(), now=datetime(2026, 8, 7, tzinfo=UTC))
 
     app = create_app(settings)
-    with patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"), TestClient(app) as client:
-        app.state.backends["production"] = backend
+    with SameThreadApiClient(app) as client:
+        install_backend(app, "production", backend)
         current = client.get("/api/v1/tenants/production/focus-preview/revisions/current?month=2026-07")
         assert current.status_code == 200
         body = current.json()
@@ -1468,12 +1560,16 @@ def test_real_api_masks_missing_current_owner_and_unknown_current_file(tmp_path:
     from core.preview.revisions import PreviewRevisionService
 
     connection_string = f"sqlite:///{tmp_path / 'masked-missing.db'}"
-    backend = SQLModelBackend(connection_string, CCloudStorageModule(), use_migrations=False)
+    backend = SQLModelBackend(
+        connection_string, CCloudStorageModule(), use_migrations=False, focus_preview_enabled=True
+    )
     backend.create_tables()
     _seed_calculation_days(backend, start=date(2026, 7, 1), end=date(2026, 8, 1))
     tenant = _tenant_config(connection_string)
     other_connection_string = f"sqlite:///{tmp_path / 'masked-other-owner.db'}"
-    other_backend = SQLModelBackend(other_connection_string, CCloudStorageModule(), use_migrations=False)
+    other_backend = SQLModelBackend(
+        other_connection_string, CCloudStorageModule(), use_migrations=False, focus_preview_enabled=True
+    )
     other_backend.create_tables()
     other_tenant = _tenant_config(other_connection_string).model_copy(update={"tenant_id": "tenant-2"})
     root = tmp_path / "masked-missing-artifacts"
@@ -1494,9 +1590,9 @@ def test_real_api_masks_missing_current_owner_and_unknown_current_file(tmp_path:
             tenants={"production": tenant, "other-owner": other_tenant},
         )
     )
-    with patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"), TestClient(app) as client:
-        app.state.backends["production"] = backend
-        app.state.backends["other-owner"] = other_backend
+    with SameThreadApiClient(app) as client:
+        install_backend(app, "production", backend)
+        install_backend(app, "other-owner", other_backend)
         missing = client.get("/api/v1/tenants/other-owner/focus-preview/revisions/current?month=2026-07")
         unknown_file = client.get(
             "/api/v1/tenants/production/focus-preview/revisions/current/files/private.csv"
@@ -1527,7 +1623,9 @@ def test_real_layered_publication_failures_preserve_current_row_and_artifact(
     from core.preview.revisions import PreviewRevisionReadService, PreviewRevisionService
 
     connection_string = f"sqlite:///{tmp_path / f'failure-{failure_layer}.db'}"
-    backend = SQLModelBackend(connection_string, CCloudStorageModule(), use_migrations=False)
+    backend = SQLModelBackend(
+        connection_string, CCloudStorageModule(), use_migrations=False, focus_preview_enabled=True
+    )
     backend.create_tables()
     _seed_month(backend, billed_cost=Decimal("8"))
     tenant = _tenant_config(connection_string)
@@ -1555,7 +1653,7 @@ def test_real_layered_publication_failures_preserve_current_row_and_artifact(
         plugin=MagicMock(),
         storage=backend,
         orchestrator=MagicMock(),
-        config_hash="stable",
+        config_hash=workflow_runner._config_hash(settings.tenants["production"]),  # noqa: SLF001
         created_at=datetime(2026, 8, 7, tzinfo=UTC),
     )
     _run_periodic_cycle(runner, _result(), now=datetime(2026, 8, 7, tzinfo=UTC))
@@ -1578,6 +1676,9 @@ def test_real_layered_publication_failures_preserve_current_row_and_artifact(
         )
         runner._settings = settings.model_copy(  # noqa: SLF001
             update={"tenants": {"production": configured_tenant}}
+        )
+        runner._tenant_runtimes["production"].config_hash = workflow_runner._config_hash(  # noqa: SLF001
+            configured_tenant
         )
     elif failure_layer == "source":
         with engine.begin() as connection:
@@ -1649,8 +1750,8 @@ def test_real_layered_publication_failures_preserve_current_row_and_artifact(
     assert rows == [{"revision_id": "revision-current", "is_current": True, "superseded_by_revision_id": None}]
     assert [path.name for path in root.iterdir() if not path.name.startswith(".")] == [current.package.storage_key]
     app = create_app(settings)
-    with patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"), TestClient(app) as client:
-        app.state.backends["production"] = backend
+    with SameThreadApiClient(app) as client:
+        install_backend(app, "production", backend)
         retained = client.get("/api/v1/tenants/production/focus-preview/revisions/current?month=2026-07")
         assert retained.status_code == 200
         assert retained.json()["revision_id"] == "revision-current"

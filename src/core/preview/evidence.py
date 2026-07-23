@@ -7,9 +7,209 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
+from enum import StrEnum
 from typing import Any, Protocol, runtime_checkable
 
 logger = logging.getLogger(__name__)
+
+
+class PreviewEvidenceBootstrapStatus(StrEnum):
+    ALREADY_CURRENT = "already_current"
+    BOOTSTRAPPED = "bootstrapped"
+    UNAVAILABLE = "unavailable"
+
+
+class PreviewEvidenceBootstrapReason(StrEnum):
+    NO_LEGACY_EVIDENCE = "no_legacy_evidence"
+    INVALID_LEGACY_EVIDENCE = "invalid_legacy_evidence"
+    CONCURRENT_CHANGE = "concurrent_change"
+
+
+class SourceAttemptStatus(StrEnum):
+    PENDING = "pending"
+    COMPLETE = "complete"
+    FAILED = "failed"
+    ABORTED = "aborted"
+
+
+class SourceAttemptFinalStatus(StrEnum):
+    COMPLETE = "complete"
+    FAILED = "failed"
+    ABORTED = "aborted"
+
+
+class SourceAttemptFailureReason(StrEnum):
+    ATTEMPT_BEGIN_FAILED = "attempt_begin_failed"
+    CONSTRUCTION_FAILED = "construction_failed"
+    PERSISTENCE_FAILED = "persistence_failed"
+    CAPABILITY_UNAVAILABLE = "capability_unavailable"
+    BOOTSTRAP_INVALID = "bootstrap_invalid"
+    BOOTSTRAP_CONCURRENT_CHANGE = "bootstrap_concurrent_change"
+    GENERIC_GATHER_FAILED = "generic_gather_failed"
+    GENERIC_COMMIT_FAILED = "generic_commit_failed"
+
+
+@dataclass(frozen=True)
+class PreviewSourceAttempt:
+    attempt_sequence: int
+    ecosystem: str
+    tenant_id: str
+    refresh_token: str
+    refresh_start: datetime
+    refresh_end: datetime
+    status: SourceAttemptStatus
+    started_at: datetime
+    completed_at: datetime | None
+    failure_reason: SourceAttemptFailureReason | None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.status, SourceAttemptStatus):
+            raise ValueError("invalid source attempt status")
+        if self.failure_reason is not None and not isinstance(self.failure_reason, SourceAttemptFailureReason):
+            raise ValueError("invalid source attempt failure reason")
+        if self.attempt_sequence <= 0 or not all(
+            value.strip() for value in (self.ecosystem, self.tenant_id, self.refresh_token)
+        ):
+            raise ValueError("invalid source attempt identity")
+        if (
+            not _aware(self.refresh_start)
+            or not _aware(self.refresh_end)
+            or self.refresh_start >= self.refresh_end
+            or not _aware(self.started_at)
+        ):
+            raise ValueError("invalid source attempt times")
+        if self.status is SourceAttemptStatus.PENDING:
+            if self.completed_at is not None or self.failure_reason is not None:
+                raise ValueError("pending source attempt has completion fields")
+            return
+        if self.completed_at is None or not _aware(self.completed_at) or self.completed_at < self.started_at:
+            raise ValueError("terminal source attempt requires completion time")
+        if self.status is SourceAttemptStatus.COMPLETE:
+            if self.failure_reason is not None:
+                raise ValueError("complete source attempt cannot have a reason")
+            return
+        failed_reasons = {
+            SourceAttemptFailureReason.ATTEMPT_BEGIN_FAILED,
+            SourceAttemptFailureReason.CONSTRUCTION_FAILED,
+            SourceAttemptFailureReason.PERSISTENCE_FAILED,
+            SourceAttemptFailureReason.CAPABILITY_UNAVAILABLE,
+            SourceAttemptFailureReason.BOOTSTRAP_INVALID,
+            SourceAttemptFailureReason.BOOTSTRAP_CONCURRENT_CHANGE,
+        }
+        aborted_reasons = {
+            SourceAttemptFailureReason.GENERIC_GATHER_FAILED,
+            SourceAttemptFailureReason.GENERIC_COMMIT_FAILED,
+        }
+        expected = failed_reasons if self.status is SourceAttemptStatus.FAILED else aborted_reasons
+        if self.failure_reason not in expected:
+            raise ValueError("source attempt status and reason do not match")
+
+
+@dataclass(frozen=True)
+class PreviewEvidenceBootstrapResult:
+    status: PreviewEvidenceBootstrapStatus
+    bootstrapped_windows: int
+    bootstrapped_rows: int
+    reason: PreviewEvidenceBootstrapReason | None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.status, PreviewEvidenceBootstrapStatus):
+            raise ValueError("invalid Preview evidence bootstrap status")
+        if self.reason is not None and not isinstance(self.reason, PreviewEvidenceBootstrapReason):
+            raise ValueError("invalid Preview evidence bootstrap reason")
+        if self.bootstrapped_windows < 0 or self.bootstrapped_rows < 0:
+            raise ValueError("bootstrap counts must be nonnegative")
+        valid = (
+            (
+                self.status is PreviewEvidenceBootstrapStatus.ALREADY_CURRENT
+                and self.bootstrapped_windows == self.bootstrapped_rows == 0
+                and self.reason is None
+            )
+            or (
+                self.status is PreviewEvidenceBootstrapStatus.BOOTSTRAPPED
+                and self.bootstrapped_windows > 0
+                and self.bootstrapped_rows > 0
+                and self.reason is None
+            )
+            or (
+                self.status is PreviewEvidenceBootstrapStatus.UNAVAILABLE
+                and self.bootstrapped_windows == self.bootstrapped_rows == 0
+                and self.reason is not None
+            )
+        )
+        if not valid:
+            raise ValueError("invalid Preview evidence bootstrap result")
+
+
+class AllocationLineageRunStatus(StrEnum):
+    COMPLETE = "complete"
+    UNAVAILABLE = "unavailable"
+
+
+class AllocationLineageUnavailableReason(StrEnum):
+    CAPTURE_FAILED = "capture_failed"
+    PERSISTENCE_FAILED = "persistence_failed"
+
+
+@dataclass(frozen=True)
+class AllocationLineageRun:
+    ecosystem: str
+    tenant_id: str
+    tracking_date: date
+    calculation_id: str
+    calculation_completed_at: datetime
+    status: AllocationLineageRunStatus
+    portion_count: int
+
+    def __post_init__(self) -> None:
+        if not self.ecosystem.strip() or not self.tenant_id.strip() or not self.calculation_id.strip():
+            raise ValueError("lineage identity must not be blank")
+        if not _aware(self.calculation_completed_at) or self.portion_count < 0:
+            raise ValueError("invalid lineage completion")
+        if self.status is not AllocationLineageRunStatus.COMPLETE:
+            raise ValueError("complete lineage run requires complete status")
+
+
+@dataclass(frozen=True)
+class AllocationLineageUnavailableRun:
+    ecosystem: str
+    tenant_id: str
+    tracking_date: date
+    calculation_id: str
+    calculation_completed_at: datetime
+    status: AllocationLineageRunStatus
+    reason: AllocationLineageUnavailableReason
+    portion_count: int = 0
+
+    def __post_init__(self) -> None:
+        if not self.ecosystem.strip() or not self.tenant_id.strip() or not self.calculation_id.strip():
+            raise ValueError("lineage identity must not be blank")
+        if not _aware(self.calculation_completed_at) or self.portion_count != 0:
+            raise ValueError("invalid unavailable lineage completion")
+        if self.status is not AllocationLineageRunStatus.UNAVAILABLE:
+            raise ValueError("unavailable lineage run requires unavailable status")
+        if not isinstance(self.reason, AllocationLineageUnavailableReason):
+            raise ValueError("unavailable lineage run requires a closed reason")
+
+
+@dataclass(frozen=True)
+class PreviewSourceReadiness:
+    ecosystem: str
+    tenant_id: str
+    window_start: datetime
+    window_end: datetime
+    capture_id: str
+    captured_at: datetime
+    source_count: int
+    attempt_sequence: int
+
+    def __post_init__(self) -> None:
+        if not self.ecosystem.strip() or not self.tenant_id.strip() or not self.capture_id.strip():
+            raise ValueError("source readiness identity must not be blank")
+        if not _aware(self.window_start) or not _aware(self.window_end) or self.window_start >= self.window_end:
+            raise ValueError("source readiness bounds must be aware and ordered")
+        if not _aware(self.captured_at) or self.source_count < 0 or self.attempt_sequence <= 0:
+            raise ValueError("invalid source readiness metadata")
 
 
 class PreviewAllocationEvidenceDecodeError(ValueError):
@@ -120,6 +320,11 @@ class PreviewSourceEvidence:
     billing_resource_id: str | None = None
     billing_product_type: str | None = None
     billing_product_category: str | None = None
+    capture_id: str | None = None
+    ecosystem: str | None = None
+    tenant_id: str | None = None
+    retention_timestamp: datetime | None = None
+    raw_payload_json: str | None = None
 
 
 @dataclass(frozen=True)
@@ -170,9 +375,29 @@ class PreviewAllocationRunEvidence:
     tracking_date: date
     calculation_id: str
     calculation_completed_at: datetime
-    capture_status: str
-    capture_reason: str | None
+    capture_status: AllocationLineageRunStatus
+    capture_reason: AllocationLineageUnavailableReason | None
     portion_count: int
+
+    def __post_init__(self) -> None:
+        if (
+            not self.ecosystem.strip()
+            or not self.tenant_id.strip()
+            or not self.calculation_id.strip()
+            or not _aware(self.calculation_completed_at)
+            or self.portion_count < 0
+        ):
+            raise ValueError("invalid allocation lineage run evidence")
+        if not isinstance(self.capture_status, AllocationLineageRunStatus):
+            raise ValueError("invalid allocation lineage capture status")
+        if self.capture_reason is not None and not isinstance(self.capture_reason, AllocationLineageUnavailableReason):
+            raise ValueError("invalid allocation lineage capture reason")
+        if self.capture_status is AllocationLineageRunStatus.COMPLETE:
+            if self.capture_reason is not None:
+                raise ValueError("complete allocation lineage cannot have a reason")
+            return
+        if self.capture_reason is None or self.portion_count != 0:
+            raise ValueError("unavailable allocation lineage requires a reason and no portions")
 
 
 @runtime_checkable

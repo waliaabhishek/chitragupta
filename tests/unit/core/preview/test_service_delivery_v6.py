@@ -12,7 +12,7 @@ import pytest
 from core.preview.artifacts import PreviewArtifactStore
 from core.preview.persistence import (
     PreviewInterruptionRecoveryResult,
-    PreviewReadUnitOfWork,
+    PreviewMetadataReadUnitOfWork,
     PreviewRequestRepository,
     PreviewRevisionRepository,
     PreviewStaleLeaseRecoveryResult,
@@ -20,9 +20,11 @@ from core.preview.persistence import (
     PreviewWriteUnitOfWork,
 )
 from core.preview.service import PreviewExecutor, PreviewRuntime
+from tests.integration.core.api.backend_provider import FixedTenantBackendProvider
 from tests.unit.core.preview.conftest import preview_module
 
 if TYPE_CHECKING:
+    from core.preview.artifacts import PreviewArtifactOwner
     from core.preview.models import (
         PreviewArtifactMetadata,
         PreviewArtifactPayload,
@@ -53,10 +55,11 @@ class RecordingStore:
     def stage_data_files(
         self,
         *,
+        owner: PreviewArtifactOwner,
         request_id: str,
         data_files: tuple[PreviewArtifactPayload, ...],
     ) -> Never:
-        del request_id, data_files
+        del owner, request_id, data_files
         raise AssertionError("not used")
 
     def read_manifest(self, storage_key: str, metadata: PreviewArtifactMetadata) -> Never:
@@ -81,7 +84,8 @@ class RecordingStore:
         del storage_key
         return False
 
-    def cleanup_staging(self) -> int:
+    def cleanup_staging(self, owner: PreviewArtifactOwner) -> int:
+        del owner
         self.cleanup_calls += 1
         if self.fail_cleanup:
             raise OSError("staging unavailable")
@@ -263,7 +267,7 @@ class RecordingBackend:
     def create_preview_write_unit_of_work(self) -> PreviewWriteUnitOfWork:
         return self.write_uow
 
-    def create_preview_read_unit_of_work(self) -> PreviewReadUnitOfWork:
+    def create_preview_metadata_read_unit_of_work(self) -> PreviewMetadataReadUnitOfWork:
         return self.read_uow
 
 
@@ -290,6 +294,7 @@ class RecordingReadUow:
 def _runtime(store: RecordingStore) -> PreviewRuntime:
     return PreviewRuntime(
         artifact_store=store,
+        backend_provider=FixedTenantBackendProvider(),
         max_workers=1,
         max_csv_file_bytes=None,
         startup_at=datetime(2026, 7, 3, 1, 2, 3, 900000, tzinfo=UTC),
@@ -311,7 +316,7 @@ def test_delivery_recovery_doubles_satisfy_full_production_protocols() -> None:
     assert isinstance(requests, PreviewRequestRepository)
     assert isinstance(backend, PreviewStorageBackend)
     assert isinstance(backend.write_uow, PreviewWriteUnitOfWork)
-    assert isinstance(backend.read_uow, PreviewReadUnitOfWork)
+    assert isinstance(backend.read_uow, PreviewMetadataReadUnitOfWork)
     assert not isinstance(backend.read_uow, PreviewWriteUnitOfWork)
     assert isinstance(backend.write_uow.revisions, PreviewRevisionRepository)
     assert isinstance(backend.read_uow.revisions, PreviewRevisionRepository)
@@ -327,7 +332,6 @@ def test_recovery_is_triple_keyed_and_failure_cannot_block_or_clear_same_provide
     backend_a = RecordingBackend(a_requests)
     backend_b = RecordingBackend(b_requests)
     try:
-        runtime.ensure_staging_recovered()
         with pytest.raises(service.PreviewRecoveryUnavailable):
             runtime.ensure_owner_recovered(
                 backend=backend_a,
@@ -355,7 +359,7 @@ def test_recovery_is_triple_keyed_and_failure_cannot_block_or_clear_same_provide
             tenant_id="shared-provider-tenant",
         )
 
-        assert store.cleanup_calls == 1
+        assert store.cleanup_calls == 4
         assert len(a_requests.recovery_calls) == 2
         assert len(b_requests.recovery_calls) == 1
         assert {call[2] for call in [*a_requests.recovery_calls, *b_requests.recovery_calls]} == {

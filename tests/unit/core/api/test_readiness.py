@@ -2,13 +2,14 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from fastapi.testclient import TestClient
 
 from core.api.routes.readiness import _check_tenant_readiness
 from core.api.topic_attribution_status import TopicAttributionStatus
 from core.config.models import AppSettings, StorageConfig, TenantConfig
+from tests.integration.core.api.backend_provider import FixedTenantBackendProvider, install_backend
 
 if TYPE_CHECKING:
     from core.api.schemas import TenantReadiness
@@ -71,17 +72,19 @@ def _call_check(
     topic_attribution_status: TopicAttributionStatus | None = None,
 ) -> TenantReadiness:
     backend = _make_backend(latest_run=latest_run, count=count)
-    with patch("core.api.routes.readiness.get_or_create_backend", return_value=backend):
-        return _check_tenant_readiness(
-            tenant_name=tenant_name,
-            ecosystem="eco",
-            tenant_id="tid",
-            storage_config=_make_storage_config(),
-            backends={},
-            workflow_runner=workflow_runner,
-            failed_tenants=failed_tenants or {},
-            topic_attribution_status=topic_attribution_status or TopicAttributionStatus(status="disabled"),
-        )
+    tenant_config = TenantConfig(
+        ecosystem="eco",
+        tenant_id="tid",
+        storage=_make_storage_config(),
+    )
+    return _check_tenant_readiness(
+        tenant_name=tenant_name,
+        tenant_config=tenant_config,
+        backend_provider=FixedTenantBackendProvider({tenant_name: backend}),
+        workflow_runner=workflow_runner,
+        failed_tenants=failed_tenants or {},
+        topic_attribution_status=topic_attribution_status or TopicAttributionStatus(status="disabled"),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -199,13 +202,8 @@ class TestReadinessHttpIntegration:
         run = _make_pipeline_run(status="running", stage="gathering")
         backend = _make_backend(latest_run=run, count=1)
 
-        # Prevent lifespan cleanup from hitting real storage, and mock the
-        # readiness backend so we control what the DB returns.
-        with (
-            patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"),
-            patch("core.api.routes.readiness.get_or_create_backend", return_value=backend),
-            TestClient(app) as client,
-        ):
+        with TestClient(app) as client:
+            install_backend(app, "acme", backend)
             response = client.get("/api/v1/readiness")
 
         assert response.status_code == 200

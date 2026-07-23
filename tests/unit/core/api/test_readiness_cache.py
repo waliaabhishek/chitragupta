@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Generator
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -10,6 +10,7 @@ import core.api.routes.readiness as readiness_module
 from core.api.app import create_app
 from core.api.schemas import ReadinessResponse
 from core.config.models import AppSettings, StorageConfig, TenantConfig
+from tests.integration.core.api.backend_provider import install_backend
 
 
 def _make_settings() -> AppSettings:
@@ -66,11 +67,8 @@ class TestReadinessCacheFirstCall:
         app = create_app(settings, workflow_runner=None, mode="api")
         backend = _make_backend()
 
-        with (
-            patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"),
-            patch("core.api.routes.readiness.get_or_create_backend", return_value=backend),
-            TestClient(app) as client,
-        ):
+        with TestClient(app) as client:
+            install_backend(app, "acme", backend)
             client.get("/api/v1/readiness")
 
         # Must be set — not None
@@ -80,19 +78,16 @@ class TestReadinessCacheFirstCall:
         assert isinstance(cached_timestamp, float)
 
     def test_first_call_queries_db(self) -> None:
-        """First request must call get_or_create_backend exactly once (no prior cache)."""
+        """First request must acquire the tenant backend exactly once."""
         settings = _make_settings()
         app = create_app(settings, workflow_runner=None, mode="api")
-        mock_get_backend = MagicMock(return_value=_make_backend())
+        backend = _make_backend()
 
-        with (
-            patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"),
-            patch("core.api.routes.readiness.get_or_create_backend", mock_get_backend),
-            TestClient(app) as client,
-        ):
+        with TestClient(app) as client:
+            provider = install_backend(app, "acme", backend)
             client.get("/api/v1/readiness")
 
-        assert mock_get_backend.call_count == 1
+        assert provider.acquisitions == ["acme"]
 
 
 # ---------------------------------------------------------------------------
@@ -105,36 +100,30 @@ class TestReadinessCacheHit:
         """Two rapid consecutive requests must result in exactly 1 DB call (cache hit on second)."""
         settings = _make_settings()
         app = create_app(settings, workflow_runner=None, mode="api")
-        mock_get_backend = MagicMock(return_value=_make_backend())
+        backend = _make_backend()
 
-        with (
-            patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"),
-            patch("core.api.routes.readiness.get_or_create_backend", mock_get_backend),
-            TestClient(app) as client,
-        ):
+        with TestClient(app) as client:
+            provider = install_backend(app, "acme", backend)
             # Both requests happen well within the 2s TTL window
             client.get("/api/v1/readiness")
             client.get("/api/v1/readiness")
 
         # Second request must use the cache — DB invoked only once
-        assert mock_get_backend.call_count == 1
+        assert provider.acquisitions == ["acme"]
 
     def test_many_rapid_calls_result_in_single_db_query(self) -> None:
         """10 back-to-back requests within 2s must produce exactly 1 DB call."""
         settings = _make_settings()
         app = create_app(settings, workflow_runner=None, mode="api")
-        mock_get_backend = MagicMock(return_value=_make_backend())
+        backend = _make_backend()
 
-        with (
-            patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"),
-            patch("core.api.routes.readiness.get_or_create_backend", mock_get_backend),
-            TestClient(app) as client,
-        ):
+        with TestClient(app) as client:
+            provider = install_backend(app, "acme", backend)
             for _ in range(10):
                 response = client.get("/api/v1/readiness")
                 assert response.status_code == 200
 
-        assert mock_get_backend.call_count == 1
+        assert provider.acquisitions == ["acme"]
 
 
 # ---------------------------------------------------------------------------
@@ -152,21 +141,18 @@ class TestReadinessCacheExpiry:
         """
         settings = _make_settings()
         app = create_app(settings, workflow_runner=None, mode="api")
-        mock_get_backend = MagicMock(return_value=_make_backend())
+        backend = _make_backend()
 
         # Seed a stale cache entry (timestamp 0.0 is always expired)
         stale_response = ReadinessResponse(status="ready", version="1.0.0", mode="api", tenants=[])
         readiness_module._readiness_cache = (stale_response, 0.0)  # type: ignore[attr-defined]
 
-        with (
-            patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"),
-            patch("core.api.routes.readiness.get_or_create_backend", mock_get_backend),
-            TestClient(app) as client,
-        ):
+        with TestClient(app) as client:
+            provider = install_backend(app, "acme", backend)
             client.get("/api/v1/readiness")
 
         # Stale cache must trigger a DB recompute
-        assert mock_get_backend.call_count == 1
+        assert provider.acquisitions == ["acme"]
         # Cache must be updated with a fresh entry (not the seeded stale one)
         assert readiness_module._readiness_cache is not None  # type: ignore[attr-defined]
         fresh_response, fresh_ts = readiness_module._readiness_cache  # type: ignore[attr-defined]

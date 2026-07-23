@@ -28,6 +28,10 @@ from core.storage.backends.sqlmodel.repositories import SQLModelEntityTagReposit
 from core.storage.backends.sqlmodel.unit_of_work import SQLModelBackend
 from plugins.confluent_cloud import ConfluentCloudPlugin
 from plugins.confluent_cloud.storage.repositories import CCloudBillingRepository, CCloudChargebackRepository
+from tests.integration.core.api.preview_pipeline_helpers import (
+    calculate_with_lineage,
+    gather_billing_with_source_evidence,
+)
 from tests.integration.core.api.test_focus_preview_pipeline import PipelineApiClient, _request
 
 if TYPE_CHECKING:
@@ -206,7 +210,6 @@ def test_real_production_lineage_projects_multiple_origins_actual_portions_and_f
 
     monkeypatch.setattr("core.api.app.asyncio.to_thread", to_thread_inline)
     monkeypatch.setattr(anyio.to_thread, "run_sync", run_sync_inline)
-    monkeypatch.setattr("workflow_runner.cleanup_orphaned_runs_for_all_tenants", lambda *_args, **_kwargs: None)
     costs = [
         _cost(
             "cost-kafka",
@@ -266,17 +269,23 @@ def test_real_production_lineage_projects_multiple_origins_actual_portions_and_f
     plugin.initialize(tenant.plugin_settings.model_dump())
     assert plugin._connection is not None
     plugin._connection.request_interval_seconds = 0
-    backend = SQLModelBackend(connection_string, plugin.get_storage_module(), use_migrations=False)
+    backend = SQLModelBackend(
+        connection_string, plugin.get_storage_module(), use_migrations=False, focus_preview_enabled=True
+    )
     backend.create_tables()
     origin_tag_id, identity_tag_id, _user_tag_id = _seed_context(backend)
     orchestrator = ChargebackOrchestrator("production", tenant, plugin, backend)
 
+    assert gather_billing_with_source_evidence(
+        orchestrator,
+        backend,
+        datetime(2026, 7, 5, tzinfo=UTC),
+    ) == {
+        date(2026, 7, 1),
+        date(2026, 7, 2),
+        date(2026, 7, 3),
+    }
     with backend.create_unit_of_work() as uow:
-        assert orchestrator._gather_phase._gather_billing(uow, datetime(2026, 7, 5, tzinfo=UTC)) == {
-            date(2026, 7, 1),
-            date(2026, 7, 2),
-            date(2026, 7, 3),
-        }
         for tracking_date in (date(2026, 7, 1), date(2026, 7, 2), date(2026, 7, 3)):
             uow.pipeline_state.upsert(
                 PipelineState(
@@ -288,15 +297,9 @@ def test_real_production_lineage_projects_multiple_origins_actual_portions_and_f
                 )
             )
         uow.commit()
-    with backend.create_unit_of_work() as uow:
-        assert orchestrator._calculate_date(uow, date(2026, 7, 1)) == 3
-        uow.commit()
-    with backend.create_unit_of_work() as uow:
-        assert orchestrator._calculate_date(uow, date(2026, 7, 2)) == 2
-        uow.commit()
-    with backend.create_unit_of_work() as uow:
-        assert orchestrator._calculate_date(uow, date(2026, 7, 3)) == 1
-        uow.commit()
+    assert calculate_with_lineage(orchestrator, backend, date(2026, 7, 1)) == 3
+    assert calculate_with_lineage(orchestrator, backend, date(2026, 7, 2)) == 2
+    assert calculate_with_lineage(orchestrator, backend, date(2026, 7, 3)) == 1
     with backend.create_read_only_unit_of_work() as uow:
         produced = [
             *uow.chargebacks.find_by_date("confluent_cloud", "org-1", date(2026, 7, 1)),
@@ -334,7 +337,7 @@ def test_real_production_lineage_projects_multiple_origins_actual_portions_and_f
     monkeypatch.setattr("core.storage.backends.sqlmodel.repositories._overlay_tags", forbidden_overlay)
     provider_calls_before_preview = len(respx.calls)
     app = create_app(settings)
-    client = PipelineApiClient(app, use_lifespan=True)
+    client = PipelineApiClient(app, use_lifespan=True, backend=backend)
     try:
         ready = _request(client, date(2026, 7, 1), date(2026, 7, 4))
         assert ready["status"] == "ready"
@@ -372,7 +375,7 @@ def test_real_production_lineage_projects_multiple_origins_actual_portions_and_f
         retrieved_parts = [client.get(item["download_url"]).content for item in files]
         assert [len(body) for body in retrieved_parts] == [item["size_bytes"] for item in files]
         assert [hashlib.sha256(body).hexdigest() for body in retrieved_parts] == [item["sha256"] for item in files]
-        with backend.create_preview_read_unit_of_work() as uow:
+        with backend.create_preview_metadata_read_unit_of_work() as uow:
             persisted = uow.requests.get_for_owner(
                 ready["request_id"],
                 "confluent_cloud",

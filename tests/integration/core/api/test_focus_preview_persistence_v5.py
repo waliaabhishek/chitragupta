@@ -7,6 +7,7 @@ from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 import anyio.to_thread
 import pytest
@@ -16,7 +17,7 @@ from sqlalchemy import create_engine, text
 import core.preview.mapping as preview_mapping
 from core.api.app import create_app
 from core.config.models import ApiConfig, AppSettings, PreviewConfig, StorageConfig, TenantConfig
-from core.preview.artifacts import LocalPreviewArtifactStore
+from core.preview.artifacts import LocalPreviewArtifactStore, PreviewArtifactOwner
 from core.preview.mapping import (
     FOCUS_1_4_SUMMARY_COLUMNS,
     LEGACY_DAILY_FULL_V4_COLUMNS,
@@ -32,6 +33,7 @@ from core.preview.models import (
 )
 from core.storage.backends.sqlmodel.unit_of_work import SQLModelBackend
 from plugins.confluent_cloud.storage.module import CCloudStorageModule
+from tests.integration.core.api.backend_provider import FixedTenantBackendProvider
 from tests.integration.core.api.test_focus_preview import SameThreadApiClient
 from tests.unit.core.storage.test_migration_019_focus_preview import _alembic_config
 
@@ -46,7 +48,6 @@ def _inline_startup_cleanup(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr("core.api.app.asyncio.to_thread", to_thread_inline)
     monkeypatch.setattr(anyio.to_thread, "run_sync", run_sync_inline)
-    monkeypatch.setattr("workflow_runner.cleanup_orphaned_runs_for_all_tenants", lambda *_args, **_kwargs: None)
 
 
 def _settings(connection_string: str, artifact_root: Path) -> AppSettings:
@@ -63,6 +64,12 @@ def _settings(connection_string: str, artifact_root: Path) -> AppSettings:
                     "billing_currency": "USD",
                     "effective_start_date": "2020-01-01",
                     "effective_end_date": "2030-01-01",
+                },
+                plugin_settings={
+                    "ccloud_api": {
+                        "key": "test-key",
+                        "secret": "test-secret",  # pragma: allowlist secret
+                    }
                 },
             )
         },
@@ -181,7 +188,11 @@ def _persist_ready_request(
     )
     ready_at = created_at + timedelta(minutes=2)
     expires_at = ready_at + timedelta(days=7)
-    with artifact_store.stage_data_files(request_id=request_id, data_files=data_files) as staged:
+    with artifact_store.stage_data_files(
+        owner=PreviewArtifactOwner("production", "confluent_cloud", "tenant-1"),
+        request_id=request_id,
+        data_files=data_files,
+    ) as staged:
         running_request = replace(
             request,
             status=PreviewRequestStatus.RUNNING,
@@ -418,7 +429,9 @@ def test_v5_daily_and_monthly_ready_rows_round_trip_through_sqlite_and_api(
 ) -> None:
     connection_string = f"sqlite:///{tmp_path / f'{request_id}.db'}"
     artifact_root = tmp_path / f"{request_id}-artifacts"
-    backend = SQLModelBackend(connection_string, CCloudStorageModule(), use_migrations=False)
+    backend = SQLModelBackend(
+        connection_string, CCloudStorageModule(), use_migrations=False, focus_preview_enabled=True
+    )
     backend.create_tables()
     artifact_store = LocalPreviewArtifactStore(artifact_root)
     package = _persist_ready_request(
@@ -435,8 +448,6 @@ def test_v5_daily_and_monthly_ready_rows_round_trip_through_sqlite_and_api(
         cutoff_end=cutoff_end,
         monthly_status=monthly_status,
     )
-    backend.dispose()
-
     engine = create_engine(connection_string)
     with engine.connect() as connection:
         persisted = connection.execute(
@@ -477,7 +488,11 @@ def test_v5_daily_and_monthly_ready_rows_round_trip_through_sqlite_and_api(
     assert json.loads(persisted.data_files_json)[0]["sha256"] == hashlib.sha256(package.data_files[0].body).hexdigest()
 
     app = create_app(_settings(connection_string, artifact_root))
-    with SameThreadApiClient(app) as client:
+    provider = FixedTenantBackendProvider({"production": backend})
+    with (
+        patch("core.api.app.ApiTenantBackendProvider", return_value=provider),
+        SameThreadApiClient(app) as client,
+    ):
         response = client.get(f"/api/v1/tenants/production/focus-preview/requests/{request_id}")
         assert response.status_code == 200
         status = response.json()
@@ -498,3 +513,4 @@ def test_v5_daily_and_monthly_ready_rows_round_trip_through_sqlite_and_api(
         assert file_metadata["sha256"] == hashlib.sha256(package.data_files[0].body).hexdigest()
         assert client.get(manifest_metadata["download_url"]).content == package.manifest_body
         assert client.get(file_metadata["download_url"]).content == package.data_files[0].body
+    backend.dispose()

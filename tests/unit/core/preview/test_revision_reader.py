@@ -28,8 +28,8 @@ class _CorruptingStore:
     file_reads: int = 0
     archive_opens: int = 0
 
-    def stage_data_files(self, *, request_id: str, data_files: tuple[Any, ...]) -> Any:
-        return self.delegate.stage_data_files(request_id=request_id, data_files=data_files)
+    def stage_data_files(self, *, owner: Any, request_id: str, data_files: tuple[Any, ...]) -> Any:
+        return self.delegate.stage_data_files(owner=owner, request_id=request_id, data_files=data_files)
 
     def read_manifest(self, storage_key: str, metadata: Any) -> bytes:
         del storage_key, metadata
@@ -47,8 +47,8 @@ class _CorruptingStore:
     def delete_package(self, *, storage_key: str) -> bool:
         return self.delegate.delete_package(storage_key=storage_key)
 
-    def cleanup_staging(self) -> int:
-        return self.delegate.cleanup_staging()
+    def cleanup_staging(self, owner: Any) -> int:
+        return self.delegate.cleanup_staging(owner)
 
     def close(self) -> None:
         self.delegate.close()
@@ -76,7 +76,8 @@ def _stored_revision(tmp_path: Path) -> tuple[Any, bytes, Any]:
         published_at=datetime(2026, 8, 4, tzinfo=UTC),
     )
     store = artifacts.LocalPreviewArtifactStore(tmp_path)
-    with store.stage_data_files(request_id="revision-1", data_files=draft.data_files) as staged:
+    owner = artifacts.PreviewArtifactOwner("old-label", "confluent_cloud", "tenant-1")
+    with store.stage_data_files(owner=owner, request_id="revision-1", data_files=draft.data_files) as staged:
         package = staged.publish(manifest_body=body)
     revision = models.PreviewRevision(
         revision_id="revision-1",
@@ -159,7 +160,7 @@ def test_reader_history_and_direct_lookup_delegate_owner_scoped_keyword_contract
     uow = MagicMock()
     uow.__enter__.return_value.revisions = repository
     backend = MagicMock()
-    backend.create_preview_read_unit_of_work.return_value = uow
+    backend.create_preview_metadata_read_unit_of_work.return_value = uow
     reader = revisions.PreviewRevisionReadService(artifact_store=store)
 
     assert (
@@ -607,4 +608,5 @@ def test_reader_is_a_borrower_and_never_closes_artifact_store(tmp_path: Path) ->
     reader = revisions.PreviewRevisionReadService(artifact_store=store)
 
     assert not hasattr(reader, "close")
-    assert store.cleanup_staging() == 0
+    artifacts = import_module("core.preview.artifacts")
+    assert store.cleanup_staging(artifacts.PreviewArtifactOwner("old-label", "confluent_cloud", "tenant-1")) == 0

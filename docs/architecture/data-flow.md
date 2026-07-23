@@ -51,13 +51,17 @@ flowchart TD
 ## Pipeline steps per date
 
 1. **Gather billing** — `CostInput.gather(tenant_id, start, end, uow)`
-   Returns `BillingLineItem` objects. CCloud fetches from billing API. Self-managed/generic
-   constructs from YAML cost model + Prometheus.
+   returns `BillingLineItem` objects. CCloud fetches from the billing API.
+   Self-managed/generic constructs from the YAML cost model and Prometheus.
+   For a Preview-enabled Confluent tenant, the same provider pass also captures
+   native source evidence; disabled tenants use the ordinary streaming path and
+   create no Preview source evidence.
 
 2. **Gather resources** — `handler.gather_resources(tenant_id, uow)`
-   discovers ordinary infrastructure resources. A separate plugin supplemental
-   gather acquires the Confluent organization used as Preview billing-account
-   authority. All are stored in `resources`.
+   discovers ordinary infrastructure resources. For a Preview-enabled
+   Confluent tenant, a separate isolated gather acquires the organization used
+   as Preview billing-account authority. Disabled tenants do not call that
+   endpoint.
 
 3. **Gather identities** — `handler.gather_identities(tenant_id, uow)`
    Discovers principals, service accounts, teams.
@@ -82,7 +86,9 @@ flowchart TD
    Splits cost across identities using configured strategy.
    UNALLOCATED identity used for unresolved costs.
 
-8. **Commit** — `ChargebackRow` records written to storage.
+8. **Commit** — `ChargebackRow` records are written to storage. Enabled tenants
+   also persist the allocation lineage needed by Preview; disabled tenants do
+   not require lineage repositories or tables.
 
 The pipeline loop ends at step 8. Topic overlay (step 9) is a separate pass over completed dates.
 
@@ -173,6 +179,13 @@ usable correlation remain unchanged and produce a non-retryable metadata
 diagnostic. Only the ordinary collector and calculation lifecycle can later
 replace persisted data.
 
+This read path exists only for tenants with `focus_preview` enabled. Disabled
+tenants do not initialize Preview artifacts/evidence or acquire organization,
+source, or lineage authority. Mixed deployments keep these boundaries per
+tenant. A Preview-specific acquisition, schema, or retention failure fails
+Preview closed without changing an otherwise successful generic chargeback
+result.
+
 At submission, Preview canonicalizes either explicit Daily bounds or one
 `YYYY-MM` Monthly interval, resolves Full/Summary/Custom effective columns, and
 samples `created_at` once to derive an immutable policy
@@ -181,8 +194,10 @@ The worker first resolves the evidence interval. For Monthly, this classifies
 future, provisional, or settlement-candidate state from immutable submission
 time and the acquisition cutoff. A future month fails with the cutoff diagnostic
 before calculation lookup. An empty provisional interval skips calculation
-lookup and source/enrichment reads, but still checks Direct-billed PAYG and
-configured-USD eligibility before producing a header-only package. For a
+lookup and source/enrichment content reads, but still requires usable Preview
+evidence storage, rejects a newer failed or pending source attempt, and checks
+Direct-billed PAYG/configured-USD eligibility before producing a header-only
+package. For a
 nonempty interval, Daily and Monthly both check calculation correlation and
 complete coverage before commercial eligibility, then apply the complete
 streamed structural/classification/financial source issue precedence.
@@ -219,8 +234,11 @@ actual output portions keyed back to that existing billing row. Raw Cost rows
 remain source/classification/coverage evidence with a lossless association to
 the billing key. The lineage path does not reconstruct billing from chargebacks,
 redistribute costs, create a residual portion, or alter allocation policy.
-Legacy raw-source rows without a billing association recover only through an
-ordinary regather followed by ordinary calculation.
+Valid legacy raw-source rows without a billing association can receive local
+authority from their retained values when an enabled tenant starts; this does
+not call the provider or alter financial values. Unreadable, ambiguous, or
+inconsistent legacy evidence remains fail-closed. A later ordinary
+regather/calculation can establish new current evidence.
 
 Older Daily/Full rows retain their original requested coverage and immutable
 stored artifacts; new requests persist their exact effective columns and

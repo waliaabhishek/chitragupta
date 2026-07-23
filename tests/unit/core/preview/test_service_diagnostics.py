@@ -12,6 +12,7 @@ from sqlalchemy import event
 from core.models.pipeline import PipelineState
 from core.storage.backends.sqlmodel.unit_of_work import SQLModelBackend
 from plugins.confluent_cloud.storage.module import CCloudStorageModule
+from tests.integration.core.api.backend_provider import FixedTenantBackendProvider
 from tests.unit.core.preview.conftest import preview_module
 from tests.unit.core.preview.test_service import (
     ControlledExecutor,
@@ -29,6 +30,7 @@ def _backend(tmp_path: Path) -> SQLModelBackend:
         f"sqlite:///{tmp_path / 'preview.db'}",
         CCloudStorageModule(),
         use_migrations=False,
+        focus_preview_enabled=True,
     )
     backend.create_tables()
     return backend
@@ -188,6 +190,7 @@ def test_scheduling_failure_persists_failed_request_and_raises_worker_unavailabl
     service = preview_module("service")
     runtime = service.PreviewRuntime(
         artifact_store=artifacts.LocalPreviewArtifactStore(tmp_path / "artifacts"),
+        backend_provider=FixedTenantBackendProvider({"production": backend}),
         max_workers=1,
         clock=lambda: datetime(2026, 7, 4, tzinfo=UTC),
         request_id_factory=lambda: "request-1",
@@ -220,6 +223,7 @@ def test_unexpected_scheduler_failure_is_logged_and_persists_redacted_diagnostic
     service = preview_module("service")
     runtime = service.PreviewRuntime(
         artifact_store=artifacts.LocalPreviewArtifactStore(tmp_path / "artifacts"),
+        backend_provider=FixedTenantBackendProvider({"production": backend}),
         max_workers=1,
         request_id_factory=lambda: "request-logged",
         executor=FailingExecutor(),
@@ -616,6 +620,7 @@ def test_rendering_and_data_fsync_finish_before_retention_clock_starts(
     store = artifacts.LocalPreviewArtifactStore(tmp_path / "artifacts")
     runtime = service.PreviewRuntime(
         artifact_store=store,
+        backend_provider=FixedTenantBackendProvider({"production": backend}),
         max_workers=1,
         clock=clock,
         request_id_factory=lambda: "request-retention",
@@ -674,6 +679,7 @@ def test_runtime_owns_and_shuts_down_only_default_executor(tmp_path: Path, monke
     monkeypatch.setattr(service, "ThreadPoolExecutor", make_executor)
     runtime = service.PreviewRuntime(
         artifact_store=artifacts.LocalPreviewArtifactStore(tmp_path / "artifacts"),
+        backend_provider=FixedTenantBackendProvider(),
         max_workers=2,
     )
 

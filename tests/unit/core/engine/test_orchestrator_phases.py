@@ -508,6 +508,21 @@ def _make_gather_phase(
 
 
 class TestGatherPhaseShouldRefresh:
+    def test_plan_refresh_preserves_exact_legacy_bounds(self) -> None:
+        phase = _make_gather_phase(
+            tenant_config=_make_tenant_config(
+                lookback_days=30,
+                cutoff_days=5,
+                focus_preview_enabled=False,
+            ),
+        )
+
+        plan = phase.plan_refresh(NOW)
+
+        assert plan.now == NOW
+        assert plan.refresh_start == NOW - timedelta(days=30)
+        assert plan.refresh_end == NOW - timedelta(days=5)
+
     def test_should_refresh_returns_false_within_gap(self) -> None:
         """_should_refresh returns False when now - last < min_refresh_gap."""
         phase = _make_gather_phase(min_refresh_gap=timedelta(hours=1))
@@ -541,6 +556,25 @@ class TestGatherPhaseShouldRefresh:
         assert result.skipped is True
         assert result.dates_gathered == 0
         assert result.errors == []
+
+    def test_repeated_direct_run_accepts_first_refresh_and_throttles_second(self) -> None:
+        from core.plugin.registry import EcosystemBundle
+
+        line = _make_billing_line(timestamp=datetime.now(UTC) - timedelta(days=1))
+        plugin = MockPlugin(handlers={}, cost_input=MockCostInput([line]))
+        phase = _make_gather_phase(
+            bundle=EcosystemBundle.build(plugin),
+            min_refresh_gap=timedelta(hours=1),
+        )
+        uow = MockUnitOfWork()
+
+        first = phase.run(uow)
+        second = phase.run(uow)
+
+        assert first.skipped is False
+        assert first.dates_gathered == 1
+        assert second.skipped is True
+        assert len(uow.billing._data) == 1
 
 
 class TestGatherPhaseHandlerException:

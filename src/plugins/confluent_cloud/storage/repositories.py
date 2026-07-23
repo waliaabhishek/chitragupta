@@ -11,8 +11,11 @@ from sqlalchemy import and_, delete, func, or_, update
 from sqlmodel import Session, col, select
 
 from core.preview.evidence import (
+    AllocationLineageRunStatus,
+    AllocationLineageUnavailableReason,
     PreviewAggregateEvidence,
     PreviewAllocationEvidence,
+    PreviewAllocationEvidenceDecodeError,
     PreviewAllocationRunEvidence,
     PreviewEvidenceScope,
     PreviewSourceEvidence,
@@ -125,9 +128,16 @@ def _source_table_to_preview(row: CCloudCostSourceTable) -> PreviewSourceEvidenc
         isinstance(key, str) and isinstance(value, str) for key, value in tiers.items()
     ):
         raise ValueError("source tier dimensions must be a string mapping")
+    if _canonical_json(tiers) != row.tier_dimensions_json:
+        raise ValueError("source tier dimensions must use canonical JSON")
     diagnostics = json.loads(row.diagnostics_json)
     if not isinstance(diagnostics, list) or not all(isinstance(value, str) for value in diagnostics):
         raise ValueError("source diagnostics must be a string list")
+    if _canonical_json(diagnostics) != row.diagnostics_json:
+        raise ValueError("source diagnostics must use canonical JSON")
+    raw_payload = json.loads(row.raw_payload_json)
+    if not isinstance(raw_payload, dict) or _canonical_json(raw_payload) != row.raw_payload_json:
+        raise ValueError("source raw payload must be a canonical JSON object")
     return PreviewSourceEvidence(
         source_record_id=row.source_record_id,
         identity_scheme=row.identity_scheme,
@@ -158,6 +168,11 @@ def _source_table_to_preview(row: CCloudCostSourceTable) -> PreviewSourceEvidenc
         billing_resource_id=row.billing_resource_id,
         billing_product_type=row.billing_product_type,
         billing_product_category=row.billing_product_category,
+        capture_id=row.capture_id,
+        ecosystem=row.ecosystem,
+        tenant_id=row.tenant_id,
+        retention_timestamp=_ensure_utc(row.retention_timestamp),
+        raw_payload_json=row.raw_payload_json,
         native_tier_dimensions=tuple(sorted(tiers.items())),
         malformed=row.malformed,
         diagnostics=tuple(diagnostics),
@@ -569,12 +584,6 @@ class CCloudBillingRepository:
         return self._reset_int_column_by_date(ecosystem, tenant_id, tracking_date, "topic_attribution_attempts")
 
     def delete_before(self, ecosystem: str, tenant_id: str, before: datetime) -> int:
-        source_stmt = delete(CCloudCostSourceTable).where(
-            col(CCloudCostSourceTable.ecosystem) == ecosystem,
-            col(CCloudCostSourceTable.tenant_id) == tenant_id,
-            col(CCloudCostSourceTable.retention_timestamp) < before,
-        )
-        self._session.execute(source_stmt)
         stmt = delete(CCloudBillingTable).where(
             col(CCloudBillingTable.ecosystem) == ecosystem,
             col(CCloudBillingTable.tenant_id) == tenant_id,
@@ -717,16 +726,21 @@ class CCloudChargebackRepository(SQLModelChargebackRepository):
             .execution_options(yield_per=256, stream_results=True)
         )
         for row in self._session.exec(statement).yield_per(256):
-            yield PreviewAllocationRunEvidence(
-                ecosystem=row.ecosystem,
-                tenant_id=row.tenant_id,
-                tracking_date=row.tracking_date,
-                calculation_id=row.calculation_id,
-                calculation_completed_at=_ensure_utc(row.calculation_completed_at),
-                capture_status=row.capture_status,
-                capture_reason=row.capture_reason,
-                portion_count=row.portion_count,
-            )
+            try:
+                yield PreviewAllocationRunEvidence(
+                    ecosystem=row.ecosystem,
+                    tenant_id=row.tenant_id,
+                    tracking_date=row.tracking_date,
+                    calculation_id=row.calculation_id,
+                    calculation_completed_at=_ensure_utc(row.calculation_completed_at),
+                    capture_status=AllocationLineageRunStatus(row.capture_status),
+                    capture_reason=(
+                        None if row.capture_reason is None else AllocationLineageUnavailableReason(row.capture_reason)
+                    ),
+                    portion_count=row.portion_count,
+                )
+            except (AttributeError, TypeError, ValueError) as exc:
+                raise PreviewAllocationEvidenceDecodeError("invalid persisted allocation lineage run") from exc
 
     def iter_preview_allocations(
         self,

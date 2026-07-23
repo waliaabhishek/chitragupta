@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Callable, Iterable, Iterator, Sequence
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING
@@ -14,7 +15,13 @@ from core.preview.eligibility import (
     request_eligibility_diagnostic,
     source_issue_diagnostic,
 )
-from core.preview.evidence import PreviewAllocationEvidenceDecodeError, PreviewEvidenceScope
+from core.preview.evidence import (
+    AllocationLineageRunStatus,
+    PreviewAllocationEvidenceDecodeError,
+    PreviewEvidenceScope,
+    PreviewSourceAttempt,
+    SourceAttemptStatus,
+)
 from core.preview.mapping import (
     FOCUS_1_4_NATIVE_LINE_READINESS_V1,
     FOCUS_1_4_SERVICE_RULES_V1,
@@ -62,16 +69,20 @@ from core.preview.models import (
     PreviewSourceSnapshot,
 )
 from core.preview.monthly import PreviewMonthlyAggregationError, aggregate_monthly_full_rows
+from core.preview.organization_authority import OrganizationAuthorityAttemptStatus
 from core.preview.persistence import (
     CompleteCalculationCoverage,
     NoUsableCalculationCoverage,
     PartialCalculationCoverage,
+    PreviewEvidenceStorageBackend,
     PreviewStorageBackend,
 )
 from core.preview.request import PreviewEvidencePendingError, resolve_preview_evidence_interval
+from core.preview.storage_availability import PreviewEvidenceUnavailableError
 
 if TYPE_CHECKING:
     from core.models.entity_tag import EntityTag
+    from core.preview.persistence import PreviewGenerationReadUnitOfWork
 
 logger = logging.getLogger(__name__)
 
@@ -93,6 +104,36 @@ def _failure(
     source_correlation_ids: tuple[str, ...] = (),
 ) -> PreviewGenerationError:
     return PreviewGenerationError(PreviewDiagnostic(code, message, retryable, source_correlation_ids))
+
+
+def _evidence_storage_unavailable() -> PreviewGenerationError:
+    return _failure(
+        "preview_evidence_storage_unavailable",
+        "FOCUS Mapping Preview evidence storage is unavailable; repair the enabled tenant database "
+        "schema and rerun the pipeline.",
+        False,
+    )
+
+
+def _require_complete_source_authority(authority: PreviewSourceAttempt | None) -> None:
+    if authority is not None and authority.status is not SourceAttemptStatus.COMPLETE:
+        raise _failure(
+            "preview_source_evidence_unavailable",
+            "Native Confluent Cloud source evidence is unavailable for the requested scope; "
+            "run the pipeline and retry.",
+            True,
+        )
+
+
+@contextmanager
+def _generation_read_unit_of_work(
+    backend: PreviewEvidenceStorageBackend,
+) -> Iterator[PreviewGenerationReadUnitOfWork]:
+    try:
+        with backend.create_preview_generation_read_unit_of_work() as uow:
+            yield uow
+    except PreviewEvidenceUnavailableError:
+        raise _evidence_storage_unavailable() from None
 
 
 def _mapping_failure(
@@ -253,31 +294,36 @@ class PreviewPackageGenerator:
             if evidence_interval.monthly_stage == "settlement_candidate"
             else "provisional"
         )
+        if not isinstance(backend, PreviewEvidenceStorageBackend):
+            raise _evidence_storage_unavailable()
         if evidence_interval.start_date == evidence_interval.end_date:
-            diagnostic = request_eligibility_diagnostic(request=request, policy=policy)
-            if diagnostic is not None:
-                raise PreviewGenerationError(diagnostic)
-            snapshot = PreviewSourceSnapshot(
-                calculation_timestamp=None,
-                calculation_coverage=(),
-                source_through=None,
-                effective_coverage_start_date=evidence_interval.start_date,
-                effective_coverage_end_date=evidence_interval.end_date,
-                availability_cutoff_end_date=(policy.acquisition_end_date if request.grain == "monthly" else None),
-                monthly_status=monthly_status,
-            )
-            package = build_preview_data_package(
-                request=request,
-                snapshot=snapshot,
-                full_rows=(),
-                reconciliation=PreviewPackageReconciliation(0, Decimal(0), Decimal(0), Decimal(0), Decimal(0)),
-                max_csv_file_bytes=self._max_csv_file_bytes,
-            )
-            return snapshot, package
+            with _generation_read_unit_of_work(backend) as uow:
+                source_authority = uow.source_readiness.get_current_authority(request.ecosystem, request.tenant_id)
+                _require_complete_source_authority(source_authority)
+                diagnostic = request_eligibility_diagnostic(request=request, policy=policy)
+                if diagnostic is not None:
+                    raise PreviewGenerationError(diagnostic)
+                snapshot = PreviewSourceSnapshot(
+                    calculation_timestamp=None,
+                    calculation_coverage=(),
+                    source_through=None,
+                    effective_coverage_start_date=evidence_interval.start_date,
+                    effective_coverage_end_date=evidence_interval.end_date,
+                    availability_cutoff_end_date=(policy.acquisition_end_date if request.grain == "monthly" else None),
+                    monthly_status=monthly_status,
+                )
+                package = build_preview_data_package(
+                    request=request,
+                    snapshot=snapshot,
+                    full_rows=(),
+                    reconciliation=PreviewPackageReconciliation(0, Decimal(0), Decimal(0), Decimal(0), Decimal(0)),
+                    max_csv_file_bytes=self._max_csv_file_bytes,
+                )
+                return snapshot, package
         start = datetime.combine(evidence_interval.start_date, datetime.min.time(), tzinfo=UTC)
         end = datetime.combine(evidence_interval.end_date, datetime.min.time(), tzinfo=UTC)
         scope = PreviewEvidenceScope(request.ecosystem, request.tenant_id, start, end)
-        with backend.create_preview_read_unit_of_work() as uow:
+        with _generation_read_unit_of_work(backend) as uow:
             coverage = uow.calculations.find_current_coverage(
                 ecosystem=request.ecosystem,
                 tenant_id=request.tenant_id,
@@ -290,12 +336,53 @@ class PreviewPackageGenerator:
             diagnostic = request_eligibility_diagnostic(request=request, policy=policy)
             if diagnostic is not None:
                 raise PreviewGenerationError(diagnostic)
+            source_authority = uow.source_readiness.get_current_authority(request.ecosystem, request.tenant_id)
+            _require_complete_source_authority(source_authority)
+            readiness = (
+                ()
+                if source_authority is None
+                else uow.source_readiness.list_covering(request.ecosystem, request.tenant_id, scope.start, scope.end)
+            )
+            readiness_by_window = {(item.window_start, item.window_end): item for item in readiness}
+            if source_authority is not None:
+                cursor = scope.start
+                for item in readiness:
+                    if item.attempt_sequence != source_authority.attempt_sequence:
+                        raise _failure(
+                            "preview_source_evidence_unavailable",
+                            "Native Confluent Cloud source evidence is unavailable for the requested scope; "
+                            "run the pipeline and retry.",
+                            True,
+                        )
+                    if item.window_end <= cursor:
+                        continue
+                    if item.window_start > cursor:
+                        break
+                    cursor = max(cursor, item.window_end)
+                if cursor < scope.end:
+                    raise _failure(
+                        "preview_source_evidence_unavailable",
+                        "Native Confluent Cloud source evidence is unavailable for the requested scope; "
+                        "run the pipeline and retry.",
+                        True,
+                    )
             accepted: list[SelectedSourceProjection] = []
             winning_issue: PreviewSourceIssue | None = None
             issue_correlations: tuple[str, ...] = ()
             valid_correlations: tuple[str, ...] = ()
             unsupported_provider_context = False
             for candidate in uow.cost_evidence.iter_preview_sources(scope):
+                if source_authority is not None:
+                    window_readiness = readiness_by_window.get(
+                        (candidate.collection_window_start, candidate.collection_window_end)
+                    )
+                    if window_readiness is None or candidate.capture_id != window_readiness.capture_id:
+                        raise _failure(
+                            "preview_source_evidence_unavailable",
+                            "Native Confluent Cloud source evidence is unavailable for the requested scope; "
+                            "run the pipeline and retry.",
+                            True,
+                        )
                 issue: PreviewSourceIssue | None
                 classification = classify_daily_full_source(request_start=start, request_end=end, source=candidate)
                 correlation = public_source_correlation_id(
@@ -338,6 +425,13 @@ class PreviewPackageGenerator:
                 valid_correlations = capped_correlations([*valid_correlations, correlation])
             if winning_issue is not None:
                 raise PreviewGenerationError(source_issue_diagnostic(winning_issue, issue_correlations))
+            if source_authority is None and accepted:
+                raise _failure(
+                    "preview_source_evidence_unavailable",
+                    "Native Confluent Cloud source evidence is unavailable for the requested scope; "
+                    "run the pipeline and retry.",
+                    True,
+                )
             if unsupported_provider_context:
                 raise _mapping_failure(
                     PreviewProviderContextIncompleteError("TABLEFLOW provider context is unavailable"),
@@ -383,10 +477,18 @@ class PreviewPackageGenerator:
                 for entry in coverage.entries
             }
             try:
+                lineage_runs = tuple(uow.allocation_evidence.iter_preview_allocation_runs(scope, calculation_ids))
+                if any(item.capture_status is AllocationLineageRunStatus.UNAVAILABLE for item in lineage_runs):
+                    raise _failure(
+                        "preview_allocation_lineage_unavailable",
+                        "Allocation lineage capture is unavailable for one or more requested calculations.",
+                        True,
+                        valid_correlations,
+                    )
                 allocations_by_origin = reconcile_allocation_lineage_stream(
                     aggregates_by_origin=aggregate_by_origin,
                     expected_completion_by_run=expected_completion_by_run,
-                    runs=uow.allocation_evidence.iter_preview_allocation_runs(scope, calculation_ids),
+                    runs=iter(lineage_runs),
                     allocations=uow.allocation_evidence.iter_preview_allocations(scope, calculation_ids),
                 )
             except PreviewAllocationEvidenceDecodeError, PreviewAllocationLineageError:
@@ -413,6 +515,13 @@ class PreviewPackageGenerator:
                 monthly_status=monthly_status,
             )
             if not selected_by_origin:
+                if source_authority is not None and any(item.source_count for item in readiness):
+                    raise _failure(
+                        "preview_source_evidence_unavailable",
+                        "Native Confluent Cloud source evidence is unavailable for the requested scope; "
+                        "run the pipeline and retry.",
+                        True,
+                    )
                 package = build_preview_data_package(
                     request=request,
                     snapshot=snapshot,
@@ -421,21 +530,48 @@ class PreviewPackageGenerator:
                     max_csv_file_bytes=self._max_csv_file_bytes,
                 )
                 return snapshot, package
+            organization_authority = uow.organization_authority.get_latest(request.ecosystem, request.tenant_id)
+            if organization_authority is not None and organization_authority.status in {
+                OrganizationAuthorityAttemptStatus.PENDING,
+                OrganizationAuthorityAttemptStatus.UNAVAILABLE,
+            }:
+                raise _mapping_failure(PreviewBillingAccountUnavailableError(), valid_correlations)
+            if (
+                organization_authority is not None
+                and organization_authority.status is OrganizationAuthorityAttemptStatus.CONFLICTING
+            ):
+                raise _mapping_failure(PreviewBillingAccountConflictError(), valid_correlations)
             organizations, _ = uow.resources.find_active_at(
                 request.ecosystem,
                 request.tenant_id,
                 current_time,
                 resource_type="organization",
-                limit=2,
+                limit=3,
                 count=False,
             )
             if not organizations:
-                raise _mapping_failure(PreviewBillingAccountUnavailableError(), valid_correlations)
+                error = (
+                    PreviewBillingAccountConflictError()
+                    if organization_authority is not None
+                    and organization_authority.status is OrganizationAuthorityAttemptStatus.AVAILABLE
+                    else PreviewBillingAccountUnavailableError()
+                )
+                raise _mapping_failure(error, valid_correlations)
             if len(organizations) != 1 or organizations[0].metadata.get("organization_binding_state") != "bound":
                 raise _mapping_failure(PreviewBillingAccountConflictError(), valid_correlations)
             organization = organizations[0]
             if not organization.resource_id.strip():
-                raise _mapping_failure(PreviewBillingAccountUnavailableError(), valid_correlations)
+                error = (
+                    PreviewBillingAccountUnavailableError()
+                    if organization_authority is None
+                    else PreviewBillingAccountConflictError()
+                )
+                raise _mapping_failure(error, valid_correlations)
+            if (
+                organization_authority is not None
+                and organization.resource_id != organization_authority.organization_id
+            ):
+                raise _mapping_failure(PreviewBillingAccountConflictError(), valid_correlations)
             provider_context = PreviewProviderContext(organization.resource_id, organization.display_name)
 
             resource_tag_ids = {

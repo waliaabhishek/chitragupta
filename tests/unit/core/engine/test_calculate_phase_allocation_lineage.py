@@ -112,6 +112,18 @@ def _backend(tmp_path: Any, name: str) -> tuple[SQLModelBackend, str]:
     return backend, connection_string
 
 
+def _opt_in_backend(tmp_path: Any, name: str, *, enabled: bool) -> tuple[SQLModelBackend, str]:
+    connection_string = f"sqlite:///{tmp_path / name}"
+    backend = SQLModelBackend(
+        connection_string,
+        CCloudStorageModule(),
+        use_migrations=False,
+        focus_preview_enabled=enabled,
+    )
+    backend.create_tables()
+    return backend, connection_string
+
+
 def _seed_pipeline_state(uow: Any) -> None:
     uow.pipeline_state.upsert(
         PipelineState(
@@ -124,29 +136,108 @@ def _seed_pipeline_state(uow: Any) -> None:
     )
 
 
-def test_supported_zero_billing_writes_complete_empty_run_with_shared_success_identity_and_time(tmp_path: Any) -> None:
-    backend, connection_string = _backend(tmp_path, "zero.db")
+def test_disabled_ccloud_calculation_commits_without_constructing_lineage(tmp_path: Any) -> None:
+    backend, connection_string = _opt_in_backend(tmp_path, "disabled-lineage.db", enabled=False)
+    with backend.create_unit_of_work() as uow:
+        _seed_pipeline_state(uow)
+        uow.billing.upsert(_origin())
+        uow.commit()
+
+    with (
+        patch(
+            "core.engine.orchestrator.build_allocation_lineage_capture",
+            side_effect=AssertionError("disabled calculation constructed Preview lineage"),
+        ) as builder,
+        backend.create_unit_of_work() as uow,
+    ):
+        assert _phase().run(uow, TRACKING_DATE) == 1
+        uow.commit()
+
+    builder.assert_not_called()
+    engine = get_or_create_engine(connection_string)
+    with Session(engine) as session:
+        assert len(session.exec(select(ChargebackFactTable)).all()) == 1
+    with backend.create_read_only_unit_of_work() as uow:
+        state = uow.pipeline_state.get("confluent_cloud", "org-1", TRACKING_DATE)
+    assert state is not None and state.has_usable_calculation is True
+    backend.dispose()
+
+
+def test_enabled_calculation_returns_lineage_capture_without_persisting_it_in_generic_uow(
+    tmp_path: Any,
+) -> None:
+    backend, connection_string = _opt_in_backend(tmp_path, "enabled-lineage.db", enabled=True)
+    with backend.create_unit_of_work() as uow:
+        _seed_pipeline_state(uow)
+        uow.billing.upsert(_origin())
+        uow.commit()
+
+    with backend.create_unit_of_work() as uow:
+        result = _phase().run_with_lineage_capture(uow, TRACKING_DATE)
+        uow.commit()
+
+    assert result.ecosystem == "confluent_cloud"
+    assert result.tenant_id == "org-1"
+    assert result.tracking_date == TRACKING_DATE
+    assert result.rows_written == 1
+    assert result.calculation_id == "calculation-1"
+    assert result.calculation_completed_at == COMPLETED_AT
+    assert result.lineage_capture is not None
+    assert result.lineage_failure is None
+    engine = get_or_create_engine(connection_string)
+    preview_tables = __import__(
+        "plugins.confluent_cloud.storage.preview_tables",
+        fromlist=["CCloudAllocationLineageRunTable"],
+    )
+    with Session(engine) as session:
+        assert session.exec(select(preview_tables.CCloudAllocationLineageRunTable)).all() == []
+    backend.dispose()
+
+
+def test_lineage_construction_failure_does_not_rollback_generic_calculation(tmp_path: Any) -> None:
+    backend, connection_string = _opt_in_backend(tmp_path, "capture-failure.db", enabled=True)
+    with backend.create_unit_of_work() as uow:
+        _seed_pipeline_state(uow)
+        uow.billing.upsert(_origin())
+        uow.commit()
+
+    with (
+        patch("core.engine.orchestrator.build_allocation_lineage_capture", side_effect=ValueError("bad capture")),
+        backend.create_unit_of_work() as uow,
+    ):
+        result = _phase().run_with_lineage_capture(uow, TRACKING_DATE)
+        uow.commit()
+
+    assert result.rows_written == 1
+    assert result.lineage_capture is None
+    assert result.lineage_failure.value == "construction_failed"
+    engine = get_or_create_engine(connection_string)
+    with Session(engine) as session:
+        assert len(session.exec(select(ChargebackFactTable)).all()) == 1
+    backend.dispose()
+
+
+def test_supported_zero_billing_returns_complete_empty_capture_with_shared_success_identity_and_time(
+    tmp_path: Any,
+) -> None:
+    backend, _connection_string = _backend(tmp_path, "zero.db")
     phase = _phase()
     with backend.create_unit_of_work() as uow:
         _seed_pipeline_state(uow)
-        assert phase.run(uow, TRACKING_DATE, calculation_run_id=None) == 0
+        result = phase.run_with_lineage_capture(uow, TRACKING_DATE, calculation_run_id=None)
         uow.commit()
 
-    from plugins.confluent_cloud.storage.tables import CCloudAllocationLineageRunTable
-
-    engine = get_or_create_engine(connection_string)
-    with Session(engine) as session:
-        lineage_run = session.exec(select(CCloudAllocationLineageRunTable)).one()
     with backend.create_read_only_unit_of_work() as uow:
         pipeline_state = uow.pipeline_state.get("confluent_cloud", "org-1", TRACKING_DATE)
 
-    assert lineage_run.calculation_id == "calculation-1"
-    assert lineage_run.capture_status == "complete"
-    assert lineage_run.capture_reason is None
-    assert lineage_run.portion_count == 0
-    assert lineage_run.calculation_completed_at.replace(tzinfo=UTC) == COMPLETED_AT
+    assert result.rows_written == 0
+    assert result.lineage_failure is None
+    assert result.lineage_capture is not None
+    assert result.lineage_capture.calculation_id == "calculation-1"
+    assert result.lineage_capture.captures == ()
+    assert result.calculation_completed_at == COMPLETED_AT
     assert pipeline_state is not None
-    assert pipeline_state.calculation_id == lineage_run.calculation_id
+    assert pipeline_state.calculation_id == result.lineage_capture.calculation_id
     assert pipeline_state.calculation_completed_at == COMPLETED_AT
     backend.dispose()
 
@@ -167,10 +258,13 @@ def test_supported_rows_build_once_per_origin_and_persist_actual_output_after_ch
         ) as builder,
         backend.create_unit_of_work() as uow,
     ):
-        assert _phase().run(uow, TRACKING_DATE) == 1
+        result = _phase().run_with_lineage_capture(uow, TRACKING_DATE)
         uow.commit()
 
     builder.assert_called_once()
+    assert result.rows_written == 1
+    assert result.lineage_capture is not None
+    assert len(result.lineage_capture.captures) == 1
     origin_arg = builder.call_args.kwargs["origin"]
     actual_rows = builder.call_args.kwargs["rows"]
     assert origin_arg.resource_id == "lkc-1"
@@ -183,7 +277,7 @@ def test_supported_rows_build_once_per_origin_and_persist_actual_output_after_ch
     backend.dispose()
 
 
-def test_supported_capability_builds_each_origin_but_writes_one_run_envelope(tmp_path: Any) -> None:
+def test_supported_capability_builds_each_origin_and_returns_one_run_envelope(tmp_path: Any) -> None:
     backend, _connection_string = _backend(tmp_path, "one-envelope.db")
     second = CCloudBillingLineItem(**{**_origin().__dict__, "resource_id": "lkc-2"})
     with backend.create_unit_of_work() as uow:
@@ -194,21 +288,20 @@ def test_supported_capability_builds_each_origin_but_writes_one_run_envelope(tmp
 
     from core.engine.allocation_lineage import build_allocation_lineage_capture
 
-    with backend.create_unit_of_work() as uow:
-        real_writer = uow.chargebacks.replace_calculation_lineage  # type: ignore[attr-defined]
-        with (
-            patch(
-                "core.engine.orchestrator.build_allocation_lineage_capture",
-                wraps=build_allocation_lineage_capture,
-            ) as builder,
-            patch.object(uow.chargebacks, "replace_calculation_lineage", wraps=real_writer) as writer,
-        ):
-            assert _phase().run(uow, TRACKING_DATE) == 2
-            uow.commit()
+    with (
+        backend.create_unit_of_work() as uow,
+        patch(
+            "core.engine.orchestrator.build_allocation_lineage_capture",
+            wraps=build_allocation_lineage_capture,
+        ) as builder,
+    ):
+        result = _phase().run_with_lineage_capture(uow, TRACKING_DATE)
+        uow.commit()
 
     assert builder.call_count == 2
-    writer.assert_called_once()
-    run = writer.call_args.args[0]
+    assert result.rows_written == 2
+    assert result.lineage_capture is not None
+    run = result.lineage_capture
     assert run.calculation_id == "calculation-1"
     assert len(run.captures) == 2
     backend.dispose()
@@ -253,8 +346,8 @@ def test_unsupported_zero_billing_retains_direct_success_without_lineage_work() 
     assert uow.pipeline_state.marked == [("test-eco", "tenant-1", TRACKING_DATE, "calculation-1", COMPLETED_AT, None)]
 
 
-def test_invalid_capture_is_persisted_without_changing_ordinary_calculation_success(tmp_path: Any) -> None:
-    backend, connection_string = _backend(tmp_path, "invalid.db")
+def test_invalid_capture_is_returned_without_changing_ordinary_calculation_success(tmp_path: Any) -> None:
+    backend, _connection_string = _backend(tmp_path, "invalid.db")
     with backend.create_unit_of_work() as uow:
         _seed_pipeline_state(uow)
         uow.billing.upsert(_origin())
@@ -280,46 +373,45 @@ def test_invalid_capture_is_persisted_without_changing_ordinary_calculation_succ
         patch("core.engine.orchestrator.build_allocation_lineage_capture", return_value=invalid),
         backend.create_unit_of_work() as uow,
     ):
-        assert _phase().run(uow, TRACKING_DATE) == 1
+        result = _phase().run_with_lineage_capture(uow, TRACKING_DATE)
         uow.commit()
 
-    from plugins.confluent_cloud.storage.tables import CCloudAllocationLineageRunTable
-
-    engine = get_or_create_engine(connection_string)
-    with Session(engine) as session:
-        lineage_run = session.exec(select(CCloudAllocationLineageRunTable)).one()
     with backend.create_read_only_unit_of_work() as uow:
         state = uow.pipeline_state.get("confluent_cloud", "org-1", TRACKING_DATE)
-    assert lineage_run.capture_status == "invalid"
-    assert lineage_run.capture_reason == "invalid_metadata"
+    assert result.rows_written == 1
+    assert result.lineage_failure is None
+    assert result.lineage_capture is not None
+    assert result.lineage_capture.captures == (invalid,)
     assert state is not None and state.chargeback_calculated is True
     backend.dispose()
 
 
-def test_lineage_persistence_fault_rolls_back_chargeback_and_success_state(tmp_path: Any) -> None:
-    backend, connection_string = _backend(tmp_path, "rollback.db")
+def test_generic_calculation_never_calls_preview_lineage_repository(tmp_path: Any) -> None:
+    backend, connection_string = _backend(tmp_path, "no-preview-write.db")
     with backend.create_unit_of_work() as uow:
         _seed_pipeline_state(uow)
         uow.billing.upsert(_origin())
         uow.commit()
 
     with (
-        pytest.raises(RuntimeError, match="lineage write failed"),
         backend.create_unit_of_work() as uow,
         patch.object(
             uow.chargebacks,
             "replace_calculation_lineage",
-            side_effect=RuntimeError("lineage write failed"),
-        ),
+            side_effect=AssertionError("generic calculation persisted Preview evidence"),
+        ) as writer,
     ):
-        _phase().run(uow, TRACKING_DATE)
+        result = _phase().run_with_lineage_capture(uow, TRACKING_DATE)
+        uow.commit()
 
     engine = get_or_create_engine(connection_string)
     with Session(engine) as session:
-        assert list(session.exec(select(ChargebackFactTable)).all()) == []
+        assert len(session.exec(select(ChargebackFactTable)).all()) == 1
     with backend.create_read_only_unit_of_work() as uow:
         state = uow.pipeline_state.get("confluent_cloud", "org-1", TRACKING_DATE)
-    assert state is None or state.chargeback_calculated is False
+    assert result.lineage_capture is not None
+    writer.assert_not_called()
+    assert state is not None and state.chargeback_calculated is True
     backend.dispose()
 
 
@@ -362,28 +454,22 @@ def test_real_production_bundle_captures_every_current_native_line_type_without_
         uow.billing.upsert(origin)
         uow.commit()
     with backend.create_unit_of_work() as uow:
-        row_count = phase.run(uow, TRACKING_DATE)
+        result = phase.run_with_lineage_capture(uow, TRACKING_DATE)
         uow.commit()
 
-    from plugins.confluent_cloud.storage.tables import (
-        CCloudAllocationLineagePortionTable,
-        CCloudAllocationLineageRunTable,
-    )
-
-    engine = get_or_create_engine(connection_string)
-    with Session(engine) as session:
-        run = session.exec(select(CCloudAllocationLineageRunTable)).one()
-        portions = list(session.exec(select(CCloudAllocationLineagePortionTable)).all())
-    assert run.capture_status == "complete"
-    assert run.calculation_id == "calculation-1"
-    assert run.portion_count == len(portions)
+    assert result.lineage_failure is None
+    assert result.lineage_capture is not None
+    assert result.lineage_capture.calculation_id == "calculation-1"
+    capture = result.lineage_capture.captures[0]
+    assert capture.status.value == "complete"
+    portions = capture.facts
     if line_type == "KAFKA_NUM_CKUS":
-        assert row_count == 1
+        assert result.rows_written == 1
         assert len(portions) == 2
     else:
-        assert row_count == len(portions)
+        assert result.rows_written == len(portions)
     assert len(portions) >= 1
-    assert {portion.origin_product_type for portion in portions} == {line_type}
+    assert capture.origin_product_type == line_type
     assert {portion.method_version for portion in portions} == {"v1"}
     backend.dispose()
     plugin.close()

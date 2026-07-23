@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable, Iterator
+from contextlib import nullcontext
 from importlib import import_module
 from types import SimpleNamespace
 from typing import Any
@@ -88,21 +89,29 @@ def test_revision_archive_close_wrapper_preserves_active_stream_error(
 def _response(monkeypatch: pytest.MonkeyPatch, archive: _Archive, *, route_kind: str) -> Any:
     route = _route()
     reader = type("Reader", (), {"open_archive": lambda self, revision: archive})()
+    tenant_config = SimpleNamespace(ecosystem="confluent_cloud", focus_preview_enabled=True)
+    scope = SimpleNamespace(tenant_config=tenant_config)
     monkeypatch.setattr(route, "_revision_reader", lambda request: reader)
+    monkeypatch.setattr(route, "_revision_backend", lambda *args: nullcontext(object()))
     if route_kind == "current":
         monkeypatch.setattr(route, "_current_revision", lambda *args: _revision())
+        monkeypatch.setattr(route, "_revision_scope", lambda *args: scope)
         return route.get_current_revision_archive(
             request=object(),
             tenant_name="new-label",
+            month="2026-07",
             revision_id="revision-1",
-            scope=object(),
+            settings=object(),
+            provider=object(),
         )
     monkeypatch.setattr(route, "_direct_revision", lambda *args: _revision())
+    monkeypatch.setattr(route, "_get_preview_tenant", lambda *args: tenant_config)
     return route.get_revision_archive(
         request=object(),
         tenant_name="new-label",
         revision_id="revision-1",
-        tenant_config=SimpleNamespace(ecosystem="confluent_cloud"),
+        settings=object(),
+        provider=object(),
     )
 
 

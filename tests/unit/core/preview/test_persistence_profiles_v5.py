@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 
+from tests.integration.core.api.backend_provider import FixedTenantBackendProvider
 from tests.unit.core.preview.test_lifecycle_snapshot_v5 import _package, _request, _snapshot
 from tests.unit.core.preview.test_persistence import _backend
 
@@ -128,7 +129,7 @@ def test_sqlite_hydration_normalizes_known_naive_utc_storage_boundary(tmp_path: 
                 "UPDATE preview_requests SET created_at = '2026-07-03 00:00:00' WHERE request_id = 'request-1'"
             )
 
-        with backend.create_preview_read_unit_of_work() as uow:
+        with backend.create_preview_metadata_read_unit_of_work() as uow:
             restored = uow.requests.get_for_owner("request-1", "confluent_cloud", "tenant-1")
 
         assert restored is not None
@@ -157,7 +158,7 @@ def test_mark_running_returns_validated_running_candidate_and_lost_transition_do
             lost = uow.requests.mark_running("request-1", datetime(2026, 7, 3, 2, tzinfo=UTC))
             uow.commit()
         assert lost is None
-        with backend.create_preview_read_unit_of_work() as uow:
+        with backend.create_preview_metadata_read_unit_of_work() as uow:
             persisted = uow.requests.get_for_owner("request-1", "confluent_cloud", "tenant-1")
         assert persisted is not None
         assert persisted.started_at == datetime(2026, 7, 3, 1, tzinfo=UTC)
@@ -182,7 +183,7 @@ def test_mark_running_rejects_invalid_candidate_before_sql_and_preserves_queued_
             uow.requests.mark_running("request-1", invalid_started_at)
             uow.commit()
 
-        with backend.create_preview_read_unit_of_work() as uow:
+        with backend.create_preview_metadata_read_unit_of_work() as uow:
             persisted = uow.requests.get_for_owner("request-1", "confluent_cloud", "tenant-1")
         assert persisted is not None
         assert persisted.status.value == "queued"
@@ -242,7 +243,7 @@ def test_mark_ready_constructs_and_persists_complete_strict_candidate(tmp_path: 
             )
             uow.commit()
 
-        with backend.create_preview_read_unit_of_work() as uow:
+        with backend.create_preview_metadata_read_unit_of_work() as uow:
             ready = uow.requests.get_for_owner("request-1", "confluent_cloud", "tenant-1")
         assert ready is not None
         assert ready.status.value == "ready"
@@ -275,7 +276,7 @@ def test_mark_ready_rejects_invalid_daily_cutoff_candidate_without_mutation(tmp_
             )
             uow.commit()
 
-        with backend.create_preview_read_unit_of_work() as uow:
+        with backend.create_preview_metadata_read_unit_of_work() as uow:
             running = uow.requests.get_for_owner("request-1", "confluent_cloud", "tenant-1")
         assert running is not None
         assert running.status.value == "running"
@@ -296,7 +297,7 @@ def test_mark_failed_constructs_complete_candidate_and_rejects_out_of_order_time
         with pytest.raises(ValueError), backend.create_preview_write_unit_of_work() as uow:
             uow.requests.mark_failed("request-1", datetime(2026, 7, 2, tzinfo=UTC), diagnostic)
             uow.commit()
-        with backend.create_preview_read_unit_of_work() as uow:
+        with backend.create_preview_metadata_read_unit_of_work() as uow:
             queued = uow.requests.get_for_owner("request-1", "confluent_cloud", "tenant-1")
         assert queued is not None
         assert queued.status.value == "queued"
@@ -311,7 +312,7 @@ def test_mark_failed_constructs_complete_candidate_and_rejects_out_of_order_time
                 is True
             )
             uow.commit()
-        with backend.create_preview_read_unit_of_work() as uow:
+        with backend.create_preview_metadata_read_unit_of_work() as uow:
             failed = uow.requests.get_for_owner("request-1", "confluent_cloud", "tenant-1")
         assert failed is not None
         assert failed.status.value == "failed"
@@ -340,7 +341,7 @@ def test_stale_ready_transition_returns_false_without_queued_mutation(tmp_path: 
                 is False
             )
             uow.commit()
-        with backend.create_preview_read_unit_of_work() as uow:
+        with backend.create_preview_metadata_read_unit_of_work() as uow:
             queued = uow.requests.get_for_owner("request-1", "confluent_cloud", "tenant-1")
         assert queued is not None
         assert queued.status.value == "queued"
@@ -373,7 +374,7 @@ def test_mark_ready_rejects_invalid_expiry_before_sql(tmp_path: Path, expires_at
             uow.requests.mark_ready("request-1", ready_at, expires_at, _snapshot(), _stored_package())
             uow.commit()
 
-        with backend.create_preview_read_unit_of_work() as uow:
+        with backend.create_preview_metadata_read_unit_of_work() as uow:
             current = uow.requests.get_for_owner("request-1", "confluent_cloud", "tenant-1")
         assert current is not None
         assert current.status.value == "running"
@@ -404,7 +405,7 @@ def test_recent_request_keyset_pagination_is_stable_and_owner_scoped(tmp_path: P
                 )
             uow.commit()
 
-        with backend.create_preview_read_unit_of_work() as uow:
+        with backend.create_preview_metadata_read_unit_of_work() as uow:
             first = uow.requests.list_recent_for_owner(
                 ecosystem="confluent_cloud", tenant_id="tenant-1", limit=2, cursor_request_id=None
             )
@@ -434,7 +435,7 @@ def test_recent_request_missing_and_foreign_cursor_use_same_typed_error(tmp_path
         for cursor in ("absent", "foreign"):
             with (
                 pytest.raises(persistence.PreviewRequestCursorError) as raised,
-                backend.create_preview_read_unit_of_work() as uow,
+                backend.create_preview_metadata_read_unit_of_work() as uow,
             ):
                 uow.requests.list_recent_for_owner(
                     ecosystem="confluent_cloud",
@@ -484,7 +485,7 @@ def test_recent_requests_include_every_lifecycle_state(tmp_path: Path) -> None:
             )
             uow.commit()
 
-        with backend.create_preview_read_unit_of_work() as uow:
+        with backend.create_preview_metadata_read_unit_of_work() as uow:
             page = uow.requests.list_recent_for_owner(
                 ecosystem="confluent_cloud",
                 tenant_id="tenant-1",
@@ -545,7 +546,7 @@ def test_expiry_transition_is_exact_idempotent_and_clears_only_matching_key(tmp_
             assert uow.requests.clear_expired_storage_key("request-1", "request-1") is False
             uow.commit()
 
-        with backend.create_preview_read_unit_of_work() as uow:
+        with backend.create_preview_metadata_read_unit_of_work() as uow:
             expired = uow.requests.get_for_owner("request-1", "confluent_cloud", "tenant-1")
         assert expired is not None
         assert expired.status.value == "expired"
@@ -641,7 +642,7 @@ def test_interruption_recovery_uses_strict_whole_second_cutoff_and_keeps_same_se
             uow.commit()
         assert result.failed_count == 2
         assert result.protected_count == 0
-        with backend.create_preview_read_unit_of_work() as uow:
+        with backend.create_preview_metadata_read_unit_of_work() as uow:
             before = uow.requests.get_for_owner("strictly-before", "confluent_cloud", "tenant-1")
             same = uow.requests.get_for_owner("same-second", "confluent_cloud", "tenant-1")
             running = uow.requests.get_for_owner("running-before", "confluent_cloud", "tenant-1")
@@ -673,8 +674,10 @@ def test_multi_instance_recovery_respects_live_heartbeat_recovers_stale_owner_an
     dead_worker = "worker-dead-process"
     live_clock = [old_created]
     monkeypatch.setattr(service, "_PREVIEW_HEARTBEAT_INTERVAL_SECONDS", 0.01)
+    live_provider = FixedTenantBackendProvider({"production": backend})
     live_runtime = service.PreviewRuntime(
         artifact_store=artifacts.LocalPreviewArtifactStore(tmp_path / "live-artifacts"),
+        backend_provider=live_provider,
         max_workers=1,
         clock=lambda: live_clock[0],
         request_id_factory=lambda: "live-request",
@@ -683,6 +686,7 @@ def test_multi_instance_recovery_respects_live_heartbeat_recovers_stale_owner_an
     )
     recovering_runtime = service.PreviewRuntime(
         artifact_store=artifacts.LocalPreviewArtifactStore(tmp_path / "recovery-artifacts"),
+        backend_provider=FixedTenantBackendProvider({"production": backend}),
         max_workers=1,
         startup_at=startup,
         clock=lambda: startup,
@@ -748,6 +752,8 @@ def test_multi_instance_recovery_respects_live_heartbeat_recovers_stale_owner_an
                 break
             time.sleep(0.01)
         assert live_lease == "2026-07-03 01:00:25.000000"
+        assert ("enter", "production") in live_provider.lease_events
+        assert ("exit", "production") in live_provider.lease_events
 
         recovering_runtime.ensure_owner_recovered(
             backend=backend,
@@ -756,7 +762,7 @@ def test_multi_instance_recovery_respects_live_heartbeat_recovers_stale_owner_an
             tenant_id="tenant-1",
         )
 
-        with backend.create_preview_read_unit_of_work() as uow:
+        with backend.create_preview_metadata_read_unit_of_work() as uow:
             live = uow.requests.get_for_owner("live-request", "confluent_cloud", "tenant-1")
             stale = uow.requests.get_for_owner("stale-request", "confluent_cloud", "tenant-1")
             same_second = uow.requests.get_for_owner("same-second-request", "confluent_cloud", "tenant-1")

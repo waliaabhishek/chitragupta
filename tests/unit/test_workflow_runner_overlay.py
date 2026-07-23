@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 from core.config.models import AppSettings, FeaturesConfig, StorageConfig, TenantConfig
 from core.engine.orchestrator import PipelineRunResult
-from workflow_runner import TenantRuntime, WorkflowRunner
+from workflow_runner import TenantRuntime, WorkflowRunner, _config_hash
 
 
 def _make_settings(tenants: dict[str, TenantConfig] | None = None) -> AppSettings:
@@ -152,7 +152,7 @@ class TestCleanupRetentionOverlayConfigAccess:
             plugin=mock_plugin,
             storage=mock_backend,
             orchestrator=MagicMock(),
-            config_hash="abc123",
+            config_hash=_config_hash(tenant),
             created_at=datetime.now(UTC),
         )
         runner._tenant_runtimes["t1"] = runtime

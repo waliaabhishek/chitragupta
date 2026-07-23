@@ -5,7 +5,6 @@ import io
 from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
-from unittest.mock import patch
 
 import anyio.to_thread
 import pytest
@@ -24,6 +23,8 @@ from core.storage.backends.sqlmodel.repositories import (
 )
 from core.storage.backends.sqlmodel.unit_of_work import SQLModelBackend
 from plugins.confluent_cloud import ConfluentCloudPlugin
+from tests.integration.core.api.backend_provider import install_backend
+from tests.integration.core.api.preview_pipeline_helpers import calculate_with_lineage, persist_source_capture
 from tests.integration.core.api.test_focus_preview import SameThreadApiClient
 from tests.integration.core.api.test_focus_preview_allocation_lineage import _seed_context
 from tests.unit.core.preview.test_service import ControlledExecutor, _aggregate, _source
@@ -74,7 +75,7 @@ def _zero_lineage_backend(
     connection = tenant.storage.connection_string.get_secret_value()
     plugin = ConfluentCloudPlugin()
     plugin.initialize(tenant.plugin_settings.model_dump())
-    backend = SQLModelBackend(connection, plugin.get_storage_module(), use_migrations=False)
+    backend = SQLModelBackend(connection, plugin.get_storage_module(), use_migrations=False, focus_preview_enabled=True)
     backend.create_tables()
     orchestrator = ChargebackOrchestrator("production", tenant, plugin, backend)
     tracking = date(2026, 7, 1)
@@ -93,9 +94,7 @@ def _zero_lineage_backend(
         uow.commit()
     tracking = date(2026, 7, 1)
     while tracking <= through:
-        with backend.create_unit_of_work() as uow:
-            assert orchestrator._calculate_phase.run(uow, tracking) == 0
-            uow.commit()
+        assert calculate_with_lineage(orchestrator, backend, tracking) == 0
         tracking += timedelta(days=1)
     return backend, settings, tenant, plugin
 
@@ -146,8 +145,8 @@ def test_primary_api_monthly_cutoff_and_72_hour_classification_uses_real_zero_li
     app = create_app(settings)
     executor = ControlledExecutor()
     try:
-        with patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"), SameThreadApiClient(app) as client:
-            app.state.backends["production"] = backend
+        with SameThreadApiClient(app) as client:
+            install_backend(app, "production", backend)
             app.state.preview_runtime._executor = executor
             app.state.preview_runtime._owns_executor = False
             app.state.preview_runtime._clock = lambda: submitted_at
@@ -177,8 +176,8 @@ def test_monthly_submission_freezes_cutoff_classification_before_delayed_worker(
     executor = ControlledExecutor()
     now = datetime(2026, 8, 2, 12, tzinfo=UTC)
     try:
-        with patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"), SameThreadApiClient(app) as client:
-            app.state.backends["production"] = backend
+        with SameThreadApiClient(app) as client:
+            install_backend(app, "production", backend)
             app.state.preview_runtime._executor = executor
             app.state.preview_runtime._owns_executor = False
             app.state.preview_runtime._clock = lambda: now
@@ -227,7 +226,7 @@ def test_settled_monthly_positive_sources_use_real_calculate_lineage_and_persist
                 source_period_start=start,
                 source_period_end=end,
                 collection_window_start=datetime(2026, 7, 1, tzinfo=UTC),
-                collection_window_end=datetime(2026, 7, 3, tzinfo=UTC),
+                collection_window_end=datetime(2026, 8, 1, tzinfo=UTC),
                 evidence_scope_start=start,
                 evidence_scope_end=end,
                 allocation_timestamp=start,
@@ -248,7 +247,7 @@ def test_settled_monthly_positive_sources_use_real_calculate_lineage_and_persist
             "confluent_cloud",
             "org-1",
             datetime(2026, 7, 1, tzinfo=UTC),
-            datetime(2026, 7, 3, tzinfo=UTC),
+            datetime(2026, 8, 1, tzinfo=UTC),
             sources,
         )
         for offset in range(2):
@@ -265,18 +264,23 @@ def test_settled_monthly_positive_sources_use_real_calculate_lineage_and_persist
                 )
             )
             uow.pipeline_state.mark_needs_recalculation("confluent_cloud", "org-1", tracking_date)
-        uow.commit()
+            uow.commit()
+    persist_source_capture(
+        backend,
+        ecosystem="confluent_cloud",
+        tenant_id="org-1",
+        records=sources,
+        captured_at=datetime(2026, 7, 3, tzinfo=UTC),
+    )
     orchestrator = ChargebackOrchestrator("production", tenant, plugin, backend)
     for tracking_date in (date(2026, 7, 1), date(2026, 7, 2)):
-        with backend.create_unit_of_work() as uow:
-            assert orchestrator._calculate_phase.run(uow, tracking_date) == 1
-            uow.commit()
+        assert calculate_with_lineage(orchestrator, backend, tracking_date) == 1
 
     app = create_app(settings)
     executor = ControlledExecutor()
     try:
-        with patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"), SameThreadApiClient(app) as client:
-            app.state.backends["production"] = backend
+        with SameThreadApiClient(app) as client:
+            install_backend(app, "production", backend)
             app.state.preview_runtime._executor = executor
             app.state.preview_runtime._owns_executor = False
             app.state.preview_runtime._clock = lambda: datetime(2026, 8, 4, tzinfo=UTC)
@@ -366,8 +370,8 @@ def test_complete_zero_portion_lineage_is_ready_without_enrichment_reads_for_all
     if profile == "custom":
         body["columns"] = ["Tags", "BilledCost"]
     try:
-        with patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"), SameThreadApiClient(app) as client:
-            app.state.backends["production"] = backend
+        with SameThreadApiClient(app) as client:
+            install_backend(app, "production", backend)
             app.state.preview_runtime._executor = executor
             app.state.preview_runtime._owns_executor = False
             app.state.preview_runtime._clock = lambda: datetime(2026, 8, 5, tzinfo=UTC)
@@ -404,8 +408,8 @@ def test_daily_and_monthly_post_create_request_rows_but_never_revision_rows(
     executor = ControlledExecutor()
     app = create_app(settings)
     try:
-        with patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"), SameThreadApiClient(app) as client:
-            app.state.backends["production"] = backend
+        with SameThreadApiClient(app) as client:
+            install_backend(app, "production", backend)
             app.state.preview_runtime._executor = executor
             app.state.preview_runtime._owns_executor = False
             app.state.preview_runtime._clock = lambda: datetime(2026, 8, 5, tzinfo=UTC)
@@ -428,8 +432,8 @@ def test_future_and_empty_early_months_do_not_require_calculation_evidence(tmp_p
     executor = ControlledExecutor()
     now = datetime(2026, 6, 30, tzinfo=UTC)
     try:
-        with patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"), SameThreadApiClient(app) as client:
-            app.state.backends["production"] = backend
+        with SameThreadApiClient(app) as client:
+            install_backend(app, "production", backend)
             app.state.preview_runtime._executor = executor
             app.state.preview_runtime._owns_executor = False
             app.state.preview_runtime._clock = lambda: now
@@ -483,8 +487,8 @@ def test_monthly_gap_checks_only_the_effective_interval_and_not_later_dates(
     app = create_app(settings)
     executor = ControlledExecutor()
     try:
-        with patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"), SameThreadApiClient(app) as client:
-            app.state.backends["production"] = backend
+        with SameThreadApiClient(app) as client:
+            install_backend(app, "production", backend)
             app.state.preview_runtime._executor = executor
             app.state.preview_runtime._owns_executor = False
             app.state.preview_runtime._clock = lambda: datetime(2026, 7, 4, tzinfo=UTC)
@@ -538,8 +542,8 @@ def test_monthly_reconciliation_ignores_corrupt_evidence_after_effective_interva
     app = create_app(settings)
     executor = ControlledExecutor()
     try:
-        with patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"), SameThreadApiClient(app) as client:
-            app.state.backends["production"] = backend
+        with SameThreadApiClient(app) as client:
+            install_backend(app, "production", backend)
             app.state.preview_runtime._executor = executor
             app.state.preview_runtime._owns_executor = False
             app.state.preview_runtime._clock = lambda: datetime(2026, 7, 4, tzinfo=UTC)
@@ -577,35 +581,39 @@ def test_primary_api_invalid_evidence_permutations_start_from_real_calculate_pha
 ) -> None:
     backend, settings, tenant, plugin = _zero_lineage_backend(tmp_path, through=date(2026, 7, 1))
     _seed_context(backend)
+    source = _source(
+        tenant_id="org-1",
+        collection_window_start=datetime(2026, 7, 1, tzinfo=UTC),
+        collection_window_end=datetime(2026, 7, 2, tzinfo=UTC),
+    )
     with backend.create_unit_of_work() as uow:
         uow.billing.replace_source_window(
             "confluent_cloud",
             "org-1",
             datetime(2026, 7, 1, tzinfo=UTC),
             datetime(2026, 7, 2, tzinfo=UTC),
-            [
-                _source(
-                    tenant_id="org-1",
-                    collection_window_start=datetime(2026, 7, 1, tzinfo=UTC),
-                    collection_window_end=datetime(2026, 7, 2, tzinfo=UTC),
-                )
-            ],
+            [source],
         )
         uow.billing.upsert(_aggregate(tenant_id="org-1"))
         uow.pipeline_state.mark_needs_recalculation("confluent_cloud", "org-1", date(2026, 7, 1))
         uow.commit()
+    persist_source_capture(
+        backend,
+        ecosystem="confluent_cloud",
+        tenant_id="org-1",
+        records=[source],
+        captured_at=datetime(2026, 7, 2, tzinfo=UTC),
+    )
     orchestrator = ChargebackOrchestrator("production", tenant, plugin, backend)
-    with backend.create_unit_of_work() as uow:
-        assert orchestrator._calculate_phase.run(uow, date(2026, 7, 1)) > 0
-        uow.commit()
+    assert calculate_with_lineage(orchestrator, backend, date(2026, 7, 1)) > 0
     with backend._engine.begin() as connection:
         connection.exec_driver_sql(f"DELETE FROM {invalid_table}")
 
     app = create_app(settings)
     executor = ControlledExecutor()
     try:
-        with patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"), SameThreadApiClient(app) as client:
-            app.state.backends["production"] = backend
+        with SameThreadApiClient(app) as client:
+            install_backend(app, "production", backend)
             app.state.preview_runtime._executor = executor
             app.state.preview_runtime._owns_executor = False
             app.state.preview_runtime._clock = lambda: datetime(2026, 7, 4, tzinfo=UTC)

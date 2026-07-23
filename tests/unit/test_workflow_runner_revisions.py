@@ -5,6 +5,7 @@ from datetime import UTC, date, datetime
 from typing import Any
 from unittest.mock import MagicMock
 
+import workflow_runner
 from core.config.models import (
     AppSettings,
     FeaturesConfig,
@@ -25,7 +26,7 @@ class _PreviewBackend:
     def create_read_only_unit_of_work(self) -> Any:
         raise AssertionError("pipeline owns backend use")
 
-    def create_preview_read_unit_of_work(self) -> Any:
+    def create_preview_metadata_read_unit_of_work(self) -> Any:
         raise AssertionError("publisher owns backend use")
 
     def create_preview_write_unit_of_work(self) -> Any:
@@ -91,7 +92,7 @@ def _runner(
         plugin=MagicMock(),
         storage=_PreviewBackend(),
         orchestrator=MagicMock(),
-        config_hash="hash",
+        config_hash=workflow_runner._config_hash(settings.tenants["production"]),  # noqa: SLF001
         created_at=datetime(2026, 8, 4, tzinfo=UTC),
     )
     return runner
@@ -119,19 +120,14 @@ def test_only_periodic_run_loop_publishes_after_successful_calculation() -> None
     assert publisher.cleanup_retention.call_args.kwargs["now"] is call["now"]
 
 
-def test_revision_cleanup_is_independent_of_result_and_preview_enablement() -> None:
+def test_revision_cleanup_skips_disabled_tenant_without_preview_backend_work() -> None:
     manager = MagicMock()
     runner = _runner(publisher=manager, tenant=_tenant(enabled=False))
     now = datetime(2026, 8, 4, 12, 0, 0, 123456, tzinfo=UTC)
 
     runner._cleanup_preview_revision_retention(now=now)  # noqa: SLF001
 
-    manager.cleanup_retention.assert_called_once()
-    call = manager.cleanup_retention.call_args.kwargs
-    assert call["tenant_name"] == "production"
-    assert call["tenant_config"].focus_preview is None
-    assert isinstance(call["backend"], _PreviewBackend)
-    assert call["now"] is now
+    manager.cleanup_retention.assert_not_called()
 
 
 def test_periodic_cleanup_covers_every_cached_owner_once_despite_publication_and_owner_failures() -> None:
@@ -155,10 +151,7 @@ def test_periodic_cleanup_covers_every_cached_owner_once_despite_publication_and
     )
     manager = MagicMock()
     manager.publish_eligible_months.side_effect = RuntimeError("synthetic publication failure")
-    manager.cleanup_retention.side_effect = [
-        RuntimeError("synthetic first-owner cleanup failure"),
-        MagicMock(),
-    ]
+    manager.cleanup_retention.side_effect = RuntimeError("synthetic enabled-owner cleanup failure")
     runner = WorkflowRunner(settings, MagicMock(), revision_manager=manager)
     for tenant_name in settings.tenants:
         runner._tenant_runtimes[tenant_name] = TenantRuntime(  # noqa: SLF001
@@ -166,7 +159,7 @@ def test_periodic_cleanup_covers_every_cached_owner_once_despite_publication_and
             plugin=MagicMock(),
             storage=_PreviewBackend(),
             orchestrator=MagicMock(),
-            config_hash=f"hash-{tenant_name}",
+            config_hash=workflow_runner._config_hash(settings.tenants[tenant_name]),  # noqa: SLF001
             created_at=datetime(2026, 8, 4, tzinfo=UTC),
         )
     shutdown = threading.Event()
@@ -183,10 +176,9 @@ def test_periodic_cleanup_covers_every_cached_owner_once_despite_publication_and
 
     manager.publish_eligible_months.assert_called_once()
     cleanup_calls = manager.cleanup_retention.call_args_list
-    assert [call.kwargs["tenant_name"] for call in cleanup_calls] == ["enabled", "disabled"]
-    assert [call.kwargs["tenant_config"].focus_preview is not None for call in cleanup_calls] == [True, False]
+    assert [call.kwargs["tenant_name"] for call in cleanup_calls] == ["enabled"]
+    assert [call.kwargs["tenant_config"].focus_preview is not None for call in cleanup_calls] == [True]
     assert all(isinstance(call.kwargs["backend"], _PreviewBackend) for call in cleanup_calls)
-    assert cleanup_calls[0].kwargs["now"] is cleanup_calls[1].kwargs["now"]
     assert cleanup_calls[0].kwargs["now"] is manager.publish_eligible_months.call_args.kwargs["now"]
 
 

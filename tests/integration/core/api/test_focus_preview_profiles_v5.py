@@ -32,9 +32,7 @@ def test_monthly_semantic_errors_are_exact_400_before_runtime_or_backend(tmp_pat
     route = importlib.import_module("core.api.routes.focus_preview")
     app, client = _client(_settings(tmp_path))
     with (
-        patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"),
         patch.object(route, "_runtime") as runtime,
-        patch.object(route, "_backend") as backend,
         client,
     ):
         response = client.post(
@@ -45,7 +43,6 @@ def test_monthly_semantic_errors_are_exact_400_before_runtime_or_backend(tmp_pat
     assert response.status_code == 400
     assert response.json() == {"detail": "month must use YYYY-MM"}
     runtime.assert_not_called()
-    backend.assert_not_called()
 
 
 @pytest.mark.parametrize(
@@ -73,7 +70,7 @@ def test_discriminated_request_bodies_forbid_cross_grain_or_missing_fields(
     body: dict[str, str],
 ) -> None:
     _app, client = _client(_settings(tmp_path))
-    with patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"), client:
+    with client:
         response = client.post("/api/v1/tenants/production/focus-preview/requests", json=body)
 
     assert response.status_code == 422
@@ -88,7 +85,6 @@ def test_explicit_columns_for_noncustom_profile_are_exact_400_before_runtime(
     route = importlib.import_module("core.api.routes.focus_preview")
     _app, client = _client(_settings(tmp_path))
     with (
-        patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"),
         patch.object(route, "_runtime") as runtime,
         client,
     ):
@@ -115,7 +111,6 @@ def test_all_invalid_custom_logs_every_unknown_before_exact_400(
     route = importlib.import_module("core.api.routes.focus_preview")
     _app, client = _client(_settings(tmp_path))
     with (
-        patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"),
         patch.object(route, "_runtime") as runtime,
         caplog.at_level(logging.WARNING, logger=route.__name__),
         client,
@@ -151,7 +146,6 @@ def test_successful_custom_normalization_logs_unknown_and_duplicate_before_runti
     route = importlib.import_module("core.api.routes.focus_preview")
     app, client = _client(_settings(tmp_path))
     with (
-        patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"),
         caplog.at_level(logging.WARNING, logger=route.__name__),
         client,
     ):
@@ -168,7 +162,7 @@ def test_successful_custom_normalization_logs_unknown_and_duplicate_before_runti
         )
 
     assert response.status_code == 503
-    assert caplog.messages == [
+    assert [record.getMessage() for record in caplog.records if record.name == route.__name__] == [
         "FOCUS Mapping Preview ignored unsupported Custom column tenant=production column='Unknown'",
         "FOCUS Mapping Preview ignored duplicate Custom column tenant=production column='BilledCost'",
     ]
@@ -178,7 +172,6 @@ def test_unexpected_normalization_exception_is_not_converted_to_semantic_400(tmp
     route = importlib.import_module("core.api.routes.focus_preview")
     _app, client = _client(_settings(tmp_path))
     with (
-        patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"),
         patch.object(route, "normalize_column_selection", side_effect=RuntimeError("unexpected sentinel")),
         client,
         pytest.raises(RuntimeError, match="unexpected sentinel"),
@@ -197,7 +190,7 @@ def test_unexpected_normalization_exception_is_not_converted_to_semantic_400(tmp
 def test_tenant_and_ecosystem_precede_semantic_month_validation(tmp_path: Path) -> None:
     invalid = {"grain": "monthly", "month": "9999-12", "column_profile": "full"}
     _app, client = _client(_settings(tmp_path, ecosystem="test-eco"))
-    with patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"), client:
+    with client:
         unknown = client.post("/api/v1/tenants/unknown/focus-preview/requests", json=invalid)
         unsupported = client.post("/api/v1/tenants/production/focus-preview/requests", json=invalid)
 
@@ -211,9 +204,7 @@ def test_profile_endpoint_is_static_code_owned_and_uses_no_runtime_backend_or_da
     mapping = importlib.import_module("core.preview.mapping")
     _app, client = _client(_settings(tmp_path))
     with (
-        patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"),
         patch.object(route, "_runtime", side_effect=AssertionError("runtime accessed")),
-        patch.object(route, "_backend", side_effect=AssertionError("backend accessed")),
         client,
     ):
         response = client.get("/api/v1/tenants/production/focus-preview/profile")
@@ -228,7 +219,7 @@ def test_profile_endpoint_is_static_code_owned_and_uses_no_runtime_backend_or_da
 
 def test_profile_endpoint_preserves_tenant_and_ecosystem_errors_without_route_shadowing(tmp_path: Path) -> None:
     _app, client = _client(_settings(tmp_path, ecosystem="test-eco"))
-    with patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"), client:
+    with client:
         unknown = client.get("/api/v1/tenants/unknown/focus-preview/profile")
         unsupported = client.get("/api/v1/tenants/production/focus-preview/profile")
 

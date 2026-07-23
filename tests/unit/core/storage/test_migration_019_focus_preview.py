@@ -13,11 +13,16 @@ from core.storage.backends.sqlmodel.unit_of_work import SQLModelBackend
 from plugins.confluent_cloud.storage.module import CCloudStorageModule
 
 
-def _alembic_config(connection_string: str) -> Config:
+def _alembic_config(connection_string: str, *, preview_enabled: bool = True) -> Config:
     migrations_dir = Path(__file__).resolve().parents[4] / "src" / "core" / "storage" / "migrations"
     config = Config(str(migrations_dir / "alembic.ini"))
     config.set_main_option("script_location", str(migrations_dir))
     config.set_main_option("sqlalchemy.url", connection_string)
+    if preview_enabled:
+        availability = importlib.import_module("core.preview.storage_availability")
+        config.attributes[availability.CFG_PREVIEW_EVIDENCE_ENABLED] = True
+        config.attributes[availability.CFG_PREVIEW_EVIDENCE_MODULE] = CCloudStorageModule()
+        config.attributes[availability.CFG_PREVIEW_EVIDENCE_ISSUES] = availability.PreviewEvidenceIssueCollector()
     return config
 
 
@@ -163,9 +168,14 @@ def test_current_preview_migrations_match_create_all_schema(tmp_path: Path) -> N
     migration_connection = f"sqlite:///{tmp_path / 'migration.db'}"
     direct_connection = f"sqlite:///{tmp_path / 'direct.db'}"
     config = _alembic_config(migration_connection)
-    command.upgrade(config, "025")
+    command.upgrade(config, "head")
 
-    direct_backend = SQLModelBackend(direct_connection, CCloudStorageModule(), use_migrations=False)
+    direct_backend = SQLModelBackend(
+        direct_connection,
+        CCloudStorageModule(),
+        use_migrations=False,
+        focus_preview_enabled=True,
+    )
     direct_backend.create_tables()
     migrated = create_engine(migration_connection)
     direct = create_engine(direct_connection)

@@ -474,6 +474,12 @@ For setup and complete UI/CLI workflows, start with
 [FOCUS Mapping Preview](focus-mapping-preview.md). This section is the HTTP
 contract reference.
 
+The API is opt-in per tenant. When `focus_preview` is absent, every Preview
+route returns HTTP 409 with the structured
+`preview_commercial_profile_unavailable` diagnostic before initializing
+Preview runtime, artifact, or evidence storage. Other billing, chargeback, and
+generic export routes remain available.
+
 The API has no built-in authentication. Protect the entire Preview route prefix
 behind an authenticated reverse proxy or API gateway, including profile,
 submission, recent history, status, manifest, individual-file, and archive
@@ -741,6 +747,7 @@ the report.
 | Invalid JSON, date, grain, or profile | 422 | FastAPI validation body |
 | Unknown tenant | 404 | `Tenant '<tenant_name>' not found` |
 | Non-Confluent Cloud tenant | 400 | `FOCUS Mapping Preview currently supports only Confluent Cloud tenants` |
+| Tenant has no `focus_preview` block | 409 | `{"code":"preview_commercial_profile_unavailable","message":"An explicit Direct-billed PAYG profile does not cover the requested interval.","retryable":false}` |
 | Start is not before end | 400 | `start_date must be before end_date` |
 | Range crosses the allowed UTC month | 400 | `Daily preview range must stay within one UTC calendar month` |
 | Invalid or unrepresentable Monthly value | 400 | `month must use YYYY-MM` |
@@ -788,11 +795,14 @@ Eligibility and source diagnostics are:
 | `preview_source_line_type_unsupported` | false | A provider line type is unknown to this release. |
 | `preview_source_mapping_unavailable` | false | A known line type lacks required mapping evidence, such as a returned unit for `KAFKA_STREAMS`. |
 | `preview_source_record_incomplete` | false | Required Preview evidence is absent. |
+| `preview_evidence_storage_unavailable` | false | Enabled Preview evidence storage or its schema is unavailable. Generic chargeback storage remains usable. |
+| `preview_source_evidence_unavailable` | true | The newest persisted source-evidence attempt is unavailable or does not cover the requested interval. Run the pipeline and retry. |
 | `preview_source_economics_unsupported` | false | Monetary or quantity values are outside the supported tracer. |
 | `preview_source_reconciliation_failed` | false | Source, aggregate, or allocation evidence does not reconcile. |
 | `preview_source_coverage_incomplete` | false | Complete source and aggregate origin coverage does not match. |
 | `preview_mapping_scope_unsupported` | false | The complete source set exceeds the current v5 Full-row mapping scope before profile projection, including multiple native/tier Cost rows associated with one billing origin. |
 | `preview_allocation_lineage_incomplete` | false | Persisted calculation lineage is missing, incomplete, corrupt, or structurally inconsistent for one or more billing origins. |
+| `preview_allocation_lineage_unavailable` | true | The ordinary calculation completed, but its Preview lineage capture or persistence did not. Run the pipeline and retry. |
 | `preview_billing_account_unavailable` | false | No authoritative persisted Confluent organization binding is available. |
 | `preview_billing_account_conflicting` | false | Persisted Confluent organization evidence conflicts for the tenant partition. |
 | `preview_provider_context_incomplete` | false | Authoritative resource context is absent or incompatible; all TABLEFLOW rows use this failure because current inventory cannot prove their provider context. |
@@ -802,9 +812,10 @@ All accepted native line types can use persisted calculation lineage, including
 organization-wide rows, provider-null promotional allowances, and signed
 refunds. TABLEFLOW still returns `preview_provider_context_incomplete` because
 current inventory cannot prove its provider context. Missing legacy billing
-association returns `preview_source_coverage_incomplete`; recovery requires an
-ordinary provider regather followed by ordinary calculation. Missing or invalid
-lineage returns `preview_allocation_lineage_incomplete`; exact cost or quantity
+association is recovered locally when retained legacy evidence is valid;
+unreadable or ambiguous legacy evidence remains fail-closed. A later ordinary
+provider gather and calculation can establish new current evidence. Missing or
+invalid lineage returns `preview_allocation_lineage_incomplete`; exact cost or quantity
 shortfall/overage returns `preview_source_reconciliation_failed`. These failures
 are non-retryable, carry at most 20 sorted safe correlations, and persist null
 source snapshot and package fields; manifest/file retrieval remains unavailable.

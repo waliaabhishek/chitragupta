@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -9,11 +10,13 @@ from core.config.models import StorageConfig, TenantConfig
 from core.models.pipeline import PipelineState
 from core.storage.backends.sqlmodel.unit_of_work import SQLModelBackend
 from plugins.confluent_cloud.storage.module import CCloudStorageModule
+from tests.integration.core.api.backend_provider import FixedTenantBackendProvider
 from tests.unit.core.preview.conftest import preview_module
 from tests.unit.core.preview.test_service import (
     ControlledExecutor,
     _aggregate,
     _allocation,
+    _replace_source_capture,
     _runtime,
     _seed,
     _source,
@@ -25,6 +28,7 @@ def _backend(tmp_path: Path) -> SQLModelBackend:
         f"sqlite:///{tmp_path / 'preview-eligibility.db'}",
         CCloudStorageModule(),
         use_migrations=False,
+        focus_preview_enabled=True,
     )
     backend.create_tables()
     return backend
@@ -110,16 +114,8 @@ def _assert_no_artifact(failed: object) -> None:
     assert failed.package is None  # type: ignore[attr-defined]
 
 
-def _replace_sources(backend: SQLModelBackend, sources: list[object]) -> None:
-    with backend.create_unit_of_work() as uow:
-        uow.billing.replace_source_window(
-            "confluent_cloud",
-            "tenant-1",
-            datetime(2026, 6, 30, tzinfo=UTC),
-            datetime(2026, 7, 3, tzinfo=UTC),
-            sources,
-        )
-        uow.commit()
+def _replace_sources(backend: SQLModelBackend, sources: list[Any]) -> None:
+    _replace_source_capture(backend, sources)
 
 
 @pytest.mark.parametrize(
@@ -247,6 +243,7 @@ def test_worker_uses_submission_clock_for_policy_even_when_queue_starts_later(tm
     service = __import__("core.preview.service", fromlist=["PreviewRuntime"])
     runtime = service.PreviewRuntime(
         artifact_store=artifacts.LocalPreviewArtifactStore(tmp_path / "artifacts"),
+        backend_provider=FixedTenantBackendProvider({"production": backend}),
         max_workers=1,
         clock=lambda: next(times),
         request_id_factory=lambda: "request-clock",
