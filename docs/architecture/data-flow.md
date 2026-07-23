@@ -245,13 +245,16 @@ stored artifacts; new requests persist their exact effective columns and
 evidence coverage.
 
 After a successful periodic pipeline cycle, the worker separately evaluates
-eligible calendar months for scheduled publication. It uses the same persisted
+eligible calendar months for scheduled publication. Before constructing a
+request or projecting a package, it excludes active months, months less than
+72 hours past their end, and months whose configured acquisition cutoff does not
+cover the complete month. Settlement-ready months use the same persisted
 calculation, source, allocation-lineage, enrichment, mapping, and reconciliation
-path as Monthly Full generation. The initial pass publishes every valid month
-inside the acquisition/effective window, including a valid header-only month.
-Later publication is driven by logical projected content and mapping semantics,
-plus the first provisional-to-settled transition. Physical CSV partitioning
-alone is not material.
+path as Monthly Full generation. The initial pass publishes only validated
+Settled revisions, including a settlement-ready valid header-only month. Later
+publication is driven by changed logical projected content or mapping semantics
+and produces another Settled replacement. Physical CSV partitioning alone is not
+material.
 
 Data files and the revision manifest become immutable before the database
 current pointer changes. Replacing a revision and linking its superseded

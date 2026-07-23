@@ -68,8 +68,10 @@ features:
   refresh_interval: 1800
 ```
 
-After each successful periodic tenant cycle, Preview evaluates eligible Monthly
-Full revisions. Disabling periodic refresh disables automatic revision
+After each successful periodic tenant cycle, Preview evaluates settlement-ready
+Monthly Full revisions. Automatic publication starts with a validated Settled
+revision; active and otherwise incomplete months remain available through
+ad-hoc requests. Disabling periodic refresh disables automatic revision
 publication; run-once and ad-hoc request execution do not replace it.
 
 The artifact root must be on durable storage and writable by both the API and
@@ -82,10 +84,11 @@ authenticated reverse proxy or API gateway. Changing the root does not move
 existing packages.
 
 `lookback_days`, `cutoff_days`, and the tenant's `focus_preview` effective dates
-bound the calendar months considered for publication. They remain acquisition
-and eligibility controls, not revision-history retention. Changing only
-`preview.max_csv_file_bytes` changes physical partitioning and does not trigger a
-replacement.
+bound the calendar months considered for publication. Automatic generation also
+waits at least 72 hours after month end and requires the acquisition cutoff to
+cover the complete month. These remain acquisition and eligibility controls, not
+revision-history retention. Changing only `preview.max_csv_file_bytes` changes
+physical partitioning and does not trigger a replacement.
 
 Confluent Cloud tenants can optionally declare the commercial contract required
 for Preview:

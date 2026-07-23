@@ -632,17 +632,23 @@ available as `expired`, while manifest, file, and archive endpoints return 410.
 ### Published monthly revisions
 
 Successful periodic worker cycles automatically evaluate eligible Monthly Full
-output. The first validated result publishes a complete revision. A provisional
-logical change, the first validated settled result, or a later settled logical
-correction atomically replaces the current revision. Failed calculation,
-eligibility, reconciliation, validation, artifact, or persistence work leaves
-the prior current revision unchanged.
+output. Active, sub-72-hour, and acquisition-cutoff-incomplete months are
+excluded before package generation. The first automatic revision publishes only
+after complete full-month calculation and source coverage, reconciliation, and
+mapping validation produce a settled result. A later material settled correction
+atomically replaces the current revision. Failed calculation, eligibility,
+reconciliation, validation, artifact, or persistence work leaves the prior
+current revision unchanged.
+
+Existing persisted provisional revisions remain available under the ordinary
+supersession and retention rules. The first valid settled revision supersedes a
+current provisional revision, even when logical report content is unchanged.
 
 Material identity covers the canonical projected rows and mapping semantics.
 Physical CSV partitioning, file names, row counts, provenance, and timestamps do
 not independently trigger replacement. The first successful scheduled pass also
-seeds every valid eligible month in the configured lookback, including a valid
-header-only no-cost month.
+seeds every settlement-ready valid month in the configured lookback, including a
+valid header-only no-cost month.
 
 Automatic publication requires `features.enable_periodic_refresh: true`. It
 runs after the ordinary pipeline cycle; `--run-once`, direct tenant runs, and

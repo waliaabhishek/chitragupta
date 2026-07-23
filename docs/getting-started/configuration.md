@@ -72,8 +72,8 @@ row-boundary parts. See
 [FOCUS Mapping Preview](../focus-mapping-preview.md) for the complete user
 workflow and supported customization boundary.
 
-To publish current Monthly Full revisions automatically, keep the ordinary
-worker in periodic mode:
+To publish current Settled Monthly Full revisions automatically, keep the
+ordinary worker in periodic mode:
 
 ```yaml
 features:
@@ -84,6 +84,9 @@ features:
 Publication follows successful periodic cycles. Run-once execution and ad-hoc
 Preview requests never publish revisions. Eligible months are bounded by
 `lookback_days`, `cutoff_days`, and the `focus_preview` effective interval.
+Automatic generation waits at least 72 hours after month end and until the
+acquisition cutoff covers the complete month; active and otherwise incomplete
+months remain available through on-demand Provisional requests.
 
 Tenant `lookback_days` is capped at 364 and controls acquisition/recalculation,
 not retention or guaranteed historical reconstruction.

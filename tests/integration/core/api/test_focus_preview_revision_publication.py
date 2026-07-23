@@ -71,6 +71,16 @@ class _FailingDeleteArtifactStore:
         return getattr(self.delegate, name)
 
 
+class _RecordingPackageGenerator:
+    def __init__(self, delegate: Any) -> None:
+        self.delegate = delegate
+        self.requests: list[Any] = []
+
+    def generate(self, *, backend: Any, request: Any, policy: Any) -> tuple[Any, Any]:
+        self.requests.append(request)
+        return self.delegate.generate(backend=backend, request=request, policy=policy)
+
+
 class _DeleteTrackingRepository:
     def __init__(self, delegate: Any, owner: _CommitFailingUnitOfWork) -> None:
         self._delegate = delegate
@@ -349,7 +359,7 @@ def test_requested_package_expires_at_seven_days_independently_of_revision_reten
 
     connection_string = f"sqlite:///{tmp_path / 'independent-lifecycles.db'}"
     artifact_root = tmp_path / "independent-lifecycles-artifacts"
-    tenant = _tenant_config(connection_string).model_copy(update={"retention_days": 1})
+    tenant = _tenant_config(connection_string).model_copy(update={"cutoff_days": 1, "retention_days": 5})
     settings = AppSettings(
         preview=PreviewConfig(artifact_root=artifact_root, max_workers=1),
         tenants={"production": tenant},
@@ -362,7 +372,7 @@ def test_requested_package_expires_at_seven_days_independently_of_revision_reten
     )
     backend.create_tables()
     _seed_month(backend, billed_cost=Decimal("8"))
-    controlled_now = [datetime(2026, 8, 1, 12, tzinfo=UTC)]
+    controlled_now = [datetime(2026, 8, 4, tzinfo=UTC)]
     publisher_store = LocalPreviewArtifactStore(artifact_root)
     publisher = PreviewRevisionService(
         artifact_store=publisher_store,
@@ -401,7 +411,7 @@ def test_requested_package_expires_at_seven_days_independently_of_revision_reten
             expires_at = datetime.fromisoformat(ready["expires_at"].replace("Z", "+00:00"))
             assert expires_at == ready_at + timedelta(days=7)
 
-            controlled_now[0] = ready_at + timedelta(days=1)
+            controlled_now[0] = ready_at + timedelta(days=5)
             cleanup = publisher.cleanup_retention(
                 tenant_name="production",
                 tenant_config=tenant,
@@ -466,15 +476,17 @@ def test_periodic_publication_lifecycle_is_visible_through_real_current_api(
     seed_backend.create_tables()
     _seed_month(seed_backend, billed_cost=Decimal("8"))
     worker_store = LocalPreviewArtifactStore(artifact_root)
-    generator = PreviewPackageGenerator(
-        max_csv_file_bytes=None,
-        clock=lambda: datetime(2026, 8, 8, tzinfo=UTC),
+    generator = _RecordingPackageGenerator(
+        PreviewPackageGenerator(
+            max_csv_file_bytes=None,
+            clock=lambda: datetime(2026, 8, 8, tzinfo=UTC),
+        )
     )
     identifiers = iter(f"revision-{index}" for index in range(1, 10))
     publisher = PreviewRevisionService(
         artifact_store=worker_store,
         package_generator=generator,
-        clock=lambda: datetime(2026, 8, 4, tzinfo=UTC),
+        clock=lambda: datetime(2026, 8, 7, tzinfo=UTC),
         revision_id_factory=lambda: next(identifiers),
     )
     plugin = MagicMock()
@@ -497,19 +509,41 @@ def test_periodic_publication_lifecycle_is_visible_through_real_current_api(
     with runner.acquire_backend("production", tenant) as acquired_backend:
         assert isinstance(acquired_backend, SQLModelBackend)
         backend = acquired_backend
-    _run_periodic_cycle(runner, _result(), now=datetime(2026, 8, 4, tzinfo=UTC))
+
+    request_app = create_app(settings)
+    with SameThreadApiClient(request_app) as client:
+        install_backend(request_app, "production", backend)
+        request_app.state.preview_runtime._clock = lambda: datetime(2026, 7, 20, tzinfo=UTC)  # noqa: SLF001
+        submitted = client.post(
+            "/api/v1/tenants/production/focus-preview/requests",
+            json={"grain": "monthly", "month": "2026-07", "column_profile": "full"},
+        )
+        assert submitted.status_code == 202
+        requested = _wait_for_terminal(client, submitted.json()["request_id"])
+        assert requested["status"] == "ready", requested["diagnostic"]
+        assert requested["source_snapshot"]["monthly_status"] == "provisional"
+        package = requested["package"]
+        assert client.get(package["manifest"]["download_url"]).status_code == 200
+        assert client.get(package["files"][0]["download_url"]).status_code == 200
+        archive = client.get(package["download_all_url"])
+        assert archive.status_code == 200
+        assert archive.headers["content-type"].startswith("application/zip")
+
+    _run_periodic_cycle(runner, _result(), now=datetime(2026, 7, 20, tzinfo=UTC))
     registry.create.assert_called_once_with("confluent_cloud")
     plugin.initialize.assert_called_once()
     with runner.acquire_backend("production", tenant) as cached_backend:
         assert cached_backend is backend
+    _run_periodic_cycle(runner, _result(), now=datetime(2026, 8, 2, 12, tzinfo=UTC))
     _run_periodic_cycle(runner, _result(), now=datetime(2026, 8, 4, tzinfo=UTC))
-    _seed_month(
-        backend,
-        billed_cost=Decimal("8"),
-        billing_account_name="Revised billing organization",
-        capture_source=True,
-    )
-    _run_periodic_cycle(runner, _result(), now=datetime(2026, 8, 4, tzinfo=UTC))
+    assert generator.requests == []
+    pre_settlement_engine = create_engine(connection_string)
+    with pre_settlement_engine.connect() as connection:
+        assert connection.execute(text("SELECT COUNT(*) FROM preview_revisions")).scalar_one() == 0
+        assert connection.execute(text("SELECT COUNT(*) FROM preview_requests")).scalar_one() == 1
+    pre_settlement_engine.dispose()
+
+    _run_periodic_cycle(runner, _result(), now=datetime(2026, 8, 7, tzinfo=UTC))
     _run_periodic_cycle(runner, _result(), now=datetime(2026, 8, 7, tzinfo=UTC))
     _seed_month(
         backend,
@@ -536,29 +570,24 @@ def test_periodic_publication_lifecycle_is_visible_through_real_current_api(
     assert [row["revision_id"] for row in revisions] == [
         "revision-1",
         "revision-2",
-        "revision-3",
-        "revision-4",
     ]
-    assert [row["monthly_status"] for row in revisions] == [
-        "provisional",
-        "provisional",
-        "settled",
-        "settled",
-    ]
-    assert [row["is_current"] for row in revisions] == [False, False, False, True]
+    assert [row["monthly_status"] for row in revisions] == ["settled", "settled"]
+    assert [row["is_current"] for row in revisions] == [False, True]
     assert [row["supersedes_revision_id"] for row in revisions] == [
         None,
         "revision-1",
-        "revision-2",
-        "revision-3",
     ]
     assert [row["superseded_by_revision_id"] for row in revisions] == [
         "revision-2",
-        "revision-3",
-        "revision-4",
         None,
     ]
-    assert request_count == 0
+    assert request_count == 1
+    assert [request.source_snapshot for request in generator.requests] == [None, None, None]
+    assert [request.created_at for request in generator.requests] == [
+        datetime(2026, 8, 7, tzinfo=UTC),
+        datetime(2026, 8, 7, tzinfo=UTC),
+        datetime(2026, 8, 7, tzinfo=UTC),
+    ]
     plugin.gather_preview_organizations.assert_not_called()
 
     app = create_app(settings)
@@ -570,7 +599,7 @@ def test_periodic_publication_lifecycle_is_visible_through_real_current_api(
         metadata = client.get("/api/v1/tenants/production/focus-preview/revisions/current?month=2026-07")
         assert metadata.status_code == 200
         body = metadata.json()
-        assert body["revision_id"] == "revision-4"
+        assert body["revision_id"] == "revision-2"
         assert body["monthly_status"] == "settled"
         manifest_response = client.get(body["package"]["manifest"]["download_url"])
         assert manifest_response.status_code == 200
@@ -587,18 +616,18 @@ def test_periodic_publication_lifecycle_is_visible_through_real_current_api(
         assert history.status_code == 200
         history_body = history.json()
         assert [item["revision_id"] for item in history_body["items"]] == [
-            "revision-4",
-            "revision-3",
+            "revision-2",
+            "revision-1",
         ]
-        assert history_body["next_cursor"] == "revision-3"
+        assert history_body["next_cursor"] is None
         assert history_body["consumer_action"] == "replace_do_not_aggregate"
-        superseded = client.get("/api/v1/tenants/production/focus-preview/revisions/revision-3")
+        superseded = client.get("/api/v1/tenants/production/focus-preview/revisions/revision-1")
         assert superseded.status_code == 200
         assert superseded.json()["lifecycle"] == "superseded"
         assert client.get(superseded.json()["package"]["manifest"]["download_url"]).status_code == 200
 
         stale = client.get(
-            "/api/v1/tenants/production/focus-preview/revisions/current/manifest?month=2026-07&revision_id=revision-3"
+            "/api/v1/tenants/production/focus-preview/revisions/current/manifest?month=2026-07&revision_id=revision-1"
         )
         assert stale.status_code == 409
         assert stale.json()["detail"]["retryable"] is True
@@ -625,8 +654,8 @@ def test_periodic_publication_lifecycle_is_visible_through_real_current_api(
         backend=backend,
         now=datetime(2027, 4, 8, tzinfo=UTC),
     )
-    assert cleanup.claimed_count == 4
-    assert cleanup.deleted_count == 4
+    assert cleanup.claimed_count == 2
+    assert cleanup.deleted_count == 2
     assert cleanup.deferred_count == 0
 
     cleaned_app = create_app(settings)
@@ -635,9 +664,194 @@ def test_periodic_publication_lifecycle_is_visible_through_real_current_api(
         history = client.get("/api/v1/tenants/production/focus-preview/revisions?month=2026-07")
         assert history.status_code == 200
         assert history.json()["items"] == []
-        assert client.get("/api/v1/tenants/production/focus-preview/revisions/revision-4").status_code == 404
+        assert client.get("/api/v1/tenants/production/focus-preview/revisions/revision-2").status_code == 404
 
     engine.dispose()
+    runner.close()
+
+
+def test_periodic_settled_publication_supersedes_existing_provisional_without_removal(
+    tmp_path: Path,
+) -> None:
+    from core.preview.artifacts import LocalPreviewArtifactStore, PreviewArtifactOwner
+    from core.preview.eligibility import policy_from_tenant_config
+    from core.preview.generator import PreviewPackageGenerator
+    from core.preview.mapping import (
+        FOCUS_1_4_FULL_PROFILE_COLUMNS,
+        build_preview_revision_manifest,
+        preview_revision_content_sha256,
+    )
+    from core.preview.models import (
+        PreviewRequest,
+        PreviewRequestStatus,
+        PreviewRevisionCandidate,
+    )
+    from core.preview.revisions import PreviewRevisionService
+
+    connection_string = f"sqlite:///{tmp_path / 'provisional-upgrade.db'}"
+    artifact_root = tmp_path / "provisional-upgrade-artifacts"
+    tenant = _tenant_config(connection_string, cutoff_days=1)
+    settings = AppSettings(
+        features=FeaturesConfig(enable_periodic_refresh=True, refresh_interval=1),
+        preview=PreviewConfig(artifact_root=artifact_root, max_workers=1),
+        tenants={"production": tenant},
+    )
+    backend = SQLModelBackend(
+        connection_string,
+        CCloudStorageModule(),
+        use_migrations=False,
+        focus_preview_enabled=True,
+    )
+    backend.create_tables()
+    _seed_month(backend, billed_cost=Decimal("8"))
+    store = LocalPreviewArtifactStore(artifact_root)
+    legacy_now = datetime(2026, 8, 2, 12, tzinfo=UTC)
+    request = PreviewRequest(
+        request_id="legacy-provisional-generation",
+        tenant_name="production",
+        ecosystem="confluent_cloud",
+        tenant_id="tenant-1",
+        grain="monthly",
+        start_date=date(2026, 7, 1),
+        end_date=date(2026, 8, 1),
+        column_profile="full",
+        status=PreviewRequestStatus.RUNNING,
+        created_at=legacy_now,
+        started_at=legacy_now,
+        completed_at=None,
+        expires_at=None,
+        source_snapshot=None,
+        diagnostic=None,
+        storage_key=None,
+        package=None,
+        effective_columns=FOCUS_1_4_FULL_PROFILE_COLUMNS,
+    )
+    snapshot, draft = PreviewPackageGenerator(
+        max_csv_file_bytes=None,
+        clock=lambda: legacy_now,
+    ).generate(
+        backend=backend,
+        request=request,
+        policy=policy_from_tenant_config(tenant, created_at=legacy_now),
+    )
+    assert snapshot.monthly_status == "provisional"
+    provisional_candidate = PreviewRevisionCandidate(
+        revision_id="revision-provisional",
+        tenant_name_at_publication="production",
+        ecosystem="confluent_cloud",
+        tenant_id="tenant-1",
+        month="2026-07",
+        start_date=date(2026, 7, 1),
+        end_date=date(2026, 8, 1),
+        monthly_status="provisional",
+        material_sha256=preview_revision_content_sha256(logical_data_sha256=draft.logical_data_sha256),
+        source_snapshot=snapshot,
+        published_at=legacy_now,
+        supersedes_revision_id=None,
+    )
+    with store.stage_data_files(
+        owner=PreviewArtifactOwner("production", "confluent_cloud", "tenant-1"),
+        request_id=provisional_candidate.revision_id,
+        data_files=draft.data_files,
+    ) as staged:
+        manifest = build_preview_revision_manifest(
+            revision_id=provisional_candidate.revision_id,
+            tenant_name_at_publication=provisional_candidate.tenant_name_at_publication,
+            month=provisional_candidate.month,
+            start_date=provisional_candidate.start_date,
+            end_date=provisional_candidate.end_date,
+            monthly_status=provisional_candidate.monthly_status,
+            material_sha256=provisional_candidate.material_sha256,
+            supersedes_revision_id=None,
+            snapshot=provisional_candidate.source_snapshot,
+            draft=draft,
+            files=staged.files,
+            published_at=provisional_candidate.published_at,
+        )
+        provisional_package = staged.publish(manifest_body=manifest)
+    with backend.create_preview_write_unit_of_work() as write_uow:
+        provisional = write_uow.revisions.replace_current(
+            candidate=provisional_candidate,
+            package=provisional_package,
+            expected_current_revision_id=None,
+        )
+        write_uow.commit()
+
+    publisher = PreviewRevisionService(
+        artifact_store=store,
+        package_generator=PreviewPackageGenerator(max_csv_file_bytes=None),
+        clock=lambda: datetime(2026, 8, 7, tzinfo=UTC),
+        revision_id_factory=lambda: "revision-settled",
+    )
+    runner = WorkflowRunner(
+        settings,
+        MagicMock(),
+        revision_manager=publisher,
+        owned_preview_artifact_store=store,
+    )
+    runner._tenant_runtimes["production"] = TenantRuntime(  # noqa: SLF001
+        tenant_name="production",
+        plugin=MagicMock(),
+        storage=backend,
+        orchestrator=MagicMock(),
+        config_hash=workflow_runner._config_hash(tenant),  # noqa: SLF001
+        created_at=datetime(2026, 8, 7, tzinfo=UTC),
+    )
+
+    _run_periodic_cycle(runner, _result(), now=datetime(2026, 8, 7, tzinfo=UTC))
+
+    app = create_app(settings)
+    with SameThreadApiClient(app) as client:
+        install_backend(app, "production", backend)
+        current = client.get("/api/v1/tenants/production/focus-preview/revisions/current?month=2026-07")
+        assert current.status_code == 200
+        current_body = current.json()
+        assert current_body["revision_id"] == "revision-settled"
+        assert current_body["monthly_status"] == "settled"
+        assert current_body["supersedes_revision_id"] == provisional.revision_id
+        assert client.get(current_body["package"]["manifest"]["download_url"]).status_code == 200
+
+        legacy = client.get(f"/api/v1/tenants/production/focus-preview/revisions/{provisional.revision_id}")
+        assert legacy.status_code == 200
+        legacy_body = legacy.json()
+        assert legacy_body["monthly_status"] == "provisional"
+        assert legacy_body["lifecycle"] == "superseded"
+        assert legacy_body["superseded_by_revision_id"] == "revision-settled"
+        assert client.get(legacy_body["package"]["manifest"]["download_url"]).status_code == 200
+
+        history = client.get("/api/v1/tenants/production/focus-preview/revisions?month=2026-07")
+        assert [item["revision_id"] for item in history.json()["items"]] == [
+            "revision-settled",
+            provisional.revision_id,
+        ]
+
+    engine = create_engine(connection_string)
+    with engine.connect() as connection:
+        rows = (
+            connection.execute(
+                text(
+                    "SELECT revision_id, monthly_status, is_current, superseded_by_revision_id "
+                    "FROM preview_revisions ORDER BY published_at"
+                )
+            )
+            .mappings()
+            .all()
+        )
+    engine.dispose()
+    assert rows == [
+        {
+            "revision_id": provisional.revision_id,
+            "monthly_status": "provisional",
+            "is_current": False,
+            "superseded_by_revision_id": "revision-settled",
+        },
+        {
+            "revision_id": "revision-settled",
+            "monthly_status": "settled",
+            "is_current": True,
+            "superseded_by_revision_id": None,
+        },
+    ]
     runner.close()
 
 
@@ -774,7 +988,7 @@ def test_periodic_retention_crash_restart_recovery_is_durable_and_api_masked(
             storage=runtime_backend,
             orchestrator=MagicMock(),
             config_hash=workflow_runner._config_hash(settings.tenants["production"]),  # noqa: SLF001
-            created_at=datetime(2026, 8, 4, tzinfo=UTC),
+            created_at=datetime(2026, 8, 7, tzinfo=UTC),
         )
         return runner
 
@@ -783,7 +997,7 @@ def test_periodic_retention_crash_restart_recovery_is_durable_and_api_masked(
     initial_service = PreviewRevisionService(
         artifact_store=failing_store,
         package_generator=PreviewPackageGenerator(max_csv_file_bytes=None),
-        clock=lambda: datetime(2026, 8, 4, tzinfo=UTC),
+        clock=lambda: datetime(2026, 8, 7, tzinfo=UTC),
         revision_id_factory=lambda: "revision-restart",
     )
     initial_runner = runner_for(
@@ -794,7 +1008,7 @@ def test_periodic_retention_crash_restart_recovery_is_durable_and_api_masked(
     _run_periodic_cycle(
         initial_runner,
         _result(),
-        now=datetime(2026, 8, 4, tzinfo=UTC),
+        now=datetime(2026, 8, 7, tzinfo=UTC),
     )
 
     boundary = datetime(2027, 4, 8, tzinfo=UTC)

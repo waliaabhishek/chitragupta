@@ -139,11 +139,14 @@ See [FOCUS Mapping Preview](../focus-mapping-preview.md) for request and downloa
 examples.
 
 When `features.enable_periodic_refresh` is enabled, each successful periodic
-tenant cycle also evaluates current Monthly Full revisions. Eligible months are
-the calendar months inside both the acquisition window and this tenant's
-effective interval. The initial pass includes every month that validates,
-including a header-only no-cost month. `cutoff_days` participates in
-provisional/settled evidence timing; it is not a revision-retention setting.
+tenant cycle also evaluates settlement-ready Monthly Full revisions. Candidate
+months must be inside both the acquisition window and this tenant's effective
+interval, at least 72 hours past month end, and fully covered by the configured
+acquisition cutoff. The initial pass publishes only validated Settled revisions,
+including a settlement-ready header-only no-cost month. Active and otherwise
+incomplete months remain available as on-demand Provisional packages.
+`cutoff_days` is an acquisition and settlement-readiness control, not a
+revision-retention setting.
 
 The configured `tenant_id` remains the stable storage owner for current-revision
 isolation. It is not emitted as `BillingAccountId`; the mapped report continues

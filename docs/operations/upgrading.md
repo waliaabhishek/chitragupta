@@ -195,14 +195,23 @@ Migration 024 adds storage for immutable published Monthly Full revisions and
 enforces one current revision per configured storage owner and UTC month. It
 does not convert requested Preview packages or backfill revision rows. The first
 successful periodic cycle after upgrade evaluates every eligible month in the
-current acquisition/effective window and publishes only months that fully
-validate.
+current acquisition/effective window. It publishes only settlement-ready months
+whose source-arrival threshold and configured acquisition cutoff have passed and
+whose complete full-month calculation, source coverage, reconciliation, and
+mapping validation produce a Settled result.
+
+Existing persisted Provisional revisions are not deleted or rewritten by the
+upgrade. They remain available under the existing supersession and retention
+rules. The first valid Settled revision supersedes a current Provisional revision
+through the ordinary replacement transaction, even when logical report content
+is unchanged.
 
 Before upgrading, back up each tenant database and the matching
 `preview.artifact_root` together. Restoring only one side can leave revision
 metadata without its immutable manifest/CSV bytes, or bytes without their
 current metadata. Automatic publication requires periodic refresh; existing
-run-once and ad-hoc request behavior is unchanged.
+run-once and ad-hoc request behavior is unchanged, including on-demand
+Provisional packages for active or otherwise incomplete months.
 
 ### Migration 025: revision history retention
 

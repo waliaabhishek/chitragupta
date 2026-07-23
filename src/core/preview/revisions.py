@@ -31,6 +31,7 @@ from core.preview.models import (
     PreviewRevision,
     PreviewRevisionCandidate,
     PreviewRevisionValidationSummary,
+    resolve_monthly_evidence,
     validate_preview_revision_invariant,
 )
 from core.preview.persistence import (
@@ -180,8 +181,16 @@ class PreviewRevisionService:
             current = _next_month(current)
         months: list[str] = []
         while current < end:
-            months.append(f"{current.year:04d}-{current.month:02d}")
-            current = _next_month(current)
+            next_month = _next_month(current)
+            resolution = resolve_monthly_evidence(
+                start_date=current,
+                end_date=next_month,
+                submitted_at=now,
+                availability_cutoff_end_date=policy.acquisition_end_date,
+            )
+            if resolution.monthly_stage == "settlement_candidate":
+                months.append(f"{current.year:04d}-{current.month:02d}")
+            current = next_month
         return tuple(months)
 
     def publish_eligible_months(
@@ -237,8 +246,8 @@ class PreviewRevisionService:
                     request=request,
                     policy=policy,
                 )
-                if snapshot.monthly_status is None:
-                    raise ValueError("scheduled monthly generation requires monthly status")
+                if snapshot.monthly_status != "settled":
+                    raise ValueError("scheduled monthly generation requires settled status")
                 material = preview_revision_content_sha256(logical_data_sha256=draft.logical_data_sha256)
                 with backend.create_preview_metadata_read_unit_of_work() as read_uow:
                     current = read_uow.revisions.get_current_for_publication(
@@ -248,11 +257,12 @@ class PreviewRevisionService:
                     )
                 if current is not None and current.retention_pending_at is not None:
                     continue
-                if current is not None:
-                    if current.monthly_status == "settled" and snapshot.monthly_status == "provisional":
-                        continue
-                    if current.monthly_status == snapshot.monthly_status and current.material_sha256 == material:
-                        continue
+                if (
+                    current is not None
+                    and current.monthly_status == snapshot.monthly_status
+                    and current.material_sha256 == material
+                ):
+                    continue
                 revision_id = self._revision_id_factory()
                 expected_current = None if current is None else current.revision_id
                 candidate = PreviewRevisionCandidate(

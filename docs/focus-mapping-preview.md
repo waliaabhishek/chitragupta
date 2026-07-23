@@ -9,7 +9,7 @@ Preview does not call Confluent Cloud, gather data, calculate allocations, edit
 stored records, or recreate historical evidence. Run the ordinary pipeline
 first. You can then create an ad-hoc package from the web UI, CLI, or request
 API, while the periodic worker automatically publishes the current validated
-Full monthly revision for eligible months.
+Settled Full monthly revision for settlement-ready months.
 
 Preview is opt-in per tenant. If every tenant omits `focus_preview`, Chitragupta
 does not create or access the Preview artifact root, gather the provider
@@ -155,7 +155,10 @@ failure.
 
 Automatic monthly publication runs only after a successful cycle of the
 continuously running periodic worker. `--run-once`, direct tenant runs, and
-ad-hoc Daily or Monthly Preview requests do not publish revisions.
+ad-hoc Daily or Monthly Preview requests do not publish revisions. Active,
+sub-72-hour, and acquisition-cutoff-incomplete months are excluded before
+package generation. On-demand Monthly requests remain available and can produce
+Provisional packages for those months.
 
 ## 3. Generate and download from the web UI
 
@@ -369,22 +372,26 @@ fields, pagination, status behavior, errors, and diagnostic codes.
 
 The periodic worker evaluates every calendar-month scope whose start is inside
 both the tenant's current `lookback_days` acquisition window and the configured
-`focus_preview` effective interval. On the first successful pass it publishes
-every month that validates, including a valid header-only month with no cost
-rows. A failure for one month publishes nothing for that month and does not
-replace its current revision.
+`focus_preview` effective interval. It generates a revision candidate only after
+the month has ended by at least 72 hours and the configured acquisition cutoff
+covers the full month. The first automatic revision publishes only when complete
+full-month calculation and source coverage, reconciliation, and mapping
+validation produce a Settled result. This includes a valid settlement-ready
+header-only month with no cost rows. A failure for one month publishes nothing
+for that month and does not replace its current revision.
 
 Published revisions use the Full profile. A month can have these transitions:
 
-- no current revision to an initial `provisional` or `settled` revision;
-- `provisional` to another `provisional` revision when logical report content
-  or mapping semantics change;
-- `provisional` to the first validated `settled` revision, even when logical
-  content is unchanged; and
+- no current revision to the first validated `settled` revision;
+- an existing `provisional` revision to the first validated `settled` revision,
+  even when logical content is unchanged; and
 - `settled` to another `settled` revision when a later correction changes
   logical content or mapping semantics.
 
-A settled month never regresses to provisional. CSV part size, part names,
+Existing Provisional revisions are not deleted during upgrade. They remain
+retrievable under the ordinary supersession and retention rules until the first
+valid Settled revision supersedes them or retention removes them. A settled
+month never regresses to provisional. CSV part size, part names,
 source-row counts, timestamps, provenance, and other physical package layout do
 not by themselves create a replacement. Each revision is a complete replacement
 for the month: use the current revision for reporting and never add revisions
@@ -502,7 +509,7 @@ This fixed seven-day package lifecycle is independent of tenant
 | Change allocation inputs | Existing Confluent allocator/identity settings | Takes effect through a later ordinary calculation; Preview reads the persisted result and never recalculates ratios. |
 | Enable automatic monthly publication | `features.enable_periodic_refresh` | Publication occurs after successful periodic cycles only. |
 | Control when periodic cycles run | `features.refresh_interval` | Interval in seconds; this is not a separate revision schedule. |
-| Control eligible publication months | Tenant `lookback_days`, `cutoff_days`, and `focus_preview` effective dates | These bound source acquisition and eligible calendar months; they are not archival-retention settings. |
+| Control eligible publication months | Tenant `lookback_days`, `cutoff_days`, and `focus_preview` effective dates | Automatic generation also waits at least 72 hours after month end and requires the acquisition cutoff to cover the complete month. These controls are not archival-retention settings. |
 
 The mapping profile itself is code-owned. Changing FOCUS field mappings,
 service/charge classification, derived SKU rules, canonical row ordering,
@@ -511,10 +518,10 @@ seven-day lifetime, or adding another provider/commercial profile requires a
 code change and a new release. There is no YAML mapping override or client-side
 remapping hook.
 
-Automatic monthly revisions always use Full. Summary and Custom remain ad-hoc
-request choices. Changing `preview.max_csv_file_bytes` alone does not publish a
-replacement; the new partition setting is used when a later logically material
-revision is published.
+Automatic monthly revisions are always Settled and use Full. Summary and Custom
+remain ad-hoc request choices. Changing `preview.max_csv_file_bytes` alone does
+not publish a replacement; the new partition setting is used when a later
+logically material Settled revision is published.
 
 ## Current output boundaries
 

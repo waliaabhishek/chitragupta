@@ -80,6 +80,16 @@ class _Generator:
         return _snapshot(request.start_date, request.end_date, status=status), _draft(marker)
 
 
+class _FailOnCallGenerator:
+    def __init__(self) -> None:
+        self.requests: list[Any] = []
+
+    def generate(self, *, backend: Any, request: Any, policy: Any) -> tuple[Any, Any]:
+        del backend, policy
+        self.requests.append(request)
+        raise AssertionError("scheduled generation must not run before monthly settlement")
+
+
 class _RevisionRepository:
     def __init__(self) -> None:
         self.current: dict[tuple[str, str, date], Any] = {}
@@ -199,13 +209,17 @@ class _ReadUow:
         del exc_type, exc_value, traceback
 
 
-def _tenant_config(connection_string: str = "sqlite:///unused.db") -> Any:
+def _tenant_config(
+    connection_string: str = "sqlite:///unused.db",
+    *,
+    cutoff_days: int = 5,
+) -> Any:
     config = import_module("core.config.models")
     return config.TenantConfig(
         ecosystem="confluent_cloud",
         tenant_id="tenant-1",
         lookback_days=40,
-        cutoff_days=5,
+        cutoff_days=cutoff_days,
         storage=config.StorageConfig(connection_string=connection_string),
         focus_preview=config.FocusPreviewTenantConfig(
             commercial_profile="direct_payg",
@@ -216,7 +230,7 @@ def _tenant_config(connection_string: str = "sqlite:///unused.db") -> Any:
     )
 
 
-def _service(tmp_path: Path, generator: _Generator) -> tuple[Any, Any]:
+def _service(tmp_path: Path, generator: Any) -> tuple[Any, Any]:
     revisions = import_module("core.preview.revisions")
     artifacts = import_module("core.preview.artifacts")
     store = artifacts.LocalPreviewArtifactStore(tmp_path)
@@ -225,7 +239,7 @@ def _service(tmp_path: Path, generator: _Generator) -> tuple[Any, Any]:
         revisions.PreviewRevisionService(
             artifact_store=store,
             package_generator=generator,
-            clock=lambda: datetime(2026, 8, 4, tzinfo=UTC),
+            clock=lambda: datetime(2026, 8, 6, tzinfo=UTC),
             revision_id_factory=lambda: next(identifiers),
         ),
         store,
@@ -237,40 +251,145 @@ def _publish(service: Any, backend: _Backend) -> tuple[Any, ...]:
         tenant_name="production",
         tenant_config=_tenant_config(),
         backend=backend,
-        now=datetime(2026, 8, 4, tzinfo=UTC),
+        now=datetime(2026, 8, 6, tzinfo=UTC),
     )
 
 
-def test_publication_state_machine_replaces_only_material_or_settlement_changes(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("now", "cutoff_days"),
+    [
+        pytest.param(datetime(2026, 7, 20, tzinfo=UTC), 5, id="active-month"),
+        pytest.param(datetime(2026, 8, 2, 12, tzinfo=UTC), 1, id="sub-72-hours"),
+        pytest.param(datetime(2026, 8, 5, tzinfo=UTC), 5, id="cutoff-incomplete"),
+    ],
+)
+def test_scheduled_publication_skips_incomplete_month_before_generation_and_projection(
+    tmp_path: Path,
+    now: datetime,
+    cutoff_days: int,
+) -> None:
+    revisions = import_module("core.preview.revisions")
+    artifacts = import_module("core.preview.artifacts")
+    generator = _FailOnCallGenerator()
+    store = artifacts.LocalPreviewArtifactStore(tmp_path)
+    service = revisions.PreviewRevisionService(
+        artifact_store=store,
+        package_generator=generator,
+        clock=lambda: now,
+    )
+    backend = _Backend()
+
+    published = service.publish_eligible_months(
+        tenant_name="production",
+        tenant_config=_tenant_config(cutoff_days=cutoff_days),
+        backend=backend,
+        now=now,
+    )
+
+    assert published == ()
+    assert generator.requests == []
+    assert backend.read_uows == []
+    assert backend.write_uows == []
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_publication_state_machine_replaces_only_material_settled_revisions(tmp_path: Path) -> None:
     generator = _Generator(
         [
-            ("provisional", "v1"),
-            ("provisional", "v1"),
-            ("provisional", "v2"),
+            ("settled", "v1"),
+            ("settled", "v1"),
             ("settled", "v2"),
-            ("settled", "v3"),
-            ("provisional", "v4"),
         ]
     )
     service, _store = _service(tmp_path, generator)
     backend = _Backend()
 
-    results = [_publish(service, backend) for _ in range(6)]
+    results = [_publish(service, backend) for _ in range(3)]
 
-    assert [len(item) for item in results] == [1, 0, 1, 1, 1, 0]
-    assert [row.revision_id for row in backend.repository.rows if row.is_current] == ["revision-4"]
+    assert [len(item) for item in results] == [1, 0, 1]
+    assert [row.revision_id for row in backend.repository.rows if row.is_current] == ["revision-2"]
     assert [row.supersedes_revision_id for row in backend.repository.rows] == [
         None,
         "revision-1",
-        "revision-2",
-        "revision-3",
     ]
-    assert [row.monthly_status for row in backend.repository.rows] == [
-        "provisional",
-        "provisional",
-        "settled",
-        "settled",
+    assert [row.monthly_status for row in backend.repository.rows] == ["settled", "settled"]
+
+
+def test_scheduled_publication_rejects_injected_provisional_output(tmp_path: Path) -> None:
+    generator = _Generator([("provisional", "v1")])
+    service, _store = _service(tmp_path, generator)
+    backend = _Backend()
+
+    assert _publish(service, backend) == ()
+    assert len(generator.requests) == 1
+    assert backend.repository.rows == []
+    assert backend.write_uows == []
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_first_settled_revision_supersedes_current_provisional_with_identical_material(
+    tmp_path: Path,
+) -> None:
+    _revisions, mapping, models, _generator = _modules()
+    artifacts = import_module("core.preview.artifacts")
+    generator = _Generator([("settled", "v1")])
+    service, store = _service(tmp_path, generator)
+    backend = _Backend()
+    start = date(2026, 7, 1)
+    end = date(2026, 8, 1)
+    draft = _draft("v1")
+    legacy = models.PreviewRevisionCandidate(
+        revision_id="revision-provisional",
+        tenant_name_at_publication="production",
+        ecosystem="confluent_cloud",
+        tenant_id="tenant-1",
+        month="2026-07",
+        start_date=start,
+        end_date=end,
+        monthly_status="provisional",
+        material_sha256=mapping.preview_revision_content_sha256(logical_data_sha256=draft.logical_data_sha256),
+        source_snapshot=_snapshot(start, end, status="provisional"),
+        published_at=datetime(2026, 8, 2, tzinfo=UTC),
+        supersedes_revision_id=None,
+    )
+    with store.stage_data_files(
+        owner=artifacts.PreviewArtifactOwner("production", "confluent_cloud", "tenant-1"),
+        request_id=legacy.revision_id,
+        data_files=draft.data_files,
+    ) as staged:
+        manifest = mapping.build_preview_revision_manifest(
+            revision_id=legacy.revision_id,
+            tenant_name_at_publication=legacy.tenant_name_at_publication,
+            month=legacy.month,
+            start_date=legacy.start_date,
+            end_date=legacy.end_date,
+            monthly_status=legacy.monthly_status,
+            material_sha256=legacy.material_sha256,
+            supersedes_revision_id=None,
+            snapshot=legacy.source_snapshot,
+            draft=draft,
+            files=staged.files,
+            published_at=legacy.published_at,
+        )
+        package = staged.publish(manifest_body=manifest)
+    with backend.create_preview_write_unit_of_work() as write_uow:
+        provisional = write_uow.revisions.replace_current(
+            candidate=legacy,
+            package=package,
+            expected_current_revision_id=None,
+        )
+        write_uow.commit()
+
+    settled = _publish(service, backend)[0]
+
+    assert settled.monthly_status == "settled"
+    assert settled.supersedes_revision_id == provisional.revision_id
+    assert [row.revision_id for row in backend.repository.rows] == [
+        provisional.revision_id,
+        settled.revision_id,
     ]
+    assert [row.is_current for row in backend.repository.rows] == [False, True]
+    assert store.read_manifest(provisional.package.storage_key, provisional.package.manifest)
 
 
 def test_generation_and_persistence_failures_preserve_current_revision(tmp_path: Path) -> None:
@@ -441,7 +560,7 @@ def test_first_scheduled_pass_seeds_every_eligible_month_including_header_only(t
 
 def test_scheduled_publication_excludes_months_already_outside_retention(tmp_path: Path) -> None:
     config = import_module("core.config.models")
-    generator = _Generator([("provisional", "july")])
+    generator = _Generator([("settled", "july")])
     service, _store = _service(tmp_path, generator)
     backend = _Backend()
     tenant = config.TenantConfig(
@@ -461,7 +580,7 @@ def test_scheduled_publication_excludes_months_already_outside_retention(tmp_pat
         tenant_name="production",
         tenant_config=tenant,
         backend=backend,
-        now=datetime(2026, 8, 4, tzinfo=UTC),
+        now=datetime(2026, 8, 6, tzinfo=UTC),
     )
 
     assert [item.month for item in published] == ["2026-07"]
