@@ -357,6 +357,21 @@ class BillingRepository(Protocol):
 
 
 @runtime_checkable
+class HistoricalRepairBillingWriter(Protocol):
+    """Exact owner/date replacement used by explicit historical repair."""
+
+    def replace_for_date(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        tracking_date: date,
+        lines: Sequence[BillingLineItem],
+    ) -> int:
+        """Replace one owner's billing rows for one UTC date."""
+        ...
+
+
+@runtime_checkable
 class ChargebackRepository(Protocol):
     """Repository for chargeback rows (star schema: dimension + fact)."""
 

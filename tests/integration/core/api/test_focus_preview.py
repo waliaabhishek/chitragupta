@@ -895,18 +895,13 @@ def test_primary_api_unknown_unsupported_line_precedes_valid_kafka_streams(tmp_p
     )
     backend.create_tables()
     _seed(backend, aggregate=_aggregate(), allocation=_allocation())
-    with backend.create_unit_of_work() as uow:
-        uow.billing.replace_source_window(
-            "confluent_cloud",
-            "tenant-1",
-            datetime(2026, 6, 30, tzinfo=UTC),
-            datetime(2026, 7, 3, tzinfo=UTC),
-            [
-                _source(source_record_id="provider:future", provider_cost_id="future", line_type="FUTURE_LINE"),
-                _source(source_record_id="provider:streams", provider_cost_id="streams", line_type="KAFKA_STREAMS"),
-            ],
-        )
-        uow.commit()
+    _replace_source_capture(
+        backend,
+        [
+            _source(source_record_id="provider:future", provider_cost_id="future", line_type="FUTURE_LINE"),
+            _source(source_record_id="provider:streams", provider_cost_id="streams", line_type="KAFKA_STREAMS"),
+        ],
+    )
     app, client = _client(settings)
     with client:
         install_backend(app, "production", backend)

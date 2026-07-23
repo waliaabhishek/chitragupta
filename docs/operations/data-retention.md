@@ -67,6 +67,28 @@ already persisted. Re-enabling may reuse or revalidate retained evidence, but
 does not reconstruct evidence already outside the acquisition or retention
 windows.
 
+## Historical repair and retention
+
+Historical repair is limited to dates wholly inside the tenant's current
+effective, acquisition, cutoff, and complete retention intervals. It does not
+extend retention or restore data already deleted by retention. Provider billing
+history and any historical metrics needed by allocation must also remain
+available outside Chitragupta.
+
+For each selected date, the authoritative provider result replaces only that
+tenant/date's billing rows. An authoritative empty result removes stale billing
+for that date and still runs the canonical zero-row calculation and validation
+path. Matching chargebacks, pipeline state, source evidence, and allocation
+lineage are updated consistently; data outside the selected tenant/date range
+is preserved. New evidence and lineage then follow the ordinary tenant
+retention policy.
+
+Repair operation and per-date statuses are durable. Expected date failures do
+not stop later dates. Interrupted work is marked failed and is not automatically
+resumed; retrying creates a new operation over the requested range. Repair
+creates no requested package or published revision, so their separate retention
+lifecycles remain unchanged.
+
 ## Requested FOCUS Preview packages
 
 A requested Preview package has a fixed seven-day availability window measured

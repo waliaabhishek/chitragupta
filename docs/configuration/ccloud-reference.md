@@ -119,6 +119,20 @@ history, or a promise that billing and Metrics API inputs still exist for
 reconstruction. `retention_days` is separate but does not introduce a
 multi-year completed-chargeback archive.
 
+Historical repair has no YAML override and does not widen these boundaries. A
+repair interval must fit completely inside the intersection of the configured
+effective interval, current lookback/cutoff window, and retained-data interval.
+New repair submission is available only through REST in `both` mode. API-only
+deployments can read a retained operation but cannot execute one; disabled
+tenants create no repair infrastructure.
+
+Repair uses `ccloud_api` credentials to reacquire authoritative Costs API
+history for each selected date and may use historical Telemetry, Prometheus, or
+Flink metrics through the configured canonical allocation path. Valid current
+credentials do not guarantee that the provider or metrics systems still retain
+the requested history. Missing history or allocation authority becomes a
+durable date diagnostic rather than inferred legacy evidence.
+
 Source-related failures can expose at most 20 sorted, unique, tenant-scoped
 `src:v1:<64 lowercase hex>` correlation values. They are safe lookup handles,
 not provider IDs, raw fields, secrets, or storage paths. All commercial,
@@ -151,8 +165,11 @@ revision-retention setting.
 The configured `tenant_id` remains the stable storage owner for current-revision
 isolation. It is not emitted as `BillingAccountId`; the mapped report continues
 to use the provider organization identity gathered through the ordinary
-inventory pipeline. Allocation, tag, resource, and identity configuration take
-effect only after the ordinary pipeline persists a new calculated result.
+inventory pipeline. Allocator and identity-resolution configuration take effect
+after either an ordinary recalculation or an explicit historical repair
+persists a new calculated result. Preview package generation itself remains
+read-only. Persisted tag, resource, and identity inventory evidence is refreshed
+only by the ordinary pipeline.
 
 ## plugin_settings fields (CCloud)
 

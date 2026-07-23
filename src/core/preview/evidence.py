@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import re
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -47,6 +48,20 @@ class SourceAttemptFailureReason(StrEnum):
     BOOTSTRAP_CONCURRENT_CHANGE = "bootstrap_concurrent_change"
     GENERIC_GATHER_FAILED = "generic_gather_failed"
     GENERIC_COMMIT_FAILED = "generic_commit_failed"
+
+
+class PreviewSourceAttemptOrigin(StrEnum):
+    ORDINARY = "ordinary"
+    REPAIR = "repair"
+
+
+_REPAIR_ATTEMPT_TOKEN = re.compile(r"repair:[^:]+:\d{4}-\d{2}-\d{2}\Z")
+
+
+def source_attempt_origin(refresh_token: str) -> PreviewSourceAttemptOrigin:
+    if _REPAIR_ATTEMPT_TOKEN.fullmatch(refresh_token) is not None:
+        return PreviewSourceAttemptOrigin.REPAIR
+    return PreviewSourceAttemptOrigin.ORDINARY
 
 
 @dataclass(frozen=True)
@@ -103,6 +118,17 @@ class PreviewSourceAttempt:
         expected = failed_reasons if self.status is SourceAttemptStatus.FAILED else aborted_reasons
         if self.failure_reason not in expected:
             raise ValueError("source attempt status and reason do not match")
+
+
+@dataclass(frozen=True)
+class PreviewSourceAuthoritySlice:
+    start: datetime
+    end: datetime
+    attempt: PreviewSourceAttempt | None
+
+    def __post_init__(self) -> None:
+        if not _aware(self.start) or not _aware(self.end) or self.start > self.end:
+            raise ValueError("invalid source authority slice")
 
 
 @dataclass(frozen=True)

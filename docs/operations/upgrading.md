@@ -132,9 +132,10 @@ Migration 019 adds the `preview_requests` table and nullable per-date
 The migration is additive and performs no data-repair update or backfill.
 Existing calculated dates therefore retain null correlation metadata and remain
 unchanged. A Preview request covering such a date fails with
-`calculation_metadata_unavailable` and `retryable=false`; Preview does not expose
-an edit, approval, backfill, or repair operation. The ordinary collector and
-calculation lifecycle remains the only producer of new calculation metadata.
+`calculation_metadata_unavailable` and `retryable=false`. Migration 027 adds an
+explicit repair operation for dates that are still inside the complete
+eligibility and retained-data interval. The migration itself never creates
+correlation metadata, source evidence, or allocation lineage from legacy rows.
 
 ### Migration 020: Preview eligibility diagnostics
 
@@ -257,6 +258,44 @@ Preview-only schema or bootstrap failure leaves generic billing and chargeback
 storage usable, but new Preview generation—including header-only output—fails
 closed until the evidence problem is repaired and the pipeline runs
 successfully.
+
+### Migration 027: retained historical repair
+
+Migration 027 adds durable repair operations, per-date results, and source
+readiness history for Preview-enabled Confluent Cloud tenants. It does not
+modify existing billing, chargebacks, pipeline state, source evidence, or
+lineage during upgrade.
+
+Use repair when retained dates upgraded from an earlier release still have
+`calculation_metadata_unavailable` or lack native source/allocation evidence.
+Repair is an explicit asynchronous REST operation available for submission only
+in `both` mode. Submit an inclusive-start/exclusive-end UTC range contained in
+the intersection of the tenant's `focus_preview` effective interval,
+`lookback_days`, `cutoff_days`, and complete `retention_days` interval. The
+operator must still have valid Confluent Cloud billing credentials, provider
+history for every selected date, and historical metrics required by the
+configured allocators. Retention and lookback configuration do not guarantee
+that those external inputs remain available.
+
+For every selected date, repair replaces that tenant/date's billing from the
+authoritative provider response, including an authoritative empty response, and
+runs the canonical calculation and evidence path. It never copies or infers
+calculation identifiers, timestamps, source records, or lineage from legacy
+aggregates. Expected date failures are stored with a stage and diagnostic while
+later dates continue. `daily_validated` means Daily validation passed and the
+date is waiting for validation of a wholly selected UTC month.
+
+Repair changes billing, chargebacks, pipeline state, and therefore generic
+exports only inside the selected tenant/date range. Dates and tenants outside
+that range are preserved. The operation creates no requested package or
+published revision. After every needed date succeeds, submit the normal Daily
+or Monthly Preview request.
+
+Interrupted operations are durably marked failed and are not resumed
+automatically. Retrying submits a new repair operation; exact-date replacement
+makes the same bounded retry deterministic without duplicate current lineage.
+API-only deployments can read retained repair status but return 503 for new
+submissions. Disabled tenants cannot submit or read repair operations.
 
 ## Rollback
 

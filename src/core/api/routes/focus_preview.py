@@ -4,7 +4,7 @@ import logging
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import UTC, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -18,6 +18,9 @@ from core.api.schemas import (  # noqa: TC001  # FastAPI evaluates annotations
     FocusPreviewDiagnosticResponse,
     FocusPreviewPackageResponse,
     FocusPreviewProfileResponse,
+    FocusPreviewRepairDateResponse,
+    FocusPreviewRepairRequestBody,
+    FocusPreviewRepairResponse,
     FocusPreviewRequestBody,
     FocusPreviewRequestListResponse,
     FocusPreviewRevisionListResponse,
@@ -37,6 +40,7 @@ from core.preview.mapping import (
 )
 from core.preview.models import (
     PreviewArtifactMetadata,
+    PreviewDiagnostic,
     PreviewInterval,
     PreviewRequest,
     PreviewRequestStatus,
@@ -45,9 +49,18 @@ from core.preview.models import (
     validate_preview_request_snapshot,
 )
 from core.preview.persistence import (
+    PreviewEvidenceStorageBackend,
     PreviewRequestCursorError,
     PreviewRevisionCursorError,
     PreviewStorageBackend,
+)
+from core.preview.repair import (
+    PreviewRepair,
+    PreviewRepairRuntime,
+    PreviewRepairStatus,
+    PreviewRepairWorkerConflictError,
+    repair_policy_from_tenant_config,
+    validate_repair_range,
 )
 from core.preview.request import (
     PreviewColumnSelectionEmptyError,
@@ -132,6 +145,13 @@ def _runtime(request: Request) -> PreviewRuntime:
     return runtime
 
 
+def _repair_runtime(request: Request) -> PreviewRepairRuntime:
+    runtime = getattr(request.app.state, "preview_repair_runtime", None)
+    if not isinstance(runtime, PreviewRepairRuntime):
+        raise HTTPException(503, detail="FOCUS Mapping Preview repair worker is unavailable")
+    return runtime
+
+
 @contextmanager
 def _preview_backend(
     provider: TenantBackendProvider,
@@ -152,6 +172,34 @@ def _preview_backend(
             type(exc).__name__,
         )
         raise HTTPException(503, detail="FOCUS Mapping Preview storage is unavailable") from None
+
+
+@contextmanager
+def _repair_backend(
+    provider: TenantBackendProvider,
+    tenant_name: str,
+    tenant_config: TenantConfig,
+) -> Iterator[PreviewEvidenceStorageBackend]:
+    from core.preview.persistence import PreviewEvidenceStorageBackend
+    from core.preview.storage_availability import PreviewEvidenceAvailabilityState
+
+    try:
+        with provider.acquire_backend(tenant_name, tenant_config) as backend:
+            if (
+                not isinstance(backend, PreviewEvidenceStorageBackend)
+                or backend.preview_evidence_availability.state is not PreviewEvidenceAvailabilityState.READY
+            ):
+                raise HTTPException(503, detail="FOCUS Mapping Preview repair storage is unavailable")
+            yield backend
+    except Exception as exc:
+        if isinstance(exc, HTTPException):
+            raise
+        logger.error(
+            "FOCUS Mapping Preview repair backend failed tenant=%s error_type=%s",
+            tenant_name,
+            type(exc).__name__,
+        )
+        raise HTTPException(503, detail="FOCUS Mapping Preview repair storage is unavailable") from None
 
 
 @contextmanager
@@ -268,6 +316,47 @@ def _serialize(request: PreviewRequest) -> FocusPreviewStatusResponse:
         diagnostic=diagnostic,
         source_snapshot=snapshot,
         package=package,
+    )
+
+
+def _repair_diagnostic_response(
+    diagnostic: PreviewDiagnostic | None,
+) -> FocusPreviewDiagnosticResponse | None:
+    if diagnostic is None:
+        return None
+    return FocusPreviewDiagnosticResponse(
+        code=diagnostic.code,
+        message=diagnostic.message,
+        retryable=diagnostic.retryable,
+        source_correlation_ids=list(diagnostic.source_correlation_ids),
+    )
+
+
+def _serialize_repair(repair: PreviewRepair) -> FocusPreviewRepairResponse:
+    return FocusPreviewRepairResponse(
+        repair_id=repair.repair_id,
+        tenant_name=repair.tenant_name,
+        start_date=repair.start_date,
+        end_date=repair.end_date,
+        status=repair.status.value,
+        created_at=repair.created_at,
+        started_at=repair.started_at,
+        completed_at=repair.completed_at,
+        diagnostic=_repair_diagnostic_response(repair.diagnostic),
+        dates=[
+            FocusPreviewRepairDateResponse(
+                tracking_date=item.tracking_date,
+                status=item.status.value,
+                started_at=item.started_at,
+                completed_at=item.completed_at,
+                calculation_id=item.calculation_id,
+                calculation_completed_at=item.calculation_completed_at,
+                rows_written=item.rows_written,
+                failure_stage=None if item.failure_stage is None else item.failure_stage.value,
+                diagnostic=_repair_diagnostic_response(item.diagnostic),
+            )
+            for item in repair.dates
+        ],
     )
 
 
@@ -496,6 +585,151 @@ def get_profile(
         full_columns=list(FOCUS_1_4_FULL_PROFILE_COLUMNS),
         summary_columns=list(FOCUS_1_4_SUMMARY_COLUMNS),
     )
+
+
+@router.post("/repairs", status_code=202, response_model=FocusPreviewRepairResponse)
+def submit_repair(
+    request: Request,
+    response: Response,
+    tenant_name: str,
+    body: FocusPreviewRepairRequestBody,
+    settings: Annotated[AppSettings, Depends(get_settings)],
+    provider: Annotated[TenantBackendProvider, Depends(get_backend_provider)],
+) -> FocusPreviewRepairResponse:
+    tenant_config = _get_preview_tenant(settings, tenant_name)
+    _require_focus_preview_enabled(tenant_config)
+    created_at = datetime.now(UTC)
+    policy = repair_policy_from_tenant_config(tenant_config, created_at=created_at)
+    try:
+        validate_repair_range(
+            body.start_date,
+            body.end_date,
+            policy=policy,
+            created_at=created_at,
+        )
+    except ValueError as exc:
+        error = str(exc)
+        if error == "range_invalid":
+            detail = {
+                "code": "focus_preview_repair_range_invalid",
+                "message": (
+                    "FOCUS Mapping Preview repair requires an inclusive start date before the exclusive end date."
+                ),
+                "retryable": False,
+            }
+        elif error == "future_range":
+            detail = {
+                "code": "focus_preview_repair_future_range",
+                "message": "FOCUS Mapping Preview repair cannot include future UTC dates.",
+                "retryable": False,
+            }
+        else:
+            detail = {
+                "code": "focus_preview_repair_range_ineligible",
+                "message": (
+                    "The requested repair range is outside the tenant's complete "
+                    "Preview eligibility and retained-data interval."
+                ),
+                "retryable": False,
+            }
+        raise HTTPException(400, detail=detail) from None
+    runtime = _repair_runtime(request)
+    with _repair_backend(provider, tenant_name, tenant_config) as backend:
+        workflow_runner = getattr(request.app.state, "workflow_runner", None)
+        is_tenant_running = getattr(workflow_runner, "is_tenant_running", None)
+        if callable(is_tenant_running) and is_tenant_running(tenant_name):
+            raise HTTPException(
+                409,
+                detail={
+                    "code": "focus_preview_repair_tenant_busy",
+                    "message": ("The tenant pipeline is busy; wait for it to finish and retry the repair."),
+                    "retryable": True,
+                },
+            )
+        try:
+            repair = runtime.create_queued(
+                backend=backend,
+                tenant_name=tenant_name,
+                tenant_config=tenant_config,
+                start_date=body.start_date,
+                end_date=body.end_date,
+                created_at=created_at,
+            )
+        except RuntimeError as exc:
+            if str(exc) != "active_repair":
+                raise
+            raise HTTPException(
+                409,
+                detail={
+                    "code": "focus_preview_repair_in_progress",
+                    "message": ("A FOCUS Mapping Preview repair is already queued or running for this tenant."),
+                    "retryable": True,
+                },
+            ) from None
+        try:
+            runtime.schedule(repair, tenant_config=tenant_config)
+        except Exception:
+            diagnostic = PreviewDiagnostic(
+                code="focus_preview_repair_worker_unavailable",
+                message="The repair worker is unavailable; submit a new bounded repair to retry.",
+                retryable=True,
+            )
+            completed_at = datetime.now(UTC)
+            with backend.create_preview_evidence_unit_of_work() as uow:
+                failed = uow.repairs.fail_queued_before_execution(
+                    repair.repair_id,
+                    completed_at=completed_at,
+                    diagnostic=diagnostic,
+                )
+                uow.commit()
+            if failed is None:
+                with backend.create_preview_generation_read_unit_of_work() as read_uow:
+                    persisted = read_uow.repairs.get_for_owner(
+                        repair.repair_id,
+                        repair.ecosystem,
+                        repair.tenant_id,
+                    )
+                if (
+                    persisted is None
+                    or persisted.status is not PreviewRepairStatus.FAILED
+                    or persisted.completed_at != completed_at
+                    or persisted.diagnostic != diagnostic
+                ):
+                    raise PreviewRepairWorkerConflictError(
+                        "queued repair scheduling failure transition conflicted"
+                    ) from None
+            raise HTTPException(
+                503,
+                detail="FOCUS Mapping Preview repair worker is unavailable",
+            ) from None
+    response.headers["Location"] = f"/api/v1/tenants/{tenant_name}/focus-preview/repairs/{repair.repair_id}"
+    return _serialize_repair(repair)
+
+
+@router.get("/repairs/{repair_id}", response_model=FocusPreviewRepairResponse)
+def get_repair(
+    tenant_name: str,
+    repair_id: str,
+    settings: Annotated[AppSettings, Depends(get_settings)],
+    provider: Annotated[TenantBackendProvider, Depends(get_backend_provider)],
+) -> FocusPreviewRepairResponse:
+    tenant_config = _get_preview_tenant(settings, tenant_name)
+    _require_focus_preview_enabled(tenant_config)
+    with (
+        _repair_backend(provider, tenant_name, tenant_config) as backend,
+        backend.create_preview_generation_read_unit_of_work() as uow,
+    ):
+        repair = uow.repairs.get_for_owner(
+            repair_id,
+            tenant_config.ecosystem,
+            tenant_config.tenant_id,
+        )
+    if repair is None:
+        raise HTTPException(
+            404,
+            detail=f"FOCUS Mapping Preview repair {repair_id!r} not found",
+        )
+    return _serialize_repair(repair)
 
 
 @router.post("/requests", status_code=202, response_model=FocusPreviewStatusResponse)

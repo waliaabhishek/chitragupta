@@ -771,6 +771,166 @@ def test_mixed_tenants_normal_pipeline_keeps_preview_evidence_enabled_only(
         client.close()
 
 
+def test_production_one_day_repair_overlays_broad_ordinary_authority_and_is_idempotent(
+    tmp_path: Path,
+) -> None:
+    tracking_date = date(2026, 7, 1)
+    tenant = TenantConfig(
+        ecosystem="confluent_cloud",
+        tenant_id="tenant-1",
+        lookback_days=30,
+        cutoff_days=5,
+        retention_days=90,
+        storage=StorageConfig(connection_string=f"sqlite:///{tmp_path / 'repair-overlay.db'}"),
+        focus_preview=_focus_preview_block(),
+        plugin_settings={
+            "ccloud_api": {"key": "key", "secret": "secret"},  # pragma: allowlist secret
+            "min_refresh_gap_seconds": 0,
+        },
+    )
+    settings = AppSettings(
+        preview=PreviewConfig(artifact_root=tmp_path / "repair-overlay-artifacts", max_workers=1),
+        tenants={"production": tenant},
+    )
+    handler = PreviewPipelineHandler()
+    plugin = PreviewPipelinePlugin(handler)
+    plugin.cost_input_override = ReplacementCostInput(tracking_date)
+    plugin.gather_preview_organizations = MagicMock(
+        return_value=(
+            CoreResource(
+                ecosystem="confluent_cloud",
+                tenant_id="tenant-1",
+                resource_id="org-1",
+                resource_type="organization",
+                display_name="Provider organization",
+                status=ResourceStatus.ACTIVE,
+            ),
+        )
+    )
+    registry = MagicMock()
+    registry.create.return_value = plugin
+    runner = WorkflowRunner(settings, registry)
+    runner.bootstrap_storage()
+    with runner.acquire_backend("production", tenant) as storage:
+        assert isinstance(storage, SQLModelBackend)
+        backend = storage
+
+    ordinary_result = runner.run_tenant("production")
+    assert ordinary_result.errors == []
+    with backend.create_preview_generation_read_unit_of_work() as uow:
+        ordinary = uow.source_readiness.get_current_authority("confluent_cloud", "tenant-1")
+    assert ordinary is not None
+    repair_start = datetime.combine(tracking_date, datetime.min.time(), tzinfo=UTC)
+    repair_end = repair_start + timedelta(days=1)
+    assert ordinary.refresh_start < repair_start
+    assert ordinary.refresh_end > repair_end
+
+    app = create_app(settings, workflow_runner=runner, mode="both")
+    client = PipelineApiClient(app, use_lifespan=True, backend=backend)
+
+    def repair() -> dict[str, Any]:
+        submitted = client.post(
+            "/api/v1/tenants/production/focus-preview/repairs",
+            json={
+                "start_date": tracking_date.isoformat(),
+                "end_date": (tracking_date + timedelta(days=1)).isoformat(),
+            },
+        )
+        assert submitted.status_code == 202
+        repair_id = submitted.json()["repair_id"]
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            response = client.get(f"/api/v1/tenants/production/focus-preview/repairs/{repair_id}")
+            assert response.status_code == 200
+            if response.json()["status"] in {"completed", "completed_with_failures", "failed"}:
+                return response.json()
+            time.sleep(0.01)
+        raise AssertionError("one-day repair did not finish")
+
+    try:
+        first = repair()
+        second = repair()
+    finally:
+        client.close()
+
+    assert first["status"] == second["status"] == "completed"
+    with backend.create_preview_generation_read_unit_of_work() as uow:
+        first_attempt = uow.source_readiness.get_by_token(
+            "confluent_cloud",
+            "tenant-1",
+            f"repair:{first['repair_id']}:{tracking_date.isoformat()}",
+        )
+        second_attempt = uow.source_readiness.get_by_token(
+            "confluent_cloud",
+            "tenant-1",
+            f"repair:{second['repair_id']}:{tracking_date.isoformat()}",
+        )
+        authority = uow.source_readiness.resolve_authority(
+            "confluent_cloud",
+            "tenant-1",
+            ordinary.refresh_start,
+            ordinary.refresh_end,
+        )
+    assert first_attempt is not None and second_attempt is not None
+    assert first_attempt.status.value == second_attempt.status.value == "complete"
+    assert [(item.start, item.end, item.attempt.attempt_sequence if item.attempt else None) for item in authority] == [
+        (ordinary.refresh_start, repair_start, ordinary.attempt_sequence),
+        (repair_start, repair_end, second_attempt.attempt_sequence),
+        (repair_end, ordinary.refresh_end, ordinary.attempt_sequence),
+    ]
+
+    engine = create_engine(tenant.storage.connection_string.get_secret_value())
+    try:
+        with engine.connect() as connection:
+            pipeline = connection.execute(
+                text(
+                    """
+                    SELECT calculation_id FROM pipeline_state
+                    WHERE ecosystem = 'confluent_cloud' AND tenant_id = 'tenant-1'
+                      AND tracking_date = :tracking_date
+                    """
+                ),
+                {"tracking_date": tracking_date},
+            ).one()
+            lineage = connection.execute(
+                text(
+                    """
+                    SELECT COUNT(*), MIN(calculation_id), MAX(calculation_id)
+                    FROM ccloud_allocation_lineage_runs
+                    WHERE ecosystem = 'confluent_cloud' AND tenant_id = 'tenant-1'
+                      AND tracking_date = :tracking_date
+                    """
+                ),
+                {"tracking_date": tracking_date},
+            ).one()
+            source_count = connection.execute(
+                text(
+                    """
+                    SELECT COUNT(*) FROM ccloud_cost_source_records
+                    WHERE ecosystem = 'confluent_cloud' AND tenant_id = 'tenant-1'
+                      AND date(billing_timestamp) = :tracking_date
+                    """
+                ),
+                {"tracking_date": tracking_date},
+            ).scalar_one()
+            chargeback_count = connection.execute(
+                text(
+                    """
+                    SELECT COUNT(*) FROM chargeback_facts
+                    JOIN chargeback_dimensions USING (dimension_id)
+                    WHERE chargeback_dimensions.ecosystem = 'confluent_cloud'
+                      AND chargeback_dimensions.tenant_id = 'tenant-1'
+                      AND date(chargeback_facts.timestamp) = :tracking_date
+                    """
+                ),
+                {"tracking_date": tracking_date},
+            ).scalar_one()
+    finally:
+        engine.dispose()
+    assert lineage == (1, pipeline.calculation_id, pipeline.calculation_id)
+    assert source_count == chargeback_count == 1
+
+
 @pytest.mark.parametrize(
     ("case_id", "provider_overrides"),
     _REAL_BUNDLE_MAPPING_SCOPE_CASES,

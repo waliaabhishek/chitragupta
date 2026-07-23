@@ -7,8 +7,8 @@ from collections.abc import Callable, Iterator
 from concurrent.futures import Future, ThreadPoolExecutor, wait
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING
+from datetime import UTC, date, datetime, timedelta
+from typing import TYPE_CHECKING, Literal, cast
 
 from core.config.fingerprint import tenant_config_fingerprint
 from core.emitters.runner import EmitterRunner
@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from core.plugin.registry import PluginRegistry
     from core.preview.artifacts import PreviewArtifactStore
     from core.preview.evidence import PreviewEvidenceBootstrapResult
+    from core.preview.evidence_capture import PreviewSourceCaptureReceipt
     from core.preview.revisions import PreviewScheduledRevisionManager
     from core.preview.storage_availability import PreviewEvidenceBootstrapUnavailable
     from core.storage.interface import StorageBackend
@@ -182,6 +183,21 @@ class WorkflowRunner:
         """Return True if tenant is currently being processed by any thread."""
         with self._running_lock:
             return tenant_name in self._running_tenants
+
+    @contextmanager
+    def _claim_tenant(self, tenant_name: str) -> Iterator[bool]:
+        with self._running_lock:
+            claimed = tenant_name not in self._running_tenants
+            if claimed:
+                self._running_tenants.add(tenant_name)
+        if not claimed:
+            yield False
+            return
+        try:
+            yield True
+        finally:
+            with self._running_lock:
+                self._running_tenants.discard(tenant_name)
 
     def drain(self, timeout: float) -> None:
         """Signal shutdown and wait for in-progress tenant runs to complete, then close.
@@ -492,8 +508,8 @@ class WorkflowRunner:
         return results
 
     def _run_tenant(self, name: str, config: TenantConfig) -> PipelineRunResult:
-        with self._running_lock:
-            if name in self._running_tenants:
+        with self._claim_tenant(name) as claimed:
+            if not claimed:
                 logger.info("Tenant %s: run skipped — already in progress", name)
                 return PipelineRunResult(
                     tenant_name=name,
@@ -504,104 +520,748 @@ class WorkflowRunner:
                     dates_pending_calculation=0,
                     already_running=True,
                 )
-            self._running_tenants.add(name)
-
-        runtime_lease = None
-        runtime_lease_entered = False
-        try:
-            runtime_lease = self._acquire_runtime(name, config)
-            runtime = runtime_lease.__enter__()
-            runtime_lease_entered = True
-            tracker = PipelineRunTracker(runtime.storage)
-
-            pipeline_run = tracker.create(name)
-            runtime.orchestrator._progress_callback = tracker.make_progress_callback(pipeline_run)
-
+            runtime_lease = None
+            runtime_lease_entered = False
             try:
-                result = runtime.orchestrator.run(
-                    calculation_run_id=pipeline_run.id
-                )  # GatherFailureThresholdError propagates up
-                runtime.last_run_at = datetime.now(UTC)
-                tracker.finalize(pipeline_run, result)
+                runtime_lease = self._acquire_runtime(name, config)
+                runtime = runtime_lease.__enter__()
+                runtime_lease_entered = True
+                tracker = PipelineRunTracker(runtime.storage)
 
-                # Post-pipeline hook: emit after successful pipeline commit
-                if config.plugin_settings.emitters:
-                    chargeback_date_source = ChargebackDateSource(runtime.storage)
-                    # Billing/resource/identity rows are Prometheus-only — only pass prometheus specs
-                    # to avoid spurious emission tracking records for CSV emitters.
-                    prometheus_specs = [s for s in config.plugin_settings.emitters if s.type == "prometheus"]
+                pipeline_run = tracker.create(name)
+                runtime.orchestrator._progress_callback = tracker.make_progress_callback(pipeline_run)
 
-                    emitter_runners = [
-                        EmitterRunner(
-                            ecosystem=config.ecosystem,
-                            storage_backend=runtime.storage,
-                            emitter_specs=config.plugin_settings.emitters,
-                            date_source=chargeback_date_source,
-                            row_fetcher=ChargebackRowFetcher(runtime.storage),
-                            emitter_builder=RegistryEmitterBuilder(),
-                            pipeline="chargeback",
-                            chargeback_granularity=config.plugin_settings.chargeback_granularity,
-                        ),
-                    ]
-                    if prometheus_specs:
-                        emitter_runners += create_auxiliary_prometheus_runners(
-                            ecosystem=config.ecosystem,
-                            storage_backend=runtime.storage,
-                            prometheus_specs=prometheus_specs,
-                            date_source=chargeback_date_source,
-                            resource_types=EcosystemBundle.build(runtime.plugin).billing_resource_types,
-                        )
+                try:
+                    result = runtime.orchestrator.run(
+                        calculation_run_id=pipeline_run.id
+                    )  # GatherFailureThresholdError propagates up
+                    runtime.last_run_at = datetime.now(UTC)
+                    tracker.finalize(pipeline_run, result)
 
-                    for emitter_runner in emitter_runners:
-                        try:
-                            emitter_runner.run(config.tenant_id)
-                        except Exception:
-                            logger.exception(
-                                "EmitterRunner failed for tenant=%s pipeline=%s — pipeline result unaffected",
-                                name,
-                                emitter_runner._pipeline,
-                            )
+                    # Post-pipeline hook: emit after successful pipeline commit
+                    if config.plugin_settings.emitters:
+                        chargeback_date_source = ChargebackDateSource(runtime.storage)
+                        # Billing/resource/identity rows are Prometheus-only — only pass prometheus specs
+                        # to avoid spurious emission tracking records for CSV emitters.
+                        prometheus_specs = [s for s in config.plugin_settings.emitters if s.type == "prometheus"]
 
-                # Post-pipeline hook: emit topic attribution after successful pipeline commit
-                ta_config = _get_overlay_ta_config(runtime.plugin)
-                if ta_config and ta_config.enabled:
-                    from core.engine.topic_attribution_models import TopicAttributionConfigProtocol
-
-                    if isinstance(ta_config, TopicAttributionConfigProtocol):
-                        emitters = getattr(ta_config, "emitters", None)
-                    else:
-                        emitters = None
-                    if emitters:
-                        try:
-                            from core.emitters.sources import (
-                                TopicAttributionDateSource,
-                                TopicAttributionRowFetcher,
-                            )
-
+                        emitter_runners = [
                             EmitterRunner(
                                 ecosystem=config.ecosystem,
                                 storage_backend=runtime.storage,
-                                emitter_specs=emitters,
-                                date_source=TopicAttributionDateSource(runtime.storage),
-                                row_fetcher=TopicAttributionRowFetcher(runtime.storage),
+                                emitter_specs=config.plugin_settings.emitters,
+                                date_source=chargeback_date_source,
+                                row_fetcher=ChargebackRowFetcher(runtime.storage),
                                 emitter_builder=RegistryEmitterBuilder(),
-                                pipeline="topic_attribution",
-                            ).run(config.tenant_id)
-                        except Exception:
-                            logger.exception(
-                                "EmitterRunner (topic_attribution) failed for tenant=%s — pipeline result unaffected",
-                                name,
+                                pipeline="chargeback",
+                                chargeback_granularity=config.plugin_settings.chargeback_granularity,
+                            ),
+                        ]
+                        if prometheus_specs:
+                            emitter_runners += create_auxiliary_prometheus_runners(
+                                ecosystem=config.ecosystem,
+                                storage_backend=runtime.storage,
+                                prometheus_specs=prometheus_specs,
+                                date_source=chargeback_date_source,
+                                resource_types=EcosystemBundle.build(runtime.plugin).billing_resource_types,
                             )
 
-                return result
-            except Exception:
-                tracker.fail(pipeline_run)
-                raise
-        finally:
-            if runtime_lease is not None and runtime_lease_entered:
-                runtime_lease.__exit__(None, None, None)
-            with self._running_lock:
-                self._running_tenants.discard(name)
+                        for emitter_runner in emitter_runners:
+                            try:
+                                emitter_runner.run(config.tenant_id)
+                            except Exception:
+                                logger.exception(
+                                    "EmitterRunner failed for tenant=%s pipeline=%s — pipeline result unaffected",
+                                    name,
+                                    emitter_runner._pipeline,
+                                )
+
+                    # Post-pipeline hook: emit topic attribution after successful pipeline commit
+                    ta_config = _get_overlay_ta_config(runtime.plugin)
+                    if ta_config and ta_config.enabled:
+                        from core.engine.topic_attribution_models import TopicAttributionConfigProtocol
+
+                        if isinstance(ta_config, TopicAttributionConfigProtocol):
+                            emitters = getattr(ta_config, "emitters", None)
+                        else:
+                            emitters = None
+                        if emitters:
+                            try:
+                                from core.emitters.sources import (
+                                    TopicAttributionDateSource,
+                                    TopicAttributionRowFetcher,
+                                )
+
+                                EmitterRunner(
+                                    ecosystem=config.ecosystem,
+                                    storage_backend=runtime.storage,
+                                    emitter_specs=emitters,
+                                    date_source=TopicAttributionDateSource(runtime.storage),
+                                    row_fetcher=TopicAttributionRowFetcher(runtime.storage),
+                                    emitter_builder=RegistryEmitterBuilder(),
+                                    pipeline="topic_attribution",
+                                ).run(config.tenant_id)
+                            except Exception:
+                                logger.exception(
+                                    "EmitterRunner (topic_attribution) failed for tenant=%s "
+                                    "— pipeline result unaffected",
+                                    name,
+                                )
+                    return result
+                except Exception:
+                    tracker.fail(pipeline_run)
+                    raise
+            finally:
+                if runtime_lease is not None and runtime_lease_entered:
+                    runtime_lease.__exit__(None, None, None)
+
+    def run_focus_preview_repair(
+        self,
+        repair_id: str,
+        tenant_name: str,
+        tenant_config: TenantConfig,
+    ) -> None:
+        from core.engine.orchestrator import HistoricalRepairProviderSourceError
+        from core.preview.eligibility import policy_from_tenant_config
+        from core.preview.evidence import (
+            AllocationLineageRunStatus,
+            AllocationLineageUnavailableReason,
+            PreviewEvidenceScope,
+            SourceAttemptFailureReason,
+            SourceAttemptFinalStatus,
+            SourceAttemptStatus,
+        )
+        from core.preview.generator import PreviewGenerationError, PreviewPackageGenerator
+        from core.preview.mapping import FOCUS_1_4_FULL_PROFILE_COLUMNS
+        from core.preview.models import PreviewDiagnostic, PreviewRequest, PreviewRequestStatus
+        from core.preview.persistence import PreviewEvidenceStorageBackend, PreviewStorageBackend
+        from core.preview.repair import (
+            PreviewRepair,
+            PreviewRepairDate,
+            PreviewRepairDateStatus,
+            PreviewRepairFailureStage,
+            PreviewRepairStatus,
+            PreviewRepairWorkerConflictError,
+        )
+        from core.preview.request import canonicalize_monthly_interval
+
+        def diagnostic(code: str, message: str, retryable: bool) -> PreviewDiagnostic:
+            return PreviewDiagnostic(code=code, message=message, retryable=retryable)
+
+        def read_operation() -> PreviewRepair | None:
+            with evidence_backend.create_preview_generation_read_unit_of_work() as read_uow:
+                return read_uow.repairs.get_for_owner(
+                    repair_id,
+                    tenant_config.ecosystem,
+                    tenant_config.tenant_id,
+                )
+
+        def require_operation(
+            value: PreviewRepair | None,
+            *,
+            matches: Callable[[PreviewRepair], bool],
+            conflict: str,
+        ) -> PreviewRepair:
+            if value is not None:
+                return value
+            persisted = read_operation()
+            if persisted is not None and matches(persisted):
+                return persisted
+            raise PreviewRepairWorkerConflictError(conflict)
+
+        def require_date(
+            value: PreviewRepairDate | None,
+            tracking_date: date,
+            *,
+            matches: Callable[[PreviewRepairDate], bool],
+            conflict: str,
+        ) -> PreviewRepairDate:
+            if value is not None:
+                return value
+            persisted = read_operation()
+            if persisted is not None:
+                current = next(
+                    (item for item in persisted.dates if item.tracking_date == tracking_date),
+                    None,
+                )
+                if current is not None and matches(current):
+                    return current
+            raise PreviewRepairWorkerConflictError(conflict)
+
+        def fail_queued_busy() -> None:
+            with self._acquire_runtime(tenant_name, tenant_config) as runtime:
+                if not isinstance(runtime.storage, PreviewEvidenceStorageBackend):
+                    return
+                completed_at = datetime.now(UTC)
+                value = diagnostic(
+                    "focus_preview_repair_tenant_busy",
+                    "The tenant pipeline is busy; wait for it to finish and retry the repair.",
+                    True,
+                )
+                with runtime.storage.create_preview_evidence_unit_of_work() as uow:
+                    failed = uow.repairs.fail_queued_before_execution(
+                        repair_id,
+                        completed_at=completed_at,
+                        diagnostic=value,
+                    )
+                    uow.commit()
+                if failed is None:
+                    with runtime.storage.create_preview_generation_read_unit_of_work() as read_uow:
+                        persisted = read_uow.repairs.get_for_owner(
+                            repair_id,
+                            tenant_config.ecosystem,
+                            tenant_config.tenant_id,
+                        )
+                    if (
+                        persisted is None
+                        or persisted.status is not PreviewRepairStatus.FAILED
+                        or persisted.completed_at != completed_at
+                        or persisted.diagnostic != value
+                    ):
+                        raise PreviewRepairWorkerConflictError("queued repair busy transition conflicted")
+
+        with self._claim_tenant(tenant_name) as claimed:
+            if not claimed:
+                fail_queued_busy()
+                return
+            with self._acquire_runtime(tenant_name, tenant_config) as runtime:
+                storage = runtime.storage
+                if not isinstance(storage, PreviewEvidenceStorageBackend) or not isinstance(
+                    storage, PreviewStorageBackend
+                ):
+                    return
+                evidence_backend = cast("PreviewEvidenceStorageBackend", storage)
+                preview_backend = cast("PreviewStorageBackend", storage)
+                started_at = datetime.now(UTC)
+                with evidence_backend.create_preview_evidence_unit_of_work() as uow:
+                    claimed_operation = uow.repairs.mark_running(
+                        repair_id,
+                        started_at=started_at,
+                    )
+                    uow.commit()
+                operation = require_operation(
+                    claimed_operation,
+                    matches=lambda item: (
+                        item.status is PreviewRepairStatus.RUNNING
+                        and item.started_at == started_at
+                        and item.completed_at is None
+                        and item.diagnostic is None
+                    ),
+                    conflict="repair claim transition conflicted",
+                )
+
+                generator = PreviewPackageGenerator(max_csv_file_bytes=self._settings.preview.max_csv_file_bytes)
+
+                def fail_date(
+                    tracking_date: date,
+                    stage: PreviewRepairFailureStage,
+                    value: PreviewDiagnostic,
+                ) -> None:
+                    completed_at = datetime.now(UTC)
+                    with evidence_backend.create_preview_evidence_unit_of_work() as uow:
+                        failed = uow.repairs.mark_date_failed_from_running(
+                            repair_id,
+                            tracking_date,
+                            completed_at=completed_at,
+                            stage=stage,
+                            diagnostic=value,
+                        )
+                        uow.commit()
+                    require_date(
+                        failed,
+                        tracking_date,
+                        matches=lambda item: (
+                            item.status is PreviewRepairDateStatus.FAILED
+                            and item.completed_at == completed_at
+                            and item.failure_stage is stage
+                            and item.diagnostic == value
+                        ),
+                        conflict=f"repair date failure transition conflicted for {tracking_date.isoformat()}",
+                    )
+
+                def fail_attempt(
+                    tracking_date: date,
+                    attempt_sequence: int,
+                    reason: SourceAttemptFailureReason,
+                ) -> None:
+                    token = f"repair:{repair_id}:{tracking_date.isoformat()}"
+                    with evidence_backend.create_preview_evidence_unit_of_work() as uow:
+                        attempt = uow.source_readiness.get_by_token(
+                            tenant_config.ecosystem,
+                            tenant_config.tenant_id,
+                            token,
+                        )
+                        if attempt is None or attempt.attempt_sequence != attempt_sequence:
+                            raise PreviewRepairWorkerConflictError(
+                                f"repair source attempt conflicted for {tracking_date.isoformat()}"
+                            )
+                        if attempt.status is SourceAttemptStatus.PENDING:
+                            failed = uow.source_readiness.finalize_attempt(
+                                attempt_sequence,
+                                SourceAttemptFinalStatus.FAILED,
+                                completed_at=datetime.now(UTC),
+                                reason=reason,
+                            )
+                            if failed.status is not SourceAttemptStatus.FAILED or failed.failure_reason is not reason:
+                                raise PreviewRepairWorkerConflictError(
+                                    f"repair source attempt failure conflicted for {tracking_date.isoformat()}"
+                                )
+                            uow.commit()
+                            return
+                        if attempt.status is SourceAttemptStatus.FAILED and attempt.failure_reason is reason:
+                            return
+                        raise PreviewRepairWorkerConflictError(
+                            f"repair source attempt terminal state conflicted for {tracking_date.isoformat()}"
+                        )
+
+                def evidence_commit_matches(
+                    *,
+                    token: str,
+                    day_start: datetime,
+                    attempt_sequence: int,
+                    completed_at: datetime,
+                    receipt: PreviewSourceCaptureReceipt | None,
+                    calculation_id: str,
+                    calculation_completed_at: datetime,
+                ) -> bool:
+                    if receipt is None:
+                        return False
+                    scope = PreviewEvidenceScope(
+                        tenant_config.ecosystem,
+                        tenant_config.tenant_id,
+                        day_start,
+                        day_start + timedelta(days=1),
+                    )
+                    with evidence_backend.create_preview_generation_read_unit_of_work() as read_uow:
+                        attempt = read_uow.source_readiness.get_by_token(
+                            tenant_config.ecosystem,
+                            tenant_config.tenant_id,
+                            token,
+                        )
+                        readiness = tuple(
+                            item
+                            for item in read_uow.source_readiness.list_covering(
+                                tenant_config.ecosystem,
+                                tenant_config.tenant_id,
+                                scope.start,
+                                scope.end,
+                            )
+                            if item.attempt_sequence == attempt_sequence
+                        )
+                        lineage_runs = tuple(
+                            read_uow.allocation_evidence.iter_preview_allocation_runs(
+                                scope,
+                                (calculation_id,),
+                            )
+                        )
+                    return (
+                        attempt is not None
+                        and attempt.attempt_sequence == attempt_sequence
+                        and attempt.refresh_token == token
+                        and attempt.refresh_start == scope.start
+                        and attempt.refresh_end == scope.end
+                        and attempt.status is SourceAttemptStatus.COMPLETE
+                        and attempt.completed_at == completed_at
+                        and attempt.failure_reason is None
+                        and readiness == receipt.captures
+                        and len(lineage_runs) == 1
+                        and lineage_runs[0].tracking_date == day_start.date()
+                        and lineage_runs[0].calculation_id == calculation_id
+                        and lineage_runs[0].calculation_completed_at == calculation_completed_at
+                        and lineage_runs[0].capture_status is AllocationLineageRunStatus.COMPLETE
+                    )
+
+                def validation_request(
+                    *,
+                    grain: Literal["daily", "monthly"],
+                    start_date: date,
+                    end_date: date,
+                ) -> PreviewRequest:
+                    now = datetime.now(UTC).replace(microsecond=0)
+                    return PreviewRequest(
+                        request_id=f"repair-validation-{repair_id}-{grain}-{start_date.isoformat()}",
+                        tenant_name=tenant_name,
+                        ecosystem=tenant_config.ecosystem,
+                        tenant_id=tenant_config.tenant_id,
+                        grain=grain,
+                        start_date=start_date,
+                        end_date=end_date,
+                        column_profile="full",
+                        status=PreviewRequestStatus.RUNNING,
+                        created_at=now,
+                        started_at=now,
+                        completed_at=None,
+                        expires_at=None,
+                        source_snapshot=None,
+                        diagnostic=None,
+                        storage_key=None,
+                        package=None,
+                        effective_columns=FOCUS_1_4_FULL_PROFILE_COLUMNS,
+                    )
+
+                policy = policy_from_tenant_config(
+                    tenant_config,
+                    created_at=datetime.now(UTC),
+                )
+                for repair_date in operation.dates:
+                    tracking_date = repair_date.tracking_date
+                    date_started_at = datetime.now(UTC)
+                    with evidence_backend.create_preview_evidence_unit_of_work() as uow:
+                        running_date = uow.repairs.mark_date_running(
+                            repair_id,
+                            tracking_date,
+                            started_at=date_started_at,
+                        )
+                        uow.commit()
+
+                    def claimed_date_matches(
+                        item: PreviewRepairDate,
+                        expected_started_at: datetime = date_started_at,
+                    ) -> bool:
+                        return (
+                            item.status is PreviewRepairDateStatus.RUNNING
+                            and item.started_at == expected_started_at
+                            and item.completed_at is None
+                            and item.calculation_id is None
+                            and item.diagnostic is None
+                        )
+
+                    require_date(
+                        running_date,
+                        tracking_date,
+                        matches=claimed_date_matches,
+                        conflict=f"repair date claim transition conflicted for {tracking_date.isoformat()}",
+                    )
+                    with storage.create_unit_of_work() as generic_uow:
+                        retained_state = generic_uow.pipeline_state.get(
+                            tenant_config.ecosystem,
+                            tenant_config.tenant_id,
+                            tracking_date,
+                        )
+                    if retained_state is None or not retained_state.chargeback_calculated:
+                        fail_date(
+                            tracking_date,
+                            PreviewRepairFailureStage.RETAINED_STATE,
+                            diagnostic(
+                                "focus_preview_repair_retained_calculation_unavailable",
+                                (
+                                    "No retained successful calculation is available for repair "
+                                    f"on {tracking_date.isoformat()}."
+                                ),
+                                False,
+                            ),
+                        )
+                        continue
+                    token = f"repair:{repair_id}:{tracking_date.isoformat()}"
+                    day_start = datetime.combine(tracking_date, datetime.min.time(), tzinfo=UTC)
+                    with evidence_backend.create_preview_evidence_unit_of_work() as uow:
+                        attempt = uow.source_readiness.begin_attempt(
+                            tenant_config.ecosystem,
+                            tenant_config.tenant_id,
+                            token,
+                            day_start,
+                            day_start + timedelta(days=1),
+                            datetime.now(UTC),
+                        )
+                        uow.commit()
+                    try:
+                        result = runtime.orchestrator.repair_historical_date(tracking_date)
+                    except HistoricalRepairProviderSourceError:
+                        fail_attempt(
+                            tracking_date,
+                            attempt.attempt_sequence,
+                            SourceAttemptFailureReason.CONSTRUCTION_FAILED,
+                        )
+                        fail_date(
+                            tracking_date,
+                            PreviewRepairFailureStage.PROVIDER_SOURCE,
+                            diagnostic(
+                                "focus_preview_repair_provider_history_unavailable",
+                                (
+                                    "Authoritative provider history is unavailable for repair "
+                                    f"on {tracking_date.isoformat()}."
+                                ),
+                                True,
+                            ),
+                        )
+                        continue
+                    except Exception:
+                        fail_attempt(
+                            tracking_date,
+                            attempt.attempt_sequence,
+                            SourceAttemptFailureReason.PERSISTENCE_FAILED,
+                        )
+                        fail_date(
+                            tracking_date,
+                            PreviewRepairFailureStage.CALCULATION,
+                            diagnostic(
+                                "focus_preview_repair_calculation_failed",
+                                f"Canonical recalculation failed for {tracking_date.isoformat()}.",
+                                True,
+                            ),
+                        )
+                        continue
+                    receipt: PreviewSourceCaptureReceipt | None = None
+                    evidence_completed_at = datetime.now(UTC)
+                    lineage_unavailable = False
+                    try:
+                        with evidence_backend.create_preview_evidence_unit_of_work() as uow:
+                            receipt = result.source_capture.write(
+                                uow.source_windows,
+                                uow.source_readiness,
+                                attempt_sequence=attempt.attempt_sequence,
+                                captured_at=evidence_completed_at,
+                            )
+                            if result.calculation.lineage_capture is None:
+                                lineage_unavailable = True
+                                uow.allocation_lineage.mark_calculation_lineage_unavailable(
+                                    runtime.orchestrator._lineage_unavailable(
+                                        result.calculation,
+                                        AllocationLineageUnavailableReason.CAPTURE_FAILED,
+                                    )
+                                )
+                                uow.source_readiness.finalize_attempt(
+                                    attempt.attempt_sequence,
+                                    SourceAttemptFinalStatus.FAILED,
+                                    completed_at=evidence_completed_at,
+                                    reason=SourceAttemptFailureReason.CONSTRUCTION_FAILED,
+                                )
+                                uow.commit()
+                                raise RuntimeError("allocation lineage capture unavailable")
+                            uow.allocation_lineage.replace_calculation_lineage(
+                                result.calculation.lineage_capture,
+                                calculation_completed_at=(result.calculation.calculation_completed_at),
+                            )
+                            uow.source_readiness.finalize_attempt(
+                                attempt.attempt_sequence,
+                                SourceAttemptFinalStatus.COMPLETE,
+                                completed_at=evidence_completed_at,
+                                reason=None,
+                            )
+                            uow.commit()
+                    except Exception:
+                        if evidence_commit_matches(
+                            token=token,
+                            day_start=day_start,
+                            attempt_sequence=attempt.attempt_sequence,
+                            completed_at=evidence_completed_at,
+                            receipt=receipt,
+                            calculation_id=result.calculation.calculation_id,
+                            calculation_completed_at=result.calculation.calculation_completed_at,
+                        ):
+                            pass
+                        else:
+                            fail_attempt(
+                                tracking_date,
+                                attempt.attempt_sequence,
+                                (
+                                    SourceAttemptFailureReason.CONSTRUCTION_FAILED
+                                    if lineage_unavailable
+                                    else SourceAttemptFailureReason.PERSISTENCE_FAILED
+                                ),
+                            )
+                            fail_date(
+                                tracking_date,
+                                PreviewRepairFailureStage.EVIDENCE,
+                                diagnostic(
+                                    "focus_preview_repair_evidence_persistence_failed",
+                                    (
+                                        "Calculation evidence could not be persisted for repair "
+                                        f"on {tracking_date.isoformat()}."
+                                    ),
+                                    True,
+                                ),
+                            )
+                            continue
+                    try:
+                        generator.generate(
+                            backend=preview_backend,
+                            request=validation_request(
+                                grain="daily",
+                                start_date=tracking_date,
+                                end_date=tracking_date + timedelta(days=1),
+                            ),
+                            policy=policy,
+                        )
+                    except PreviewGenerationError as exc:
+                        fail_date(
+                            tracking_date,
+                            PreviewRepairFailureStage.PREVIEW_VALIDATION,
+                            exc.diagnostic,
+                        )
+                        continue
+                    month_start = tracking_date.replace(day=1)
+                    month_end = (
+                        date(month_start.year + 1, 1, 1)
+                        if month_start.month == 12
+                        else date(month_start.year, month_start.month + 1, 1)
+                    )
+                    date_completed_at = datetime.now(UTC)
+                    with evidence_backend.create_preview_evidence_unit_of_work() as uow:
+                        if operation.start_date <= month_start and operation.end_date >= month_end:
+                            validated = uow.repairs.mark_date_daily_validated(
+                                repair_id,
+                                tracking_date,
+                                calculation_id=result.calculation.calculation_id,
+                                calculation_completed_at=(result.calculation.calculation_completed_at),
+                                rows_written=result.billing_rows_written,
+                            )
+                        else:
+                            validated = uow.repairs.mark_date_succeeded_from_running(
+                                repair_id,
+                                tracking_date,
+                                completed_at=date_completed_at,
+                                calculation_id=result.calculation.calculation_id,
+                                calculation_completed_at=(result.calculation.calculation_completed_at),
+                                rows_written=result.billing_rows_written,
+                            )
+                        uow.commit()
+                    target_status = (
+                        PreviewRepairDateStatus.DAILY_VALIDATED
+                        if operation.start_date <= month_start and operation.end_date >= month_end
+                        else PreviewRepairDateStatus.SUCCEEDED
+                    )
+                    expected_date_completed_at = (
+                        None if target_status is PreviewRepairDateStatus.DAILY_VALIDATED else date_completed_at
+                    )
+                    calculation_id = result.calculation.calculation_id
+                    calculation_completed_at = result.calculation.calculation_completed_at
+                    rows_written = result.billing_rows_written
+
+                    def validated_date_matches(
+                        item: PreviewRepairDate,
+                        expected_status: PreviewRepairDateStatus = target_status,
+                        expected_completed_at: datetime | None = expected_date_completed_at,
+                        expected_calculation_id: str = calculation_id,
+                        expected_calculation_completed_at: datetime = calculation_completed_at,
+                        expected_rows_written: int = rows_written,
+                    ) -> bool:
+                        return (
+                            item.status is expected_status
+                            and item.completed_at == expected_completed_at
+                            and item.calculation_id == expected_calculation_id
+                            and item.calculation_completed_at == expected_calculation_completed_at
+                            and item.rows_written == expected_rows_written
+                            and item.failure_stage is None
+                            and item.diagnostic is None
+                        )
+
+                    require_date(
+                        validated,
+                        tracking_date,
+                        matches=validated_date_matches,
+                        conflict=f"repair date validation transition conflicted for {tracking_date.isoformat()}",
+                    )
+
+                month_cursor = operation.start_date.replace(day=1)
+                while month_cursor < operation.end_date:
+                    interval = canonicalize_monthly_interval(month=f"{month_cursor.year:04d}-{month_cursor.month:02d}")
+                    if operation.start_date <= interval.start_date and operation.end_date >= interval.end_date:
+                        with evidence_backend.create_preview_generation_read_unit_of_work() as read_uow:
+                            current = read_uow.repairs.get_for_owner(
+                                repair_id,
+                                tenant_config.ecosystem,
+                                tenant_config.tenant_id,
+                            )
+                        assert current is not None
+                        pending_month = tuple(
+                            item.tracking_date
+                            for item in current.dates
+                            if interval.start_date <= item.tracking_date < interval.end_date
+                            and item.status is PreviewRepairDateStatus.DAILY_VALIDATED
+                        )
+                        if pending_month:
+                            terminal = PreviewRepairDateStatus.SUCCEEDED
+                            stage = None
+                            monthly_diagnostic = None
+                            try:
+                                generator.generate(
+                                    backend=preview_backend,
+                                    request=validation_request(
+                                        grain="monthly",
+                                        start_date=interval.start_date,
+                                        end_date=interval.end_date,
+                                    ),
+                                    policy=policy,
+                                )
+                            except PreviewGenerationError as exc:
+                                terminal = PreviewRepairDateStatus.FAILED
+                                stage = PreviewRepairFailureStage.PREVIEW_VALIDATION
+                                monthly_diagnostic = exc.diagnostic
+                            month_completed_at = datetime.now(UTC)
+                            with evidence_backend.create_preview_evidence_unit_of_work() as uow:
+                                finalized_month = uow.repairs.finalize_month_dates(
+                                    repair_id,
+                                    pending_month,
+                                    terminal_status=cast(
+                                        "Literal[PreviewRepairDateStatus.SUCCEEDED, PreviewRepairDateStatus.FAILED]",
+                                        terminal,
+                                    ),
+                                    completed_at=month_completed_at,
+                                    stage=stage,
+                                    diagnostic=monthly_diagnostic,
+                                )
+                                uow.commit()
+                            if finalized_month is None:
+                                persisted = read_operation()
+                                if persisted is None:
+                                    raise PreviewRepairWorkerConflictError(
+                                        "monthly repair finalization lost its operation"
+                                    )
+                                persisted_month = tuple(
+                                    item for item in persisted.dates if item.tracking_date in pending_month
+                                )
+                                exact = len(persisted_month) == len(pending_month) and all(
+                                    item.status is terminal
+                                    and item.completed_at == month_completed_at
+                                    and (
+                                        (
+                                            terminal is PreviewRepairDateStatus.SUCCEEDED
+                                            and item.failure_stage is None
+                                            and item.diagnostic is None
+                                        )
+                                        or (
+                                            terminal is PreviewRepairDateStatus.FAILED
+                                            and item.failure_stage is stage
+                                            and item.diagnostic == monthly_diagnostic
+                                        )
+                                    )
+                                    for item in persisted_month
+                                )
+                                if not exact:
+                                    raise PreviewRepairWorkerConflictError("monthly repair finalization conflicted")
+                    month_cursor = interval.end_date
+
+                with evidence_backend.create_preview_evidence_unit_of_work() as uow:
+                    final = uow.repairs.get_for_owner(
+                        repair_id,
+                        tenant_config.ecosystem,
+                        tenant_config.tenant_id,
+                    )
+                    assert final is not None
+                    operation_completed_at = datetime.now(UTC)
+                    if all(item.status is PreviewRepairDateStatus.SUCCEEDED for item in final.dates):
+                        completed = uow.repairs.finalize_completed(
+                            repair_id,
+                            completed_at=operation_completed_at,
+                        )
+                        expected_status = PreviewRepairStatus.COMPLETED
+                    else:
+                        completed = uow.repairs.finalize_completed_with_failures(
+                            repair_id,
+                            completed_at=operation_completed_at,
+                        )
+                        expected_status = PreviewRepairStatus.COMPLETED_WITH_FAILURES
+                    uow.commit()
+                require_operation(
+                    completed,
+                    matches=lambda item: (
+                        item.status is expected_status
+                        and item.completed_at == operation_completed_at
+                        and item.diagnostic is None
+                    ),
+                    conflict="repair operation finalization conflicted",
+                )
 
     def _build_cached_fatal_result(self, name: str, config: TenantConfig, error_msg: str) -> PipelineRunResult:
         """Build a PipelineRunResult for an already-failed tenant (no side effects)."""
@@ -664,71 +1324,117 @@ class WorkflowRunner:
             config = self._settings.tenants.get(name)
             if config is None or config.retention_days <= 0:
                 continue  # tenant removed from config, or retention disabled
+            with self._claim_tenant(name) as claimed:
+                if not claimed:
+                    continue
+                self._cleanup_tenant_retention(
+                    name,
+                    config,
+                    cleanup_now=cleanup_now,
+                )
 
-            cutoff = cleanup_now - timedelta(days=config.retention_days)
-            try:
-                with self._acquire_runtime(name, config) as runtime:
-                    with runtime.storage.create_unit_of_work() as uow:
-                        deleted_billing = uow.billing.delete_before(config.ecosystem, config.tenant_id, cutoff)
-                        deleted_resources = uow.resources.delete_before(config.ecosystem, config.tenant_id, cutoff)
-                        deleted_identities = uow.identities.delete_before(config.ecosystem, config.tenant_id, cutoff)
-                        deleted_chargebacks = uow.chargebacks.delete_before(config.ecosystem, config.tenant_id, cutoff)
-
-                        ta_config = _get_overlay_ta_config(runtime.plugin)
-                        deleted_ta = 0
-                        if ta_config and ta_config.enabled:
-                            from core.engine.topic_attribution_models import TopicAttributionConfigProtocol
-
-                            if isinstance(ta_config, TopicAttributionConfigProtocol):
-                                retention_days = getattr(ta_config, "retention_days", None)
-                                if retention_days:
-                                    ta_cutoff = cleanup_now - timedelta(days=retention_days)
-                                    deleted_ta = uow.topic_attributions.delete_before(
-                                        config.ecosystem, config.tenant_id, ta_cutoff
-                                    )
-
-                        uow.commit()
-
-                    total_deleted = (
-                        deleted_billing + deleted_resources + deleted_identities + deleted_chargebacks + deleted_ta
+    def _cleanup_tenant_retention(
+        self,
+        name: str,
+        config: TenantConfig,
+        *,
+        cleanup_now: datetime,
+    ) -> None:
+        cutoff = cleanup_now - timedelta(days=config.retention_days)
+        try:
+            with self._acquire_runtime(name, config) as runtime:
+                with runtime.storage.create_unit_of_work() as uow:
+                    deleted_billing = uow.billing.delete_before(
+                        config.ecosystem,
+                        config.tenant_id,
+                        cutoff,
                     )
-                    if config.focus_preview_enabled:
-                        from core.preview.persistence import PreviewEvidenceStorageBackend
+                    deleted_resources = uow.resources.delete_before(
+                        config.ecosystem,
+                        config.tenant_id,
+                        cutoff,
+                    )
+                    deleted_identities = uow.identities.delete_before(
+                        config.ecosystem,
+                        config.tenant_id,
+                        cutoff,
+                    )
+                    deleted_chargebacks = uow.chargebacks.delete_before(
+                        config.ecosystem,
+                        config.tenant_id,
+                        cutoff,
+                    )
 
-                        if isinstance(runtime.storage, PreviewEvidenceStorageBackend):
-                            try:
-                                with runtime.storage.create_preview_evidence_unit_of_work() as evidence_uow:
-                                    source_deleted = evidence_uow.source_windows.delete_before(
-                                        config.ecosystem, config.tenant_id, cutoff
-                                    )
-                                    readiness_deleted = evidence_uow.source_readiness.delete_orphaned_before(
-                                        config.ecosystem, config.tenant_id, cutoff
-                                    )
-                                    lineage_deleted = evidence_uow.allocation_lineage.delete_before(
-                                        config.ecosystem, config.tenant_id, cutoff.date()
-                                    )
-                                    organization_deleted = evidence_uow.organization_authority.delete_superseded_before(
-                                        config.ecosystem, config.tenant_id, cutoff
-                                    )
-                                    evidence_uow.commit()
-                                total_deleted += (
-                                    source_deleted
-                                    + readiness_deleted
-                                    + lineage_deleted.portions
-                                    + lineage_deleted.runs
-                                    + organization_deleted
+                    ta_config = _get_overlay_ta_config(runtime.plugin)
+                    deleted_ta = 0
+                    if ta_config and ta_config.enabled:
+                        from core.engine.topic_attribution_models import (
+                            TopicAttributionConfigProtocol,
+                        )
+
+                        if isinstance(ta_config, TopicAttributionConfigProtocol):
+                            retention_days = getattr(ta_config, "retention_days", None)
+                            if retention_days:
+                                ta_cutoff = cleanup_now - timedelta(days=retention_days)
+                                deleted_ta = uow.topic_attributions.delete_before(
+                                    config.ecosystem,
+                                    config.tenant_id,
+                                    ta_cutoff,
                                 )
-                            except Exception:
-                                logger.exception("Tenant %s: Preview evidence retention cleanup failed", name)
-                if total_deleted > 0:
-                    logger.info(
-                        "Tenant %s: retention cleanup deleted %d records (before %s)",
-                        name,
-                        total_deleted,
-                        cutoff.date(),
-                    )
-            except Exception:
-                logger.exception("Tenant %s: retention cleanup failed", name)
+
+                    uow.commit()
+
+                total_deleted = (
+                    deleted_billing + deleted_resources + deleted_identities + deleted_chargebacks + deleted_ta
+                )
+                if config.focus_preview_enabled:
+                    from core.preview.persistence import PreviewEvidenceStorageBackend
+
+                    if isinstance(runtime.storage, PreviewEvidenceStorageBackend):
+                        try:
+                            with runtime.storage.create_preview_evidence_unit_of_work() as evidence_uow:
+                                source_deleted = evidence_uow.source_windows.delete_before(
+                                    config.ecosystem,
+                                    config.tenant_id,
+                                    cutoff,
+                                )
+                                readiness_deleted = evidence_uow.source_readiness.delete_orphaned_before(
+                                    config.ecosystem,
+                                    config.tenant_id,
+                                    cutoff,
+                                )
+                                lineage_deleted = evidence_uow.allocation_lineage.delete_before(
+                                    config.ecosystem,
+                                    config.tenant_id,
+                                    cutoff.date(),
+                                )
+                                organization_deleted = evidence_uow.organization_authority.delete_superseded_before(
+                                    config.ecosystem,
+                                    config.tenant_id,
+                                    cutoff,
+                                )
+                                evidence_uow.commit()
+                            total_deleted += (
+                                source_deleted
+                                + readiness_deleted
+                                + lineage_deleted.portions
+                                + lineage_deleted.runs
+                                + organization_deleted
+                            )
+                        except Exception:
+                            logger.exception(
+                                "Tenant %s: Preview evidence retention cleanup failed",
+                                name,
+                            )
+            if total_deleted > 0:
+                logger.info(
+                    "Tenant %s: retention cleanup deleted %d records (before %s)",
+                    name,
+                    total_deleted,
+                    cutoff.date(),
+                )
+        except Exception:
+            logger.exception("Tenant %s: retention cleanup failed", name)
 
     def _publish_scheduled_revisions(
         self,
@@ -756,22 +1462,25 @@ class WorkflowRunner:
                 or not isinstance(runtime.storage, PreviewStorageBackend)
             ):
                 continue
-            try:
-                with self._acquire_runtime(tenant_name, config) as leased_runtime:
-                    if not isinstance(leased_runtime.storage, PreviewStorageBackend):
-                        continue
-                    manager.publish_eligible_months(
-                        tenant_name=tenant_name,
-                        tenant_config=config,
-                        backend=leased_runtime.storage,
-                        now=now,
+            with self._claim_tenant(tenant_name) as claimed:
+                if not claimed:
+                    continue
+                try:
+                    with self._acquire_runtime(tenant_name, config) as leased_runtime:
+                        if not isinstance(leased_runtime.storage, PreviewStorageBackend):
+                            continue
+                        manager.publish_eligible_months(
+                            tenant_name=tenant_name,
+                            tenant_config=config,
+                            backend=leased_runtime.storage,
+                            now=now,
+                        )
+                except Exception as exc:
+                    logger.error(
+                        "Tenant %s: scheduled FOCUS Mapping Preview publication failed error_type=%s",
+                        tenant_name,
+                        type(exc).__name__,
                     )
-            except Exception as exc:
-                logger.error(
-                    "Tenant %s: scheduled FOCUS Mapping Preview publication failed error_type=%s",
-                    tenant_name,
-                    type(exc).__name__,
-                )
 
     def _cleanup_preview_revision_retention(self, *, now: datetime) -> None:
         manager = self._revision_manager
@@ -788,22 +1497,25 @@ class WorkflowRunner:
                 or not isinstance(runtime.storage, PreviewStorageBackend)
             ):
                 continue
-            try:
-                with self._acquire_runtime(tenant_name, config) as leased_runtime:
-                    if not isinstance(leased_runtime.storage, PreviewStorageBackend):
-                        continue
-                    manager.cleanup_retention(
-                        tenant_name=tenant_name,
-                        tenant_config=config,
-                        backend=leased_runtime.storage,
-                        now=now,
+            with self._claim_tenant(tenant_name) as claimed:
+                if not claimed:
+                    continue
+                try:
+                    with self._acquire_runtime(tenant_name, config) as leased_runtime:
+                        if not isinstance(leased_runtime.storage, PreviewStorageBackend):
+                            continue
+                        manager.cleanup_retention(
+                            tenant_name=tenant_name,
+                            tenant_config=config,
+                            backend=leased_runtime.storage,
+                            now=now,
+                        )
+                except Exception as exc:
+                    logger.error(
+                        "Tenant %s: FOCUS Mapping Preview revision retention failed error_type=%s",
+                        tenant_name,
+                        type(exc).__name__,
                     )
-            except Exception as exc:
-                logger.error(
-                    "Tenant %s: FOCUS Mapping Preview revision retention failed error_type=%s",
-                    tenant_name,
-                    type(exc).__name__,
-                )
 
     def run_loop(self, shutdown_event: threading.Event) -> None:
         """Run orchestrator loop until shutdown_event is set."""

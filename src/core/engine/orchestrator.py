@@ -129,6 +129,17 @@ class CalculationPhaseResult:
             raise ValueError("lineage capture identity does not match calculation")
 
 
+@dataclass(frozen=True)
+class HistoricalRepairDateResult:
+    source_capture: NativeSourceEvidenceCapture
+    calculation: CalculationPhaseResult
+    billing_rows_written: int
+
+
+class HistoricalRepairProviderSourceError(RuntimeError):
+    """Historical provider data or its native capture was unavailable."""
+
+
 _DEFAULT_GRANULARITY_DURATION: dict[str, timedelta] = {
     "hourly": timedelta(hours=1),
     "daily": timedelta(hours=24),
@@ -1780,6 +1791,63 @@ class ChargebackOrchestrator:
                 result.tracking_date,
                 type(exc).__name__,
             )
+
+    def repair_historical_date(self, tracking_date: date_type) -> HistoricalRepairDateResult:
+        from core.storage.interface import HistoricalRepairBillingWriter
+
+        start = datetime.combine(tracking_date, datetime.min.time(), tzinfo=UTC)
+        end = start + timedelta(days=1)
+        cost_input = self._bundle.plugin.get_cost_input()
+        if not isinstance(cost_input, NativeSourceEvidenceCostInput):
+            raise HistoricalRepairProviderSourceError("historical provider source capture is unavailable")
+        try:
+            native = cost_input.gather_with_native_source_evidence(self._tenant_id, start, end)
+        except Exception as exc:
+            raise HistoricalRepairProviderSourceError("historical provider source acquisition failed") from exc
+        if native.capture is None:
+            raise HistoricalRepairProviderSourceError("historical provider source capture is unavailable")
+        with self._storage_backend.create_unit_of_work() as uow:
+            billing = uow.billing
+            if not isinstance(billing, HistoricalRepairBillingWriter):
+                raise RuntimeError("historical repair billing replacement is unavailable")
+            billing_rows_written = billing.replace_for_date(
+                self._ecosystem,
+                self._tenant_id,
+                tracking_date,
+                native.billing_lines,
+            )
+            uow.chargebacks.delete_by_date(self._ecosystem, self._tenant_id, tracking_date)
+            uow.topic_attributions.delete_by_date(
+                self._ecosystem,
+                self._tenant_id,
+                tracking_date,
+            )
+            uow.pipeline_state.mark_needs_recalculation(
+                self._ecosystem,
+                self._tenant_id,
+                tracking_date,
+            )
+            billing.reset_allocation_attempts_by_date(
+                self._ecosystem,
+                self._tenant_id,
+                tracking_date,
+            )
+            billing.reset_topic_attribution_attempts_by_date(
+                self._ecosystem,
+                self._tenant_id,
+                tracking_date,
+            )
+            calculation = self._calculate_phase.run_with_lineage_capture(
+                uow,
+                tracking_date,
+                calculation_run_id=None,
+            )
+            uow.commit()
+        return HistoricalRepairDateResult(
+            source_capture=native.capture,
+            calculation=calculation,
+            billing_rows_written=billing_rows_written,
+        )
 
     def run(self, *, calculation_run_id: int | None = None) -> PipelineRunResult:
         errors: list[str] = []

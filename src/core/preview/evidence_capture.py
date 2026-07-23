@@ -107,6 +107,15 @@ class NativeSourceEvidenceCapture(Protocol):
         captured_at: datetime,
     ) -> PreviewSourceCaptureReceipt: ...
 
+    def write(
+        self,
+        source_windows: PreviewSourceWindowWriter,
+        source_readiness: PreviewSourceReadinessWriter,
+        *,
+        attempt_sequence: int,
+        captured_at: datetime,
+    ) -> PreviewSourceCaptureReceipt: ...
+
 
 @dataclass(frozen=True)
 class NativeSourceGatherResult:

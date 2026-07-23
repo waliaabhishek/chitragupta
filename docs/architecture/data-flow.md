@@ -124,6 +124,8 @@ The pipeline loop ends at step 8. Topic overlay (step 9) is a separate pass over
 | `topic_attribution_facts` | Per-topic cost amounts linked to dimensions via `dimension_id` |
 | `pipeline_runs` | Audit trail: run start/end, status, rows written, errors |
 | `preview_requests` | Tenant-scoped Daily/Monthly scope, effective columns and evidence coverage, status/expiry/worker lease, diagnostics, source snapshot, and public artifact metadata (never server paths) |
+| `ccloud_focus_preview_repairs` | Durable owner/range repair operation state and operation diagnostic for enabled Confluent Cloud tenants |
+| `ccloud_focus_preview_repair_dates` | Ordered per-date repair status, calculation result, failure stage, and diagnostic |
 | `custom_tags` | User-defined key/value tags attached to chargeback dimensions |
 | `emission_records` | Per-tenant/emitter/date emission outcome tracking (emitted, failed) with attempt count |
 
@@ -141,6 +143,47 @@ optional `calculation_run_id` in the same per-date transaction as the chargeback
 rows. Preview uses the per-date identity and completion time as success authority;
 the global `pipeline_runs` status is audit provenance and does not invalidate a
 date that already committed.
+
+## Historical FOCUS repair write path
+
+```mermaid
+flowchart LR
+    POST[REST POST repair in both mode] --> POLICY[Validate enabled tenant and bounded UTC policy]
+    POLICY --> STATUS[(Durable operation and date statuses)]
+    STATUS --> DATE[Process each date; continue after expected failures]
+    DATE --> PROVIDER[Authoritative provider acquisition]
+    PROVIDER --> REPLACE[Exact tenant/date billing replacement]
+    REPLACE --> CALC[Canonical calculation]
+    CALC --> EVIDENCE[Atomic source readiness and lineage evidence]
+    EVIDENCE --> DAILY[Daily Full validation]
+    DAILY --> MONTH[Whole-month Full validation when fully selected]
+    MONTH --> STATUS
+    STATUS --> GET[REST GET status]
+    STATUS -. no artifact .-> NORMAL[Normal Daily/Monthly request after success]
+```
+
+Repair is separate from package generation. It is REST-only, asynchronous, and
+can be submitted only in `both` mode for a Preview-enabled Confluent Cloud
+tenant. The half-open UTC range must fit the intersection of the configured
+effective, lookback, cutoff, and complete retention intervals. Provider billing
+credentials, retained Costs API history, and historical metrics needed by the
+canonical allocators must remain available.
+
+Each date's authoritative result replaces only its owner/date billing scope,
+including an authoritative empty result. Canonical calculation then establishes
+one consistent calculation identity, chargeback result, pipeline state, native
+source evidence, and allocation lineage. Nothing is fabricated from legacy
+aggregate rows. Expected date failures persist a stage and diagnostic and do not
+stop later dates. Full-month dates remain `daily_validated` after Daily success
+until Monthly validation atomically makes them terminal.
+
+The target tenant is exclusively claimed for the operation; other tenants keep
+running. Selected billing, chargebacks, and generic export results may change,
+while dates and tenants outside the range are preserved. The repair path does
+not run emitters, topic attribution, scheduled publication, retention, or
+artifact persistence. It creates no requested package or revision. Startup
+recovery marks interrupted unfinished work failed rather than resuming provider
+calls; a retry is a new deterministic exact-date replacement operation.
 
 ## FOCUS Mapping Preview read path
 
@@ -172,12 +215,12 @@ flowchart LR
     HISTORY --> RET[Periodic billing-scope retention]
 ```
 
-Preview is read-only with respect to collected business data. It does not call a
-provider, start a gather/calculation run, infer missing historical calculation
-metadata, or expose an edit/backfill path. Migrated calculated dates without
-usable correlation remain unchanged and produce a non-retryable metadata
-diagnostic. Only the ordinary collector and calculation lifecycle can later
-replace persisted data.
+Package generation is read-only with respect to collected business data. It
+does not call a provider, start a gather/calculation run, or infer missing
+historical calculation metadata. Migrated calculated dates without usable
+correlation remain unchanged and produce a non-retryable metadata diagnostic
+until the ordinary lifecycle or explicit repair establishes current
+authoritative evidence.
 
 This read path exists only for tenants with `focus_preview` enabled. Disabled
 tenants do not initialize Preview artifacts/evidence or acquire organization,
@@ -238,7 +281,8 @@ Valid legacy raw-source rows without a billing association can receive local
 authority from their retained values when an enabled tenant starts; this does
 not call the provider or alter financial values. Unreadable, ambiguous, or
 inconsistent legacy evidence remains fail-closed. A later ordinary
-regather/calculation can establish new current evidence.
+regather/calculation or explicit retained-date repair can establish new current
+evidence.
 
 Older Daily/Full rows retain their original requested coverage and immutable
 stored artifacts; new requests persist their exact effective columns and
@@ -316,4 +360,7 @@ not a conformance claim.
 ## Concurrency
 
 Multiple tenants run concurrently (bounded by `features.max_parallel_tenants`).
-One orchestrator per tenant. Thread-safe via per-tenant `TenantRuntime` isolation.
+One orchestrator runs per tenant. Ordinary pipeline, repair, publication, and
+retention work serialize for the same tenant; repair does not introduce a
+global lock, so other tenants continue through per-tenant `TenantRuntime`
+isolation.

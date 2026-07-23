@@ -90,6 +90,48 @@ class FocusPreviewDiagnosticResponse(BaseModel):
     source_correlation_ids: list[str] = Field(default_factory=list, exclude_if=lambda value: not value)
 
 
+class FocusPreviewRepairRequestBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    start_date: date
+    end_date: date
+
+
+class FocusPreviewRepairDateResponse(BaseModel):
+    tracking_date: date
+    status: Literal["queued", "running", "daily_validated", "succeeded", "failed"]
+    started_at: datetime | None
+    completed_at: datetime | None
+    calculation_id: str | None
+    calculation_completed_at: datetime | None
+    rows_written: int | None
+    failure_stage: (
+        Literal[
+            "retained_state",
+            "provider_source",
+            "calculation",
+            "evidence",
+            "preview_validation",
+            "worker",
+        ]
+        | None
+    )
+    diagnostic: FocusPreviewDiagnosticResponse | None
+
+
+class FocusPreviewRepairResponse(BaseModel):
+    repair_id: str
+    tenant_name: str
+    start_date: date
+    end_date: date
+    status: Literal["queued", "running", "completed", "completed_with_failures", "failed"]
+    created_at: datetime
+    started_at: datetime | None
+    completed_at: datetime | None
+    diagnostic: FocusPreviewDiagnosticResponse | None
+    dates: list[FocusPreviewRepairDateResponse]
+
+
 class FocusPreviewCalculationCoverageEntryResponse(BaseModel):
     tracking_date: date
     calculation_id: str

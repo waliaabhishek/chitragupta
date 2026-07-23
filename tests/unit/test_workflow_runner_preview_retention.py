@@ -83,6 +83,18 @@ def test_disabled_retention_commits_generic_cleanup_without_any_evidence_capabil
     assert "create_preview_evidence_unit_of_work" not in storage.method_calls
 
 
+def test_retention_skips_tenant_owned_by_repair_or_pipeline(tmp_path: Path) -> None:
+    tenant = _tenant(tmp_path, enabled=True)
+    storage = preview_evidence_backend_double()
+    runner = _runner(tenant, storage)
+    runner._running_tenants.add("production")
+
+    runner._cleanup_retention(now=NOW)
+
+    storage.create_unit_of_work.assert_not_called()
+    storage.create_preview_evidence_unit_of_work.assert_not_called()
+
+
 def test_enabled_retention_runs_all_evidence_deletes_in_documented_order_after_generic_commit(
     tmp_path: Path,
 ) -> None:

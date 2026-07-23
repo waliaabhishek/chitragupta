@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import Sequence
 from datetime import UTC, date, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from sqlalchemy import delete, exists, update
 from sqlmodel import Session, col, select
@@ -13,11 +14,14 @@ from core.preview.evidence import (
     AllocationLineageRunStatus,
     AllocationLineageUnavailableRun,
     PreviewSourceAttempt,
+    PreviewSourceAttemptOrigin,
+    PreviewSourceAuthoritySlice,
     PreviewSourceEvidence,
     PreviewSourceReadiness,
     SourceAttemptFailureReason,
     SourceAttemptFinalStatus,
     SourceAttemptStatus,
+    source_attempt_origin,
 )
 from core.preview.evidence_capture import (
     NativeSourceEvidenceCapture,
@@ -26,6 +30,7 @@ from core.preview.evidence_capture import (
     SourceAttemptBeginFailure,
     SourceWindowWriteResult,
 )
+from core.preview.models import PreviewDiagnostic
 from core.preview.organization_authority import (
     OrganizationAuthorityAttempt,
     OrganizationAuthorityAttemptStatus,
@@ -34,11 +39,21 @@ from core.preview.organization_authority import (
     PreviewOrganizationAuthorityConflictError,
     PreviewOrganizationAuthorityDecodeError,
 )
+from core.preview.repair import (
+    PreviewRepair,
+    PreviewRepairDate,
+    PreviewRepairDateStatus,
+    PreviewRepairFailureStage,
+    PreviewRepairStatus,
+)
 from plugins.confluent_cloud.storage.preview_tables import (
     CCloudAllocationLineagePortionTable,
     CCloudAllocationLineageRunTable,
     CCloudCostSourceRecordTable,
+    CCloudFocusPreviewRepairDateTable,
+    CCloudFocusPreviewRepairTable,
     CCloudOrganizationAuthorityAttemptTable,
+    CCloudSourceCaptureReadinessHistoryTable,
     CCloudSourceCaptureReadinessTable,
     CCloudSourceEvidenceAttemptTable,
 )
@@ -86,7 +101,9 @@ def _source_attempt(row: CCloudSourceEvidenceAttemptTable) -> PreviewSourceAttem
     )
 
 
-def _readiness(row: CCloudSourceCaptureReadinessTable) -> PreviewSourceReadiness:
+def _readiness(
+    row: CCloudSourceCaptureReadinessTable | CCloudSourceCaptureReadinessHistoryTable,
+) -> PreviewSourceReadiness:
     return PreviewSourceReadiness(
         ecosystem=row.ecosystem,
         tenant_id=row.tenant_id,
@@ -97,6 +114,538 @@ def _readiness(row: CCloudSourceCaptureReadinessTable) -> PreviewSourceReadiness
         source_count=row.source_count,
         attempt_sequence=row.attempt_sequence,
     )
+
+
+def _diagnostic(
+    code: str | None,
+    message: str | None,
+    retryable: bool | None,
+    source_correlation_ids_json: str | None = None,
+) -> PreviewDiagnostic | None:
+    if code is None and message is None and retryable is None:
+        return None
+    if code is None or message is None or retryable is None:
+        raise ValueError("incomplete persisted repair diagnostic")
+    correlations: tuple[str, ...] = ()
+    if source_correlation_ids_json is not None:
+        decoded = json.loads(source_correlation_ids_json)
+        if not isinstance(decoded, list) or not all(isinstance(item, str) for item in decoded):
+            raise ValueError("invalid persisted repair diagnostic correlations")
+        correlations = tuple(decoded)
+    return PreviewDiagnostic(
+        code=code,
+        message=message,
+        retryable=retryable,
+        source_correlation_ids=correlations,
+    )
+
+
+def _repair_date(row: CCloudFocusPreviewRepairDateTable) -> PreviewRepairDate:
+    return PreviewRepairDate(
+        repair_id=row.repair_id,
+        tracking_date=row.tracking_date,
+        status=PreviewRepairDateStatus(row.status),
+        started_at=None if row.started_at is None else _utc(row.started_at),
+        completed_at=None if row.completed_at is None else _utc(row.completed_at),
+        calculation_id=row.calculation_id,
+        calculation_completed_at=(None if row.calculation_completed_at is None else _utc(row.calculation_completed_at)),
+        rows_written=row.rows_written,
+        failure_stage=None if row.failure_stage is None else PreviewRepairFailureStage(row.failure_stage),
+        diagnostic=_diagnostic(
+            row.diagnostic_code,
+            row.diagnostic_message,
+            row.diagnostic_retryable,
+            row.source_correlation_ids_json,
+        ),
+    )
+
+
+class SQLModelPreviewRepairRepository:
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def _get(self, repair_id: str) -> PreviewRepair | None:
+        row = self._session.get(CCloudFocusPreviewRepairTable, repair_id)
+        if row is None:
+            return None
+        date_rows = self._session.exec(
+            select(CCloudFocusPreviewRepairDateTable)
+            .where(col(CCloudFocusPreviewRepairDateTable.repair_id) == repair_id)
+            .order_by(col(CCloudFocusPreviewRepairDateTable.tracking_date))
+        ).all()
+        return PreviewRepair(
+            repair_id=row.repair_id,
+            tenant_name=row.tenant_name,
+            ecosystem=row.ecosystem,
+            tenant_id=row.tenant_id,
+            start_date=row.start_date,
+            end_date=row.end_date,
+            status=PreviewRepairStatus(row.status),
+            created_at=_utc(row.created_at),
+            started_at=None if row.started_at is None else _utc(row.started_at),
+            completed_at=None if row.completed_at is None else _utc(row.completed_at),
+            diagnostic=_diagnostic(
+                row.diagnostic_code,
+                row.diagnostic_message,
+                row.diagnostic_retryable,
+            ),
+            dates=tuple(_repair_date(item) for item in date_rows),
+        )
+
+    def create_queued(self, repair: PreviewRepair) -> PreviewRepair:
+        if repair.status is not PreviewRepairStatus.QUEUED:
+            raise ValueError("repair must be queued")
+        self._session.add(
+            CCloudFocusPreviewRepairTable(
+                repair_id=repair.repair_id,
+                tenant_name=repair.tenant_name,
+                ecosystem=repair.ecosystem,
+                tenant_id=repair.tenant_id,
+                start_date=repair.start_date,
+                end_date=repair.end_date,
+                status=repair.status.value,
+                created_at=repair.created_at,
+            )
+        )
+        self._session.add_all(
+            [
+                CCloudFocusPreviewRepairDateTable(
+                    repair_id=item.repair_id,
+                    tracking_date=item.tracking_date,
+                    status=item.status.value,
+                )
+                for item in repair.dates
+            ]
+        )
+        self._session.flush()
+        created = self._get(repair.repair_id)
+        if created is None:
+            raise RuntimeError("queued repair was not persisted")
+        return created
+
+    def get_for_owner(
+        self,
+        repair_id: str,
+        ecosystem: str,
+        tenant_id: str,
+    ) -> PreviewRepair | None:
+        value = self._get(repair_id)
+        if value is None or value.ecosystem != ecosystem or value.tenant_id != tenant_id:
+            return None
+        return value
+
+    def find_active_for_owner(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+    ) -> PreviewRepair | None:
+        row = self._session.exec(
+            select(CCloudFocusPreviewRepairTable)
+            .where(
+                col(CCloudFocusPreviewRepairTable.ecosystem) == ecosystem,
+                col(CCloudFocusPreviewRepairTable.tenant_id) == tenant_id,
+                col(CCloudFocusPreviewRepairTable.status).in_(
+                    (PreviewRepairStatus.QUEUED.value, PreviewRepairStatus.RUNNING.value)
+                ),
+            )
+            .order_by(col(CCloudFocusPreviewRepairTable.created_at))
+            .limit(1)
+        ).first()
+        return None if row is None else self._get(row.repair_id)
+
+    def mark_running(self, repair_id: str, *, started_at: datetime) -> PreviewRepair | None:
+        result = self._session.exec(
+            update(CCloudFocusPreviewRepairTable)
+            .where(
+                col(CCloudFocusPreviewRepairTable.repair_id) == repair_id,
+                col(CCloudFocusPreviewRepairTable.status) == PreviewRepairStatus.QUEUED.value,
+            )
+            .values(status=PreviewRepairStatus.RUNNING.value, started_at=_require_aware(started_at, "started_at"))
+        )
+        if int(getattr(result, "rowcount", 0)) != 1:
+            return None
+        self._session.flush()
+        return self._get(repair_id)
+
+    def mark_date_running(
+        self,
+        repair_id: str,
+        tracking_date: date,
+        *,
+        started_at: datetime,
+    ) -> PreviewRepairDate | None:
+        parent = self._session.get(CCloudFocusPreviewRepairTable, repair_id)
+        if parent is None or parent.status != PreviewRepairStatus.RUNNING.value:
+            return None
+        result = self._session.exec(
+            update(CCloudFocusPreviewRepairDateTable)
+            .where(
+                col(CCloudFocusPreviewRepairDateTable.repair_id) == repair_id,
+                col(CCloudFocusPreviewRepairDateTable.tracking_date) == tracking_date,
+                col(CCloudFocusPreviewRepairDateTable.status) == PreviewRepairDateStatus.QUEUED.value,
+            )
+            .values(
+                status=PreviewRepairDateStatus.RUNNING.value,
+                started_at=_require_aware(started_at, "started_at"),
+            )
+        )
+        if int(getattr(result, "rowcount", 0)) != 1:
+            return None
+        self._session.flush()
+        row = self._session.get(CCloudFocusPreviewRepairDateTable, (repair_id, tracking_date))
+        return None if row is None else _repair_date(row)
+
+    def _mark_date_result(
+        self,
+        repair_id: str,
+        tracking_date: date,
+        *,
+        status: PreviewRepairDateStatus,
+        completed_at: datetime | None,
+        calculation_id: str,
+        calculation_completed_at: datetime,
+        rows_written: int,
+    ) -> PreviewRepairDate | None:
+        if not calculation_id.strip() or rows_written < 0:
+            raise ValueError("invalid repair calculation result")
+        result = self._session.exec(
+            update(CCloudFocusPreviewRepairDateTable)
+            .where(
+                col(CCloudFocusPreviewRepairDateTable.repair_id) == repair_id,
+                col(CCloudFocusPreviewRepairDateTable.tracking_date) == tracking_date,
+                col(CCloudFocusPreviewRepairDateTable.status) == PreviewRepairDateStatus.RUNNING.value,
+            )
+            .values(
+                status=status.value,
+                completed_at=None if completed_at is None else _require_aware(completed_at, "completed_at"),
+                calculation_id=calculation_id,
+                calculation_completed_at=_require_aware(
+                    calculation_completed_at,
+                    "calculation_completed_at",
+                ),
+                rows_written=rows_written,
+            )
+        )
+        if int(getattr(result, "rowcount", 0)) != 1:
+            return None
+        self._session.flush()
+        row = self._session.get(CCloudFocusPreviewRepairDateTable, (repair_id, tracking_date))
+        return None if row is None else _repair_date(row)
+
+    def mark_date_daily_validated(
+        self,
+        repair_id: str,
+        tracking_date: date,
+        *,
+        calculation_id: str,
+        calculation_completed_at: datetime,
+        rows_written: int,
+    ) -> PreviewRepairDate | None:
+        return self._mark_date_result(
+            repair_id,
+            tracking_date,
+            status=PreviewRepairDateStatus.DAILY_VALIDATED,
+            completed_at=None,
+            calculation_id=calculation_id,
+            calculation_completed_at=calculation_completed_at,
+            rows_written=rows_written,
+        )
+
+    def mark_date_succeeded_from_running(
+        self,
+        repair_id: str,
+        tracking_date: date,
+        *,
+        completed_at: datetime,
+        calculation_id: str,
+        calculation_completed_at: datetime,
+        rows_written: int,
+    ) -> PreviewRepairDate | None:
+        return self._mark_date_result(
+            repair_id,
+            tracking_date,
+            status=PreviewRepairDateStatus.SUCCEEDED,
+            completed_at=completed_at,
+            calculation_id=calculation_id,
+            calculation_completed_at=calculation_completed_at,
+            rows_written=rows_written,
+        )
+
+    def mark_date_failed_from_running(
+        self,
+        repair_id: str,
+        tracking_date: date,
+        *,
+        completed_at: datetime,
+        stage: PreviewRepairFailureStage,
+        diagnostic: PreviewDiagnostic,
+    ) -> PreviewRepairDate | None:
+        result = self._session.exec(
+            update(CCloudFocusPreviewRepairDateTable)
+            .where(
+                col(CCloudFocusPreviewRepairDateTable.repair_id) == repair_id,
+                col(CCloudFocusPreviewRepairDateTable.tracking_date) == tracking_date,
+                col(CCloudFocusPreviewRepairDateTable.status) == PreviewRepairDateStatus.RUNNING.value,
+            )
+            .values(
+                status=PreviewRepairDateStatus.FAILED.value,
+                completed_at=_require_aware(completed_at, "completed_at"),
+                calculation_id=None,
+                calculation_completed_at=None,
+                rows_written=None,
+                failure_stage=stage.value,
+                diagnostic_code=diagnostic.code,
+                diagnostic_message=diagnostic.message,
+                diagnostic_retryable=diagnostic.retryable,
+                source_correlation_ids_json=json.dumps(list(diagnostic.source_correlation_ids)),
+            )
+        )
+        if int(getattr(result, "rowcount", 0)) != 1:
+            return None
+        self._session.flush()
+        row = self._session.get(CCloudFocusPreviewRepairDateTable, (repair_id, tracking_date))
+        return None if row is None else _repair_date(row)
+
+    def finalize_month_dates(
+        self,
+        repair_id: str,
+        tracking_dates: tuple[date, ...],
+        *,
+        terminal_status: Literal[
+            PreviewRepairDateStatus.SUCCEEDED,
+            PreviewRepairDateStatus.FAILED,
+        ],
+        completed_at: datetime,
+        stage: PreviewRepairFailureStage | None,
+        diagnostic: PreviewDiagnostic | None,
+    ) -> tuple[PreviewRepairDate, ...] | None:
+        if (
+            not tracking_dates
+            or tuple(sorted(set(tracking_dates))) != tracking_dates
+            or terminal_status not in {PreviewRepairDateStatus.SUCCEEDED, PreviewRepairDateStatus.FAILED}
+            or (terminal_status is PreviewRepairDateStatus.SUCCEEDED and (stage is not None or diagnostic is not None))
+            or (terminal_status is PreviewRepairDateStatus.FAILED and (stage is None or diagnostic is None))
+        ):
+            raise ValueError("invalid monthly repair finalization")
+        rows = self._session.exec(
+            select(CCloudFocusPreviewRepairDateTable).where(
+                col(CCloudFocusPreviewRepairDateTable.repair_id) == repair_id,
+                col(CCloudFocusPreviewRepairDateTable.tracking_date).in_(tracking_dates),
+            )
+        ).all()
+        if len(rows) != len(tracking_dates) or any(
+            row.status != PreviewRepairDateStatus.DAILY_VALIDATED.value for row in rows
+        ):
+            return None
+        values: dict[str, object] = {
+            "status": terminal_status.value,
+            "completed_at": _require_aware(completed_at, "completed_at"),
+        }
+        if terminal_status is PreviewRepairDateStatus.FAILED:
+            assert stage is not None and diagnostic is not None
+            values.update(
+                calculation_id=None,
+                calculation_completed_at=None,
+                rows_written=None,
+                failure_stage=stage.value,
+                diagnostic_code=diagnostic.code,
+                diagnostic_message=diagnostic.message,
+                diagnostic_retryable=diagnostic.retryable,
+                source_correlation_ids_json=json.dumps(list(diagnostic.source_correlation_ids)),
+            )
+        result = self._session.exec(
+            update(CCloudFocusPreviewRepairDateTable)
+            .where(
+                col(CCloudFocusPreviewRepairDateTable.repair_id) == repair_id,
+                col(CCloudFocusPreviewRepairDateTable.tracking_date).in_(tracking_dates),
+                col(CCloudFocusPreviewRepairDateTable.status) == PreviewRepairDateStatus.DAILY_VALIDATED.value,
+            )
+            .values(**values)
+        )
+        if int(getattr(result, "rowcount", 0)) != len(tracking_dates):
+            self._session.rollback()
+            return None
+        self._session.flush()
+        updated = self._session.exec(
+            select(CCloudFocusPreviewRepairDateTable)
+            .where(
+                col(CCloudFocusPreviewRepairDateTable.repair_id) == repair_id,
+                col(CCloudFocusPreviewRepairDateTable.tracking_date).in_(tracking_dates),
+            )
+            .order_by(col(CCloudFocusPreviewRepairDateTable.tracking_date))
+        ).all()
+        return tuple(_repair_date(item) for item in updated)
+
+    def _fail(
+        self,
+        repair_id: str,
+        *,
+        expected_status: PreviewRepairStatus,
+        completed_at: datetime,
+        diagnostic: PreviewDiagnostic,
+    ) -> PreviewRepair | None:
+        completed = _require_aware(completed_at, "completed_at")
+        result = self._session.exec(
+            update(CCloudFocusPreviewRepairTable)
+            .where(
+                col(CCloudFocusPreviewRepairTable.repair_id) == repair_id,
+                col(CCloudFocusPreviewRepairTable.status) == expected_status.value,
+            )
+            .values(
+                status=PreviewRepairStatus.FAILED.value,
+                completed_at=completed,
+                diagnostic_code=diagnostic.code,
+                diagnostic_message=diagnostic.message,
+                diagnostic_retryable=diagnostic.retryable,
+            )
+        )
+        if int(getattr(result, "rowcount", 0)) != 1:
+            return None
+        nonterminal = (
+            (PreviewRepairDateStatus.QUEUED.value,)
+            if expected_status is PreviewRepairStatus.QUEUED
+            else (
+                PreviewRepairDateStatus.QUEUED.value,
+                PreviewRepairDateStatus.RUNNING.value,
+                PreviewRepairDateStatus.DAILY_VALIDATED.value,
+            )
+        )
+        expected_children = len(
+            self._session.exec(
+                select(CCloudFocusPreviewRepairDateTable).where(
+                    col(CCloudFocusPreviewRepairDateTable.repair_id) == repair_id,
+                    col(CCloudFocusPreviewRepairDateTable.status).in_(nonterminal),
+                )
+            ).all()
+        )
+        child_result = self._session.exec(
+            update(CCloudFocusPreviewRepairDateTable)
+            .where(
+                col(CCloudFocusPreviewRepairDateTable.repair_id) == repair_id,
+                col(CCloudFocusPreviewRepairDateTable.status).in_(nonterminal),
+            )
+            .values(
+                status=PreviewRepairDateStatus.FAILED.value,
+                completed_at=completed,
+                calculation_id=None,
+                calculation_completed_at=None,
+                rows_written=None,
+                failure_stage=PreviewRepairFailureStage.WORKER.value,
+                diagnostic_code=diagnostic.code,
+                diagnostic_message=diagnostic.message,
+                diagnostic_retryable=diagnostic.retryable,
+                source_correlation_ids_json=json.dumps(list(diagnostic.source_correlation_ids)),
+            )
+        )
+        if int(getattr(child_result, "rowcount", 0)) != expected_children:
+            self._session.rollback()
+            return None
+        self._session.flush()
+        return self._get(repair_id)
+
+    def fail_queued_before_execution(
+        self,
+        repair_id: str,
+        *,
+        completed_at: datetime,
+        diagnostic: PreviewDiagnostic,
+    ) -> PreviewRepair | None:
+        return self._fail(
+            repair_id,
+            expected_status=PreviewRepairStatus.QUEUED,
+            completed_at=completed_at,
+            diagnostic=diagnostic,
+        )
+
+    def fail_running_worker(
+        self,
+        repair_id: str,
+        *,
+        completed_at: datetime,
+        diagnostic: PreviewDiagnostic,
+    ) -> PreviewRepair | None:
+        return self._fail(
+            repair_id,
+            expected_status=PreviewRepairStatus.RUNNING,
+            completed_at=completed_at,
+            diagnostic=diagnostic,
+        )
+
+    def _finalize(
+        self,
+        repair_id: str,
+        *,
+        completed_at: datetime,
+        with_failures: bool,
+    ) -> PreviewRepair | None:
+        children = self._session.exec(
+            select(CCloudFocusPreviewRepairDateTable).where(
+                col(CCloudFocusPreviewRepairDateTable.repair_id) == repair_id
+            )
+        ).all()
+        statuses = {item.status for item in children}
+        if not children or not statuses <= {
+            PreviewRepairDateStatus.SUCCEEDED.value,
+            PreviewRepairDateStatus.FAILED.value,
+        }:
+            return None
+        if with_failures != (PreviewRepairDateStatus.FAILED.value in statuses):
+            return None
+        final_status = PreviewRepairStatus.COMPLETED_WITH_FAILURES if with_failures else PreviewRepairStatus.COMPLETED
+        result = self._session.exec(
+            update(CCloudFocusPreviewRepairTable)
+            .where(
+                col(CCloudFocusPreviewRepairTable.repair_id) == repair_id,
+                col(CCloudFocusPreviewRepairTable.status) == PreviewRepairStatus.RUNNING.value,
+            )
+            .values(status=final_status.value, completed_at=_require_aware(completed_at, "completed_at"))
+        )
+        if int(getattr(result, "rowcount", 0)) != 1:
+            return None
+        self._session.flush()
+        return self._get(repair_id)
+
+    def finalize_completed(self, repair_id: str, *, completed_at: datetime) -> PreviewRepair | None:
+        return self._finalize(repair_id, completed_at=completed_at, with_failures=False)
+
+    def finalize_completed_with_failures(
+        self,
+        repair_id: str,
+        *,
+        completed_at: datetime,
+    ) -> PreviewRepair | None:
+        return self._finalize(repair_id, completed_at=completed_at, with_failures=True)
+
+    def fail_interrupted_before(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        process_started_at: datetime,
+        *,
+        completed_at: datetime,
+        diagnostic: PreviewDiagnostic,
+    ) -> int:
+        rows = self._session.exec(
+            select(CCloudFocusPreviewRepairTable).where(
+                col(CCloudFocusPreviewRepairTable.ecosystem) == ecosystem,
+                col(CCloudFocusPreviewRepairTable.tenant_id) == tenant_id,
+                col(CCloudFocusPreviewRepairTable.created_at)
+                < _require_aware(process_started_at, "process_started_at"),
+                col(CCloudFocusPreviewRepairTable.status).in_(
+                    (PreviewRepairStatus.QUEUED.value, PreviewRepairStatus.RUNNING.value)
+                ),
+            )
+        ).all()
+        changed = 0
+        for row in rows:
+            result = self._fail(
+                row.repair_id,
+                expected_status=PreviewRepairStatus(row.status),
+                completed_at=completed_at,
+                diagnostic=diagnostic,
+            )
+            changed += result is not None
+        return changed
 
 
 class SQLModelPreviewSourceWindowRepository:
@@ -471,6 +1020,78 @@ class SQLModelPreviewSourceReadinessRepository:
         ).first()
         return None if row is None else _source_attempt(row)
 
+    def resolve_authority(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        start: datetime,
+        end: datetime,
+    ) -> tuple[PreviewSourceAuthoritySlice, ...]:
+        start = _require_aware(start, "start")
+        end = _require_aware(end, "end")
+        if start > end:
+            raise ValueError("authority bounds must be ordered")
+        base = select(CCloudSourceEvidenceAttemptTable).where(
+            col(CCloudSourceEvidenceAttemptTable.ecosystem) == ecosystem,
+            col(CCloudSourceEvidenceAttemptTable.tenant_id) == tenant_id,
+            col(CCloudSourceEvidenceAttemptTable.status) != SourceAttemptStatus.ABORTED.value,
+        )
+        if start == end:
+            rows = self._session.exec(
+                base.order_by(col(CCloudSourceEvidenceAttemptTable.attempt_sequence).desc())
+            ).all()
+            selected = next(
+                (
+                    row
+                    for row in rows
+                    if source_attempt_origin(row.refresh_token) is PreviewSourceAttemptOrigin.ORDINARY
+                    or _utc(row.refresh_start) <= start < _utc(row.refresh_end)
+                ),
+                None,
+            )
+            return (
+                PreviewSourceAuthoritySlice(
+                    start,
+                    end,
+                    None if selected is None else _source_attempt(selected),
+                ),
+            )
+        rows = self._session.exec(
+            base.where(
+                col(CCloudSourceEvidenceAttemptTable.refresh_start) < end,
+                col(CCloudSourceEvidenceAttemptTable.refresh_end) > start,
+            ).order_by(col(CCloudSourceEvidenceAttemptTable.attempt_sequence).desc())
+        ).all()
+        unresolved: list[tuple[datetime, datetime]] = [(start, end)]
+        assigned: list[PreviewSourceAuthoritySlice] = []
+        for row in rows:
+            attempt = _source_attempt(row)
+            next_unresolved: list[tuple[datetime, datetime]] = []
+            for segment_start, segment_end in unresolved:
+                overlap_start = max(segment_start, attempt.refresh_start)
+                overlap_end = min(segment_end, attempt.refresh_end)
+                if overlap_start >= overlap_end:
+                    next_unresolved.append((segment_start, segment_end))
+                    continue
+                if segment_start < overlap_start:
+                    next_unresolved.append((segment_start, overlap_start))
+                assigned.append(PreviewSourceAuthoritySlice(overlap_start, overlap_end, attempt))
+                if overlap_end < segment_end:
+                    next_unresolved.append((overlap_end, segment_end))
+            unresolved = next_unresolved
+            if not unresolved:
+                break
+        assigned.extend(PreviewSourceAuthoritySlice(left, right, None) for left, right in unresolved)
+        ordered = sorted(assigned, key=lambda item: (item.start, item.end))
+        merged: list[PreviewSourceAuthoritySlice] = []
+        for item in ordered:
+            if merged and merged[-1].end == item.start and merged[-1].attempt == item.attempt:
+                previous = merged[-1]
+                merged[-1] = PreviewSourceAuthoritySlice(previous.start, item.end, item.attempt)
+            else:
+                merged.append(item)
+        return tuple(merged)
+
     def list_covering(
         self,
         ecosystem: str,
@@ -483,17 +1104,17 @@ class SQLModelPreviewSourceReadinessRepository:
         if start >= end:
             raise ValueError("readiness bounds must be ordered")
         rows = self._session.exec(
-            select(CCloudSourceCaptureReadinessTable)
+            select(CCloudSourceCaptureReadinessHistoryTable)
             .where(
-                col(CCloudSourceCaptureReadinessTable.ecosystem) == ecosystem,
-                col(CCloudSourceCaptureReadinessTable.tenant_id) == tenant_id,
-                col(CCloudSourceCaptureReadinessTable.window_start) < end,
-                col(CCloudSourceCaptureReadinessTable.window_end) > start,
+                col(CCloudSourceCaptureReadinessHistoryTable.ecosystem) == ecosystem,
+                col(CCloudSourceCaptureReadinessHistoryTable.tenant_id) == tenant_id,
+                col(CCloudSourceCaptureReadinessHistoryTable.window_start) < end,
+                col(CCloudSourceCaptureReadinessHistoryTable.window_end) > start,
             )
             .order_by(
-                col(CCloudSourceCaptureReadinessTable.window_start),
-                col(CCloudSourceCaptureReadinessTable.window_end),
-                col(CCloudSourceCaptureReadinessTable.capture_id),
+                col(CCloudSourceCaptureReadinessHistoryTable.window_start),
+                col(CCloudSourceCaptureReadinessHistoryTable.window_end),
+                col(CCloudSourceCaptureReadinessHistoryTable.attempt_sequence),
             )
         ).all()
         return tuple(_readiness(row) for row in rows)
@@ -556,6 +1177,19 @@ class SQLModelPreviewSourceReadinessRepository:
             )
         )
         self._session.add_all(rows)
+        for row in rows:
+            self._session.merge(
+                CCloudSourceCaptureReadinessHistoryTable(
+                    ecosystem=row.ecosystem,
+                    tenant_id=row.tenant_id,
+                    attempt_sequence=row.attempt_sequence,
+                    window_start=row.window_start,
+                    window_end=row.window_end,
+                    capture_id=row.capture_id,
+                    captured_at=row.captured_at,
+                    source_count=row.source_count,
+                )
+            )
         self._session.flush(rows)
         return tuple(_readiness(row) for row in rows)
 
@@ -575,9 +1209,27 @@ class SQLModelPreviewSourceReadinessRepository:
             )
         )
         deleted = int(getattr(result, "rowcount", 0))
+        history_source_exists = exists().where(
+            col(CCloudCostSourceRecordTable.ecosystem) == ecosystem,
+            col(CCloudCostSourceRecordTable.tenant_id) == tenant_id,
+            col(CCloudCostSourceRecordTable.capture_id) == col(CCloudSourceCaptureReadinessHistoryTable.capture_id),
+        )
+        history_result = self._session.exec(
+            delete(CCloudSourceCaptureReadinessHistoryTable).where(
+                col(CCloudSourceCaptureReadinessHistoryTable.ecosystem) == ecosystem,
+                col(CCloudSourceCaptureReadinessHistoryTable.tenant_id) == tenant_id,
+                col(CCloudSourceCaptureReadinessHistoryTable.window_end) < cutoff,
+                ~history_source_exists,
+            )
+        )
+        deleted += int(getattr(history_result, "rowcount", 0))
         current = self.get_current_authority(ecosystem, tenant_id)
-        readiness_exists = exists().where(
+        current_readiness_exists = exists().where(
             col(CCloudSourceCaptureReadinessTable.attempt_sequence)
+            == col(CCloudSourceEvidenceAttemptTable.attempt_sequence)
+        )
+        history_readiness_exists = exists().where(
+            col(CCloudSourceCaptureReadinessHistoryTable.attempt_sequence)
             == col(CCloudSourceEvidenceAttemptTable.attempt_sequence)
         )
         conditions = [
@@ -586,7 +1238,8 @@ class SQLModelPreviewSourceReadinessRepository:
             col(CCloudSourceEvidenceAttemptTable.status) != SourceAttemptStatus.PENDING.value,
             col(CCloudSourceEvidenceAttemptTable.completed_at).is_not(None),
             col(CCloudSourceEvidenceAttemptTable.completed_at) < cutoff,
-            ~readiness_exists,
+            ~current_readiness_exists,
+            ~history_readiness_exists,
         ]
         if current is not None:
             conditions.append(col(CCloudSourceEvidenceAttemptTable.attempt_sequence) != current.attempt_sequence)

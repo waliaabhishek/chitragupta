@@ -100,15 +100,18 @@ def create_app(
         app.state.backend_provider = backend_provider
         app.state.preview_artifact_store = None
         app.state.preview_runtime = None
+        app.state.preview_repair_runtime = None
         app.state.preview_revision_reader = None
         app.state.workflow_runner = workflow_runner
         app.state.mode = mode
         from core.preview.artifacts import LocalPreviewArtifactStore
+        from core.preview.repair import PreviewRepairRunner, PreviewRepairRuntime
         from core.preview.revisions import PreviewRevisionReadService
         from core.preview.service import PreviewRuntime
 
         preview_artifact_store: LocalPreviewArtifactStore | None = None
         preview_runtime: PreviewRuntime | None = None
+        preview_repair_runtime: PreviewRepairRuntime | None = None
         original_error: BaseException | None = None
         try:
             if settings.focus_preview_enabled:
@@ -146,6 +149,28 @@ def create_app(
                             tenant_name,
                             type(exc).__name__,
                         )
+                if mode == "both" and isinstance(workflow_runner, PreviewRepairRunner):
+                    preview_repair_runtime = PreviewRepairRuntime(
+                        runner=workflow_runner,
+                        backend_provider=backend_provider,
+                        max_workers=settings.preview.max_workers,
+                        configured_owners=tuple(
+                            (tenant_name, tenant_config)
+                            for tenant_name, tenant_config in settings.tenants.items()
+                            if tenant_config.focus_preview_enabled
+                        ),
+                    )
+                    try:
+                        preview_repair_runtime.recover()
+                    except Exception as exc:
+                        logger.error(
+                            "FOCUS Mapping Preview repair recovery unavailable error_type=%s",
+                            type(exc).__name__,
+                        )
+                        preview_repair_runtime.close(wait=True)
+                        preview_repair_runtime = None
+                    else:
+                        app.state.preview_repair_runtime = preview_repair_runtime
             if workflow_runner is None:
                 for tenant_name, tenant_config in settings.tenants.items():
                     try:
@@ -169,6 +194,11 @@ def create_app(
                     type(exc).__name__,
                 )
 
+            if preview_repair_runtime is not None:
+                try:
+                    preview_repair_runtime.close(wait=True)
+                except BaseException as exc:
+                    record_cleanup_error("preview_repair_runtime", exc)
             if preview_runtime is not None:
                 try:
                     preview_runtime.close(wait=True)

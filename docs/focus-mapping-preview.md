@@ -5,11 +5,13 @@ allocation data already stored by Chitragupta into an immutable FOCUS 1.4 Cost
 and Usage package. Packages are explicitly marked `non_conforming` because
 some provider-authoritative FOCUS fields are unavailable.
 
-Preview does not call Confluent Cloud, gather data, calculate allocations, edit
-stored records, or recreate historical evidence. Run the ordinary pipeline
-first. You can then create an ad-hoc package from the web UI, CLI, or request
-API, while the periodic worker automatically publishes the current validated
-Settled Full monthly revision for settlement-ready months.
+Package generation does not call Confluent Cloud, gather data, calculate
+allocations, edit stored records, or recreate historical evidence. Run the
+ordinary pipeline first. A separate operator-requested historical repair can
+reacquire and recalculate eligible retained dates that predate Preview evidence.
+You can then create an ad-hoc package from the web UI, CLI, or request API, while
+the periodic worker automatically publishes the current validated Settled Full
+monthly revision for settlement-ready months.
 
 Preview is opt-in per tenant. If every tenant omits `focus_preview`, Chitragupta
 does not create or access the Preview artifact root, gather the provider
@@ -77,7 +79,7 @@ The process-wide Preview settings are:
 | Setting | Default | Valid values | Effect |
 |---|---:|---|---|
 | `preview.artifact_root` | `data/focus-preview` | Writable local path | Stores immutable requested packages and published monthly revisions. Changing it does not move existing packages. |
-| `preview.max_workers` | `2` | 1–16 | Maximum concurrent ad-hoc Preview request jobs in one API process. |
+| `preview.max_workers` | `2` | 1–16 | Maximum background jobs for each Preview request or repair runtime in one API process. |
 | `preview.max_csv_file_bytes` | `null` | `null` or a positive integer | `null` produces one CSV. A byte limit splits output into deterministic parts without splitting rows. |
 
 See the [Confluent Cloud configuration reference](configuration/ccloud-reference.md)
@@ -102,8 +104,8 @@ uv run python src/main.py --config-file config.yaml --mode both
 | Mode | FOCUS Mapping Preview behavior |
 |---|---|
 | `worker` | Runs the ordinary pipeline, scheduled monthly publication, and revision retention. It exposes no Preview HTTP routes. |
-| `api` | Serves ad-hoc requests, request history, published revision history, and downloads. It does not run periodic publication. |
-| `both` | Serves the same Preview HTTP contract as `api` and also runs the periodic worker. |
+| `api` | Serves ad-hoc requests, request history, published revision history, downloads, and retained repair status. It cannot submit repair or run periodic publication. |
+| `both` | Serves the same Preview HTTP contract as `api`, runs the periodic worker, and is the only mode that accepts repair submissions. |
 
 When API and worker run as separate processes, they must use the same tenant
 database and the same durable `preview.artifact_root`. The database identifies
@@ -160,6 +162,64 @@ sub-72-hour, and acquisition-cutoff-incomplete months are excluded before
 package generation. On-demand Monthly requests remain available and can produce
 Provisional packages for those months.
 
+### Repair retained upgraded dates
+
+Retained calculations upgraded without Preview calculation correlation, native
+source evidence, or allocation lineage cannot be made Preview-ready by copying
+legacy aggregate rows. If such dates fail with
+`calculation_metadata_unavailable`, use the historical repair REST operation.
+There is no repair command in the CLI or web UI.
+
+Submit an inclusive-start/exclusive-end UTC interval in `both` mode:
+
+```bash
+curl -i -X POST \
+  https://chitragupta.example/api/v1/tenants/production/focus-preview/repairs \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer <token>' \
+  -d '{"start_date":"2026-01-01","end_date":"2026-02-01"}'
+```
+
+A valid submission returns 202, a durable queued document, and a `Location`
+header. Poll that URL:
+
+```bash
+curl \
+  https://chitragupta.example/api/v1/tenants/production/focus-preview/repairs/{repair_id} \
+  -H 'Authorization: Bearer <token>'
+```
+
+The submitted range must be contained in the intersection of the configured
+`focus_preview` effective interval, current `lookback_days` and `cutoff_days`
+window, and complete `retention_days` interval. Future dates, disabled tenants,
+unsupported ecosystems, and ranges outside that scope are rejected before
+pipeline data changes. The operation also requires active Confluent Cloud
+billing credentials, retained provider billing history, and any historical
+Telemetry, Prometheus, or Flink metrics required by the configured allocators.
+Configuration does not guarantee that those external histories still exist.
+
+Repair processes dates in ascending order and continues after expected
+per-date failures. Each date has durable status, timestamps, optional
+calculation result, failure stage, and diagnostic. `daily_validated` is
+nonterminal: Daily Full validation passed, but validation of a wholly selected
+UTC month has not completed. A process interruption marks the operation and
+unfinished dates failed; work is not automatically resumed.
+
+For each date, the authoritative provider result replaces the exact
+tenant/date billing scope, including an authoritative empty result. The
+canonical calculation then writes mutually consistent chargebacks, pipeline
+state, source evidence, and allocation lineage. It does not fabricate
+calculation identity, timestamps, source evidence, or lineage from legacy
+records. The selected range may therefore change billing, chargebacks, and
+generic exports, while other dates and tenants remain unchanged.
+
+Repair creates no requested package or published revision. After all required
+dates succeed, submit a normal Daily or Monthly Preview request. Retrying a
+partial or interrupted range creates a new operation and safely performs the
+same exact-date replacements without duplicate current lineage. API-only mode
+can read retained repair status but returns 503 for POST; disabled tenants
+cannot execute or read repair.
+
 ## 3. Generate and download from the web UI
 
 Open **FOCUS Mapping Preview** at `/focus-preview` and select a tenant. The page:
@@ -186,10 +246,11 @@ checkout with `uv run`. Include `/api/v1` in `--api-url` and repeat
 Duplicate header names are preserved on submission, polling, and downloads.
 
 Chitragupta's REST API has no built-in authentication. Deployments must protect
-the complete Preview route prefix—including submission, history, status,
-manifest, file, and archive routes—behind an authenticated reverse proxy or API
-gateway. The CLI forwards every supplied `--header` on submission, status polls,
-and artifact downloads so it can use that external authentication boundary.
+the complete Preview route prefix—including repair, package submission,
+history, status, manifest, file, and archive routes—behind an authenticated
+reverse proxy or API gateway. The CLI forwards every supplied `--header` on
+submission, status polls, and artifact downloads so it can use that external
+authentication boundary.
 
 ### Request and download a package
 
@@ -312,6 +373,8 @@ All paths are under `/api/v1/tenants/{tenant_name}/focus-preview`.
 | Method and path | Purpose |
 |---|---|
 | `GET /profile` | Return the mapping profile version and ordered Full/Summary column allowlists. |
+| `POST /repairs` | In `both` mode, create a durable historical repair for an eligible retained UTC interval. |
+| `GET /repairs/{repair_id}` | Read durable operation and per-date repair status. |
 | `POST /requests` | Create an asynchronous Daily or Monthly request. |
 | `GET /requests?limit=20&cursor={request_id}` | List requests newest first. `limit` is 1–100; `next_cursor` continues the list. |
 | `GET /requests/{request_id}` | Read status, freshness, diagnostics, expiry, and ready package metadata. |
@@ -506,7 +569,7 @@ This fixed seven-day package lifecycle is independent of tenant
 | Choose physical part size | `preview.max_csv_file_bytes` | Changes filenames and part boundaries only; rows and totals are unchanged. |
 | Choose package storage/concurrency | `preview.artifact_root`, `preview.max_workers` | The root stores both package kinds; worker count applies to ad-hoc request jobs. |
 | Declare Preview commercial scope | Tenant `focus_preview` block | Currently Direct-billed PAYG and USD only. |
-| Change allocation inputs | Existing Confluent allocator/identity settings | Takes effect through a later ordinary calculation; Preview reads the persisted result and never recalculates ratios. |
+| Change allocation inputs | Existing Confluent allocator/identity settings | Takes effect through a later ordinary recalculation or explicit historical repair; Preview package generation reads the persisted result and never recalculates ratios. |
 | Enable automatic monthly publication | `features.enable_periodic_refresh` | Publication occurs after successful periodic cycles only. |
 | Control when periodic cycles run | `features.refresh_interval` | Interval in seconds; this is not a separate revision schedule. |
 | Control eligible publication months | Tenant `lookback_days`, `cutoff_days`, and `focus_preview` effective dates | Automatic generation also waits at least 72 hours after month end and requires the acquisition cutoff to cover the complete month. These controls are not archival-retention settings. |

@@ -16,6 +16,7 @@ from core.storage.backends.sqlmodel.repositories import SQLModelEntityTagReposit
 from plugins.confluent_cloud.storage.preview_repositories import (
     SQLModelPreviewAllocationLineageRepository,
     SQLModelPreviewOrganizationAuthorityRepository,
+    SQLModelPreviewRepairRepository,
     SQLModelPreviewSourceReadinessRepository,
     SQLModelPreviewSourceWindowRepository,
 )
@@ -38,6 +39,7 @@ if TYPE_CHECKING:
         PreviewSourceReadinessReader,
         PreviewSourceReadinessWriter,
     )
+    from core.preview.repair import PreviewRepairRepository
     from core.storage.interface import EntityTagRepository, IdentityRepository, ResourceRepository
 
 
@@ -51,6 +53,7 @@ class CCloudPreviewEvidenceSQLModelUnitOfWork:
     allocation_lineage: PreviewAllocationLineageWriter
     source_readiness: PreviewSourceReadinessWriter
     organization_authority: PreviewOrganizationAuthorityWriter
+    repairs: PreviewRepairRepository
 
     def __init__(self, connection_string: str, availability: PreviewEvidenceAvailability) -> None:
         _require_ready(availability)
@@ -64,6 +67,7 @@ class CCloudPreviewEvidenceSQLModelUnitOfWork:
         self.allocation_lineage = SQLModelPreviewAllocationLineageRepository(self._session)
         self.source_readiness = SQLModelPreviewSourceReadinessRepository(self._session)
         self.organization_authority = SQLModelPreviewOrganizationAuthorityRepository(self._session)
+        self.repairs = SQLModelPreviewRepairRepository(self._session)
         return self
 
     def __exit__(
@@ -110,6 +114,7 @@ class CCloudPreviewGenerationReadSQLModelUnitOfWork:
     resources: ResourceRepository
     identities: IdentityRepository
     tags: EntityTagRepository
+    repairs: PreviewRepairRepository
 
     def __init__(self, connection_string: str, availability: PreviewEvidenceAvailability) -> None:
         _require_ready(availability)
@@ -129,6 +134,7 @@ class CCloudPreviewGenerationReadSQLModelUnitOfWork:
         self.allocation_evidence = CCloudChargebackRepository(self._session)
         self.source_readiness = SQLModelPreviewSourceReadinessRepository(self._session)
         self.organization_authority = SQLModelPreviewOrganizationAuthorityRepository(self._session)
+        self.repairs = SQLModelPreviewRepairRepository(self._session)
         self.resources = SQLModelResourceRepository(self._session)
         self.identities = SQLModelIdentityRepository(self._session)
         self.tags = SQLModelEntityTagRepository(self._session)

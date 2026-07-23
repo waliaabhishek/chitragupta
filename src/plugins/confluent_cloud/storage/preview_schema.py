@@ -94,13 +94,13 @@ def _source_v18() -> sa.Table:
 
 def _source_for_revision(target_revision: str) -> sa.Table:
     table = _source_v18()
-    if target_revision in {"021", "026"}:
+    if target_revision in {"021", "026", "027"}:
         table.append_column(sa.Column("billing_timestamp", sa.DateTime(timezone=True), nullable=True))
         table.append_column(sa.Column("billing_env_id", sa.String(), nullable=True))
         table.append_column(sa.Column("billing_resource_id", sa.String(), nullable=True))
         table.append_column(sa.Column("billing_product_type", sa.String(), nullable=True))
         table.append_column(sa.Column("billing_product_category", sa.String(), nullable=True))
-    if target_revision == "026":
+    if target_revision in {"026", "027"}:
         table.append_column(sa.Column("capture_id", sa.String(), nullable=True))
     return table
 
@@ -114,7 +114,7 @@ def _sqlmodel_table(model: type[object]) -> sa.Table:
 
 def _expected_tables(target_revision: str) -> tuple[sa.Table, ...]:
     tables = [_source_for_revision(target_revision)]
-    if target_revision in {"021", "026"}:
+    if target_revision in {"021", "026", "027"}:
         from plugins.confluent_cloud.storage.preview_tables import (
             CCloudAllocationLineagePortionTable,
             CCloudAllocationLineageRunTable,
@@ -126,7 +126,7 @@ def _expected_tables(target_revision: str) -> tuple[sa.Table, ...]:
                 _sqlmodel_table(CCloudAllocationLineagePortionTable),
             )
         )
-    if target_revision == "026":
+    if target_revision in {"026", "027"}:
         from plugins.confluent_cloud.storage.preview_tables import (
             CCloudOrganizationAuthorityAttemptTable,
             CCloudSourceCaptureReadinessTable,
@@ -138,6 +138,20 @@ def _expected_tables(target_revision: str) -> tuple[sa.Table, ...]:
                 _sqlmodel_table(CCloudSourceEvidenceAttemptTable),
                 _sqlmodel_table(CCloudSourceCaptureReadinessTable),
                 _sqlmodel_table(CCloudOrganizationAuthorityAttemptTable),
+            )
+        )
+    if target_revision == "027":
+        from plugins.confluent_cloud.storage.preview_tables import (
+            CCloudFocusPreviewRepairDateTable,
+            CCloudFocusPreviewRepairTable,
+            CCloudSourceCaptureReadinessHistoryTable,
+        )
+
+        tables.extend(
+            (
+                _sqlmodel_table(CCloudSourceCaptureReadinessHistoryTable),
+                _sqlmodel_table(CCloudFocusPreviewRepairTable),
+                _sqlmodel_table(CCloudFocusPreviewRepairDateTable),
             )
         )
     return tuple(tables)
@@ -209,9 +223,9 @@ def _allowed_missing_columns(table_name: str, target_revision: str) -> frozenset
     if table_name != _SOURCE_TABLE:
         return frozenset()
     allowed: tuple[str, ...] = ()
-    if target_revision in {"021", "026"}:
+    if target_revision in {"021", "026", "027"}:
         allowed += _V21_COLUMNS
-    if target_revision == "026":
+    if target_revision in {"026", "027"}:
         allowed += _V26_COLUMNS
     return frozenset(allowed)
 
@@ -304,7 +318,7 @@ def _add_nullable_columns(
 
 class CCloudPreviewSchemaManager:
     def prepare(self, connection: Connection, *, target_revision: str) -> None:
-        if target_revision not in {"018", "021", "026"}:
+        if target_revision not in {"018", "021", "026", "027"}:
             raise ValueError(f"unknown Preview evidence target revision: {target_revision}")
         plans = tuple(
             _plan_table_repair(connection, table, target_revision=target_revision)
@@ -312,10 +326,44 @@ class CCloudPreviewSchemaManager:
         )
         for plan in plans:
             plan.apply(connection)
+        if target_revision == "027":
+            self._copy_readiness_history(connection)
+
+    @staticmethod
+    def _copy_readiness_history(connection: Connection) -> None:
+        current = sa.Table(
+            "ccloud_source_capture_readiness",
+            sa.MetaData(),
+            autoload_with=connection,
+        )
+        history = sa.Table(
+            "ccloud_source_capture_readiness_history",
+            sa.MetaData(),
+            autoload_with=connection,
+        )
+        for row in connection.execute(sa.select(current)).mappings():
+            key = sa.and_(
+                history.c.ecosystem == row["ecosystem"],
+                history.c.tenant_id == row["tenant_id"],
+                history.c.attempt_sequence == row["attempt_sequence"],
+                history.c.window_start == row["window_start"],
+                history.c.window_end == row["window_end"],
+            )
+            if connection.execute(sa.select(sa.literal(1)).where(key).limit(1)).first() is None:
+                connection.execute(sa.insert(history).values(**dict(row)))
 
     def downgrade(self, connection: Connection, *, target_revision: str) -> None:
         inspector = inspect(connection)
         names = set(inspector.get_table_names())
+        if target_revision == "027":
+            for name in (
+                "ccloud_focus_preview_repair_dates",
+                "ccloud_focus_preview_repairs",
+                "ccloud_source_capture_readiness_history",
+            ):
+                if name in names:
+                    sa.Table(name, sa.MetaData(), autoload_with=connection).drop(connection)
+            return
         if target_revision == "026":
             for name in (
                 "ccloud_source_capture_readiness",

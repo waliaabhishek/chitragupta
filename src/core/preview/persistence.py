@@ -38,6 +38,7 @@ from core.preview.evidence import (  # noqa: TC001  # resolved by get_type_hints
     PreviewCostEvidenceReader,
     PreviewEvidenceBootstrapResult,
     PreviewSourceAttempt,
+    PreviewSourceAuthoritySlice,
     PreviewSourceReadiness,
     SourceAttemptFailureReason,
     SourceAttemptFinalStatus,
@@ -63,6 +64,7 @@ from core.preview.organization_authority import (  # noqa: TC001
     PreviewOrganizationAuthorityReader,
     PreviewOrganizationAuthorityWriter,
 )
+from core.preview.repair import PreviewRepairRepository  # noqa: TC001
 from core.preview.storage_availability import PreviewEvidenceAvailability  # noqa: TC001
 from core.storage.backends.sqlmodel.mappers import ensure_utc, ensure_utc_strict
 from core.storage.backends.sqlmodel.tables import PipelineStateTable
@@ -1791,6 +1793,10 @@ class PreviewSourceReadinessWriter(Protocol):
         self, ecosystem: str, tenant_id: str, start: datetime, end: datetime
     ) -> tuple[PreviewSourceReadiness, ...]: ...
 
+    def resolve_authority(
+        self, ecosystem: str, tenant_id: str, start: datetime, end: datetime
+    ) -> tuple[PreviewSourceAuthoritySlice, ...]: ...
+
     def delete_orphaned_before(self, ecosystem: str, tenant_id: str, before: datetime) -> int: ...
 
 
@@ -1798,9 +1804,20 @@ class PreviewSourceReadinessWriter(Protocol):
 class PreviewSourceReadinessReader(Protocol):
     def get_current_authority(self, ecosystem: str, tenant_id: str) -> PreviewSourceAttempt | None: ...
 
+    def get_by_token(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        refresh_token: str,
+    ) -> PreviewSourceAttempt | None: ...
+
     def list_covering(
         self, ecosystem: str, tenant_id: str, start: datetime, end: datetime
     ) -> tuple[PreviewSourceReadiness, ...]: ...
+
+    def resolve_authority(
+        self, ecosystem: str, tenant_id: str, start: datetime, end: datetime
+    ) -> tuple[PreviewSourceAuthoritySlice, ...]: ...
 
 
 class PreviewSourceAttemptConflictError(RuntimeError):
@@ -1872,6 +1889,7 @@ class PreviewGenerationReadUnitOfWork(Protocol):
     resources: ResourceRepository
     identities: IdentityRepository
     tags: EntityTagRepository
+    repairs: PreviewRepairRepository
 
     def __enter__(self) -> Self: ...
     def __exit__(
@@ -1888,6 +1906,7 @@ class PreviewEvidenceWriteUnitOfWork(Protocol):
     allocation_lineage: PreviewAllocationLineageWriter
     source_readiness: PreviewSourceReadinessWriter
     organization_authority: PreviewOrganizationAuthorityWriter
+    repairs: PreviewRepairRepository
 
     def __enter__(self) -> Self: ...
     def __exit__(

@@ -130,6 +130,22 @@ def test_revision_cleanup_skips_disabled_tenant_without_preview_backend_work() -
     manager.cleanup_retention.assert_not_called()
 
 
+def test_scheduled_publication_and_revision_retention_skip_owned_tenant() -> None:
+    manager = MagicMock()
+    runner = _runner(publisher=manager)
+    runner._running_tenants.add("production")  # noqa: SLF001
+    now = datetime(2026, 8, 4, tzinfo=UTC)
+
+    runner._publish_scheduled_revisions(  # noqa: SLF001
+        {"production": _result()},
+        now=now,
+    )
+    runner._cleanup_preview_revision_retention(now=now)  # noqa: SLF001
+
+    manager.publish_eligible_months.assert_not_called()
+    manager.cleanup_retention.assert_not_called()
+
+
 def test_periodic_cleanup_covers_every_cached_owner_once_despite_publication_and_owner_failures() -> None:
     enabled_base = _tenant()
     disabled_base = _tenant(enabled=False)

@@ -24,6 +24,7 @@ from core.preview.evidence import (
 from core.storage.backends.sqlmodel.mappers import chargeback_to_dimension
 from core.storage.backends.sqlmodel.repositories import SQLModelChargebackRepository
 from core.storage.backends.sqlmodel.tables import ChargebackDimensionTable, ChargebackFactTable
+from core.storage.backends.sqlmodel.time_bounds import exact_utc_half_open_bounds
 from core.storage.interface import AllocationLineageRunCapture, LineageCaptureStatus
 from plugins.confluent_cloud.models.billing import CCloudBillingLineItem, CCloudCostSourceRecord
 from plugins.confluent_cloud.storage.tables import (
@@ -327,6 +328,53 @@ class CCloudBillingRepository:
         self._session.flush()
         return _table_to_line(merged)
 
+    def replace_for_date(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        tracking_date: date,
+        lines: Sequence[BillingLineItem],
+    ) -> int:
+        validated: list[CCloudBillingLineItem] = []
+        natural_keys: set[tuple[str, str, datetime, str, str, str, str]] = set()
+        for line in lines:
+            if line.ecosystem != ecosystem or line.tenant_id != tenant_id:
+                raise ValueError("historical repair billing owner mismatch")
+            timestamp = _ensure_utc_strict(line.timestamp)
+            if timestamp.date() != tracking_date:
+                raise ValueError("historical repair billing timestamp outside requested date")
+            env_id = getattr(line, "env_id", None)
+            if not isinstance(env_id, str) or not env_id.strip():
+                raise ValueError("historical repair billing line requires env_id")
+            ccloud_line = cast("CCloudBillingLineItem", line)
+            key = (
+                ecosystem,
+                tenant_id,
+                timestamp,
+                env_id,
+                line.resource_id,
+                line.product_type,
+                line.product_category,
+            )
+            if key in natural_keys:
+                raise ValueError("duplicate historical repair billing natural key")
+            natural_keys.add(key)
+            validated.append(ccloud_line)
+
+        start, end = exact_utc_half_open_bounds(self._session, *_date_to_range(tracking_date))
+        self._session.exec(
+            delete(CCloudBillingTable).where(
+                col(CCloudBillingTable.ecosystem) == ecosystem,
+                col(CCloudBillingTable.tenant_id) == tenant_id,
+                col(CCloudBillingTable.timestamp) >= start,
+                col(CCloudBillingTable.timestamp) < end,
+            )
+        )
+        rows = [_line_to_table(line) for line in validated]
+        self._session.add_all(rows)
+        self._session.flush()
+        return len(rows)
+
     def replace_source_window(
         self,
         ecosystem: str,
@@ -375,7 +423,7 @@ class CCloudBillingRepository:
         self._session.flush()
 
     def find_by_date(self, ecosystem: str, tenant_id: str, target_date: date) -> list[CCloudBillingLineItem]:
-        start, end = _date_to_range(target_date)
+        start, end = exact_utc_half_open_bounds(self._session, *_date_to_range(target_date))
         stmt = select(CCloudBillingTable).where(
             col(CCloudBillingTable.ecosystem) == ecosystem,
             col(CCloudBillingTable.tenant_id) == tenant_id,
@@ -469,13 +517,14 @@ class CCloudBillingRepository:
             yield _source_table_to_preview(row)
 
     def iter_preview_aggregates(self, scope: PreviewEvidenceScope) -> Iterator[PreviewAggregateEvidence]:
+        start, end = exact_utc_half_open_bounds(self._session, scope.start, scope.end)
         statement = (
             select(CCloudBillingTable)
             .where(
                 col(CCloudBillingTable.ecosystem) == scope.ecosystem,
                 col(CCloudBillingTable.tenant_id) == scope.tenant_id,
-                col(CCloudBillingTable.timestamp) >= scope.start,
-                col(CCloudBillingTable.timestamp) < scope.end,
+                col(CCloudBillingTable.timestamp) >= start,
+                col(CCloudBillingTable.timestamp) < end,
             )
             .order_by(
                 col(CCloudBillingTable.timestamp),
@@ -562,7 +611,7 @@ class CCloudBillingRepository:
         return self._increment_int_column(line, "topic_attribution_attempts")
 
     def _reset_int_column_by_date(self, ecosystem: str, tenant_id: str, tracking_date: date, attr: str) -> int:
-        start, end = _date_to_range(tracking_date)
+        start, end = exact_utc_half_open_bounds(self._session, *_date_to_range(tracking_date))
         stmt = (
             update(CCloudBillingTable)
             .where(

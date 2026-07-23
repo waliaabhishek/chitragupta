@@ -462,8 +462,10 @@ The `tags` column is serialized as `key=value;key=value` pairs (e.g. `team=platf
 ## FOCUS Mapping Preview
 
 FOCUS Mapping Preview is an asynchronous, Confluent Cloud-only exposition API.
-It reads persisted calculation and source evidence; it never calls the provider,
-triggers the pipeline, reruns allocation, or edits/backfills data. Requests
+Package requests and publication read persisted calculation and source evidence;
+they never call the provider, trigger the pipeline, rerun allocation, or edit
+data. A separate historical-repair API explicitly reacquires provider evidence
+and runs canonical calculation for eligible retained dates. Package requests
 support Daily or Monthly grain and Full, Summary, or Custom column profiles. The
 tenant's optional `focus_preview`
 block must establish a `direct_payg` commercial profile over the complete
@@ -482,9 +484,10 @@ generic export routes remain available.
 
 The API has no built-in authentication. Protect the entire Preview route prefix
 behind an authenticated reverse proxy or API gateway, including profile,
-submission, recent history, status, manifest, individual-file, and archive
-routes. The remote CLI's repeatable `--header NAME=VALUE` option forwards the
-deployment's external authentication headers on every request.
+repair submission/status, package submission, recent history, status, manifest,
+individual-file, and archive routes. The remote CLI's repeatable
+`--header NAME=VALUE` option forwards the deployment's external authentication
+headers on every request.
 
 ### `GET /api/v1/tenants/{tenant_name}/focus-preview/profile`
 
@@ -493,6 +496,81 @@ Return static metadata for the current `focus-1.4-preview-v5` mapping profile:
 20-column `summary_columns` subset. This endpoint validates tenant existence and
 the Confluent Cloud ecosystem but does not initialize Preview storage or the
 worker runtime.
+
+### `POST /api/v1/tenants/{tenant_name}/focus-preview/repairs`
+
+Create a durable asynchronous historical repair. This operator surface is
+REST-only and accepts new work only in `both` mode.
+
+```json
+{
+  "start_date": "2026-01-01",
+  "end_date": "2026-02-01"
+}
+```
+
+The dates are UTC with inclusive-start/exclusive-end semantics and must contain
+1–364 dates. The complete range must fit within the intersection of the
+tenant's `focus_preview` effective interval, current `lookback_days` and
+`cutoff_days` acquisition window, and complete `retention_days` interval. It
+cannot include future dates. Validation of tenant, ecosystem, enablement, and
+range occurs before repair changes pipeline data.
+
+A valid submission returns HTTP 202 with the durable queued operation and a
+`Location` header identifying its status URL. The operation fields are:
+`repair_id`, `tenant_name`, `start_date`, `end_date`, `status`, `created_at`,
+nullable `started_at`, nullable `completed_at`, nullable `diagnostic`, and
+date-ordered `dates`. Operation status is `queued`, `running`, `completed`,
+`completed_with_failures`, or `failed`.
+
+Each date contains `tracking_date`, `status`, nullable `started_at`,
+`completed_at`, `calculation_id`, `calculation_completed_at`, `rows_written`,
+`failure_stage`, and `diagnostic`. Date status is `queued`, `running`,
+`daily_validated`, `succeeded`, or `failed`. `daily_validated` is nonterminal:
+Daily Full validation passed with calculation metadata, but validation of the
+wholly selected UTC month has not completed. Failure stages are
+`retained_state`, `provider_source`, `calculation`, `evidence`,
+`preview_validation`, and `worker`. Diagnostics contain `code`, `message`,
+`retryable`, and `source_correlation_ids`.
+
+The worker processes every date in ascending order and continues after expected
+date failures. It reacquires authoritative provider billing data and may query
+historical metrics through the configured canonical allocators. The exact
+tenant/date billing scope is replaced even when the provider authoritatively
+returns no rows, then canonical calculation and evidence persistence rebuild
+chargebacks, pipeline state, source evidence, and allocation lineage. Repair
+never copies or infers calculation metadata or evidence from legacy aggregates.
+
+The selected range can change billing, chargebacks, and generic exports; other
+dates and tenants are preserved. Repair creates no requested package or
+published revision. After successful repair, create a normal Daily or Monthly
+Preview request.
+
+Submitting the same range again creates a new operation. Exact-date replacement
+makes retry deterministic without duplicate current lineage. On restart,
+interrupted operations and unfinished `queued`, `running`, or
+`daily_validated` dates are marked failed and are not automatically resumed.
+
+| Condition | Status | Detail |
+|---|---:|---|
+| Malformed, missing, or extra body field | 422 | FastAPI validation body |
+| Unknown tenant | 404 | `Tenant '<tenant_name>' not found` |
+| Unsupported ecosystem | 400 | `FOCUS Mapping Preview currently supports only Confluent Cloud tenants` |
+| Disabled tenant | 409 | `preview_commercial_profile_unavailable` diagnostic |
+| Start is not before end | 400 | `focus_preview_repair_range_invalid` diagnostic |
+| Future date included | 400 | `focus_preview_repair_future_range` diagnostic |
+| Outside effective/acquisition/retention interval or over 364 dates | 400 | `focus_preview_repair_range_ineligible` diagnostic |
+| API-only mode or missing repair runtime | 503 | `FOCUS Mapping Preview repair worker is unavailable` |
+| Repair storage unavailable | 503 | `FOCUS Mapping Preview repair storage is unavailable` |
+| Queued/running repair already exists for tenant | 409 | `focus_preview_repair_in_progress` diagnostic |
+| Target tenant is executing pipeline or maintenance work | 409 | `focus_preview_repair_tenant_busy` diagnostic |
+
+### `GET /api/v1/tenants/{tenant_name}/focus-preview/repairs/{repair_id}`
+
+Return the same durable operation and complete per-date result list. GET is
+available in `api` and `both` modes for an enabled tenant and does not require a
+running repair worker. A missing repair or a repair owned by another tenant
+returns 404. Disabled tenants retain the normal 409 enablement boundary.
 
 ### `POST /api/v1/tenants/{tenant_name}/focus-preview/requests`
 
@@ -829,8 +907,10 @@ source snapshot and package fields; manifest/file retrieval remains unavailable.
 Incomplete persisted calculation metadata has precedence over acquisition,
 commercial, currency, source, and mapping diagnostics. `lookback_days` is capped
 at 364 and classifies the current acquisition/recalculation window; it is not a
-retention or reconstruction promise. The API provides no data-editing,
-historical reconstruction, or correlation-repair endpoint.
+retention or reconstruction promise. The explicit repair endpoints above
+reacquire authoritative provider history and run canonical calculation for a
+bounded retained interval; they never create correlation or evidence by editing
+legacy aggregate metadata.
 
 ---
 

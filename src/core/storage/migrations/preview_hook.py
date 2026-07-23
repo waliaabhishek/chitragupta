@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 _ONLINE_ENABLED_UPGRADE_COMMAND = (
     "uv run alembic -c src/core/storage/migrations/alembic.ini -x focus_preview=confluent_cloud upgrade head"
 )
-_DOWNGRADE_TARGETS = {"026": "025", "021": "020", "018": "017"}
+_DOWNGRADE_TARGETS = {"027": "026", "026": "025", "021": "020", "018": "017"}
 
 
 def run_preview_evidence_step(target_revision: str) -> None:

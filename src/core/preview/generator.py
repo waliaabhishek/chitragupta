@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+from bisect import bisect_right
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from contextlib import contextmanager
 from datetime import UTC, datetime
@@ -20,6 +21,8 @@ from core.preview.evidence import (
     PreviewAllocationEvidenceDecodeError,
     PreviewEvidenceScope,
     PreviewSourceAttempt,
+    PreviewSourceAuthoritySlice,
+    PreviewSourceReadiness,
     SourceAttemptStatus,
 )
 from core.preview.mapping import (
@@ -75,6 +78,7 @@ from core.preview.persistence import (
     NoUsableCalculationCoverage,
     PartialCalculationCoverage,
     PreviewEvidenceStorageBackend,
+    PreviewSourceReadinessReader,
     PreviewStorageBackend,
 )
 from core.preview.request import PreviewEvidencePendingError, resolve_preview_evidence_interval
@@ -123,6 +127,58 @@ def _require_complete_source_authority(authority: PreviewSourceAttempt | None) -
             "run the pipeline and retry.",
             True,
         )
+
+
+def _resolve_source_authority(
+    source_readiness: PreviewSourceReadinessReader,
+    ecosystem: str,
+    tenant_id: str,
+    start: datetime,
+    end: datetime,
+) -> tuple[PreviewSourceAuthoritySlice, ...]:
+    resolver = getattr(source_readiness, "resolve_authority", None)
+    if callable(resolver):
+        resolved = resolver(ecosystem, tenant_id, start, end)
+        if isinstance(resolved, tuple) and all(isinstance(item, PreviewSourceAuthoritySlice) for item in resolved):
+            return resolved
+    authority = source_readiness.get_current_authority(ecosystem, tenant_id)
+    return (PreviewSourceAuthoritySlice(start, end, authority),)
+
+
+def _readiness_covering_slice(
+    authority_slice: PreviewSourceAuthoritySlice,
+    rows: tuple[PreviewSourceReadiness, ...],
+    starts: tuple[datetime, ...],
+) -> tuple[PreviewSourceReadiness, ...] | None:
+    cursor = authority_slice.start
+    position = max(0, bisect_right(starts, cursor) - 1)
+    used: list[PreviewSourceReadiness] = []
+    while position < len(rows):
+        item = rows[position]
+        if item.window_start > cursor or item.window_start >= authority_slice.end:
+            break
+        if item.window_end > cursor:
+            used.append(item)
+            cursor = item.window_end
+            if cursor >= authority_slice.end:
+                return tuple(used)
+        position += 1
+    return None
+
+
+def _authority_for_window(
+    authority_slices: tuple[PreviewSourceAuthoritySlice, ...],
+    starts: tuple[datetime, ...],
+    window_start: datetime,
+    window_end: datetime,
+) -> PreviewSourceAttempt | None:
+    position = bisect_right(starts, window_start) - 1
+    if position < 0:
+        return None
+    authority_slice = authority_slices[position]
+    if authority_slice.start <= window_start and window_end <= authority_slice.end:
+        return authority_slice.attempt
+    return None
 
 
 @contextmanager
@@ -298,7 +354,15 @@ class PreviewPackageGenerator:
             raise _evidence_storage_unavailable()
         if evidence_interval.start_date == evidence_interval.end_date:
             with _generation_read_unit_of_work(backend) as uow:
-                source_authority = uow.source_readiness.get_current_authority(request.ecosystem, request.tenant_id)
+                point = datetime.combine(evidence_interval.start_date, datetime.min.time(), tzinfo=UTC)
+                authority_slices = _resolve_source_authority(
+                    uow.source_readiness,
+                    request.ecosystem,
+                    request.tenant_id,
+                    point,
+                    point,
+                )
+                source_authority = authority_slices[0].attempt if authority_slices else None
                 _require_complete_source_authority(source_authority)
                 diagnostic = request_eligibility_diagnostic(request=request, policy=policy)
                 if diagnostic is not None:
@@ -336,53 +400,102 @@ class PreviewPackageGenerator:
             diagnostic = request_eligibility_diagnostic(request=request, policy=policy)
             if diagnostic is not None:
                 raise PreviewGenerationError(diagnostic)
-            source_authority = uow.source_readiness.get_current_authority(request.ecosystem, request.tenant_id)
-            _require_complete_source_authority(source_authority)
-            readiness = (
-                ()
-                if source_authority is None
-                else uow.source_readiness.list_covering(request.ecosystem, request.tenant_id, scope.start, scope.end)
+            authority_slices = _resolve_source_authority(
+                uow.source_readiness,
+                request.ecosystem,
+                request.tenant_id,
+                scope.start,
+                scope.end,
             )
-            readiness_by_window = {(item.window_start, item.window_end): item for item in readiness}
-            if source_authority is not None:
-                cursor = scope.start
-                for item in readiness:
-                    if item.attempt_sequence != source_authority.attempt_sequence:
-                        raise _failure(
-                            "preview_source_evidence_unavailable",
-                            "Native Confluent Cloud source evidence is unavailable for the requested scope; "
-                            "run the pipeline and retry.",
-                            True,
-                        )
-                    if item.window_end <= cursor:
-                        continue
-                    if item.window_start > cursor:
-                        break
-                    cursor = max(cursor, item.window_end)
-                if cursor < scope.end:
+            readiness = uow.source_readiness.list_covering(
+                request.ecosystem,
+                request.tenant_id,
+                scope.start,
+                scope.end,
+            )
+            readiness_by_window = {
+                (item.attempt_sequence, item.window_start, item.window_end): item for item in readiness
+            }
+            readiness_by_attempt: dict[int, list[PreviewSourceReadiness]] = {}
+            for item in readiness:
+                readiness_by_attempt.setdefault(item.attempt_sequence, []).append(item)
+            readiness_index = {
+                attempt_sequence: (
+                    tuple(items),
+                    tuple(item.window_start for item in items),
+                )
+                for attempt_sequence, items in readiness_by_attempt.items()
+            }
+            effective_readiness: list[PreviewSourceReadiness] = []
+            for authority_slice in authority_slices:
+                _require_complete_source_authority(authority_slice.attempt)
+                if authority_slice.attempt is None:
+                    continue
+                indexed = readiness_index.get(authority_slice.attempt.attempt_sequence)
+                covering = (
+                    None
+                    if indexed is None
+                    else _readiness_covering_slice(
+                        authority_slice,
+                        indexed[0],
+                        indexed[1],
+                    )
+                )
+                if covering is None:
                     raise _failure(
                         "preview_source_evidence_unavailable",
                         "Native Confluent Cloud source evidence is unavailable for the requested scope; "
                         "run the pipeline and retry.",
                         True,
                     )
+                effective_readiness.extend(covering)
+            authority_starts = tuple(item.start for item in authority_slices)
             accepted: list[SelectedSourceProjection] = []
             winning_issue: PreviewSourceIssue | None = None
             issue_correlations: tuple[str, ...] = ()
             valid_correlations: tuple[str, ...] = ()
             unsupported_provider_context = False
             for candidate in uow.cost_evidence.iter_preview_sources(scope):
-                if source_authority is not None:
-                    window_readiness = readiness_by_window.get(
-                        (candidate.collection_window_start, candidate.collection_window_end)
+                if (
+                    candidate.collection_window_start.tzinfo is None
+                    or candidate.collection_window_start.utcoffset() is None
+                    or candidate.collection_window_end.tzinfo is None
+                    or candidate.collection_window_end.utcoffset() is None
+                    or candidate.collection_window_start >= candidate.collection_window_end
+                ):
+                    raise _failure(
+                        "preview_source_evidence_unavailable",
+                        "Native Confluent Cloud source evidence is unavailable for the requested scope; "
+                        "run the pipeline and retry.",
+                        True,
                     )
-                    if window_readiness is None or candidate.capture_id != window_readiness.capture_id:
-                        raise _failure(
-                            "preview_source_evidence_unavailable",
-                            "Native Confluent Cloud source evidence is unavailable for the requested scope; "
-                            "run the pipeline and retry.",
-                            True,
-                        )
+                matching_authority = _authority_for_window(
+                    authority_slices,
+                    authority_starts,
+                    max(candidate.collection_window_start, scope.start),
+                    min(candidate.collection_window_end, scope.end),
+                )
+                if matching_authority is None:
+                    raise _failure(
+                        "preview_source_evidence_unavailable",
+                        "Native Confluent Cloud source evidence is unavailable for the requested scope; "
+                        "run the pipeline and retry.",
+                        True,
+                    )
+                window_readiness = readiness_by_window.get(
+                    (
+                        matching_authority.attempt_sequence,
+                        candidate.collection_window_start,
+                        candidate.collection_window_end,
+                    )
+                )
+                if window_readiness is None or candidate.capture_id != window_readiness.capture_id:
+                    raise _failure(
+                        "preview_source_evidence_unavailable",
+                        "Native Confluent Cloud source evidence is unavailable for the requested scope; "
+                        "run the pipeline and retry.",
+                        True,
+                    )
                 issue: PreviewSourceIssue | None
                 classification = classify_daily_full_source(request_start=start, request_end=end, source=candidate)
                 correlation = public_source_correlation_id(
@@ -425,7 +538,7 @@ class PreviewPackageGenerator:
                 valid_correlations = capped_correlations([*valid_correlations, correlation])
             if winning_issue is not None:
                 raise PreviewGenerationError(source_issue_diagnostic(winning_issue, issue_correlations))
-            if source_authority is None and accepted:
+            if any(item.attempt is None for item in authority_slices) and accepted:
                 raise _failure(
                     "preview_source_evidence_unavailable",
                     "Native Confluent Cloud source evidence is unavailable for the requested scope; "
@@ -515,7 +628,7 @@ class PreviewPackageGenerator:
                 monthly_status=monthly_status,
             )
             if not selected_by_origin:
-                if source_authority is not None and any(item.source_count for item in readiness):
+                if any(item.source_count for item in effective_readiness):
                     raise _failure(
                         "preview_source_evidence_unavailable",
                         "Native Confluent Cloud source evidence is unavailable for the requested scope; "

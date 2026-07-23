@@ -63,6 +63,7 @@ from core.storage.backends.sqlmodel.tables import (
     PipelineStateTable,
 )
 from core.storage.backends.sqlmodel.tag_joins import TagJoinSpec, build_tag_join_specs
+from core.storage.backends.sqlmodel.time_bounds import exact_utc_half_open_bounds
 
 logger = logging.getLogger(__name__)
 
@@ -1064,8 +1065,7 @@ class SQLModelChargebackRepository:
         return items, total
 
     def delete_by_date(self, ecosystem: str, tenant_id: str, target_date: date) -> int:
-        start, end = _date_to_range(target_date)
-
+        start, end = exact_utc_half_open_bounds(self._session, *_date_to_range(target_date))
         dim_subquery = (
             select(ChargebackDimensionTable.dimension_id)
             .where(
@@ -1999,9 +1999,11 @@ class TopicAttributionRepository:
 
     def delete_by_date(self, ecosystem: str, tenant_id: str, target_date: date) -> int:
         """Delete all facts for a specific date. Returns count deleted."""
-        start = datetime(target_date.year, target_date.month, target_date.day, tzinfo=UTC)
-        end = start + timedelta(days=1)
-
+        start, end = exact_utc_half_open_bounds(
+            self._session,
+            datetime(target_date.year, target_date.month, target_date.day, tzinfo=UTC),
+            datetime(target_date.year, target_date.month, target_date.day, tzinfo=UTC) + timedelta(days=1),
+        )
         dim_ids_stmt = select(TopicAttributionDimensionTable.dimension_id).where(
             col(TopicAttributionDimensionTable.ecosystem) == ecosystem,
             col(TopicAttributionDimensionTable.tenant_id) == tenant_id,

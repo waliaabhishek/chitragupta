@@ -53,6 +53,28 @@ class CCloudNativeSourceEvidenceCapture:
         attempt_sequence: int,
         captured_at: datetime,
     ) -> PreviewSourceCaptureReceipt:
+        receipt = self.write(
+            source_windows,
+            source_readiness,
+            attempt_sequence=attempt_sequence,
+            captured_at=captured_at,
+        )
+        source_readiness.finalize_attempt(
+            attempt_sequence,
+            SourceAttemptFinalStatus.COMPLETE,
+            completed_at=captured_at,
+            reason=None,
+        )
+        return receipt
+
+    def write(
+        self,
+        source_windows: PreviewSourceWindowWriter,
+        source_readiness: PreviewSourceReadinessWriter,
+        *,
+        attempt_sequence: int,
+        captured_at: datetime,
+    ) -> PreviewSourceCaptureReceipt:
         result = source_windows.replace_capture(
             self,
             attempt_sequence=attempt_sequence,
@@ -81,12 +103,6 @@ class CCloudNativeSourceEvidenceCapture:
         )
         if persisted != captures or result.records_written != sum(item.source_count for item in captures):
             raise PreviewSourceCapturePersistenceError("persisted source capture does not match its plan")
-        source_readiness.finalize_attempt(
-            attempt_sequence,
-            SourceAttemptFinalStatus.COMPLETE,
-            completed_at=captured_at,
-            reason=None,
-        )
         return PreviewSourceCaptureReceipt(
             ecosystem=self.ecosystem,
             tenant_id=self.tenant_id,

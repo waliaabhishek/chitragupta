@@ -57,7 +57,7 @@ preview:
 | Field | Type | Default | Constraints | Description |
 |---|---|---|---|---|
 | `preview.artifact_root` | path | `data/focus-preview` | writable directory | Durable local root for immutable Preview packages. Relative paths resolve from the process working directory. |
-| `preview.max_workers` | int | `2` | 1–16 | Maximum ad-hoc Preview request jobs in this API process. Scheduled publication does not use this pool. |
+| `preview.max_workers` | int | `2` | 1–16 | Maximum background jobs for each Preview request or historical-repair runtime in this API process. Scheduled publication does not use these pools. |
 | `preview.max_csv_file_bytes` | int or null | `null` | positive integer or null | Maximum bytes per CSV part, including its repeated header and LF record terminators. `null` emits one `cost-and-usage.csv`; a positive value enables deterministic row-boundary partitioning. |
 
 Scheduled current monthly revisions use the ordinary periodic worker settings:
@@ -116,6 +116,14 @@ current configured contract, while generated `BillingCurrency` remains null and
 the manifest identifies the provider-field limitation. See the
 [Confluent Cloud reference](ccloud-reference.md#focus-mapping-preview-eligibility)
 for the fail-closed rules and retention boundary.
+
+Historical repair has no separate eligibility override. Its bounded UTC range
+must fit within the intersection of `focus_preview` effective dates, the current
+`lookback_days` and `cutoff_days` acquisition window, and the complete
+`retention_days` interval. Submission is REST-only and requires `both` mode;
+`api` mode can read retained status but cannot execute repair. Valid Confluent
+Cloud billing credentials, retained provider history, and any historical
+metrics required by the configured allocation paths must still be available.
 
 See [FOCUS Mapping Preview](../focus-mapping-preview.md) for the complete setup,
 request, download, package, expiry, and customization workflow.
