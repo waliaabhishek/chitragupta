@@ -7,12 +7,14 @@ import json
 import logging
 import re
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from decimal import Context, Decimal, localcontext
 from enum import StrEnum
+from itertools import zip_longest
+from pathlib import Path
 from types import MappingProxyType
-from typing import Literal
+from typing import Literal, cast
 
 import core.preview.models as preview_models
 from core.models.identity import Identity  # noqa: TC001 - resolved by contract tests
@@ -35,6 +37,13 @@ from core.preview.models import (
     PreviewSourceSnapshot,
     preview_month,
     validate_preview_request_snapshot,
+)
+from core.preview.spooling import (
+    SQLITE_BATCH_SIZE,
+    PreviewGenerationWorkspace,
+    PreviewSpooledArtifactCollection,
+    PreviewSpooledBody,
+    spooled_body_metadata,
 )
 from core.storage.interface import ResourceRepository  # noqa: TC001 - resolved by contract tests
 
@@ -1527,6 +1536,17 @@ def validate_allocation_lineage_structure(
     ordinals = {item.portion_ordinal for item in allocations}
     if len(ordinals) != len(allocations) or ordinals != set(range(len(allocations))):
         raise PreviewAllocationLineageError("allocation lineage ordinals are invalid")
+    for allocation in allocations:
+        validate_allocation_lineage_portion(aggregate=aggregate, allocation=allocation)
+
+
+def validate_allocation_lineage_portion(
+    *,
+    aggregate: PreviewAggregateEvidence,
+    allocation: PreviewAllocationEvidence,
+) -> None:
+    """Validate one allocation portion without retaining its sibling portions."""
+
     origin = (
         aggregate.timestamp,
         aggregate.environment_id,
@@ -1534,55 +1554,54 @@ def validate_allocation_lineage_structure(
         aggregate.native_product,
         aggregate.native_line_type,
     )
-    for allocation in allocations:
-        allocation_origin = (
-            allocation.timestamp,
-            allocation.environment_id,
-            allocation.resource_id,
-            allocation.native_product,
-            allocation.native_line_type,
+    allocation_origin = (
+        allocation.timestamp,
+        allocation.environment_id,
+        allocation.resource_id,
+        allocation.native_product,
+        allocation.native_line_type,
+    )
+    target_valid = (allocation.target_kind == "unallocated" and allocation.target_id is None) or (
+        allocation.target_kind in {"identity", "resource"}
+        and isinstance(allocation.target_id, str)
+        and bool(allocation.target_id.strip())
+        and (allocation.target_kind != "resource" or allocation.target_id == aggregate.resource_id)
+    )
+    quantity_sign_valid = (
+        aggregate.quantity == 0
+        and allocation.allocated_quantity == 0
+        or aggregate.quantity > 0
+        and allocation.allocated_quantity >= 0
+        or aggregate.quantity < 0
+        and allocation.allocated_quantity <= 0
+    )
+    try:
+        with localcontext(_DECIMAL_CONTEXT):
+            realized_ratio = allocation.allocated_cost / allocation.origin_total_cost
+        decode_lineage_method_details(
+            allocation.method_details_json,
+            target_kind=allocation.target_kind,
         )
-        target_valid = (allocation.target_kind == "unallocated" and allocation.target_id is None) or (
-            allocation.target_kind in {"identity", "resource"}
-            and isinstance(allocation.target_id, str)
-            and bool(allocation.target_id.strip())
-            and (allocation.target_kind != "resource" or allocation.target_id == aggregate.resource_id)
-        )
-        quantity_sign_valid = (
-            aggregate.quantity == 0
-            and allocation.allocated_quantity == 0
-            or aggregate.quantity > 0
-            and allocation.allocated_quantity >= 0
-            or aggregate.quantity < 0
-            and allocation.allocated_quantity <= 0
-        )
-        try:
-            with localcontext(_DECIMAL_CONTEXT):
-                realized_ratio = allocation.allocated_cost / allocation.origin_total_cost
-            decode_lineage_method_details(
-                allocation.method_details_json,
-                target_kind=allocation.target_kind,
-            )
-        except (ArithmeticError, ValueError) as exc:
-            raise PreviewAllocationLineageError("allocation lineage encoding is invalid") from exc
-        if not (
-            allocation_origin == origin
-            and allocation.origin_total_cost == aggregate.total_cost
-            and allocation.origin_quantity == aggregate.quantity
-            and allocation.origin_unit_price == aggregate.unit_price
-            and allocation.origin_currency == aggregate.compatibility_currency
-            and allocation.origin_granularity == aggregate.granularity
-            and allocation.method_id.strip()
-            and allocation.method_version == "v1"
-            and allocation.allocation_ratio.is_finite()
-            and allocation.allocation_ratio >= 0
-            and allocation.allocation_ratio == realized_ratio
-            and allocation.allocated_cost.is_finite()
-            and allocation.allocated_quantity.is_finite()
-            and quantity_sign_valid
-            and target_valid
-        ):
-            raise PreviewAllocationLineageError("allocation lineage structure is invalid")
+    except (ArithmeticError, ValueError) as exc:
+        raise PreviewAllocationLineageError("allocation lineage encoding is invalid") from exc
+    if not (
+        allocation_origin == origin
+        and allocation.origin_total_cost == aggregate.total_cost
+        and allocation.origin_quantity == aggregate.quantity
+        and allocation.origin_unit_price == aggregate.unit_price
+        and allocation.origin_currency == aggregate.compatibility_currency
+        and allocation.origin_granularity == aggregate.granularity
+        and allocation.method_id.strip()
+        and allocation.method_version == "v1"
+        and allocation.allocation_ratio.is_finite()
+        and allocation.allocation_ratio >= 0
+        and allocation.allocation_ratio == realized_ratio
+        and allocation.allocated_cost.is_finite()
+        and allocation.allocated_quantity.is_finite()
+        and quantity_sign_valid
+        and target_valid
+    ):
+        raise PreviewAllocationLineageError("allocation lineage structure is invalid")
 
 
 def reconcile_allocation_lineage_totals(
@@ -2318,6 +2337,11 @@ class PreviewDataPackageDraft:
     rows: int
     reconciliation: PreviewPackageReconciliation
     logical_data_sha256: str
+    _workspace: PreviewGenerationWorkspace | None = field(default=None, repr=False, compare=False)
+
+    def close(self) -> None:
+        if self._workspace is not None:
+            self._workspace.close()
 
 
 def _preview_csv_record(values: Iterable[object]) -> bytes:
@@ -2401,6 +2425,205 @@ def build_preview_data_package(
     )
 
 
+def build_bounded_preview_data_package(
+    *,
+    request: PreviewRequest,
+    snapshot: PreviewSourceSnapshot,
+    full_rows: Iterable[PreviewFullRow],
+    reconciliation: PreviewPackageReconciliation,
+    max_csv_file_bytes: int | None,
+    max_generation_spool_bytes: int,
+    workspace: PreviewGenerationWorkspace | None = None,
+) -> PreviewDataPackageDraft:
+    """Render a package through an external SQLite order and disk-backed parts."""
+
+    validate_preview_effective_columns(request.column_profile, request.effective_columns)
+    validate_preview_request_snapshot(
+        request=request,
+        snapshot=snapshot,
+        resulting_status=PreviewRequestStatus.READY,
+        mode="candidate_ready",
+    )
+    header = _preview_csv_record(request.effective_columns)
+    if max_csv_file_bytes is not None and (max_csv_file_bytes <= 0 or len(header) > max_csv_file_bytes):
+        raise PreviewCsvFileSizeError("A Preview CSV header or row exceeds the configured file-size limit.")
+    if reconciliation.source_records < 0:
+        raise PreviewMappingError("source record count cannot be negative")
+
+    workspace = workspace or PreviewGenerationWorkspace(max_generation_spool_bytes)
+    database_path = workspace.root / "projection.sqlite"
+    all_columns = FOCUS_1_4_FULL_PROFILE_COLUMNS
+    sort_column_count = len(all_columns)
+    sort_columns = tuple(f"sort_{index}" for index in range(sort_column_count))
+    quoted_sort_columns = ", ".join(f'"{column}" TEXT NOT NULL' for column in sort_columns)
+    insert_columns = ", ".join((*sort_columns, "encounter_ordinal", "record"))
+    placeholders = ", ".join("?" for _ in range(sort_column_count + 2))
+    order_columns = ", ".join((*sort_columns, "encounter_ordinal"))
+    row_count = 0
+    try:
+        with workspace.sqlite_connection(database_path) as connection:
+            connection.execute(
+                f"""
+                CREATE TABLE ordered_rows (
+                    {quoted_sort_columns},
+                    encounter_ordinal INTEGER NOT NULL,
+                    record BLOB NOT NULL,
+                    PRIMARY KEY ({order_columns})
+                ) WITHOUT ROWID
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE artifacts (
+                    file_order INTEGER PRIMARY KEY,
+                    name TEXT NOT NULL UNIQUE,
+                    media_type TEXT NOT NULL,
+                    path TEXT NOT NULL,
+                    size_bytes INTEGER NOT NULL,
+                    sha256 TEXT NOT NULL
+                )
+                """
+            )
+            pending_rows = 0
+            for row_count, row in enumerate(full_rows, start=1):
+                serialized = tuple(preview_serialize_cell(value) for value in (*row.target_values, *row.custom_values))
+                values = dict(zip(all_columns, (*row.target_values, *row.custom_values), strict=True))
+                record = _preview_csv_record(
+                    preview_serialize_cell(values[column]) for column in request.effective_columns
+                )
+                if max_csv_file_bytes is not None and len(header) + len(record) > max_csv_file_bytes:
+                    raise PreviewCsvFileSizeError("A Preview CSV header or row exceeds the configured file-size limit.")
+                workspace.preflight_write(len(record) + sum(len(value.encode()) for value in serialized))
+                connection.execute(
+                    f"INSERT INTO ordered_rows ({insert_columns}) VALUES ({placeholders})",
+                    (*serialized, row_count, record),
+                )
+                pending_rows += 1
+                if pending_rows == SQLITE_BATCH_SIZE:
+                    connection.commit()
+                    workspace.enforce_limit()
+                    pending_rows = 0
+            if pending_rows:
+                connection.commit()
+                workspace.enforce_limit()
+            if reconciliation.source_records == 0:
+                if (
+                    reconciliation.source_cost != 0
+                    or reconciliation.allocated_cost != 0
+                    or row_count
+                    or snapshot.source_through is not None
+                ):
+                    raise PreviewMappingError("zero-source package state is inconsistent")
+            elif not row_count or snapshot.source_through is None:
+                raise PreviewMappingError("positive-source package state is inconsistent")
+
+            logical_hasher = hashlib.sha256(header)
+            part_handle = None
+            part_hasher = hashlib.sha256()
+            part_size = 0
+            part_count = 0
+            current_part_path: Path | None = None
+
+            def open_part() -> None:
+                nonlocal current_part_path, part_count, part_handle, part_hasher, part_size
+                part_count += 1
+                current_part_path = workspace.root / f"part-{part_count:020d}.tmp"
+                part_handle = current_part_path.open("xb")
+                workspace.record_write(len(header))
+                part_handle.write(header)
+                part_hasher = hashlib.sha256(header)
+                part_size = len(header)
+
+            def close_part() -> None:
+                nonlocal part_handle
+                assert part_handle is not None
+                assert current_part_path is not None
+                part_handle.flush()
+                part_handle.close()
+                part_handle = None
+                database_size = workspace.constrain_sqlite_growth(connection, database_path)
+                connection.execute(
+                    """
+                    INSERT INTO artifacts (file_order, name, media_type, path, size_bytes, sha256)
+                    VALUES (?, ?, 'text/csv', ?, ?, ?)
+                    """,
+                    (
+                        part_count,
+                        current_part_path.name,
+                        str(current_part_path),
+                        part_size,
+                        part_hasher.hexdigest(),
+                    ),
+                )
+                connection.commit()
+                database_growth = database_path.stat().st_size - database_size
+                if database_growth > 0:
+                    workspace.record_write(database_growth)
+
+            open_part()
+            cursor = connection.execute(f"SELECT record FROM ordered_rows ORDER BY {order_columns}")
+            for (record_value,) in cursor:
+                record = bytes(record_value)
+                logical_hasher.update(record)
+                if max_csv_file_bytes is not None and part_size + len(record) > max_csv_file_bytes:
+                    close_part()
+                    open_part()
+                assert part_handle is not None
+                workspace.record_write(len(record))
+                part_handle.write(record)
+                part_hasher.update(record)
+                part_size += len(record)
+            close_part()
+
+            width = max(5, len(str(part_count)))
+            artifacts = connection.execute("SELECT file_order, path FROM artifacts ORDER BY file_order")
+            for index, path_text in artifacts:
+                name = (
+                    "cost-and-usage.csv"
+                    if part_count == 1
+                    else f"cost-and-usage-part-{index:0{width}d}-of-{part_count:0{width}d}.csv"
+                )
+                path = Path(str(path_text))
+                final_path = workspace.root / name
+                path.rename(final_path)
+                connection.execute(
+                    """
+                    UPDATE artifacts
+                    SET name = ?, path = ?
+                    WHERE file_order = ?
+                    """,
+                    (name, str(final_path), index),
+                )
+            workspace.constrain_sqlite_growth(connection, database_path)
+            connection.execute("DROP TABLE ordered_rows")
+            connection.commit()
+            workspace.enforce_limit()
+
+        if row_count == 0:
+            body = (workspace.root / "cost-and-usage.csv").read_bytes()
+            return PreviewDataPackageDraft(
+                data_files=(PreviewArtifactPayload("cost-and-usage.csv", "text/csv", 1, body),),
+                source_records=reconciliation.source_records,
+                rows=0,
+                reconciliation=reconciliation,
+                logical_data_sha256=logical_hasher.hexdigest(),
+                _workspace=workspace,
+            )
+
+        data_files = PreviewSpooledArtifactCollection(database_path)
+        return PreviewDataPackageDraft(
+            data_files=cast("tuple[PreviewArtifactPayload, ...]", data_files),
+            source_records=reconciliation.source_records,
+            rows=row_count,
+            reconciliation=reconciliation,
+            logical_data_sha256=logical_hasher.hexdigest(),
+            _workspace=workspace,
+        )
+    except BaseException:
+        workspace.close()
+        raise
+
+
 def preview_revision_content_sha256(
     *,
     logical_data_sha256: str,
@@ -2421,6 +2644,97 @@ def preview_revision_content_sha256(
     return hashlib.sha256(preview_canonical_json(preimage).encode()).hexdigest()
 
 
+def _validate_rendered_file_metadata(
+    draft: PreviewDataPackageDraft,
+    files: Iterable[PreviewArtifactMetadata],
+) -> None:
+    missing = object()
+    for payload, metadata in zip_longest(draft.data_files, files, fillvalue=missing):
+        if payload is missing or metadata is missing:
+            raise PreviewMappingError("artifact metadata does not match rendered package bytes")
+        assert isinstance(payload, PreviewArtifactPayload)
+        assert isinstance(metadata, PreviewArtifactMetadata)
+        size_bytes, sha256 = spooled_body_metadata(payload.body)
+        if metadata != PreviewArtifactMetadata(
+            name=payload.name,
+            media_type=payload.media_type,
+            size_bytes=size_bytes,
+            sha256=sha256,
+            order=payload.order,
+        ):
+            raise PreviewMappingError("artifact metadata does not match rendered package bytes")
+
+
+def _render_manifest(
+    manifest: Mapping[str, object],
+    *,
+    files: Iterable[PreviewArtifactMetadata],
+    workspace: PreviewGenerationWorkspace | None,
+) -> bytes:
+    if workspace is None:
+        return (
+            preview_canonical_json(
+                {
+                    **manifest,
+                    "files": [
+                        {
+                            "name": item.name,
+                            "media_type": item.media_type,
+                            "size_bytes": item.size_bytes,
+                            "sha256": item.sha256,
+                            "order": item.order,
+                        }
+                        for item in files
+                    ],
+                }
+            )
+            + "\n"
+        ).encode()
+
+    manifest_path = workspace.root / "manifest.json.tmp"
+    keys = sorted((*manifest, "files"))
+    digest = hashlib.sha256()
+    size_bytes = 0
+    with manifest_path.open("xb") as handle:
+
+        def write(value: bytes) -> None:
+            nonlocal size_bytes
+            workspace.record_write(len(value))
+            handle.write(value)
+            digest.update(value)
+            size_bytes += len(value)
+
+        write(b"{")
+        for key_index, key in enumerate(keys):
+            if key_index:
+                write(b",")
+            write(json.dumps(key, separators=(",", ":")).encode())
+            write(b":")
+            if key != "files":
+                write(preview_canonical_json(manifest[key]).encode())
+                continue
+            write(b"[")
+            for file_index, item in enumerate(files):
+                if file_index:
+                    write(b",")
+                write(
+                    preview_canonical_json(
+                        {
+                            "name": item.name,
+                            "media_type": item.media_type,
+                            "size_bytes": item.size_bytes,
+                            "sha256": item.sha256,
+                            "order": item.order,
+                        }
+                    ).encode()
+                )
+            write(b"]")
+        write(b"}\n")
+        handle.flush()
+    workspace.enforce_limit()
+    return cast("bytes", PreviewSpooledBody(manifest_path, size_bytes, digest.hexdigest()))
+
+
 def build_requested_preview_manifest(
     *,
     request: PreviewRequest,
@@ -2434,18 +2748,7 @@ def build_requested_preview_manifest(
         raise PreviewMappingError("ready_at must be timezone-aware")
     if expires_at != ready_at + timedelta(days=7):
         raise PreviewMappingError("expires_at must be exactly seven days after ready_at")
-    expected = tuple(
-        PreviewArtifactMetadata(
-            name=item.name,
-            media_type=item.media_type,
-            size_bytes=len(item.body),
-            sha256=hashlib.sha256(item.body).hexdigest(),
-            order=item.order,
-        )
-        for item in draft.data_files
-    )
-    if files != expected:
-        raise PreviewMappingError("artifact metadata does not match rendered package bytes")
+    _validate_rendered_file_metadata(draft, files)
     reconciliation = draft.reconciliation
     evidence_start = snapshot.effective_coverage_start_date
     evidence_end = snapshot.effective_coverage_end_date
@@ -2529,18 +2832,8 @@ def build_requested_preview_manifest(
             "retention_days": 7,
         },
         "generated_at": preview_utc_text(ready_at),
-        "files": [
-            {
-                "name": item.name,
-                "media_type": item.media_type,
-                "size_bytes": item.size_bytes,
-                "sha256": item.sha256,
-                "order": item.order,
-            }
-            for item in files
-        ],
     }
-    return (preview_canonical_json(manifest) + "\n").encode()
+    return _render_manifest(manifest, files=files, workspace=draft._workspace)
 
 
 def preview_revision_source_snapshot(snapshot: PreviewSourceSnapshot) -> dict[str, object]:
@@ -2591,18 +2884,7 @@ def build_preview_revision_manifest(
     )
     if published_at.tzinfo is None or published_at.utcoffset() is None:
         raise PreviewMappingError("published_at must be timezone-aware")
-    expected = tuple(
-        PreviewArtifactMetadata(
-            name=item.name,
-            media_type=item.media_type,
-            size_bytes=len(item.body),
-            sha256=hashlib.sha256(item.body).hexdigest(),
-            order=item.order,
-        )
-        for item in draft.data_files
-    )
-    if files != expected:
-        raise PreviewMappingError("artifact metadata does not match rendered package bytes")
+    _validate_rendered_file_metadata(draft, files)
     mapping_profile_version = MAPPING_PROFILE_VERSION
     target_focus_version = "1.4"
     column_profile: PreviewColumnProfile = "full"
@@ -2657,18 +2939,8 @@ def build_preview_revision_manifest(
                 preview_subtract_decimals(reconciliation.source_quantity, reconciliation.allocated_quantity)
             ),
         },
-        "files": [
-            {
-                "name": item.name,
-                "media_type": item.media_type,
-                "size_bytes": item.size_bytes,
-                "sha256": item.sha256,
-                "order": item.order,
-            }
-            for item in files
-        ],
     }
-    return (preview_canonical_json(manifest) + "\n").encode()
+    return _render_manifest(manifest, files=files, workspace=draft._workspace)
 
 
 def _validate_profile_definition() -> None:

@@ -145,12 +145,21 @@ authority only for enabled tenants. Preview requests and scheduled revisions
 reuse that persisted evidence and do not make provider calls. Preview-only
 capture, schema, or authority failures do not change generic chargeback results.
 
-The top-level `preview.max_csv_file_bytes` setting controls only physical CSV
-part boundaries. Request grain and Full/Summary/Custom profiles control report
-shape. FOCUS field mappings, charge classification, Summary membership,
-manifest schema, and package lifetime are code-owned and have no YAML override.
-See [FOCUS Mapping Preview](../focus-mapping-preview.md) for request and download
-examples.
+The top-level Preview capacity settings apply per process. Requested packages
+and scheduled tenant-month publication share `preview.max_workers`,
+`preview.max_queued_generations`,
+`preview.max_running_generations_per_tenant`, and
+`preview.max_queued_generations_per_tenant`. A full scheduler rejects a
+requested package with retryable HTTP 429 and defers scheduled publication to a
+later periodic cycle. `preview.max_generation_spool_bytes` defaults to 2 GiB
+per running generation and bounds its temporary disk use.
+
+`preview.max_csv_file_bytes` controls only physical CSV part boundaries.
+Request grain and Full/Summary/Custom profiles control report shape. FOCUS field
+mappings, charge classification, Summary membership, manifest schema, and
+package lifetime are code-owned and have no YAML override. See
+[FOCUS Mapping Preview](../focus-mapping-preview.md) for capacity validation,
+request, and download examples.
 
 When `features.enable_periodic_refresh` is enabled, each successful periodic
 tenant cycle also evaluates settlement-ready Monthly Full revisions. Candidate

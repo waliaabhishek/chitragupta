@@ -310,42 +310,45 @@ def test_stage_or_publish_failure_leaves_failed_request_and_no_ready_package(
     runtime = _runtime(tmp_path, backend, executor)
     store = runtime._artifact_store
 
-    if failure_point == "stage":
-        monkeypatch.setattr(
-            store,
-            "stage_data_files",
-            lambda **_kwargs: (_ for _ in ()).throw(OSError("stage failed")),
-        )
-    else:
-        real_stage = store.stage_data_files
+    real_begin = store.begin_generation
 
-        class PublishFailure:
-            def __init__(self, staged: object) -> None:
-                self.staged = staged
+    class GenerationFailure:
+        def __init__(self, generation: object) -> None:
+            self.generation = generation
 
-            @property
-            def files(self) -> object:
-                return self.staged.files
+        @property
+        def workspace(self) -> object:
+            return self.generation.workspace
 
-            def publish(self, *, manifest_body: bytes) -> object:
-                del manifest_body
+        @property
+        def files(self) -> object:
+            return self.generation.files
+
+        def stage_data_files(self, data_files: object) -> None:
+            if failure_point == "stage":
+                raise OSError("stage failed")
+            self.generation.stage_data_files(data_files)
+
+        def publish(self, *, manifest_body: bytes) -> object:
+            if failure_point == "publish":
                 raise OSError("publish failed")
+            return self.generation.publish(manifest_body=manifest_body)
 
-            def close(self) -> None:
-                self.staged.close()
+        def close(self) -> None:
+            self.generation.close()
 
-            def __enter__(self) -> PublishFailure:
-                self.staged.__enter__()
-                return self
+        def __enter__(self) -> GenerationFailure:
+            self.generation.__enter__()
+            return self
 
-            def __exit__(self, *args: object) -> None:
-                self.staged.__exit__(*args)
+        def __exit__(self, *args: object) -> None:
+            self.generation.__exit__(*args)
 
-        monkeypatch.setattr(
-            store,
-            "stage_data_files",
-            lambda **kwargs: PublishFailure(real_stage(**kwargs)),
-        )
+    monkeypatch.setattr(
+        store,
+        "begin_generation",
+        lambda **kwargs: GenerationFailure(real_begin(**kwargs)),
+    )
     try:
         queued = _submit_range(runtime, backend, date(2026, 7, 2))
         executor.run_all()
@@ -464,7 +467,7 @@ def test_worker_ready_path_preserves_validation_artifact_and_compare_and_set_ord
     real_candidate_validate = mapping.validate_preview_request_snapshot
     real_build_data = generator.build_preview_data_package
     real_build_manifest = service.build_requested_preview_manifest
-    real_stage = runtime._artifact_store.stage_data_files
+    real_begin = runtime._artifact_store.begin_generation
     real_replace = persistence.replace
     real_post_init = models.PreviewRequest.__post_init__
     real_strict_validate = persistence.validate_preview_request_snapshot
@@ -489,32 +492,38 @@ def test_worker_ready_path_preserves_validation_artifact_and_compare_and_set_ord
         events.append("data-draft-built")
         return result
 
-    class RecordingStaged:
-        def __init__(self, staged: object) -> None:
-            self._staged = staged
+    class RecordingGeneration:
+        def __init__(self, generation: object) -> None:
+            self._generation = generation
+
+        @property
+        def workspace(self) -> object:
+            return self._generation.workspace
 
         @property
         def files(self) -> object:
-            return self._staged.files
+            return self._generation.files
+
+        def stage_data_files(self, data_files: object) -> None:
+            self._generation.stage_data_files(data_files)
+            events.append("data-staged-fsynced")
 
         def publish(self, *, manifest_body: bytes) -> object:
             events.append("published")
-            return self._staged.publish(manifest_body=manifest_body)
+            return self._generation.publish(manifest_body=manifest_body)
 
         def close(self) -> None:
-            self._staged.close()
+            self._generation.close()
 
-        def __enter__(self) -> RecordingStaged:
-            self._staged.__enter__()
+        def __enter__(self) -> RecordingGeneration:
+            self._generation.__enter__()
             return self
 
         def __exit__(self, *args: object) -> None:
-            self._staged.__exit__(*args)
+            self._generation.__exit__(*args)
 
-    def stage(*args: object, **kwargs: object) -> object:
-        staged = real_stage(*args, **kwargs)
-        events.append("data-staged-fsynced")
-        return RecordingStaged(staged)
+    def begin(*args: object, **kwargs: object) -> object:
+        return RecordingGeneration(real_begin(*args, **kwargs))
 
     captured_manifest_times: list[tuple[datetime, datetime]] = []
 
@@ -571,7 +580,7 @@ def test_worker_ready_path_preserves_validation_artifact_and_compare_and_set_ord
     monkeypatch.setattr(mapping, "validate_preview_request_snapshot", candidate_validate)
     monkeypatch.setattr(generator, "build_preview_data_package", build_data)
     monkeypatch.setattr(service, "build_requested_preview_manifest", build_manifest)
-    monkeypatch.setattr(runtime._artifact_store, "stage_data_files", stage)
+    monkeypatch.setattr(runtime._artifact_store, "begin_generation", begin)
     monkeypatch.setattr(persistence, "replace", replace_candidate)
     monkeypatch.setattr(models.PreviewRequest, "__post_init__", post_init)
     monkeypatch.setattr(persistence, "validate_preview_request_snapshot", strict_validate)
@@ -643,20 +652,36 @@ def test_rendering_and_data_fsync_finish_before_retention_clock_starts(
         executor=executor,
     )
     real_build = generator.build_preview_data_package
-    real_stage = store.stage_data_files
+    real_begin = store.begin_generation
 
     def slow_build(**kwargs: object) -> object:
         result = real_build(**kwargs)
         clock.now += timedelta(hours=3)
         return result
 
-    def slow_stage(**kwargs: object) -> object:
-        result = real_stage(**kwargs)
-        clock.now += timedelta(hours=4)
-        return result
+    class SlowGeneration:
+        def __init__(self, generation: object) -> None:
+            self.generation = generation
+
+        def __getattr__(self, name: str) -> object:
+            return getattr(self.generation, name)
+
+        def stage_data_files(self, data_files: object) -> None:
+            self.generation.stage_data_files(data_files)
+            clock.now += timedelta(hours=4)
+
+        def __enter__(self) -> SlowGeneration:
+            self.generation.__enter__()
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            self.generation.__exit__(*args)
+
+    def slow_begin(**kwargs: object) -> object:
+        return SlowGeneration(real_begin(**kwargs))
 
     monkeypatch.setattr(generator, "build_preview_data_package", slow_build)
-    monkeypatch.setattr(store, "stage_data_files", slow_stage)
+    monkeypatch.setattr(store, "begin_generation", slow_begin)
     try:
         queued = _submit_range(runtime, backend, date(2026, 7, 2))
         executor.run_all()

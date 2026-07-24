@@ -155,7 +155,14 @@ def test_migration_022_matches_direct_create_all_preview_request_schema_before_e
     assert {column["name"] for column in sa_inspect(migrated).get_columns("preview_requests")} == {
         column["name"]
         for column in sa_inspect(direct).get_columns("preview_requests")
-        if column["name"] not in {"expires_at", "worker_id", "lease_expires_at"}
+        if column["name"]
+        not in {
+            "expires_at",
+            "worker_id",
+            "lease_expires_at",
+            "artifact_file_count",
+            "artifact_file_catalog_sha256",
+        }
     }
 
     migrated.dispose()

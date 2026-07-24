@@ -51,16 +51,33 @@ process-wide settings, not tenant settings:
 preview:
   artifact_root: /var/lib/chitragupta/focus-preview
   max_workers: 2
+  max_queued_generations: 8
+  max_running_generations_per_tenant: 1
+  max_queued_generations_per_tenant: 2
+  max_generation_spool_bytes: 2147483648
   max_csv_file_bytes: null
 ```
 
 | Field | Type | Default | Constraints | Description |
 |---|---|---|---|---|
 | `preview.artifact_root` | path | `data/focus-preview` | writable directory | Durable local root for immutable Preview packages. Relative paths resolve from the process working directory. |
-| `preview.max_workers` | int | `2` | 1–16 | Maximum background jobs for each Preview request or historical-repair runtime in this API process. Scheduled publication does not use these pools. |
+| `preview.max_workers` | int | `2` | 1–16 | Process-local running-generation limit shared by requested packages and scheduled publication. It also remains the worker count for the separate historical-repair runtime. |
+| `preview.max_queued_generations` | int | `8` | zero or positive | Process-local maximum waiting requested and scheduled generations across all tenants. |
+| `preview.max_running_generations_per_tenant` | int | `1` | positive and no greater than `max_workers` | Maximum running generations for one tenant. |
+| `preview.max_queued_generations_per_tenant` | int | `2` | zero or positive | Maximum waiting generations for one tenant. |
+| `preview.max_generation_spool_bytes` | int | `2147483648` (2 GiB) | positive | Hard temporary-disk ceiling for one running generation. |
 | `preview.max_csv_file_bytes` | int or null | `null` | positive integer or null | Maximum bytes per CSV part, including its repeated header and LF record terminators. `null` emits one `cost-and-usage.csv`; a positive value enables deterministic row-boundary partitioning. |
 
-Scheduled current monthly revisions use the ordinary periodic worker settings:
+Both queue limits must be zero together or both positive. When positive,
+`max_queued_generations_per_tenant` must be lower than
+`max_queued_generations`. Setting both to zero disables waiting: a requested
+generation receives HTTP 429 unless it can start immediately, while an eligible
+scheduled tenant-month is deferred to a later periodic cycle. Requested and
+scheduled work share the same process-local running and waiting limits, with
+fair capacity across tenants.
+
+Scheduled current monthly revisions are discovered by the ordinary periodic
+worker:
 
 ```yaml
 features:
@@ -69,10 +86,13 @@ features:
 ```
 
 After each successful periodic tenant cycle, Preview evaluates settlement-ready
-Monthly Full revisions. Automatic publication starts with a validated Settled
-revision; active and otherwise incomplete months remain available through
-ad-hoc requests. Disabling periodic refresh disables automatic revision
-publication; run-once and ad-hoc request execution do not replace it.
+Monthly Full revisions and admits each eligible tenant-month independently to
+the shared generation scheduler. Full capacity defers that month without
+creating a revision or changing the current pointer; a later cycle reevaluates
+it. Automatic publication starts with a validated Settled revision; active and
+otherwise incomplete months remain available through ad-hoc requests.
+Disabling periodic refresh disables automatic revision publication; run-once
+and ad-hoc request execution do not replace it.
 
 The artifact root must be on durable storage and writable by both the API and
 periodic worker. If they run separately, mount and configure the same path in

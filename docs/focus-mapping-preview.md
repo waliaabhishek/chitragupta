@@ -31,6 +31,10 @@ must fit inside the configured half-open effective interval.
 preview:
   artifact_root: data/focus-preview
   max_workers: 2
+  max_queued_generations: 8
+  max_running_generations_per_tenant: 1
+  max_queued_generations_per_tenant: 2
+  max_generation_spool_bytes: 2147483648
   max_csv_file_bytes: null
 
 tenants:
@@ -85,8 +89,19 @@ The process-wide Preview settings are:
 | Setting | Default | Valid values | Effect |
 |---|---:|---|---|
 | `preview.artifact_root` | `data/focus-preview` | Writable local path | Stores immutable requested packages and published monthly revisions. Changing it does not move existing packages. |
-| `preview.max_workers` | `2` | 1–16 | Maximum background jobs for each Preview request or repair runtime in one API process. |
+| `preview.max_workers` | `2` | 1–16 | Process-local running-generation limit shared by requested packages and scheduled publication; also the separate repair-runtime worker count. |
+| `preview.max_queued_generations` | `8` | Zero or a positive integer | Maximum requested and scheduled generations waiting across all tenants in one process. |
+| `preview.max_running_generations_per_tenant` | `1` | Positive and no greater than `max_workers` | Running-generation limit for one tenant. |
+| `preview.max_queued_generations_per_tenant` | `2` | Zero or a positive integer | Waiting-generation limit for one tenant. |
+| `preview.max_generation_spool_bytes` | `2147483648` (2 GiB) | Positive integer | Hard temporary-disk ceiling for one running generation. |
 | `preview.max_csv_file_bytes` | `null` | `null` or a positive integer | `null` produces one CSV. A byte limit splits output into deterministic parts without splitting rows. |
+
+The global and per-tenant queue limits must both be zero or both be positive.
+When positive, the per-tenant queue limit must be lower than the global queue
+limit. Zero disables waiting: an ad-hoc request must start immediately or
+returns retryable HTTP 429, while a scheduled month is deferred. Positive
+queues provide fair capacity across tenants. Limits are per application
+process, not distributed across replicas.
 
 See the [Confluent Cloud configuration reference](configuration/ccloud-reference.md)
 for the remaining collection and allocation settings.
@@ -135,6 +150,10 @@ volume at `/app/data`:
 preview:
   artifact_root: /app/data/focus-preview
   max_workers: 2
+  max_queued_generations: 8
+  max_running_generations_per_tenant: 1
+  max_queued_generations_per_tenant: 2
+  max_generation_spool_bytes: 2147483648
   max_csv_file_bytes: null
 ```
 
@@ -166,7 +185,10 @@ continuously running periodic worker. `--run-once`, direct tenant runs, and
 ad-hoc Daily or Monthly Preview requests do not publish revisions. Active,
 sub-72-hour, and acquisition-cutoff-incomplete months are excluded before
 package generation. On-demand Monthly requests remain available and can produce
-Provisional packages for those months.
+Provisional packages for those months. Scheduled and ad-hoc generation share
+the same bounded process-local capacity. If a tenant-month cannot be admitted,
+the worker defers it without creating a revision or changing the current
+pointer; a later periodic cycle reevaluates it.
 
 ### Repair retained upgraded dates
 
@@ -315,6 +337,11 @@ uv run chitragupta-preview status \
 `--no-wait` performs only the POST. It prints the request ID, or the complete
 queued response with `--json`, and cannot be combined with a download output.
 `status` performs one GET unless `--wait` is present.
+
+If submission receives HTTP 429
+`preview_capacity_exhausted`, no request was created. The CLI exits with code 1
+and does not retry automatically. Wait for running or queued Preview work to
+drain, then repeat the same command.
 
 Download an existing ready request:
 
@@ -572,6 +599,18 @@ metadata transaction commits. If publication is interrupted, same-process or
 restart recovery removes abandoned staging work and retries incomplete request
 terminalization, expiry cleanup, and revision retention.
 
+Package generation uses bounded temporary disk rather than retaining a complete
+package in memory. `preview.max_generation_spool_bytes` defaults to a 2 GiB
+hard ceiling for each running generation. Exceeding it fails an ad-hoc request
+with non-retryable
+`preview_generation_spool_limit_exceeded`; scheduled publication creates no
+revision and preserves the current revision.
+
+Artifact retrieval incrementally validates the manifest and verifies stored
+sizes and SHA-256 values before response delivery, then streams verified
+manifest, CSV, and ZIP bytes in fixed chunks. Large stored artifacts therefore
+do not require a matching whole-body response allocation.
+
 Recovery does not infer ownership from a directory name alone. It takes an
 owner-scoped snapshot of every non-null request and revision storage reference,
 then rechecks each apparent finalized orphan against authoritative metadata
@@ -598,7 +637,7 @@ requested-package owner-recovery step.
 | Choose reporting period | Daily `start_date`/`end_date` or Monthly `month` | Daily cannot span more than one UTC calendar month. |
 | Choose columns | Full, Summary, or Custom profile | Full emits 65 FOCUS columns plus 12 evidence columns; Summary emits its fixed 20-column subset; Custom uses only names returned by `GET /profile`. |
 | Choose physical part size | `preview.max_csv_file_bytes` | Changes filenames and part boundaries only; rows and totals are unchanged. |
-| Choose package storage/concurrency | `preview.artifact_root`, `preview.max_workers` | The root stores both package kinds; worker count applies to ad-hoc request jobs. |
+| Choose package storage/capacity | `preview.artifact_root`, `preview.max_workers`, queue/per-tenant limits, `preview.max_generation_spool_bytes` | Requested and scheduled generation share process-local capacity; the spool ceiling applies to each running generation. |
 | Declare Preview commercial scope | Tenant `focus_preview` block | Currently Direct-billed PAYG and USD only. |
 | Change allocation inputs | Existing Confluent allocator/identity settings | Takes effect through a later ordinary recalculation or explicit historical repair; Preview package generation reads the persisted result and never recalculates ratios. |
 | Enable automatic monthly publication | `features.enable_periodic_refresh` | Publication occurs after successful periodic cycles only. |

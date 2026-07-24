@@ -70,6 +70,10 @@ class RecordingStore:
         del storage_key, metadata
         raise AssertionError("not used")
 
+    def open_verified(self, storage_key: str, metadata: PreviewArtifactMetadata) -> Never:
+        del storage_key, metadata
+        raise AssertionError("not used")
+
     def open_archive(
         self,
         *,

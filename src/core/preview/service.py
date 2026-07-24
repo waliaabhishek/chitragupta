@@ -1,24 +1,31 @@
 from __future__ import annotations
 
-import json
 import logging
 import threading
 import uuid
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import UTC, date, datetime, timedelta
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Literal, Protocol, overload, runtime_checkable
 
 from core.preview.artifacts import (
     PreviewArtifactIntegrityError,
     PreviewArtifactOwner,
+    PreviewRuntimeArtifactStore,
+    find_preview_artifact_metadata,
     preview_artifact_owner,
+)
+from core.preview.capacity import (
+    PreviewCapacityUnavailable,
+    PreviewGenerationScheduler,
+    PreviewRequestedReservation,
 )
 from core.preview.eligibility import (
     PreviewEligibilityPolicy,
     policy_from_tenant_config,
 )
 from core.preview.generator import PreviewGenerationError, PreviewPackageGenerator
+from core.preview.manifest_validation import validate_requested_manifest
 from core.preview.mapping import (
     build_requested_preview_manifest,
     validate_preview_effective_columns,
@@ -36,13 +43,17 @@ from core.preview.persistence import (
     PreviewRequestPage,
     PreviewStorageBackend,
 )
+from core.preview.spooling import PreviewGenerationSpoolLimitError
 from core.storage.backend_provider import (  # noqa: TC001 - public runtime constructor annotation is resolvable
     TenantBackendProvider,
 )
 
 if TYPE_CHECKING:
     from core.config.models import TenantConfig
-    from core.preview.artifacts import PreviewArchiveStream, PreviewArtifactStore
+    from core.preview.artifacts import (
+        PreviewArchiveStream,
+        PreviewVerifiedArtifactStream,
+    )
 
 logger = logging.getLogger(__name__)
 _PREVIEW_LEASE_DURATION = timedelta(seconds=30)
@@ -85,15 +96,20 @@ class PreviewRuntime:
     def __init__(
         self,
         *,
-        artifact_store: PreviewArtifactStore,
+        artifact_store: PreviewRuntimeArtifactStore,
         backend_provider: TenantBackendProvider,
         max_workers: int,
+        max_queued_generations: int = 8,
+        max_running_generations_per_tenant: int = 1,
+        max_queued_generations_per_tenant: int = 2,
+        max_generation_spool_bytes: int = 2_147_483_648,
         max_csv_file_bytes: int | None = None,
         startup_at: datetime | None = None,
         configured_owners: tuple[PreviewArtifactOwner, ...] = (),
         clock: Callable[[], datetime] = utc_now,
         request_id_factory: Callable[[], str] = new_uuid,
         executor: PreviewExecutor | None = None,
+        scheduler: PreviewGenerationScheduler | None = None,
         lease_owner_id: str | None = None,
         package_generator: PreviewPackageGenerator | None = None,
     ) -> None:
@@ -101,8 +117,10 @@ class PreviewRuntime:
         self._backend_provider = backend_provider
         self._clock = clock
         self._max_csv_file_bytes = max_csv_file_bytes
+        self._max_generation_spool_bytes = max_generation_spool_bytes
         self._package_generator = package_generator or PreviewPackageGenerator(
             max_csv_file_bytes=max_csv_file_bytes,
+            max_generation_spool_bytes=max_generation_spool_bytes,
             clock=clock,
         )
         process_start = startup_at if startup_at is not None else utc_now()
@@ -132,8 +150,21 @@ class PreviewRuntime:
         self._lease_targets: dict[str, tuple[str, TenantConfig]] = {}
         self._heartbeat_stop = threading.Event()
         self._heartbeat_thread: threading.Thread | None = None
-        self._owns_executor = executor is None
-        self._executor: PreviewExecutor = executor or ThreadPoolExecutor(max_workers=max_workers)
+        if scheduler is not None and executor is not None:
+            raise ValueError("executor cannot be supplied with a shared scheduler")
+        self._owns_scheduler = scheduler is None
+        if scheduler is None:
+            owns_executor = executor is None
+            scheduler_executor = executor or ThreadPoolExecutor(max_workers=max_workers)
+            scheduler = PreviewGenerationScheduler(
+                max_workers=max_workers,
+                max_queued_generations=max_queued_generations,
+                max_running_generations_per_tenant=max_running_generations_per_tenant,
+                max_queued_generations_per_tenant=max_queued_generations_per_tenant,
+                executor=scheduler_executor,
+                shutdown_executor=owns_executor,
+            )
+        self._scheduler = scheduler
         self._closed = False
 
     @staticmethod
@@ -298,6 +329,8 @@ class PreviewRuntime:
     def _untrack_request(self, request_id: str) -> None:
         with self._lease_lock:
             self._lease_targets.pop(request_id, None)
+            if self._closed and not self._lease_targets:
+                self._heartbeat_stop.set()
 
     def _heartbeat_loop(self) -> None:
         while not self._heartbeat_stop.wait(_PREVIEW_HEARTBEAT_INTERVAL_SECONDS):
@@ -336,9 +369,12 @@ class PreviewRuntime:
         grain: PreviewGrain,
         column_profile: PreviewColumnProfile,
         effective_columns: tuple[str, ...],
+        reservation: PreviewRequestedReservation | None = None,
     ) -> PreviewRequest:
         if self._closed:
             raise PreviewWorkerUnavailable("preview runtime is closed")
+        owner = preview_artifact_owner(tenant_name, tenant_config)
+        requested_reservation = reservation or self.reserve_requested(owner=owner)
         created_at = self._clock().astimezone(UTC).replace(microsecond=0)
         policy = policy_from_tenant_config(tenant_config, created_at=created_at)
         validate_preview_effective_columns(column_profile, effective_columns)
@@ -368,22 +404,33 @@ class PreviewRuntime:
             resulting_status=request.status,
             mode="strict_materialized",
         )
-        with backend.create_preview_write_unit_of_work() as uow:
-            uow.requests.create_queued(
-                request,
-                worker_id=self._lease_owner_id,
-                lease_expires_at=self._lease_expiry(),
-            )
-            uow.commit()
+        try:
+            with backend.create_preview_write_unit_of_work() as uow:
+                uow.requests.create_queued(
+                    request,
+                    worker_id=self._lease_owner_id,
+                    lease_expires_at=self._lease_expiry(),
+                )
+                uow.commit()
+        except BaseException:
+            requested_reservation.cancel()
+            raise
         self._track_request(request.request_id, tenant_name, tenant_config)
         try:
-            self._executor.submit(lambda: self._run_worker(request, policy, tenant_config))
+            requested_reservation.attach(
+                work_id=request.request_id,
+                run=lambda: self._run_worker(request, policy, tenant_config),
+                on_cancel=lambda: self._cancel_waiting_request(request, tenant_config),
+            )
         except Exception as exc:
+            scheduling_error: BaseException = exc
+            while scheduling_error.__cause__ is not None:
+                scheduling_error = scheduling_error.__cause__
             logger.error(
                 "FOCUS Mapping Preview worker scheduling failed tenant=%s request_id=%s error_type=%s",
                 request.tenant_name,
                 request.request_id,
-                type(exc).__name__,
+                type(scheduling_error).__name__,
             )
             diagnostic = PreviewDiagnostic(
                 "preview_worker_unavailable", "FOCUS Mapping Preview worker is unavailable.", True
@@ -397,6 +444,35 @@ class PreviewRuntime:
             self._untrack_request(request.request_id)
             raise PreviewWorkerUnavailable("FOCUS Mapping Preview worker is unavailable") from exc
         return request
+
+    def _cancel_waiting_request(
+        self,
+        request: PreviewRequest,
+        tenant_config: TenantConfig,
+    ) -> None:
+        diagnostic = PreviewDiagnostic(
+            "preview_generation_interrupted",
+            "FOCUS Mapping Preview generation was interrupted before completion.",
+            True,
+        )
+        try:
+            if not self._mark_failed_with_lease(request, tenant_config, diagnostic):
+                self._remember_terminalization(
+                    request_id=request.request_id,
+                    owner=preview_artifact_owner(request.tenant_name, tenant_config),
+                    diagnostic=diagnostic,
+                )
+        finally:
+            self._untrack_request(request.request_id)
+
+    def reserve_requested(
+        self,
+        *,
+        owner: PreviewArtifactOwner,
+    ) -> PreviewRequestedReservation:
+        if self._closed:
+            raise PreviewCapacityUnavailable
+        return self._scheduler.reserve_requested(owner=owner)
 
     def _run_worker(
         self,
@@ -443,6 +519,7 @@ class PreviewRuntime:
         owner: PreviewArtifactOwner,
     ) -> None:
         stored = None
+        draft = None
         ready_committed = False
         failure_diagnostic = PreviewDiagnostic(
             "preview_generation_failed",
@@ -460,39 +537,50 @@ class PreviewRuntime:
                 if running is None:
                     return
                 uow.commit()
-            snapshot, draft = self._package_generator.generate(
-                backend=backend,
-                request=running,
-                policy=policy,
-            )
-            with self._artifact_store.stage_data_files(
-                owner=owner,
-                request_id=request.request_id,
-                data_files=draft.data_files,
-            ) as staged:
-                ready_at = self._clock().astimezone(UTC).replace(microsecond=0)
-                expires_at = ready_at + timedelta(days=7)
-                manifest_body = build_requested_preview_manifest(
-                    request=running,
-                    snapshot=snapshot,
-                    draft=draft,
-                    files=staged.files,
-                    ready_at=ready_at,
-                    expires_at=expires_at,
-                )
-                stored = staged.publish(manifest_body=manifest_body)
-                with backend.create_preview_write_unit_of_work() as uow:
-                    if not uow.requests.mark_ready(
-                        request.request_id,
-                        ready_at,
-                        expires_at,
-                        snapshot,
-                        stored,
-                        worker_id=self._lease_owner_id,
-                    ):
-                        raise _PreviewReadyTransitionError(stored.storage_key)
-                    uow.commit()
-                    ready_committed = True
+            try:
+                with self._artifact_store.begin_generation(
+                    owner=owner,
+                    request_id=request.request_id,
+                    max_spool_bytes=self._max_generation_spool_bytes,
+                ) as generation:
+                    snapshot, draft = self._package_generator.generate(
+                        backend=backend,
+                        request=running,
+                        policy=policy,
+                        workspace=generation.workspace,
+                    )
+                    generation.stage_data_files(draft.data_files)
+                    ready_at = self._clock().astimezone(UTC).replace(microsecond=0)
+                    expires_at = ready_at + timedelta(days=7)
+                    manifest_body = build_requested_preview_manifest(
+                        request=running,
+                        snapshot=snapshot,
+                        draft=draft,
+                        files=generation.files,
+                        ready_at=ready_at,
+                        expires_at=expires_at,
+                    )
+                    stored = generation.publish(manifest_body=manifest_body)
+                    with backend.create_preview_write_unit_of_work() as uow:
+                        if not uow.requests.mark_ready(
+                            request.request_id,
+                            ready_at,
+                            expires_at,
+                            snapshot,
+                            stored,
+                            worker_id=self._lease_owner_id,
+                        ):
+                            raise _PreviewReadyTransitionError(stored.storage_key)
+                        uow.commit()
+                        ready_committed = True
+            except PreviewGenerationSpoolLimitError:
+                raise PreviewGenerationError(
+                    PreviewDiagnostic(
+                        "preview_generation_spool_limit_exceeded",
+                        "FOCUS Mapping Preview package exceeds the configured generation spool limit.",
+                        False,
+                    )
+                ) from None
         except PreviewGenerationError as exc:
             if not self._mark_failed(backend, request.request_id, exc.diagnostic):
                 self._remember_terminalization(
@@ -518,13 +606,26 @@ class PreviewRuntime:
                 request.request_id,
                 type(exc).__name__,
             )
-            if not self._mark_failed(backend, request.request_id, failure_diagnostic):
+            if ready_committed:
+                with self._recovery_state_lock:
+                    self._owner_recovery_pending.add(self._owner_key(owner))
+            elif not self._mark_failed(backend, request.request_id, failure_diagnostic):
                 self._remember_terminalization(
                     request_id=request.request_id,
                     owner=owner,
                     diagnostic=failure_diagnostic,
                 )
         finally:
+            if draft is not None:
+                try:
+                    draft.close()
+                except OSError:
+                    logger.exception(
+                        "FOCUS Mapping Preview generation workspace cleanup failed request_id=%s",
+                        request.request_id,
+                    )
+                    with self._recovery_state_lock:
+                        self._owner_recovery_pending.add(self._owner_key(owner))
             if stored is not None and not ready_committed:
                 with self._recovery_state_lock:
                     self._owner_recovery_pending.add(self._owner_key(owner))
@@ -683,37 +784,49 @@ class PreviewRuntime:
                 )
                 raise PreviewRecoveryUnavailable("FOCUS Mapping Preview recovery is unavailable") from None
 
-    def _verified_manifest_body(self, request: PreviewRequest) -> bytes:
+    def _open_verified_manifest(self, request: PreviewRequest) -> PreviewVerifiedArtifactStream:
         if request.storage_key is None or request.package is None:
             raise PreviewArtifactUnavailable("preview package is unavailable")
-        body = self._artifact_store.read_manifest(request.storage_key, request.package.manifest)
         try:
-            manifest = json.loads(body)
-        except UnicodeDecodeError, json.JSONDecodeError:
-            raise PreviewArtifactIntegrityError("stored preview manifest is invalid") from None
-        if not isinstance(manifest, dict) or manifest.get("request_id") != request.request_id:
-            raise PreviewArtifactIntegrityError("stored preview manifest identity is invalid")
-        declarations = manifest.get("files")
-        if not isinstance(declarations, list):
-            raise PreviewArtifactIntegrityError("stored preview manifest file declarations are invalid")
-        actual = tuple(declaration for declaration in declarations if isinstance(declaration, dict))
-        expected = tuple(
-            {
-                "name": item.name,
-                "media_type": item.media_type,
-                "size_bytes": item.size_bytes,
-                "sha256": item.sha256,
-                "order": item.order,
-            }
-            for item in request.package.files
-        )
-        if len(actual) != len(declarations) or actual != expected:
-            raise PreviewArtifactIntegrityError("stored preview manifest metadata is inconsistent")
-        return body
+            stream = self._artifact_store.open_verified(request.storage_key, request.package.manifest)
+            try:
+                validate_requested_manifest(stream, request)
+            except BaseException:
+                stream.close()
+                raise
+            return stream
+        except OSError:
+            raise
+        except ValueError as exc:
+            raise PreviewArtifactIntegrityError("stored preview manifest is invalid") from exc
 
-    def read_manifest_bytes(self, request: PreviewRequest) -> bytes:
+    def _verified_manifest_body(self, request: PreviewRequest) -> bytes:
+        with self._open_verified_manifest(request) as stream:
+            return b"".join(stream.iter_chunks())
+
+    @overload
+    def read_manifest_bytes(self, request: PreviewRequest) -> bytes: ...
+
+    @overload
+    def read_manifest_bytes(
+        self,
+        request: PreviewRequest,
+        *,
+        stream: Literal[True],
+    ) -> PreviewVerifiedArtifactStream: ...
+
+    def read_manifest_bytes(
+        self,
+        request: PreviewRequest,
+        *,
+        stream: bool = False,
+    ) -> bytes | PreviewVerifiedArtifactStream:
         try:
-            return self._verified_manifest_body(request)
+            opened = self._open_verified_manifest(request)
+            if stream:
+                return opened
+            with opened:
+                return b"".join(opened.iter_chunks())
         except (OSError, ValueError) as exc:
             logger.error(
                 "FOCUS Mapping Preview manifest read failed tenant=%s request_id=%s error_type=%s",
@@ -723,17 +836,51 @@ class PreviewRuntime:
             )
             raise PreviewArtifactUnavailable("preview package is unavailable") from None
 
-    def read_file_bytes(self, request: PreviewRequest, file_name: str) -> bytes:
+    @overload
+    def read_file_bytes(self, request: PreviewRequest, file_name: str) -> bytes: ...
+
+    @overload
+    def read_file_bytes(
+        self,
+        request: PreviewRequest,
+        file_name: str,
+        *,
+        stream: Literal[True],
+    ) -> PreviewVerifiedArtifactStream: ...
+
+    def read_file_bytes(
+        self,
+        request: PreviewRequest,
+        file_name: str,
+        *,
+        stream: bool = False,
+    ) -> bytes | PreviewVerifiedArtifactStream:
+        opened = self._open_file_stream(request, file_name)
+        if stream:
+            return opened
+        with opened:
+            return b"".join(opened.iter_chunks())
+
+    def open_manifest_stream(self, request: PreviewRequest) -> PreviewVerifiedArtifactStream:
+        return self.read_manifest_bytes(request, stream=True)
+
+    def _open_file_stream(
+        self,
+        request: PreviewRequest,
+        file_name: str,
+    ) -> PreviewVerifiedArtifactStream:
         if (
             request.storage_key is None
             or request.package is None
-            or file_name not in {item.name for item in request.package.files}
+            or find_preview_artifact_metadata(request.package.files, file_name) is None
         ):
             raise PreviewArtifactUnavailable("preview package is unavailable")
         try:
-            self._verified_manifest_body(request)
-            metadata = next(item for item in request.package.files if item.name == file_name)
-            return self._artifact_store.read_file(request.storage_key, metadata)
+            with self._open_verified_manifest(request):
+                pass
+            metadata = find_preview_artifact_metadata(request.package.files, file_name)
+            assert metadata is not None
+            return self._artifact_store.open_verified(request.storage_key, metadata)
         except (OSError, ValueError) as exc:
             logger.error(
                 "FOCUS Mapping Preview file read failed tenant=%s request_id=%s error_type=%s",
@@ -742,6 +889,13 @@ class PreviewRuntime:
                 type(exc).__name__,
             )
             raise PreviewArtifactUnavailable("preview package is unavailable") from None
+
+    def open_file_stream(
+        self,
+        request: PreviewRequest,
+        file_name: str,
+    ) -> PreviewVerifiedArtifactStream:
+        return self.read_file_bytes(request, file_name, stream=True)
 
     def open_archive(self, request: PreviewRequest) -> PreviewArchiveStream:
         if request.storage_key is None or request.package is None:
@@ -766,8 +920,19 @@ class PreviewRuntime:
         if self._closed:
             return
         self._closed = True
-        if self._owns_executor:
-            self._executor.shutdown(wait=wait, cancel_futures=False)
-        self._heartbeat_stop.set()
-        if self._heartbeat_thread is not None:
-            self._heartbeat_thread.join(timeout=None if wait else 0)
+        scheduler_error: BaseException | None = None
+        try:
+            if self._owns_scheduler:
+                self._scheduler.close(wait=wait)
+            elif wait:
+                self._scheduler.wait_idle()
+        except BaseException as exc:
+            scheduler_error = exc
+        finally:
+            with self._lease_lock:
+                if wait or not self._lease_targets:
+                    self._heartbeat_stop.set()
+            if wait and self._heartbeat_thread is not None:
+                self._heartbeat_thread.join()
+        if scheduler_error is not None:
+            raise scheduler_error

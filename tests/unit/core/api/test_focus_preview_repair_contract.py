@@ -241,6 +241,7 @@ class _ProductionRunnerDouble:
         self.backend = backend
         self.events = events
         self.busy = False
+        self.preview_generation_scheduler = None
 
     @contextmanager
     def acquire_backend(

@@ -135,6 +135,24 @@ class _Reader:
             raise FileNotFoundError("unknown revision file")
         return metadata, f"csv-body:{revision.revision_id}".encode()
 
+    def open_manifest_stream(self, *, revision: Any) -> Any:
+        self.calls.append(f"manifest:{revision.revision_id}")
+        if failure := self.failures.get("read_manifest"):
+            raise failure
+        return _Archive(body=f'{{"revision_id":"{revision.revision_id}"}}'.encode())
+
+    def open_file_stream(self, *, revision: Any, file_name: str) -> tuple[Any, Any]:
+        self.calls.append(f"file:{revision.revision_id}:{file_name}")
+        if failure := self.failures.get("read_file"):
+            raise failure
+        metadata = next(
+            (item for item in revision.package.files if item.name == file_name),
+            None,
+        )
+        if metadata is None:
+            raise FileNotFoundError("unknown revision file")
+        return metadata, _Archive(body=f"csv-body:{revision.revision_id}".encode())
+
     def open_archive(self, *, revision: Any) -> Any:
         self.calls.append(f"archive:{revision.revision_id}")
         if failure := self.failures.get("open_archive"):

@@ -462,6 +462,7 @@ def test_v5_daily_and_monthly_ready_rows_round_trip_through_sqlite_and_api(
                        effective_columns_json, effective_coverage_start_date,
                        effective_coverage_end_date, availability_cutoff_end_date,
                        monthly_status, manifest_metadata_json, data_files_json,
+                       artifact_file_count,
                        completed_at, expires_at
                 FROM preview_requests WHERE request_id = :request_id
                 """
@@ -469,6 +470,17 @@ def test_v5_daily_and_monthly_ready_rows_round_trip_through_sqlite_and_api(
             {"request_id": request_id},
         ).one()
         revision_count = connection.execute(text("SELECT COUNT(*) FROM preview_revisions")).scalar_one()
+        catalog_sha256 = connection.execute(
+            text(
+                """
+                SELECT sha256 FROM preview_artifact_files
+                WHERE ecosystem = 'confluent_cloud' AND tenant_id = 'tenant-1'
+                  AND package_kind = 'requested' AND package_id = :request_id
+                  AND file_order = 1
+                """
+            ),
+            {"request_id": request_id},
+        ).scalar_one()
     engine.dispose()
     assert persisted.grain == grain
     assert str(persisted.start_date) == start.isoformat()
@@ -490,7 +502,9 @@ def test_v5_daily_and_monthly_ready_rows_round_trip_through_sqlite_and_api(
     assert persisted.monthly_status == monthly_status
     assert revision_count == 0
     assert json.loads(persisted.manifest_metadata_json)["sha256"] == hashlib.sha256(package.manifest_body).hexdigest()
-    assert json.loads(persisted.data_files_json)[0]["sha256"] == hashlib.sha256(package.data_files[0].body).hexdigest()
+    assert persisted.data_files_json is None
+    assert persisted.artifact_file_count == 1
+    assert catalog_sha256 == hashlib.sha256(package.data_files[0].body).hexdigest()
 
     app = create_app(_settings(connection_string, artifact_root))
     provider = FixedTenantBackendProvider({"production": backend})

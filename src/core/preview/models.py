@@ -5,7 +5,10 @@ import re
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from enum import StrEnum
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
+
+if TYPE_CHECKING:
+    from core.preview.spooling import PreviewSpooledBody
 
 logger = logging.getLogger(__name__)
 
@@ -225,6 +228,8 @@ class PreviewPackageMetadata:
     def __post_init__(self) -> None:
         if self.manifest.order is not None:
             raise ValueError("manifest order must be None")
+        if getattr(self.files, "_preview_validated_catalog", False):
+            return
         names = (self.manifest.name, *(item.name for item in self.files))
         if len(names) != len(set(names)):
             raise ValueError("package artifact names must be unique")
@@ -381,7 +386,7 @@ class PreviewArtifactPayload:
     name: str
     media_type: str
     order: int
-    body: bytes
+    body: bytes | PreviewSpooledBody
 
 
 @dataclass(frozen=True)

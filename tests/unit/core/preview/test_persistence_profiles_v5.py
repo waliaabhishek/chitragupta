@@ -665,8 +665,7 @@ def test_multi_instance_recovery_respects_live_heartbeat_recovers_stale_owner_an
     service = import_module("core.preview.service")
     artifacts = import_module("core.preview.artifacts")
     mapping = import_module("core.preview.mapping")
-    from tests.unit.core.preview.test_service import _tenant_config
-    from tests.unit.core.preview.test_service_delivery_v6 import ImmediateExecutor
+    from tests.unit.core.preview.test_service import ControlledExecutor, _tenant_config
 
     startup = datetime(2026, 7, 3, 1, tzinfo=UTC)
     old_created = startup - timedelta(minutes=1)
@@ -675,6 +674,7 @@ def test_multi_instance_recovery_respects_live_heartbeat_recovers_stale_owner_an
     live_clock = [old_created]
     monkeypatch.setattr(service, "_PREVIEW_HEARTBEAT_INTERVAL_SECONDS", 0.01)
     live_provider = FixedTenantBackendProvider({"production": backend})
+    live_executor = ControlledExecutor()
     owner = artifacts.preview_artifact_owner(
         "production",
         _tenant_config(backend._connection_string),
@@ -685,7 +685,7 @@ def test_multi_instance_recovery_respects_live_heartbeat_recovers_stale_owner_an
         max_workers=1,
         clock=lambda: live_clock[0],
         request_id_factory=lambda: "live-request",
-        executor=ImmediateExecutor(),
+        executor=live_executor,
         lease_owner_id=live_worker,
     )
     recovering_runtime = service.PreviewRuntime(
@@ -784,6 +784,7 @@ def test_multi_instance_recovery_respects_live_heartbeat_recovers_stale_owner_an
         assert rows["stale-request"] == (None, None)
         assert rows["same-second-request"] == (None, None)
     finally:
+        live_executor.run_all()
         live_runtime.close()
         recovering_runtime.close()
         backend.dispose()

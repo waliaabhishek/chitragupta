@@ -114,25 +114,35 @@ def _build_registry(settings: AppSettings) -> PluginRegistry:
 def _create_runner(settings: AppSettings) -> WorkflowRunner:
     """Create a WorkflowRunner with all plugins discovered from configured plugins path."""
     from core.preview.artifacts import LocalPreviewArtifactStore
+    from core.preview.capacity import PreviewGenerationScheduler
     from core.preview.generator import PreviewPackageGenerator
     from core.preview.revisions import PreviewRevisionService
 
     artifact_store = None
     revision_manager = None
+    preview_generation_scheduler = None
     if settings.focus_preview_enabled:
         artifact_store = LocalPreviewArtifactStore(settings.preview.artifact_root)
         package_generator = PreviewPackageGenerator(
             max_csv_file_bytes=settings.preview.max_csv_file_bytes,
+            max_generation_spool_bytes=settings.preview.max_generation_spool_bytes,
         )
         revision_manager = PreviewRevisionService(
             artifact_store=artifact_store,
             package_generator=package_generator,
+        )
+        preview_generation_scheduler = PreviewGenerationScheduler(
+            max_workers=settings.preview.max_workers,
+            max_queued_generations=settings.preview.max_queued_generations,
+            max_running_generations_per_tenant=(settings.preview.max_running_generations_per_tenant),
+            max_queued_generations_per_tenant=(settings.preview.max_queued_generations_per_tenant),
         )
     return WorkflowRunner(
         settings,
         _build_registry(settings),
         revision_manager=revision_manager,
         owned_preview_artifact_store=artifact_store,
+        preview_generation_scheduler=preview_generation_scheduler,
     )
 
 

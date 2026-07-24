@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import threading
 from collections.abc import Callable, Iterator
 from concurrent.futures import Future
 from dataclasses import replace
@@ -528,6 +529,80 @@ def test_controlled_runtime_commits_queued_before_running_and_reaches_ready(tmp_
         runtime.close()
         backend.dispose()
     assert executor.shutdown_calls == []
+
+
+@pytest.mark.parametrize("wait", [False, True])
+def test_runtime_shutdown_terminalizes_or_drains_persisted_work_and_stops_heartbeat(
+    tmp_path: Path,
+    wait: bool,
+) -> None:
+    backend = SQLModelBackend(
+        f"sqlite:///{tmp_path / 'shutdown.db'}",
+        CCloudStorageModule(),
+        use_migrations=False,
+        focus_preview_enabled=True,
+    )
+    backend.create_tables()
+    _seed(backend, source=_source(), aggregate=_aggregate(), allocation=_allocation())
+    executor = ControlledExecutor()
+    artifacts = preview_module("artifacts")
+    service = preview_module("service")
+    identifiers = iter(("request-running", "request-waiting"))
+    runtime = service.PreviewRuntime(
+        artifact_store=artifacts.LocalPreviewArtifactStore(tmp_path / "artifacts"),
+        backend_provider=FixedTenantBackendProvider({"production": backend}),
+        max_workers=1,
+        clock=lambda: datetime(2026, 7, 4, tzinfo=UTC),
+        request_id_factory=lambda: next(identifiers),
+        executor=executor,
+    )
+    close_thread: threading.Thread | None = None
+    try:
+        first = _submit(runtime, backend)
+        second = _submit(runtime, backend)
+        assert len(executor.pending) == 1
+        if wait:
+            close_thread = threading.Thread(target=lambda: runtime.close(wait=True))
+            close_thread.start()
+            close_thread.join(timeout=0.1)
+            assert close_thread.is_alive()
+            assert not runtime._heartbeat_stop.is_set()  # noqa: SLF001
+        else:
+            runtime.close(wait=False)
+            waiting = runtime.get_request(
+                backend=backend,
+                request_id=second.request_id,
+                ecosystem="confluent_cloud",
+                tenant_id="tenant-1",
+            )
+            assert waiting.status.value == "failed"
+            assert waiting.diagnostic.code == "preview_generation_interrupted"
+            assert set(runtime._lease_targets) == {first.request_id}  # noqa: SLF001
+            assert not runtime._heartbeat_stop.is_set()  # noqa: SLF001
+
+        executor.run_all()
+        if close_thread is not None:
+            close_thread.join(timeout=5)
+            assert not close_thread.is_alive()
+            drained = runtime.get_request(
+                backend=backend,
+                request_id=second.request_id,
+                ecosystem="confluent_cloud",
+                tenant_id="tenant-1",
+            )
+            assert drained.status.value == "ready"
+        assert runtime._heartbeat_stop.wait(timeout=5)  # noqa: SLF001
+        assert runtime._lease_targets == {}  # noqa: SLF001
+        assert executor.shutdown_calls == []
+    finally:
+        executor.run_all()
+        runtime._heartbeat_stop.set()  # noqa: SLF001
+        heartbeat = runtime._heartbeat_thread  # noqa: SLF001
+        if heartbeat is not None:
+            heartbeat.join(timeout=5)
+        if close_thread is not None:
+            close_thread.join(timeout=5)
+        backend.dispose()
 
 
 def test_daily_full_package_maps_provider_financial_account_sku_and_invoice_evidence(tmp_path: Path) -> None:

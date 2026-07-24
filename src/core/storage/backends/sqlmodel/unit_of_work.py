@@ -426,7 +426,7 @@ class SQLModelBackend:
             with self._engine.begin() as connection:
                 self._storage_module.prepare_preview_evidence_migration(
                     connection,
-                    target_revision="027",
+                    target_revision="028",
                 )
         except (PreviewEvidenceSchemaError, SQLAlchemyError) as exc:
             issues.append(

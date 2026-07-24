@@ -1684,7 +1684,9 @@ def test_two_live_runtimes_reap_only_expired_foreign_post_start_leases_through_a
     service = import_module("core.preview.service")
     artifacts = import_module("core.preview.artifacts")
     mapping = import_module("core.preview.mapping")
-    immediate_executor = import_module("tests.unit.core.preview.test_service_delivery_v6").ImmediateExecutor
+    controlled_executor = import_module("tests.unit.core.preview.test_service").ControlledExecutor
+    peer_executor = controlled_executor()
+    app_executor = controlled_executor()
     startup_at = datetime(2026, 7, 20, 12, 0, 0, tzinfo=UTC)
     app_clock = [startup_at]
     peer_clock = [startup_at + timedelta(seconds=1)]
@@ -1704,7 +1706,7 @@ def test_two_live_runtimes_reap_only_expired_foreign_post_start_leases_through_a
         max_workers=1,
         clock=lambda: peer_clock[0],
         request_id_factory=lambda: "peer-request",
-        executor=immediate_executor(),
+        executor=peer_executor,
         lease_owner_id="peer-worker",
     )
 
@@ -1717,7 +1719,7 @@ def test_two_live_runtimes_reap_only_expired_foreign_post_start_leases_through_a
             startup_at=startup_at,
             clock=lambda: app_clock[0],
             request_id_factory=lambda: "own-request",
-            executor=immediate_executor(),
+            executor=app_executor,
             lease_owner_id="app-worker",
         )
 
@@ -1773,7 +1775,9 @@ def test_two_live_runtimes_reap_only_expired_foreign_post_start_leases_through_a
             assert renewed_peer.status_code == 200
             assert renewed_peer.json()["status"] == "queued"
 
-            peer_runtime.close()
+            peer_runtime._heartbeat_stop.set()
+            assert peer_runtime._heartbeat_thread is not None
+            peer_runtime._heartbeat_thread.join()
             app_clock[0] = startup_at + timedelta(seconds=41)
             reaped_peer = client.get("/api/v1/tenants/production/focus-preview/requests/peer-request")
             after_crash = client.get("/api/v1/tenants/production/focus-preview/requests?limit=20")
@@ -1802,6 +1806,8 @@ def test_two_live_runtimes_reap_only_expired_foreign_post_start_leases_through_a
             assert ownership["own-request"][0] == "app-worker"
             assert ownership["peer-request"] == (None, None)
             assert ownership["same-second-missing-lease"] == (None, None)
+            peer_executor.run_all()
+            app_executor.run_all()
     finally:
         peer_runtime.close()
         peer_store.close()
@@ -2049,8 +2055,8 @@ def test_artifact_failure_logs_only_stable_identifiers_and_exception_type(
                 raise OSError(f"{exception_detail}: {filesystem_secret}") from cause
 
         cases = [
-            ("read_manifest", ready["package"]["manifest"]["download_url"]),
-            ("read_file", ready["package"]["files"][0]["download_url"]),
+            ("open_verified", ready["package"]["manifest"]["download_url"]),
+            ("open_verified", ready["package"]["files"][0]["download_url"]),
             ("open_archive", ready["package"]["download_all_url"]),
         ]
         for method_name, url in cases:
@@ -2197,19 +2203,51 @@ def test_archive_rejects_manifest_declarations_that_drift_from_persisted_metadat
         request_id = submitted.json()["request_id"]
         ready = _wait_for_terminal(client, request_id)
         with backend._engine.begin() as connection:
-            data_files = json.loads(
-                connection.execute(
-                    text("SELECT data_files_json FROM preview_requests WHERE request_id = :request_id"),
-                    {"request_id": request_id},
-                ).scalar_one()
-            )
-            data_files[0]["media_type"] = "application/octet-stream"
             connection.execute(
-                text("UPDATE preview_requests SET data_files_json = :data_files_json WHERE request_id = :request_id"),
-                {
-                    "request_id": request_id,
-                    "data_files_json": json.dumps(data_files, sort_keys=True, separators=(",", ":")),
-                },
+                text(
+                    """
+                    UPDATE preview_artifact_files
+                    SET media_type = 'application/octet-stream'
+                    WHERE package_kind = 'requested' AND package_id = :request_id
+                    """
+                ),
+                {"request_id": request_id},
+            )
+            rows = connection.execute(
+                text(
+                    """
+                    SELECT name, media_type, size_bytes, sha256, file_order
+                    FROM preview_artifact_files
+                    WHERE package_kind = 'requested' AND package_id = :request_id
+                    ORDER BY file_order
+                    """
+                ),
+                {"request_id": request_id},
+            ).all()
+            digest = hashlib.sha256()
+            for row in rows:
+                encoded = json.dumps(
+                    {
+                        "name": row.name,
+                        "media_type": row.media_type,
+                        "size_bytes": row.size_bytes,
+                        "sha256": row.sha256,
+                        "order": row.file_order,
+                    },
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode()
+                digest.update(len(encoded).to_bytes(8, "big"))
+                digest.update(encoded)
+            connection.execute(
+                text(
+                    """
+                    UPDATE preview_requests
+                    SET artifact_file_catalog_sha256 = :digest
+                    WHERE request_id = :request_id
+                    """
+                ),
+                {"request_id": request_id, "digest": digest.hexdigest()},
             )
 
         response = client.get(ready["package"]["download_all_url"])

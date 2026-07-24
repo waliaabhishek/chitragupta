@@ -42,7 +42,7 @@ def _table_names(url: str) -> set[str]:
         engine.dispose()
 
 
-def test_revision_027_is_current_head_and_calls_guarded_preview_hook() -> None:
+def test_revision_027_calls_guarded_preview_hook() -> None:
     config = _config("sqlite:///unused.db")
     script = ScriptDirectory.from_config(config)
     migration_path = (
@@ -55,7 +55,7 @@ def test_revision_027_is_current_head_and_calls_guarded_preview_hook() -> None:
         / "027_add_focus_preview_historical_repair.py"
     )
 
-    assert script.get_current_head() == "027"
+    assert script.get_current_head() == "028"
     source = migration_path.read_text(encoding="utf-8")
     assert 'run_preview_evidence_step("027")' in source
     assert 'run_preview_evidence_downgrade_step("027")' in source

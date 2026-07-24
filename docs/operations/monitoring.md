@@ -36,6 +36,8 @@ logging:
 | `Tenant X completed with errors: [...]` | Partial run — some dates failed |
 | `ALERT: Tenant X has been permanently suspended` | Gather failure threshold breached |
 | `ALERT: All N tenant(s) have been permanently suspended` | All tenants failed — engine is idle |
+| `FOCUS Mapping Preview revision generation skipped tenant=... month=... diagnostic_code=preview_generation_spool_limit_exceeded` | A scheduled revision exceeded its per-generation spool ceiling; no revision was published. |
+| `FOCUS Mapping Preview revision publication failed ...` | Scheduled publication failed and left the current revision unchanged. |
 
 ## API health check
 
@@ -129,3 +131,23 @@ WHERE attribution_method = 'ATTRIBUTION_FAILED';
 - `gathered` count per run — drop indicates billing API issues
 - `errors` list per run — content identifies root cause
 - Pipeline run duration — set alerts if > `tenant_execution_timeout_seconds`
+
+## Monitoring FOCUS Mapping Preview capacity
+
+Track HTTP 429 responses with
+`detail.code=preview_capacity_exhausted` on request submission. Sustained 429s
+mean the process-local running or queued generation limit is full. No request is
+created, so clients must submit again later.
+
+Also track failed request diagnostics by code, especially
+`preview_generation_spool_limit_exceeded`. That diagnostic is non-retryable for
+the same configured spool limit. Compare artifact-root free space with
+`preview.max_workers × preview.max_generation_spool_bytes`, then include
+retained package size and filesystem safety margin.
+
+Scheduled capacity deferral intentionally creates no revision or success event.
+Monitor settlement-ready months that remain without a current revision across
+later periodic cycles, together with worker-cycle completion and the revision
+generation/publication log messages above. Repeated absence while ad-hoc
+requests saturate capacity indicates that process limits or replica sizing need
+tuning.

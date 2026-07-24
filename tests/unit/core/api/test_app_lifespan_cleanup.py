@@ -177,6 +177,7 @@ class ControlledRunner:
     events: list[str]
     failure: str | set[str] | None = None
     backends: dict[str, object] | None = None
+    preview_generation_scheduler: object | None = None
 
     @contextmanager
     def acquire_backend(self, tenant_name: str, tenant_config: TenantConfig) -> Any:
@@ -465,6 +466,36 @@ def test_lifespan_normal_exit_keeps_exact_cleanup_order(
         "runtime.close(wait=True)",
         "store.close",
         "runner.drain(30)",
+    ]
+
+
+def test_both_mode_closes_shared_scheduler_owner_before_borrowing_runtime_and_store(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+    store = ControlledStore(events)
+    runtime = ControlledRuntime(events)
+    runner = ControlledRunner(events, preview_generation_scheduler=object())
+    monkeypatch.setattr("core.api.app.asyncio.to_thread", _run_inline)
+    store_patch, runtime_patch = _patch_owned_resources(store, runtime)
+    with store_patch, runtime_patch:
+        app = create_app(
+            _settings(tmp_path),
+            workflow_runner=runner,  # type: ignore[arg-type]
+            mode="both",
+        )
+
+        async def exercise() -> None:
+            async with app.router.lifespan_context(app):
+                pass
+
+        _run(exercise())
+
+    assert events == [
+        "runner.drain(30)",
+        "runtime.close(wait=True)",
+        "store.close",
     ]
 
 

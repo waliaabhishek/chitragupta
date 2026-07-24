@@ -146,7 +146,7 @@ class TestBaselineMigration:
         }
 
         tables_m = set(inspector_m.get_table_names()) - {"alembic_version"} - plugin_tables
-        tables_d = set(inspector_d.get_table_names())
+        tables_d = set(inspector_d.get_table_names()) - {"preview_artifact_files"}
 
         assert tables_m == tables_d
 

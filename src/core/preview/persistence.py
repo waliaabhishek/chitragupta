@@ -2,32 +2,41 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import sqlite3
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from contextlib import AbstractContextManager
 from dataclasses import asdict, dataclass, replace
 from datetime import date, datetime, timedelta
-from typing import Literal, Protocol, Self, runtime_checkable
+from hashlib import sha256
+from typing import TYPE_CHECKING, Literal, Protocol, Self, overload, runtime_checkable
+from typing import cast as type_cast
 
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     Column,
     Date,
     DateTime,
     Index,
+    Integer,
     String,
+    Table,
     Text,
+    UniqueConstraint,
     and_,
     case,
     cast,
     delete,
     func,
+    insert,
     inspect,
     or_,
     text,
     true,
     update,
 )
+from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlmodel import Field, Session, SQLModel, col, select
 
@@ -75,6 +84,9 @@ from core.storage.interface import (  # noqa: TC001  # resolved by get_type_hint
     IdentityRepository,
     ResourceRepository,
 )
+
+if TYPE_CHECKING:
+    from sqlmodel.sql.expression import SelectOfScalar
 
 logger = logging.getLogger(__name__)
 
@@ -333,7 +345,12 @@ class PreviewRequestTable(SQLModel, table=True):
     )
     storage_key: str | None = None
     manifest_metadata_json: str | None = None
-    data_files_json: str | None = None
+    data_files_json: str | None = Field(default=None, sa_column=Column(Text(), nullable=True))
+    artifact_file_count: int | None = Field(default=None, sa_column=Column(Integer(), nullable=True))
+    artifact_file_catalog_sha256: str | None = Field(
+        default=None,
+        sa_column=Column(String(), nullable=True),
+    )
     effective_columns_json: str | None = Field(default=None, sa_column=Column(Text(), nullable=True))
     effective_coverage_start_date: date | None = Field(default=None, sa_column=Column(Date(), nullable=True))
     effective_coverage_end_date: date | None = Field(default=None, sa_column=Column(Date(), nullable=True))
@@ -397,11 +414,60 @@ class PreviewRevisionTable(SQLModel, table=True):
     is_current: bool = Field(sa_column=Column(Boolean(), nullable=False))
     storage_key: str
     manifest_metadata_json: str = Field(sa_column=Column(Text(), nullable=False))
-    file_metadata_json: str = Field(sa_column=Column(Text(), nullable=False))
+    file_metadata_json: str | None = Field(default=None, sa_column=Column(Text(), nullable=True))
+    artifact_file_count: int | None = Field(default=None, sa_column=Column(Integer(), nullable=True))
+    artifact_file_catalog_sha256: str | None = Field(
+        default=None,
+        sa_column=Column(String(), nullable=True),
+    )
     retention_pending_at: datetime | None = Field(
         default=None,
         sa_column=Column(DateTime(timezone=True), nullable=True),
     )
+
+
+class PreviewArtifactFileTable(SQLModel, table=True):
+    __tablename__ = "preview_artifact_files"
+    __table_args__ = (
+        CheckConstraint(
+            "package_kind IN ('requested', 'revision')",
+            name="ck_preview_artifact_files_package_kind",
+        ),
+        UniqueConstraint(
+            "ecosystem",
+            "tenant_id",
+            "package_kind",
+            "package_id",
+            "name",
+            name="uq_preview_artifact_files_owner_package_name",
+        ),
+        Index(
+            "ix_preview_artifact_files_owner_package_order",
+            "ecosystem",
+            "tenant_id",
+            "package_kind",
+            "package_id",
+            "file_order",
+        ),
+        Index(
+            "ix_preview_artifact_files_owner_package_name",
+            "ecosystem",
+            "tenant_id",
+            "package_kind",
+            "package_id",
+            "name",
+        ),
+    )
+
+    ecosystem: str = Field(primary_key=True)
+    tenant_id: str = Field(primary_key=True)
+    package_kind: str = Field(primary_key=True)
+    package_id: str = Field(primary_key=True)
+    file_order: int = Field(primary_key=True)
+    name: str
+    media_type: str
+    size_bytes: int
+    sha256: str
 
 
 @runtime_checkable
@@ -483,6 +549,180 @@ def _canonical_json(value: object) -> str:
 
 def _artifact_dict(item: PreviewArtifactMetadata) -> dict[str, object]:
     return asdict(item)
+
+
+def _artifact_catalog_digest(files: Sequence[PreviewArtifactMetadata]) -> str:
+    digest = sha256()
+    for expected_order, item in enumerate(files, start=1):
+        if item.order != expected_order:
+            raise ValueError("preview artifact catalog order must be contiguous")
+        encoded = _canonical_json(_artifact_dict(item)).encode("utf-8")
+        digest.update(len(encoded).to_bytes(8, "big"))
+        digest.update(encoded)
+    return digest.hexdigest()
+
+
+class PreviewPersistedArtifactMetadataCollection(Sequence[PreviewArtifactMetadata]):
+    """Rewindable normalized catalog view backed by durable package rows."""
+
+    _preview_validated_catalog = True
+
+    def __init__(
+        self,
+        engine: Engine,
+        *,
+        ecosystem: str,
+        tenant_id: str,
+        package_kind: Literal["requested", "revision"],
+        package_id: str,
+        expected_count: int,
+        expected_digest: str,
+    ) -> None:
+        if expected_count < 0:
+            raise ValueError("preview artifact catalog count must be non-negative")
+        if re.fullmatch(r"[0-9a-f]{64}", expected_digest) is None:
+            raise ValueError("preview artifact catalog digest is invalid")
+        self._engine = engine
+        self._ecosystem = ecosystem
+        self._tenant_id = tenant_id
+        self._package_kind = package_kind
+        self._package_id = package_id
+        self._expected_count = expected_count
+        self._expected_digest = expected_digest
+
+    def __len__(self) -> int:
+        return self._expected_count
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Sequence) or len(other) != self._expected_count:
+            return False
+        return all(left == right for left, right in zip(self, other, strict=True))
+
+    def _statement(self) -> SelectOfScalar[PreviewArtifactFileTable]:
+        return (
+            select(PreviewArtifactFileTable)
+            .where(
+                col(PreviewArtifactFileTable.ecosystem) == self._ecosystem,
+                col(PreviewArtifactFileTable.tenant_id) == self._tenant_id,
+                col(PreviewArtifactFileTable.package_kind) == self._package_kind,
+                col(PreviewArtifactFileTable.package_id) == self._package_id,
+            )
+            .order_by(col(PreviewArtifactFileTable.file_order))
+        )
+
+    @staticmethod
+    def _metadata(row: PreviewArtifactFileTable) -> PreviewArtifactMetadata:
+        return PreviewArtifactMetadata(
+            name=row.name,
+            media_type=row.media_type,
+            size_bytes=row.size_bytes,
+            sha256=row.sha256,
+            order=row.file_order,
+        )
+
+    def __iter__(self) -> Iterator[PreviewArtifactMetadata]:
+        count = 0
+        digest = sha256()
+        with Session(self._engine) as session:
+            rows = session.exec(self._statement()).yield_per(400)
+            for expected_order, row in enumerate(rows, start=1):
+                item = self._metadata(row)
+                if item.order != expected_order:
+                    raise ValueError("preview artifact catalog order must be contiguous")
+                encoded = _canonical_json(_artifact_dict(item)).encode("utf-8")
+                digest.update(len(encoded).to_bytes(8, "big"))
+                digest.update(encoded)
+                count = expected_order
+                yield item
+        if count != self._expected_count:
+            raise ValueError("preview artifact catalog count does not match persisted metadata")
+        if digest.hexdigest() != self._expected_digest:
+            raise ValueError("preview artifact catalog digest does not match persisted metadata")
+
+    def find_by_name(self, file_name: str) -> PreviewArtifactMetadata | None:
+        with Session(self._engine) as session:
+            row = session.exec(
+                self._statement().where(col(PreviewArtifactFileTable.name) == file_name).limit(1)
+            ).first()
+        if row is None:
+            return None
+        item = self._metadata(row)
+        if item.order is None or item.order < 1 or item.order > self._expected_count:
+            raise ValueError("preview artifact catalog order must be contiguous")
+        return item
+
+    @overload
+    def __getitem__(self, index: int) -> PreviewArtifactMetadata: ...
+
+    @overload
+    def __getitem__(self, index: slice) -> Sequence[PreviewArtifactMetadata]: ...
+
+    def __getitem__(
+        self,
+        index: int | slice,
+    ) -> PreviewArtifactMetadata | Sequence[PreviewArtifactMetadata]:
+        if isinstance(index, slice):
+            start, stop, step = index.indices(self._expected_count)
+            if step != 1:
+                return tuple(iter(self))[index]
+            if stop <= start:
+                return ()
+            with Session(self._engine) as session:
+                rows = session.exec(self._statement().offset(start).limit(stop - start)).all()
+            return tuple(self._metadata(row) for row in rows)
+        normalized = index if index >= 0 else self._expected_count + index
+        if normalized < 0 or normalized >= self._expected_count:
+            raise IndexError(index)
+        with Session(self._engine) as session:
+            row = session.exec(self._statement().offset(normalized).limit(1)).first()
+        if row is None:
+            raise ValueError("preview artifact catalog count does not match persisted metadata")
+        return self._metadata(row)
+
+
+def _insert_normalized_catalog(
+    session: Session,
+    *,
+    ecosystem: str,
+    tenant_id: str,
+    package_kind: Literal["requested", "revision"],
+    package_id: str,
+    files: Sequence[PreviewArtifactMetadata],
+    batch_size: int = 400,
+) -> tuple[int, str]:
+    if batch_size < 1:
+        raise ValueError("preview artifact catalog batch size must be positive")
+    count = 0
+    digest = sha256()
+    batch: list[PreviewArtifactFileTable] = []
+    for expected_order, item in enumerate(files, start=1):
+        if item.order != expected_order:
+            raise ValueError("preview artifact catalog order must be contiguous")
+        encoded = _canonical_json(_artifact_dict(item)).encode("utf-8")
+        digest.update(len(encoded).to_bytes(8, "big"))
+        digest.update(encoded)
+        batch.append(
+            PreviewArtifactFileTable(
+                ecosystem=ecosystem,
+                tenant_id=tenant_id,
+                package_kind=package_kind,
+                package_id=package_id,
+                file_order=expected_order,
+                name=item.name,
+                media_type=item.media_type,
+                size_bytes=item.size_bytes,
+                sha256=item.sha256,
+            )
+        )
+        count += 1
+        if len(batch) == batch_size:
+            session.add_all(batch)
+            session.flush(batch)
+            batch.clear()
+    if batch:
+        session.add_all(batch)
+        session.flush(batch)
+    return count, digest.hexdigest()
 
 
 def _coverage_json(snapshot: PreviewSourceSnapshot | None) -> str | None:
@@ -594,7 +834,11 @@ def _supported_monthly_status(value: str | None) -> Literal["provisional", "sett
     raise ValueError(f"unsupported persisted preview monthly status: {value!r}")
 
 
-def request_to_domain(row: PreviewRequestTable) -> PreviewRequest:
+def request_to_domain(
+    row: PreviewRequestTable,
+    *,
+    normalized_files: tuple[PreviewArtifactMetadata, ...] | None = None,
+) -> PreviewRequest:
     profile = _supported_column_profile(row.column_profile)
     grain = _supported_grain(row.grain)
     legacy_v4 = row.effective_columns_json is None
@@ -663,7 +907,28 @@ def request_to_domain(row: PreviewRequestTable) -> PreviewRequest:
             correlations,
         )
     package = None
-    if row.manifest_metadata_json is not None and row.data_files_json is not None:
+    normalized_count = row.artifact_file_count
+    normalized_digest = row.artifact_file_catalog_sha256
+    normalized_representation = normalized_count is not None or normalized_digest is not None
+    if normalized_representation:
+        if (
+            normalized_count is None
+            or normalized_digest is None
+            or row.data_files_json is not None
+            or normalized_files is None
+        ):
+            raise ValueError("preview artifact catalog representation is mixed or incomplete")
+        if len(normalized_files) != normalized_count:
+            raise ValueError("preview artifact catalog count does not match persisted metadata")
+        if _artifact_catalog_digest(normalized_files) != normalized_digest:
+            raise ValueError("preview artifact catalog digest does not match persisted metadata")
+        if row.manifest_metadata_json is None:
+            raise ValueError("preview artifact catalog manifest metadata is missing")
+        package = PreviewPackageMetadata(
+            manifest=_artifact_from_dict(json.loads(row.manifest_metadata_json)),
+            files=normalized_files,
+        )
+    elif row.manifest_metadata_json is not None and row.data_files_json is not None:
         raw_files = json.loads(row.data_files_json)
         if legacy_v4:
             raw_files = [{**item, "order": index} for index, item in enumerate(raw_files, start=1)]
@@ -671,6 +936,8 @@ def request_to_domain(row: PreviewRequestTable) -> PreviewRequest:
             manifest=_artifact_from_dict(json.loads(row.manifest_metadata_json)),
             files=tuple(_artifact_from_dict(item) for item in raw_files),
         )
+    elif row.manifest_metadata_json is not None or row.data_files_json is not None:
+        raise ValueError("preview artifact package representation is incomplete")
     request = PreviewRequest(
         request_id=row.request_id,
         tenant_name=row.tenant_name,
@@ -766,6 +1033,54 @@ class SQLModelPreviewCalculationRepository:
 class SQLModelPreviewRequestRepository:
     def __init__(self, session: Session) -> None:
         self._session = session
+        self._has_catalog_parent_columns = {
+            "artifact_file_count",
+            "artifact_file_catalog_sha256",
+        }.issubset(
+            column["name"] for column in inspect(session.get_bind()).get_columns(PreviewRequestTable.__tablename__)
+        )
+
+    def _legacy_schema_request(
+        self,
+        *,
+        request_id: str,
+        ecosystem: str | None = None,
+        tenant_id: str | None = None,
+    ) -> PreviewRequestTable | None:
+        table = type_cast("Table", vars(PreviewRequestTable)["__table__"])
+        statement = select(
+            *(
+                column
+                for column in table.c
+                if column.name not in {"artifact_file_count", "artifact_file_catalog_sha256"}
+            )
+        ).where(table.c.request_id == request_id)
+        if ecosystem is not None:
+            statement = statement.where(table.c.ecosystem == ecosystem)
+        if tenant_id is not None:
+            statement = statement.where(table.c.tenant_id == tenant_id)
+        row = self._session.execute(statement).mappings().first()
+        return None if row is None else PreviewRequestTable(**row)
+
+    def _to_domain(self, row: PreviewRequestTable) -> PreviewRequest:
+        files = None
+        if row.artifact_file_count is not None and row.artifact_file_catalog_sha256 is not None:
+            bind = self._session.get_bind()
+            if not isinstance(bind, Engine):
+                raise RuntimeError("durable preview artifact catalog requires an engine-backed session")
+            files = type_cast(
+                "tuple[PreviewArtifactMetadata, ...]",
+                PreviewPersistedArtifactMetadataCollection(
+                    bind,
+                    ecosystem=row.ecosystem,
+                    tenant_id=row.tenant_id,
+                    package_kind="requested",
+                    package_id=row.request_id,
+                    expected_count=row.artifact_file_count,
+                    expected_digest=row.artifact_file_catalog_sha256,
+                ),
+            )
+        return request_to_domain(row, normalized_files=files)
 
     def create_queued(
         self,
@@ -783,18 +1098,32 @@ class SQLModelPreviewRequestRepository:
         row = request_to_table(request)
         row.worker_id = worker_id
         row.lease_expires_at = ensure_utc_strict(lease_expires_at)
-        self._session.add(row)
-        self._session.flush()
+        if self._has_catalog_parent_columns:
+            self._session.add(row)
+            self._session.flush()
+        else:
+            values = row.model_dump()
+            values.pop("artifact_file_count", None)
+            values.pop("artifact_file_catalog_sha256", None)
+            table = type_cast("Table", vars(PreviewRequestTable)["__table__"])
+            self._session.execute(insert(table).values(**values))
         return request
 
     def get_for_owner(self, request_id: str, ecosystem: str, tenant_id: str) -> PreviewRequest | None:
+        if not self._has_catalog_parent_columns:
+            row = self._legacy_schema_request(
+                request_id=request_id,
+                ecosystem=ecosystem,
+                tenant_id=tenant_id,
+            )
+            return self._to_domain(row) if row else None
         statement = select(PreviewRequestTable).where(
             col(PreviewRequestTable.request_id) == request_id,
             col(PreviewRequestTable.ecosystem) == ecosystem,
             col(PreviewRequestTable.tenant_id) == tenant_id,
         )
         row = self._session.exec(statement).first()
-        return request_to_domain(row) if row else None
+        return self._to_domain(row) if row else None
 
     def list_recent_for_owner(
         self,
@@ -837,12 +1166,16 @@ class SQLModelPreviewRequestRepository:
         ).all()
         has_more = len(rows) > limit
         emitted = rows[:limit]
-        items = tuple(request_to_domain(row) for row in emitted)
+        items = tuple(self._to_domain(row) for row in emitted)
         return PreviewRequestPage(items=items, next_cursor=items[-1].request_id if has_more and items else None)
 
     def _current(self, request_id: str) -> PreviewRequest | None:
-        row = self._session.get(PreviewRequestTable, request_id)
-        return None if row is None else request_to_domain(row)
+        row = (
+            self._session.get(PreviewRequestTable, request_id)
+            if self._has_catalog_parent_columns
+            else self._legacy_schema_request(request_id=request_id)
+        )
+        return None if row is None else self._to_domain(row)
 
     def mark_running(
         self,
@@ -931,6 +1264,9 @@ class SQLModelPreviewRequestRepository:
             resulting_status=candidate.status,
             mode="strict_materialized",
         )
+        normalized_catalog = inspect(self._session.get_bind()).has_table(PreviewArtifactFileTable.__tablename__)
+        catalog_count = len(package.files) if normalized_catalog else None
+        catalog_digest = _artifact_catalog_digest(package.files) if normalized_catalog else None
         statement = update(PreviewRequestTable).where(
             col(PreviewRequestTable.request_id) == request_id,
             col(PreviewRequestTable.status) == PreviewRequestStatus.RUNNING.value,
@@ -951,12 +1287,32 @@ class SQLModelPreviewRequestRepository:
                 monthly_status=source_snapshot.monthly_status,
                 storage_key=candidate.storage_key,
                 manifest_metadata_json=_canonical_json(_artifact_dict(package.manifest)),
-                data_files_json=_canonical_json([_artifact_dict(item) for item in package.files]),
+                data_files_json=(
+                    None if normalized_catalog else _canonical_json([_artifact_dict(item) for item in package.files])
+                ),
+                artifact_file_count=catalog_count,
+                artifact_file_catalog_sha256=catalog_digest,
                 worker_id=None,
                 lease_expires_at=None,
             )
         )
-        return getattr(result, "rowcount", 0) == 1
+        if getattr(result, "rowcount", 0) != 1:
+            return False
+        if not normalized_catalog:
+            return True
+        assert catalog_count is not None
+        assert catalog_digest is not None
+        inserted_count, inserted_digest = _insert_normalized_catalog(
+            self._session,
+            ecosystem=candidate.ecosystem,
+            tenant_id=candidate.tenant_id,
+            package_kind="requested",
+            package_id=request_id,
+            files=package.files,
+        )
+        if (inserted_count, inserted_digest) != (catalog_count, catalog_digest):
+            raise ValueError("preview artifact catalog publication metadata changed during persistence")
+        return True
 
     def expire_ready_request(
         self,
@@ -1045,8 +1401,8 @@ class SQLModelPreviewRequestRepository:
     ) -> tuple[PreviewExpiredArtifact, ...]:
         if limit < 1 or limit > 100:
             raise ValueError("expiry limit must be between 1 and 100")
-        rows = self._session.exec(
-            select(PreviewRequestTable)
+        rows = self._session.execute(
+            select(PreviewRequestTable.request_id, PreviewRequestTable.storage_key)
             .where(
                 col(PreviewRequestTable.ecosystem) == ecosystem,
                 col(PreviewRequestTable.tenant_id) == tenant_id,
@@ -1057,7 +1413,9 @@ class SQLModelPreviewRequestRepository:
             .limit(limit)
         ).all()
         return tuple(
-            PreviewExpiredArtifact(row.request_id, row.storage_key) for row in rows if row.storage_key is not None
+            PreviewExpiredArtifact(request_id, storage_key)
+            for request_id, storage_key in rows
+            if storage_key is not None
         )
 
     def clear_expired_storage_key(self, request_id: str, storage_key: str) -> bool:
@@ -1419,7 +1777,11 @@ def _revision_snapshot_from_json(body: str) -> PreviewSourceSnapshot:
 def _revision_to_table(
     candidate: PreviewRevisionCandidate,
     package: PreviewStoredPackage,
+    *,
+    normalized_catalog: bool,
 ) -> PreviewRevisionTable:
+    catalog_count = len(package.files) if normalized_catalog else None
+    catalog_digest = _artifact_catalog_digest(package.files) if normalized_catalog else None
     return PreviewRevisionTable(
         revision_id=candidate.revision_id,
         tenant_name_at_publication=candidate.tenant_name_at_publication,
@@ -1436,12 +1798,20 @@ def _revision_to_table(
         is_current=True,
         storage_key=package.storage_key,
         manifest_metadata_json=_canonical_json(_artifact_dict(package.manifest)),
-        file_metadata_json=_canonical_json([_artifact_dict(item) for item in package.files]),
+        file_metadata_json=(
+            None if normalized_catalog else _canonical_json([_artifact_dict(item) for item in package.files])
+        ),
+        artifact_file_count=catalog_count,
+        artifact_file_catalog_sha256=catalog_digest,
         retention_pending_at=None,
     )
 
 
-def _revision_to_domain(row: PreviewRevisionTable) -> PreviewRevision:
+def _revision_to_domain(
+    row: PreviewRevisionTable,
+    *,
+    normalized_files: tuple[PreviewArtifactMetadata, ...] | None = None,
+) -> PreviewRevision:
     snapshot = _revision_snapshot_from_json(row.source_snapshot_json)
     status = _supported_monthly_status(row.monthly_status)
     if status is None:
@@ -1454,9 +1824,31 @@ def _revision_to_domain(row: PreviewRevisionTable) -> PreviewRevision:
         source_snapshot=snapshot,
     )
     manifest_raw = json.loads(row.manifest_metadata_json)
-    files_raw = json.loads(row.file_metadata_json)
-    if not isinstance(manifest_raw, dict) or not isinstance(files_raw, list):
+    if not isinstance(manifest_raw, dict):
         raise ValueError("persisted revision artifact metadata is invalid")
+    normalized_count = row.artifact_file_count
+    normalized_digest = row.artifact_file_catalog_sha256
+    normalized_representation = normalized_count is not None or normalized_digest is not None
+    if normalized_representation:
+        if (
+            normalized_count is None
+            or normalized_digest is None
+            or row.file_metadata_json is not None
+            or normalized_files is None
+        ):
+            raise ValueError("preview revision artifact catalog representation is mixed or incomplete")
+        if len(normalized_files) != normalized_count:
+            raise ValueError("preview revision artifact catalog count does not match persisted metadata")
+        if _artifact_catalog_digest(normalized_files) != normalized_digest:
+            raise ValueError("preview revision artifact catalog digest does not match persisted metadata")
+        files = normalized_files
+    else:
+        if row.file_metadata_json is None:
+            raise ValueError("persisted revision artifact representation is incomplete")
+        files_raw = json.loads(row.file_metadata_json)
+        if not isinstance(files_raw, list):
+            raise ValueError("persisted revision artifact metadata is invalid")
+        files = tuple(_artifact_from_dict(item) for item in files_raw)
     return PreviewRevision(
         revision_id=row.revision_id,
         tenant_name_at_publication=row.tenant_name_at_publication,
@@ -1475,7 +1867,7 @@ def _revision_to_domain(row: PreviewRevisionTable) -> PreviewRevision:
         package=PreviewStoredPackage(
             storage_key=row.storage_key,
             manifest=_artifact_from_dict(manifest_raw),
-            files=tuple(_artifact_from_dict(item) for item in files_raw),
+            files=files,
         ),
         retention_pending_at=(None if row.retention_pending_at is None else ensure_utc(row.retention_pending_at)),
     )
@@ -1514,6 +1906,26 @@ class SQLModelPreviewRevisionRepository:
     def __init__(self, session: Session) -> None:
         self._session = session
 
+    def _to_domain(self, row: PreviewRevisionTable) -> PreviewRevision:
+        files = None
+        if row.artifact_file_count is not None and row.artifact_file_catalog_sha256 is not None:
+            bind = self._session.get_bind()
+            if not isinstance(bind, Engine):
+                raise RuntimeError("durable preview artifact catalog requires an engine-backed session")
+            files = type_cast(
+                "tuple[PreviewArtifactMetadata, ...]",
+                PreviewPersistedArtifactMetadataCollection(
+                    bind,
+                    ecosystem=row.ecosystem,
+                    tenant_id=row.tenant_id,
+                    package_kind="revision",
+                    package_id=row.revision_id,
+                    expected_count=row.artifact_file_count,
+                    expected_digest=row.artifact_file_catalog_sha256,
+                ),
+            )
+        return _revision_to_domain(row, normalized_files=files)
+
     def get_current_for_owner(
         self,
         *,
@@ -1534,7 +1946,7 @@ class SQLModelPreviewRevisionRepository:
                 col(PreviewRevisionTable.retention_pending_at).is_(None),
             )
         ).first()
-        return None if row is None else _revision_to_domain(row)
+        return None if row is None else self._to_domain(row)
 
     def get_current_for_publication(
         self,
@@ -1555,7 +1967,7 @@ class SQLModelPreviewRevisionRepository:
                 current_predicate,
             )
         ).first()
-        return None if row is None else _revision_to_domain(row)
+        return None if row is None else self._to_domain(row)
 
     def get_for_owner(
         self,
@@ -1572,7 +1984,7 @@ class SQLModelPreviewRevisionRepository:
                 col(PreviewRevisionTable.retention_pending_at).is_(None),
             )
         ).first()
-        return None if row is None else _revision_to_domain(row)
+        return None if row is None else self._to_domain(row)
 
     def list_for_owner_month(
         self,
@@ -1621,7 +2033,7 @@ class SQLModelPreviewRevisionRepository:
             ).limit(limit + 1)
         ).all()
         visible = rows[:limit]
-        items = tuple(_revision_to_domain(row) for row in visible)
+        items = tuple(self._to_domain(row) for row in visible)
         return PreviewRevisionPage(
             items=items,
             next_cursor=items[-1].revision_id if len(rows) > limit else None,
@@ -1763,7 +2175,18 @@ class SQLModelPreviewRevisionRepository:
                 col(PreviewRevisionTable.retention_pending_at) == candidate.retention_pending_at,
             )
         )
-        return getattr(result, "rowcount", 0) == 1
+        if getattr(result, "rowcount", 0) != 1:
+            return False
+        if inspect(self._session.get_bind()).has_table(PreviewArtifactFileTable.__tablename__):
+            self._session.execute(
+                delete(PreviewArtifactFileTable).where(
+                    col(PreviewArtifactFileTable.ecosystem) == candidate.ecosystem,
+                    col(PreviewArtifactFileTable.tenant_id) == candidate.tenant_id,
+                    col(PreviewArtifactFileTable.package_kind) == "revision",
+                    col(PreviewArtifactFileTable.package_id) == candidate.revision_id,
+                )
+            )
+        return True
 
     def replace_current(
         self,
@@ -1774,7 +2197,12 @@ class SQLModelPreviewRevisionRepository:
     ) -> PreviewRevision:
         if candidate.supersedes_revision_id != expected_current_revision_id:
             raise ValueError("candidate supersedes identity does not match expected current revision")
-        candidate_row = _revision_to_table(candidate, package)
+        normalized_catalog = inspect(self._session.get_bind()).has_table(PreviewArtifactFileTable.__tablename__)
+        candidate_row = _revision_to_table(
+            candidate,
+            package,
+            normalized_catalog=normalized_catalog,
+        )
         try:
             with self._session.no_autoflush:
                 if expected_current_revision_id is not None:
@@ -1795,15 +2223,53 @@ class SQLModelPreviewRevisionRepository:
                         raise PreviewRevisionConflictError("current preview revision changed")
                 self._session.add(candidate_row)
                 self._session.flush([candidate_row])
+                if normalized_catalog:
+                    inserted_count, inserted_digest = _insert_normalized_catalog(
+                        self._session,
+                        ecosystem=candidate.ecosystem,
+                        tenant_id=candidate.tenant_id,
+                        package_kind="revision",
+                        package_id=candidate.revision_id,
+                        files=package.files,
+                    )
+                    expected_catalog = (
+                        candidate_row.artifact_file_count,
+                        candidate_row.artifact_file_catalog_sha256,
+                    )
+                    if (inserted_count, inserted_digest) != expected_catalog:
+                        raise ValueError("preview revision artifact catalog changed during persistence")
         except (IntegrityError, OperationalError) as exc:
             if _is_revision_conflict(exc):
                 raise PreviewRevisionConflictError("current preview revision changed") from exc
             raise
+        returned_package = package
+        if normalized_catalog:
+            catalog_count = candidate_row.artifact_file_count
+            catalog_digest = candidate_row.artifact_file_catalog_sha256
+            if catalog_count is None or catalog_digest is None:
+                raise ValueError("preview revision artifact catalog is incomplete")
+            bind = self._session.get_bind()
+            if not isinstance(bind, Engine):
+                raise RuntimeError("durable preview artifact catalog requires an engine-backed session")
+            durable_files = PreviewPersistedArtifactMetadataCollection(
+                bind,
+                ecosystem=candidate.ecosystem,
+                tenant_id=candidate.tenant_id,
+                package_kind="revision",
+                package_id=candidate.revision_id,
+                expected_count=catalog_count,
+                expected_digest=catalog_digest,
+            )
+            returned_package = PreviewStoredPackage(
+                storage_key=package.storage_key,
+                manifest=package.manifest,
+                files=type_cast("tuple[PreviewArtifactMetadata, ...]", durable_files),
+            )
         return PreviewRevision(
             **candidate.__dict__,
             superseded_by_revision_id=None,
             is_current=True,
-            package=package,
+            package=returned_package,
         )
 
 

@@ -61,8 +61,25 @@ class StorageConfig(BaseModel):
 
 class PreviewConfig(BaseModel):
     artifact_root: Path = Path("data/focus-preview")
-    max_workers: int = Field(default=2, gt=0, le=16)
-    max_csv_file_bytes: int | None = Field(default=None, gt=0)
+    max_workers: int = Field(default=2, gt=0, le=16, strict=True)
+    max_queued_generations: int = Field(default=8, ge=0, strict=True)
+    max_running_generations_per_tenant: int = Field(default=1, gt=0, strict=True)
+    max_queued_generations_per_tenant: int = Field(default=2, ge=0, strict=True)
+    max_generation_spool_bytes: int = Field(default=2_147_483_648, gt=0, strict=True)
+    max_csv_file_bytes: int | None = Field(default=None, gt=0, strict=True)
+
+    @model_validator(mode="after")
+    def validate_capacity_limits(self) -> PreviewConfig:
+        if self.max_running_generations_per_tenant > self.max_workers:
+            raise ValueError("preview per-tenant running limit must not exceed max_workers")
+
+        global_queued = self.max_queued_generations
+        tenant_queued = self.max_queued_generations_per_tenant
+        if (global_queued == 0) != (tenant_queued == 0):
+            raise ValueError("preview global and per-tenant queued limits must both be zero or both be positive")
+        if global_queued > 0 and tenant_queued >= global_queued:
+            raise ValueError("preview per-tenant queued limit must be lower than the global queued limit")
+        return self
 
 
 class FocusPreviewTenantConfig(BaseModel):

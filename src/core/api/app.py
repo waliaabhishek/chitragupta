@@ -120,12 +120,22 @@ def create_app(
                     for tenant_name, tenant in settings.tenants.items()
                     if tenant.focus_preview_enabled
                 )
+                shared_scheduler = (
+                    workflow_runner.preview_generation_scheduler
+                    if mode == "both" and workflow_runner is not None
+                    else None
+                )
                 preview_runtime = PreviewRuntime(
                     artifact_store=preview_artifact_store,
                     backend_provider=backend_provider,
                     max_workers=settings.preview.max_workers,
+                    max_queued_generations=settings.preview.max_queued_generations,
+                    max_running_generations_per_tenant=(settings.preview.max_running_generations_per_tenant),
+                    max_queued_generations_per_tenant=(settings.preview.max_queued_generations_per_tenant),
+                    max_generation_spool_bytes=settings.preview.max_generation_spool_bytes,
                     max_csv_file_bytes=settings.preview.max_csv_file_bytes,
                     configured_owners=enabled_owners,
+                    scheduler=shared_scheduler,
                 )
                 app.state.preview_artifact_store = preview_artifact_store
                 app.state.preview_runtime = preview_runtime
@@ -198,6 +208,12 @@ def create_app(
                     preview_repair_runtime.close(wait=True)
                 except BaseException as exc:
                     record_cleanup_error("preview_repair_runtime", exc)
+            if mode == "both" and workflow_runner is not None:
+                logger.debug("Draining workflow runner")
+                try:
+                    workflow_runner.drain(30)
+                except BaseException as exc:
+                    record_cleanup_error("workflow_runner", exc)
             if preview_runtime is not None:
                 try:
                     preview_runtime.close(wait=True)
@@ -213,7 +229,7 @@ def create_app(
                     backend_provider.close()
                 except BaseException as exc:
                     record_cleanup_error("backend_provider", exc)
-            if workflow_runner is not None:
+            if mode != "both" and workflow_runner is not None:
                 logger.debug("Draining workflow runner")
                 try:
                     workflow_runner.drain(30)

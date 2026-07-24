@@ -70,8 +70,12 @@ class _Generator:
         self.states = states
         self.requests: list[Any] = []
 
-    def generate(self, *, backend: Any, request: Any, policy: Any) -> tuple[Any, Any]:
-        del backend, policy
+    @property
+    def max_generation_spool_bytes(self) -> int:
+        return 2_147_483_648
+
+    def generate(self, *, backend: Any, request: Any, policy: Any, workspace: Any) -> tuple[Any, Any]:
+        del backend, policy, workspace
         self.requests.append(request)
         state = self.states.pop(0)
         if isinstance(state, BaseException):
@@ -84,8 +88,12 @@ class _FailOnCallGenerator:
     def __init__(self) -> None:
         self.requests: list[Any] = []
 
-    def generate(self, *, backend: Any, request: Any, policy: Any) -> tuple[Any, Any]:
-        del backend, policy
+    @property
+    def max_generation_spool_bytes(self) -> int:
+        return 2_147_483_648
+
+    def generate(self, *, backend: Any, request: Any, policy: Any, workspace: Any) -> tuple[Any, Any]:
+        del backend, policy, workspace
         self.requests.append(request)
         raise AssertionError("scheduled generation must not run before monthly settlement")
 
@@ -510,7 +518,7 @@ def test_artifact_staging_failure_publishes_nothing_and_preserves_current(
     def fail_stage(**_kwargs: object) -> object:
         raise OSError("private staging path")
 
-    monkeypatch.setattr(store, "stage_data_files", fail_stage)
+    monkeypatch.setattr(store, "begin_generation", fail_stage)
 
     assert _publish(service, backend) == ()
     assert backend.repository.current[("confluent_cloud", "tenant-1", date(2026, 7, 1))] == initial

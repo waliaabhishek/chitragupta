@@ -5,7 +5,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Annotated
+from typing import Annotated, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response, StreamingResponse
@@ -33,8 +33,11 @@ from core.api.schemas import (  # noqa: TC001  # FastAPI evaluates annotations
 from core.config.models import AppSettings, TenantConfig  # noqa: TC001  # FastAPI evaluates annotations
 from core.preview.artifacts import (  # noqa: TC001 - used by FastAPI route helpers
     PreviewArchiveStream,
+    PreviewVerifiedArtifactStream,
+    find_preview_artifact_metadata,
     preview_artifact_owner,
 )
+from core.preview.capacity import PreviewCapacityUnavailable
 from core.preview.eligibility import COMMERCIAL_PROFILE_UNAVAILABLE, diagnostic_detail
 from core.preview.mapping import (
     FOCUS_1_4_FULL_PROFILE_COLUMNS,
@@ -143,9 +146,9 @@ def _close_revision_archive_safely(
 
 def _runtime(request: Request) -> PreviewRuntime:
     runtime = getattr(request.app.state, "preview_runtime", None)
-    if not isinstance(runtime, PreviewRuntime):
+    if runtime is None:
         raise HTTPException(503, detail="FOCUS Mapping Preview runtime is unavailable")
-    return runtime
+    return cast("PreviewRuntime", runtime)
 
 
 def _repair_runtime(request: Request) -> PreviewRepairRuntime:
@@ -760,26 +763,51 @@ def submit_preview(
     _log_ignored_columns(tenant_name, selection.ignored_unknown, selection.ignored_duplicates)
     _require_focus_preview_enabled(tenant_config)
     runtime = _runtime(request)
-    with _preview_backend(provider, tenant_name, tenant_config) as backend:
-        try:
-            runtime.ensure_owner_recovered(
-                backend=backend,
-                owner=preview_artifact_owner(tenant_name, tenant_config),
-            )
-            preview = runtime.submit(
-                tenant_name=tenant_name,
-                tenant_config=tenant_config,
-                backend=backend,
-                start_date=interval.start_date,
-                end_date=interval.end_date,
-                grain=interval.grain,
-                column_profile=body.column_profile,
-                effective_columns=selection.effective_columns,
-            )
-        except PreviewRecoveryUnavailable:
-            raise HTTPException(503, detail="FOCUS Mapping Preview recovery is unavailable") from None
-        except PreviewWorkerUnavailable:
-            raise HTTPException(503, detail="FOCUS Mapping Preview worker is unavailable") from None
+    owner = preview_artifact_owner(tenant_name, tenant_config)
+    try:
+        reservation = runtime.reserve_requested(owner=owner)
+    except PreviewCapacityUnavailable:
+        raise HTTPException(
+            429,
+            detail={
+                "code": "preview_capacity_exhausted",
+                "message": "FOCUS Mapping Preview generation capacity is exhausted.",
+                "retryable": True,
+            },
+        ) from None
+    attached = False
+    try:
+        with _preview_backend(provider, tenant_name, tenant_config) as backend:
+            try:
+                runtime.ensure_owner_recovered(
+                    backend=backend,
+                    owner=owner,
+                )
+                preview = runtime.submit(
+                    tenant_name=tenant_name,
+                    tenant_config=tenant_config,
+                    backend=backend,
+                    start_date=interval.start_date,
+                    end_date=interval.end_date,
+                    grain=interval.grain,
+                    column_profile=body.column_profile,
+                    effective_columns=selection.effective_columns,
+                    reservation=reservation,
+                )
+                attached = True
+            except PreviewRecoveryUnavailable:
+                raise HTTPException(
+                    503,
+                    detail="FOCUS Mapping Preview recovery is unavailable",
+                ) from None
+            except PreviewWorkerUnavailable:
+                raise HTTPException(
+                    503,
+                    detail="FOCUS Mapping Preview worker is unavailable",
+                ) from None
+    finally:
+        if not attached:
+            reservation.cancel()
     return _serialize(preview)
 
 
@@ -854,14 +882,14 @@ def get_current_revision_manifest(
     with _revision_backend(provider, tenant_name, scope.tenant_config) as backend:
         revision = _current_revision(tenant_name, scope, reader, revision_id, backend)
         try:
-            body = reader.read_manifest(revision=revision)
+            stream = reader.open_manifest_stream(revision=revision)
+            return _artifact_streaming_response(stream, media_type="application/json")
         except Exception as exc:
             raise _revision_artifact_unavailable(
                 tenant_name=tenant_name,
                 tenant_config=scope.tenant_config,
                 error=exc,
             ) from None
-    return Response(body, media_type="application/json")
 
 
 @router.get("/revisions/current/files/{file_name}")
@@ -878,17 +906,17 @@ def get_current_revision_file(
     reader = _revision_reader(request)
     with _revision_backend(provider, tenant_name, scope.tenant_config) as backend:
         revision = _current_revision(tenant_name, scope, reader, revision_id, backend)
-        if file_name not in {item.name for item in revision.package.files}:
+        if find_preview_artifact_metadata(revision.package.files, file_name) is None:
             raise HTTPException(404, detail="FOCUS Mapping Preview file not found for current revision")
         try:
-            metadata, body = reader.read_file(revision=revision, file_name=file_name)
+            metadata, stream = reader.open_file_stream(revision=revision, file_name=file_name)
+            return _artifact_streaming_response(stream, media_type=metadata.media_type)
         except Exception as exc:
             raise _revision_artifact_unavailable(
                 tenant_name=tenant_name,
                 tenant_config=scope.tenant_config,
                 error=exc,
             ) from None
-    return Response(body, media_type=metadata.media_type)
 
 
 @router.get("/revisions/current/archive")
@@ -1049,7 +1077,8 @@ def get_revision_manifest(
     with _revision_backend(provider, tenant_name, tenant_config) as backend:
         revision = _direct_revision(tenant_name, tenant_config, reader, revision_id, backend)
         try:
-            return Response(reader.read_manifest(revision=revision), media_type="application/json")
+            stream = reader.open_manifest_stream(revision=revision)
+            return _artifact_streaming_response(stream, media_type="application/json")
         except Exception as exc:
             raise _revision_artifact_unavailable(
                 tenant_name=tenant_name,
@@ -1073,8 +1102,8 @@ def get_revision_file(
     with _revision_backend(provider, tenant_name, tenant_config) as backend:
         revision = _direct_revision(tenant_name, tenant_config, reader, revision_id, backend)
         try:
-            metadata, body = reader.read_file(revision=revision, file_name=file_name)
-            return Response(body, media_type=metadata.media_type)
+            metadata, stream = reader.open_file_stream(revision=revision, file_name=file_name)
+            return _artifact_streaming_response(stream, media_type=metadata.media_type)
         except FileNotFoundError, StopIteration:
             raise HTTPException(404, detail="FOCUS Mapping Preview file not found for revision") from None
         except Exception as exc:
@@ -1162,7 +1191,7 @@ def get_manifest(
     request_id: str,
     settings: Annotated[AppSettings, Depends(get_settings)],
     provider: Annotated[TenantBackendProvider, Depends(get_backend_provider)],
-) -> Response:
+) -> StreamingResponse:
     tenant_config = _get_preview_tenant(settings, tenant_name)
     _require_focus_preview_enabled(tenant_config)
     runtime = _runtime(request)
@@ -1170,10 +1199,10 @@ def get_manifest(
         runtime, preview = _lookup(runtime, tenant_name, tenant_config, request_id, backend)
         _require_ready(preview)
         try:
-            body = runtime.read_manifest_bytes(preview)
+            stream = runtime.open_manifest_stream(preview)
         except PreviewArtifactUnavailable, OSError:
             raise HTTPException(500, detail="Stored preview artifact is unavailable") from None
-    return Response(body, media_type="application/json")
+    return _artifact_streaming_response(stream, media_type="application/json")
 
 
 @router.get("/requests/{request_id}/files/{file_name}")
@@ -1184,21 +1213,42 @@ def get_file(
     file_name: str,
     settings: Annotated[AppSettings, Depends(get_settings)],
     provider: Annotated[TenantBackendProvider, Depends(get_backend_provider)],
-) -> Response:
+) -> StreamingResponse:
     tenant_config = _get_preview_tenant(settings, tenant_name)
     _require_focus_preview_enabled(tenant_config)
     runtime = _runtime(request)
     with _preview_backend(provider, tenant_name, tenant_config) as backend:
         runtime, preview = _lookup(runtime, tenant_name, tenant_config, request_id, backend)
         _require_ready(preview)
-        if preview.package is None or file_name not in {item.name for item in preview.package.files}:
+        if preview.package is None:
             raise HTTPException(404, detail=f"Preview file {file_name!r} not found for request {request_id!r}")
-        metadata = next(item for item in preview.package.files if item.name == file_name)
+        metadata = find_preview_artifact_metadata(preview.package.files, file_name)
+        if metadata is None:
+            raise HTTPException(404, detail=f"Preview file {file_name!r} not found for request {request_id!r}")
         try:
-            body = runtime.read_file_bytes(preview, file_name)
+            stream = runtime.open_file_stream(preview, file_name)
         except PreviewArtifactUnavailable, OSError:
             raise HTTPException(500, detail="Stored preview artifact is unavailable") from None
-    return Response(body, media_type=metadata.media_type)
+    return _artifact_streaming_response(stream, media_type=metadata.media_type)
+
+
+def _artifact_streaming_response(
+    stream: PreviewVerifiedArtifactStream,
+    *,
+    media_type: str,
+) -> StreamingResponse:
+    def chunks() -> Iterator[bytes]:
+        try:
+            yield from stream.iter_chunks()
+        finally:
+            stream.close()
+
+    return StreamingResponse(
+        chunks(),
+        media_type=media_type,
+        headers={"Content-Length": str(stream.size_bytes)},
+        background=BackgroundTask(stream.close),
+    )
 
 
 @router.get("/requests/{request_id}/archive")

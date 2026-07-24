@@ -27,6 +27,7 @@ if TYPE_CHECKING:
     from core.plugin.protocols import EcosystemPlugin, OverlayConfig
     from core.plugin.registry import PluginRegistry
     from core.preview.artifacts import PreviewArtifactStore
+    from core.preview.capacity import PreviewGenerationScheduler
     from core.preview.evidence import PreviewEvidenceBootstrapResult
     from core.preview.evidence_capture import PreviewSourceCaptureReceipt
     from core.preview.revisions import PreviewScheduledRevisionManager
@@ -153,6 +154,7 @@ class WorkflowRunner:
         *,
         revision_manager: PreviewScheduledRevisionManager | None = None,
         owned_preview_artifact_store: PreviewArtifactStore | None = None,
+        preview_generation_scheduler: PreviewGenerationScheduler | None = None,
     ) -> None:
         self._settings = settings
         self._plugin_registry = plugin_registry
@@ -168,8 +170,19 @@ class WorkflowRunner:
         self._shutdown_event: threading.Event | None = None
         self._revision_manager = revision_manager
         self._owned_preview_artifact_store = owned_preview_artifact_store
+        if revision_manager is not None and preview_generation_scheduler is None:
+            from core.preview.capacity import PreviewGenerationScheduler
+
+            preview_generation_scheduler = PreviewGenerationScheduler(
+                max_workers=settings.preview.max_workers,
+                max_queued_generations=settings.preview.max_queued_generations,
+                max_running_generations_per_tenant=(settings.preview.max_running_generations_per_tenant),
+                max_queued_generations_per_tenant=(settings.preview.max_queued_generations_per_tenant),
+            )
+        self._preview_generation_scheduler = preview_generation_scheduler
         self._periodic_cycle_lock = threading.Lock()
         self._close_lock = threading.Lock()
+        self._closing_event = threading.Event()
         self._closed = False
 
     def set_shutdown_event(self, event: threading.Event) -> None:
@@ -177,7 +190,7 @@ class WorkflowRunner:
         self._shutdown_event = event
 
     def _is_shutdown_requested(self) -> bool:
-        return self._shutdown_event is not None and self._shutdown_event.is_set()
+        return self._closing_event.is_set() or (self._shutdown_event is not None and self._shutdown_event.is_set())
 
     def is_tenant_running(self, tenant_name: str) -> bool:
         """Return True if tenant is currently being processed by any thread."""
@@ -188,6 +201,21 @@ class WorkflowRunner:
     def _claim_tenant(self, tenant_name: str) -> Iterator[bool]:
         with self._running_lock:
             claimed = tenant_name not in self._running_tenants
+            if claimed:
+                self._running_tenants.add(tenant_name)
+        if not claimed:
+            yield False
+            return
+        try:
+            yield True
+        finally:
+            with self._running_lock:
+                self._running_tenants.discard(tenant_name)
+
+    @contextmanager
+    def _claim_tenant_for_scheduled_preview(self, tenant_name: str) -> Iterator[bool]:
+        with self._running_lock:
+            claimed = not self._is_shutdown_requested() and tenant_name not in self._running_tenants
             if claimed:
                 self._running_tenants.add(tenant_name)
         if not claimed:
@@ -220,11 +248,17 @@ class WorkflowRunner:
         with self._periodic_cycle_lock, self._close_lock:
             if self._closed:
                 return
+            self._closing_event.set()
+            failures: list[BaseException] = []
+            if self._preview_generation_scheduler is not None:
+                try:
+                    self._preview_generation_scheduler.close(wait=True)
+                except BaseException as exc:
+                    failures.append(exc)
             with self._runtime_condition:
                 self._closed = True
                 while any(self._runtime_leases.values()):
                     self._runtime_condition.wait()
-            failures: list[BaseException] = []
             with self._runtime_condition:
                 while self._tenant_runtimes:
                     tenant_name, runtime = next(iter(self._tenant_runtimes.items()))
@@ -250,6 +284,10 @@ class WorkflowRunner:
                     failures.append(exc)
             if failures:
                 raise failures[0]
+
+    @property
+    def preview_generation_scheduler(self) -> PreviewGenerationScheduler | None:
+        return self._preview_generation_scheduler
 
     def _get_or_create_runtime(self, tenant_name: str, config: TenantConfig) -> TenantRuntime:
         """Get cached runtime or create new one. Recreates if unhealthy or config changed."""
@@ -1453,12 +1491,15 @@ class WorkflowRunner:
         results: dict[str, PipelineRunResult],
         *,
         now: datetime,
-    ) -> None:
+    ) -> tuple[threading.Event, ...]:
         manager = self._revision_manager
-        if manager is None:
-            return
+        scheduler = self._preview_generation_scheduler
+        if manager is None or scheduler is None:
+            return ()
+        from core.preview.artifacts import preview_artifact_owner
         from core.preview.persistence import PreviewStorageBackend
 
+        admitted_completions: list[threading.Event] = []
         for tenant_name, result in results.items():
             if result.errors or result.already_running or result.fatal:
                 continue
@@ -1474,25 +1515,70 @@ class WorkflowRunner:
                 or not isinstance(runtime.storage, PreviewStorageBackend)
             ):
                 continue
-            with self._claim_tenant(tenant_name) as claimed:
-                if not claimed:
-                    continue
-                try:
-                    with self._acquire_runtime(tenant_name, config) as leased_runtime:
-                        if not isinstance(leased_runtime.storage, PreviewStorageBackend):
-                            continue
-                        manager.publish_eligible_months(
+            tenant_config: TenantConfig = config
+            owner = preview_artifact_owner(tenant_name, tenant_config)
+            for month in manager.eligible_months(tenant_config=tenant_config, now=now):
+                month_start = date.fromisoformat(f"{month}-01")
+                completion = threading.Event()
+
+                def run_scheduled(
+                    tenant_name: str = tenant_name,
+                    month: str = month,
+                    completion: threading.Event = completion,
+                ) -> None:
+                    try:
+                        self._run_scheduled_revision(
                             tenant_name=tenant_name,
-                            tenant_config=config,
-                            backend=leased_runtime.storage,
-                            now=now,
+                            month=month,
                         )
-                except Exception as exc:
-                    logger.error(
-                        "Tenant %s: scheduled FOCUS Mapping Preview publication failed error_type=%s",
-                        tenant_name,
-                        type(exc).__name__,
+                    finally:
+                        completion.set()
+
+                admitted = scheduler.admit_scheduled(
+                    owner=owner,
+                    month=month_start,
+                    run=run_scheduled,
+                    on_cancel=completion.set,
+                )
+                if admitted:
+                    admitted_completions.append(completion)
+        return tuple(admitted_completions)
+
+    def _run_scheduled_revision(
+        self,
+        *,
+        tenant_name: str,
+        month: str,
+    ) -> None:
+        manager = self._revision_manager
+        config = self._settings.tenants.get(tenant_name)
+        if manager is None or config is None or not config.focus_preview_enabled:
+            return
+        from core.preview.persistence import PreviewStorageBackend
+
+        with self._claim_tenant_for_scheduled_preview(tenant_name) as claimed:
+            if not claimed:
+                return
+            try:
+                with self._acquire_runtime(tenant_name, config) as leased_runtime:
+                    if self._is_shutdown_requested() or not isinstance(
+                        leased_runtime.storage,
+                        PreviewStorageBackend,
+                    ):
+                        return
+                    manager.publish_eligible_month(
+                        tenant_name=tenant_name,
+                        tenant_config=config,
+                        backend=leased_runtime.storage,
+                        now=datetime.now(UTC),
+                        month=month,
                     )
+            except Exception as exc:
+                logger.error(
+                    "Tenant %s: scheduled FOCUS Mapping Preview publication failed error_type=%s",
+                    tenant_name,
+                    type(exc).__name__,
+                )
 
     def _cleanup_preview_revision_retention(self, *, now: datetime) -> None:
         manager = self._revision_manager
@@ -1546,7 +1632,9 @@ class WorkflowRunner:
                     cycle_now = datetime.now(UTC)
                     results = self.run_once()
                     self._log_results(results)
-                    self._publish_scheduled_revisions(results, now=cycle_now)
+                    scheduled_completions = self._publish_scheduled_revisions(results, now=cycle_now)
+                    for completion in scheduled_completions:
+                        completion.wait()
                     self._cleanup_retention(now=cycle_now)  # TD-016: Retention cleanup after each cycle
                     self._cleanup_preview_revision_retention(now=cycle_now)
 

@@ -100,6 +100,7 @@ def _runner(
 
 def test_only_periodic_run_loop_publishes_after_successful_calculation() -> None:
     publisher = MagicMock()
+    publisher.eligible_months.return_value = ("2026-07",)
     runner = _runner(publisher=publisher)
     shutdown = threading.Event()
 
@@ -109,15 +110,17 @@ def test_only_periodic_run_loop_publishes_after_successful_calculation() -> None
 
     runner.run_once = run_once  # type: ignore[method-assign]
     runner.run_loop(shutdown)
+    assert runner.preview_generation_scheduler is not None
+    runner.preview_generation_scheduler.wait_idle()
 
-    publisher.publish_eligible_months.assert_called_once()
-    call = publisher.publish_eligible_months.call_args.kwargs
+    publisher.publish_eligible_month.assert_called_once()
+    call = publisher.publish_eligible_month.call_args.kwargs
     assert call["tenant_name"] == "production"
     assert call["tenant_config"].tenant_id == "tenant-1"
     assert isinstance(call["backend"], _PreviewBackend)
     assert call["now"].tzinfo is UTC
     publisher.cleanup_retention.assert_called_once()
-    assert publisher.cleanup_retention.call_args.kwargs["now"] is call["now"]
+    assert publisher.cleanup_retention.call_args.kwargs["now"].tzinfo is UTC
 
 
 def test_revision_cleanup_skips_disabled_tenant_without_preview_backend_work() -> None:
@@ -142,7 +145,8 @@ def test_scheduled_publication_and_revision_retention_skip_owned_tenant() -> Non
     )
     runner._cleanup_preview_revision_retention(now=now)  # noqa: SLF001
 
-    manager.publish_eligible_months.assert_not_called()
+    manager.eligible_months.assert_called_once()
+    manager.publish_eligible_month.assert_not_called()
     manager.cleanup_retention.assert_not_called()
 
 
@@ -166,7 +170,8 @@ def test_periodic_cleanup_covers_every_cached_owner_once_despite_publication_and
         tenants={"enabled": enabled, "disabled": disabled},
     )
     manager = MagicMock()
-    manager.publish_eligible_months.side_effect = RuntimeError("synthetic publication failure")
+    manager.eligible_months.return_value = ("2026-07",)
+    manager.publish_eligible_month.side_effect = RuntimeError("synthetic publication failure")
     manager.cleanup_retention.side_effect = RuntimeError("synthetic enabled-owner cleanup failure")
     runner = WorkflowRunner(settings, MagicMock(), revision_manager=manager)
     for tenant_name in settings.tenants:
@@ -189,13 +194,15 @@ def test_periodic_cleanup_covers_every_cached_owner_once_despite_publication_and
 
     runner.run_once = run_once  # type: ignore[method-assign]
     runner.run_loop(shutdown)
+    assert runner.preview_generation_scheduler is not None
+    runner.preview_generation_scheduler.wait_idle()
 
-    manager.publish_eligible_months.assert_called_once()
+    manager.publish_eligible_month.assert_called_once()
     cleanup_calls = manager.cleanup_retention.call_args_list
     assert [call.kwargs["tenant_name"] for call in cleanup_calls] == ["enabled"]
     assert [call.kwargs["tenant_config"].focus_preview is not None for call in cleanup_calls] == [True]
     assert all(isinstance(call.kwargs["backend"], _PreviewBackend) for call in cleanup_calls)
-    assert cleanup_calls[0].kwargs["now"] is manager.publish_eligible_months.call_args.kwargs["now"]
+    assert cleanup_calls[0].kwargs["now"].tzinfo is UTC
 
 
 def test_revision_cleanup_skips_unsupported_uncached_and_wrong_backends() -> None:
@@ -225,7 +232,8 @@ def test_direct_run_once_and_run_tenant_do_not_publish() -> None:
     runner.run_once()
     runner.run_tenant("production")
 
-    publisher.publish_eligible_months.assert_not_called()
+    publisher.eligible_months.assert_not_called()
+    publisher.publish_eligible_month.assert_not_called()
 
 
 def test_nonperiodic_single_cycle_does_not_publish() -> None:
@@ -235,7 +243,8 @@ def test_nonperiodic_single_cycle_does_not_publish() -> None:
 
     runner.run_loop(threading.Event())
 
-    publisher.publish_eligible_months.assert_not_called()
+    publisher.eligible_months.assert_not_called()
+    publisher.publish_eligible_month.assert_not_called()
 
 
 def test_periodic_publisher_skips_failed_already_running_and_fatal_results() -> None:
@@ -251,7 +260,8 @@ def test_periodic_publisher_skips_failed_already_running_and_fatal_results() -> 
             {"production": result}, now=datetime(2026, 8, 4, tzinfo=UTC)
         )
 
-    publisher.publish_eligible_months.assert_not_called()
+    publisher.eligible_months.assert_not_called()
+    publisher.publish_eligible_month.assert_not_called()
 
 
 def test_periodic_publisher_skips_missing_runtime_unsupported_profile_and_wrong_backend() -> None:
@@ -278,7 +288,8 @@ def test_periodic_publisher_skips_missing_runtime_unsupported_profile_and_wrong_
         {"production": _result()}, now=datetime(2026, 8, 4, tzinfo=UTC)
     )
 
-    publisher.publish_eligible_months.assert_not_called()
+    publisher.eligible_months.assert_not_called()
+    publisher.publish_eligible_month.assert_not_called()
 
 
 def test_runner_closes_owned_store_and_cached_runtimes_exactly_once() -> None:
@@ -311,7 +322,11 @@ def test_drain_waits_for_scheduled_publication_before_closing_backend_and_artifa
     store = MagicMock()
 
     class BlockingPublisher:
-        def publish_eligible_months(self, **kwargs: Any) -> tuple[()]:
+        def eligible_months(self, **kwargs: Any) -> tuple[str, ...]:
+            del kwargs
+            return ("2026-07",)
+
+        def publish_eligible_month(self, **kwargs: Any) -> None:
             backend = kwargs["backend"]
             assert isinstance(backend, _PreviewBackend)
             entered.set()
@@ -320,7 +335,6 @@ def test_drain_waits_for_scheduled_publication_before_closing_backend_and_artifa
             assert release.wait(5)
             assert backend.dispose_calls == 0
             assert store.close.call_count == 0
-            return ()
 
         def cleanup_retention(self, **kwargs: Any) -> Any:
             del kwargs

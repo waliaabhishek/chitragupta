@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from importlib import import_module
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Self
 from unittest.mock import MagicMock
 
 import pytest
@@ -40,6 +40,13 @@ class _CorruptingStore:
         self.file_reads += 1
         return self.delegate.read_file(storage_key, metadata)
 
+    def open_verified(self, storage_key: str, metadata: Any) -> Any:
+        if metadata.name == "manifest.json":
+            self.manifest_reads += 1
+            return _TestArtifactStream(self.manifest_body)
+        self.file_reads += 1
+        return self.delegate.open_verified(storage_key, metadata)
+
     def open_archive(self, *, storage_key: str, manifest: Any, files: tuple[Any, ...]) -> Any:
         self.archive_opens += 1
         return self.delegate.open_archive(storage_key=storage_key, manifest=manifest, files=files)
@@ -65,6 +72,36 @@ class _CorruptingStore:
 
     def close(self) -> None:
         self.delegate.close()
+
+
+class _TestArtifactStream:
+    def __init__(self, body: bytes) -> None:
+        self._body = body
+        self._closed = False
+
+    @property
+    def size_bytes(self) -> int:
+        return len(self._body)
+
+    def iter_chunks(self, *, chunk_size: int = 64 * 1024) -> Any:
+        if self._closed:
+            raise ValueError("artifact stream is closed")
+        for offset in range(0, len(self._body), chunk_size):
+            yield self._body[offset : offset + chunk_size]
+
+    def rewind(self) -> None:
+        if self._closed:
+            raise ValueError("artifact stream is closed")
+
+    def close(self) -> None:
+        self._closed = True
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, exc_type: object, exc_value: object, traceback: object) -> None:
+        del exc_type, exc_value, traceback
+        self.close()
 
 
 def _stored_revision(tmp_path: Path) -> tuple[Any, bytes, Any]:

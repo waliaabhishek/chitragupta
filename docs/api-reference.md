@@ -589,7 +589,9 @@ returns 404. Disabled tenants retain the normal 409 enablement boundary.
 
 ### `POST /api/v1/tenants/{tenant_name}/focus-preview/requests`
 
-Create a request. Returns HTTP 202 with a queued status document.
+Create a request. An admitted request returns HTTP 202 with a queued status
+document. Capacity admission follows tenant, ecosystem, input, enablement, and
+runtime validation.
 
 ```json
 {
@@ -621,6 +623,23 @@ Custom supplies `columns`, for example
 Supported names retain first-occurrence caller order; unknown and duplicate
 entries are logged and ignored. Full and Summary reject `columns`, and Custom
 rejects a selection with no supported Full-profile columns.
+
+When the process-local global or per-tenant capacity limit is full, the
+submission returns HTTP 429:
+
+```json
+{
+  "detail": {
+    "code": "preview_capacity_exhausted",
+    "message": "FOCUS Mapping Preview generation capacity is exhausted.",
+    "retryable": true
+  }
+}
+```
+
+No request ID or artifacts are created for this response. Clients, including
+`chitragupta-preview`, should wait and submit the request again; the CLI does
+not automatically retry a capacity rejection.
 
 ### `GET /api/v1/tenants/{tenant_name}/focus-preview/requests`
 
@@ -675,9 +694,12 @@ non_conforming`, profile version, grain, requested bounds, derived month,
 column profile, effective columns,
 calculation/source coverage, exact known gaps, validation status/counts, cost
 and quantity reconciliation, seven-day lifecycle, and ordered file checksums.
-Mapping/profile validation completes before atomic publication. Manifest and
-CSV downloads return verified stored bytes; the API, UI, and CLI do not remap
-them.
+Mapping/profile validation completes before atomic publication. Before any
+artifact response starts, the API incrementally validates the stored manifest
+against persisted package metadata and incrementally verifies the selected
+artifact's size and SHA-256. Manifest, CSV, and ZIP bodies are then streamed in
+fixed chunks rather than loaded as complete response bodies. The API, UI, and
+CLI do not remap the verified bytes.
 
 With `preview.max_csv_file_bytes: null`, the package has one
 `cost-and-usage.csv`. A positive byte limit may produce ordered names such as
@@ -853,6 +875,7 @@ the report.
 | `columns` supplied for Full or Summary | 400 | `columns may be supplied only when column_profile is custom` |
 | Custom has no supported columns | 400 | `Custom column selection must contain at least one supported Full-profile column` |
 | Runtime unavailable | 503 | `FOCUS Mapping Preview runtime is unavailable` |
+| Generation capacity exhausted | 429 | `{"code":"preview_capacity_exhausted","message":"FOCUS Mapping Preview generation capacity is exhausted.","retryable":true}` |
 | Storage unavailable | 503 | `FOCUS Mapping Preview storage is unavailable` |
 | Recovery unavailable | 503 | `FOCUS Mapping Preview recovery is unavailable` |
 | Worker scheduling unavailable | 503 | `FOCUS Mapping Preview worker is unavailable` |
@@ -867,6 +890,14 @@ The recovery 503 is retryable operationally after restoring tenant database
 and artifact-root availability. It does not expire a ready request, delete a
 referenced requested package or revision, or authorize automatic deletion of
 an unverifiable legacy finalized path.
+
+A generation whose temporary disk use would exceed
+`preview.max_generation_spool_bytes` terminates as a failed request with
+`diagnostic.code: preview_generation_spool_limit_exceeded`,
+`diagnostic.message: FOCUS Mapping Preview package exceeds the configured
+generation spool limit.`, and `retryable: false`. It publishes no package.
+Scheduled publication logs the same diagnostic code, publishes no revision,
+and leaves the current revision unchanged.
 
 Calculation diagnostics use these exact public meanings:
 

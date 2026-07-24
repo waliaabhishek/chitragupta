@@ -49,9 +49,30 @@ class _BarrierArtifactStore:
         self.delegate = delegate
         self.barrier = barrier
 
-    def stage_data_files(self, *, owner: Any, request_id: str, data_files: tuple[Any, ...]) -> Any:
-        self.barrier.wait(timeout=10)
-        return self.delegate.stage_data_files(owner=owner, request_id=request_id, data_files=data_files)
+    def begin_generation(self, *, owner: Any, request_id: str, max_spool_bytes: int) -> Any:
+        generation = self.delegate.begin_generation(
+            owner=owner,
+            request_id=request_id,
+            max_spool_bytes=max_spool_bytes,
+        )
+        barrier = self.barrier
+
+        class BarrierGeneration:
+            def __enter__(self) -> Any:
+                generation.__enter__()
+                return self
+
+            def __exit__(self, *args: object) -> None:
+                generation.__exit__(*args)
+
+            def publish(self, *, manifest_body: bytes) -> Any:
+                barrier.wait(timeout=10)
+                return generation.publish(manifest_body=manifest_body)
+
+            def __getattr__(self, name: str) -> Any:
+                return getattr(generation, name)
+
+        return BarrierGeneration()
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self.delegate, name)
@@ -76,9 +97,18 @@ class _RecordingPackageGenerator:
         self.delegate = delegate
         self.requests: list[Any] = []
 
-    def generate(self, *, backend: Any, request: Any, policy: Any) -> tuple[Any, Any]:
+    @property
+    def max_generation_spool_bytes(self) -> int:
+        return self.delegate.max_generation_spool_bytes
+
+    def generate(self, *, backend: Any, request: Any, policy: Any, workspace: Any) -> tuple[Any, Any]:
         self.requests.append(request)
-        return self.delegate.generate(backend=backend, request=request, policy=policy)
+        return self.delegate.generate(
+            backend=backend,
+            request=request,
+            policy=policy,
+            workspace=workspace,
+        )
 
 
 class _DeleteTrackingRepository:
@@ -142,14 +172,15 @@ class _FinalDeleteCommitFailingBackend:
 
 
 def _run_periodic_cycle_without_clock_patch(runner: WorkflowRunner, result: PipelineRunResult) -> None:
-    shutdown = threading.Event()
-
-    def run_once() -> dict[str, PipelineRunResult]:
-        shutdown.set()
-        return {"production": result}
-
-    runner.run_once = run_once  # type: ignore[method-assign]
-    runner.run_loop(shutdown)
+    results = {"production": result}
+    cycle_now = workflow_runner.datetime.now(UTC)
+    runner._log_results(results)  # noqa: SLF001
+    runner._publish_scheduled_revisions(results, now=cycle_now)  # noqa: SLF001
+    scheduler = runner.preview_generation_scheduler
+    if scheduler is not None:
+        scheduler.wait_idle()
+    runner._cleanup_retention(now=cycle_now)  # noqa: SLF001
+    runner._cleanup_preview_revision_retention(now=cycle_now)  # noqa: SLF001
 
 
 def _run_periodic_cycle(runner: WorkflowRunner, result: PipelineRunResult, *, now: datetime) -> None:
@@ -1273,6 +1304,7 @@ def test_concurrent_real_publication_deletes_loser_package_and_keeps_winner_read
 
     assert workflow_module.datetime is datetime
     probe_publisher = MagicMock()
+    probe_publisher.eligible_months.return_value = ("2026-07",)
     probe_runner = scheduled_runner(probe_publisher, owned_store=None)
     before = datetime.now(UTC)
     probe_now = datetime.now(UTC)
@@ -1280,10 +1312,12 @@ def test_concurrent_real_publication_deletes_loser_package_and_keeps_winner_read
         {"production": _result()},
         now=probe_now,
     )
+    assert probe_runner.preview_generation_scheduler is not None
+    probe_runner.preview_generation_scheduler.wait_idle()
     after = datetime.now(UTC)
-    observed_now = probe_publisher.publish_eligible_months.call_args.kwargs["now"]
+    observed_now = probe_publisher.publish_eligible_month.call_args.kwargs["now"]
     assert before <= observed_now <= after
-    assert observed_now == probe_now
+    assert observed_now >= probe_now
     assert "revision publication failed tenant=production month=2026-07" in caplog.text
     assert "error_type=PreviewRevisionConflictError" in caplog.text
 

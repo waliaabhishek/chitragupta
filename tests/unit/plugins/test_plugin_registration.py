@@ -183,6 +183,7 @@ def test_create_runner_registers_self_managed_kafka() -> None:
 
     mock_settings = MagicMock()
     mock_settings.schedule.interval_seconds = 3600
+    mock_settings.focus_preview_enabled = False
 
     with (
         patch("core.plugin.loader.discover_plugins") as mock_discover,
@@ -211,6 +212,7 @@ def test_create_runner_registers_confluent_cloud(tmp_path: Path) -> None:
     from main import _create_runner
 
     mock_settings = MagicMock()
+    mock_settings.focus_preview_enabled = False
 
     with (
         patch("core.plugin.loader.discover_plugins") as mock_discover,

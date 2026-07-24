@@ -180,7 +180,9 @@ def test_migration_023_matches_direct_create_all_schema(tmp_path: Path) -> None:
     direct = create_engine(direct_url)
 
     assert {column["name"] for column in inspect(migrated).get_columns("preview_requests")} == {
-        column["name"] for column in inspect(direct).get_columns("preview_requests")
+        column["name"]
+        for column in inspect(direct).get_columns("preview_requests")
+        if column["name"] not in {"artifact_file_count", "artifact_file_catalog_sha256"}
     }
     assert "ix_preview_requests_owner_expiry" in {
         index["name"] for index in inspect(direct).get_indexes("preview_requests")

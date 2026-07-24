@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import Iterable
 from dataclasses import dataclass
+from hashlib import sha256
 from typing import TYPE_CHECKING, Any
 
 import sqlalchemy as sa
+from alembic.migration import MigrationContext
+from alembic.operations import Operations
 from sqlalchemy import Connection, inspect
 
 from core.preview.storage_availability import PreviewEvidenceSchemaError
@@ -94,13 +98,13 @@ def _source_v18() -> sa.Table:
 
 def _source_for_revision(target_revision: str) -> sa.Table:
     table = _source_v18()
-    if target_revision in {"021", "026", "027"}:
+    if target_revision in {"021", "026", "027", "028"}:
         table.append_column(sa.Column("billing_timestamp", sa.DateTime(timezone=True), nullable=True))
         table.append_column(sa.Column("billing_env_id", sa.String(), nullable=True))
         table.append_column(sa.Column("billing_resource_id", sa.String(), nullable=True))
         table.append_column(sa.Column("billing_product_type", sa.String(), nullable=True))
         table.append_column(sa.Column("billing_product_category", sa.String(), nullable=True))
-    if target_revision in {"026", "027"}:
+    if target_revision in {"026", "027", "028"}:
         table.append_column(sa.Column("capture_id", sa.String(), nullable=True))
     return table
 
@@ -114,7 +118,7 @@ def _sqlmodel_table(model: type[object]) -> sa.Table:
 
 def _expected_tables(target_revision: str) -> tuple[sa.Table, ...]:
     tables = [_source_for_revision(target_revision)]
-    if target_revision in {"021", "026", "027"}:
+    if target_revision in {"021", "026", "027", "028"}:
         from plugins.confluent_cloud.storage.preview_tables import (
             CCloudAllocationLineagePortionTable,
             CCloudAllocationLineageRunTable,
@@ -126,7 +130,7 @@ def _expected_tables(target_revision: str) -> tuple[sa.Table, ...]:
                 _sqlmodel_table(CCloudAllocationLineagePortionTable),
             )
         )
-    if target_revision in {"026", "027"}:
+    if target_revision in {"026", "027", "028"}:
         from plugins.confluent_cloud.storage.preview_tables import (
             CCloudOrganizationAuthorityAttemptTable,
             CCloudSourceCaptureReadinessTable,
@@ -140,7 +144,7 @@ def _expected_tables(target_revision: str) -> tuple[sa.Table, ...]:
                 _sqlmodel_table(CCloudOrganizationAuthorityAttemptTable),
             )
         )
-    if target_revision == "027":
+    if target_revision in {"027", "028"}:
         from plugins.confluent_cloud.storage.preview_tables import (
             CCloudFocusPreviewRepairDateTable,
             CCloudFocusPreviewRepairTable,
@@ -154,6 +158,10 @@ def _expected_tables(target_revision: str) -> tuple[sa.Table, ...]:
                 _sqlmodel_table(CCloudFocusPreviewRepairDateTable),
             )
         )
+    if target_revision == "028":
+        from core.preview.persistence import PreviewArtifactFileTable
+
+        tables.append(_sqlmodel_table(PreviewArtifactFileTable))
     return tuple(tables)
 
 
@@ -223,9 +231,9 @@ def _allowed_missing_columns(table_name: str, target_revision: str) -> frozenset
     if table_name != _SOURCE_TABLE:
         return frozenset()
     allowed: tuple[str, ...] = ()
-    if target_revision in {"021", "026", "027"}:
+    if target_revision in {"021", "026", "027", "028"}:
         allowed += _V21_COLUMNS
-    if target_revision in {"026", "027"}:
+    if target_revision in {"026", "027", "028"}:
         allowed += _V26_COLUMNS
     return frozenset(allowed)
 
@@ -316,17 +324,200 @@ def _add_nullable_columns(
         )
 
 
+def _operations(connection: Connection) -> Operations:
+    return Operations(MigrationContext.configure(connection))
+
+
+def _prepare_artifact_catalog_parents(connection: Connection) -> None:
+    required = {
+        "preview_requests": (
+            "data_files_json",
+            "artifact_file_count",
+            "artifact_file_catalog_sha256",
+        ),
+        "preview_revisions": (
+            "file_metadata_json",
+            "artifact_file_count",
+            "artifact_file_catalog_sha256",
+        ),
+    }
+    inspector = inspect(connection)
+    table_names = set(inspector.get_table_names())
+    missing_tables = set(required) - table_names
+    if missing_tables:
+        raise PreviewEvidenceSchemaError(
+            f"incompatible Preview schema: missing required table {sorted(missing_tables)[0]}"
+        )
+
+    operations = _operations(connection)
+    for table_name, (legacy_name, count_name, digest_name) in required.items():
+        columns = _columns(connection, table_name)
+        additions: list[sa.Column[Any]] = []
+        if count_name not in columns:
+            additions.append(sa.Column(count_name, sa.Integer(), nullable=True))
+        if digest_name not in columns:
+            additions.append(sa.Column(digest_name, sa.String(), nullable=True))
+        for column in additions:
+            operations.add_column(table_name, column)
+        columns = _columns(connection, table_name)
+        legacy = columns.get(legacy_name)
+        if legacy is None:
+            raise PreviewEvidenceSchemaError(f"incompatible {table_name} schema: missing required column {legacy_name}")
+        if not legacy["nullable"]:
+            with operations.batch_alter_table(table_name) as batch:
+                batch.alter_column(
+                    legacy_name,
+                    existing_type=legacy["type"],
+                    nullable=True,
+                )
+        columns = _columns(connection, table_name)
+        expected_families = {
+            legacy_name: sa.String,
+            count_name: sa.Integer,
+            digest_name: sa.String,
+        }
+        for column_name, expected_family in expected_families.items():
+            actual = columns.get(column_name)
+            if actual is None or _type_family(actual["type"]) is not expected_family or not actual["nullable"]:
+                raise PreviewEvidenceSchemaError(
+                    f"incompatible {table_name} schema: column {column_name} has wrong type or nullability"
+                )
+
+
+def _canonical_catalog_json(rows: list[sa.RowMapping]) -> tuple[str, str]:
+    digest = sha256()
+    values: list[dict[str, object]] = []
+    for expected_order, row in enumerate(rows, start=1):
+        if row["file_order"] != expected_order:
+            raise PreviewEvidenceSchemaError("preview artifact catalog order is not contiguous")
+        item = {
+            "name": row["name"],
+            "media_type": row["media_type"],
+            "size_bytes": row["size_bytes"],
+            "sha256": row["sha256"],
+            "order": row["file_order"],
+        }
+        encoded = json.dumps(item, sort_keys=True, separators=(",", ":")).encode()
+        digest.update(len(encoded).to_bytes(8, "big"))
+        digest.update(encoded)
+        values.append(item)
+    return json.dumps(values, sort_keys=True, separators=(",", ":")), digest.hexdigest()
+
+
+def _restore_legacy_catalogs(
+    connection: Connection,
+    *,
+    parent_name: str,
+    package_kind: str,
+    package_id_name: str,
+    legacy_name: str,
+) -> None:
+    metadata = sa.MetaData()
+    parent = sa.Table(parent_name, metadata, autoload_with=connection)
+    catalog = sa.Table("preview_artifact_files", metadata, autoload_with=connection)
+    normalized_rows = connection.execute(
+        sa.select(
+            parent.c.ecosystem,
+            parent.c.tenant_id,
+            parent.c[package_id_name],
+            parent.c[legacy_name],
+            parent.c.artifact_file_count,
+            parent.c.artifact_file_catalog_sha256,
+        ).where(
+            sa.or_(
+                parent.c.artifact_file_count.is_not(None),
+                parent.c.artifact_file_catalog_sha256.is_not(None),
+            )
+        )
+    ).mappings()
+    for normalized in normalized_rows:
+        expected_count = normalized["artifact_file_count"]
+        expected_digest = normalized["artifact_file_catalog_sha256"]
+        if expected_count is None or expected_digest is None or normalized[legacy_name] is not None:
+            raise PreviewEvidenceSchemaError(f"{parent_name} has a mixed or incomplete preview artifact catalog")
+        catalog_rows = list(
+            connection.execute(
+                sa.select(
+                    catalog.c.file_order,
+                    catalog.c.name,
+                    catalog.c.media_type,
+                    catalog.c.size_bytes,
+                    catalog.c.sha256,
+                )
+                .where(
+                    catalog.c.ecosystem == normalized["ecosystem"],
+                    catalog.c.tenant_id == normalized["tenant_id"],
+                    catalog.c.package_kind == package_kind,
+                    catalog.c.package_id == normalized[package_id_name],
+                )
+                .order_by(catalog.c.file_order)
+            ).mappings()
+        )
+        legacy_json, digest = _canonical_catalog_json(catalog_rows)
+        if len(catalog_rows) != expected_count or digest != expected_digest:
+            raise PreviewEvidenceSchemaError(f"{parent_name} preview artifact catalog does not match parent metadata")
+        connection.execute(
+            sa.update(parent)
+            .where(
+                parent.c.ecosystem == normalized["ecosystem"],
+                parent.c.tenant_id == normalized["tenant_id"],
+                parent.c[package_id_name] == normalized[package_id_name],
+            )
+            .values({legacy_name: legacy_json})
+        )
+
+
+def _downgrade_artifact_catalog(connection: Connection) -> None:
+    inspector = inspect(connection)
+    table_names = set(inspector.get_table_names())
+    if "preview_artifact_files" not in table_names:
+        return
+    _restore_legacy_catalogs(
+        connection,
+        parent_name="preview_requests",
+        package_kind="requested",
+        package_id_name="request_id",
+        legacy_name="data_files_json",
+    )
+    _restore_legacy_catalogs(
+        connection,
+        parent_name="preview_revisions",
+        package_kind="revision",
+        package_id_name="revision_id",
+        legacy_name="file_metadata_json",
+    )
+    sa.Table(
+        "preview_artifact_files",
+        sa.MetaData(),
+        autoload_with=connection,
+    ).drop(connection)
+    operations = _operations(connection)
+    with operations.batch_alter_table("preview_revisions") as batch:
+        batch.drop_column("artifact_file_catalog_sha256")
+        batch.drop_column("artifact_file_count")
+        batch.alter_column(
+            "file_metadata_json",
+            existing_type=sa.Text(),
+            nullable=False,
+        )
+    with operations.batch_alter_table("preview_requests") as batch:
+        batch.drop_column("artifact_file_catalog_sha256")
+        batch.drop_column("artifact_file_count")
+
+
 class CCloudPreviewSchemaManager:
     def prepare(self, connection: Connection, *, target_revision: str) -> None:
-        if target_revision not in {"018", "021", "026", "027"}:
+        if target_revision not in {"018", "021", "026", "027", "028"}:
             raise ValueError(f"unknown Preview evidence target revision: {target_revision}")
+        if target_revision == "028":
+            _prepare_artifact_catalog_parents(connection)
         plans = tuple(
             _plan_table_repair(connection, table, target_revision=target_revision)
             for table in _expected_tables(target_revision)
         )
         for plan in plans:
             plan.apply(connection)
-        if target_revision == "027":
+        if target_revision in {"027", "028"}:
             self._copy_readiness_history(connection)
 
     @staticmethod
@@ -355,6 +546,9 @@ class CCloudPreviewSchemaManager:
     def downgrade(self, connection: Connection, *, target_revision: str) -> None:
         inspector = inspect(connection)
         names = set(inspector.get_table_names())
+        if target_revision == "028":
+            _downgrade_artifact_catalog(connection)
+            return
         if target_revision == "027":
             for name in (
                 "ccloud_focus_preview_repair_dates",

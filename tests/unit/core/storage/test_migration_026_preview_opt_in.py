@@ -78,7 +78,7 @@ def test_backend_enabled_migration_to_head_creates_complete_preview_evidence(tmp
 def test_direct_disabled_offline_upgrade_emits_no_preview_evidence_sql(selection: str | None) -> None:
     output = io.StringIO()
     config = _config("sqlite:///offline.db", selection=selection, output=output)
-    assert ScriptDirectory.from_config(config).get_current_head() == "027"
+    assert ScriptDirectory.from_config(config).get_current_head() == "028"
     command.upgrade(config, "025:head", sql=True)
 
     sql = output.getvalue().lower()
@@ -321,7 +321,7 @@ def test_incompatible_preview_schema_does_not_block_all_core_revisions_through_h
     version_engine = create_engine(url)
     try:
         with version_engine.connect() as connection:
-            assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "027"
+            assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "028"
     finally:
         version_engine.dispose()
     assert backend.preview_evidence_availability.state.value == "unavailable"

@@ -22,6 +22,7 @@ def test_generator_is_a_one_way_module_with_exact_public_contract() -> None:
     models = _module("models")
     eligibility = _module("eligibility")
     mapping = _module("mapping")
+    spooling = _module("spooling")
     source = inspect.getsource(generator)
 
     assert source.lstrip().startswith("from __future__ import annotations")
@@ -31,6 +32,7 @@ def test_generator_is_a_one_way_module_with_exact_public_contract() -> None:
     assert get_type_hints(generator.utc_now) == {"return": datetime}
     assert get_type_hints(generator.PreviewPackageGenerator.__init__) == {
         "max_csv_file_bytes": int | None,
+        "max_generation_spool_bytes": int,
         "clock": Callable[[], datetime],
         "return": type(None),
     }
@@ -38,6 +40,7 @@ def test_generator_is_a_one_way_module_with_exact_public_contract() -> None:
         "backend": persistence.PreviewStorageBackend,
         "request": models.PreviewRequest,
         "policy": eligibility.PreviewEligibilityPolicy,
+        "workspace": spooling.PreviewGenerationWorkspace | None,
         "return": tuple[models.PreviewSourceSnapshot, mapping.PreviewDataPackageDraft],
     }
     assert generator.PreviewGenerationError.__name__.endswith("Error")
@@ -170,6 +173,18 @@ def test_revision_protocols_have_the_exact_history_and_retention_contracts() -> 
         "revision": models.PreviewRevision,
         "file_name": str,
         "return": tuple[models.PreviewArtifactMetadata, bytes],
+    }
+    assert get_type_hints(revisions.PreviewRevisionReader.open_manifest_stream) == {
+        "revision": models.PreviewRevision,
+        "return": artifacts.PreviewVerifiedArtifactStream,
+    }
+    assert get_type_hints(revisions.PreviewRevisionReader.open_file_stream) == {
+        "revision": models.PreviewRevision,
+        "file_name": str,
+        "return": tuple[
+            models.PreviewArtifactMetadata,
+            artifacts.PreviewVerifiedArtifactStream,
+        ],
     }
     assert get_type_hints(revisions.PreviewRevisionReader.open_archive) == {
         "revision": models.PreviewRevision,
@@ -318,6 +333,8 @@ _READER_METHODS = {
     "validation_summary",
     "read_manifest",
     "read_file",
+    "open_manifest_stream",
+    "open_file_stream",
     "open_archive",
 }
 

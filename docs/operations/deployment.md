@@ -107,6 +107,38 @@ are verified before delivery. When `api` and `worker` run separately, configure
 both with the same tenant database and the same durable artifact root. Use a
 database deployment suitable for the expected process and write concurrency.
 
+### Preview capacity and storage sizing
+
+Preview generation limits are process-local. In `both` mode, requested packages
+and scheduled tenant-month publication share one bounded scheduler. In split
+mode, the API process enforces its requested-generation limits and the worker
+process enforces its scheduled-generation limits independently. Every
+additional API or worker replica has its own configured running and queued
+capacity; replicas do not combine their counters into a distributed limit.
+
+`preview.max_generation_spool_bytes` defaults to 2 GiB for each running
+generation. Reserve at least:
+
+```text
+preview.max_workers × preview.max_generation_spool_bytes
+```
+
+of temporary-disk headroom per process, in addition to retained immutable
+packages, the tenant database, filesystem metadata, and operating-system safety
+margin. The defaults therefore permit up to 4 GiB of concurrent generation
+temporary-disk use in one process. Split API and worker processes or multiple
+replicas can each consume that amount. Place `preview.artifact_root` on storage
+sized for the sum of all processes that share it.
+
+Generation and artifact delivery are bounded so package size does not require
+equivalent process memory. Operators must still budget ordinary application and
+API memory in addition to the temporary-disk calculation above.
+
+Use the queue defaults for burst absorption. Both queue limits may instead be
+set to zero to require immediate starts; requested submissions then return
+retryable HTTP 429 when no slot is available, and scheduled tenant-months defer
+to a later periodic cycle.
+
 Mixed deployments are supported. Only enabled tenants use the shared Preview
 artifact root and evidence schema; disabled tenants do not acquire Preview
 organization/source/lineage data. An enabled tenant's Preview storage,

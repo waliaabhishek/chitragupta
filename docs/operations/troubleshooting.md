@@ -17,6 +17,17 @@
 **Cause**: `lookback_days` ≤ `cutoff_days` in tenant config.
 **Fix**: Set `lookback_days` higher than `cutoff_days` (default: 200 > 5).
 
+### Preview capacity configuration is rejected
+
+**Cause**: The global and per-tenant queued limits are not both zero or both
+positive; the positive per-tenant queued limit is not lower than the global
+limit; or `preview.max_running_generations_per_tenant` exceeds
+`preview.max_workers`.
+
+**Fix**: Use the defaults (`max_workers: 2`, global queued: `8`, per-tenant
+running: `1`, per-tenant queued: `2`) or preserve those relationships. To
+disable waiting, set both queued limits to `0`.
+
 ### `username and password required for basic auth`
 
 **Cause**: `auth_type: basic` set but credentials missing.
@@ -183,6 +194,44 @@
 - Increase `billing_api.days_per_query` to fetch more days per request (max 30).
 - Increase `min_refresh_gap_seconds` to reduce pipeline run frequency.
 - Check if multiple tenants are querying the same CCloud org simultaneously — they share the rate limit.
+
+### `HTTP 429` with `preview_capacity_exhausted`
+
+**Cause**: The application process has reached its configured global or
+per-tenant running/queued Preview generation limit.
+
+**Fix**:
+
+- Wait for existing Preview work to finish, then submit the same request again.
+  The rejected attempt created no request ID or artifacts.
+- If bursts are expected, increase both queue limits while keeping the
+  per-tenant queued limit lower than the global limit.
+- If generation is continuously saturated and the host has sufficient disk and
+  memory headroom, tune `preview.max_workers` and the per-tenant running limit
+  together.
+- Remember that limits are per process. Additional replicas add independent
+  capacity rather than sharing one global counter.
+
+The remote `chitragupta-preview` CLI exits with code 1 for this response and
+does not retry automatically.
+
+### `preview_generation_spool_limit_exceeded`
+
+**Cause**: One requested or scheduled package needed more temporary disk than
+`preview.max_generation_spool_bytes` (default 2 GiB).
+
+**Fix**:
+
+- Confirm the artifact filesystem has enough free space for
+  `preview.max_workers × preview.max_generation_spool_bytes`, retained
+  packages, and safety margin.
+- Increase the per-generation limit only after sizing every process or replica
+  that shares the artifact root.
+- Reducing `preview.max_csv_file_bytes` changes part boundaries but does not
+  reduce the aggregate generation spool requirement.
+
+The request diagnostic is non-retryable with the same limit. Scheduled
+publication creates no revision and leaves the current pointer unchanged.
 
 ### `HTTP 409 Conflict` on `POST /api/v1/tenants/{name}/pipeline/run`
 

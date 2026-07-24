@@ -57,7 +57,9 @@ def test_migration_025_schema_matches_create_all(tmp_path: Path) -> None:
     direct = create_engine(direct_url)
 
     assert {column["name"] for column in inspect(migrated).get_columns("preview_revisions")} == {
-        column["name"] for column in inspect(direct).get_columns("preview_revisions")
+        column["name"]
+        for column in inspect(direct).get_columns("preview_revisions")
+        if column["name"] not in {"artifact_file_count", "artifact_file_catalog_sha256"}
     }
     assert {index["name"] for index in inspect(migrated).get_indexes("preview_revisions")} == {
         index["name"] for index in inspect(direct).get_indexes("preview_revisions")

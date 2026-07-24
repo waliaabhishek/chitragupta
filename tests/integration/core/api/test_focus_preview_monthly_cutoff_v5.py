@@ -147,8 +147,8 @@ def test_primary_api_monthly_cutoff_and_72_hour_classification_uses_real_zero_li
     try:
         with SameThreadApiClient(app) as client:
             install_backend(app, "production", backend)
-            app.state.preview_runtime._executor = executor
-            app.state.preview_runtime._owns_executor = False
+            app.state.preview_runtime._scheduler._executor = executor
+            app.state.preview_runtime._scheduler._shutdown_executor = False
             app.state.preview_runtime._clock = lambda: submitted_at
             terminal = _submit(
                 client,
@@ -178,8 +178,8 @@ def test_monthly_submission_freezes_cutoff_classification_before_delayed_worker(
     try:
         with SameThreadApiClient(app) as client:
             install_backend(app, "production", backend)
-            app.state.preview_runtime._executor = executor
-            app.state.preview_runtime._owns_executor = False
+            app.state.preview_runtime._scheduler._executor = executor
+            app.state.preview_runtime._scheduler._shutdown_executor = False
             app.state.preview_runtime._clock = lambda: now
             submitted = client.post(
                 "/api/v1/tenants/production/focus-preview/requests",
@@ -281,8 +281,8 @@ def test_settled_monthly_positive_sources_use_real_calculate_lineage_and_persist
     try:
         with SameThreadApiClient(app) as client:
             install_backend(app, "production", backend)
-            app.state.preview_runtime._executor = executor
-            app.state.preview_runtime._owns_executor = False
+            app.state.preview_runtime._scheduler._executor = executor
+            app.state.preview_runtime._scheduler._shutdown_executor = False
             app.state.preview_runtime._clock = lambda: datetime(2026, 8, 4, tzinfo=UTC)
             ready = _submit(
                 client,
@@ -323,9 +323,9 @@ def test_settled_monthly_positive_sources_use_real_calculate_lineage_and_persist
             persisted = connection.execute(
                 text(
                     """
-                    SELECT status, storage_key, monthly_status, effective_coverage_end_date,
-                           manifest_metadata_json, data_files_json
-                    FROM preview_requests WHERE request_id = :request_id
+                SELECT status, storage_key, monthly_status, effective_coverage_end_date,
+                       manifest_metadata_json, data_files_json, artifact_file_count
+                FROM preview_requests WHERE request_id = :request_id
                     """
                 ),
                 {"request_id": ready["request_id"]},
@@ -335,7 +335,8 @@ def test_settled_monthly_positive_sources_use_real_calculate_lineage_and_persist
         assert persisted.monthly_status == "settled"
         assert str(persisted.effective_coverage_end_date) == "2026-08-01"
         assert persisted.manifest_metadata_json
-        assert persisted.data_files_json
+        assert persisted.data_files_json is None
+        assert persisted.artifact_file_count == len(ready["package"]["files"])
     finally:
         backend.dispose()
         plugin.close()
@@ -372,8 +373,8 @@ def test_complete_zero_portion_lineage_is_ready_without_enrichment_reads_for_all
     try:
         with SameThreadApiClient(app) as client:
             install_backend(app, "production", backend)
-            app.state.preview_runtime._executor = executor
-            app.state.preview_runtime._owns_executor = False
+            app.state.preview_runtime._scheduler._executor = executor
+            app.state.preview_runtime._scheduler._shutdown_executor = False
             app.state.preview_runtime._clock = lambda: datetime(2026, 8, 5, tzinfo=UTC)
             ready = _submit(client, executor, body)
 
@@ -410,8 +411,8 @@ def test_daily_and_monthly_post_create_request_rows_but_never_revision_rows(
     try:
         with SameThreadApiClient(app) as client:
             install_backend(app, "production", backend)
-            app.state.preview_runtime._executor = executor
-            app.state.preview_runtime._owns_executor = False
+            app.state.preview_runtime._scheduler._executor = executor
+            app.state.preview_runtime._scheduler._shutdown_executor = False
             app.state.preview_runtime._clock = lambda: datetime(2026, 8, 5, tzinfo=UTC)
             ready = _submit(client, executor, body)
             assert ready["status"] == "ready", ready["diagnostic"]
@@ -434,8 +435,8 @@ def test_future_and_empty_early_months_do_not_require_calculation_evidence(tmp_p
     try:
         with SameThreadApiClient(app) as client:
             install_backend(app, "production", backend)
-            app.state.preview_runtime._executor = executor
-            app.state.preview_runtime._owns_executor = False
+            app.state.preview_runtime._scheduler._executor = executor
+            app.state.preview_runtime._scheduler._shutdown_executor = False
             app.state.preview_runtime._clock = lambda: now
             future = _submit(
                 client,
@@ -489,8 +490,8 @@ def test_monthly_gap_checks_only_the_effective_interval_and_not_later_dates(
     try:
         with SameThreadApiClient(app) as client:
             install_backend(app, "production", backend)
-            app.state.preview_runtime._executor = executor
-            app.state.preview_runtime._owns_executor = False
+            app.state.preview_runtime._scheduler._executor = executor
+            app.state.preview_runtime._scheduler._shutdown_executor = False
             app.state.preview_runtime._clock = lambda: datetime(2026, 7, 4, tzinfo=UTC)
             failed = _submit(
                 client,
@@ -544,8 +545,8 @@ def test_monthly_reconciliation_ignores_corrupt_evidence_after_effective_interva
     try:
         with SameThreadApiClient(app) as client:
             install_backend(app, "production", backend)
-            app.state.preview_runtime._executor = executor
-            app.state.preview_runtime._owns_executor = False
+            app.state.preview_runtime._scheduler._executor = executor
+            app.state.preview_runtime._scheduler._shutdown_executor = False
             app.state.preview_runtime._clock = lambda: datetime(2026, 7, 4, tzinfo=UTC)
             ready = _submit(
                 client,
@@ -614,8 +615,8 @@ def test_primary_api_invalid_evidence_permutations_start_from_real_calculate_pha
     try:
         with SameThreadApiClient(app) as client:
             install_backend(app, "production", backend)
-            app.state.preview_runtime._executor = executor
-            app.state.preview_runtime._owns_executor = False
+            app.state.preview_runtime._scheduler._executor = executor
+            app.state.preview_runtime._scheduler._shutdown_executor = False
             app.state.preview_runtime._clock = lambda: datetime(2026, 7, 4, tzinfo=UTC)
             failed = _submit(
                 client,

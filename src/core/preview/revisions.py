@@ -1,29 +1,30 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import logging
-import re
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
-from typing import Literal, Protocol, cast, runtime_checkable
+from typing import Protocol, runtime_checkable
 
 from core.config.models import TenantConfig  # noqa: TC001 - resolved by runtime protocol tests
 from core.preview.artifacts import (  # noqa: TC001 - resolved by runtime protocol tests
     PreviewArchiveStream,
     PreviewArtifactOwner,
-    PreviewArtifactStore,
+    PreviewGenerationArtifactStore,
+    PreviewStreamingArtifactStore,
+    PreviewVerifiedArtifactStream,
+    find_preview_artifact_metadata,
     preview_artifact_owner,
 )
 from core.preview.eligibility import policy_from_tenant_config
 from core.preview.generator import PreviewGenerationError, PreviewPackageGenerator, utc_now
+from core.preview.manifest_validation import validate_revision_manifest
 from core.preview.mapping import (
     FOCUS_1_4_FULL_PROFILE_COLUMNS,
     build_preview_revision_manifest,
     preview_revision_content_sha256,
-    preview_revision_source_snapshot,
 )
 from core.preview.models import (
     PreviewArtifactMetadata,
@@ -42,6 +43,7 @@ from core.preview.persistence import (
     PreviewStorageBackend,  # noqa: TC001 - resolved by runtime protocol tests
 )
 from core.preview.request import canonicalize_monthly_interval
+from core.preview.spooling import PreviewGenerationSpoolLimitError
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +72,13 @@ class PreviewRevisionCleanupResult:
 
 @runtime_checkable
 class PreviewScheduledRevisionManager(Protocol):
+    def eligible_months(
+        self,
+        *,
+        tenant_config: TenantConfig,
+        now: datetime,
+    ) -> tuple[str, ...]: ...
+
     def publish_eligible_months(
         self,
         *,
@@ -78,6 +87,16 @@ class PreviewScheduledRevisionManager(Protocol):
         backend: PreviewStorageBackend,
         now: datetime,
     ) -> tuple[PreviewRevision, ...]: ...
+
+    def publish_eligible_month(
+        self,
+        *,
+        tenant_name: str,
+        tenant_config: TenantConfig,
+        backend: PreviewStorageBackend,
+        now: datetime,
+        month: str,
+    ) -> PreviewRevision | None: ...
 
     def cleanup_retention(
         self,
@@ -135,6 +154,19 @@ class PreviewRevisionReader(Protocol):
         file_name: str,
     ) -> tuple[PreviewArtifactMetadata, bytes]: ...
 
+    def open_manifest_stream(
+        self,
+        *,
+        revision: PreviewRevision,
+    ) -> PreviewVerifiedArtifactStream: ...
+
+    def open_file_stream(
+        self,
+        *,
+        revision: PreviewRevision,
+        file_name: str,
+    ) -> tuple[PreviewArtifactMetadata, PreviewVerifiedArtifactStream]: ...
+
     def open_archive(self, *, revision: PreviewRevision) -> PreviewArchiveStream: ...
 
 
@@ -160,7 +192,7 @@ class PreviewRevisionService:
     def __init__(
         self,
         *,
-        artifact_store: PreviewArtifactStore,
+        artifact_store: PreviewGenerationArtifactStore,
         package_generator: PreviewPackageGenerator,
         clock: Callable[[], datetime] = utc_now,
         revision_id_factory: Callable[[], str] = lambda: str(uuid.uuid4()),
@@ -223,6 +255,14 @@ class PreviewRevisionService:
             current = next_month
         return tuple(months)
 
+    def eligible_months(
+        self,
+        *,
+        tenant_config: TenantConfig,
+        now: datetime,
+    ) -> tuple[str, ...]:
+        return self._eligible_months(tenant_config, now.astimezone(UTC).replace(microsecond=0))
+
     def publish_eligible_months(
         self,
         *,
@@ -230,10 +270,13 @@ class PreviewRevisionService:
         tenant_config: TenantConfig,
         backend: PreviewStorageBackend,
         now: datetime,
+        _eligible_months: tuple[str, ...] | None = None,
     ) -> tuple[PreviewRevision, ...]:
         owner = preview_artifact_owner(tenant_name, tenant_config)
         normalized_now = now.astimezone(UTC).replace(microsecond=0)
-        eligible_months = self._eligible_months(tenant_config, normalized_now)
+        eligible_months = (
+            self._eligible_months(tenant_config, normalized_now) if _eligible_months is None else _eligible_months
+        )
         if not eligible_months:
             return ()
         try:
@@ -249,6 +292,8 @@ class PreviewRevisionService:
         published: list[PreviewRevision] = []
         policy = policy_from_tenant_config(tenant_config, created_at=normalized_now)
         for month in eligible_months:
+            draft = None
+            generation = None
             try:
                 interval = canonicalize_monthly_interval(month=month)
                 cutoff_date = (normalized_now - timedelta(days=tenant_config.retention_days)).date()
@@ -274,10 +319,16 @@ class PreviewRevisionService:
                     package=None,
                     effective_columns=FOCUS_1_4_FULL_PROFILE_COLUMNS,
                 )
+                generation = self._artifact_store.begin_generation(
+                    owner=owner,
+                    request_id=request.request_id,
+                    max_spool_bytes=self._package_generator.max_generation_spool_bytes,
+                )
                 snapshot, draft = self._package_generator.generate(
                     backend=backend,
                     request=request,
                     policy=policy,
+                    workspace=generation.workspace,
                 )
                 if snapshot.monthly_status != "settled":
                     raise ValueError("scheduled monthly generation requires settled status")
@@ -316,37 +367,35 @@ class PreviewRevisionService:
                     raise ValueError("candidate supersedes identity does not match expected current revision")
                 stored = None
                 try:
-                    with self._artifact_store.stage_data_files(
-                        owner=owner,
-                        request_id=revision_id,
-                        data_files=draft.data_files,
-                    ) as staged:
-                        manifest = build_preview_revision_manifest(
-                            revision_id=candidate.revision_id,
-                            tenant_name_at_publication=candidate.tenant_name_at_publication,
-                            month=candidate.month,
-                            start_date=candidate.start_date,
-                            end_date=candidate.end_date,
-                            monthly_status=candidate.monthly_status,
-                            material_sha256=candidate.material_sha256,
-                            supersedes_revision_id=candidate.supersedes_revision_id,
-                            snapshot=candidate.source_snapshot,
-                            draft=draft,
-                            files=staged.files,
-                            published_at=candidate.published_at,
+                    generation.stage_data_files(draft.data_files)
+                    manifest = build_preview_revision_manifest(
+                        revision_id=candidate.revision_id,
+                        tenant_name_at_publication=candidate.tenant_name_at_publication,
+                        month=candidate.month,
+                        start_date=candidate.start_date,
+                        end_date=candidate.end_date,
+                        monthly_status=candidate.monthly_status,
+                        material_sha256=candidate.material_sha256,
+                        supersedes_revision_id=candidate.supersedes_revision_id,
+                        snapshot=candidate.source_snapshot,
+                        draft=draft,
+                        files=generation.files,
+                        published_at=candidate.published_at,
+                    )
+                    stored = generation.publish(manifest_body=manifest)
+                    with backend.create_preview_write_unit_of_work() as write_uow:
+                        revision = write_uow.revisions.replace_current(
+                            candidate=candidate,
+                            package=stored,
+                            expected_current_revision_id=expected_current,
                         )
-                        stored = staged.publish(manifest_body=manifest)
-                        with backend.create_preview_write_unit_of_work() as write_uow:
-                            revision = write_uow.revisions.replace_current(
-                                candidate=candidate,
-                                package=stored,
-                                expected_current_revision_id=expected_current,
-                            )
-                            write_uow.commit()
+                        write_uow.commit()
                     published.append(revision)
                 except Exception as publication_error:
                     if stored is not None:
                         try:
+                            generation.close()
+                            generation = None
                             self._recover_artifacts(owner=owner, backend=backend)
                         except Exception as cleanup_error:
                             logger.error(
@@ -356,12 +405,17 @@ class PreviewRevisionService:
                                 type(cleanup_error).__name__,
                             )
                     raise
-            except PreviewGenerationError as exc:
+            except (PreviewGenerationError, PreviewGenerationSpoolLimitError) as exc:
+                diagnostic_code = (
+                    exc.diagnostic.code
+                    if isinstance(exc, PreviewGenerationError)
+                    else "preview_generation_spool_limit_exceeded"
+                )
                 logger.warning(
                     "FOCUS Mapping Preview revision generation skipped tenant=%s month=%s diagnostic_code=%s",
                     tenant_name,
                     month,
-                    exc.diagnostic.code,
+                    diagnostic_code,
                 )
             except Exception as exc:
                 logger.error(
@@ -370,7 +424,46 @@ class PreviewRevisionService:
                     month,
                     type(exc).__name__,
                 )
+            finally:
+                if generation is not None:
+                    try:
+                        generation.close()
+                    except OSError:
+                        logger.exception(
+                            "FOCUS Mapping Preview revision generation workspace cleanup failed tenant=%s month=%s",
+                            tenant_name,
+                            month,
+                        )
+                if draft is not None:
+                    try:
+                        draft.close()
+                    except OSError:
+                        logger.exception(
+                            "FOCUS Mapping Preview revision draft workspace cleanup failed tenant=%s month=%s",
+                            tenant_name,
+                            month,
+                        )
         return tuple(published)
+
+    def publish_eligible_month(
+        self,
+        *,
+        tenant_name: str,
+        tenant_config: TenantConfig,
+        backend: PreviewStorageBackend,
+        now: datetime,
+        month: str,
+    ) -> PreviewRevision | None:
+        if month not in self.eligible_months(tenant_config=tenant_config, now=now):
+            return None
+        published = self.publish_eligible_months(
+            tenant_name=tenant_name,
+            tenant_config=tenant_config,
+            backend=backend,
+            now=now,
+            _eligible_months=(month,),
+        )
+        return published[0] if published else None
 
     def cleanup_retention(
         self,
@@ -486,21 +579,8 @@ class PreviewRevisionService:
         )
 
 
-def _artifact_declarations(revision: PreviewRevision) -> list[dict[str, object]]:
-    return [
-        {
-            "name": item.name,
-            "media_type": item.media_type,
-            "size_bytes": item.size_bytes,
-            "sha256": item.sha256,
-            "order": item.order,
-        }
-        for item in revision.package.files
-    ]
-
-
 class PreviewRevisionReadService:
-    def __init__(self, *, artifact_store: PreviewArtifactStore) -> None:
+    def __init__(self, *, artifact_store: PreviewStreamingArtifactStore) -> None:
         self._artifact_store = artifact_store
 
     def get_current(
@@ -552,10 +632,11 @@ class PreviewRevisionReadService:
                 cursor_revision_id=cursor_revision_id,
             )
 
-    def _validated_manifest(
+    def _open_validated_manifest(
         self,
         revision: PreviewRevision,
-    ) -> tuple[bytes, dict[str, object], PreviewRevisionValidationSummary]:
+    ) -> tuple[PreviewVerifiedArtifactStream, PreviewRevisionValidationSummary]:
+        stream: PreviewVerifiedArtifactStream | None = None
         try:
             validate_preview_revision_invariant(
                 month=revision.month,
@@ -564,94 +645,35 @@ class PreviewRevisionReadService:
                 monthly_status=revision.monthly_status,
                 source_snapshot=revision.source_snapshot,
             )
-            body = self._artifact_store.read_manifest(
+            stream = self._artifact_store.open_verified(
                 revision.package.storage_key,
                 revision.package.manifest,
             )
-            manifest = json.loads(body)
-            if not isinstance(manifest, dict):
-                raise ValueError("manifest must be an object")
-            for name in ("mapping_profile_version", "target_focus_version", "column_profile"):
-                if not isinstance(manifest.get(name), str):
-                    raise ValueError("invalid material preimage")
-            columns = manifest.get("effective_columns")
-            if not isinstance(columns, list) or not all(isinstance(item, str) for item in columns):
-                raise ValueError("invalid material preimage")
-            logical = manifest.get("logical_data_sha256")
-            manifest_material = manifest.get("material_sha256")
-            if not isinstance(logical, str) or re.fullmatch(r"[0-9a-f]{64}", logical) is None:
-                raise ValueError("invalid material preimage")
-            if not isinstance(manifest_material, str) or re.fullmatch(r"[0-9a-f]{64}", manifest_material) is None:
-                raise ValueError("invalid material digest")
-            recomputed = preview_revision_content_sha256(
-                mapping_profile_version=manifest["mapping_profile_version"],
-                target_focus_version=manifest["target_focus_version"],
-                column_profile=manifest["column_profile"],
-                effective_columns=tuple(columns),
-                logical_data_sha256=logical,
-            )
-            if recomputed != manifest_material or recomputed != revision.material_sha256:
-                raise ValueError("material digest mismatch")
-            expected = {
-                "revision_id": revision.revision_id,
-                "tenant_name": revision.tenant_name_at_publication,
-                "grain": "monthly",
-                "month": revision.month,
-                "start_date": revision.start_date.isoformat(),
-                "end_date": revision.end_date.isoformat(),
-                "monthly_status": revision.monthly_status,
-                "supersedes_revision_id": revision.supersedes_revision_id,
-                "published_at": revision.published_at.isoformat().replace("+00:00", "Z"),
-                "source_snapshot": preview_revision_source_snapshot(revision.source_snapshot),
-                "files": _artifact_declarations(revision),
-            }
-            for key, value in expected.items():
-                if manifest.get(key) != value:
-                    raise ValueError("manifest correlation mismatch")
-            validation = manifest.get("validation")
-            if not isinstance(validation, dict):
-                raise ValueError("manifest validation must be an object")
-            if validation.get("status") != "passed":
-                raise ValueError("validation status must be passed")
-            mapping_profile_version = validation.get("mapping_profile_version")
-            source_records = validation.get("source_records")
-            rows = validation.get("rows")
-            mapping_errors = validation.get("mapping_errors")
-            if not isinstance(mapping_profile_version, str):
-                raise ValueError("validation mapping profile must be a string")
-            if not isinstance(source_records, int) or isinstance(source_records, bool):
-                raise ValueError("validation source records must be an integer")
-            if not isinstance(rows, int) or isinstance(rows, bool):
-                raise ValueError("validation rows must be an integer")
-            if type(mapping_errors) is not int or mapping_errors != 0:
-                raise ValueError("validation mapping errors must be zero")
-            if validation.get("artifact_integrity") != "passed":
-                raise ValueError("validation artifact integrity must be passed")
-            summary = PreviewRevisionValidationSummary(
-                status="passed",
-                mapping_profile_version=mapping_profile_version,
-                source_records=source_records,
-                rows=rows,
-                mapping_errors=cast("Literal[0]", mapping_errors),
-                artifact_integrity="passed",
-            )
-            if summary.mapping_profile_version != manifest["mapping_profile_version"]:
-                raise ValueError("validation mapping profile mismatch")
-            return body, manifest, summary
+            return stream, validate_revision_manifest(stream, revision)
         except PreviewRevisionArtifactUnavailableError:
+            if stream is not None:
+                stream.close()
             raise
         except Exception:
+            if stream is not None:
+                stream.close()
             raise PreviewRevisionArtifactUnavailableError(
                 "Stored FOCUS Mapping Preview revision artifact is unavailable"
             ) from None
 
     def validation_summary(self, *, revision: PreviewRevision) -> PreviewRevisionValidationSummary:
-        _body, _manifest, summary = self._validated_manifest(revision)
+        stream, summary = self._open_validated_manifest(revision)
+        stream.close()
         return summary
 
     def read_manifest(self, *, revision: PreviewRevision) -> bytes:
-        body, _manifest, _summary = self._validated_manifest(revision)
-        return body
+        stream = self.open_manifest_stream(revision=revision)
+        with stream:
+            return b"".join(stream.iter_chunks())
+
+    def open_manifest_stream(self, *, revision: PreviewRevision) -> PreviewVerifiedArtifactStream:
+        stream, _summary = self._open_validated_manifest(revision)
+        return stream
 
     def read_file(
         self,
@@ -659,19 +681,34 @@ class PreviewRevisionReadService:
         revision: PreviewRevision,
         file_name: str,
     ) -> tuple[PreviewArtifactMetadata, bytes]:
-        self._validated_manifest(revision)
-        metadata = next((item for item in revision.package.files if item.name == file_name), None)
+        metadata, stream = self.open_file_stream(revision=revision, file_name=file_name)
+        with stream:
+            return metadata, b"".join(stream.iter_chunks())
+
+    def open_file_stream(
+        self,
+        *,
+        revision: PreviewRevision,
+        file_name: str,
+    ) -> tuple[PreviewArtifactMetadata, PreviewVerifiedArtifactStream]:
+        manifest_stream, _summary = self._open_validated_manifest(revision)
+        manifest_stream.close()
+        metadata = find_preview_artifact_metadata(revision.package.files, file_name)
         if metadata is None:
             raise FileNotFoundError("FOCUS Mapping Preview file not found for current revision")
         try:
-            return metadata, self._artifact_store.read_file(revision.package.storage_key, metadata)
+            return (
+                metadata,
+                self._artifact_store.open_verified(revision.package.storage_key, metadata),
+            )
         except Exception:
             raise PreviewRevisionArtifactUnavailableError(
                 "Stored FOCUS Mapping Preview revision artifact is unavailable"
             ) from None
 
     def open_archive(self, *, revision: PreviewRevision) -> PreviewArchiveStream:
-        self._validated_manifest(revision)
+        manifest_stream, _summary = self._open_validated_manifest(revision)
+        manifest_stream.close()
         try:
             return self._artifact_store.open_archive(
                 storage_key=revision.package.storage_key,

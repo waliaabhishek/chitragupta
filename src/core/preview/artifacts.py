@@ -9,14 +9,29 @@ import shutil
 import tempfile
 import uuid
 import zipfile
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, BinaryIO, Protocol, Self, cast, runtime_checkable
+from typing import (
+    TYPE_CHECKING,
+    BinaryIO,
+    Literal,
+    Protocol,
+    Self,
+    cast,
+    overload,
+    runtime_checkable,
+)
 
 from core.config.fingerprint import storage_backend_fingerprint
 from core.preview.models import PreviewArtifactMetadata, PreviewArtifactPayload, PreviewStoredPackage
+from core.preview.spooling import (
+    PreviewGenerationWorkspace,
+    PreviewSpooledArtifactCollection,
+    PreviewSpooledBody,
+    spooled_body_metadata,
+)
 
 if TYPE_CHECKING:
     from core.config.models import TenantConfig
@@ -95,11 +110,40 @@ class PreviewStagedPackage(Protocol):
 
 
 @runtime_checkable
+class PreviewGenerationPackage(PreviewStagedPackage, Protocol):
+    @property
+    def workspace(self) -> PreviewGenerationWorkspace: ...
+
+    def stage_data_files(self, data_files: Sequence[PreviewArtifactPayload]) -> None: ...
+
+
+@runtime_checkable
 class PreviewArchiveStream(Protocol):
     @property
     def size_bytes(self) -> int: ...
 
     def iter_chunks(self, *, chunk_size: int = 64 * 1024) -> Iterator[bytes]: ...
+
+    def close(self) -> None: ...
+
+    def __enter__(self) -> Self: ...
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: object,
+    ) -> None: ...
+
+
+@runtime_checkable
+class PreviewVerifiedArtifactStream(Protocol):
+    @property
+    def size_bytes(self) -> int: ...
+
+    def iter_chunks(self, *, chunk_size: int = 64 * 1024) -> Iterator[bytes]: ...
+
+    def rewind(self) -> None: ...
 
     def close(self) -> None: ...
 
@@ -148,6 +192,45 @@ class PreviewArtifactStore(Protocol):
     ) -> int: ...
 
     def close(self) -> None: ...
+
+
+@runtime_checkable
+class PreviewGenerationArtifactStore(PreviewArtifactStore, Protocol):
+    def begin_generation(
+        self,
+        *,
+        owner: PreviewArtifactOwner,
+        request_id: str,
+        max_spool_bytes: int,
+    ) -> PreviewGenerationPackage: ...
+
+
+@runtime_checkable
+class PreviewStreamingArtifactStore(PreviewArtifactStore, Protocol):
+    def open_verified(
+        self,
+        storage_key: str,
+        metadata: PreviewArtifactMetadata,
+    ) -> PreviewVerifiedArtifactStream: ...
+
+
+@runtime_checkable
+class PreviewRuntimeArtifactStore(PreviewGenerationArtifactStore, PreviewStreamingArtifactStore, Protocol):
+    pass
+
+
+@runtime_checkable
+class PreviewArtifactMetadataLookup(Protocol):
+    def find_by_name(self, file_name: str) -> PreviewArtifactMetadata | None: ...
+
+
+def find_preview_artifact_metadata(
+    files: Sequence[PreviewArtifactMetadata],
+    file_name: str,
+) -> PreviewArtifactMetadata | None:
+    if isinstance(files, PreviewArtifactMetadataLookup):
+        return files.find_by_name(file_name)
+    return next((item for item in files if item.name == file_name), None)
 
 
 def _safe_segment(value: str) -> str:
@@ -219,7 +302,7 @@ class _LocalPreviewStagedPackage:
         lock_path: Path,
         lock_handle: BinaryIO,
         storage_key: str,
-        files: tuple[PreviewArtifactMetadata, ...],
+        workspace: PreviewGenerationWorkspace,
     ) -> None:
         self._root = root
         self._staging = staging
@@ -227,57 +310,119 @@ class _LocalPreviewStagedPackage:
         self._lock_path = lock_path
         self._lock_handle: BinaryIO | None = lock_handle
         self._storage_key = storage_key
-        self._files = files
+        self._workspace = workspace
+        self._files: tuple[PreviewArtifactMetadata, ...] | None = None
         self._published = False
         self._closed = False
 
     @property
     def files(self) -> tuple[PreviewArtifactMetadata, ...]:
+        if self._files is None:
+            raise RuntimeError("generation data files have not been staged")
         return self._files
+
+    @property
+    def workspace(self) -> PreviewGenerationWorkspace:
+        return self._workspace
+
+    def stage_data_files(self, data_files: Sequence[PreviewArtifactPayload]) -> None:
+        if self._closed or self._published or self._files is not None:
+            raise RuntimeError("generation package is no longer stageable")
+        bounded_metadata = data_files.metadata if isinstance(data_files, PreviewSpooledArtifactCollection) else None
+        metadata: list[PreviewArtifactMetadata] = []
+        for item in data_files:
+            name = _safe_segment(item.name)
+            size_bytes, sha256 = spooled_body_metadata(item.body)
+            item_metadata = PreviewArtifactMetadata(
+                name=name,
+                media_type=item.media_type,
+                size_bytes=size_bytes,
+                sha256=sha256,
+                order=item.order,
+            )
+            if bounded_metadata is None:
+                metadata.append(item_metadata)
+            target = self._staging / name
+            staged_hasher = hashlib.sha256()
+            staged_size = 0
+            if isinstance(item.body, PreviewSpooledBody):
+                with item.body.open() as source:
+                    while chunk := source.read(64 * 1024):
+                        staged_hasher.update(chunk)
+                        staged_size += len(chunk)
+                if (staged_size, staged_hasher.hexdigest()) != (size_bytes, sha256):
+                    raise PreviewArtifactIntegrityError("spooled preview artifact changed during staging")
+                item.body.path.rename(target)
+            else:
+                self._workspace.record_write(len(item.body))
+                with target.open("xb") as handle:
+                    handle.write(item.body)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                staged_hasher.update(item.body)
+                staged_size = len(item.body)
+                if (staged_size, staged_hasher.hexdigest()) != (size_bytes, sha256):
+                    raise PreviewArtifactIntegrityError("preview artifact changed during staging")
+        file_metadata = tuple(metadata) if bounded_metadata is None else bounded_metadata
+        if any(item.order != index for index, item in enumerate(file_metadata, start=1)):
+            raise ValueError("package file order must be contiguous")
+        if bounded_metadata is None and len({item.name for item in metadata}) != len(metadata):
+            raise ValueError("package artifact names must be unique")
+        self._workspace.enforce_limit()
+        _fsync_directory(self._staging)
+        self._files = cast("tuple[PreviewArtifactMetadata, ...]", file_metadata)
 
     def publish(self, *, manifest_body: bytes) -> PreviewStoredPackage:
         if self._closed or self._published:
             raise RuntimeError("staged package is no longer publishable")
-        try:
-            manifest = json.loads(manifest_body)
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise ValueError("manifest is not valid JSON") from exc
-        if not isinstance(manifest, dict):
-            raise ValueError("manifest is not valid JSON")
-        declared = manifest.get("files")
-        actual = [
-            {
-                "name": item.name,
-                "media_type": item.media_type,
-                "size_bytes": item.size_bytes,
-                "sha256": item.sha256,
-                "order": item.order,
-            }
-            for item in self._files
-        ]
-        if declared != actual:
-            raise ValueError("manifest file metadata does not match package bytes")
+        files = self.files
+        if not isinstance(manifest_body, PreviewSpooledBody):
+            try:
+                manifest = json.loads(manifest_body)
+            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise ValueError("manifest is not valid JSON") from exc
+            if not isinstance(manifest, dict):
+                raise ValueError("manifest is not valid JSON")
+            declared = manifest.get("files")
+            actual = [
+                {
+                    "name": item.name,
+                    "media_type": item.media_type,
+                    "size_bytes": item.size_bytes,
+                    "sha256": item.sha256,
+                    "order": item.order,
+                }
+                for item in files
+            ]
+            if declared != actual:
+                raise ValueError("manifest file metadata does not match package bytes")
         manifest_path = self._staging / "manifest.json"
-        with manifest_path.open("xb") as handle:
-            handle.write(manifest_body)
-            handle.flush()
-            os.fsync(handle.fileno())
+        if isinstance(manifest_body, PreviewSpooledBody):
+            manifest_body.path.rename(manifest_path)
+        else:
+            self._workspace.record_write(len(manifest_body))
+            with manifest_path.open("xb") as handle:
+                handle.write(manifest_body)
+                handle.flush()
+                os.fsync(handle.fileno())
+        self._workspace.enforce_limit()
         _fsync_directory(self._staging)
         target = self._root / self._storage_key
         self._staging.rename(target)
         _fsync_directory(self._root)
         self._published = True
+        manifest_size, manifest_sha256 = spooled_body_metadata(manifest_body)
         manifest_metadata = PreviewArtifactMetadata(
             name="manifest.json",
             media_type="application/json",
-            size_bytes=len(manifest_body),
-            sha256=hashlib.sha256(manifest_body).hexdigest(),
+            size_bytes=manifest_size,
+            sha256=manifest_sha256,
             order=None,
         )
         return PreviewStoredPackage(
             storage_key=self._storage_key,
             manifest=manifest_metadata,
-            files=self._files,
+            files=files,
         )
 
     def close(self) -> None:
@@ -288,7 +433,10 @@ class _LocalPreviewStagedPackage:
             if not self._published and self._staging.exists():
                 shutil.rmtree(self._staging)
         finally:
-            self._release_lock()
+            try:
+                self._workspace.close()
+            finally:
+                self._release_lock()
 
     def _release_lock(self) -> None:
         handle = self._lock_handle
@@ -357,18 +505,61 @@ class _LocalPreviewArchiveStream:
         self.close()
 
 
+class _LocalPreviewVerifiedArtifactStream:
+    def __init__(self, handle: BinaryIO, size_bytes: int) -> None:
+        self._handle = handle
+        self._size_bytes = size_bytes
+        self._closed = False
+
+    @property
+    def size_bytes(self) -> int:
+        return self._size_bytes
+
+    def iter_chunks(self, *, chunk_size: int = 64 * 1024) -> Iterator[bytes]:
+        if self._closed:
+            raise ValueError("artifact stream is closed")
+        if chunk_size <= 0:
+            raise ValueError("chunk_size must be positive")
+        while chunk := self._handle.read(chunk_size):
+            yield chunk
+
+    def rewind(self) -> None:
+        if self._closed:
+            raise ValueError("artifact stream is closed")
+        self._handle.seek(0)
+
+    def close(self) -> None:
+        if not self._closed:
+            self._closed = True
+            self._handle.close()
+
+    def __enter__(self) -> Self:
+        if self._closed:
+            raise ValueError("artifact stream is closed")
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: object,
+    ) -> None:
+        del exc_type, exc_value, traceback
+        self.close()
+
+
 class LocalPreviewArtifactStore:
     def __init__(self, artifact_root: Path) -> None:
         self._root = artifact_root
         self._root.mkdir(parents=True, exist_ok=True)
 
-    def stage_data_files(
+    def begin_generation(
         self,
         *,
         owner: PreviewArtifactOwner,
         request_id: str,
-        data_files: tuple[PreviewArtifactPayload, ...],
-    ) -> PreviewStagedPackage:
+        max_spool_bytes: int,
+    ) -> PreviewGenerationPackage:
         del request_id
         package_id = uuid.uuid4().hex
         owner_token = preview_storage_owner_token(owner)
@@ -376,9 +567,10 @@ class LocalPreviewArtifactStore:
         owner_root = self._root / ".staging" / "v1" / owner_token
         lock_root = self._root / ".locks" / "v1" / owner_token
         staging = owner_root / f"{package_id}.staging"
+        workspace_path = owner_root / f"{package_id}.workspace"
         lock_path = lock_root / f"{package_id}.lock"
         lock_handle: BinaryIO | None = None
-        metadata: list[PreviewArtifactMetadata] = []
+        workspace: PreviewGenerationWorkspace | None = None
         try:
             with _exclusive_root_lock(self._root):
                 owner_root.mkdir(parents=True, exist_ok=True)
@@ -386,29 +578,17 @@ class LocalPreviewArtifactStore:
                 lock_handle = lock_path.open("x+b")
                 _acquire_stage_lock(lock_handle)
                 staging.mkdir()
-            for item in data_files:
-                name = _safe_segment(item.name)
-                item_metadata = PreviewArtifactMetadata(
-                    name=name,
-                    media_type=item.media_type,
-                    size_bytes=len(item.body),
-                    sha256=hashlib.sha256(item.body).hexdigest(),
-                    order=item.order,
+                workspace = PreviewGenerationWorkspace(
+                    max_spool_bytes,
+                    root=workspace_path,
+                    accounting_roots=(staging,),
                 )
-                metadata.append(item_metadata)
-                with (staging / name).open("xb") as handle:
-                    handle.write(item.body)
-                    handle.flush()
-                    os.fsync(handle.fileno())
-            if tuple(item.order for item in metadata) != tuple(range(1, len(metadata) + 1)):
-                raise ValueError("package file order must be contiguous")
-            if len({item.name for item in metadata}) != len(metadata):
-                raise ValueError("package artifact names must be unique")
-            _fsync_directory(staging)
         except Exception:
             try:
                 if staging.exists():
                     shutil.rmtree(staging)
+                if workspace_path.exists():
+                    shutil.rmtree(workspace_path)
             finally:
                 if lock_handle is not None:
                     try:
@@ -421,26 +601,109 @@ class LocalPreviewArtifactStore:
                     _remove_empty_parents(self._root, lock_root)
             raise
         assert lock_handle is not None
+        assert workspace is not None
         return _LocalPreviewStagedPackage(
             root=self._root,
             staging=staging,
             lock_path=lock_path,
             lock_handle=lock_handle,
             storage_key=storage_key,
-            files=tuple(metadata),
+            workspace=workspace,
         )
 
-    def read_manifest(self, storage_key: str, metadata: PreviewArtifactMetadata) -> bytes:
-        return self._read_verified(storage_key, metadata)
+    def stage_data_files(
+        self,
+        *,
+        owner: PreviewArtifactOwner,
+        request_id: str,
+        data_files: tuple[PreviewArtifactPayload, ...],
+    ) -> PreviewStagedPackage:
+        staged = self.begin_generation(
+            owner=owner,
+            request_id=request_id,
+            max_spool_bytes=max(1, sum(len(item.body) for item in data_files) * 2 + 1024 * 1024),
+        )
+        try:
+            staged.stage_data_files(data_files)
+            return staged
+        except BaseException:
+            staged.close()
+            raise
 
-    def read_file(self, storage_key: str, metadata: PreviewArtifactMetadata) -> bytes:
-        return self._read_verified(storage_key, metadata)
+    @overload
+    def read_manifest(self, storage_key: str, metadata: PreviewArtifactMetadata) -> bytes: ...
+
+    @overload
+    def read_manifest(
+        self,
+        storage_key: str,
+        metadata: PreviewArtifactMetadata,
+        *,
+        stream: Literal[True],
+    ) -> PreviewVerifiedArtifactStream: ...
+
+    def read_manifest(
+        self,
+        storage_key: str,
+        metadata: PreviewArtifactMetadata,
+        *,
+        stream: bool = False,
+    ) -> bytes | PreviewVerifiedArtifactStream:
+        opened = self.open_verified(storage_key, metadata)
+        if stream:
+            return opened
+        with opened:
+            return b"".join(opened.iter_chunks())
+
+    @overload
+    def read_file(self, storage_key: str, metadata: PreviewArtifactMetadata) -> bytes: ...
+
+    @overload
+    def read_file(
+        self,
+        storage_key: str,
+        metadata: PreviewArtifactMetadata,
+        *,
+        stream: Literal[True],
+    ) -> PreviewVerifiedArtifactStream: ...
+
+    def read_file(
+        self,
+        storage_key: str,
+        metadata: PreviewArtifactMetadata,
+        *,
+        stream: bool = False,
+    ) -> bytes | PreviewVerifiedArtifactStream:
+        opened = self.open_verified(storage_key, metadata)
+        if stream:
+            return opened
+        with opened:
+            return b"".join(opened.iter_chunks())
 
     def _read_verified(self, storage_key: str, metadata: PreviewArtifactMetadata) -> bytes:
-        body = (self._root / _safe_segment(storage_key) / _safe_segment(metadata.name)).read_bytes()
-        if len(body) != metadata.size_bytes or hashlib.sha256(body).hexdigest() != metadata.sha256:
-            raise PreviewArtifactIntegrityError("stored preview artifact failed integrity verification")
-        return body
+        result = self.read_file(storage_key, metadata)
+        return result
+
+    def open_verified(
+        self,
+        storage_key: str,
+        metadata: PreviewArtifactMetadata,
+    ) -> PreviewVerifiedArtifactStream:
+        path = self._root / _safe_segment(storage_key) / _safe_segment(metadata.name)
+        handle = path.open("rb")
+        try:
+            digest = hashlib.sha256()
+            size = 0
+            while chunk := handle.read(64 * 1024):
+                digest.update(chunk)
+                size += len(chunk)
+            if size != metadata.size_bytes or digest.hexdigest() != metadata.sha256:
+                raise PreviewArtifactIntegrityError("stored preview artifact failed integrity verification")
+            handle.seek(0)
+            return _LocalPreviewVerifiedArtifactStream(handle, size)
+        except BaseException:
+            handle.close()
+            raise
 
     def _write_zip_entry(
         self,
@@ -502,7 +765,7 @@ class LocalPreviewArtifactStore:
         return removed
 
     def _cleanup_v1_staging(self, owner: PreviewArtifactOwner) -> int:
-        removed = 0
+        removed_packages: set[str] = set()
         changed = False
         owner_token = preview_storage_owner_token(owner)
         owner_root = self._root / ".staging" / "v1" / owner_token
@@ -514,11 +777,15 @@ class LocalPreviewArtifactStore:
                 name = path.name
                 if (
                     path.is_dir()
-                    and name.endswith(".staging")
-                    and len(name) == 32 + len(".staging")
+                    and (name.endswith(".staging") or name.endswith(".workspace"))
+                    and len(name)
+                    in {
+                        32 + len(".staging"),
+                        32 + len(".workspace"),
+                    }
                     and all(character in "0123456789abcdef" for character in name[:32])
                 ):
-                    package_id = name.removesuffix(".staging")
+                    package_id = name.split(".", maxsplit=1)[0]
                     lock_path = lock_root / f"{package_id}.lock"
                     lock_path.parent.mkdir(parents=True, exist_ok=True)
                     lock_handle = lock_path.open("a+b")
@@ -529,7 +796,7 @@ class LocalPreviewArtifactStore:
                             continue
                         if path.exists():
                             shutil.rmtree(path)
-                            removed += 1
+                            removed_packages.add(package_id)
                             changed = True
                         lock_path.unlink(missing_ok=True)
                     finally:
@@ -542,6 +809,7 @@ class LocalPreviewArtifactStore:
                     and len(name) == 32 + len(".lock")
                     and all(character in "0123456789abcdef" for character in name[:32])
                     and not (owner_root / f"{name.removesuffix('.lock')}.staging").exists()
+                    and not (owner_root / f"{name.removesuffix('.lock')}.workspace").exists()
                 ):
                     lock_handle = lock_path.open("a+b")
                     try:
@@ -557,7 +825,7 @@ class LocalPreviewArtifactStore:
                 _fsync_directory(self._root)
             _remove_empty_parents(self._root, owner_root)
             _remove_empty_parents(self._root, lock_root)
-        return removed
+        return len(removed_packages)
 
     def _cleanup_legacy_staging(self, owner: PreviewArtifactOwner) -> int:
         removed = 0
@@ -659,6 +927,16 @@ class LocalPreviewArtifactStore:
                     with _exclusive_root_lock(self._root):
                         lock_path.unlink(missing_ok=True)
                         _remove_empty_parents(self._root, lock_root)
+        workspace_root = self._root / ".staging" / "v1" / owner_token
+        with _exclusive_root_lock(self._root):
+            for storage_key in referenced_storage_keys:
+                package_id = _package_id_from_storage_key(storage_key, owner_token)
+                if package_id is None:
+                    continue
+                workspace = workspace_root / f"{package_id}.workspace"
+                if workspace.exists():
+                    shutil.rmtree(workspace)
+            _remove_empty_parents(self._root, workspace_root)
         return removed
 
     def close(self) -> None:
