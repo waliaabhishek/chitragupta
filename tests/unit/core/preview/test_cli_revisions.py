@@ -11,6 +11,10 @@ import pytest
 
 from tests.unit.core.preview.conftest import preview_module
 from tests.unit.core.preview.test_cli import RecordingTransport
+from tests.unit.core.preview.test_revision_mapping import (
+    EXPECTED_PUBLIC_KNOWN_GAPS,
+    assert_public_known_gaps,
+)
 
 
 def _connection() -> list[str]:
@@ -53,6 +57,7 @@ def _revision_detail(
             {
                 "schema_version": "chitragupta.preview-manifest.v2",
                 "revision_id": manifest_revision_id or revision_id,
+                "known_gaps": EXPECTED_PUBLIC_KNOWN_GAPS,
                 "files": [file_metadata],
             },
             sort_keys=True,
@@ -283,6 +288,7 @@ def test_revision_manifest_local_is_verified_then_atomically_replaces_target(
 
     assert code == 0
     assert target.read_bytes() == manifest
+    assert_public_known_gaps(json.loads(target.read_bytes()))
     assert not list(tmp_path.glob(".*.tmp"))
     assert [request.url.path.rsplit("/", 1)[-1] for request in transport.requests] == [
         "revision-2",
@@ -313,6 +319,7 @@ def test_revision_manifest_stdout_contains_only_fully_verified_bytes(
 
     assert code == 0
     assert stdout.buffer.getvalue() == manifest
+    assert_public_known_gaps(json.loads(stdout.buffer.getvalue()))
 
 
 @pytest.mark.parametrize(
@@ -464,6 +471,9 @@ def test_revision_archive_verifies_identity_and_forwards_headers(
 
     assert code == 0
     assert target.read_bytes() == archive_body
+    with zipfile.ZipFile(target) as packaged:
+        assert packaged.read("manifest.json") == manifest
+        assert_public_known_gaps(json.loads(packaged.read("manifest.json")))
     assert [request.url.path.rsplit("/", 1)[-1] for request in transport.requests] == [
         "revision-2",
         "archive",

@@ -701,6 +701,55 @@ artifact's size and SHA-256. Manifest, CSV, and ZIP bodies are then streamed in
 fixed chunks rather than loaded as complete response bodies. The API, UI, and
 CLI do not remap the verified bytes.
 
+Both requested-package and published-revision manifests contain the same
+complete ordered `known_gaps` array. Each object contains exactly `code`,
+`description`, and ordered `columns`; internal ownership and delivery-process
+metadata have no public field or alias:
+
+```json
+[
+  {
+    "code": "provider_billing_currency_field_unavailable",
+    "description": "Confluent Costs records do not carry a per-record billing currency.",
+    "columns": ["BillingCurrency"]
+  },
+  {
+    "code": "invoice_identity_unavailable",
+    "description": "Post-issuance invoice identity is unavailable.",
+    "columns": ["InvoiceDetailId", "InvoiceId"]
+  },
+  {
+    "code": "invoice_issuer_name_unavailable",
+    "description": "Provider legal invoice-issuer evidence is unavailable.",
+    "columns": ["InvoiceIssuerName"]
+  },
+  {
+    "code": "provider_host_display_name_unavailable",
+    "description": "HostProviderName contains the raw provider cloud code, not a provider display name.",
+    "columns": ["HostProviderName"]
+  },
+  {
+    "code": "provider_region_display_name_unavailable",
+    "description": "Confluent inventory does not provide a distinct region display name.",
+    "columns": ["RegionName"]
+  },
+  {
+    "code": "derived_sku_identity_not_provider_authoritative",
+    "description": "SKU values are deterministic Chitragupta-derived evidence, not provider-issued identifiers.",
+    "columns": [
+      "SkuId",
+      "SkuMeter",
+      "SkuPriceDetails",
+      "SkuPriceId",
+      "x_ChitraguptaSkuComponents"
+    ]
+  }
+]
+```
+
+These provider-authority gaps remain unresolved, and
+`conformance_status` remains `non_conforming`.
+
 With `preview.max_csv_file_bytes: null`, the package has one
 `cost-and-usage.csv`. A positive byte limit may produce ordered names such as
 `cost-and-usage-part-00001-of-00003.csv`. Every part repeats the header, no row

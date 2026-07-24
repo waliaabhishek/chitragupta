@@ -583,6 +583,55 @@ and checksum. The ZIP is a transport wrapper containing `manifest.json` followed
 by the CSV files in manifest order; it is not another data artifact in the
 manifest.
 
+Both manifest types contain the same complete ordered `known_gaps` array. Each
+object contains exactly the stable `code`, durable customer-facing
+`description`, and ordered affected `columns`:
+
+```json
+[
+  {
+    "code": "provider_billing_currency_field_unavailable",
+    "description": "Confluent Costs records do not carry a per-record billing currency.",
+    "columns": ["BillingCurrency"]
+  },
+  {
+    "code": "invoice_identity_unavailable",
+    "description": "Post-issuance invoice identity is unavailable.",
+    "columns": ["InvoiceDetailId", "InvoiceId"]
+  },
+  {
+    "code": "invoice_issuer_name_unavailable",
+    "description": "Provider legal invoice-issuer evidence is unavailable.",
+    "columns": ["InvoiceIssuerName"]
+  },
+  {
+    "code": "provider_host_display_name_unavailable",
+    "description": "HostProviderName contains the raw provider cloud code, not a provider display name.",
+    "columns": ["HostProviderName"]
+  },
+  {
+    "code": "provider_region_display_name_unavailable",
+    "description": "Confluent inventory does not provide a distinct region display name.",
+    "columns": ["RegionName"]
+  },
+  {
+    "code": "derived_sku_identity_not_provider_authoritative",
+    "description": "SKU values are deterministic Chitragupta-derived evidence, not provider-issued identifiers.",
+    "columns": [
+      "SkuId",
+      "SkuMeter",
+      "SkuPriceDetails",
+      "SkuPriceId",
+      "x_ChitraguptaSkuComponents"
+    ]
+  }
+]
+```
+
+The manifest contract has no public ownership or delivery-process field or
+alias. These provider-authority gaps remain unresolved, and both package types
+retain `conformance_status: non_conforming`.
+
 A requested package is downloadable for exactly seven days from durable ready
 publication. At `expires_at`, status becomes `expired` and all downloads return
 410 before filesystem cleanup. The request and audit metadata remain visible.

@@ -672,6 +672,19 @@ KNOWN_GAPS = (
         ("SkuId", "SkuMeter", "SkuPriceDetails", "SkuPriceId", "x_ChitraguptaSkuComponents"),
     ),
 )
+
+
+def preview_manifest_known_gaps() -> list[dict[str, object]]:
+    return [
+        {
+            "code": gap.code,
+            "description": gap.description,
+            "columns": list(gap.columns),
+        }
+        for gap in KNOWN_GAPS
+    ]
+
+
 PROFILE_NOT_APPLICABLE_COLUMNS = tuple(
     rule.column for rule in FOCUS_1_4_COLUMN_RULES if rule.applicability is PreviewApplicability.NOT_APPLICABLE
 )
@@ -2783,15 +2796,7 @@ def build_requested_preview_manifest(
         "target_focus_version": "1.4",
         "conformance_status": "non_conforming",
         "mapping_profile_version": MAPPING_PROFILE_VERSION,
-        "known_gaps": [
-            {
-                "code": gap.code,
-                "description": gap.description,
-                "owner_task": gap.owner_task,
-                "columns": list(gap.columns),
-            }
-            for gap in KNOWN_GAPS
-        ],
+        "known_gaps": preview_manifest_known_gaps(),
         "profile_not_applicable_columns": list(PROFILE_NOT_APPLICABLE_COLUMNS),
         "source_snapshot": source_snapshot,
         "evidence_coverage": {
@@ -2918,6 +2923,7 @@ def build_preview_revision_manifest(
         "logical_data_sha256": draft.logical_data_sha256,
         "material_sha256": material_sha256,
         "conformance_status": "non_conforming",
+        "known_gaps": preview_manifest_known_gaps(),
         "source_snapshot": preview_revision_source_snapshot(snapshot),
         "validation": {
             "status": "passed",

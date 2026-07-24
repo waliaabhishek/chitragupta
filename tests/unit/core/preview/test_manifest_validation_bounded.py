@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Callable
+from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -11,6 +12,7 @@ from typing import Any
 import pytest
 
 from tests.unit.core.preview.conftest import preview_module
+from tests.unit.core.preview.test_revision_mapping import EXPECTED_PUBLIC_KNOWN_GAPS
 from tests.unit.core.preview.test_revision_reader import _stored_revision
 from tests.unit.core.preview.test_service import _ready_request
 
@@ -21,6 +23,7 @@ def _tampered_ready_request(
     mutate: Callable[[dict[str, Any]], None],
 ) -> Any:
     manifest = json.loads(manifest_path.read_bytes())
+    manifest["known_gaps"] = deepcopy(EXPECTED_PUBLIC_KNOWN_GAPS)
     mutate(manifest)
     body = (json.dumps(manifest, sort_keys=True, separators=(",", ":")) + "\n").encode()
     manifest_path.write_bytes(body)
@@ -30,6 +33,52 @@ def _tampered_ready_request(
         sha256=hashlib.sha256(body).hexdigest(),
     )
     return replace(ready, package=replace(ready.package, manifest=metadata))
+
+
+def _tampered_revision(
+    tmp_path: Path,
+    mutate: Callable[[dict[str, Any]], None],
+) -> tuple[Any, Any]:
+    revision, body, store = _stored_revision(tmp_path)
+    manifest = json.loads(body)
+    manifest["known_gaps"] = deepcopy(EXPECTED_PUBLIC_KNOWN_GAPS)
+    mutate(manifest)
+    tampered_body = (json.dumps(manifest, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    manifest_path = tmp_path / revision.package.storage_key / "manifest.json"
+    manifest_path.write_bytes(tampered_body)
+    metadata = replace(
+        revision.package.manifest,
+        size_bytes=len(tampered_body),
+        sha256=hashlib.sha256(tampered_body).hexdigest(),
+    )
+    return (
+        replace(revision, package=replace(revision.package, manifest=metadata)),
+        store,
+    )
+
+
+def _remove_known_gaps(manifest: dict[str, Any]) -> None:
+    manifest.pop("known_gaps")
+
+
+def _reverse_known_gaps(manifest: dict[str, Any]) -> None:
+    manifest["known_gaps"].reverse()
+
+
+def _alter_known_gap_columns(manifest: dict[str, Any]) -> None:
+    manifest["known_gaps"][-1]["columns"].reverse()
+
+
+def _add_known_gap_owner(manifest: dict[str, Any]) -> None:
+    manifest["known_gaps"][0]["owner_task"] = "TASK-254.03"
+
+
+_KNOWN_GAP_TAMPERS = (
+    ("omitted", _remove_known_gaps),
+    ("reordered", _reverse_known_gaps),
+    ("altered-columns", _alter_known_gap_columns),
+    ("owner-bearing", _add_known_gap_owner),
+)
 
 
 @pytest.mark.parametrize(
@@ -78,6 +127,41 @@ def test_requested_manifest_rejects_every_semantic_correlation_before_delivery(
     finally:
         runtime.close()
         backend.dispose()
+
+
+@pytest.mark.parametrize(("case", "mutate"), _KNOWN_GAP_TAMPERS)
+def test_requested_manifest_rejects_noncanonical_public_gap_contract(
+    tmp_path: Path,
+    case: str,
+    mutate: Callable[[dict[str, Any]], None],
+) -> None:
+    del case
+    runtime, ready, backend, _executor = _ready_request(tmp_path)
+    assert ready.storage_key is not None
+    manifest_path = tmp_path / "artifacts" / ready.storage_key / "manifest.json"
+    tampered = _tampered_ready_request(ready, manifest_path, mutate)
+    service = preview_module("service")
+    try:
+        with pytest.raises(service.PreviewArtifactUnavailable):
+            runtime.read_manifest_bytes(tampered)
+    finally:
+        runtime.close()
+        backend.dispose()
+
+
+@pytest.mark.parametrize(("case", "mutate"), _KNOWN_GAP_TAMPERS)
+def test_revision_manifest_rejects_noncanonical_public_gap_contract(
+    tmp_path: Path,
+    case: str,
+    mutate: Callable[[dict[str, Any]], None],
+) -> None:
+    del case
+    revision, store = _tampered_revision(tmp_path, mutate)
+    revisions = preview_module("revisions")
+    reader = revisions.PreviewRevisionReadService(artifact_store=store)
+
+    with pytest.raises(revisions.PreviewRevisionArtifactUnavailableError):
+        reader.read_manifest(revision=revision)
 
 
 def test_manifest_and_file_delivery_do_not_call_path_read_bytes(

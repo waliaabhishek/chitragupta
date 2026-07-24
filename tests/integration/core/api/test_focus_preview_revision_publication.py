@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import logging
 import threading
+import zipfile
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
@@ -26,6 +28,7 @@ from core.storage.interface import AllocationLineageRunCapture
 from plugins.confluent_cloud.storage.module import CCloudStorageModule
 from tests.integration.core.api.backend_provider import install_backend
 from tests.integration.core.api.test_focus_preview import SameThreadApiClient, _body, _wait_for_terminal
+from tests.unit.core.preview.test_revision_mapping import assert_public_known_gaps
 from tests.unit.core.preview.test_revision_models import _candidate, _package
 from tests.unit.core.preview.test_revisions import _tenant_config
 from tests.unit.core.preview.test_service import _aggregate, _allocation, _seed, _source
@@ -635,6 +638,8 @@ def test_periodic_publication_lifecycle_is_visible_through_real_current_api(
         manifest_response = client.get(body["package"]["manifest"]["download_url"])
         assert manifest_response.status_code == 200
         first_manifest_body = manifest_response.content
+        assert client.get(body["package"]["manifest"]["download_url"]).content == first_manifest_body
+        assert_public_known_gaps(manifest_response.json())
         file_response = client.get(body["package"]["files"][0]["download_url"])
         assert file_response.status_code == 200
         first_file_body = file_response.content
@@ -642,6 +647,8 @@ def test_periodic_publication_lifecycle_is_visible_through_real_current_api(
         assert archive.status_code == 200
         assert archive.headers["content-type"].startswith("application/zip")
         first_archive_body = archive.content
+        with zipfile.ZipFile(io.BytesIO(first_archive_body)) as packaged:
+            assert packaged.read("manifest.json") == first_manifest_body
 
         history = client.get("/api/v1/tenants/production/focus-preview/revisions?month=2026-07&limit=2")
         assert history.status_code == 200
@@ -655,7 +662,13 @@ def test_periodic_publication_lifecycle_is_visible_through_real_current_api(
         superseded = client.get("/api/v1/tenants/production/focus-preview/revisions/revision-1")
         assert superseded.status_code == 200
         assert superseded.json()["lifecycle"] == "superseded"
-        assert client.get(superseded.json()["package"]["manifest"]["download_url"]).status_code == 200
+        superseded_manifest = client.get(superseded.json()["package"]["manifest"]["download_url"])
+        assert superseded_manifest.status_code == 200
+        assert_public_known_gaps(superseded_manifest.json())
+        superseded_archive = client.get(superseded.json()["package"]["download_all_url"])
+        assert superseded_archive.status_code == 200
+        with zipfile.ZipFile(io.BytesIO(superseded_archive.content)) as packaged:
+            assert packaged.read("manifest.json") == superseded_manifest.content
 
         stale = client.get(
             "/api/v1/tenants/production/focus-preview/revisions/current/manifest?month=2026-07&revision_id=revision-1"

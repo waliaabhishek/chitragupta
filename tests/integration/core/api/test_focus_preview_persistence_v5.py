@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
+import zipfile
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
@@ -35,6 +37,7 @@ from core.storage.backends.sqlmodel.unit_of_work import SQLModelBackend
 from plugins.confluent_cloud.storage.module import CCloudStorageModule
 from tests.integration.core.api.backend_provider import FixedTenantBackendProvider
 from tests.integration.core.api.test_focus_preview import SameThreadApiClient
+from tests.unit.core.preview.test_revision_mapping import assert_public_known_gaps
 from tests.unit.core.storage.test_migration_019_focus_preview import _alembic_config
 
 
@@ -530,6 +533,16 @@ def test_v5_daily_and_monthly_ready_rows_round_trip_through_sqlite_and_api(
         file_metadata = status["package"]["files"][0]
         assert manifest_metadata["sha256"] == hashlib.sha256(package.manifest_body).hexdigest()
         assert file_metadata["sha256"] == hashlib.sha256(package.data_files[0].body).hexdigest()
-        assert client.get(manifest_metadata["download_url"]).content == package.manifest_body
+        manifest_responses = [client.get(manifest_metadata["download_url"]) for _ in range(2)]
+        assert [response.status_code for response in manifest_responses] == [200, 200]
+        assert [response.content for response in manifest_responses] == [
+            package.manifest_body,
+            package.manifest_body,
+        ]
+        assert_public_known_gaps(manifest_responses[0].json())
         assert client.get(file_metadata["download_url"]).content == package.data_files[0].body
+        archive_response = client.get(status["package"]["download_all_url"])
+        assert archive_response.status_code == 200
+        with zipfile.ZipFile(io.BytesIO(archive_response.content)) as archive:
+            assert archive.read("manifest.json") == package.manifest_body
     backend.dispose()

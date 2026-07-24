@@ -13,6 +13,56 @@ import pytest
 from tests.unit.core.preview.test_lifecycle_snapshot_v5 import _request, _snapshot
 from tests.unit.core.preview.test_monthly_v5 import _row
 
+EXPECTED_PUBLIC_KNOWN_GAPS: list[dict[str, object]] = [
+    {
+        "code": "provider_billing_currency_field_unavailable",
+        "description": "Confluent Costs records do not carry a per-record billing currency.",
+        "columns": ["BillingCurrency"],
+    },
+    {
+        "code": "invoice_identity_unavailable",
+        "description": "Post-issuance invoice identity is unavailable.",
+        "columns": ["InvoiceDetailId", "InvoiceId"],
+    },
+    {
+        "code": "invoice_issuer_name_unavailable",
+        "description": "Provider legal invoice-issuer evidence is unavailable.",
+        "columns": ["InvoiceIssuerName"],
+    },
+    {
+        "code": "provider_host_display_name_unavailable",
+        "description": "HostProviderName contains the raw provider cloud code, not a provider display name.",
+        "columns": ["HostProviderName"],
+    },
+    {
+        "code": "provider_region_display_name_unavailable",
+        "description": "Confluent inventory does not provide a distinct region display name.",
+        "columns": ["RegionName"],
+    },
+    {
+        "code": "derived_sku_identity_not_provider_authoritative",
+        "description": ("SKU values are deterministic Chitragupta-derived evidence, not provider-issued identifiers."),
+        "columns": [
+            "SkuId",
+            "SkuMeter",
+            "SkuPriceDetails",
+            "SkuPriceId",
+            "x_ChitraguptaSkuComponents",
+        ],
+    },
+]
+
+
+def assert_public_known_gaps(manifest: dict[str, Any]) -> None:
+    assert manifest["known_gaps"] == EXPECTED_PUBLIC_KNOWN_GAPS
+    manifest_text = json.dumps(manifest, sort_keys=True)
+    assert "owner_task" not in manifest_text
+    assert '"owner":' not in manifest_text
+    assert "TASK-" not in manifest_text
+    assert "reviewer" not in manifest_text.lower()
+    assert "implementation chronology" not in manifest_text.lower()
+    assert "delivery-process" not in manifest_text.lower()
+
 
 def _mapping() -> Any:
     return import_module("core.preview.mapping")
@@ -193,6 +243,7 @@ def test_revision_manifest_serializes_the_exact_verified_material_preimage() -> 
         "logical_data_sha256": draft.logical_data_sha256,
         "material_sha256": material,
     }
+    assert_public_known_gaps(manifest)
 
 
 def test_counts_reconciliation_snapshot_and_file_layout_do_not_enter_material_identity() -> None:
@@ -241,6 +292,7 @@ def test_requested_manifest_contract_keeps_seven_day_expiry_and_package_type() -
         "retention_days": 7,
     }
     assert "expires_at" not in manifest
+    assert_public_known_gaps(manifest)
 
 
 def test_revision_manifest_invokes_shared_revision_invariant(monkeypatch: pytest.MonkeyPatch) -> None:

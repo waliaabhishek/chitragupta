@@ -19,6 +19,7 @@ from core.models.identity import CoreIdentity
 from core.models.resource import CoreResource
 from core.storage.interface import ResourceRepository
 from tests.unit.core.preview.conftest import preview_module
+from tests.unit.core.preview.test_revision_mapping import assert_public_known_gaps
 
 REQUEST_START = datetime(2026, 7, 1, tzinfo=UTC)
 REQUEST_END = datetime(2026, 7, 2, tzinfo=UTC)
@@ -2083,15 +2084,7 @@ def test_package_manifest_reports_the_complete_validated_v3_profile(
         }
     ]
     assert manifest["profile_not_applicable_columns"] == list(mapping.PROFILE_NOT_APPLICABLE_COLUMNS)
-    assert manifest["known_gaps"] == [
-        {
-            "code": gap.code,
-            "columns": list(gap.columns),
-            "description": gap.description,
-            "owner_task": gap.owner_task,
-        }
-        for gap in mapping.KNOWN_GAPS
-    ]
+    assert_public_known_gaps(manifest)
 
 
 @pytest.mark.parametrize(

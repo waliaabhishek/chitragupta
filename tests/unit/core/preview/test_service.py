@@ -23,6 +23,7 @@ from plugins.confluent_cloud.models.billing import CCloudBillingLineItem, CCloud
 from plugins.confluent_cloud.storage.module import CCloudStorageModule
 from tests.integration.core.api.backend_provider import FixedTenantBackendProvider
 from tests.unit.core.preview.conftest import preview_module
+from tests.unit.core.preview.test_revision_mapping import assert_public_known_gaps
 
 
 class ControlledExecutor:
@@ -670,20 +671,7 @@ def test_daily_full_package_maps_provider_financial_account_sku_and_invoice_evid
         assert manifest["target_focus_version"] == "1.4"
         assert manifest["conformance_status"] == "non_conforming"
         assert manifest["mapping_profile_version"] == "focus-1.4-preview-v5"
-        assert [gap["code"] for gap in manifest["known_gaps"]] == [gap.code for gap in mapping.KNOWN_GAPS]
-        assert manifest["known_gaps"] == [
-            {
-                "code": gap.code,
-                "description": gap.description,
-                "owner_task": gap.owner_task,
-                "columns": list(gap.columns),
-            }
-            for gap in mapping.KNOWN_GAPS
-        ]
-        assert {gap["owner_task"] for gap in manifest["known_gaps"]} == {
-            "TASK-254.03",
-            "TASK-254.04",
-        }
+        assert_public_known_gaps(manifest)
         gap_codes = {gap["code"] for gap in manifest["known_gaps"]}
         assert "task_254_04_applicability_and_provider_mapping_pending" not in gap_codes
         assert "billing_account_and_issuer_mapping_pending" not in gap_codes

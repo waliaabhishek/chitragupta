@@ -10,6 +10,7 @@ from typing import Any, Literal, Protocol, cast
 
 from core.preview.mapping import (
     MAPPING_PROFILE_VERSION,
+    preview_manifest_known_gaps,
     preview_revision_content_sha256,
     preview_revision_source_snapshot,
     preview_utc_text,
@@ -286,6 +287,7 @@ def validate_requested_manifest(
     _require_equal(manifest, "target_focus_version", "1.4")
     _require_equal(manifest, "conformance_status", "non_conforming")
     _require_equal(manifest, "mapping_profile_version", MAPPING_PROFILE_VERSION)
+    _require_equal(manifest, "known_gaps", preview_manifest_known_gaps())
 
     snapshot = request.source_snapshot
     if snapshot is None:
@@ -368,6 +370,7 @@ def validate_revision_manifest(
         preview_revision_source_snapshot(revision.source_snapshot),
     )
     _require_equal(manifest, "conformance_status", "non_conforming")
+    _require_equal(manifest, "known_gaps", preview_manifest_known_gaps())
 
     mapping_profile_version = manifest.get("mapping_profile_version")
     target_focus_version = manifest.get("target_focus_version")

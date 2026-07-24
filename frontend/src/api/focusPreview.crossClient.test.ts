@@ -63,7 +63,30 @@ acceptance("FOCUS Preview real-package cross-client fixture", () => {
       ...fetched.package!.files,
     ]) {
       const blob = await adapter.fetchPreviewArtifact(artifact.download_url);
-      expect(await sha256(await blob.arrayBuffer())).toBe(artifact.sha256);
+      const bytes = await blob.arrayBuffer();
+      expect(await sha256(bytes)).toBe(artifact.sha256);
+      if (artifact.download_url === fetched.package!.manifest.download_url) {
+        const manifestText = new TextDecoder().decode(bytes);
+        const manifest = JSON.parse(manifestText) as {
+          known_gaps: Array<Record<string, unknown>>;
+        };
+        expect(manifest.known_gaps).toHaveLength(6);
+        for (const gap of manifest.known_gaps) {
+          expect(Object.keys(gap).sort()).toEqual([
+            "code",
+            "columns",
+            "description",
+          ]);
+        }
+        expect(manifestText).not.toContain("owner_task");
+        expect(manifestText).not.toContain('"owner":');
+        expect(manifestText).not.toContain("TASK-");
+        expect(manifestText.toLowerCase()).not.toContain("reviewer");
+        expect(manifestText.toLowerCase()).not.toContain(
+          "implementation chronology",
+        );
+        expect(manifestText.toLowerCase()).not.toContain("delivery-process");
+      }
     }
     const archive = await adapter.fetchPreviewArtifact(
       fetched.package!.download_all_url,

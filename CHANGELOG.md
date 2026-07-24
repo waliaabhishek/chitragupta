@@ -42,6 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Make FOCUS Mapping Preview a tenant-level opt-in boundary. Deployments with no enabled tenant no longer initialize or require Preview artifacts, organization authority, native source evidence, allocation lineage, or Preview retention. Mixed deployments apply those requirements only to enabled tenants; package and revision generation reuse persisted provider evidence without new provider calls, and Preview-only evidence failures no longer poison otherwise successful generic chargeback processing.
 - The FOCUS Mapping Preview authority-gap list no longer exposes internal issue or task ownership metadata, while preserving all six gap explanations and the non-conforming warning.
+- Requested FOCUS Preview packages and published revisions now use the same ordered three-field known-gap manifest contract without internal delivery metadata.
 
 
 ## [2.1.0] - 2026-04-09

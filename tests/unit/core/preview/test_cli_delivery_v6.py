@@ -15,6 +15,10 @@ import pytest
 
 from tests.unit.core.preview.conftest import preview_module
 from tests.unit.core.preview.test_cli import RecordingTransport
+from tests.unit.core.preview.test_revision_mapping import (
+    EXPECTED_PUBLIC_KNOWN_GAPS,
+    assert_public_known_gaps,
+)
 
 
 def _artifact(name: str, body: bytes, order: int | None, url: str) -> dict[str, object]:
@@ -33,6 +37,7 @@ def _ready_package() -> tuple[dict[str, object], bytes, dict[str, bytes], bytes]
     manifest_value = {
         "schema_version": "chitragupta.preview-manifest.v2",
         "request_id": "request-1",
+        "known_gaps": EXPECTED_PUBLIC_KNOWN_GAPS,
         "files": [
             {
                 "name": name,
@@ -238,6 +243,7 @@ def test_download_directory_verifies_manifest_and_every_file_before_atomic_publi
 
     assert code == 0
     assert (output / "manifest.json").read_bytes() == manifest
+    assert_public_known_gaps(json.loads((output / "manifest.json").read_bytes()))
     assert {name: (output / name).read_bytes() for name in files} == files
     assert not list(tmp_path.rglob("*.tmp"))
 
@@ -344,7 +350,7 @@ def test_verified_archive_is_atomically_written_to_a_local_file(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    package, _manifest, _files, archive = _ready_package()
+    package, manifest, _files, archive = _ready_package()
     transport = RecordingTransport(
         lambda request, _sequence: (
             httpx.Response(200, content=archive)
@@ -362,6 +368,9 @@ def test_verified_archive_is_atomically_written_to_a_local_file(
 
     assert code == 0
     assert target.read_bytes() == archive
+    with zipfile.ZipFile(target) as packaged:
+        assert packaged.read("manifest.json") == manifest
+        assert_public_known_gaps(json.loads(packaged.read("manifest.json")))
     assert not list(tmp_path.rglob("*.tmp"))
 
 
