@@ -32,12 +32,34 @@ class NativeSourceWindow:
 
 
 @dataclass(frozen=True)
-class SourceWindowWriteResult:
-    records_written: int
+class SourceWindowCount:
+    window: NativeSourceWindow
+    source_count: int
 
     def __post_init__(self) -> None:
-        if self.records_written < 0:
-            raise ValueError("records_written must be nonnegative")
+        if not isinstance(self.window, NativeSourceWindow) or self.source_count < 0:
+            raise ValueError("invalid source window count")
+
+
+@dataclass(frozen=True)
+class SourceWindowWriteResult:
+    records_written: int
+    window_counts: tuple[SourceWindowCount, ...] = ()
+
+    def __post_init__(self) -> None:
+        if (
+            self.records_written < 0
+            or not isinstance(self.window_counts, tuple)
+            or len({item.window for item in self.window_counts}) != len(self.window_counts)
+            or sum(item.source_count for item in self.window_counts) != self.records_written
+        ):
+            raise ValueError("invalid source window write result")
+
+    def count_for(self, window: NativeSourceWindow) -> int:
+        return next(
+            (item.source_count for item in self.window_counts if item.window == window),
+            0,
+        )
 
 
 class SourceCaptureFailure(StrEnum):

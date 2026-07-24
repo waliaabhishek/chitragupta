@@ -381,6 +381,8 @@ def test_native_source_window_requires_aware_ordered_bounds() -> None:
         capture.NativeSourceWindow(start=MID, end=START)
     with pytest.raises(ValueError):
         capture.SourceWindowWriteResult(records_written=-1)
+    with pytest.raises(ValueError):
+        capture.SourceWindowWriteResult(records_written=1)
 
 
 def test_source_capture_receipt_requires_exact_gap_free_partition_and_count() -> None:

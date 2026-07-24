@@ -15,6 +15,7 @@ from unittest.mock import MagicMock, patch
 
 import anyio.to_thread
 import pytest
+from alembic import command
 from sqlalchemy import create_engine, text
 
 import workflow_runner
@@ -32,6 +33,9 @@ from tests.unit.core.preview.test_revision_mapping import assert_public_known_ga
 from tests.unit.core.preview.test_revision_models import _candidate, _package
 from tests.unit.core.preview.test_revisions import _tenant_config
 from tests.unit.core.preview.test_service import _aggregate, _allocation, _seed, _source
+from tests.unit.core.storage.test_migration_019_focus_preview import (
+    _alembic_config,
+)
 from workflow_runner import TenantRuntime, WorkflowRunner
 
 
@@ -461,7 +465,7 @@ def test_requested_package_expires_at_seven_days_independently_of_revision_reten
             assert after_revision_cleanup.status_code == 200
             assert after_revision_cleanup.json()["status"] == "ready"
 
-            controlled_now[0] = expires_at - timedelta(microseconds=1)
+            controlled_now[0] = expires_at - timedelta(seconds=1)
             before_expiry = client.get(f"/api/v1/tenants/production/focus-preview/requests/{request_id}")
             assert before_expiry.status_code == 200
             assert before_expiry.json()["status"] == "ready"
@@ -544,6 +548,9 @@ def test_periodic_publication_lifecycle_is_visible_through_real_current_api(
         assert isinstance(acquired_backend, SQLModelBackend)
         backend = acquired_backend
 
+    requested_manifest_body = b""
+    requested_file_body = b""
+    requested_archive_body = b""
     request_app = create_app(settings)
     with SameThreadApiClient(request_app) as client:
         install_backend(request_app, "production", backend)
@@ -557,11 +564,16 @@ def test_periodic_publication_lifecycle_is_visible_through_real_current_api(
         assert requested["status"] == "ready", requested["diagnostic"]
         assert requested["source_snapshot"]["monthly_status"] == "provisional"
         package = requested["package"]
-        assert client.get(package["manifest"]["download_url"]).status_code == 200
-        assert client.get(package["files"][0]["download_url"]).status_code == 200
+        requested_manifest = client.get(package["manifest"]["download_url"])
+        requested_file = client.get(package["files"][0]["download_url"])
+        assert requested_manifest.status_code == 200
+        assert requested_file.status_code == 200
         archive = client.get(package["download_all_url"])
         assert archive.status_code == 200
         assert archive.headers["content-type"].startswith("application/zip")
+        requested_manifest_body = requested_manifest.content
+        requested_file_body = requested_file.content
+        requested_archive_body = archive.content
 
     _run_periodic_cycle(runner, _result(), now=datetime(2026, 7, 20, tzinfo=UTC))
     registry.create.assert_called_once_with("confluent_cloud")
@@ -628,6 +640,8 @@ def test_periodic_publication_lifecycle_is_visible_through_real_current_api(
     first_manifest_body = b""
     first_file_body = b""
     first_archive_body = b""
+    superseded_manifest_body = b""
+    superseded_archive_body = b""
     with SameThreadApiClient(app) as client:
         install_backend(app, "production", backend)
         metadata = client.get("/api/v1/tenants/production/focus-preview/revisions/current?month=2026-07")
@@ -664,9 +678,11 @@ def test_periodic_publication_lifecycle_is_visible_through_real_current_api(
         assert superseded.json()["lifecycle"] == "superseded"
         superseded_manifest = client.get(superseded.json()["package"]["manifest"]["download_url"])
         assert superseded_manifest.status_code == 200
+        superseded_manifest_body = superseded_manifest.content
         assert_public_known_gaps(superseded_manifest.json())
         superseded_archive = client.get(superseded.json()["package"]["download_all_url"])
         assert superseded_archive.status_code == 200
+        superseded_archive_body = superseded_archive.content
         with zipfile.ZipFile(io.BytesIO(superseded_archive.content)) as packaged:
             assert packaged.read("manifest.json") == superseded_manifest.content
 
@@ -692,6 +708,62 @@ def test_periodic_publication_lifecycle_is_visible_through_real_current_api(
         assert client.get(renamed_body["package"]["download_all_url"]).content == first_archive_body
         assert client.get("/api/v1/tenants/production/focus-preview/revisions/current?month=2026-07").status_code == 404
 
+    engine.dispose()
+    migration = _alembic_config(connection_string)
+    command.downgrade(migration, "028")
+    revision_028_engine = create_engine(connection_string)
+    with revision_028_engine.connect() as connection:
+        request_raw = connection.execute(
+            text("SELECT created_at FROM preview_requests WHERE request_id = :request_id"),
+            {"request_id": requested["request_id"]},
+        ).scalar_one()
+        revision_raw = connection.execute(
+            text("SELECT published_at FROM preview_revisions WHERE revision_id = 'revision-2'")
+        ).scalar_one()
+    revision_028_engine.dispose()
+    assert request_raw.endswith(".000000")
+    assert revision_raw.endswith(".000000")
+
+    command.upgrade(migration, "029")
+    upgraded_engine = create_engine(connection_string)
+    with upgraded_engine.connect() as connection:
+        upgraded_revisions = (
+            connection.execute(
+                text(
+                    "SELECT revision_id, monthly_status, is_current, "
+                    "supersedes_revision_id, superseded_by_revision_id "
+                    "FROM preview_revisions ORDER BY published_at, revision_id"
+                )
+            )
+            .mappings()
+            .all()
+        )
+        assert connection.execute(text("SELECT COUNT(*) FROM preview_requests")).scalar_one() == request_count
+    upgraded_engine.dispose()
+    assert upgraded_revisions == revisions
+
+    upgraded_app = create_app(settings)
+    with SameThreadApiClient(upgraded_app) as client:
+        install_backend(upgraded_app, "production", backend)
+        retained_request = client.get(f"/api/v1/tenants/production/focus-preview/requests/{requested['request_id']}")
+        assert retained_request.status_code == 200
+        retained_request_package = retained_request.json()["package"]
+        assert client.get(retained_request_package["manifest"]["download_url"]).content == requested_manifest_body
+        assert client.get(retained_request_package["files"][0]["download_url"]).content == requested_file_body
+        assert client.get(retained_request_package["download_all_url"]).content == requested_archive_body
+        retained_current = client.get("/api/v1/tenants/production/focus-preview/revisions/current?month=2026-07")
+        retained_old = client.get("/api/v1/tenants/production/focus-preview/revisions/revision-1")
+        assert retained_current.status_code == retained_old.status_code == 200
+        assert retained_current.json()["revision_id"] == "revision-2"
+        assert retained_old.json()["lifecycle"] == "superseded"
+        current_package = retained_current.json()["package"]
+        old_package = retained_old.json()["package"]
+        assert client.get(current_package["manifest"]["download_url"]).content == first_manifest_body
+        assert client.get(current_package["files"][0]["download_url"]).content == first_file_body
+        assert client.get(current_package["download_all_url"]).content == first_archive_body
+        assert client.get(old_package["manifest"]["download_url"]).content == superseded_manifest_body
+        assert client.get(old_package["download_all_url"]).content == superseded_archive_body
+
     cleanup = publisher.cleanup_retention(
         tenant_name="production",
         tenant_config=tenant,
@@ -710,7 +782,6 @@ def test_periodic_publication_lifecycle_is_visible_through_real_current_api(
         assert history.json()["items"] == []
         assert client.get("/api/v1/tenants/production/focus-preview/revisions/revision-2").status_code == 404
 
-    engine.dispose()
     runner.close()
 
 
@@ -1128,8 +1199,9 @@ def test_periodic_retention_crash_restart_recovery_is_durable_and_api_masked(
             limit=100,
         )
     assert len(pending) == 1
-    assert pending[0].retention_pending_at == boundary + timedelta(microseconds=1)
+    assert pending[0].retention_pending_at == boundary
     assert pending[0].retention_pending_at.tzinfo is UTC
+    assert pending[0].retention_retry_count == 1
     with backend.create_preview_metadata_read_unit_of_work() as read_uow:
         assert (
             read_uow.revisions.get_for_owner(
@@ -1177,7 +1249,8 @@ def test_periodic_retention_crash_restart_recovery_is_durable_and_api_masked(
             limit=100,
         )
     assert len(after_commit_failure) == 1
-    assert after_commit_failure[0].retention_pending_at == boundary + timedelta(microseconds=2)
+    assert after_commit_failure[0].retention_pending_at == boundary
+    assert after_commit_failure[0].retention_retry_count == 2
 
     recovered_store = LocalPreviewArtifactStore(artifact_root)
     recovered_service = PreviewRevisionService(

@@ -2,16 +2,103 @@ from __future__ import annotations
 
 import dataclasses
 import json
-from datetime import UTC, datetime
+from collections.abc import Iterator
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
+from sqlalchemy import create_engine
 from sqlmodel import Session, col, select
 
+from core.preview.evidence_capture import PreviewSourceWindowWriter
 from core.storage.backends.sqlmodel.engine import _engine_lock, _engines, get_or_create_engine
 from core.storage.backends.sqlmodel.unit_of_work import SQLModelBackend
 from plugins.confluent_cloud.storage.module import CCloudStorageModule
+
+if TYPE_CHECKING:
+    from core.preview.evidence import PreviewSourceEvidence
+    from core.preview.evidence_capture import (
+        NativeSourceEvidenceCapture,
+        NativeSourceWindow,
+        SourceWindowWriteResult,
+    )
+
+
+class _RecordingSourceWindowWriter:
+    def __init__(self, delegate: PreviewSourceWindowWriter) -> None:
+        self._delegate = delegate
+        self.write_results: list[SourceWindowWriteResult] = []
+
+    def replace_capture(
+        self,
+        capture: NativeSourceEvidenceCapture,
+        *,
+        attempt_sequence: int,
+        captured_at: datetime,
+    ) -> SourceWindowWriteResult:
+        result = self._delegate.replace_capture(
+            capture,
+            attempt_sequence=attempt_sequence,
+            captured_at=captured_at,
+        )
+        self.write_results.append(result)
+        return result
+
+    def list_unassociated_windows(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        start: datetime,
+        end: datetime,
+    ) -> tuple[NativeSourceWindow, ...]:
+        return self._delegate.list_unassociated_windows(
+            ecosystem,
+            tenant_id,
+            start,
+            end,
+        )
+
+    def iter_unassociated_window(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        window: NativeSourceWindow,
+    ) -> Iterator[PreviewSourceEvidence]:
+        return self._delegate.iter_unassociated_window(
+            ecosystem,
+            tenant_id,
+            window,
+        )
+
+    def associate_legacy_window(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        window: NativeSourceWindow,
+        *,
+        capture_id: str,
+        expected_source_count: int,
+    ) -> int:
+        return self._delegate.associate_legacy_window(
+            ecosystem,
+            tenant_id,
+            window,
+            capture_id=capture_id,
+            expected_source_count=expected_source_count,
+        )
+
+    def delete_before(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        before: datetime,
+    ) -> int:
+        return self._delegate.delete_before(
+            ecosystem,
+            tenant_id,
+            before,
+        )
 
 
 @pytest.fixture(autouse=True)
@@ -41,8 +128,8 @@ def source_backend(tmp_path: Any) -> tuple[SQLModelBackend, str]:
     backend.dispose()
 
 
-def _dt(day: int, *, hour: int = 0, microsecond: int = 0) -> datetime:
-    return datetime(2026, 7, day, hour, microsecond=microsecond, tzinfo=UTC)
+def _dt(day: int, *, hour: int = 0) -> datetime:
+    return datetime(2026, 7, day, hour, tzinfo=UTC)
 
 
 def _record(**overrides: Any) -> Any:
@@ -145,6 +232,92 @@ def _aware(value: datetime | None) -> datetime | None:
     if value is None or value.tzinfo is not None:
         return value
     return value.replace(tzinfo=UTC)
+
+
+def test_subsecond_equivalent_source_records_share_one_canonical_capture_count(
+    source_backend: tuple[SQLModelBackend, str],
+) -> None:
+    from core.preview.evidence_capture import NativeSourceWindow
+    from plugins.confluent_cloud.source_capture import (
+        CCloudNativeSourceEvidenceCapture,
+    )
+
+    backend, connection_string = source_backend
+    first = _record()
+    offset = timedelta(microseconds=654_321)
+    second = dataclasses.replace(
+        first,
+        source_period_start=first.source_period_start + offset,
+        source_period_end=first.source_period_end + offset,
+        collection_window_start=first.collection_window_start + offset,
+        evidence_scope_start=first.evidence_scope_start + offset,
+        evidence_scope_end=first.evidence_scope_end + offset,
+        allocation_timestamp=first.allocation_timestamp + offset,
+        retention_timestamp=first.retention_timestamp + offset,
+        billing_timestamp=first.billing_timestamp + offset,
+    )
+    capture = CCloudNativeSourceEvidenceCapture(
+        ecosystem="confluent_cloud",
+        tenant_id="org-1",
+        refresh_start=_dt(1),
+        refresh_end=_dt(4),
+        windows=(NativeSourceWindow(_dt(1), _dt(4)),),
+        records=(first, second),
+    )
+    with backend.create_preview_evidence_unit_of_work() as uow:
+        source_windows = _RecordingSourceWindowWriter(uow.source_windows)
+        assert isinstance(source_windows, PreviewSourceWindowWriter)
+        attempt = uow.source_readiness.begin_attempt(
+            "confluent_cloud",
+            "org-1",
+            "refresh-subsecond-equivalent",
+            _dt(1),
+            _dt(4),
+            _dt(4),
+        )
+        receipt = capture.persist(
+            source_windows,
+            uow.source_readiness,
+            attempt_sequence=attempt.attempt_sequence,
+            captured_at=_dt(4),
+        )
+        uow.commit()
+
+    with backend.create_preview_generation_read_unit_of_work() as uow:
+        readiness = uow.source_readiness.list_covering(
+            "confluent_cloud",
+            "org-1",
+            _dt(1),
+            _dt(4),
+        )
+    rows = _rows(connection_string)
+    assert len(rows) == 1
+    assert len(source_windows.write_results) == 1
+    assert source_windows.write_results[0].records_written == 1
+    assert len(source_windows.write_results[0].window_counts) == 1
+    assert source_windows.write_results[0].window_counts[0].source_count == 1
+    assert receipt.source_count == 1
+    assert len(receipt.captures) == 1
+    assert receipt.captures[0].source_count == 1
+    assert readiness == receipt.captures
+    assert rows[0].capture_id == receipt.captures[0].capture_id
+
+    conflicting = dataclasses.replace(second, amount=Decimal("99"))
+    with (
+        backend.create_unit_of_work() as uow,
+        pytest.raises(
+            ValueError,
+            match="conflicting source records",
+        ),
+    ):
+        uow.billing.replace_source_window(  # type: ignore[attr-defined]
+            "confluent_cloud",
+            "org-1",
+            _dt(1),
+            _dt(4),
+            (first, conflicting),
+        )
+    assert len(_rows(connection_string)) == 1
 
 
 class TestSourcePersistence:
@@ -541,8 +714,23 @@ class TestSourceRetention:
             assert (_aware(rows[0].evidence_scope_start), _aware(rows[0].evidence_scope_end)) == (_dt(1), _dt(3))
             assert json.loads(rows[0].raw_payload_json) == {"a": {"b": 2}, "z": 1}
 
+        engine = create_engine(connection_string)
+        with engine.connect() as connection:
+            raw_retention = connection.exec_driver_sql(
+                "SELECT retention_timestamp FROM ccloud_cost_source_records"
+            ).scalar_one()
+        engine.dispose()
+        assert raw_retention == "2026-07-03 00:00:00"
+
         with backend.create_preview_evidence_unit_of_work() as uow:
-            assert uow.source_windows.delete_before("confluent_cloud", "org-1", _dt(3, microsecond=1)) == 1
+            assert (
+                uow.source_windows.delete_before(
+                    "confluent_cloud",
+                    "org-1",
+                    _dt(3) + timedelta(seconds=1),
+                )
+                == 1
+            )
             uow.commit()
         assert _rows(connection_string) == []
 

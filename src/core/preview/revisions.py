@@ -514,13 +514,6 @@ class PreviewRevisionService:
 
         retry_capacity = self.RETENTION_ATTEMPT_LIMIT - len(new_candidates)
         retries = retry_snapshot[:retry_capacity]
-        with backend.create_preview_metadata_read_unit_of_work() as read_uow:
-            pending_tail = read_uow.revisions.get_retention_pending_tail(
-                ecosystem=ecosystem,
-                tenant_id=tenant_id,
-            )
-        retry_at = max(normalized_now, pending_tail or normalized_now) + timedelta(microseconds=1)
-
         attempts: list[PreviewRetentionCandidate] = []
         retry_iter = iter(retries)
         new_iter = iter(new_candidates)
@@ -557,7 +550,6 @@ class PreviewRevisionService:
                     with backend.create_preview_write_unit_of_work() as write_uow:
                         deferred = write_uow.revisions.defer_retention_pending(
                             candidate=candidate,
-                            retry_at=retry_at,
                         )
                         write_uow.commit()
                     if deferred:

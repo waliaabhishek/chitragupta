@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Sequence
+from dataclasses import replace
 from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING, Literal
 
@@ -47,6 +48,10 @@ from core.preview.repair import (
     PreviewRepairStatus,
 )
 from core.storage.backends.sqlmodel.tables import PipelineStateTable
+from core.storage.backends.sqlmodel.timestamps import (
+    canonical_utc_second,
+    exclusive_utc_second_upper_bound,
+)
 from plugins.confluent_cloud.storage.preview_tables import (
     CCloudAllocationLineagePortionTable,
     CCloudAllocationLineageRunTable,
@@ -76,14 +81,12 @@ if TYPE_CHECKING:
 
 def _utc(value: datetime) -> datetime:
     if value.tzinfo is None:
-        return value.replace(tzinfo=UTC)
-    return value.astimezone(UTC)
+        value = value.replace(tzinfo=UTC)
+    return canonical_utc_second(value)
 
 
 def _require_aware(value: datetime, name: str) -> datetime:
-    if value.tzinfo is None or value.utcoffset() is None:
-        raise ValueError(f"{name} must be timezone-aware")
-    return value.astimezone(UTC)
+    return canonical_utc_second(value, field=name)
 
 
 def _source_attempt(row: CCloudSourceEvidenceAttemptTable) -> PreviewSourceAttempt:
@@ -618,11 +621,10 @@ class SQLModelPreviewRepairRepository:
     ) -> PreviewRepair | None:
         return self._finalize(repair_id, completed_at=completed_at, with_failures=True)
 
-    def fail_interrupted_before(
+    def fail_interrupted_for_owner(
         self,
         ecosystem: str,
         tenant_id: str,
-        process_started_at: datetime,
         *,
         completed_at: datetime,
         diagnostic: PreviewDiagnostic,
@@ -631,8 +633,6 @@ class SQLModelPreviewRepairRepository:
             select(CCloudFocusPreviewRepairTable).where(
                 col(CCloudFocusPreviewRepairTable.ecosystem) == ecosystem,
                 col(CCloudFocusPreviewRepairTable.tenant_id) == tenant_id,
-                col(CCloudFocusPreviewRepairTable.created_at)
-                < _require_aware(process_started_at, "process_started_at"),
                 col(CCloudFocusPreviewRepairTable.status).in_(
                     (PreviewRepairStatus.QUEUED.value, PreviewRepairStatus.RUNNING.value)
                 ),
@@ -671,14 +671,15 @@ class SQLModelPreviewSourceWindowRepository:
         if attempt_sequence <= 0:
             raise ValueError("attempt_sequence must be positive")
         _require_aware(captured_at, "captured_at")
-        self._sources.replace_source_window(
+        result = self._sources.replace_source_window(
             capture.ecosystem,
             capture.tenant_id,
             capture.refresh_start,
             capture.refresh_end,
             capture.records,
         )
-        for window in capture.windows:
+        for window_count in result.window_counts:
+            window = window_count.window
             capture_id = capture.capture_id(window)
             self._session.execute(
                 update(CCloudCostSourceRecordTable)
@@ -691,7 +692,7 @@ class SQLModelPreviewSourceWindowRepository:
                 .values(capture_id=capture_id)
             )
         self._session.flush()
-        return SourceWindowWriteResult(records_written=len(capture.records))
+        return result
 
     def list_unassociated_windows(
         self, ecosystem: str, tenant_id: str, start: datetime, end: datetime
@@ -766,11 +767,12 @@ class SQLModelPreviewSourceWindowRepository:
         return changed
 
     def delete_before(self, ecosystem: str, tenant_id: str, before: datetime) -> int:
+        cutoff = exclusive_utc_second_upper_bound(before, field="before")
         result = self._session.execute(
             delete(CCloudCostSourceRecordTable).where(
                 col(CCloudCostSourceRecordTable.ecosystem) == ecosystem,
                 col(CCloudCostSourceRecordTable.tenant_id) == tenant_id,
-                col(CCloudCostSourceRecordTable.retention_timestamp) < _require_aware(before, "before"),
+                col(CCloudCostSourceRecordTable.retention_timestamp) < cutoff,
             )
         )
         return int(getattr(result, "rowcount", 0))
@@ -1176,10 +1178,28 @@ class SQLModelPreviewSourceReadinessRepository:
         end = _require_aware(refresh_end, "refresh_end")
         if start >= end:
             raise ValueError("readiness bounds must be ordered")
+        canonical_captures = tuple(
+            replace(
+                capture,
+                window_start=_require_aware(
+                    capture.window_start,
+                    "capture.window_start",
+                ),
+                window_end=_require_aware(
+                    capture.window_end,
+                    "capture.window_end",
+                ),
+                captured_at=_require_aware(
+                    capture.captured_at,
+                    "capture.captured_at",
+                ),
+            )
+            for capture in captures
+        )
         rows: list[CCloudSourceCaptureReadinessTable] = []
         cursor = start
         attempt_sequence: int | None = None
-        for capture in captures:
+        for capture in canonical_captures:
             if capture.ecosystem != ecosystem or capture.tenant_id != tenant_id:
                 raise ValueError("readiness owner mismatch")
             if capture.window_start != cursor or capture.window_end > end:
@@ -1239,7 +1259,7 @@ class SQLModelPreviewSourceReadinessRepository:
         return tuple(_readiness(row) for row in rows)
 
     def delete_orphaned_before(self, ecosystem: str, tenant_id: str, before: datetime) -> int:
-        cutoff = _require_aware(before, "before")
+        cutoff = exclusive_utc_second_upper_bound(before, field="before")
         source_exists = exists().where(
             col(CCloudCostSourceRecordTable.ecosystem) == ecosystem,
             col(CCloudCostSourceRecordTable.tenant_id) == tenant_id,
@@ -1374,11 +1394,12 @@ class SQLModelPreviewOrganizationAuthorityRepository:
 
     def delete_superseded_before(self, ecosystem: str, tenant_id: str, before: datetime) -> int:
         latest = self.get_latest(ecosystem, tenant_id)
+        cutoff = exclusive_utc_second_upper_bound(before, field="before")
         conditions = [
             col(CCloudOrganizationAuthorityAttemptTable.ecosystem) == ecosystem,
             col(CCloudOrganizationAuthorityAttemptTable.tenant_id) == tenant_id,
             col(CCloudOrganizationAuthorityAttemptTable.completed_at).is_not(None),
-            col(CCloudOrganizationAuthorityAttemptTable.completed_at) < _require_aware(before, "before"),
+            col(CCloudOrganizationAuthorityAttemptTable.completed_at) < cutoff,
         ]
         if latest is not None:
             conditions.append(col(CCloudOrganizationAuthorityAttemptTable.attempt_sequence) != latest.attempt_sequence)

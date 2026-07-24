@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import logging
-from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING
@@ -13,6 +12,7 @@ from core.preview.evidence_capture import (
     PreviewSourceCaptureReceipt,
     PreviewSourceWindowWriter,
 )
+from core.time_precision import canonical_utc_second
 
 logger = logging.getLogger(__name__)
 
@@ -80,25 +80,41 @@ class CCloudNativeSourceEvidenceCapture:
             attempt_sequence=attempt_sequence,
             captured_at=captured_at,
         )
-        counts = Counter((record.collection_window_start, record.collection_window_end) for record in self.records)
+        refresh_start = canonical_utc_second(self.refresh_start, field="refresh_start")
+        refresh_end = canonical_utc_second(self.refresh_end, field="refresh_end")
+        captured_at = canonical_utc_second(captured_at, field="captured_at")
+        windows = tuple(
+            NativeSourceWindow(
+                canonical_utc_second(
+                    window.start,
+                    field="window.start",
+                ),
+                canonical_utc_second(
+                    window.end,
+                    field="window.end",
+                ),
+            )
+            for window in self.windows
+        )
+        counts_by_window = {item.window: item.source_count for item in result.window_counts}
         captures = tuple(
             PreviewSourceReadiness(
                 ecosystem=self.ecosystem,
                 tenant_id=self.tenant_id,
                 window_start=window.start,
                 window_end=window.end,
-                capture_id=self.capture_id(window),
+                capture_id=self._capture_id(window.start, window.end),
                 captured_at=captured_at,
-                source_count=counts[(window.start, window.end)],
+                source_count=counts_by_window.get(window, 0),
                 attempt_sequence=attempt_sequence,
             )
-            for window in self.windows
+            for window in windows
         )
         persisted = source_readiness.replace_overlapping(
             self.ecosystem,
             self.tenant_id,
-            self.refresh_start,
-            self.refresh_end,
+            refresh_start,
+            refresh_end,
             captures,
         )
         if persisted != captures or result.records_written != sum(item.source_count for item in captures):
@@ -107,14 +123,19 @@ class CCloudNativeSourceEvidenceCapture:
             ecosystem=self.ecosystem,
             tenant_id=self.tenant_id,
             attempt_sequence=attempt_sequence,
-            refresh_start=self.refresh_start,
-            refresh_end=self.refresh_end,
+            refresh_start=refresh_start,
+            refresh_end=refresh_end,
             captures=persisted,
             source_count=result.records_written,
         )
 
     def capture_id(self, window: NativeSourceWindow) -> str:
+        start = canonical_utc_second(window.start, field="window.start")
+        end = canonical_utc_second(window.end, field="window.end")
+        return self._capture_id(start, end)
+
+    def _capture_id(self, start: datetime, end: datetime) -> str:
         digest = hashlib.sha256(
-            f"{self.ecosystem}\0{self.tenant_id}\0{window.start.isoformat()}\0{window.end.isoformat()}".encode()
+            f"{self.ecosystem}\0{self.tenant_id}\0{start.isoformat()}\0{end.isoformat()}".encode()
         ).hexdigest()
         return f"capture:v1:{digest}"

@@ -297,6 +297,38 @@ makes the same bounded retry deterministic without duplicate current lineage.
 API-only deployments can read retained repair status but return 503 for new
 submissions. Disabled tenants cannot submit or read repair operations.
 
+### Migration 029: canonical UTC-second timestamps
+
+Migration 029 establishes one persistence contract for financial-period keys
+and Preview lifecycle state on SQLite and PostgreSQL: values are UTC and stored
+at whole-second precision. It covers the in-scope billing, chargeback,
+topic-allocation, source-evidence, calculation-lineage, Preview
+request/revision/repair scalar timestamps, plus the named timestamps in
+persisted request coverage and revision source-snapshot JSON.
+
+The migration requires an online database connection because it preflights all
+supported tables before changing data. Offline `--sql` upgrade or downgrade
+fails with an instruction to run against the database. During preflight,
+logically identical records that collapse to the same canonical natural key are
+converged deterministically. Conflicting payloads, invalid timestamps, naive
+JSON timestamps, or unsafe allocation-lineage parent state abort the transaction
+with the affected table/key and repair guidance; the database remains at
+revision 028. When lineage portions converge, their complete parent run's
+`portion_count` is recalculated from the canonical survivors.
+
+SQLite downgrade from 029 restores the revision-028 zero-fraction text form
+ending in `.000000` before removing the new retention retry column. This is
+only compatibility with revision-028 upsert identity, not a sub-second
+precision contract. PostgreSQL migration behavior and rollback are verified by
+the dedicated real-PostgreSQL CI job.
+
+Existing API field names, shapes, and semantics remain compatible; affected
+lifecycle timestamp values follow the new UTC whole-second contract. Production
+manifest timestamps already emitted at whole-second precision keep their
+formatting. Immutable artifact bytes, storage keys, financial values,
+correlations, and totals are unchanged. Canonical duplicate convergence
+prevents one logical financial origin from being processed twice.
+
 ## FOCUS Mapping Preview compatibility
 
 Existing Preview configuration and previously published requested packages and

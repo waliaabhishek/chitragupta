@@ -80,16 +80,54 @@ jobs:
       - name: Build
         run: npm run build
 
+  postgresql-migration:
+    name: PostgreSQL migration
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: chitragupta_test
+          POSTGRES_USER: chitragupta
+          POSTGRES_PASSWORD: chitragupta  # pragma: allowlist secret
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U chitragupta -d chitragupta_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Run PostgreSQL migration tests
+        env:
+          TEST_POSTGRESQL_URL: postgresql+psycopg://chitragupta:chitragupta@localhost:5432/chitragupta_test  # pragma: allowlist secret
+        run: uv run pytest tests/integration/core/storage/test_migration_029_postgresql.py
+
   ci-success:
     name: CI Success
     runs-on: ubuntu-latest
-    needs: [quality, frontend]
+    needs: [quality, frontend, postgresql-migration]
     if: always()
     steps:
       - name: Verify all upstream jobs succeeded
         run: |
-          if [[ "${{ needs.quality.result }}" != "success" || "${{ needs.frontend.result }}" != "success" ]]; then
-            echo "CI failed — quality=${{ needs.quality.result }}, frontend=${{ needs.frontend.result }}"
+          if [[ "${{ needs.quality.result }}" != "success" || "${{ needs.frontend.result }}" != "success" || "${{ needs.postgresql-migration.result }}" != "success" ]]; then
+            echo "CI failed — quality=${{ needs.quality.result }}, frontend=${{ needs.frontend.result }}, postgresql-migration=${{ needs.postgresql-migration.result }}"
             exit 1
           fi
           echo "All CI jobs succeeded"

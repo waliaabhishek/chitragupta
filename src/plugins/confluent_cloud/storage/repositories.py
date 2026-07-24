@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections import Counter
 from collections.abc import Iterator, Sequence
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
@@ -21,10 +22,19 @@ from core.preview.evidence import (
     PreviewSourceEvidence,
     decode_lineage_decimal,
 )
+from core.preview.evidence_capture import (
+    NativeSourceWindow,
+    SourceWindowCount,
+    SourceWindowWriteResult,
+)
 from core.storage.backends.sqlmodel.mappers import chargeback_to_dimension
 from core.storage.backends.sqlmodel.repositories import SQLModelChargebackRepository
 from core.storage.backends.sqlmodel.tables import ChargebackDimensionTable, ChargebackFactTable
 from core.storage.backends.sqlmodel.time_bounds import exact_utc_half_open_bounds
+from core.storage.backends.sqlmodel.timestamps import (
+    canonical_utc_second,
+    exclusive_utc_second_upper_bound,
+)
 from core.storage.interface import AllocationLineageRunCapture, LineageCaptureStatus
 from plugins.confluent_cloud.models.billing import CCloudBillingLineItem, CCloudCostSourceRecord
 from plugins.confluent_cloud.storage.tables import (
@@ -60,6 +70,10 @@ def _ensure_utc_strict(dt: datetime) -> datetime:
     return dt.astimezone(UTC)
 
 
+def _canonical_second(dt: datetime, field: str = "timestamp") -> datetime:
+    return canonical_utc_second(dt, field=field)
+
+
 def _metadata_to_json(metadata: dict[str, Any]) -> str | None:
     if not metadata:
         return None
@@ -89,14 +103,36 @@ def _source_to_table(record: CCloudCostSourceRecord) -> CCloudCostSourceTable:
         provider_cost_id=record.provider_cost_id,
         source_period_start=None
         if record.source_period_start is None
-        else _ensure_utc_strict(record.source_period_start),
-        source_period_end=None if record.source_period_end is None else _ensure_utc_strict(record.source_period_end),
-        collection_window_start=_ensure_utc_strict(record.collection_window_start),
-        collection_window_end=_ensure_utc_strict(record.collection_window_end),
-        evidence_scope_start=_ensure_utc_strict(record.evidence_scope_start),
-        evidence_scope_end=_ensure_utc_strict(record.evidence_scope_end),
-        allocation_timestamp=_ensure_utc_strict(record.allocation_timestamp),
-        retention_timestamp=_ensure_utc_strict(record.retention_timestamp),
+        else _canonical_second(record.source_period_start, "source_period_start"),
+        source_period_end=(
+            None
+            if record.source_period_end is None
+            else _canonical_second(record.source_period_end, "source_period_end")
+        ),
+        collection_window_start=_canonical_second(
+            record.collection_window_start,
+            "collection_window_start",
+        ),
+        collection_window_end=_canonical_second(
+            record.collection_window_end,
+            "collection_window_end",
+        ),
+        evidence_scope_start=_canonical_second(
+            record.evidence_scope_start,
+            "evidence_scope_start",
+        ),
+        evidence_scope_end=_canonical_second(
+            record.evidence_scope_end,
+            "evidence_scope_end",
+        ),
+        allocation_timestamp=_canonical_second(
+            record.allocation_timestamp,
+            "allocation_timestamp",
+        ),
+        retention_timestamp=_canonical_second(
+            record.retention_timestamp,
+            "retention_timestamp",
+        ),
         granularity=record.granularity,
         product=record.product,
         line_type=record.line_type,
@@ -111,7 +147,11 @@ def _source_to_table(record: CCloudCostSourceRecord) -> CCloudCostSourceTable:
         resource_id=record.resource_id,
         resource_name=record.resource_name,
         environment_id=record.environment_id,
-        billing_timestamp=None if record.billing_timestamp is None else _ensure_utc_strict(record.billing_timestamp),
+        billing_timestamp=(
+            None
+            if record.billing_timestamp is None
+            else _canonical_second(record.billing_timestamp, "billing_timestamp")
+        ),
         billing_env_id=record.billing_env_id,
         billing_resource_id=record.billing_resource_id,
         billing_product_type=record.billing_product_type,
@@ -259,7 +299,7 @@ def _line_to_table(line: CCloudBillingLineItem) -> CCloudBillingTable:
     return CCloudBillingTable(
         ecosystem=line.ecosystem,
         tenant_id=line.tenant_id,
-        timestamp=_ensure_utc_strict(line.timestamp),
+        timestamp=_canonical_second(line.timestamp),
         env_id=line.env_id,
         resource_id=line.resource_id,
         product_type=line.product_type,
@@ -295,7 +335,7 @@ def _billing_pk(line: CCloudBillingLineItem) -> tuple[str, str, datetime, str, s
     return (
         line.ecosystem,
         line.tenant_id,
-        line.timestamp,
+        _canonical_second(line.timestamp),
         line.env_id,
         line.resource_id,
         line.product_type,
@@ -340,7 +380,7 @@ class CCloudBillingRepository:
         for line in lines:
             if line.ecosystem != ecosystem or line.tenant_id != tenant_id:
                 raise ValueError("historical repair billing owner mismatch")
-            timestamp = _ensure_utc_strict(line.timestamp)
+            timestamp = _canonical_second(line.timestamp)
             if timestamp.date() != tracking_date:
                 raise ValueError("historical repair billing timestamp outside requested date")
             env_id = getattr(line, "env_id", None)
@@ -382,14 +422,31 @@ class CCloudBillingRepository:
         refresh_window_start: datetime,
         refresh_window_end: datetime,
         records: Sequence[CCloudCostSourceRecord],
-    ) -> None:
+    ) -> SourceWindowWriteResult:
         refresh_start = _validate_utc_midnight(refresh_window_start, "refresh_window_start")
         refresh_end = _validate_utc_midnight(refresh_window_end, "refresh_window_end")
         if refresh_start >= refresh_end:
             raise ValueError("Source replacement window must be non-empty")
         for record in records:
             _validate_source_record(record, ecosystem, tenant_id, refresh_start, refresh_end)
-        table_records = [_source_to_table(record) for record in records]
+        table_records_by_key: dict[
+            tuple[str, str, str, datetime, datetime],
+            CCloudCostSourceTable,
+        ] = {}
+        for record in records:
+            table_record = _source_to_table(record)
+            key = (
+                table_record.ecosystem,
+                table_record.tenant_id,
+                table_record.source_record_id,
+                table_record.evidence_scope_start,
+                table_record.evidence_scope_end,
+            )
+            existing = table_records_by_key.get(key)
+            if existing is not None and existing.model_dump() != table_record.model_dump():
+                raise ValueError("conflicting source records resolve to the same canonical natural key")
+            table_records_by_key[key] = table_record
+        table_records = list(table_records_by_key.values())
 
         valid_delete = delete(CCloudCostSourceTable).where(
             col(CCloudCostSourceTable.ecosystem) == ecosystem,
@@ -421,6 +478,23 @@ class CCloudBillingRepository:
         self._session.add_all(residuals)
         self._session.add_all(table_records)
         self._session.flush()
+        counts = Counter(
+            (
+                record.collection_window_start,
+                record.collection_window_end,
+            )
+            for record in table_records
+        )
+        return SourceWindowWriteResult(
+            records_written=len(table_records),
+            window_counts=tuple(
+                SourceWindowCount(
+                    window=NativeSourceWindow(start, end),
+                    source_count=count,
+                )
+                for (start, end), count in sorted(counts.items())
+            ),
+        )
 
     def find_by_date(self, ecosystem: str, tenant_id: str, target_date: date) -> list[CCloudBillingLineItem]:
         start, end = exact_utc_half_open_bounds(self._session, *_date_to_range(target_date))
@@ -435,6 +509,7 @@ class CCloudBillingRepository:
     def find_by_range(
         self, ecosystem: str, tenant_id: str, start: datetime, end: datetime
     ) -> list[CCloudBillingLineItem]:
+        start, end = exact_utc_half_open_bounds(self._session, start, end)
         stmt = select(CCloudBillingTable).where(
             col(CCloudBillingTable.ecosystem) == ecosystem,
             col(CCloudBillingTable.tenant_id) == tenant_id,
@@ -444,12 +519,17 @@ class CCloudBillingRepository:
         return [_table_to_line(r) for r in self._session.exec(stmt).all()]
 
     def find_preview_source_candidates(self, scope: PreviewEvidenceScope) -> tuple[PreviewSourceEvidence, ...]:
+        scope_start, scope_end = exact_utc_half_open_bounds(
+            self._session,
+            scope.start,
+            scope.end,
+        )
         dated_overlap = (
             col(CCloudCostSourceTable.malformed) == False,  # noqa: E712
             col(CCloudCostSourceTable.source_period_start).is_not(None),
             col(CCloudCostSourceTable.source_period_end).is_not(None),
-            col(CCloudCostSourceTable.source_period_start) < scope.end,
-            col(CCloudCostSourceTable.source_period_end) > scope.start,
+            col(CCloudCostSourceTable.source_period_start) < scope_end,
+            col(CCloudCostSourceTable.source_period_end) > scope_start,
         )
         fallback_overlap = (
             or_(
@@ -457,8 +537,8 @@ class CCloudBillingRepository:
                 col(CCloudCostSourceTable.source_period_start).is_(None),
                 col(CCloudCostSourceTable.source_period_end).is_(None),
             ),
-            col(CCloudCostSourceTable.evidence_scope_start) < scope.end,
-            col(CCloudCostSourceTable.evidence_scope_end) > scope.start,
+            col(CCloudCostSourceTable.evidence_scope_start) < scope_end,
+            col(CCloudCostSourceTable.evidence_scope_end) > scope_start,
         )
         statement = (
             select(CCloudCostSourceTable)
@@ -478,12 +558,17 @@ class CCloudBillingRepository:
         return tuple(_source_table_to_preview(row) for row in self._session.exec(statement).all())
 
     def iter_preview_sources(self, scope: PreviewEvidenceScope) -> Iterator[PreviewSourceEvidence]:
+        scope_start, scope_end = exact_utc_half_open_bounds(
+            self._session,
+            scope.start,
+            scope.end,
+        )
         dated_overlap = (
             col(CCloudCostSourceTable.malformed) == False,  # noqa: E712
             col(CCloudCostSourceTable.source_period_start).is_not(None),
             col(CCloudCostSourceTable.source_period_end).is_not(None),
-            col(CCloudCostSourceTable.source_period_start) < scope.end,
-            col(CCloudCostSourceTable.source_period_end) > scope.start,
+            col(CCloudCostSourceTable.source_period_start) < scope_end,
+            col(CCloudCostSourceTable.source_period_end) > scope_start,
         )
         fallback_overlap = (
             or_(
@@ -491,8 +576,8 @@ class CCloudBillingRepository:
                 col(CCloudCostSourceTable.source_period_start).is_(None),
                 col(CCloudCostSourceTable.source_period_end).is_(None),
             ),
-            col(CCloudCostSourceTable.evidence_scope_start) < scope.end,
-            col(CCloudCostSourceTable.evidence_scope_end) > scope.start,
+            col(CCloudCostSourceTable.evidence_scope_start) < scope_end,
+            col(CCloudCostSourceTable.evidence_scope_end) > scope_start,
         )
         statement = (
             select(CCloudCostSourceTable)
@@ -558,7 +643,11 @@ class CCloudBillingRepository:
             .where(
                 col(CCloudBillingTable.ecosystem) == scope.ecosystem,
                 col(CCloudBillingTable.tenant_id) == scope.tenant_id,
-                col(CCloudBillingTable.timestamp) == source.allocation_timestamp,
+                col(CCloudBillingTable.timestamp)
+                == _canonical_second(
+                    source.allocation_timestamp,
+                    "source.allocation_timestamp",
+                ),
                 col(CCloudBillingTable.env_id) == source.environment_id,
                 col(CCloudBillingTable.resource_id) == source.resource_id,
                 col(CCloudBillingTable.product_category) == source.native_product,
@@ -633,6 +722,7 @@ class CCloudBillingRepository:
         return self._reset_int_column_by_date(ecosystem, tenant_id, tracking_date, "topic_attribution_attempts")
 
     def delete_before(self, ecosystem: str, tenant_id: str, before: datetime) -> int:
+        before = exclusive_utc_second_upper_bound(before)
         stmt = delete(CCloudBillingTable).where(
             col(CCloudBillingTable.ecosystem) == ecosystem,
             col(CCloudBillingTable.tenant_id) == tenant_id,
@@ -657,8 +747,18 @@ class CCloudBillingRepository:
             col(CCloudBillingTable.tenant_id) == tenant_id,
         ]
         if start is not None:
+            start = exact_utc_half_open_bounds(
+                self._session,
+                start,
+                start,
+            )[0]
             where.append(col(CCloudBillingTable.timestamp) >= start)
         if end is not None:
+            end = exact_utc_half_open_bounds(
+                self._session,
+                end,
+                end,
+            )[0]
             where.append(col(CCloudBillingTable.timestamp) < end)
         if product_type is not None:
             where.append(col(CCloudBillingTable.product_type) == product_type)
@@ -697,7 +797,10 @@ class CCloudChargebackRepository(SQLModelChargebackRepository):
     ) -> None:
         if not run.calculation_id:
             raise ValueError("calculation_id must not be empty")
-        completed_at = _ensure_utc_strict(calculation_completed_at)
+        completed_at = _canonical_second(
+            calculation_completed_at,
+            "calculation_completed_at",
+        )
         self._session.execute(
             delete(CCloudAllocationLineagePortionTable).where(
                 col(CCloudAllocationLineagePortionTable.ecosystem) == run.ecosystem,
@@ -719,7 +822,10 @@ class CCloudChargebackRepository(SQLModelChargebackRepository):
                 tenant_id=run.tenant_id,
                 tracking_date=run.tracking_date,
                 calculation_id=run.calculation_id,
-                origin_timestamp=_ensure_utc_strict(capture.origin_timestamp),
+                origin_timestamp=_canonical_second(
+                    capture.origin_timestamp,
+                    "origin_timestamp",
+                ),
                 origin_env_id=capture.origin_env_id,
                 origin_resource_id=capture.origin_resource_id,
                 origin_product_type=capture.origin_product_type,
@@ -873,7 +979,11 @@ class CCloudChargebackRepository(SQLModelChargebackRepository):
             .where(
                 col(ChargebackDimensionTable.ecosystem) == scope.ecosystem,
                 col(ChargebackDimensionTable.tenant_id) == scope.tenant_id,
-                col(ChargebackFactTable.timestamp) == source.allocation_timestamp,
+                col(ChargebackFactTable.timestamp)
+                == _canonical_second(
+                    source.allocation_timestamp,
+                    "source.allocation_timestamp",
+                ),
                 col(ChargebackDimensionTable.env_id) == source.environment_id,
                 col(ChargebackDimensionTable.resource_id) == source.resource_id,
                 col(ChargebackDimensionTable.product_category) == source.native_product,

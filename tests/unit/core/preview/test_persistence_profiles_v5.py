@@ -256,6 +256,106 @@ def test_mark_ready_constructs_and_persists_complete_strict_candidate(tmp_path: 
         backend.dispose()
 
 
+def test_request_scalar_and_coverage_json_timestamps_round_trip_at_utc_seconds(
+    tmp_path: Path,
+) -> None:
+    backend = _backend(tmp_path)
+    snapshot = _snapshot()
+    completed = datetime(2026, 7, 3, 2, 0, 0, 987_654, tzinfo=UTC)
+    coverage = tuple(
+        replace(
+            entry,
+            calculation_completed_at=entry.calculation_completed_at.replace(microsecond=654_321),
+        )
+        for entry in snapshot.calculation_coverage
+    )
+    snapshot = replace(
+        snapshot,
+        calculation_coverage=coverage,
+        calculation_timestamp=max(entry.calculation_completed_at for entry in coverage),
+        source_through=snapshot.source_through.replace(microsecond=456_789),
+    )
+    try:
+        with backend.create_preview_write_unit_of_work() as uow:
+            uow.requests.create_queued(
+                _request(
+                    status="queued",
+                    created_at=datetime(
+                        2026,
+                        7,
+                        3,
+                        0,
+                        0,
+                        0,
+                        123_456,
+                        tzinfo=UTC,
+                    ),
+                )
+            )
+            uow.commit()
+        with backend.create_preview_write_unit_of_work() as uow:
+            assert (
+                uow.requests.mark_running(
+                    "request-1",
+                    datetime(
+                        2026,
+                        7,
+                        3,
+                        1,
+                        0,
+                        0,
+                        234_567,
+                        tzinfo=UTC,
+                    ),
+                )
+                is not None
+            )
+            uow.commit()
+        with backend.create_preview_write_unit_of_work() as uow:
+            assert uow.requests.mark_ready(
+                "request-1",
+                completed,
+                completed + timedelta(days=7),
+                snapshot,
+                _stored_package(),
+            )
+            uow.commit()
+
+        with backend._engine.connect() as connection:
+            raw = connection.exec_driver_sql(
+                "SELECT created_at, started_at, completed_at, expires_at, "
+                "calculation_timestamp, source_through, calculation_coverage_json "
+                "FROM preview_requests WHERE request_id = 'request-1'"
+            ).one()
+        with backend.create_preview_metadata_read_unit_of_work() as uow:
+            restored = uow.requests.get_for_owner(
+                "request-1",
+                "confluent_cloud",
+                "tenant-1",
+            )
+
+        assert raw[:6] == (
+            "2026-07-03 00:00:00",
+            "2026-07-03 01:00:00",
+            "2026-07-03 02:00:00",
+            "2026-07-10 02:00:00",
+            "2026-07-03 00:00:00",
+            "2026-07-02 00:00:00",
+        )
+        assert '"calculation_completed_at":"2026-07-03T00:00:00+00:00"' in raw.calculation_coverage_json
+        assert restored is not None
+        assert restored.created_at == datetime(2026, 7, 3, tzinfo=UTC)
+        assert restored.started_at == datetime(2026, 7, 3, 1, tzinfo=UTC)
+        assert restored.completed_at == datetime(2026, 7, 3, 2, tzinfo=UTC)
+        assert restored.expires_at == datetime(2026, 7, 10, 2, tzinfo=UTC)
+        assert restored.source_snapshot is not None
+        assert restored.source_snapshot.calculation_coverage[0].calculation_completed_at == datetime(
+            2026, 7, 3, tzinfo=UTC
+        )
+    finally:
+        backend.dispose()
+
+
 def test_mark_ready_rejects_invalid_daily_cutoff_candidate_without_mutation(tmp_path: Path) -> None:
     backend = _backend(tmp_path)
     invalid = _snapshot(cutoff=date(2026, 7, 2))
@@ -518,7 +618,7 @@ def test_expiry_transition_is_exact_idempotent_and_clears_only_matching_key(tmp_
                     request_id="request-1",
                     ecosystem="confluent_cloud",
                     tenant_id="tenant-1",
-                    now=expires_at - timedelta(microseconds=1),
+                    now=expires_at - timedelta(seconds=1),
                 )
                 is None
             )
@@ -601,7 +701,7 @@ def test_due_expiry_is_bounded_and_ordered_by_expiry_then_request_id(tmp_path: P
         backend.dispose()
 
 
-def test_interruption_recovery_uses_strict_whole_second_cutoff_and_keeps_same_second_row(
+def test_interruption_recovery_uses_owner_state_and_fails_same_second_unowned_rows(
     tmp_path: Path,
 ) -> None:
     backend = _backend(tmp_path)
@@ -615,13 +715,22 @@ def test_interruption_recovery_uses_strict_whole_second_cutoff_and_keeps_same_se
     try:
         with backend.create_preview_write_unit_of_work() as uow:
             uow.requests.create_queued(
-                _request(status="queued", request_id="strictly-before", created_at=startup - timedelta(microseconds=1))
+                _request(status="queued", request_id="strictly-before", created_at=startup - timedelta(seconds=1))
             )
             uow.requests.create_queued(
                 _request(status="queued", request_id="same-second", created_at=startup + timedelta(milliseconds=500))
             )
             uow.requests.create_queued(
                 _request(status="queued", request_id="running-before", created_at=startup - timedelta(seconds=1))
+            )
+            uow.requests.create_queued(
+                _request(
+                    status="queued",
+                    request_id="owned-live",
+                    created_at=startup + timedelta(milliseconds=500),
+                ),
+                worker_id="live-worker",
+                lease_expires_at=startup + timedelta(seconds=30),
             )
             assert (
                 uow.requests.mark_running(
@@ -640,24 +749,94 @@ def test_interruption_recovery_uses_strict_whole_second_cutoff_and_keeps_same_se
                 diagnostic=diagnostic,
             )
             uow.commit()
-        assert result.failed_count == 2
-        assert result.protected_count == 0
+        assert result.failed_count == 3
+        assert result.protected_count == 1
         with backend.create_preview_metadata_read_unit_of_work() as uow:
             before = uow.requests.get_for_owner("strictly-before", "confluent_cloud", "tenant-1")
             same = uow.requests.get_for_owner("same-second", "confluent_cloud", "tenant-1")
             running = uow.requests.get_for_owner("running-before", "confluent_cloud", "tenant-1")
+            owned = uow.requests.get_for_owner("owned-live", "confluent_cloud", "tenant-1")
         assert before is not None and before.status.value == "failed"
         assert before.diagnostic == diagnostic
-        assert same is not None and same.status.value == "queued"
+        assert same is not None and same.status.value == "failed"
         assert running is not None and running.status.value == "failed"
-        assert running.started_at == startup + timedelta(milliseconds=500)
+        assert running.started_at == startup
         assert running.completed_at == running.started_at
         assert running.completed_at >= running.started_at
+        assert owned is not None and owned.status.value == "queued"
+        with backend._engine.connect() as connection:
+            assert connection.exec_driver_sql(
+                "SELECT worker_id, lease_expires_at FROM preview_requests WHERE request_id = 'owned-live'"
+            ).one() == ("live-worker", "2026-07-03 01:00:30")
     finally:
         backend.dispose()
 
 
-def test_multi_instance_recovery_respects_live_heartbeat_recovers_stale_owner_and_keeps_same_second_gap(
+def test_same_second_request_restart_recovers_unowned_state_after_backend_reopen(
+    tmp_path: Path,
+) -> None:
+    models = import_module("core.preview.models")
+    startup = datetime(2026, 7, 3, 1, 2, 3, tzinfo=UTC)
+    diagnostic = models.PreviewDiagnostic(
+        "preview_generation_interrupted",
+        "FOCUS Mapping Preview generation was interrupted before completion.",
+        True,
+    )
+    first = _backend(tmp_path)
+    with first.create_preview_write_unit_of_work() as uow:
+        uow.requests.create_queued(
+            _request(
+                status="queued",
+                request_id="same-second-unowned",
+                created_at=startup.replace(microsecond=987_654),
+            )
+        )
+        uow.requests.create_queued(
+            _request(
+                status="queued",
+                request_id="same-second-owned",
+                created_at=startup.replace(microsecond=123_456),
+            ),
+            worker_id="live-worker",
+            lease_expires_at=startup + timedelta(seconds=30),
+        )
+        uow.commit()
+    first.dispose()
+
+    reopened = _backend(tmp_path)
+    try:
+        with reopened.create_preview_write_unit_of_work() as uow:
+            result = uow.requests.fail_interrupted_before(
+                ecosystem="confluent_cloud",
+                tenant_id="tenant-1",
+                startup_at=startup,
+                lease_stale_at=startup,
+                diagnostic=diagnostic,
+            )
+            uow.commit()
+        with reopened.create_preview_metadata_read_unit_of_work() as uow:
+            interrupted = uow.requests.get_for_owner(
+                "same-second-unowned",
+                "confluent_cloud",
+                "tenant-1",
+            )
+            protected = uow.requests.get_for_owner(
+                "same-second-owned",
+                "confluent_cloud",
+                "tenant-1",
+            )
+
+        assert result.failed_count == 1
+        assert result.protected_count == 1
+        assert interrupted is not None
+        assert interrupted.status.value == "failed"
+        assert interrupted.created_at == startup
+        assert protected is not None and protected.status.value == "queued"
+    finally:
+        reopened.dispose()
+
+
+def test_multi_instance_recovery_respects_live_heartbeat_and_recovers_same_second_unowned_request(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -752,10 +931,10 @@ def test_multi_instance_recovery_respects_live_heartbeat_recovers_stale_owner_an
                 live_lease = connection.exec_driver_sql(
                     "SELECT lease_expires_at FROM preview_requests WHERE request_id = 'live-request'"
                 ).scalar_one()
-            if live_lease == "2026-07-03 01:00:25.000000":
+            if live_lease == "2026-07-03 01:00:25":
                 break
             time.sleep(0.01)
-        assert live_lease == "2026-07-03 01:00:25.000000"
+        assert live_lease == "2026-07-03 01:00:25"
         assert ("enter", "production") in live_provider.lease_events
         assert ("exit", "production") in live_provider.lease_events
 
@@ -771,7 +950,9 @@ def test_multi_instance_recovery_respects_live_heartbeat_recovers_stale_owner_an
         assert live is not None and live.status.value == "running"
         assert stale is not None and stale.status.value == "failed"
         assert stale.diagnostic is not None and stale.diagnostic.code == "preview_generation_interrupted"
-        assert same_second is not None and same_second.status.value == "queued"
+        assert same_second is not None and same_second.status.value == "failed"
+        assert same_second.diagnostic is not None
+        assert same_second.diagnostic.code == "preview_generation_interrupted"
         with backend._engine.connect() as connection:
             rows = {
                 request_id: (worker_id, lease_expires_at)
@@ -780,7 +961,7 @@ def test_multi_instance_recovery_respects_live_heartbeat_recovers_stale_owner_an
                     "WHERE request_id IN ('live-request', 'stale-request', 'same-second-request')"
                 )
             }
-        assert rows["live-request"] == (live_worker, "2026-07-03 01:00:25.000000")
+        assert rows["live-request"] == (live_worker, "2026-07-03 01:00:25")
         assert rows["stale-request"] == (None, None)
         assert rows["same-second-request"] == (None, None)
     finally:

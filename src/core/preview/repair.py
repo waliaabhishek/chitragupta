@@ -11,6 +11,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable
 
 from core.preview.models import PreviewDiagnostic
+from core.time_precision import canonical_utc_second
 
 if TYPE_CHECKING:
     from core.config.models import TenantConfig
@@ -267,11 +268,10 @@ class PreviewRepairRepository(Protocol):
     ) -> PreviewRepair | None: ...
     def finalize_completed(self, repair_id: str, *, completed_at: datetime) -> PreviewRepair | None: ...
     def finalize_completed_with_failures(self, repair_id: str, *, completed_at: datetime) -> PreviewRepair | None: ...
-    def fail_interrupted_before(
+    def fail_interrupted_for_owner(
         self,
         ecosystem: str,
         tenant_id: str,
-        process_started_at: datetime,
         *,
         completed_at: datetime,
         diagnostic: PreviewDiagnostic,
@@ -310,7 +310,6 @@ class PreviewRepairRuntime:
         self.clock = clock
         self.repair_id_factory = repair_id_factory
         self.configured_owners = configured_owners
-        self.process_started_at = self.clock()
         self._executor = executor or ThreadPoolExecutor(max_workers=max_workers)
         self._lock = threading.Lock()
 
@@ -326,12 +325,14 @@ class PreviewRepairRuntime:
             with self.backend_provider.acquire_backend(tenant_name, tenant_config) as backend:
                 if not isinstance(backend, PreviewEvidenceStorageBackend):
                     continue
-                completed_at = self.clock()
+                completed_at = canonical_utc_second(
+                    self.clock(),
+                    field="repair.completed_at",
+                )
                 with backend.create_preview_evidence_unit_of_work() as uow:
-                    uow.repairs.fail_interrupted_before(
+                    uow.repairs.fail_interrupted_for_owner(
                         tenant_config.ecosystem,
                         tenant_config.tenant_id,
-                        self.process_started_at,
                         completed_at=completed_at,
                         diagnostic=diagnostic,
                     )
@@ -371,7 +372,10 @@ class PreviewRepairRuntime:
             start_date=start_date,
             end_date=end_date,
             status=PreviewRepairStatus.QUEUED,
-            created_at=created_at,
+            created_at=canonical_utc_second(
+                created_at,
+                field="repair.created_at",
+            ),
             started_at=None,
             completed_at=None,
             diagnostic=None,
@@ -425,7 +429,10 @@ class PreviewRepairRuntime:
                             )
                             if current is None:
                                 return
-                            completed_at = self.clock()
+                            completed_at = canonical_utc_second(
+                                self.clock(),
+                                field="repair.completed_at",
+                            )
                             if current.status is PreviewRepairStatus.QUEUED:
                                 failed = uow.repairs.fail_queued_before_execution(
                                     repair.repair_id,

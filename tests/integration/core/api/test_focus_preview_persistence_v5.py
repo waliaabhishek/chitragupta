@@ -347,8 +347,8 @@ def test_revision_021_ready_daily_full_artifacts_survive_024_and_hydrate_through
         assert response.status_code == 200
         status = response.json()
         assert status["status"] == "ready"
-        assert status["completed_at"] == "2026-07-19T00:02:00.345678Z"
-        assert status["expires_at"] == "2026-07-26T00:02:00.345678Z"
+        assert status["completed_at"] == "2026-07-19T00:02:00Z"
+        assert status["expires_at"] == "2026-07-26T00:02:00Z"
         assert status["grain"] == "daily"
         assert status["month"] is None
         assert status["column_profile"] == "full"

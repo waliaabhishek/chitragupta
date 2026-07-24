@@ -3,7 +3,7 @@ from __future__ import annotations
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime
 from importlib import import_module
 from pathlib import Path
 from typing import Any
@@ -57,10 +57,12 @@ def test_revision_page_and_retention_candidate_validate_invariants() -> None:
         tenant_id="tenant-1",
         storage_key="revision-1",
         retention_pending_at=datetime(2026, 8, 5, tzinfo=UTC),
+        retention_retry_count=0,
     )
 
     assert page.items == (revision,)
     assert candidate.retention_pending_at.tzinfo is UTC
+    assert candidate.retention_retry_count == 0
 
     with pytest.raises(ValueError):
         persistence.PreviewRevisionPage(items=[revision], next_cursor=None)
@@ -68,6 +70,8 @@ def test_revision_page_and_retention_candidate_validate_invariants() -> None:
         persistence.PreviewRevisionPage(items=(revision,), next_cursor="revision-other")
     with pytest.raises(ValueError):
         replace(candidate, retention_pending_at=datetime(2026, 8, 5))
+    with pytest.raises(ValueError):
+        replace(candidate, retention_retry_count=-1)
 
 
 def test_visible_history_is_newest_first_keyset_paginated_and_owner_scoped(tmp_path: Path) -> None:
@@ -177,6 +181,7 @@ def test_pending_current_is_hidden_from_reads_but_visible_to_publication(tmp_pat
     engine = create_engine(f"sqlite:///{tmp_path / 'pending-current.db'}")
     _schema(engine)
     pending_at = datetime(2026, 8, 5, 1, 2, 3, 4, tzinfo=UTC)
+    canonical_pending_at = datetime(2026, 8, 5, 1, 2, 3, tzinfo=UTC)
     with Session(engine) as session:
         repository = _publish_chain(session)
         claimed = repository.mark_retention_due(
@@ -206,12 +211,13 @@ def test_pending_current_is_hidden_from_reads_but_visible_to_publication(tmp_pat
         )
 
     assert len(claimed) == 3
+    assert all(candidate.retention_pending_at == canonical_pending_at for candidate in claimed)
     assert visible is None
     assert direct is None
     assert history.items == ()
     assert publication is not None
     assert publication.revision_id == "revision-c"
-    assert publication.retention_pending_at == pending_at
+    assert publication.retention_pending_at == canonical_pending_at
     assert publication.retention_pending_at.tzinfo is UTC
     engine.dispose()
 
@@ -274,7 +280,10 @@ def test_direct_lookup_masks_distinct_foreign_pending_and_removed_states(tmp_pat
     engine.dispose()
 
 
-@pytest.mark.parametrize("mismatch", ["owner", "storage-key", "pending-at"])
+@pytest.mark.parametrize(
+    "mismatch",
+    ["owner", "storage-key", "retry-count"],
+)
 def test_retention_claim_uses_exact_month_end_boundary_and_guarded_finalization(
     tmp_path: Path,
     mismatch: str,
@@ -296,25 +305,78 @@ def test_retention_claim_uses_exact_month_end_boundary_and_guarded_finalization(
 
     assert [item.revision_id for item in candidates] == ["revision-a", "revision-b"]
     assert all(item.retention_pending_at == pending_at for item in candidates)
+    assert all(item.retention_retry_count == 0 for item in candidates)
 
     with Session(engine) as session:
         repository = persistence.SQLModelPreviewRevisionRepository(session)
         changes = {
             "owner": {"tenant_id": "tenant-other"},
             "storage-key": {"storage_key": "wrong-key"},
-            "pending-at": {"retention_pending_at": pending_at + timedelta(microseconds=1)},
+            "retry-count": {"retention_retry_count": 1},
         }
         wrong = replace(candidates[0], **changes[mismatch])
         assert repository.delete_retention_pending(candidate=wrong) is False
-        retry_at = pending_at + timedelta(microseconds=1)
-        assert repository.defer_retention_pending(candidate=candidates[0], retry_at=retry_at) is True
+        assert repository.defer_retention_pending(candidate=candidates[0]) is True
         session.commit()
 
     with Session(engine) as session:
         repository = persistence.SQLModelPreviewRevisionRepository(session)
         pending = repository.list_retention_pending(ecosystem="confluent_cloud", tenant_id="tenant-1", limit=100)
     assert [item.revision_id for item in pending] == ["revision-b", "revision-a"]
-    assert pending[-1].retention_pending_at == pending_at + timedelta(microseconds=1)
+    assert pending[-1].retention_pending_at == pending_at
+    assert [item.retention_retry_count for item in pending] == [0, 1]
+    engine.dispose()
+
+
+def test_same_second_retention_retries_use_durable_count_and_count_is_part_of_cas(
+    tmp_path: Path,
+) -> None:
+    persistence = _persistence()
+    engine = create_engine(f"sqlite:///{tmp_path / 'same-second-retry.db'}")
+    _schema(engine)
+    fixed_now = datetime(2026, 8, 5, 1, 2, 3, tzinfo=UTC)
+    with Session(engine) as session:
+        repository = _publish_chain(session)
+        claimed = repository.mark_retention_due(
+            ecosystem="confluent_cloud",
+            tenant_id="tenant-1",
+            cutoff_date=date(2026, 8, 1),
+            pending_at=fixed_now,
+            limit=1,
+        )
+        assert len(claimed) == 1
+        original = claimed[0]
+        assert repository.defer_retention_pending(candidate=original) is True
+        session.commit()
+
+    with Session(engine) as session:
+        repository = persistence.SQLModelPreviewRevisionRepository(session)
+        after_restart = repository.list_retention_pending(
+            ecosystem="confluent_cloud",
+            tenant_id="tenant-1",
+            limit=10,
+        )
+        assert len(after_restart) == 1
+        first_retry = after_restart[0]
+        assert first_retry.retention_pending_at == fixed_now
+        assert first_retry.retention_retry_count == 1
+        assert repository.defer_retention_pending(candidate=original) is False
+        assert repository.delete_retention_pending(candidate=original) is False
+        assert repository.defer_retention_pending(candidate=first_retry) is True
+        session.commit()
+
+    with Session(engine) as session:
+        repository = persistence.SQLModelPreviewRevisionRepository(session)
+        second_retry = repository.list_retention_pending(
+            ecosystem="confluent_cloud",
+            tenant_id="tenant-1",
+            limit=10,
+        )[0]
+        assert second_retry.retention_pending_at == fixed_now
+        assert second_retry.retention_retry_count == 2
+        assert repository.delete_retention_pending(candidate=first_retry) is False
+        assert repository.delete_retention_pending(candidate=second_retry) is True
+        session.commit()
     engine.dispose()
 
 

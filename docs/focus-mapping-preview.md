@@ -231,7 +231,8 @@ per-date failures. Each date has durable status, timestamps, optional
 calculation result, failure stage, and diagnostic. `daily_validated` is
 nonterminal: Daily Full validation passed, but validation of a wholly selected
 UTC month has not completed. A process interruption marks the operation and
-unfinished dates failed; work is not automatically resumed.
+unfinished dates for that configured tenant owner failed, including work
+created in the same whole second as restart; work is not automatically resumed.
 
 For each date, the authoritative provider result replaces the exact
 tenant/date billing scope, including an authoritative empty result. The
@@ -560,6 +561,14 @@ retention cutoff is no longer listed or retrievable.
 
 ## Package contents and lifecycle
 
+Persisted financial-period keys and Preview lifecycle state use aware UTC
+whole-second timestamps on both SQLite and PostgreSQL. This includes the
+timestamps embedded in persisted request calculation coverage and revision
+source snapshots. Public API fields and manifest shapes remain unchanged, and
+strict validation of retained manifests and artifact sizes, checksums, and bytes
+is unchanged. Timestamp canonicalization does not alter financial amounts,
+correlations, reconciliation, or totals.
+
 Every package contains:
 
 - `manifest.json`, using schema `chitragupta.preview-manifest.v2`; and
@@ -647,6 +656,14 @@ atomically finalized, and protected by one stable package lock until their
 metadata transaction commits. If publication is interrupted, same-process or
 restart recovery removes abandoned staging work and retries incomplete request
 terminalization, expiry cleanup, and revision retention.
+
+Request recovery uses durable worker ownership and lease state, so an unowned
+incomplete request remains recoverable even when it shares startup's whole
+second. Revision-retention retries use persisted retry count, original pending
+time, and revision identity; a failed attempt increments the count without
+changing the pending timestamp. Compare-and-set checks include the retry count
+and candidate ownership/identity fields, preserving current-pointer safety and
+restart convergence when multiple events have tied timestamps.
 
 Package generation uses bounded temporary disk rather than retaining a complete
 package in memory. `preview.max_generation_spool_bytes` defaults to a 2 GiB

@@ -150,10 +150,15 @@ def _seed_retained_state(backend: SQLModelBackend) -> None:
         uow.commit()
 
 
-def _successful_result() -> HistoricalRepairDateResult:
+def _successful_result(
+    *,
+    calculation_microsecond: int = 0,
+) -> HistoricalRepairDateResult:
     day_start = datetime.combine(DAY, datetime.min.time(), tzinfo=UTC)
     calculation_id = "repaired-calculation"
-    calculation_completed_at = NOW + timedelta(seconds=1)
+    calculation_completed_at = (NOW + timedelta(seconds=1)).replace(
+        microsecond=calculation_microsecond,
+    )
     capture = CCloudNativeSourceEvidenceCapture(
         ecosystem="confluent_cloud",
         tenant_id="tenant-1",
@@ -263,6 +268,115 @@ def test_guarded_date_transition_conflict_is_terminalized_by_worker_failure(
         assert failed.diagnostic is not None
         assert failed.diagnostic.code == "focus_preview_repair_worker_unavailable"
         assert [item.status.value for item in failed.dates] == ["failed"]
+    finally:
+        runtime.close(wait=True)
+        backend.dispose()
+
+
+def test_worker_failure_equivalent_committed_state_matches_at_whole_seconds(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from plugins.confluent_cloud.storage.preview_repositories import (
+        SQLModelPreviewRepairRepository,
+    )
+
+    tenant, backend, runner, runtime, executor = _setup(tmp_path)
+    queued = _queue(runtime, backend, tenant)
+    runner.run_focus_preview_repair = MagicMock(
+        side_effect=RuntimeError("controlled worker failure"),
+    )
+    runtime.clock = lambda: NOW.replace(microsecond=987_654)
+    original = SQLModelPreviewRepairRepository.fail_queued_before_execution
+
+    def persist_but_hide_return(
+        repository: object,
+        *args: object,
+        **kwargs: object,
+    ) -> None:
+        original(repository, *args, **kwargs)
+        return None
+
+    monkeypatch.setattr(
+        SQLModelPreviewRepairRepository,
+        "fail_queued_before_execution",
+        persist_but_hide_return,
+    )
+    try:
+        runtime.schedule(queued, tenant_config=tenant)
+        executor.run_all()
+
+        failed = _read(backend, queued.repair_id)
+        assert failed.status.value == "failed"
+        assert failed.completed_at == NOW
+        assert failed.diagnostic is not None
+        assert failed.diagnostic.code == "focus_preview_repair_worker_unavailable"
+    finally:
+        runtime.close(wait=True)
+        backend.dispose()
+
+
+def test_equivalent_committed_repair_transitions_match_at_whole_seconds(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from plugins.confluent_cloud.storage.preview_repositories import (
+        SQLModelPreviewRepairRepository,
+    )
+
+    orchestrator = MagicMock()
+    orchestrator.repair_historical_date.return_value = _successful_result(
+        calculation_microsecond=654_321,
+    )
+    tenant, backend, runner, runtime, _executor = _setup(
+        tmp_path,
+        orchestrator=orchestrator,
+    )
+    _seed_retained_state(backend)
+    queued = _queue(runtime, backend, tenant)
+
+    for method_name in (
+        "mark_running",
+        "mark_date_running",
+        "mark_date_succeeded_from_running",
+        "finalize_completed",
+    ):
+        original = getattr(SQLModelPreviewRepairRepository, method_name)
+
+        def persist_but_hide_return(
+            repository: object,
+            *args: object,
+            _original: Any = original,
+            **kwargs: object,
+        ) -> None:
+            _original(repository, *args, **kwargs)
+            return None
+
+        monkeypatch.setattr(
+            SQLModelPreviewRepairRepository,
+            method_name,
+            persist_but_hide_return,
+        )
+    monkeypatch.setattr(
+        "core.preview.generator.PreviewPackageGenerator.generate",
+        lambda *args, **kwargs: (MagicMock(), MagicMock()),
+    )
+    try:
+        runner.run_focus_preview_repair(
+            queued.repair_id,
+            "production",
+            tenant,
+        )
+
+        repaired = _read(backend, queued.repair_id)
+        assert repaired.status.value == "completed"
+        assert repaired.started_at is not None and repaired.started_at.microsecond == 0
+        assert repaired.completed_at is not None and repaired.completed_at.microsecond == 0
+        assert repaired.dates[0].started_at is not None
+        assert repaired.dates[0].started_at.microsecond == 0
+        assert repaired.dates[0].completed_at is not None
+        assert repaired.dates[0].completed_at.microsecond == 0
+        assert repaired.dates[0].calculation_completed_at == NOW + timedelta(seconds=1)
     finally:
         runtime.close(wait=True)
         backend.dispose()

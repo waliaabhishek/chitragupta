@@ -108,6 +108,65 @@ def test_source_candidates_include_native_overlap_and_undated_evidence_overlap(t
     engine.dispose()
 
 
+def test_readiness_boundary_stores_and_returns_canonical_second_values(
+    tmp_path: Path,
+) -> None:
+    from core.preview.evidence import PreviewSourceReadiness
+    from plugins.confluent_cloud.storage.preview_repositories import (
+        SQLModelPreviewSourceReadinessRepository,
+    )
+
+    engine = _engine(tmp_path)
+    start = datetime(2026, 7, 1, 0, 0, 0, 111_111, tzinfo=UTC)
+    end = datetime(2026, 7, 2, 0, 0, 0, 222_222, tzinfo=UTC)
+    captured_at = datetime(2026, 7, 3, 1, 2, 3, 333_333, tzinfo=UTC)
+    with Session(engine) as session:
+        repository = SQLModelPreviewSourceReadinessRepository(session)
+        attempt = repository.begin_attempt(
+            "confluent_cloud",
+            "tenant-1",
+            "refresh-1",
+            start,
+            end,
+            captured_at,
+        )
+        persisted = repository.replace_overlapping(
+            "confluent_cloud",
+            "tenant-1",
+            start,
+            end,
+            (
+                PreviewSourceReadiness(
+                    ecosystem="confluent_cloud",
+                    tenant_id="tenant-1",
+                    window_start=start,
+                    window_end=end,
+                    capture_id="capture-1",
+                    captured_at=captured_at,
+                    source_count=0,
+                    attempt_sequence=attempt.attempt_sequence,
+                ),
+            ),
+        )
+        session.commit()
+
+    expected_start = datetime(2026, 7, 1, tzinfo=UTC)
+    expected_end = datetime(2026, 7, 2, tzinfo=UTC)
+    expected_captured_at = datetime(2026, 7, 3, 1, 2, 3, tzinfo=UTC)
+    assert persisted[0].window_start == expected_start
+    assert persisted[0].window_end == expected_end
+    assert persisted[0].captured_at == expected_captured_at
+    with engine.connect() as connection:
+        assert connection.exec_driver_sql(
+            "SELECT window_start, window_end, captured_at FROM ccloud_source_capture_readiness"
+        ).one() == (
+            "2026-07-01 00:00:00",
+            "2026-07-02 00:00:00",
+            "2026-07-03 01:02:03",
+        )
+    engine.dispose()
+
+
 def test_source_candidate_query_is_tenant_scoped_deterministic_and_hard_limited_to_two(tmp_path: Path) -> None:
     engine = _engine(tmp_path)
     with Session(engine) as session:

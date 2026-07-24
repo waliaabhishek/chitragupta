@@ -1633,6 +1633,11 @@ def test_real_lifespan_retries_protected_foreign_leases_against_current_clock(
     monkeypatch.setattr(service.PreviewRuntime, "__init__", controlled_runtime_init)
     app = create_app(settings)
     with SameThreadApiClient(app) as client:
+        interruption_diagnostic = {
+            "code": "preview_generation_interrupted",
+            "message": "FOCUS Mapping Preview generation was interrupted before completion.",
+            "retryable": True,
+        }
         initially_protected = client.get("/api/v1/tenants/production/focus-preview/requests?limit=20")
         assert initially_protected.status_code == 200, initially_protected.json()
         assert {
@@ -1640,7 +1645,7 @@ def test_real_lifespan_retries_protected_foreign_leases_against_current_clock(
         } == {
             "expiring-request": ("queued", None),
             "renewed-request": ("queued", None),
-            "same-second-request": ("queued", None),
+            "same-second-request": ("failed", interruption_diagnostic),
         }
 
         with (
@@ -1663,17 +1668,16 @@ def test_real_lifespan_retries_protected_foreign_leases_against_current_clock(
 
         assert expired_foreign_lease.status_code == 200
         assert expired_foreign_lease.json()["status"] == "failed"
-        assert expired_foreign_lease.json()["diagnostic"] == {
-            "code": "preview_generation_interrupted",
-            "message": "FOCUS Mapping Preview generation was interrupted before completion.",
-            "retryable": True,
-        }
+        assert expired_foreign_lease.json()["diagnostic"] == interruption_diagnostic
         assert {
             item["request_id"]: (item["status"], item["diagnostic"]) for item in after_recovery.json()["items"]
         } == {
             "expiring-request": ("failed", expired_foreign_lease.json()["diagnostic"]),
             "renewed-request": ("queued", None),
-            "same-second-request": ("queued", None),
+            "same-second-request": (
+                "failed",
+                expired_foreign_lease.json()["diagnostic"],
+            ),
         }
 
 

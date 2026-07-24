@@ -3,8 +3,10 @@ from __future__ import annotations
 import logging
 from datetime import date, datetime
 
-from sqlalchemy import Column, DateTime, Index, PrimaryKeyConstraint
+from sqlalchemy import Column, Index, PrimaryKeyConstraint
 from sqlmodel import Field, SQLModel
+
+from core.storage.backends.sqlmodel.timestamps import UTCSecondDateTime
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +36,7 @@ class CCloudBillingTable(SQLModel, table=True):
 
     ecosystem: str = Field(primary_key=True)
     tenant_id: str = Field(primary_key=True)
-    timestamp: datetime = Field(sa_column=Column(DateTime(timezone=True), primary_key=True))
+    timestamp: datetime = Field(sa_column=Column(UTCSecondDateTime(), primary_key=True))
     env_id: str = Field(primary_key=True)
     resource_id: str = Field(primary_key=True)
     product_type: str = Field(primary_key=True)
@@ -89,14 +91,14 @@ class CCloudCostSourceTable(SQLModel, table=True):
     source_record_id: str = Field(primary_key=True)
     identity_scheme: str
     provider_cost_id: str | None = Field(default=None)
-    source_period_start: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True))
-    source_period_end: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True))
-    collection_window_start: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))
-    collection_window_end: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))
-    evidence_scope_start: datetime = Field(sa_column=Column(DateTime(timezone=True), primary_key=True))
-    evidence_scope_end: datetime = Field(sa_column=Column(DateTime(timezone=True), primary_key=True))
-    allocation_timestamp: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))
-    retention_timestamp: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))
+    source_period_start: datetime | None = Field(default=None, sa_column=Column(UTCSecondDateTime(), nullable=True))
+    source_period_end: datetime | None = Field(default=None, sa_column=Column(UTCSecondDateTime(), nullable=True))
+    collection_window_start: datetime = Field(sa_column=Column(UTCSecondDateTime(), nullable=False))
+    collection_window_end: datetime = Field(sa_column=Column(UTCSecondDateTime(), nullable=False))
+    evidence_scope_start: datetime = Field(sa_column=Column(UTCSecondDateTime(), primary_key=True))
+    evidence_scope_end: datetime = Field(sa_column=Column(UTCSecondDateTime(), primary_key=True))
+    allocation_timestamp: datetime = Field(sa_column=Column(UTCSecondDateTime(), nullable=False))
+    retention_timestamp: datetime = Field(sa_column=Column(UTCSecondDateTime(), nullable=False))
     granularity: str | None = Field(default=None)
     product: str | None = Field(default=None)
     line_type: str | None = Field(default=None)
@@ -111,7 +113,7 @@ class CCloudCostSourceTable(SQLModel, table=True):
     resource_id: str | None = Field(default=None)
     resource_name: str | None = Field(default=None)
     environment_id: str | None = Field(default=None)
-    billing_timestamp: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True))
+    billing_timestamp: datetime | None = Field(default=None, sa_column=Column(UTCSecondDateTime(), nullable=True))
     billing_env_id: str | None = Field(default=None)
     billing_resource_id: str | None = Field(default=None)
     billing_product_type: str | None = Field(default=None)
@@ -131,7 +133,7 @@ class CCloudAllocationLineageRunTable(SQLModel, table=True):
     tenant_id: str = Field(primary_key=True)
     tracking_date: date = Field(primary_key=True)
     calculation_id: str
-    calculation_completed_at: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))
+    calculation_completed_at: datetime = Field(sa_column=Column(UTCSecondDateTime(), nullable=False))
     capture_status: str
     capture_reason: str | None = Field(default=None)
     portion_count: int
@@ -164,7 +166,7 @@ class CCloudAllocationLineagePortionTable(SQLModel, table=True):
     tenant_id: str = Field(primary_key=True)
     tracking_date: date = Field(primary_key=True)
     calculation_id: str = Field(primary_key=True)
-    origin_timestamp: datetime = Field(sa_column=Column(DateTime(timezone=True), primary_key=True))
+    origin_timestamp: datetime = Field(sa_column=Column(UTCSecondDateTime(), primary_key=True))
     origin_env_id: str = Field(primary_key=True)
     origin_resource_id: str = Field(primary_key=True)
     origin_product_type: str = Field(primary_key=True)

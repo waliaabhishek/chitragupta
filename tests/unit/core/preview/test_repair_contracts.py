@@ -22,7 +22,7 @@ def test_repair_repository_exposes_only_guarded_transition_methods() -> None:
         "fail_running_worker",
         "finalize_completed",
         "finalize_completed_with_failures",
-        "fail_interrupted_before",
+        "fail_interrupted_for_owner",
     }
     public_methods = {
         name

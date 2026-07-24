@@ -18,6 +18,7 @@ from core.engine.orchestrator import ChargebackOrchestrator, GatherFailureThresh
 from core.plugin.protocols import OverlayPlugin
 from core.plugin.registry import EcosystemBundle
 from core.storage.tenant_lifecycle import cleanup_orphaned_pipeline_run, prepare_tenant_backend
+from core.time_precision import canonical_utc_second
 
 if TYPE_CHECKING:
     from datetime import date as date_type
@@ -730,7 +731,10 @@ class WorkflowRunner:
             with self._acquire_runtime(tenant_name, tenant_config) as runtime:
                 if not isinstance(runtime.storage, PreviewEvidenceStorageBackend):
                     return
-                completed_at = datetime.now(UTC)
+                completed_at = canonical_utc_second(
+                    datetime.now(UTC),
+                    field="repair.completed_at",
+                )
                 value = diagnostic(
                     "focus_preview_repair_tenant_busy",
                     "The tenant pipeline is busy; wait for it to finish and retry the repair.",
@@ -770,7 +774,10 @@ class WorkflowRunner:
                     return
                 evidence_backend = cast("PreviewEvidenceStorageBackend", storage)
                 preview_backend = cast("PreviewStorageBackend", storage)
-                started_at = datetime.now(UTC)
+                started_at = canonical_utc_second(
+                    datetime.now(UTC),
+                    field="repair.started_at",
+                )
                 with evidence_backend.create_preview_evidence_unit_of_work() as uow:
                     claimed_operation = uow.repairs.mark_running(
                         repair_id,
@@ -795,7 +802,10 @@ class WorkflowRunner:
                     stage: PreviewRepairFailureStage,
                     value: PreviewDiagnostic,
                 ) -> None:
-                    completed_at = datetime.now(UTC)
+                    completed_at = canonical_utc_second(
+                        datetime.now(UTC),
+                        field="repair_date.completed_at",
+                    )
                     with evidence_backend.create_preview_evidence_unit_of_work() as uow:
                         failed = uow.repairs.mark_date_failed_from_running(
                             repair_id,
@@ -837,7 +847,10 @@ class WorkflowRunner:
                             failed = uow.source_readiness.finalize_attempt(
                                 attempt_sequence,
                                 SourceAttemptFinalStatus.FAILED,
-                                completed_at=datetime.now(UTC),
+                                completed_at=canonical_utc_second(
+                                    datetime.now(UTC),
+                                    field="source_attempt.completed_at",
+                                ),
                                 reason=reason,
                             )
                             if failed.status is not SourceAttemptStatus.FAILED or failed.failure_reason is not reason:
@@ -943,7 +956,10 @@ class WorkflowRunner:
                 )
                 for repair_date in operation.dates:
                     tracking_date = repair_date.tracking_date
-                    date_started_at = datetime.now(UTC)
+                    date_started_at = canonical_utc_second(
+                        datetime.now(UTC),
+                        field="repair_date.started_at",
+                    )
                     with evidence_backend.create_preview_evidence_unit_of_work() as uow:
                         running_date = uow.repairs.mark_date_running(
                             repair_id,
@@ -1039,8 +1055,15 @@ class WorkflowRunner:
                             ),
                         )
                         continue
+                    calculation_completed_at = canonical_utc_second(
+                        result.calculation.calculation_completed_at,
+                        field="repair_date.calculation_completed_at",
+                    )
                     receipt: PreviewSourceCaptureReceipt | None = None
-                    evidence_completed_at = datetime.now(UTC)
+                    evidence_completed_at = canonical_utc_second(
+                        datetime.now(UTC),
+                        field="source_evidence.completed_at",
+                    )
                     lineage_unavailable = False
                     try:
                         with evidence_backend.create_preview_evidence_unit_of_work() as uow:
@@ -1068,7 +1091,7 @@ class WorkflowRunner:
                                 raise RuntimeError("allocation lineage capture unavailable")
                             uow.allocation_lineage.replace_calculation_lineage(
                                 result.calculation.lineage_capture,
-                                calculation_completed_at=(result.calculation.calculation_completed_at),
+                                calculation_completed_at=calculation_completed_at,
                             )
                             uow.source_readiness.finalize_attempt(
                                 attempt.attempt_sequence,
@@ -1085,7 +1108,7 @@ class WorkflowRunner:
                             completed_at=evidence_completed_at,
                             receipt=receipt,
                             calculation_id=result.calculation.calculation_id,
-                            calculation_completed_at=result.calculation.calculation_completed_at,
+                            calculation_completed_at=calculation_completed_at,
                         ):
                             pass
                         else:
@@ -1134,14 +1157,17 @@ class WorkflowRunner:
                         if month_start.month == 12
                         else date(month_start.year, month_start.month + 1, 1)
                     )
-                    date_completed_at = datetime.now(UTC)
+                    date_completed_at = canonical_utc_second(
+                        datetime.now(UTC),
+                        field="repair_date.completed_at",
+                    )
                     with evidence_backend.create_preview_evidence_unit_of_work() as uow:
                         if operation.start_date <= month_start and operation.end_date >= month_end:
                             validated = uow.repairs.mark_date_daily_validated(
                                 repair_id,
                                 tracking_date,
                                 calculation_id=result.calculation.calculation_id,
-                                calculation_completed_at=(result.calculation.calculation_completed_at),
+                                calculation_completed_at=calculation_completed_at,
                                 rows_written=result.billing_rows_written,
                             )
                         else:
@@ -1150,7 +1176,7 @@ class WorkflowRunner:
                                 tracking_date,
                                 completed_at=date_completed_at,
                                 calculation_id=result.calculation.calculation_id,
-                                calculation_completed_at=(result.calculation.calculation_completed_at),
+                                calculation_completed_at=calculation_completed_at,
                                 rows_written=result.billing_rows_written,
                             )
                         uow.commit()
@@ -1163,7 +1189,6 @@ class WorkflowRunner:
                         None if target_status is PreviewRepairDateStatus.DAILY_VALIDATED else date_completed_at
                     )
                     calculation_id = result.calculation.calculation_id
-                    calculation_completed_at = result.calculation.calculation_completed_at
                     rows_written = result.billing_rows_written
 
                     def validated_date_matches(
@@ -1226,7 +1251,10 @@ class WorkflowRunner:
                                 terminal = PreviewRepairDateStatus.FAILED
                                 stage = PreviewRepairFailureStage.PREVIEW_VALIDATION
                                 monthly_diagnostic = exc.diagnostic
-                            month_completed_at = datetime.now(UTC)
+                            month_completed_at = canonical_utc_second(
+                                datetime.now(UTC),
+                                field="repair_date.completed_at",
+                            )
                             with evidence_backend.create_preview_evidence_unit_of_work() as uow:
                                 finalized_month = uow.repairs.finalize_month_dates(
                                     repair_id,
@@ -1277,7 +1305,10 @@ class WorkflowRunner:
                         tenant_config.tenant_id,
                     )
                     assert final is not None
-                    operation_completed_at = datetime.now(UTC)
+                    operation_completed_at = canonical_utc_second(
+                        datetime.now(UTC),
+                        field="repair.completed_at",
+                    )
                     if all(item.status is PreviewRepairDateStatus.SUCCEEDED for item in final.dates):
                         completed = uow.repairs.finalize_completed(
                             repair_id,

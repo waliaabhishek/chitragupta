@@ -97,10 +97,12 @@ is preserved. New evidence and lineage then follow the ordinary tenant
 retention policy.
 
 Repair operation and per-date statuses are durable. Expected date failures do
-not stop later dates. Interrupted work is marked failed and is not automatically
-resumed; retrying creates a new operation over the requested range. Repair
-creates no requested package or published revision, so their separate retention
-lifecycles remain unchanged.
+not stop later dates. At startup, queued or running repairs for the exact
+configured tenant owner are marked failed regardless of whether they were
+created in the same whole second; work is not automatically resumed. Retrying
+creates a new operation over the requested range. Repair creates no requested
+package or published revision, so their separate retention lifecycles remain
+unchanged.
 
 ## Preview artifact recovery
 
@@ -127,6 +129,11 @@ unverifiable finalized paths are not automatically deleted. Request expiry
 still blocks downloads before deleting bytes, and revision retention still
 hides eligible revisions before package deletion and retries pending cleanup
 after later cycles or restarts.
+
+Request startup recovery uses durable worker ownership and lease state rather
+than creation-time ordering. An unowned incomplete request is recoverable even
+when it was created in the same whole second as startup; a live owned lease
+remains protected.
 
 ## Requested FOCUS Preview packages
 
@@ -180,8 +187,13 @@ Cleanup runs only as part of scheduled periodic processing. It first makes each
 eligible revision unavailable to public history and direct downloads, then
 removes its package, and finally removes its metadata. If package removal fails,
 the revision stays unavailable and pending cleanup. Later periodic runs retry
-it, including after a service restart. An already-absent package is treated as
-success so cleanup can finish.
+it, including after a service restart. Pending retries are ordered by durable
+`retention_retry_count`, original `retention_pending_at`, and `revision_id`.
+Each failure increments the retry count without fabricating a later pending
+timestamp. Deferral and deletion use compare-and-set checks over the candidate
+owner, revision, storage key, pending timestamp, and retry count so stale work
+cannot delete or reorder a changed revision. An already-absent package is
+treated as success so cleanup can finish.
 
 Scheduled publication does not seed months that are already outside this
 retention window. `lookback_days` still controls acquisition and recalculation;

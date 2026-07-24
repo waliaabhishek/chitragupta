@@ -17,7 +17,6 @@ from sqlalchemy import (
     CheckConstraint,
     Column,
     Date,
-    DateTime,
     Index,
     Integer,
     String,
@@ -78,6 +77,7 @@ from core.preview.repair import PreviewRepairRepository  # noqa: TC001
 from core.preview.storage_availability import PreviewEvidenceAvailability  # noqa: TC001
 from core.storage.backends.sqlmodel.mappers import ensure_utc, ensure_utc_strict
 from core.storage.backends.sqlmodel.tables import PipelineStateTable
+from core.storage.backends.sqlmodel.timestamps import UTCSecondDateTime, canonical_utc_second
 from core.storage.interface import (  # noqa: TC001  # resolved by get_type_hints contract test
     AllocationLineageRunCapture,
     EntityTagRepository,
@@ -150,6 +150,7 @@ class PreviewRetentionCandidate:
     tenant_id: str
     storage_key: str
     retention_pending_at: datetime
+    retention_retry_count: int
 
     def __post_init__(self) -> None:
         _require_safe_identifier(self.revision_id, "revision_id")
@@ -160,7 +161,13 @@ class PreviewRetentionCandidate:
             raise ValueError(f"unsupported preview ecosystem: {self.ecosystem!r}")
         if not isinstance(self.tenant_id, str) or not self.tenant_id.strip():
             raise ValueError("tenant_id must not be blank")
-        object.__setattr__(self, "retention_pending_at", ensure_utc_strict(self.retention_pending_at))
+        if type(self.retention_retry_count) is not int or self.retention_retry_count < 0:
+            raise ValueError("retention_retry_count must be a non-negative integer")
+        object.__setattr__(
+            self,
+            "retention_pending_at",
+            ensure_utc_strict(self.retention_pending_at),
+        )
 
 
 @dataclass(frozen=True)
@@ -327,14 +334,23 @@ class PreviewRequestTable(SQLModel, table=True):
     end_date: date = Field(sa_column=Column(Date()))
     column_profile: str
     status: str
-    created_at: datetime = Field(sa_column=Column(DateTime(timezone=True)))
-    started_at: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True)))
-    completed_at: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True)))
-    expires_at: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True)))
+    created_at: datetime = Field(sa_column=Column(UTCSecondDateTime()))
+    started_at: datetime | None = Field(default=None, sa_column=Column(UTCSecondDateTime()))
+    completed_at: datetime | None = Field(default=None, sa_column=Column(UTCSecondDateTime()))
+    expires_at: datetime | None = Field(default=None, sa_column=Column(UTCSecondDateTime()))
     worker_id: str | None = Field(default=None, sa_column=Column(String(), nullable=True))
-    lease_expires_at: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True))
-    calculation_timestamp: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True)))
-    source_through: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True)))
+    lease_expires_at: datetime | None = Field(
+        default=None,
+        sa_column=Column(UTCSecondDateTime(), nullable=True),
+    )
+    calculation_timestamp: datetime | None = Field(
+        default=None,
+        sa_column=Column(UTCSecondDateTime()),
+    )
+    source_through: datetime | None = Field(
+        default=None,
+        sa_column=Column(UTCSecondDateTime()),
+    )
     calculation_coverage_json: str | None = None
     diagnostic_code: str | None = None
     diagnostic_message: str | None = None
@@ -385,6 +401,7 @@ class PreviewRevisionTable(SQLModel, table=True):
             "ix_preview_revisions_owner_retention_pending",
             "ecosystem",
             "tenant_id",
+            "retention_retry_count",
             "retention_pending_at",
             "revision_id",
         ),
@@ -408,7 +425,7 @@ class PreviewRevisionTable(SQLModel, table=True):
     monthly_status: str
     material_sha256: str
     source_snapshot_json: str = Field(sa_column=Column(Text(), nullable=False))
-    published_at: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))
+    published_at: datetime = Field(sa_column=Column(UTCSecondDateTime(), nullable=False))
     supersedes_revision_id: str | None = Field(default=None, sa_column=Column(String(), nullable=True))
     superseded_by_revision_id: str | None = Field(default=None, sa_column=Column(String(), nullable=True))
     is_current: bool = Field(sa_column=Column(Boolean(), nullable=False))
@@ -422,7 +439,11 @@ class PreviewRevisionTable(SQLModel, table=True):
     )
     retention_pending_at: datetime | None = Field(
         default=None,
-        sa_column=Column(DateTime(timezone=True), nullable=True),
+        sa_column=Column(UTCSecondDateTime(), nullable=True),
+    )
+    retention_retry_count: int = Field(
+        default=0,
+        sa_column=Column(Integer(), nullable=False, server_default="0"),
     )
 
 
@@ -545,6 +566,20 @@ class SQLModelPreviewArtifactReferenceRepository:
 
 def _canonical_json(value: object) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"))
+
+
+def canonical_timestamp_json(value: datetime, *, field: str = "timestamp") -> str:
+    return canonical_utc_second(value, field=field).isoformat(timespec="seconds")
+
+
+def parse_canonical_timestamp_json(raw: object, *, field: str = "timestamp") -> datetime:
+    if not isinstance(raw, str):
+        raise ValueError(f"{field} must be an ISO-8601 timestamp")
+    try:
+        value = datetime.fromisoformat(raw)
+    except ValueError as exc:
+        raise ValueError(f"{field} must be an ISO-8601 timestamp") from exc
+    return canonical_utc_second(value, field=field)
 
 
 def _artifact_dict(item: PreviewArtifactMetadata) -> dict[str, object]:
@@ -733,7 +768,10 @@ def _coverage_json(snapshot: PreviewSourceSnapshot | None) -> str | None:
             {
                 "tracking_date": entry.tracking_date.isoformat(),
                 "calculation_id": entry.calculation_id,
-                "calculation_completed_at": entry.calculation_completed_at.isoformat(),
+                "calculation_completed_at": canonical_timestamp_json(
+                    entry.calculation_completed_at,
+                    field="calculation_coverage.calculation_completed_at",
+                ),
                 "calculation_run_id": entry.calculation_run_id,
             }
             for entry in snapshot.calculation_coverage
@@ -862,7 +900,10 @@ def request_to_domain(
             PreviewCalculationCoverageEntry(
                 tracking_date=date.fromisoformat(item["tracking_date"]),
                 calculation_id=item["calculation_id"],
-                calculation_completed_at=datetime.fromisoformat(item["calculation_completed_at"]),
+                calculation_completed_at=parse_canonical_timestamp_json(
+                    item["calculation_completed_at"],
+                    field="calculation_coverage.calculation_completed_at",
+                ),
                 calculation_run_id=item.get("calculation_run_id"),
             )
             for item in raw
@@ -1439,8 +1480,8 @@ class SQLModelPreviewRequestRepository:
         lease_stale_at: datetime,
         diagnostic: PreviewDiagnostic,
     ) -> PreviewInterruptionRecoveryResult:
-        cutoff = ensure_utc_strict(startup_at)
-        stale = ensure_utc_strict(lease_stale_at)
+        cutoff = canonical_utc_second(startup_at, field="startup_at")
+        stale = canonical_utc_second(lease_stale_at, field="lease_stale_at")
         result = self._session.execute(
             update(PreviewRequestTable)
             .where(
@@ -1449,7 +1490,6 @@ class SQLModelPreviewRequestRepository:
                 col(PreviewRequestTable.status).in_(
                     [PreviewRequestStatus.QUEUED.value, PreviewRequestStatus.RUNNING.value]
                 ),
-                col(PreviewRequestTable.created_at) < cutoff,
                 or_(
                     col(PreviewRequestTable.worker_id).is_(None),
                     col(PreviewRequestTable.lease_expires_at).is_(None),
@@ -1488,7 +1528,6 @@ class SQLModelPreviewRequestRepository:
                     col(PreviewRequestTable.status).in_(
                         [PreviewRequestStatus.QUEUED.value, PreviewRequestStatus.RUNNING.value]
                     ),
-                    col(PreviewRequestTable.created_at) < cutoff,
                     col(PreviewRequestTable.worker_id).is_not(None),
                     col(PreviewRequestTable.lease_expires_at).is_not(None),
                     col(PreviewRequestTable.lease_expires_at) > stale,
@@ -1690,18 +1729,10 @@ class PreviewRevisionRepository(Protocol):
         limit: int,
     ) -> tuple[PreviewRetentionCandidate, ...]: ...
 
-    def get_retention_pending_tail(
-        self,
-        *,
-        ecosystem: str,
-        tenant_id: str,
-    ) -> datetime | None: ...
-
     def defer_retention_pending(
         self,
         *,
         candidate: PreviewRetentionCandidate,
-        retry_at: datetime,
     ) -> bool: ...
 
     def delete_retention_pending(
@@ -1722,18 +1753,33 @@ class PreviewRevisionRepository(Protocol):
 def _revision_snapshot_dict(snapshot: PreviewSourceSnapshot) -> dict[str, object]:
     return {
         "calculation_timestamp": (
-            None if snapshot.calculation_timestamp is None else snapshot.calculation_timestamp.isoformat()
+            None
+            if snapshot.calculation_timestamp is None
+            else canonical_timestamp_json(
+                snapshot.calculation_timestamp,
+                field="source_snapshot.calculation_timestamp",
+            )
         ),
         "calculation_coverage": [
             {
                 "tracking_date": entry.tracking_date.isoformat(),
                 "calculation_id": entry.calculation_id,
-                "calculation_completed_at": entry.calculation_completed_at.isoformat(),
+                "calculation_completed_at": canonical_timestamp_json(
+                    entry.calculation_completed_at,
+                    field="source_snapshot.calculation_coverage.calculation_completed_at",
+                ),
                 "calculation_run_id": entry.calculation_run_id,
             }
             for entry in snapshot.calculation_coverage
         ],
-        "source_through": None if snapshot.source_through is None else snapshot.source_through.isoformat(),
+        "source_through": (
+            None
+            if snapshot.source_through is None
+            else canonical_timestamp_json(
+                snapshot.source_through,
+                field="source_snapshot.source_through",
+            )
+        ),
         "effective_coverage_start_date": snapshot.effective_coverage_start_date.isoformat(),
         "effective_coverage_end_date": snapshot.effective_coverage_end_date.isoformat(),
         "availability_cutoff_end_date": (
@@ -1754,7 +1800,10 @@ def _revision_snapshot_from_json(body: str) -> PreviewSourceSnapshot:
         PreviewCalculationCoverageEntry(
             tracking_date=date.fromisoformat(item["tracking_date"]),
             calculation_id=item["calculation_id"],
-            calculation_completed_at=datetime.fromisoformat(item["calculation_completed_at"]),
+            calculation_completed_at=parse_canonical_timestamp_json(
+                item["calculation_completed_at"],
+                field="source_snapshot.calculation_coverage.calculation_completed_at",
+            ),
             calculation_run_id=item.get("calculation_run_id"),
         )
         for item in coverage_raw
@@ -1763,10 +1812,22 @@ def _revision_snapshot_from_json(body: str) -> PreviewSourceSnapshot:
     status = _supported_monthly_status(raw.get("monthly_status"))
     return PreviewSourceSnapshot(
         calculation_timestamp=(
-            None if raw.get("calculation_timestamp") is None else datetime.fromisoformat(raw["calculation_timestamp"])
+            None
+            if raw.get("calculation_timestamp") is None
+            else parse_canonical_timestamp_json(
+                raw["calculation_timestamp"],
+                field="source_snapshot.calculation_timestamp",
+            )
         ),
         calculation_coverage=coverage,
-        source_through=(None if raw.get("source_through") is None else datetime.fromisoformat(raw["source_through"])),
+        source_through=(
+            None
+            if raw.get("source_through") is None
+            else parse_canonical_timestamp_json(
+                raw["source_through"],
+                field="source_snapshot.source_through",
+            )
+        ),
         effective_coverage_start_date=date.fromisoformat(raw["effective_coverage_start_date"]),
         effective_coverage_end_date=date.fromisoformat(raw["effective_coverage_end_date"]),
         availability_cutoff_end_date=None if cutoff is None else date.fromisoformat(cutoff),
@@ -1804,6 +1865,50 @@ def _revision_to_table(
         artifact_file_count=catalog_count,
         artifact_file_catalog_sha256=catalog_digest,
         retention_pending_at=None,
+        retention_retry_count=0,
+    )
+
+
+def _canonical_revision_candidate(
+    candidate: PreviewRevisionCandidate,
+) -> PreviewRevisionCandidate:
+    snapshot = candidate.source_snapshot
+    canonical_snapshot = replace(
+        snapshot,
+        calculation_timestamp=(
+            None
+            if snapshot.calculation_timestamp is None
+            else canonical_utc_second(
+                snapshot.calculation_timestamp,
+                field="source_snapshot.calculation_timestamp",
+            )
+        ),
+        calculation_coverage=tuple(
+            replace(
+                entry,
+                calculation_completed_at=canonical_utc_second(
+                    entry.calculation_completed_at,
+                    field="source_snapshot.calculation_coverage.calculation_completed_at",
+                ),
+            )
+            for entry in snapshot.calculation_coverage
+        ),
+        source_through=(
+            None
+            if snapshot.source_through is None
+            else canonical_utc_second(
+                snapshot.source_through,
+                field="source_snapshot.source_through",
+            )
+        ),
+    )
+    return replace(
+        candidate,
+        source_snapshot=canonical_snapshot,
+        published_at=canonical_utc_second(
+            candidate.published_at,
+            field="published_at",
+        ),
     )
 
 
@@ -1882,6 +1987,7 @@ def _retention_candidate_from_row(row: PreviewRevisionTable) -> PreviewRetention
         tenant_id=row.tenant_id,
         storage_key=row.storage_key,
         retention_pending_at=ensure_utc(row.retention_pending_at),
+        retention_retry_count=row.retention_retry_count,
     )
 
 
@@ -2048,7 +2154,10 @@ class SQLModelPreviewRevisionRepository:
         pending_at: datetime,
         limit: int,
     ) -> tuple[PreviewRetentionCandidate, ...]:
-        normalized_pending = ensure_utc_strict(pending_at)
+        normalized_pending = canonical_utc_second(
+            pending_at,
+            field="pending_at",
+        )
         if type(limit) is not int or limit < 1:
             return ()
         selected_ids = self._session.exec(
@@ -2077,7 +2186,10 @@ class SQLModelPreviewRevisionRepository:
                 col(PreviewRevisionTable.month_end) <= cutoff_date,
                 col(PreviewRevisionTable.retention_pending_at).is_(None),
             )
-            .values(retention_pending_at=normalized_pending)
+            .values(
+                retention_pending_at=normalized_pending,
+                retention_retry_count=0,
+            )
             .returning(col(PreviewRevisionTable.revision_id))
         )
         claimed_ids = [row[0] for row in claim_result]
@@ -2091,6 +2203,7 @@ class SQLModelPreviewRevisionRepository:
                 col(PreviewRevisionTable.tenant_id) == tenant_id,
                 col(PreviewRevisionTable.revision_id).in_(claimed_ids),
                 col(PreviewRevisionTable.retention_pending_at) == normalized_pending,
+                col(PreviewRevisionTable.retention_retry_count) == 0,
             )
             .order_by(
                 col(PreviewRevisionTable.month_end),
@@ -2117,6 +2230,7 @@ class SQLModelPreviewRevisionRepository:
                 col(PreviewRevisionTable.retention_pending_at).is_not(None),
             )
             .order_by(
+                col(PreviewRevisionTable.retention_retry_count),
                 col(PreviewRevisionTable.retention_pending_at),
                 col(PreviewRevisionTable.revision_id),
             )
@@ -2124,34 +2238,11 @@ class SQLModelPreviewRevisionRepository:
         ).all()
         return tuple(_retention_candidate_from_row(row) for row in rows)
 
-    def get_retention_pending_tail(
-        self,
-        *,
-        ecosystem: str,
-        tenant_id: str,
-    ) -> datetime | None:
-        value = self._session.exec(
-            select(PreviewRevisionTable.retention_pending_at)
-            .where(
-                col(PreviewRevisionTable.ecosystem) == ecosystem,
-                col(PreviewRevisionTable.tenant_id) == tenant_id,
-                col(PreviewRevisionTable.retention_pending_at).is_not(None),
-            )
-            .order_by(
-                col(PreviewRevisionTable.retention_pending_at).desc(),
-                col(PreviewRevisionTable.revision_id).desc(),
-            )
-            .limit(1)
-        ).first()
-        return None if value is None else ensure_utc(value)
-
     def defer_retention_pending(
         self,
         *,
         candidate: PreviewRetentionCandidate,
-        retry_at: datetime,
     ) -> bool:
-        normalized_retry = ensure_utc_strict(retry_at)
         result = self._session.execute(
             update(PreviewRevisionTable)
             .where(
@@ -2160,8 +2251,11 @@ class SQLModelPreviewRevisionRepository:
                 col(PreviewRevisionTable.revision_id) == candidate.revision_id,
                 col(PreviewRevisionTable.storage_key) == candidate.storage_key,
                 col(PreviewRevisionTable.retention_pending_at) == candidate.retention_pending_at,
+                col(PreviewRevisionTable.retention_retry_count) == candidate.retention_retry_count,
             )
-            .values(retention_pending_at=normalized_retry)
+            .values(
+                retention_retry_count=col(PreviewRevisionTable.retention_retry_count) + 1,
+            )
         )
         return getattr(result, "rowcount", 0) == 1
 
@@ -2173,6 +2267,7 @@ class SQLModelPreviewRevisionRepository:
                 col(PreviewRevisionTable.revision_id) == candidate.revision_id,
                 col(PreviewRevisionTable.storage_key) == candidate.storage_key,
                 col(PreviewRevisionTable.retention_pending_at) == candidate.retention_pending_at,
+                col(PreviewRevisionTable.retention_retry_count) == candidate.retention_retry_count,
             )
         )
         if getattr(result, "rowcount", 0) != 1:
@@ -2197,6 +2292,7 @@ class SQLModelPreviewRevisionRepository:
     ) -> PreviewRevision:
         if candidate.supersedes_revision_id != expected_current_revision_id:
             raise ValueError("candidate supersedes identity does not match expected current revision")
+        candidate = _canonical_revision_candidate(candidate)
         normalized_catalog = inspect(self._session.get_bind()).has_table(PreviewArtifactFileTable.__tablename__)
         candidate_row = _revision_to_table(
             candidate,

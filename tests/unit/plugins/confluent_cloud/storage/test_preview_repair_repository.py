@@ -94,10 +94,9 @@ def test_interruption_recovery_is_exactly_owner_scoped(backend: object) -> None:
     )
 
     with backend.create_preview_evidence_unit_of_work() as uow:  # type: ignore[attr-defined]
-        changed = uow.repairs.fail_interrupted_before(
+        changed = uow.repairs.fail_interrupted_for_owner(
             "confluent_cloud",
             "tenant-1",
-            NOW + timedelta(seconds=1),
             completed_at=NOW + timedelta(seconds=2),
             diagnostic=_diagnostic("focus_preview_repair_interrupted"),
         )
@@ -118,6 +117,84 @@ def test_interruption_recovery_is_exactly_owner_scoped(backend: object) -> None:
     assert changed == 1
     assert recovered is not None and recovered.status.value == "failed"
     assert untouched is not None and untouched.status.value == "queued"
+
+
+def test_same_second_repair_restart_recovers_owner_and_allows_replacement(
+    tmp_path: Path,
+) -> None:
+    connection_string = f"sqlite:///{tmp_path / 'same-second-restart.db'}"
+    first = SQLModelBackend(
+        connection_string,
+        CCloudStorageModule(),
+        use_migrations=False,
+        focus_preview_enabled=True,
+    )
+    first.create_tables()
+    _create(first, _queued(repair_id="repair-terminal"))
+    with first.create_preview_evidence_unit_of_work() as uow:
+        terminal = uow.repairs.fail_queued_before_execution(
+            "repair-terminal",
+            completed_at=NOW,
+            diagnostic=_diagnostic("already_terminal"),
+        )
+        uow.commit()
+    assert terminal is not None and terminal.status.value == "failed"
+    _create(first, _queued(repair_id="repair-interrupted"))
+    _create(
+        first,
+        _queued(
+            repair_id="repair-foreign",
+            tenant_name="sandbox",
+            tenant_id="tenant-2",
+        ),
+    )
+    first.dispose()
+
+    reopened = SQLModelBackend(
+        connection_string,
+        CCloudStorageModule(),
+        use_migrations=False,
+        focus_preview_enabled=True,
+    )
+    reopened.create_tables()
+    with reopened.create_preview_evidence_unit_of_work() as uow:
+        changed = uow.repairs.fail_interrupted_for_owner(
+            "confluent_cloud",
+            "tenant-1",
+            completed_at=NOW,
+            diagnostic=_diagnostic("focus_preview_repair_interrupted"),
+        )
+        uow.commit()
+    with reopened.create_preview_generation_read_unit_of_work() as uow:
+        interrupted = uow.repairs.get_for_owner(
+            "repair-interrupted",
+            "confluent_cloud",
+            "tenant-1",
+        )
+        foreign = uow.repairs.get_for_owner(
+            "repair-foreign",
+            "confluent_cloud",
+            "tenant-2",
+        )
+        terminal_after = uow.repairs.get_for_owner(
+            "repair-terminal",
+            "confluent_cloud",
+            "tenant-1",
+        )
+    replacement = _create(
+        reopened,
+        _queued(repair_id="repair-replacement"),
+    )
+
+    assert changed == 1
+    assert interrupted is not None
+    assert interrupted.status.value == "failed"
+    assert interrupted.completed_at == NOW
+    assert {item.status.value for item in interrupted.dates} == {"failed"}
+    assert foreign is not None and foreign.status.value == "queued"
+    assert terminal_after == terminal
+    assert replacement.status.value == "queued"  # type: ignore[attr-defined]
+    reopened.dispose()
 
 
 def test_queued_operation_and_complete_date_set_are_durable_and_owner_scoped(

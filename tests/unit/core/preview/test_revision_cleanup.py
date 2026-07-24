@@ -15,7 +15,7 @@ class _Repository:
     def __init__(self, *, pending: list[Any], due: list[Any]) -> None:
         self.pending = pending
         self.due = due
-        self.attempted_defer: list[tuple[str, datetime]] = []
+        self.attempted_defer: list[str] = []
         self.attempted_delete: list[str] = []
         self.claim_limits: list[int] = []
         self.delete_returns: dict[str, bool] = {}
@@ -27,7 +27,16 @@ class _Repository:
 
     def list_retention_pending(self, *, ecosystem: str, tenant_id: str, limit: int) -> tuple[Any, ...]:
         del ecosystem, tenant_id
-        return tuple(sorted(self.pending, key=lambda item: (item.retention_pending_at, item.revision_id))[:limit])
+        return tuple(
+            sorted(
+                self.pending,
+                key=lambda item: (
+                    item.retention_retry_count,
+                    item.retention_pending_at,
+                    item.revision_id,
+                ),
+            )[:limit]
+        )
 
     def mark_retention_due(
         self,
@@ -42,23 +51,29 @@ class _Repository:
         self.last_operation = "claim"
         self.claim_limits.append(limit)
         selected, self.due = self.due[:limit], self.due[limit:]
-        claimed = [replace(item, retention_pending_at=pending_at) for item in selected]
+        claimed = [
+            replace(
+                item,
+                retention_pending_at=pending_at,
+                retention_retry_count=0,
+            )
+            for item in selected
+        ]
         self.pending.extend(claimed)
         return tuple(claimed)
 
-    def get_retention_pending_tail(self, *, ecosystem: str, tenant_id: str) -> datetime | None:
-        del ecosystem, tenant_id
-        return max((item.retention_pending_at for item in self.pending), default=None)
-
-    def defer_retention_pending(self, *, candidate: Any, retry_at: datetime) -> bool:
-        self.attempted_defer.append((candidate.revision_id, retry_at))
+    def defer_retention_pending(self, *, candidate: Any) -> bool:
+        self.attempted_defer.append(candidate.revision_id)
         self.last_operation = "defer"
         if candidate.revision_id in self.defer_raises:
             raise RuntimeError("synthetic deferral persistence failure")
         for index, item in enumerate(self.pending):
             if item == candidate:
                 self.deferred_previous = item
-                self.pending[index] = replace(item, retention_pending_at=retry_at)
+                self.pending[index] = replace(
+                    item,
+                    retention_retry_count=item.retention_retry_count + 1,
+                )
                 return True
         return False
 
@@ -156,7 +171,12 @@ class _Store:
         return 0
 
 
-def _candidate(index: int, *, pending_at: datetime) -> Any:
+def _candidate(
+    index: int,
+    *,
+    pending_at: datetime,
+    retry_count: int = 0,
+) -> Any:
     persistence = import_module("core.preview.persistence")
     return persistence.PreviewRetentionCandidate(
         revision_id=f"revision-{index:03d}",
@@ -164,6 +184,7 @@ def _candidate(index: int, *, pending_at: datetime) -> Any:
         tenant_id="tenant-1",
         storage_key=f"package-{index:03d}",
         retention_pending_at=pending_at,
+        retention_retry_count=retry_count,
     )
 
 
@@ -188,7 +209,7 @@ def test_cleanup_rejects_naive_cycle_time() -> None:
 
 def test_cleanup_reserves_fifty_attempts_for_retry_and_new_lanes() -> None:
     base = datetime(2026, 8, 5, tzinfo=UTC)
-    pending = [_candidate(index, pending_at=base + timedelta(microseconds=index)) for index in range(100)]
+    pending = [_candidate(index, pending_at=base) for index in range(100)]
     due = [_candidate(100 + index, pending_at=base) for index in range(60)]
     repository = _Repository(pending=pending, due=due)
     store = _Store(failures={item.storage_key for item in (*pending, *due)})
@@ -213,9 +234,9 @@ def test_cleanup_reserves_fifty_attempts_for_retry_and_new_lanes() -> None:
     assert result.deferred_count == 100
 
 
-def test_cleanup_defers_failures_after_complete_persisted_tail_and_reaches_older_retries_next_cycle() -> None:
+def test_cleanup_increments_retry_count_and_reaches_unattempted_rows_next_cycle() -> None:
     base = datetime(2026, 8, 5, tzinfo=UTC)
-    pending = [_candidate(index, pending_at=base + timedelta(microseconds=index)) for index in range(101)]
+    pending = [_candidate(index, pending_at=base) for index in range(101)]
     due = [_candidate(200 + index, pending_at=base) for index in range(60)]
     repository = _Repository(pending=pending, due=due)
     store = _Store(failures={item.storage_key for item in (*pending, *due)})
@@ -224,8 +245,11 @@ def test_cleanup_defers_failures_after_complete_persisted_tail_and_reaches_older
 
     service.cleanup_retention(tenant_name="production", tenant_config=tenant, backend=_Backend(repository), now=base)
 
-    retry_times = {retry_at for _revision_id, retry_at in repository.attempted_defer}
-    assert retry_times == {base + timedelta(microseconds=101)}
+    assert len(repository.attempted_defer) == 100
+    assert all(item.retention_pending_at == base for item in repository.pending)
+    assert {
+        item.retention_retry_count for item in repository.pending if item.revision_id in repository.attempted_defer
+    } == {1}
     assert "package-100" not in store.attempts
 
     store.attempts.clear()
@@ -286,7 +310,7 @@ def test_cleanup_retries_backfill_when_newly_due_lane_underfills_capacity() -> N
 
 def test_cleanup_sustains_both_lanes_until_original_retry_and_due_sentinels_are_attempted() -> None:
     base = datetime(2026, 8, 5, tzinfo=UTC)
-    pending = [_candidate(index, pending_at=base + timedelta(microseconds=index)) for index in range(200)]
+    pending = [_candidate(index, pending_at=base) for index in range(200)]
     due = [_candidate(200 + index, pending_at=base) for index in range(200)]
     repository = _Repository(pending=pending, due=due)
     store = _Store(failures={item.storage_key for item in (*pending, *due)})
@@ -333,10 +357,11 @@ def test_cleanup_defers_when_guarded_row_delete_returns_false() -> None:
 
     assert result.deleted_count == 0
     assert result.deferred_count == 1
-    assert repository.attempted_defer == [(candidate.revision_id, base + timedelta(microseconds=1))]
+    assert repository.attempted_defer == [candidate.revision_id]
+    assert repository.pending == [replace(candidate, retention_retry_count=1)]
 
 
-def test_cleanup_defers_one_microsecond_after_later_cycle_time() -> None:
+def test_cleanup_same_second_failure_advances_retry_count_without_moving_timestamp() -> None:
     pending_at = datetime(2026, 8, 5, tzinfo=UTC)
     cycle_time = pending_at + timedelta(hours=2)
     candidate = _candidate(1, pending_at=pending_at)
@@ -354,13 +379,14 @@ def test_cleanup_defers_one_microsecond_after_later_cycle_time() -> None:
         now=cycle_time,
     )
 
-    assert repository.attempted_defer == [(candidate.revision_id, cycle_time + timedelta(microseconds=1))]
+    assert repository.attempted_defer == [candidate.revision_id]
+    assert repository.pending == [replace(candidate, retention_retry_count=1)]
     assert result.deleted_count == 0
     assert result.deferred_count == 1
 
 
 @pytest.mark.parametrize("failure", ["row-delete", "delete-commit"])
-def test_cleanup_uses_same_strictly_later_guarded_deferral_for_finalization_failures(
+def test_cleanup_uses_same_retry_count_guarded_deferral_for_finalization_failures(
     failure: str,
 ) -> None:
     base = datetime(2026, 8, 5, tzinfo=UTC)
@@ -383,11 +409,10 @@ def test_cleanup_uses_same_strictly_later_guarded_deferral_for_finalization_fail
         now=base,
     )
 
-    retry_at = base + timedelta(microseconds=1)
-    assert repository.attempted_defer == [(candidate.revision_id, retry_at)]
+    assert repository.attempted_defer == [candidate.revision_id]
     assert result.deleted_count == 0
     assert result.deferred_count == 1
-    assert repository.pending == [replace(candidate, retention_pending_at=retry_at)]
+    assert repository.pending == [replace(candidate, retention_retry_count=1)]
 
 
 @pytest.mark.parametrize("failure", ["method", "commit"])
@@ -415,7 +440,7 @@ def test_deferral_persistence_failure_leaves_original_pending_claim_durable(
         now=base,
     )
 
-    assert repository.attempted_defer == [(candidate.revision_id, base + timedelta(microseconds=1))]
+    assert repository.attempted_defer == [candidate.revision_id]
     assert result.deleted_count == 0
     assert result.deferred_count == 0
     assert repository.pending == [candidate]

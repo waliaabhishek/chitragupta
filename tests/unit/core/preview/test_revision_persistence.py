@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import json
 import sqlite3
 import threading
 from dataclasses import replace
@@ -51,6 +52,7 @@ def test_revision_table_registers_complete_immutable_replacement_metadata() -> N
         table.c.manifest_metadata_json,
         table.c.file_metadata_json,
         table.c.retention_pending_at,
+        table.c.retention_retry_count,
     }
     assert tuple(column.name for column in table.primary_key.columns) == ("revision_id",)
     assert {index.name: tuple(column.name for column in index.columns) for index in table.indexes}.items() >= {
@@ -73,10 +75,69 @@ def test_revision_table_registers_complete_immutable_replacement_metadata() -> N
         "ix_preview_revisions_owner_retention_pending": (
             "ecosystem",
             "tenant_id",
+            "retention_retry_count",
             "retention_pending_at",
             "revision_id",
         ),
     }.items()
+
+
+def test_revision_scalar_and_source_snapshot_json_round_trip_at_utc_seconds(
+    tmp_path: Path,
+) -> None:
+    persistence = _persistence()
+    engine = create_engine(f"sqlite:///{tmp_path / 'revision-seconds.db'}")
+    _create_revision_schema(engine)
+    candidate = _candidate()
+    coverage = tuple(
+        replace(
+            entry,
+            calculation_completed_at=entry.calculation_completed_at.replace(microsecond=654_321),
+        )
+        for entry in candidate.source_snapshot.calculation_coverage
+    )
+    snapshot = replace(
+        candidate.source_snapshot,
+        calculation_coverage=coverage,
+        calculation_timestamp=max(entry.calculation_completed_at for entry in coverage),
+        source_through=candidate.source_snapshot.source_through.replace(microsecond=456_789),
+    )
+    candidate = replace(
+        candidate,
+        source_snapshot=snapshot,
+        published_at=candidate.published_at.replace(microsecond=987_654),
+    )
+    with Session(engine) as session:
+        repository = persistence.SQLModelPreviewRevisionRepository(session)
+        revision = repository.replace_current(
+            candidate=candidate,
+            package=_package(),
+            expected_current_revision_id=None,
+        )
+        session.commit()
+    with engine.connect() as connection:
+        raw = connection.execute(
+            text("SELECT published_at, source_snapshot_json FROM preview_revisions WHERE revision_id = 'revision-1'")
+        ).one()
+    with Session(engine) as session:
+        restored = persistence.SQLModelPreviewRevisionRepository(session).get_current_for_owner(
+            ecosystem="confluent_cloud",
+            tenant_id="tenant-1",
+            month_start=date(2026, 7, 1),
+        )
+
+    assert revision.published_at == datetime(2026, 8, 4, tzinfo=UTC)
+    assert raw.published_at == "2026-08-04 00:00:00"
+    raw_snapshot = json.loads(raw.source_snapshot_json)
+    assert raw_snapshot["calculation_timestamp"].endswith("00:00:00+00:00")
+    assert all(
+        item["calculation_completed_at"].endswith("00:00:00+00:00") for item in raw_snapshot["calculation_coverage"]
+    )
+    assert raw_snapshot["source_through"] == "2026-08-01T00:00:00+00:00"
+    assert restored is not None
+    assert restored.published_at == datetime(2026, 8, 4, tzinfo=UTC)
+    assert all(item.calculation_completed_at.microsecond == 0 for item in restored.source_snapshot.calculation_coverage)
+    engine.dispose()
 
 
 def test_current_revision_partial_index_compiles_for_sqlite_and_postgresql() -> None:
@@ -205,14 +266,6 @@ def test_postgresql_retention_queries_compile_with_index_matched_predicates_and_
         )
         == ()
     )
-    assert (
-        repository.get_retention_pending_tail(
-            ecosystem="confluent_cloud",
-            tenant_id="tenant-1",
-        )
-        is None
-    )
-
     sql = [
         str(
             statement.compile(
@@ -222,17 +275,17 @@ def test_postgresql_retention_queries_compile_with_index_matched_predicates_and_
         )
         for statement in statements
     ]
-    due, pending, tail = sql
+    due, pending = sql
     assert "retention_pending_at IS NULL" in due
     assert "month_end <= '2026-08-01'" in due
     assert "ORDER BY preview_revisions.month_end, preview_revisions.published_at, preview_revisions.revision_id" in due
     assert "LIMIT 100" in due
     assert "retention_pending_at IS NOT NULL" in pending
-    assert "ORDER BY preview_revisions.retention_pending_at, preview_revisions.revision_id" in pending
+    assert (
+        "ORDER BY preview_revisions.retention_retry_count, "
+        "preview_revisions.retention_pending_at, preview_revisions.revision_id"
+    ) in pending
     assert "LIMIT 100" in pending
-    assert "retention_pending_at IS NOT NULL" in tail
-    assert "ORDER BY preview_revisions.retention_pending_at DESC, preview_revisions.revision_id DESC" in tail
-    assert "LIMIT 1" in tail
 
 
 def test_repository_rejects_supersedes_mismatch_before_sql() -> None:

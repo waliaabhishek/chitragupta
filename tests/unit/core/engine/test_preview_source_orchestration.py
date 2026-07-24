@@ -433,7 +433,11 @@ def test_abort_finalization_failure_is_isolated_from_generic_gather_result() -> 
 
 
 def test_native_capture_writer_readiness_mismatch_is_rejected_before_attempt_completion() -> None:
-    from core.preview.evidence_capture import NativeSourceWindow
+    from core.preview.evidence_capture import (
+        NativeSourceWindow,
+        SourceWindowCount,
+        SourceWindowWriteResult,
+    )
     from plugins.confluent_cloud.source_capture import (
         CCloudNativeSourceEvidenceCapture,
         PreviewSourceCapturePersistenceError,
@@ -448,7 +452,15 @@ def test_native_capture_writer_readiness_mismatch_is_rejected_before_attempt_com
         records=(),
     )
     source_windows = MagicMock()
-    source_windows.replace_capture.return_value.records_written = 1
+    source_windows.replace_capture.return_value = SourceWindowWriteResult(
+        records_written=1,
+        window_counts=(
+            SourceWindowCount(
+                window=NativeSourceWindow(START, NOW),
+                source_count=1,
+            ),
+        ),
+    )
     source_readiness = MagicMock()
     source_readiness.replace_overlapping.return_value = ()
 
@@ -461,6 +473,55 @@ def test_native_capture_writer_readiness_mismatch_is_rejected_before_attempt_com
         )
 
     source_readiness.finalize_attempt.assert_not_called()
+
+
+def test_native_capture_writer_compares_and_returns_canonical_second_plan() -> None:
+    from core.preview.evidence_capture import (
+        NativeSourceWindow,
+        SourceWindowWriteResult,
+    )
+    from plugins.confluent_cloud.source_capture import (
+        CCloudNativeSourceEvidenceCapture,
+    )
+
+    refresh_start = START.replace(microsecond=111_111)
+    refresh_end = NOW.replace(microsecond=222_222)
+    captured_at = NOW.replace(microsecond=333_333)
+    capture = CCloudNativeSourceEvidenceCapture(
+        ecosystem="confluent_cloud",
+        tenant_id="tenant-1",
+        refresh_start=refresh_start,
+        refresh_end=refresh_end,
+        windows=(NativeSourceWindow(refresh_start, refresh_end),),
+        records=(),
+    )
+    source_windows = MagicMock()
+    source_windows.replace_capture.return_value = SourceWindowWriteResult(
+        records_written=0,
+    )
+    source_readiness = MagicMock()
+    source_readiness.replace_overlapping.side_effect = lambda _ecosystem, _tenant_id, _start, _end, captures: tuple(
+        captures
+    )
+
+    receipt = capture.write(
+        source_windows,
+        source_readiness,
+        attempt_sequence=11,
+        captured_at=captured_at,
+    )
+
+    assert receipt.refresh_start == START
+    assert receipt.refresh_end == NOW
+    assert receipt.captures[0].window_start == START
+    assert receipt.captures[0].window_end == NOW
+    assert receipt.captures[0].captured_at == NOW
+    readiness_call = source_readiness.replace_overlapping.call_args.args
+    assert readiness_call[2:] == (
+        START,
+        NOW,
+        receipt.captures,
+    )
 
 
 def test_generic_billing_gather_persists_each_line_before_requesting_the_next() -> None:

@@ -215,11 +215,11 @@ def test_revision_repository_and_uow_contracts_expose_history_and_retention() ->
         "list_for_owner_month",
         "mark_retention_due",
         "list_retention_pending",
-        "get_retention_pending_tail",
         "defer_retention_pending",
         "delete_retention_pending",
     }
     assert expected <= set(persistence.PreviewRevisionRepository.__dict__)
+    assert "get_retention_pending_tail" not in persistence.PreviewRevisionRepository.__dict__
     assert get_type_hints(persistence.PreviewRevisionRepository.get_current_for_publication) == {
         "ecosystem": str,
         "tenant_id": str,
@@ -254,10 +254,13 @@ def test_revision_repository_and_uow_contracts_expose_history_and_retention() ->
         "limit": int,
         "return": tuple[persistence.PreviewRetentionCandidate, ...],
     }
-    assert get_type_hints(persistence.PreviewRevisionRepository.get_retention_pending_tail) == {
-        "ecosystem": str,
-        "tenant_id": str,
-        "return": datetime | None,
+    assert get_type_hints(persistence.PreviewRevisionRepository.defer_retention_pending) == {
+        "candidate": persistence.PreviewRetentionCandidate,
+        "return": bool,
+    }
+    assert get_type_hints(persistence.PreviewRevisionRepository.delete_retention_pending) == {
+        "candidate": persistence.PreviewRetentionCandidate,
+        "return": bool,
     }
     assert "revisions" in persistence.PreviewWriteUnitOfWork.__annotations__
     assert "revisions" in persistence.PreviewMetadataReadUnitOfWork.__annotations__

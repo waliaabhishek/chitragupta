@@ -30,6 +30,7 @@ from plugins.confluent_cloud.storage.module import CCloudStorageModule
 
 if TYPE_CHECKING:
     from core.models.billing import BillingLineItem
+    from core.preview.evidence_capture import SourceWindowWriteResult
     from plugins.confluent_cloud.models.billing import CCloudCostSourceRecord
 
 
@@ -108,7 +109,7 @@ class _SourceWriter(_BillingRepositoryProxy):
         refresh_window_start: datetime,
         refresh_window_end: datetime,
         records: Sequence[CCloudCostSourceRecord],
-    ) -> None:
+    ) -> SourceWindowWriteResult:
         self.calls.append(
             (
                 ecosystem,
@@ -117,6 +118,16 @@ class _SourceWriter(_BillingRepositoryProxy):
                 refresh_window_end,
                 tuple(records),
             )
+        )
+        repository = self._repository()
+        if not isinstance(repository, CCloudSourceWindowWriter):
+            raise TypeError("bound billing repository does not support source-window writes")
+        return repository.replace_source_window(
+            ecosystem,
+            tenant_id,
+            refresh_window_start,
+            refresh_window_end,
+            records,
         )
 
 

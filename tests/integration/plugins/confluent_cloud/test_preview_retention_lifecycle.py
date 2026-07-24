@@ -129,12 +129,10 @@ def test_real_retention_uses_whole_calculation_day_reconciles_orphans_and_is_ide
 
         engine = create_engine(connection_string)
         with engine.begin() as connection:
-            connection.execute(
-                text(
-                    "DELETE FROM ccloud_billing "
-                    "WHERE tenant_id = 'tenant-1' AND timestamp = '2026-07-20 00:00:00.000000'"
-                )
+            deleted_billing = connection.execute(
+                text("DELETE FROM ccloud_billing WHERE tenant_id = 'tenant-1' AND timestamp = '2026-07-20 00:00:00'")
             )
+            assert deleted_billing.rowcount == 1
             connection.execute(
                 text(
                     "UPDATE pipeline_state SET calculation_id = 'replacement-calculation' "

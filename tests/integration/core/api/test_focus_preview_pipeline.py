@@ -2271,6 +2271,7 @@ def test_ordinary_gather_and_calculate_lifecycle_replaces_incomplete_legacy_corr
 
         ready = _request(client, tracking_date, tracking_date + timedelta(days=1))
         assert ready["status"] == "ready", ready["diagnostic"]
+        assert ready["diagnostic"] is None
         assert ready["source_snapshot"]["calculation_coverage"] == [
             {
                 "tracking_date": tracking_date.isoformat(),
@@ -2279,6 +2280,52 @@ def test_ordinary_gather_and_calculate_lifecycle_replaces_incomplete_legacy_corr
                 "calculation_run_id": replaced.calculation_run_id,
             }
         ]
+        persisted = create_engine(connection_string)
+        try:
+            with persisted.connect() as connection:
+                billing = connection.execute(
+                    text(
+                        "SELECT COUNT(*), MIN(timestamp), MAX(timestamp) "
+                        "FROM ccloud_billing "
+                        "WHERE ecosystem = 'confluent_cloud' "
+                        "AND tenant_id = 'tenant-1' "
+                        "AND timestamp >= :start AND timestamp < :end"
+                    ),
+                    {
+                        "start": tracking_timestamp,
+                        "end": (tracking_start + timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S"),
+                    },
+                ).one()
+                lineage_run = connection.execute(
+                    text(
+                        "SELECT capture_status, capture_reason, portion_count "
+                        "FROM ccloud_allocation_lineage_runs "
+                        "WHERE ecosystem = 'confluent_cloud' "
+                        "AND tenant_id = 'tenant-1' "
+                        "AND tracking_date = :tracking_date"
+                    ),
+                    {"tracking_date": tracking_iso},
+                ).one()
+                lineage_portions = connection.execute(
+                    text(
+                        "SELECT COUNT(*) "
+                        "FROM ccloud_allocation_lineage_portions "
+                        "WHERE ecosystem = 'confluent_cloud' "
+                        "AND tenant_id = 'tenant-1' "
+                        "AND tracking_date = :tracking_date"
+                    ),
+                    {"tracking_date": tracking_iso},
+                ).scalar_one()
+            assert billing == (
+                1,
+                tracking_timestamp,
+                tracking_timestamp,
+            )
+            assert lineage_run.capture_status == "complete"
+            assert lineage_run.capture_reason is None
+            assert lineage_run.portion_count == lineage_portions == 1
+        finally:
+            persisted.dispose()
     finally:
         client.close()
         runner.close()

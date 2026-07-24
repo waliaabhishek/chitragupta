@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import Any
 
@@ -56,3 +56,46 @@ def test_postgresql_bounds_remain_aware_utc_half_open_without_session_date_extra
     assert "date(" not in sql
     assert "timestamp >=" in sql
     assert "timestamp <" in sql
+
+
+def test_all_dialects_canonicalize_fractional_offset_bounds_to_utc_seconds() -> None:
+    start = datetime(
+        2026,
+        6,
+        30,
+        17,
+        0,
+        0,
+        999_999,
+        tzinfo=timezone(timedelta(hours=-7)),
+    )
+    end = datetime(
+        2026,
+        7,
+        1,
+        17,
+        0,
+        0,
+        999_999,
+        tzinfo=timezone(timedelta(hours=-7)),
+    )
+
+    sqlite_bounds = exact_utc_half_open_bounds(
+        _DialectSession(sqlite.dialect()),
+        start,
+        end,
+    )
+    postgres_bounds = exact_utc_half_open_bounds(
+        _DialectSession(postgresql.dialect()),
+        start,
+        end,
+    )
+
+    assert tuple(bound.value for bound in sqlite_bounds) == (
+        "2026-07-01 00:00:00",
+        "2026-07-02 00:00:00",
+    )
+    assert postgres_bounds == (
+        datetime(2026, 7, 1, tzinfo=UTC),
+        datetime(2026, 7, 2, tzinfo=UTC),
+    )

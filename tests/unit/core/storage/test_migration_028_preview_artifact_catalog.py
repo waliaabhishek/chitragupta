@@ -18,7 +18,7 @@ from tests.unit.core.storage.test_migration_027_historical_repair import _config
 CATALOG_TABLE = "preview_artifact_files"
 
 
-def test_revision_028_is_current_head_and_defines_preview_artifact_catalog_migration() -> None:
+def test_revision_028_defines_preview_artifact_catalog_migration_in_current_chain() -> None:
     config = _config("sqlite:///unused.db")
     script = ScriptDirectory.from_config(config)
     migration_path = (
@@ -31,7 +31,7 @@ def test_revision_028_is_current_head_and_defines_preview_artifact_catalog_migra
         / "028_add_preview_artifact_file_catalog.py"
     )
 
-    assert script.get_current_head() == "028"
+    assert script.get_current_head() == "029"
     source = migration_path.read_text(encoding="utf-8")
     assert 'run_preview_evidence_step("028")' in source
     assert 'run_preview_evidence_downgrade_step("028")' in source

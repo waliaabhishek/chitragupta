@@ -5,7 +5,10 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
-from typing import Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+
+if TYPE_CHECKING:
+    from core.preview.evidence_capture import SourceWindowWriteResult
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +66,7 @@ class CCloudSourceWindowWriter(Protocol):
         refresh_window_start: datetime,
         refresh_window_end: datetime,
         records: Sequence[CCloudCostSourceRecord],
-    ) -> None: ...
+    ) -> SourceWindowWriteResult: ...
 
 
 @dataclass(frozen=True)

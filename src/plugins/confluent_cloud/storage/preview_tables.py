@@ -3,9 +3,10 @@ from __future__ import annotations
 import logging
 from datetime import date, datetime
 
-from sqlalchemy import Boolean, CheckConstraint, Column, Date, DateTime, Index, Integer, PrimaryKeyConstraint
+from sqlalchemy import Boolean, CheckConstraint, Column, Date, Index, Integer, PrimaryKeyConstraint
 from sqlmodel import Field, SQLModel
 
+from core.storage.backends.sqlmodel.timestamps import UTCSecondDateTime
 from plugins.confluent_cloud.storage.tables import (
     CCloudAllocationLineagePortionTable,
     CCloudAllocationLineageRunTable,
@@ -44,11 +45,14 @@ class CCloudSourceEvidenceAttemptTable(SQLModel, table=True):
     ecosystem: str
     tenant_id: str
     refresh_token: str
-    refresh_start: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))
-    refresh_end: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))
+    refresh_start: datetime = Field(sa_column=Column(UTCSecondDateTime(), nullable=False))
+    refresh_end: datetime = Field(sa_column=Column(UTCSecondDateTime(), nullable=False))
     status: str
-    started_at: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))
-    completed_at: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True))
+    started_at: datetime = Field(sa_column=Column(UTCSecondDateTime(), nullable=False))
+    completed_at: datetime | None = Field(
+        default=None,
+        sa_column=Column(UTCSecondDateTime(), nullable=True),
+    )
     failure_reason: str | None = Field(default=None)
 
 
@@ -80,10 +84,10 @@ class CCloudSourceCaptureReadinessTable(SQLModel, table=True):
 
     ecosystem: str = Field(primary_key=True)
     tenant_id: str = Field(primary_key=True)
-    window_start: datetime = Field(sa_column=Column(DateTime(timezone=True), primary_key=True))
-    window_end: datetime = Field(sa_column=Column(DateTime(timezone=True), primary_key=True))
+    window_start: datetime = Field(sa_column=Column(UTCSecondDateTime(), primary_key=True))
+    window_end: datetime = Field(sa_column=Column(UTCSecondDateTime(), primary_key=True))
     capture_id: str
-    captured_at: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))
+    captured_at: datetime = Field(sa_column=Column(UTCSecondDateTime(), nullable=False))
     source_count: int
     attempt_sequence: int = Field(foreign_key="ccloud_source_evidence_attempts.attempt_sequence")
 
@@ -119,10 +123,10 @@ class CCloudSourceCaptureReadinessHistoryTable(SQLModel, table=True):
         foreign_key="ccloud_source_evidence_attempts.attempt_sequence",
         primary_key=True,
     )
-    window_start: datetime = Field(sa_column=Column(DateTime(timezone=True), primary_key=True))
-    window_end: datetime = Field(sa_column=Column(DateTime(timezone=True), primary_key=True))
+    window_start: datetime = Field(sa_column=Column(UTCSecondDateTime(), primary_key=True))
+    window_end: datetime = Field(sa_column=Column(UTCSecondDateTime(), primary_key=True))
     capture_id: str
-    captured_at: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))
+    captured_at: datetime = Field(sa_column=Column(UTCSecondDateTime(), nullable=False))
     source_count: int
 
 
@@ -144,9 +148,15 @@ class CCloudFocusPreviewRepairTable(SQLModel, table=True):
     start_date: date = Field(sa_column=Column(Date, nullable=False))
     end_date: date = Field(sa_column=Column(Date, nullable=False))
     status: str
-    created_at: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))
-    started_at: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True))
-    completed_at: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True))
+    created_at: datetime = Field(sa_column=Column(UTCSecondDateTime(), nullable=False))
+    started_at: datetime | None = Field(
+        default=None,
+        sa_column=Column(UTCSecondDateTime(), nullable=True),
+    )
+    completed_at: datetime | None = Field(
+        default=None,
+        sa_column=Column(UTCSecondDateTime(), nullable=True),
+    )
     diagnostic_code: str | None = None
     diagnostic_message: str | None = None
     diagnostic_retryable: bool | None = Field(default=None, sa_column=Column(Boolean, nullable=True))
@@ -169,12 +179,18 @@ class CCloudFocusPreviewRepairDateTable(SQLModel, table=True):
     )
     tracking_date: date = Field(sa_column=Column(Date, primary_key=True))
     status: str
-    started_at: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True))
-    completed_at: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True))
+    started_at: datetime | None = Field(
+        default=None,
+        sa_column=Column(UTCSecondDateTime(), nullable=True),
+    )
+    completed_at: datetime | None = Field(
+        default=None,
+        sa_column=Column(UTCSecondDateTime(), nullable=True),
+    )
     calculation_id: str | None = None
     calculation_completed_at: datetime | None = Field(
         default=None,
-        sa_column=Column(DateTime(timezone=True), nullable=True),
+        sa_column=Column(UTCSecondDateTime(), nullable=True),
     )
     rows_written: int | None = None
     failure_stage: str | None = None
@@ -202,8 +218,11 @@ class CCloudOrganizationAuthorityAttemptTable(SQLModel, table=True):
     ecosystem: str
     tenant_id: str
     status: str
-    started_at: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))
-    completed_at: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True))
+    started_at: datetime = Field(sa_column=Column(UTCSecondDateTime(), nullable=False))
+    completed_at: datetime | None = Field(
+        default=None,
+        sa_column=Column(UTCSecondDateTime(), nullable=True),
+    )
     organization_id: str | None = Field(default=None)
     failure_reason: str | None = Field(default=None)
 
