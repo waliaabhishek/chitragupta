@@ -206,6 +206,10 @@ class PreviewRequestCursorError(ValueError):
         super().__init__("preview request cursor is invalid")
 
 
+class PreviewEffectiveColumnsMetadataMissingError(ValueError):
+    pass
+
+
 @runtime_checkable
 class PreviewCalculationRepository(Protocol):
     def find_current_coverage(
@@ -880,7 +884,7 @@ def request_to_domain(
     profile = _supported_column_profile(row.column_profile)
     grain = _supported_grain(row.grain)
     if row.effective_columns_json is None:
-        raise ValueError("preview effective columns metadata is required")
+        raise PreviewEffectiveColumnsMetadataMissingError("preview effective columns metadata is required")
     decoded_columns = json.loads(row.effective_columns_json)
     if not isinstance(decoded_columns, list) or not all(isinstance(value, str) for value in decoded_columns):
         raise ValueError("preview effective columns must be a string list")

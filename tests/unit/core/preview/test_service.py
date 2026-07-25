@@ -490,6 +490,94 @@ def _ready_request(tmp_path: Path) -> tuple[object, object, SQLModelBackend, Con
     return runtime, ready, backend, executor
 
 
+def test_request_specific_reconcile_handles_missing_metadata_by_type_not_message(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend = SQLModelBackend(
+        f"sqlite:///{tmp_path / 'preview.db'}",
+        CCloudStorageModule(),
+        use_migrations=False,
+        focus_preview_enabled=True,
+    )
+    backend.create_tables()
+    executor = ControlledExecutor()
+    runtime = _runtime(tmp_path, backend, executor)
+    persistence = preview_module("persistence")
+
+    def missing_metadata(
+        _repository: object,
+        *,
+        request_id: str,
+        ecosystem: str,
+        tenant_id: str,
+        now: datetime,
+    ) -> None:
+        del request_id, ecosystem, tenant_id, now
+        raise persistence.PreviewEffectiveColumnsMetadataMissingError("diagnostic wording changed")
+
+    monkeypatch.setattr(
+        persistence.SQLModelPreviewRequestRepository,
+        "expire_ready_request",
+        missing_metadata,
+    )
+    try:
+        runtime.reconcile_expiry(
+            backend=backend,
+            ecosystem="confluent_cloud",
+            tenant_id="tenant-1",
+            request_id="request-1",
+        )
+    finally:
+        runtime.close()
+        backend.dispose()
+
+
+def test_request_specific_reconcile_does_not_special_case_old_message_on_value_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend = SQLModelBackend(
+        f"sqlite:///{tmp_path / 'preview.db'}",
+        CCloudStorageModule(),
+        use_migrations=False,
+        focus_preview_enabled=True,
+    )
+    backend.create_tables()
+    executor = ControlledExecutor()
+    runtime = _runtime(tmp_path, backend, executor)
+    persistence = preview_module("persistence")
+    service = preview_module("service")
+
+    def unrelated_value_error(
+        _repository: object,
+        *,
+        request_id: str,
+        ecosystem: str,
+        tenant_id: str,
+        now: datetime,
+    ) -> None:
+        del request_id, ecosystem, tenant_id, now
+        raise ValueError("preview effective columns metadata is required")
+
+    monkeypatch.setattr(
+        persistence.SQLModelPreviewRequestRepository,
+        "expire_ready_request",
+        unrelated_value_error,
+    )
+    try:
+        with pytest.raises(service.PreviewRecoveryUnavailable):
+            runtime.reconcile_expiry(
+                backend=backend,
+                ecosystem="confluent_cloud",
+                tenant_id="tenant-1",
+                request_id="request-1",
+            )
+    finally:
+        runtime.close()
+        backend.dispose()
+
+
 def test_controlled_runtime_commits_queued_before_running_and_reaches_ready(tmp_path: Path) -> None:
     backend = SQLModelBackend(
         f"sqlite:///{tmp_path / 'preview.db'}",

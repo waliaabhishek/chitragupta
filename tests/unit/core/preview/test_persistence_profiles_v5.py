@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import time
 from dataclasses import FrozenInstanceError, replace
 from datetime import UTC, date, datetime, timedelta
@@ -68,7 +69,10 @@ def test_null_effective_columns_fail_closed_without_legacy_hydration() -> None:
     row = persistence.request_to_table(_request(status="queued"))
     row.effective_columns_json = None
 
-    with pytest.raises(ValueError, match="preview effective columns metadata is required"):
+    with pytest.raises(
+        persistence.PreviewEffectiveColumnsMetadataMissingError,
+        match="preview effective columns metadata is required",
+    ):
         persistence.request_to_domain(row)
 
 
@@ -88,7 +92,10 @@ def test_ready_current_row_requires_effective_columns_before_coverage_hydration(
     row.effective_coverage_start_date = None
     row.effective_coverage_end_date = None
 
-    with pytest.raises(ValueError, match="preview effective columns metadata is required"):
+    with pytest.raises(
+        persistence.PreviewEffectiveColumnsMetadataMissingError,
+        match="preview effective columns metadata is required",
+    ):
         persistence.request_to_domain(row)
 
 
@@ -106,8 +113,95 @@ def test_ready_current_row_with_columns_still_requires_effective_coverage() -> N
     row.effective_coverage_start_date = None
     row.effective_coverage_end_date = None
 
-    with pytest.raises(ValueError, match="current ready preview requires persisted effective coverage bounds"):
+    with pytest.raises(
+        ValueError,
+        match="current ready preview requires persisted effective coverage bounds",
+    ) as exc_info:
         persistence.request_to_domain(row)
+    missing_metadata_error = getattr(
+        persistence,
+        "PreviewEffectiveColumnsMetadataMissingError",
+        (),
+    )
+    assert not isinstance(exc_info.value, missing_metadata_error)
+
+
+def test_invalid_effective_columns_json_does_not_raise_missing_metadata_error() -> None:
+    persistence = _persistence()
+    row = persistence.request_to_table(_request(status="queued"))
+    row.effective_columns_json = "not-json"
+
+    with pytest.raises(json.JSONDecodeError) as exc_info:
+        persistence.request_to_domain(row)
+    missing_metadata_error = getattr(
+        persistence,
+        "PreviewEffectiveColumnsMetadataMissingError",
+        (),
+    )
+    assert not isinstance(exc_info.value, missing_metadata_error)
+
+
+@pytest.mark.parametrize("encoded_columns", ['{"BilledCost": true}', '["BilledCost", 1]'])
+def test_invalid_effective_columns_collection_does_not_raise_missing_metadata_error(
+    encoded_columns: str,
+) -> None:
+    persistence = _persistence()
+    row = persistence.request_to_table(_request(status="queued"))
+    row.effective_columns_json = encoded_columns
+
+    with pytest.raises(
+        ValueError,
+        match="preview effective columns must be a string list",
+    ) as exc_info:
+        persistence.request_to_domain(row)
+    missing_metadata_error = getattr(
+        persistence,
+        "PreviewEffectiveColumnsMetadataMissingError",
+        (),
+    )
+    assert not isinstance(exc_info.value, missing_metadata_error)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("column_profile", "obsolete", "unsupported persisted preview column profile"),
+        ("grain", "hourly", "unsupported persisted preview grain"),
+    ],
+)
+def test_unsupported_profile_or_grain_precedes_missing_effective_columns(
+    field: str,
+    value: str,
+    message: str,
+) -> None:
+    persistence = _persistence()
+    row = persistence.request_to_table(_request(status="queued"))
+    setattr(row, field, value)
+    row.effective_columns_json = None
+
+    with pytest.raises(ValueError, match=message) as exc_info:
+        persistence.request_to_domain(row)
+    missing_metadata_error = getattr(
+        persistence,
+        "PreviewEffectiveColumnsMetadataMissingError",
+        (),
+    )
+    assert not isinstance(exc_info.value, missing_metadata_error)
+
+
+def test_invalid_selected_columns_do_not_raise_missing_metadata_error() -> None:
+    persistence = _persistence()
+    row = persistence.request_to_table(_request(status="queued"))
+    row.effective_columns_json = '["BilledCost"]'
+
+    with pytest.raises(_mapping().PreviewEffectiveColumnsError) as exc_info:
+        persistence.request_to_domain(row)
+    missing_metadata_error = getattr(
+        persistence,
+        "PreviewEffectiveColumnsMetadataMissingError",
+        (),
+    )
+    assert not isinstance(exc_info.value, missing_metadata_error)
 
 
 def test_invalid_direct_domain_selection_fails_before_table_construction() -> None:

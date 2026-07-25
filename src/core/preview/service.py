@@ -39,6 +39,7 @@ from core.preview.models import (
     validate_preview_request_snapshot,
 )
 from core.preview.persistence import (
+    PreviewEffectiveColumnsMetadataMissingError,
     PreviewExpiredArtifact,
     PreviewRequestPage,
     PreviewStorageBackend,
@@ -735,10 +736,8 @@ class PreviewRuntime:
                             tenant_id=tenant_id,
                             now=now,
                         )
-                    except ValueError as exc:
-                        if str(exc) == "preview effective columns metadata is required":
-                            return
-                        raise
+                    except PreviewEffectiveColumnsMetadataMissingError:
+                        return
                     if artifact is not None:
                         artifacts.append(artifact)
                     else:

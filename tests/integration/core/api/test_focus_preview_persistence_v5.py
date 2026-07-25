@@ -377,10 +377,16 @@ def test_invalid_current_effective_columns_metadata_preserves_recovery_unavailab
         patch("core.api.app.ApiTenantBackendProvider", return_value=provider),
         SameThreadApiClient(app) as client,
     ):
-        response = client.get(f"/api/v1/tenants/production/focus-preview/requests/{request_id}")
-
-    assert response.status_code == 503
-    assert response.json() == {"detail": "FOCUS Mapping Preview recovery is unavailable"}
+        base = f"/api/v1/tenants/production/focus-preview/requests/{request_id}"
+        for path in (
+            base,
+            f"{base}/manifest",
+            f"{base}/files/focus.csv",
+            f"{base}/archive",
+        ):
+            response = client.get(path)
+            assert response.status_code == 503
+            assert response.json() == {"detail": "FOCUS Mapping Preview recovery is unavailable"}
     backend.dispose()
 
 
@@ -489,11 +495,22 @@ def test_obsolete_revision_021_package_survives_upgrade_physically_but_all_deliv
     )
     assert tuple(upgraded[4:9]) == (None, None, None, None, None)
     assert str(upgraded.expires_at) == "2026-07-26 00:02:00.345678"
-    assert (storage_dir / "manifest.json").read_bytes() == manifest_body
-    assert (storage_dir / "focus.csv").read_bytes() == csv_body
+    manifest_before = (storage_dir / "manifest.json").read_bytes()
+    csv_before = (storage_dir / "focus.csv").read_bytes()
+    assert manifest_before == manifest_body
+    assert csv_before == csv_body
 
     app = create_app(_settings(connection_string, artifact_root))
     with SameThreadApiClient(app) as client:
+        engine = create_engine(connection_string)
+        with engine.connect() as connection:
+            persisted_row_before = tuple(
+                connection.execute(
+                    text("SELECT * FROM preview_requests WHERE request_id = :request_id"),
+                    {"request_id": request_id},
+                ).one()
+            )
+        engine.dispose()
         base = f"/api/v1/tenants/production/focus-preview/requests/{request_id}"
         for path in (
             base,
@@ -504,9 +521,18 @@ def test_obsolete_revision_021_package_survives_upgrade_physically_but_all_deliv
             response = client.get(path)
             assert response.status_code == 503
             assert response.json() == {"detail": "FOCUS Mapping Preview storage is unavailable"}
-
-    assert (storage_dir / "manifest.json").read_bytes() == manifest_body
-    assert (storage_dir / "focus.csv").read_bytes() == csv_body
+        engine = create_engine(connection_string)
+        with engine.connect() as connection:
+            persisted_row_after = tuple(
+                connection.execute(
+                    text("SELECT * FROM preview_requests WHERE request_id = :request_id"),
+                    {"request_id": request_id},
+                ).one()
+            )
+        engine.dispose()
+    assert persisted_row_after == persisted_row_before
+    assert (storage_dir / "manifest.json").read_bytes() == manifest_before
+    assert (storage_dir / "focus.csv").read_bytes() == csv_before
 
 
 @pytest.mark.parametrize(
