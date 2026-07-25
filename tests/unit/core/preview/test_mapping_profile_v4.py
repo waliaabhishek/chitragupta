@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 from core.preview import mapping
@@ -17,14 +16,6 @@ RESOLVED_COLUMNS = {
     "x_ChitraguptaAllocationRatio",
     "x_ChitraguptaAllocationMethodVersion",
 }
-RETAINED_FRONTEND_GAPS = (
-    "provider_billing_currency_field_unavailable",
-    "invoice_identity_unavailable",
-    "invoice_issuer_name_unavailable",
-    "provider_host_display_name_unavailable",
-    "provider_region_display_name_unavailable",
-    "derived_sku_identity_not_provider_authoritative",
-)
 TASK_254_05_LINE_TYPES = {
     "AUDIT_LOG_READ",
     "SUPPORT",
@@ -62,29 +53,6 @@ def test_every_current_native_line_type_is_lineage_ready_without_changing_tablef
         mapping.FOCUS_1_4_SERVICE_RULES_V1[mapping.PreviewServiceRuleKey.TABLEFLOW].context_strategy
         == "unsupported_provider_context"
     )
-
-
-def test_frontend_removes_only_resolved_task_254_05_hard_coded_gap_entries() -> None:
-    frontend = Path("frontend/src/pages/focusPreview/index.tsx").read_text()
-    frontend_test = Path("frontend/src/pages/focusPreview/index.test.tsx").read_text()
-
-    for gap in RESOLVED_GAPS:
-        assert gap not in frontend
-        assert f'screen.getByText("{gap}")' not in frontend_test
-    declared_block = frontend.split("const CURRENT_AUTHORITY_GAPS = [", 1)[1].split("] as const;", 1)[0]
-    assert tuple(re.findall(r'code: "([^"]+)"', declared_block)) == RETAINED_FRONTEND_GAPS
-    for retained in RETAINED_FRONTEND_GAPS:
-        assert retained in frontend
-    for description in (
-        "Confluent Costs records do not carry a per-record billing currency.",
-        "Post-issuance invoice identity is unavailable.",
-        "Provider legal invoice-issuer evidence is unavailable.",
-        "HostProviderName contains the raw provider cloud code, not a provider display name.",
-        "Confluent inventory does not provide a distinct region display name.",
-        "SKU values are deterministic Chitragupta-derived evidence, not provider-issued identifiers.",
-    ):
-        assert description in frontend
-        assert description in frontend_test
 
 
 def test_global_handler_allocator_and_generic_export_modules_are_not_task_254_05_policy_owners() -> None:

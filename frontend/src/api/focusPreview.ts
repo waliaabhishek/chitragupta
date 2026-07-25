@@ -137,10 +137,17 @@ export type SubmitFocusPreviewBody =
   | SubmitDailyFocusPreviewBody
   | SubmitMonthlyFocusPreviewBody;
 
+export interface FocusPreviewKnownGap {
+  code: string;
+  description: string;
+  columns: string[];
+}
+
 export interface FocusPreviewProfile {
   mapping_profile_version: string;
   full_columns: string[];
   summary_columns: string[];
+  known_gaps: FocusPreviewKnownGap[];
 }
 
 async function requireOk(response: Response): Promise<Response> {

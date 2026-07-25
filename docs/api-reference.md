@@ -530,9 +530,17 @@ requested-package owner-recovery step.
 
 Return static metadata for the current `focus-1.4-preview-v5` mapping profile:
 `mapping_profile_version`, the ordered `full_columns` allowlist, and the ordered
-20-column `summary_columns` subset. This endpoint validates tenant existence and
-the Confluent Cloud ecosystem but does not initialize Preview storage or the
-worker runtime.
+20-column `summary_columns` subset. The response also contains `known_gaps`,
+the same canonical ordered public value used by Requested Preview Package and
+Published Preview Revision manifests. Each gap contains exactly `code`,
+customer-facing `description`, and ordered affected `columns`; internal task or
+issue ownership, reviewer terminology, implementation chronology, and
+delivery-process metadata are excluded. The pre-submission UI renders its
+**Current authority gaps** list from this response. See the manifest contract
+below for the complete current gap catalog, which is not repeated here.
+
+This endpoint validates tenant existence and the Confluent Cloud ecosystem but
+does not initialize Preview storage or the worker runtime.
 
 ### `POST /api/v1/tenants/{tenant_name}/focus-preview/repairs`
 

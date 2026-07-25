@@ -459,7 +459,7 @@ All paths are under `/api/v1/tenants/{tenant_name}/focus-preview`.
 
 | Method and path | Purpose |
 |---|---|
-| `GET /profile` | Return the mapping profile version and ordered Full/Summary column allowlists. |
+| `GET /profile` | Return the mapping profile version, ordered Full/Summary column allowlists, and canonical ordered public `known_gaps`. |
 | `POST /repairs` | In `both` mode, create a durable historical repair for an eligible retained UTC interval. |
 | `GET /repairs/{repair_id}` | Read durable operation and per-date repair status. |
 | `POST /requests` | Create an asynchronous Daily or Monthly request. |
@@ -477,6 +477,14 @@ All paths are under `/api/v1/tenants/{tenant_name}/focus-preview`.
 | `GET /revisions/{revision_id}/manifest` | Download a retained revision manifest. |
 | `GET /revisions/{revision_id}/files/{file_name}` | Download one retained revision CSV part. |
 | `GET /revisions/{revision_id}/archive` | Stream a retained revision ZIP. |
+
+The pre-submission UI renders **Current authority gaps** from the existing
+tenant-scoped `/profile` response. Its `known_gaps` value is the same canonical
+ordered public value used by Requested Preview Package and Published Preview
+Revision manifests. Each gap contains exactly `code`, customer-facing
+`description`, and ordered affected `columns`; internal ownership and
+delivery-process metadata are excluded. The complete current catalog remains
+documented once in the manifest contract below.
 
 Daily request:
 

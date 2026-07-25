@@ -11,6 +11,7 @@ import {
   listFocusPreviewRevisions,
   submitFocusPreview,
   type FocusPreviewColumnProfile,
+  type FocusPreviewKnownGap,
   type FocusPreviewRequest,
   type FocusPreviewRevision,
   type FocusPreviewRevisionSummary,
@@ -217,33 +218,6 @@ function PreviewRevisionDownload({
   );
 }
 
-const CURRENT_AUTHORITY_GAPS = [
-  {
-    code: "provider_billing_currency_field_unavailable",
-    description: "Confluent Costs records do not carry a per-record billing currency.",
-  },
-  {
-    code: "invoice_identity_unavailable",
-    description: "Post-issuance invoice identity is unavailable.",
-  },
-  {
-    code: "invoice_issuer_name_unavailable",
-    description: "Provider legal invoice-issuer evidence is unavailable.",
-  },
-  {
-    code: "provider_host_display_name_unavailable",
-    description: "HostProviderName contains the raw provider cloud code, not a provider display name.",
-  },
-  {
-    code: "provider_region_display_name_unavailable",
-    description: "Confluent inventory does not provide a distinct region display name.",
-  },
-  {
-    code: "derived_sku_identity_not_provider_authoritative",
-    description: "SKU values are deterministic Chitragupta-derived evidence, not provider-issued identifiers.",
-  },
-] as const;
-
 interface FocusPreviewPageProps {
   now?: () => Date;
 }
@@ -264,6 +238,7 @@ export function FocusPreviewPage({ now = () => new Date() }: FocusPreviewPagePro
   const [columnProfile, setColumnProfile] = useState<FocusPreviewColumnProfile>("full");
   const [customColumns, setCustomColumns] = useState<string[]>([]);
   const [fullColumns, setFullColumns] = useState<string[]>([]);
+  const [knownGaps, setKnownGaps] = useState<FocusPreviewKnownGap[]>([]);
   const [startDate, setStartDate] = useState(initialRange.startDate);
   const [endDate, setEndDate] = useState(initialRange.endDate);
   const [preview, setPreview] = useState<FocusPreviewRequest | null>(null);
@@ -318,6 +293,7 @@ export function FocusPreviewPage({ now = () => new Date() }: FocusPreviewPagePro
     setRevisionControlsVisible(false);
     setOperationError(null);
     setRevisionError(null);
+    setKnownGaps([]);
     if (!currentTenant || featureBlocked) return;
 
     const tenantName = currentTenant.tenant_name;
@@ -332,7 +308,9 @@ export function FocusPreviewPage({ now = () => new Date() }: FocusPreviewPagePro
 
     void fetchFocusPreviewProfile(tenantName, profileController.signal)
       .then((profile) => {
-        if (active(profileController)) setFullColumns(profile.full_columns);
+        if (!active(profileController)) return;
+        setFullColumns(profile.full_columns);
+        setKnownGaps(profile.known_gaps);
       })
       .catch((error: unknown) => {
         if (active(profileController) && !isAbortError(error)) {
@@ -744,12 +722,12 @@ export function FocusPreviewPage({ now = () => new Date() }: FocusPreviewPagePro
         type="warning"
         showIcon
         message="Non-conforming preview"
-        description="Provider-authoritative billing currency evidence is unavailable. The manifest declares every current authority gap."
+        description="Every generated manifest declares the current authority gaps."
       />
       <section aria-labelledby="focus-preview-gaps">
         <Title id="focus-preview-gaps" level={4}>Current authority gaps</Title>
         <ul>
-          {CURRENT_AUTHORITY_GAPS.map((gap) => (
+          {knownGaps.map((gap) => (
             <li key={gap.code}>
               <Text code>{gap.code}</Text>{" "}
               <Text>{gap.description}</Text>

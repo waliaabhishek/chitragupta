@@ -83,21 +83,38 @@ describe("FOCUS Preview grain and profile API contracts", () => {
   });
 
   it("loads code-owned profile metadata from the static endpoint", async () => {
+    const knownGaps = [
+      {
+        code: "sentinel_gap_zeta",
+        description: "Sentinel zeta authority evidence is unavailable.",
+        columns: ["SentinelColumnB", "SentinelColumnA"],
+      },
+      {
+        code: "sentinel_gap_alpha",
+        description: "Sentinel alpha authority evidence is unavailable.",
+        columns: ["SentinelColumnC"],
+      },
+    ];
     server.use(
       http.get(`${API_BASE}/tenants/production/focus-preview/profile`, () =>
         HttpResponse.json({
           mapping_profile_version: "focus-1.4-preview-v5",
           full_columns: ["BilledCost", "Tags"],
           summary_columns: ["BilledCost"],
+          known_gaps: knownGaps,
         }),
       ),
     );
     const { fetchFocusPreviewProfile } = await loadClient();
 
-    await expect(fetchFocusPreviewProfile("production")).resolves.toEqual({
+    const profile = await fetchFocusPreviewProfile("production");
+
+    expect(profile).toEqual({
       mapping_profile_version: "focus-1.4-preview-v5",
       full_columns: ["BilledCost", "Tags"],
       summary_columns: ["BilledCost"],
+      known_gaps: knownGaps,
     });
+    expect(profile.known_gaps).toEqual(knownGaps);
   });
 });

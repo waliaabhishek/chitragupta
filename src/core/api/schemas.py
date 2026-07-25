@@ -150,10 +150,17 @@ class FocusPreviewSourceSnapshotResponse(BaseModel):
     monthly_status: Literal["provisional", "settled"] | None
 
 
+class FocusPreviewKnownGapResponse(BaseModel):
+    code: str
+    description: str
+    columns: list[str]
+
+
 class FocusPreviewProfileResponse(BaseModel):
     mapping_profile_version: str
     full_columns: list[str]
     summary_columns: list[str]
+    known_gaps: list[FocusPreviewKnownGapResponse]
 
 
 class FocusPreviewArtifactResponse(BaseModel):

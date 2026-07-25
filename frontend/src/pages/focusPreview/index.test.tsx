@@ -92,6 +92,19 @@ const baseRequest = {
   package: null,
 };
 
+const profileKnownGaps = [
+  {
+    code: "sentinel_profile_gap_zeta",
+    description: "Sentinel zeta profile evidence is unavailable.",
+    columns: ["SentinelColumnB", "SentinelColumnA"],
+  },
+  {
+    code: "sentinel_profile_gap_alpha",
+    description: "Sentinel alpha profile evidence is unavailable.",
+    columns: ["SentinelColumnC"],
+  },
+];
+
 const currentRevision = {
   revision_id: "revision-current",
   tenant_name: "production",
@@ -224,6 +237,7 @@ describe("FOCUS Mapping Preview page delegation", () => {
       mapping_profile_version: "focus-1.4-preview-v5",
       full_columns: ["BilledCost", "Tags", "AllocatedResourceId"],
       summary_columns: ["AllocatedResourceId", "BilledCost", "Tags"],
+      known_gaps: profileKnownGaps,
     });
     vi.mocked(submitFocusPreview).mockResolvedValue(baseRequest);
   });
@@ -248,7 +262,7 @@ describe("FOCUS Mapping Preview page delegation", () => {
     },
   );
 
-  it("shows both grains and all column profiles while retaining non-conformance gaps", async () => {
+  it("shows both grains and all column profiles with profile-provided gaps in response order", async () => {
     render(<FocusPreviewPage />);
 
     expect(screen.getByRole("heading", { name: "FOCUS Mapping Preview" })).toBeTruthy();
@@ -262,37 +276,16 @@ describe("FOCUS Mapping Preview page delegation", () => {
       expect.any(AbortSignal),
     ));
     expect(screen.getByText(/non-conforming/i)).toBeTruthy();
-    const expectedAuthorityGaps = [
-      [
-        "provider_billing_currency_field_unavailable",
-        "Confluent Costs records do not carry a per-record billing currency.",
-      ],
-      [
-        "invoice_identity_unavailable",
-        "Post-issuance invoice identity is unavailable.",
-      ],
-      [
-        "invoice_issuer_name_unavailable",
-        "Provider legal invoice-issuer evidence is unavailable.",
-      ],
-      [
-        "provider_host_display_name_unavailable",
-        "HostProviderName contains the raw provider cloud code, not a provider display name.",
-      ],
-      [
-        "provider_region_display_name_unavailable",
-        "Confluent inventory does not provide a distinct region display name.",
-      ],
-      [
-        "derived_sku_identity_not_provider_authoritative",
-        "SKU values are deterministic Chitragupta-derived evidence, not provider-issued identifiers.",
-      ],
-    ] as const;
-
-    for (const [code, description] of expectedAuthorityGaps) {
-      expect(screen.getByText(code)).toBeTruthy();
-      expect(screen.getByText(description)).toBeTruthy();
-    }
+    const gapsSection = screen
+      .getByRole("heading", { name: "Current authority gaps" })
+      .closest("section");
+    await waitFor(() => {
+      expect(
+        Array.from(gapsSection?.querySelectorAll("li") ?? [], (item) => item.textContent),
+      ).toEqual(
+        profileKnownGaps.map((gap) => `${gap.code} ${gap.description}`),
+      );
+    });
     expect(document.body.textContent).not.toContain("TASK-");
     expect(screen.queryByText(/^Owner:/i)).toBeNull();
     expect(screen.queryByText("allocation_lineage_and_tag_projection_pending")).toBeNull();
@@ -302,6 +295,104 @@ describe("FOCUS Mapping Preview page delegation", () => {
     expect(screen.queryByText("Authoritative provider billing-period mapping is pending.")).toBeNull();
     expect(screen.queryByText("Provider applicability and mapping are pending.")).toBeNull();
     expect(screen.queryByText(/billing period evidence is not yet available/i)).toBeNull();
+  });
+
+  it("keeps Generate enabled while the profile response is pending without showing fallback gaps", async () => {
+    const profile = deferred<Awaited<ReturnType<typeof fetchFocusPreviewProfile>>>();
+    vi.mocked(fetchFocusPreviewProfile).mockReturnValue(profile.promise);
+
+    render(<FocusPreviewPage />);
+
+    await waitFor(() => expect(fetchFocusPreviewProfile).toHaveBeenCalled());
+    expect(screen.getByRole("button", { name: /generate preview/i })).toBeEnabled();
+    expect(screen.getByText(/non-conforming/i)).toBeInTheDocument();
+    const gapsSection = screen
+      .getByRole("heading", { name: "Current authority gaps" })
+      .closest("section");
+    expect(gapsSection?.querySelectorAll("li")).toHaveLength(0);
+  });
+
+  it("keeps Generate enabled and shows only the generic error when the profile response fails", async () => {
+    vi.mocked(fetchFocusPreviewProfile).mockRejectedValue(
+      new Error("sensitive profile transport detail"),
+    );
+
+    render(<FocusPreviewPage />);
+
+    expect(
+      await screen.findByText("FOCUS Mapping Preview request failed. Try again."),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /generate preview/i })).toBeEnabled();
+    expect(screen.queryByText(/sensitive profile transport detail/i)).toBeNull();
+    const gapsSection = screen
+      .getByRole("heading", { name: "Current authority gaps" })
+      .closest("section");
+    expect(gapsSection?.querySelectorAll("li")).toHaveLength(0);
+  });
+
+  it("aborts and rejects a stale profile gap response after the tenant changes", async () => {
+    const productionProfile = deferred<Awaited<ReturnType<typeof fetchFocusPreviewProfile>>>();
+    const stagingProfile = deferred<Awaited<ReturnType<typeof fetchFocusPreviewProfile>>>();
+    let productionSignal: AbortSignal | undefined;
+    vi.mocked(fetchFocusPreviewProfile).mockImplementation((tenantName, signal) => {
+      if (tenantName === "production") {
+        productionSignal = signal;
+        return productionProfile.promise;
+      }
+      return stagingProfile.promise;
+    });
+
+    const { rerender } = render(<FocusPreviewPage />);
+    await waitFor(() =>
+      expect(fetchFocusPreviewProfile).toHaveBeenCalledWith(
+        "production",
+        expect.any(AbortSignal),
+      ),
+    );
+
+    tenantState.current = { tenant_name: "staging", tenant_id: "tenant-2" };
+    rerender(<FocusPreviewPage />);
+
+    await waitFor(() => expect(productionSignal?.aborted).toBe(true));
+    expect(fetchFocusPreviewProfile).toHaveBeenLastCalledWith(
+      "staging",
+      expect.any(AbortSignal),
+    );
+    await act(async () => {
+      stagingProfile.resolve({
+        mapping_profile_version: "focus-1.4-preview-v5",
+        full_columns: ["SentinelColumnC"],
+        summary_columns: ["SentinelColumnC"],
+        known_gaps: [
+          {
+            code: "sentinel_active_tenant_gap",
+            description: "Sentinel active tenant evidence is unavailable.",
+            columns: ["SentinelColumnC"],
+          },
+        ],
+      });
+      await stagingProfile.promise;
+    });
+    expect(await screen.findByText("sentinel_active_tenant_gap")).toBeInTheDocument();
+
+    await act(async () => {
+      productionProfile.resolve({
+        mapping_profile_version: "focus-1.4-preview-v5",
+        full_columns: ["SentinelColumnA"],
+        summary_columns: ["SentinelColumnA"],
+        known_gaps: [
+          {
+            code: "sentinel_stale_tenant_gap",
+            description: "Sentinel stale tenant evidence is unavailable.",
+            columns: ["SentinelColumnA"],
+          },
+        ],
+      });
+      await productionProfile.promise;
+    });
+
+    expect(screen.queryByText("sentinel_stale_tenant_gap")).toBeNull();
+    expect(screen.getByText("sentinel_active_tenant_gap")).toBeInTheDocument();
   });
 
   it("submits, polls, and downloads only through the API module", async () => {

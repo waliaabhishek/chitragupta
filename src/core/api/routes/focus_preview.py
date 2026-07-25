@@ -16,6 +16,7 @@ from core.api.schemas import (  # noqa: TC001  # FastAPI evaluates annotations
     FocusPreviewArtifactResponse,
     FocusPreviewCalculationCoverageEntryResponse,
     FocusPreviewDiagnosticResponse,
+    FocusPreviewKnownGapResponse,
     FocusPreviewPackageResponse,
     FocusPreviewProfileResponse,
     FocusPreviewRepairDateResponse,
@@ -43,6 +44,7 @@ from core.preview.mapping import (
     FOCUS_1_4_FULL_PROFILE_COLUMNS,
     FOCUS_1_4_SUMMARY_COLUMNS,
     MAPPING_PROFILE_VERSION,
+    preview_manifest_known_gaps,
 )
 from core.preview.models import (
     PreviewArtifactMetadata,
@@ -588,6 +590,7 @@ def get_profile(
         mapping_profile_version=MAPPING_PROFILE_VERSION,
         full_columns=list(FOCUS_1_4_FULL_PROFILE_COLUMNS),
         summary_columns=list(FOCUS_1_4_SUMMARY_COLUMNS),
+        known_gaps=[FocusPreviewKnownGapResponse.model_validate(gap) for gap in preview_manifest_known_gaps()],
     )
 
 

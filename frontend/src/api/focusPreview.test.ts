@@ -330,6 +330,13 @@ describe("FOCUS Mapping Preview API delegation", () => {
           mapping_profile_version: "focus-1.4-preview-v5",
           full_columns: ["BilledCost"],
           summary_columns: ["BilledCost"],
+          known_gaps: [
+            {
+              code: "sentinel_minimal_profile_gap",
+              description: "Sentinel minimal profile evidence is unavailable.",
+              columns: ["SentinelColumnA"],
+            },
+          ],
         }),
       ),
       http.get(
@@ -398,6 +405,13 @@ describe("FOCUS Mapping Preview API delegation", () => {
             mapping_profile_version: "focus-1.4-preview-v5",
             full_columns: ["BilledCost"],
             summary_columns: ["BilledCost"],
+            known_gaps: [
+              {
+                code: "sentinel_signal_profile_gap",
+                description: "Sentinel signal profile evidence is unavailable.",
+                columns: ["SentinelColumnB"],
+              },
+            ],
           });
         },
       ),
