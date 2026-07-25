@@ -346,10 +346,10 @@ def test_real_production_lineage_projects_multiple_origins_actual_portions_and_f
         manifest_response = client.get(ready["package"]["manifest"]["download_url"])
         assert manifest_response.status_code == 200
         manifest = manifest_response.json()
-        assert manifest["mapping_profile_version"] == "focus-1.4-preview-v5"
+        assert manifest["mapping_profile_version"] == "focus-1.4-preview-v1"
         assert manifest["validation"] == {
             "status": "passed",
-            "mapping_profile_version": "focus-1.4-preview-v5",
+            "mapping_profile_version": "focus-1.4-preview-v1",
             "source_records": 4,
             "rows": 6,
             "mapping_errors": 0,

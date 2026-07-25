@@ -667,10 +667,10 @@ def test_daily_full_package_maps_provider_financial_account_sku_and_invoice_evid
         assert b"\r\n" not in csv_bytes
 
         manifest = json.loads(manifest_bytes)
-        assert manifest["schema_version"] == "chitragupta.preview-manifest.v2"
+        assert manifest["schema_version"] == "chitragupta.preview-manifest.v1"
         assert manifest["target_focus_version"] == "1.4"
         assert manifest["conformance_status"] == "non_conforming"
-        assert manifest["mapping_profile_version"] == "focus-1.4-preview-v5"
+        assert manifest["mapping_profile_version"] == "focus-1.4-preview-v1"
         assert_public_known_gaps(manifest)
         gap_codes = {gap["code"] for gap in manifest["known_gaps"]}
         assert "task_254_04_applicability_and_provider_mapping_pending" not in gap_codes

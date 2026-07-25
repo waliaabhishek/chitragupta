@@ -53,7 +53,7 @@ from core.preview.evidence import (  # noqa: TC001  # resolved by get_type_hints
     SourceAttemptFinalStatus,
 )
 from core.preview.evidence_capture import PreviewSourceWindowWriter, SourceAttemptBeginFailure  # noqa: TC001
-from core.preview.mapping import LEGACY_DAILY_FULL_V4_COLUMNS, validate_preview_effective_columns
+from core.preview.mapping import validate_preview_effective_columns
 from core.preview.models import (
     PreviewArtifactMetadata,
     PreviewCalculationCoverageEntry,
@@ -879,19 +879,13 @@ def request_to_domain(
 ) -> PreviewRequest:
     profile = _supported_column_profile(row.column_profile)
     grain = _supported_grain(row.grain)
-    legacy_v4 = row.effective_columns_json is None
-    if legacy_v4:
-        if profile != "full" or grain != "daily":
-            raise ValueError("legacy preview columns are valid only for Daily Full rows")
-        effective_columns = LEGACY_DAILY_FULL_V4_COLUMNS
-    else:
-        explicit_columns_json = row.effective_columns_json
-        assert explicit_columns_json is not None
-        decoded_columns = json.loads(explicit_columns_json)
-        if not isinstance(decoded_columns, list) or not all(isinstance(value, str) for value in decoded_columns):
-            raise ValueError("preview effective columns must be a string list")
-        effective_columns = tuple(decoded_columns)
-        validate_preview_effective_columns(profile, effective_columns)
+    if row.effective_columns_json is None:
+        raise ValueError("preview effective columns metadata is required")
+    decoded_columns = json.loads(row.effective_columns_json)
+    if not isinstance(decoded_columns, list) or not all(isinstance(value, str) for value in decoded_columns):
+        raise ValueError("preview effective columns must be a string list")
+    effective_columns = tuple(decoded_columns)
+    validate_preview_effective_columns(profile, effective_columns)
 
     coverage: tuple[PreviewCalculationCoverageEntry, ...] = ()
     if row.calculation_coverage_json:
@@ -910,18 +904,10 @@ def request_to_domain(
         )
     snapshot = None
     if row.status in {PreviewRequestStatus.READY.value, PreviewRequestStatus.EXPIRED.value}:
-        effective_coverage_start_date: date
-        effective_coverage_end_date: date
-        if legacy_v4:
-            effective_coverage_start_date = row.start_date
-            effective_coverage_end_date = row.end_date
-        else:
-            persisted_start = row.effective_coverage_start_date
-            persisted_end = row.effective_coverage_end_date
-            if persisted_start is None or persisted_end is None:
-                raise ValueError("v5 ready preview requires persisted effective coverage bounds")
-            effective_coverage_start_date = persisted_start
-            effective_coverage_end_date = persisted_end
+        effective_coverage_start_date = row.effective_coverage_start_date
+        effective_coverage_end_date = row.effective_coverage_end_date
+        if effective_coverage_start_date is None or effective_coverage_end_date is None:
+            raise ValueError("current ready preview requires persisted effective coverage bounds")
         snapshot = PreviewSourceSnapshot(
             calculation_timestamp=ensure_utc(row.calculation_timestamp),
             calculation_coverage=coverage,
@@ -971,8 +957,6 @@ def request_to_domain(
         )
     elif row.manifest_metadata_json is not None and row.data_files_json is not None:
         raw_files = json.loads(row.data_files_json)
-        if legacy_v4:
-            raw_files = [{**item, "order": index} for index, item in enumerate(raw_files, start=1)]
         package = PreviewPackageMetadata(
             manifest=_artifact_from_dict(json.loads(row.manifest_metadata_json)),
             files=tuple(_artifact_from_dict(item) for item in raw_files),

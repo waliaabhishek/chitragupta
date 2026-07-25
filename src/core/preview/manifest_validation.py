@@ -5,14 +5,21 @@ import logging
 import re
 import tempfile
 from collections.abc import Iterator, Mapping
+from datetime import date
+from decimal import Decimal, InvalidOperation
 from io import TextIOWrapper
 from typing import Any, Literal, Protocol, cast
 
 from core.preview.mapping import (
+    FOCUS_1_4_FULL_PROFILE_COLUMNS,
     MAPPING_PROFILE_VERSION,
+    PREVIEW_MANIFEST_SCHEMA_VERSION,
+    PROFILE_NOT_APPLICABLE_COLUMNS,
+    preview_decimal_text,
     preview_manifest_known_gaps,
     preview_revision_content_sha256,
     preview_revision_source_snapshot,
+    preview_subtract_decimals,
     preview_utc_text,
 )
 from core.preview.models import (
@@ -24,6 +31,7 @@ from core.preview.models import (
 )
 
 logger = logging.getLogger(__name__)
+_CANONICAL_DECIMAL_PATTERN = re.compile(r"-?(?:0|[1-9][0-9]*)(?:\.[0-9]*[1-9])?")
 
 
 class RewindableArtifactStream(Protocol):
@@ -228,6 +236,46 @@ def _require_equal(manifest: Mapping[str, Any], field: str, expected: object) ->
         raise PreviewManifestValidationError(f"stored preview manifest {field} is inconsistent")
 
 
+def _canonical_decimal(value: object) -> Decimal:
+    if not isinstance(value, str) or _CANONICAL_DECIMAL_PATTERN.fullmatch(value) is None:
+        raise PreviewManifestValidationError("stored preview manifest reconciliation is inconsistent")
+    try:
+        decimal = Decimal(value)
+    except InvalidOperation as exc:
+        raise PreviewManifestValidationError("stored preview manifest reconciliation is inconsistent") from exc
+    if not decimal.is_finite() or preview_decimal_text(decimal) != value:
+        raise PreviewManifestValidationError("stored preview manifest reconciliation is inconsistent")
+    return decimal
+
+
+def _validate_reconciliation(manifest: Mapping[str, Any]) -> None:
+    reconciliation = manifest.get("reconciliation")
+    fields = {
+        "source_cost",
+        "allocated_cost",
+        "difference",
+        "source_quantity",
+        "allocated_quantity",
+        "quantity_difference",
+    }
+    if not isinstance(reconciliation, dict) or set(reconciliation) != fields:
+        raise PreviewManifestValidationError("stored preview manifest reconciliation is inconsistent")
+    source_cost = _canonical_decimal(reconciliation["source_cost"])
+    allocated_cost = _canonical_decimal(reconciliation["allocated_cost"])
+    difference = _canonical_decimal(reconciliation["difference"])
+    source_quantity = _canonical_decimal(reconciliation["source_quantity"])
+    allocated_quantity = _canonical_decimal(reconciliation["allocated_quantity"])
+    quantity_difference = _canonical_decimal(reconciliation["quantity_difference"])
+    if (
+        reconciliation["difference"] != preview_decimal_text(preview_subtract_decimals(source_cost, allocated_cost))
+        or reconciliation["quantity_difference"]
+        != preview_decimal_text(preview_subtract_decimals(source_quantity, allocated_quantity))
+        or difference != 0
+        or quantity_difference != 0
+    ):
+        raise PreviewManifestValidationError("stored preview manifest reconciliation is inconsistent")
+
+
 def _parse_manifest(
     stream: RewindableArtifactStream,
     expected_files: Iterator[dict[str, object]],
@@ -264,13 +312,7 @@ def validate_requested_manifest(
     if not isinstance(manifest, dict):
         raise PreviewManifestValidationError("stored preview manifest is invalid")
 
-    if manifest.get("mapping_profile_version") == "focus-1.4-preview-v4":
-        _require_equal(manifest, "request_id", request.request_id)
-        _require_equal(manifest, "grain", request.grain)
-        _require_equal(manifest, "column_profile", request.column_profile)
-        return
-
-    _require_equal(manifest, "schema_version", "chitragupta.preview-manifest.v2")
+    _require_equal(manifest, "schema_version", PREVIEW_MANIFEST_SCHEMA_VERSION)
     _require_equal(manifest, "package_type", "requested_preview_package")
     _require_equal(manifest, "request_id", request.request_id)
     _require_equal(manifest, "tenant_name", request.tenant_name)
@@ -288,6 +330,11 @@ def validate_requested_manifest(
     _require_equal(manifest, "conformance_status", "non_conforming")
     _require_equal(manifest, "mapping_profile_version", MAPPING_PROFILE_VERSION)
     _require_equal(manifest, "known_gaps", preview_manifest_known_gaps())
+    _require_equal(
+        manifest,
+        "profile_not_applicable_columns",
+        list(PROFILE_NOT_APPLICABLE_COLUMNS),
+    )
 
     snapshot = request.source_snapshot
     if snapshot is None:
@@ -311,6 +358,23 @@ def validate_requested_manifest(
     if source_snapshot != expected_snapshot:
         raise PreviewManifestValidationError("stored preview manifest source snapshot is inconsistent")
 
+    evidence_start = snapshot.effective_coverage_start_date
+    evidence_end = snapshot.effective_coverage_end_date
+    if evidence_start is None or evidence_end is None:
+        raise PreviewManifestValidationError("stored preview manifest evidence coverage is inconsistent")
+    evidence_through = None if evidence_start == evidence_end else evidence_end - date.resolution
+    expected_evidence_coverage = {
+        "start_date": evidence_start.isoformat(),
+        "end_date": evidence_end.isoformat(),
+        "end_exclusive": True,
+        "evidence_through_date": None if evidence_through is None else evidence_through.isoformat(),
+        "availability_cutoff_end_date": (
+            None if snapshot.availability_cutoff_end_date is None else snapshot.availability_cutoff_end_date.isoformat()
+        ),
+    }
+    if manifest.get("evidence_coverage") != expected_evidence_coverage:
+        raise PreviewManifestValidationError("stored preview manifest evidence coverage is inconsistent")
+
     _require_equal(manifest, "monthly_status", snapshot.monthly_status)
     validation = manifest.get("validation")
     if not isinstance(validation, dict):
@@ -322,10 +386,14 @@ def validate_requested_manifest(
         or validation.get("artifact_integrity") != "passed"
         or not isinstance(validation.get("source_records"), int)
         or isinstance(validation.get("source_records"), bool)
+        or validation["source_records"] < 0
         or not isinstance(validation.get("rows"), int)
         or isinstance(validation.get("rows"), bool)
+        or validation["rows"] < 0
     ):
         raise PreviewManifestValidationError("stored preview manifest validation is inconsistent")
+
+    _validate_reconciliation(manifest)
 
     if request.completed_at is None or request.expires_at is None:
         raise PreviewManifestValidationError("stored preview manifest lifecycle is inconsistent")
@@ -353,7 +421,7 @@ def validate_revision_manifest(
         (_artifact_declaration(item) for item in revision.package.files),
     )
 
-    _require_equal(manifest, "schema_version", "chitragupta.preview-manifest.v2")
+    _require_equal(manifest, "schema_version", PREVIEW_MANIFEST_SCHEMA_VERSION)
     _require_equal(manifest, "package_type", "published_preview_revision")
     _require_equal(manifest, "revision_id", revision.revision_id)
     _require_equal(manifest, "tenant_name", revision.tenant_name_at_publication)
@@ -371,6 +439,10 @@ def validate_revision_manifest(
     )
     _require_equal(manifest, "conformance_status", "non_conforming")
     _require_equal(manifest, "known_gaps", preview_manifest_known_gaps())
+    _require_equal(manifest, "mapping_profile_version", MAPPING_PROFILE_VERSION)
+    _require_equal(manifest, "target_focus_version", "1.4")
+    _require_equal(manifest, "column_profile", "full")
+    _require_equal(manifest, "effective_columns", list(FOCUS_1_4_FULL_PROFILE_COLUMNS))
 
     mapping_profile_version = manifest.get("mapping_profile_version")
     target_focus_version = manifest.get("target_focus_version")
@@ -382,9 +454,8 @@ def validate_revision_manifest(
         not isinstance(mapping_profile_version, str)
         or not isinstance(target_focus_version, str)
         or not isinstance(column_profile, str)
-        or column_profile not in {"full", "summary", "custom"}
-        or not isinstance(effective_columns, list)
-        or not all(isinstance(item, str) for item in effective_columns)
+        or column_profile != "full"
+        or effective_columns != list(FOCUS_1_4_FULL_PROFILE_COLUMNS)
         or not isinstance(logical_data_sha256, str)
         or re.fullmatch(r"[0-9a-f]{64}", logical_data_sha256) is None
         or not isinstance(material_sha256, str)

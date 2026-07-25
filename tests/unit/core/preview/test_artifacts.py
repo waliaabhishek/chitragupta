@@ -104,7 +104,7 @@ def _manifest(files: tuple[object, ...], *, mutate_sha: bool = False) -> bytes:
     ]
     return (
         json.dumps(
-            {"schema_version": "chitragupta.preview-manifest.v2", "files": declared},
+            {"schema_version": "chitragupta.preview-manifest.v1", "files": declared},
             sort_keys=True,
             separators=(",", ":"),
         )

@@ -13,7 +13,7 @@ import pytest
 
 from tests.unit.core.preview.conftest import preview_module
 from tests.unit.core.preview.test_revision_mapping import EXPECTED_PUBLIC_KNOWN_GAPS
-from tests.unit.core.preview.test_revision_reader import _stored_revision
+from tests.unit.core.preview.test_revision_reader import _stored_revision, _TestArtifactStream
 from tests.unit.core.preview.test_service import _ready_request
 
 
@@ -81,6 +81,61 @@ _KNOWN_GAP_TAMPERS = (
 )
 
 
+def _set_manifest_path(
+    manifest: dict[str, Any],
+    path: tuple[str | int, ...],
+    value: object,
+) -> None:
+    target: Any = manifest
+    for part in path[:-1]:
+        target = target[part]
+    target[path[-1]] = value
+
+
+_LEGACY_SELF_CLAIM_BYPASS_TAMPERS = (
+    ("schema", ("schema_version",), "chitragupta.preview-manifest.v2"),
+    ("package-identity", ("package_type",), "other"),
+    ("request-identity", ("request_id",), "other"),
+    ("tenant", ("tenant_name",), "other"),
+    ("interval", ("start_date",), "2026-06-30"),
+    ("effective-columns", ("effective_columns",), ["BilledCost"]),
+    ("target", ("target_focus_version",), "1.3"),
+    ("status", ("conformance_status",), "conforming"),
+    ("gaps", ("known_gaps",), []),
+    ("snapshot", ("source_snapshot",), {}),
+    ("evidence-coverage", ("evidence_coverage",), {}),
+    ("lifecycle", ("lifecycle",), {}),
+    ("validation", ("validation",), {}),
+    ("reconciliation", ("reconciliation",), {}),
+    ("file-order", ("files", 0, "order"), 9),
+    ("file-checksum", ("files", 0, "sha256"), "0" * 64),
+)
+
+
+@pytest.mark.parametrize(
+    "value",
+    (
+        "1e100000",
+        "01",
+        "1.0",
+        "+1",
+    ),
+)
+def test_reconciliation_rejects_noncanonical_decimal_before_parsing(
+    monkeypatch: pytest.MonkeyPatch,
+    value: str,
+) -> None:
+    validation = preview_module("manifest_validation")
+    monkeypatch.setattr(
+        validation,
+        "Decimal",
+        lambda _value: pytest.fail("invalid reconciliation decimal reached Decimal construction"),
+    )
+
+    with pytest.raises(validation.PreviewManifestValidationError):
+        validation._canonical_decimal(value)
+
+
 @pytest.mark.parametrize(
     ("case", "mutate"),
     [
@@ -106,6 +161,27 @@ _KNOWN_GAP_TAMPERS = (
                 "artifact_integrity",
                 "failed",
             ),
+        ),
+        (
+            "profile-not-applicable",
+            lambda manifest: manifest.__setitem__("profile_not_applicable_columns", []),
+        ),
+        (
+            "evidence-coverage",
+            lambda manifest: manifest.__setitem__("evidence_coverage", {}),
+        ),
+        (
+            "validation-negative-count",
+            lambda manifest: manifest["validation"].__setitem__("source_records", -1),
+        ),
+        (
+            "reconciliation",
+            lambda manifest: manifest["reconciliation"].__setitem__("difference", "1"),
+        ),
+        ("lifecycle", lambda manifest: manifest.__setitem__("lifecycle", {})),
+        (
+            "generated-at",
+            lambda manifest: manifest.__setitem__("generated_at", "2026-07-05T00:00:00Z"),
         ),
     ],
     ids=lambda value: value if isinstance(value, str) else None,
@@ -147,6 +223,128 @@ def test_requested_manifest_rejects_noncanonical_public_gap_contract(
     finally:
         runtime.close()
         backend.dispose()
+
+
+def test_legacy_v4_self_claim_cannot_bypass_any_current_requested_manifest_check(
+    tmp_path: Path,
+) -> None:
+    runtime, ready, backend, _executor = _ready_request(tmp_path)
+    assert ready.storage_key is not None
+    manifest_path = tmp_path / "artifacts" / ready.storage_key / "manifest.json"
+    original = json.loads(manifest_path.read_bytes())
+    validation = preview_module("manifest_validation")
+    try:
+        for case, path, value in _LEGACY_SELF_CLAIM_BYPASS_TAMPERS:
+            manifest = deepcopy(original)
+            manifest["mapping_profile_version"] = "focus-1.4-preview-v4"
+            _set_manifest_path(manifest, path, value)
+            body = (json.dumps(manifest, sort_keys=True, separators=(",", ":")) + "\n").encode()
+            try:
+                validation.validate_requested_manifest(_TestArtifactStream(body), ready)
+            except validation.PreviewManifestValidationError:
+                continue
+            pytest.fail(f"legacy v4 self-claim bypassed current requested-manifest check: {case}")
+    finally:
+        runtime.close()
+        backend.dispose()
+
+
+def test_incomplete_internal_schema_v1_collision_fails_complete_current_validation(
+    tmp_path: Path,
+) -> None:
+    runtime, ready, backend, _executor = _ready_request(tmp_path)
+    assert ready.storage_key is not None
+    manifest_path = tmp_path / "artifacts" / ready.storage_key / "manifest.json"
+    incomplete = json.loads(manifest_path.read_bytes())
+    incomplete["schema_version"] = "chitragupta.preview-manifest.v1"
+    incomplete.pop("effective_columns")
+    body = (json.dumps(incomplete, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    validation = preview_module("manifest_validation")
+    try:
+        with pytest.raises(validation.PreviewManifestValidationError):
+            validation.validate_requested_manifest(_TestArtifactStream(body), ready)
+    finally:
+        runtime.close()
+        backend.dispose()
+
+
+def test_requested_and_revision_builders_share_exact_first_release_authorities(
+    tmp_path: Path,
+) -> None:
+    requested_root = tmp_path / "requested"
+    requested_root.mkdir()
+    runtime, ready, backend, _executor = _ready_request(requested_root)
+    revision, revision_body, store = _stored_revision(tmp_path / "revision")
+    del revision
+    assert ready.storage_key is not None
+    requested_path = requested_root / "artifacts" / ready.storage_key / "manifest.json"
+    requested = json.loads(requested_path.read_bytes())
+    revision_manifest = json.loads(revision_body)
+    mapping = preview_module("mapping")
+    try:
+        assert mapping.MAPPING_PROFILE_VERSION == "focus-1.4-preview-v1"
+        assert mapping.PREVIEW_MANIFEST_SCHEMA_VERSION == "chitragupta.preview-manifest.v1"
+        assert requested["mapping_profile_version"] == mapping.MAPPING_PROFILE_VERSION
+        assert revision_manifest["mapping_profile_version"] == mapping.MAPPING_PROFILE_VERSION
+        assert requested["schema_version"] == mapping.PREVIEW_MANIFEST_SCHEMA_VERSION
+        assert revision_manifest["schema_version"] == mapping.PREVIEW_MANIFEST_SCHEMA_VERSION
+    finally:
+        runtime.close()
+        backend.dispose()
+        store.close()
+
+
+def test_revision_validation_rejects_obsolete_schema_even_when_manifest_is_otherwise_current(
+    tmp_path: Path,
+) -> None:
+    revision, body, store = _stored_revision(tmp_path)
+    manifest = json.loads(body)
+    manifest["schema_version"] = "chitragupta.preview-manifest.v2"
+    obsolete = (json.dumps(manifest, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    validation = preview_module("manifest_validation")
+    try:
+        with pytest.raises(validation.PreviewManifestValidationError):
+            validation.validate_revision_manifest(_TestArtifactStream(obsolete), revision)
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize(
+    ("field", "obsolete_value"),
+    [
+        ("mapping_profile_version", "focus-1.4-preview-v5"),
+        ("target_focus_version", "1.3"),
+        ("column_profile", "summary"),
+        ("effective_columns", ["BilledCost"]),
+    ],
+)
+def test_revision_validation_rejects_self_consistent_obsolete_material_authority(
+    tmp_path: Path,
+    field: str,
+    obsolete_value: object,
+) -> None:
+    revision, body, store = _stored_revision(tmp_path)
+    manifest = json.loads(body)
+    manifest[field] = obsolete_value
+    if field == "mapping_profile_version":
+        manifest["validation"]["mapping_profile_version"] = obsolete_value
+    mapping = preview_module("mapping")
+    obsolete_material = mapping.preview_revision_content_sha256(
+        mapping_profile_version=manifest["mapping_profile_version"],
+        target_focus_version=manifest["target_focus_version"],
+        column_profile=manifest["column_profile"],
+        effective_columns=tuple(manifest["effective_columns"]),
+        logical_data_sha256=manifest["logical_data_sha256"],
+    )
+    manifest["material_sha256"] = obsolete_material
+    obsolete_revision = replace(revision, material_sha256=obsolete_material)
+    obsolete = (json.dumps(manifest, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    validation = preview_module("manifest_validation")
+    try:
+        with pytest.raises(validation.PreviewManifestValidationError):
+            validation.validate_revision_manifest(_TestArtifactStream(obsolete), obsolete_revision)
+    finally:
+        store.close()
 
 
 @pytest.mark.parametrize(("case", "mutate"), _KNOWN_GAP_TAMPERS)

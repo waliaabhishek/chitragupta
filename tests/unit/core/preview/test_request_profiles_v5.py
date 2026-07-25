@@ -292,11 +292,15 @@ def test_monthly_request_adapter_rejects_future_and_returns_same_resolution(monk
         request.resolve_preview_evidence_interval(request=monthly, policy=policy)
 
 
-def test_full_and_summary_columns_are_exact_versioned_authorities() -> None:
+def test_full_and_summary_columns_are_exact_current_authorities_without_legacy_alias() -> None:
     mapping = _mapping()
 
-    assert len(mapping.LEGACY_DAILY_FULL_V4_COLUMNS) == 77
-    assert mapping.FOCUS_1_4_FULL_PROFILE_COLUMNS is mapping.LEGACY_DAILY_FULL_V4_COLUMNS
+    assert not hasattr(mapping, "LEGACY_DAILY_FULL_V4_COLUMNS")
+    assert (
+        *mapping.FOCUS_1_4_FULL_COLUMNS,
+        *mapping.CUSTOM_EVIDENCE_COLUMNS,
+    ) == mapping.FOCUS_1_4_FULL_PROFILE_COLUMNS
+    assert len(mapping.FOCUS_1_4_FULL_PROFILE_COLUMNS) == 77
     assert mapping.FOCUS_1_4_SUMMARY_COLUMNS == SUMMARY_COLUMNS
     mapping.validate_preview_effective_columns("full", mapping.FOCUS_1_4_FULL_PROFILE_COLUMNS)
     mapping.validate_preview_effective_columns("summary", SUMMARY_COLUMNS)

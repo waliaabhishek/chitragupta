@@ -98,7 +98,7 @@ describe("FOCUS Preview grain and profile API contracts", () => {
     server.use(
       http.get(`${API_BASE}/tenants/production/focus-preview/profile`, () =>
         HttpResponse.json({
-          mapping_profile_version: "focus-1.4-preview-v5",
+          mapping_profile_version: "focus-1.4-preview-v1",
           full_columns: ["BilledCost", "Tags"],
           summary_columns: ["BilledCost"],
           known_gaps: knownGaps,
@@ -110,7 +110,7 @@ describe("FOCUS Preview grain and profile API contracts", () => {
     const profile = await fetchFocusPreviewProfile("production");
 
     expect(profile).toEqual({
-      mapping_profile_version: "focus-1.4-preview-v5",
+      mapping_profile_version: "focus-1.4-preview-v1",
       full_columns: ["BilledCost", "Tags"],
       summary_columns: ["BilledCost"],
       known_gaps: knownGaps,

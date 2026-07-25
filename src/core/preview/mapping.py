@@ -47,7 +47,8 @@ from core.preview.spooling import (
 )
 from core.storage.interface import ResourceRepository  # noqa: TC001 - resolved by contract tests
 
-MAPPING_PROFILE_VERSION = "focus-1.4-preview-v5"
+MAPPING_PROFILE_VERSION = "focus-1.4-preview-v1"
+PREVIEW_MANIFEST_SCHEMA_VERSION = "chitragupta.preview-manifest.v1"
 PREVIEW_DECIMAL_CONTEXT = Context(prec=38)
 _DECIMAL_CONTEXT = PREVIEW_DECIMAL_CONTEXT
 logger = logging.getLogger(__name__)
@@ -144,7 +145,7 @@ class PreviewRowValidationError(PreviewMappingError):
         super().__init__(rule_id.value if column is None else f"{rule_id.value}:{column}")
 
 
-# Compatibility aliases retained for callers from the v2 boundary.
+# Stable exception names used across Preview mapping callers.
 PreviewTracerScopeError = PreviewMappingScopeError
 PreviewSourceSnapshotError = PreviewSourceEvidenceError
 PreviewReconciliationError = PreviewFinancialReconciliationError
@@ -546,7 +547,7 @@ _CUSTOM_RULE_AUTHORITIES = {
     ),
     "x_ChitraguptaAllocationRatio": ("persisted allocation lineage", "copy exact realized ratio"),
     "x_ChitraguptaAllocationMethodVersion": ("persisted allocation lineage", "copy lineage method version"),
-    "x_ChitraguptaMappingProfileVersion": ("mapping profile", "emit focus-1.4-preview-v5"),
+    "x_ChitraguptaMappingProfileVersion": ("mapping profile", "emit focus-1.4-preview-v1"),
     "x_ChitraguptaSkuComponents": (
         "canonical SKU and SKU price components",
         "serialize as canonical JSON",
@@ -577,11 +578,10 @@ CUSTOM_EVIDENCE_RULES = tuple(
 )
 CUSTOM_EVIDENCE_COLUMNS = tuple(rule.column for rule in CUSTOM_EVIDENCE_RULES)
 
-LEGACY_DAILY_FULL_V4_COLUMNS = (
+FOCUS_1_4_FULL_PROFILE_COLUMNS = (
     *FOCUS_1_4_FULL_COLUMNS,
     *CUSTOM_EVIDENCE_COLUMNS,
 )
-FOCUS_1_4_FULL_PROFILE_COLUMNS = LEGACY_DAILY_FULL_V4_COLUMNS
 FOCUS_1_4_SUMMARY_COLUMNS = (
     "AllocatedResourceId",
     "AllocatedResourceName",
@@ -1126,8 +1126,7 @@ def preview_canonical_json(value: object) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"))
 
 
-# Compatibility names for unchanged v4 call sites. New v5 modules use the
-# named Preview APIs above.
+# Private spellings used by mapping-local call sites.
 _utc = preview_utc_text
 _decimal = preview_decimal_text
 _serialize_cell = preview_serialize_cell
@@ -2783,7 +2782,7 @@ def build_requested_preview_manifest(
         "source_through": None if snapshot.source_through is None else preview_utc_text(snapshot.source_through),
     }
     manifest = {
-        "schema_version": "chitragupta.preview-manifest.v2",
+        "schema_version": PREVIEW_MANIFEST_SCHEMA_VERSION,
         "package_type": "requested_preview_package",
         "request_id": request.request_id,
         "tenant_name": request.tenant_name,
@@ -2905,7 +2904,7 @@ def build_preview_revision_manifest(
         raise PreviewMappingError("revision material digest does not match canonical preimage")
     reconciliation = draft.reconciliation
     manifest = {
-        "schema_version": "chitragupta.preview-manifest.v2",
+        "schema_version": PREVIEW_MANIFEST_SCHEMA_VERSION,
         "package_type": "published_preview_revision",
         "revision_id": revision_id,
         "tenant_name": tenant_name_at_publication,

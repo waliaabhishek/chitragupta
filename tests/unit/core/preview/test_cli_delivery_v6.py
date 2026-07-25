@@ -35,7 +35,7 @@ def _artifact(name: str, body: bytes, order: int | None, url: str) -> dict[str, 
 def _ready_package() -> tuple[dict[str, object], bytes, dict[str, bytes], bytes]:
     files = {"part-1.csv": b"name,cost\na,1\n", "part-2.csv": b"name,cost\nb,2\n"}
     manifest_value = {
-        "schema_version": "chitragupta.preview-manifest.v2",
+        "schema_version": "chitragupta.preview-manifest.v1",
         "request_id": "request-1",
         "known_gaps": EXPECTED_PUBLIC_KNOWN_GAPS,
         "files": [

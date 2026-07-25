@@ -106,7 +106,7 @@ CUSTOM_RULE_AUTHORITIES = (
     ),
     ("x_ChitraguptaAllocationRatio", "persisted allocation lineage", "copy exact realized ratio"),
     ("x_ChitraguptaAllocationMethodVersion", "persisted allocation lineage", "copy lineage method version"),
-    ("x_ChitraguptaMappingProfileVersion", "mapping profile", "emit focus-1.4-preview-v5"),
+    ("x_ChitraguptaMappingProfileVersion", "mapping profile", "emit focus-1.4-preview-v1"),
     ("x_ChitraguptaSkuComponents", "canonical SKU and SKU price components", "serialize as canonical JSON"),
     ("x_ConfluentProduct", "source.native_product", "copy losslessly"),
     ("x_ConfluentLineType", "source.native_line_type", "copy losslessly"),
@@ -398,7 +398,7 @@ def _valid_row_projection(mapping: Any) -> Any:
         {
             "x_ChitraguptaSourceCostId": "cost-1",
             "x_ChitraguptaBillingScopeId": billing_scope,
-            "x_ChitraguptaMappingProfileVersion": "focus-1.4-preview-v5",
+            "x_ChitraguptaMappingProfileVersion": "focus-1.4-preview-v1",
             "x_ChitraguptaSkuComponents": mapping._canonical_json(
                 {"schema_version": "v1", "sku": sku, "sku_price": sku_price}
             ),
@@ -2057,12 +2057,12 @@ def test_package_manifest_reports_the_complete_validated_v3_profile(
         include_manifest=True,
     )
 
-    assert manifest["mapping_profile_version"] == "focus-1.4-preview-v5"
-    assert manifest["schema_version"] == "chitragupta.preview-manifest.v2"
+    assert manifest["mapping_profile_version"] == "focus-1.4-preview-v1"
+    assert manifest["schema_version"] == "chitragupta.preview-manifest.v1"
     assert manifest["conformance_status"] == "non_conforming"
     assert manifest["validation"] == {
         "mapping_errors": 0,
-        "mapping_profile_version": "focus-1.4-preview-v5",
+        "mapping_profile_version": "focus-1.4-preview-v1",
         "rows": 1,
         "source_records": 1,
         "status": "passed",

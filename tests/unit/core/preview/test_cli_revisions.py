@@ -55,7 +55,7 @@ def _revision_detail(
     manifest_body = (
         json.dumps(
             {
-                "schema_version": "chitragupta.preview-manifest.v2",
+                "schema_version": "chitragupta.preview-manifest.v1",
                 "revision_id": manifest_revision_id or revision_id,
                 "known_gaps": EXPECTED_PUBLIC_KNOWN_GAPS,
                 "files": [file_metadata],

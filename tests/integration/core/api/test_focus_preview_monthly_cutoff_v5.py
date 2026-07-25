@@ -381,7 +381,7 @@ def test_complete_zero_portion_lineage_is_ready_without_enrichment_reads_for_all
             assert ready["status"] == "ready", ready["diagnostic"]
             manifest = client.get(ready["package"]["manifest"]["download_url"])
             assert manifest.status_code == 200
-            assert manifest.json()["mapping_profile_version"] == "focus-1.4-preview-v5"
+            assert manifest.json()["mapping_profile_version"] == "focus-1.4-preview-v1"
             assert len(list(csv.reader(io.StringIO(_csv(client, ready).decode())))) == 1
         engine = create_engine(backend._connection_string)
         with engine.connect() as connection:

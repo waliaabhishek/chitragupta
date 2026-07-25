@@ -110,7 +110,7 @@ class _Reader:
             raise failure
         return SimpleNamespace(
             status="passed",
-            mapping_profile_version="focus-1.4-preview-v5",
+            mapping_profile_version="focus-1.4-preview-v1",
             source_records=2,
             rows=2,
             mapping_errors=0,
@@ -347,7 +347,7 @@ def test_history_lists_current_and_superseded_with_replacement_semantics(tmp_pat
     assert [item["lifecycle"] for item in body["items"]] == ["current", "superseded"]
     assert body["items"][0]["validation"] == {
         "status": "passed",
-        "mapping_profile_version": "focus-1.4-preview-v5",
+        "mapping_profile_version": "focus-1.4-preview-v1",
         "source_records": 2,
         "rows": 2,
         "mapping_errors": 0,

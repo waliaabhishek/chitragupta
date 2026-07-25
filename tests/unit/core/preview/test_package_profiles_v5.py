@@ -370,7 +370,7 @@ def test_manifest_v2_is_canonical_nonrecursive_and_has_exact_lifecycle_and_integ
     draft = _draft("custom", columns, (_row(AllocatedResourceId="sa-a"),))
     manifest = _manifest("custom", columns, draft)
 
-    assert manifest["schema_version"] == "chitragupta.preview-manifest.v2"
+    assert manifest["schema_version"] == "chitragupta.preview-manifest.v1"
     assert manifest["generated_at"] == "2026-07-03T00:00:00Z"
     assert manifest["lifecycle"] == {
         "ready_at": "2026-07-03T00:00:00Z",

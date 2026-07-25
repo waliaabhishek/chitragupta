@@ -21,7 +21,7 @@ NEW_COLUMNS = {
 }
 
 
-def _insert_ready_v4(connection_string: str) -> tuple[object, ...]:
+def _insert_obsolete_ready(connection_string: str) -> tuple[object, ...]:
     engine = create_engine(connection_string)
     with engine.begin() as connection:
         connection.execute(
@@ -88,13 +88,13 @@ def _insert_ready_v4(connection_string: str) -> tuple[object, ...]:
     return before
 
 
-def test_migration_022_adds_only_nullable_preview_request_columns_and_preserves_ready_v4(
+def test_migration_022_preserves_obsolete_ready_row_and_leaves_current_metadata_null(
     tmp_path: Path,
 ) -> None:
     connection_string = f"sqlite:///{tmp_path / 'migration-022.db'}"
     config = _alembic_config(connection_string)
     command.upgrade(config, "021")
-    before = _insert_ready_v4(connection_string)
+    before = _insert_obsolete_ready(connection_string)
 
     command.upgrade(config, "022")
 
@@ -128,7 +128,7 @@ def test_migration_022_revision_chain_and_downgrade_are_narrow(tmp_path: Path) -
     connection_string = f"sqlite:///{tmp_path / 'migration-022-down.db'}"
     config = _alembic_config(connection_string)
     command.upgrade(config, "021")
-    before = _insert_ready_v4(connection_string)
+    before = _insert_obsolete_ready(connection_string)
     command.upgrade(config, "022")
     command.downgrade(config, "021")
 

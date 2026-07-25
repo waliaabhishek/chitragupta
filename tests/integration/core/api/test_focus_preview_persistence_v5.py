@@ -22,7 +22,6 @@ from core.config.models import ApiConfig, AppSettings, PreviewConfig, StorageCon
 from core.preview.artifacts import LocalPreviewArtifactStore, PreviewArtifactOwner
 from core.preview.mapping import (
     FOCUS_1_4_SUMMARY_COLUMNS,
-    LEGACY_DAILY_FULL_V4_COLUMNS,
     PreviewDataPackageDraft,
     PreviewPackageReconciliation,
 )
@@ -235,7 +234,157 @@ def _persist_ready_request(
     return package
 
 
-def test_revision_021_ready_daily_full_artifacts_survive_024_and_hydrate_through_api(
+def test_incomplete_internal_schema_v1_on_current_row_returns_artifact_unavailable(
+    tmp_path: Path,
+) -> None:
+    connection_string = f"sqlite:///{tmp_path / 'schema-v1-collision.db'}"
+    artifact_root = tmp_path / "schema-v1-collision-artifacts"
+    backend = SQLModelBackend(
+        connection_string,
+        CCloudStorageModule(),
+        use_migrations=False,
+        focus_preview_enabled=True,
+    )
+    backend.create_tables()
+    artifact_store = LocalPreviewArtifactStore(artifact_root)
+    request_id = "current-row-incomplete-internal-schema-v1"
+    _persist_ready_request(
+        backend=backend,
+        artifact_store=artifact_store,
+        request_id=request_id,
+        grain="daily",
+        start=date(2026, 7, 1),
+        end=date(2026, 7, 2),
+        profile="full",
+        effective_columns=preview_mapping.FOCUS_1_4_FULL_PROFILE_COLUMNS,
+        created_at=datetime(2026, 7, 19, tzinfo=UTC),
+        effective_end=date(2026, 7, 2),
+        cutoff_end=None,
+        monthly_status=None,
+    )
+    with backend.create_preview_metadata_read_unit_of_work() as uow:
+        ready = uow.requests.get_for_owner(request_id, "confluent_cloud", "tenant-1")
+    assert ready is not None
+    assert ready.package is not None
+    assert ready.storage_key is not None
+    file_metadata = ready.package.files[0]
+    incomplete_body = (
+        json.dumps(
+            {
+                "schema_version": "chitragupta.preview-manifest.v1",
+                "files": [
+                    {
+                        "name": file_metadata.name,
+                        "media_type": file_metadata.media_type,
+                        "size_bytes": file_metadata.size_bytes,
+                        "sha256": file_metadata.sha256,
+                        "order": file_metadata.order,
+                    }
+                ],
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n"
+    ).encode()
+    manifest_path = artifact_root / ready.storage_key / "manifest.json"
+    manifest_path.write_bytes(incomplete_body)
+    manifest_metadata = {
+        "name": "manifest.json",
+        "media_type": "application/json",
+        "size_bytes": len(incomplete_body),
+        "sha256": hashlib.sha256(incomplete_body).hexdigest(),
+        "order": None,
+    }
+    with backend._engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                UPDATE preview_requests
+                SET manifest_metadata_json = :manifest_metadata
+                WHERE request_id = :request_id
+                """
+            ),
+            {
+                "manifest_metadata": json.dumps(manifest_metadata, separators=(",", ":")),
+                "request_id": request_id,
+            },
+        )
+
+    app = create_app(_settings(connection_string, artifact_root))
+    provider = FixedTenantBackendProvider({"production": backend})
+    with (
+        patch("core.api.app.ApiTenantBackendProvider", return_value=provider),
+        SameThreadApiClient(app) as client,
+    ):
+        base = f"/api/v1/tenants/production/focus-preview/requests/{request_id}"
+        status = client.get(base)
+        assert status.status_code == 200
+        for path in (
+            f"{base}/manifest",
+            f"{base}/files/{file_metadata.name}",
+            f"{base}/archive",
+        ):
+            response = client.get(path)
+            assert response.status_code == 500
+            assert response.json() == {"detail": "Stored preview artifact is unavailable"}
+    backend.dispose()
+
+
+def test_invalid_current_effective_columns_metadata_preserves_recovery_unavailable(
+    tmp_path: Path,
+) -> None:
+    connection_string = f"sqlite:///{tmp_path / 'invalid-effective-columns.db'}"
+    artifact_root = tmp_path / "invalid-effective-columns-artifacts"
+    backend = SQLModelBackend(
+        connection_string,
+        CCloudStorageModule(),
+        use_migrations=False,
+        focus_preview_enabled=True,
+    )
+    backend.create_tables()
+    artifact_store = LocalPreviewArtifactStore(artifact_root)
+    request_id = "current-row-invalid-effective-columns"
+    _persist_ready_request(
+        backend=backend,
+        artifact_store=artifact_store,
+        request_id=request_id,
+        grain="daily",
+        start=date(2026, 7, 1),
+        end=date(2026, 7, 2),
+        profile="full",
+        effective_columns=preview_mapping.FOCUS_1_4_FULL_PROFILE_COLUMNS,
+        created_at=datetime(2026, 7, 19, tzinfo=UTC),
+        effective_end=date(2026, 7, 2),
+        cutoff_end=None,
+        monthly_status=None,
+    )
+    with backend._engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                UPDATE preview_requests
+                SET effective_columns_json = 'not-json'
+                WHERE request_id = :request_id
+                """
+            ),
+            {"request_id": request_id},
+        )
+
+    app = create_app(_settings(connection_string, artifact_root))
+    provider = FixedTenantBackendProvider({"production": backend})
+    with (
+        patch("core.api.app.ApiTenantBackendProvider", return_value=provider),
+        SameThreadApiClient(app) as client,
+    ):
+        response = client.get(f"/api/v1/tenants/production/focus-preview/requests/{request_id}")
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "FOCUS Mapping Preview recovery is unavailable"}
+    backend.dispose()
+
+
+def test_obsolete_revision_021_package_survives_upgrade_physically_but_all_delivery_fails_closed(
     tmp_path: Path,
 ) -> None:
     connection_string = f"sqlite:///{tmp_path / 'legacy-ready.db'}"
@@ -340,41 +489,24 @@ def test_revision_021_ready_daily_full_artifacts_survive_024_and_hydrate_through
     )
     assert tuple(upgraded[4:9]) == (None, None, None, None, None)
     assert str(upgraded.expires_at) == "2026-07-26 00:02:00.345678"
+    assert (storage_dir / "manifest.json").read_bytes() == manifest_body
+    assert (storage_dir / "focus.csv").read_bytes() == csv_body
 
     app = create_app(_settings(connection_string, artifact_root))
     with SameThreadApiClient(app) as client:
-        response = client.get(f"/api/v1/tenants/production/focus-preview/requests/{request_id}")
-        assert response.status_code == 200
-        status = response.json()
-        assert status["status"] == "ready"
-        assert status["completed_at"] == "2026-07-19T00:02:00Z"
-        assert status["expires_at"] == "2026-07-26T00:02:00Z"
-        assert status["grain"] == "daily"
-        assert status["month"] is None
-        assert status["column_profile"] == "full"
-        assert status["effective_columns"] == list(LEGACY_DAILY_FULL_V4_COLUMNS)
-        assert status["source_snapshot"] == {
-            "calculation_timestamp": calculation_timestamp.isoformat().replace("+00:00", "Z"),
-            "calculation_coverage": [
-                {
-                    **calculation_coverage[0],
-                    "calculation_completed_at": calculation_timestamp.isoformat().replace("+00:00", "Z"),
-                }
-            ],
-            "source_through": "2026-07-02T00:00:00Z",
-            "effective_coverage_start_date": "2026-07-01",
-            "effective_coverage_end_date": "2026-07-02",
-            "evidence_through_date": "2026-07-01",
-            "availability_cutoff_end_date": None,
-            "monthly_status": None,
-        }
-        assert status["package"]["manifest"]["sha256"] == hashlib.sha256(manifest_body).hexdigest()
-        assert status["package"]["files"][0]["sha256"] == hashlib.sha256(csv_body).hexdigest()
+        base = f"/api/v1/tenants/production/focus-preview/requests/{request_id}"
+        for path in (
+            base,
+            f"{base}/manifest",
+            f"{base}/files/focus.csv",
+            f"{base}/archive",
+        ):
+            response = client.get(path)
+            assert response.status_code == 503
+            assert response.json() == {"detail": "FOCUS Mapping Preview storage is unavailable"}
 
-        manifest_url = status["package"]["manifest"]["download_url"]
-        file_url = status["package"]["files"][0]["download_url"]
-        assert [client.get(manifest_url).content for _ in range(2)] == [manifest_body, manifest_body]
-        assert [client.get(file_url).content for _ in range(2)] == [csv_body, csv_body]
+    assert (storage_dir / "manifest.json").read_bytes() == manifest_body
+    assert (storage_dir / "focus.csv").read_bytes() == csv_body
 
 
 @pytest.mark.parametrize(
@@ -393,7 +525,7 @@ def test_revision_021_ready_daily_full_artifacts_survive_024_and_hydrate_through
     ),
     [
         (
-            "v5-daily-custom",
+            "current-daily-custom",
             "daily",
             date(2026, 7, 1),
             date(2026, 7, 3),
@@ -406,7 +538,7 @@ def test_revision_021_ready_daily_full_artifacts_survive_024_and_hydrate_through
             None,
         ),
         (
-            "v5-monthly-summary",
+            "current-monthly-summary",
             "monthly",
             date(2026, 7, 1),
             date(2026, 8, 1),
@@ -421,7 +553,7 @@ def test_revision_021_ready_daily_full_artifacts_survive_024_and_hydrate_through
     ],
     ids=("daily", "monthly"),
 )
-def test_v5_daily_and_monthly_ready_rows_round_trip_through_sqlite_and_api(
+def test_current_daily_and_monthly_ready_rows_round_trip_through_sqlite_and_api(
     tmp_path: Path,
     request_id: str,
     grain: str,
@@ -546,3 +678,129 @@ def test_v5_daily_and_monthly_ready_rows_round_trip_through_sqlite_and_api(
         with zipfile.ZipFile(io.BytesIO(archive_response.content)) as archive:
             assert archive.read("manifest.json") == package.manifest_body
     backend.dispose()
+
+
+def test_already_normalized_current_package_is_byte_identical_across_supported_upgrade(
+    tmp_path: Path,
+) -> None:
+    connection_string = f"sqlite:///{tmp_path / 'current-upgrade.db'}"
+    artifact_root = tmp_path / "current-upgrade-artifacts"
+    migration = _alembic_config(connection_string)
+    command.upgrade(migration, "029")
+    backend = SQLModelBackend(
+        connection_string,
+        CCloudStorageModule(),
+        use_migrations=False,
+        focus_preview_enabled=True,
+    )
+    artifact_store = LocalPreviewArtifactStore(artifact_root)
+    request_id = "already-normalized-current-package"
+    package = _persist_ready_request(
+        backend=backend,
+        artifact_store=artifact_store,
+        request_id=request_id,
+        grain="daily",
+        start=date(2026, 7, 1),
+        end=date(2026, 7, 2),
+        profile="full",
+        effective_columns=preview_mapping.FOCUS_1_4_FULL_PROFILE_COLUMNS,
+        created_at=datetime(2026, 7, 19, tzinfo=UTC),
+        effective_end=date(2026, 7, 2),
+        cutoff_end=None,
+        monthly_status=None,
+    )
+    manifest = json.loads(package.manifest_body)
+    assert manifest["mapping_profile_version"] == "focus-1.4-preview-v1"
+    assert manifest["schema_version"] == "chitragupta.preview-manifest.v1"
+
+    engine = create_engine(connection_string)
+    with engine.connect() as connection:
+        row_before = tuple(
+            connection.execute(
+                text(
+                    """
+                    SELECT storage_key, manifest_metadata_json, data_files_json,
+                           artifact_file_count, artifact_file_catalog_sha256,
+                           effective_columns_json, effective_coverage_start_date,
+                           effective_coverage_end_date
+                    FROM preview_requests WHERE request_id = :request_id
+                    """
+                ),
+                {"request_id": request_id},
+            ).one()
+        )
+    engine.dispose()
+    storage_key = str(row_before[0])
+    manifest_path = artifact_root / storage_key / "manifest.json"
+    csv_path = artifact_root / storage_key / package.data_files[0].name
+    physical_before = (manifest_path.read_bytes(), csv_path.read_bytes())
+
+    app = create_app(_settings(connection_string, artifact_root))
+    provider = FixedTenantBackendProvider({"production": backend})
+    with (
+        patch("core.api.app.ApiTenantBackendProvider", return_value=provider),
+        SameThreadApiClient(app) as client,
+    ):
+        base = f"/api/v1/tenants/production/focus-preview/requests/{request_id}"
+        status_before = client.get(base).json()
+        urls_before = (
+            status_before["package"]["manifest"]["download_url"],
+            status_before["package"]["files"][0]["download_url"],
+            status_before["package"]["download_all_url"],
+        )
+        downloads_before = tuple(tuple(client.get(url).content for _ in range(2)) for url in urls_before)
+        assert all(first == second for first, second in downloads_before)
+    backend.dispose()
+
+    command.upgrade(migration, "head")
+    upgraded_backend = SQLModelBackend(
+        connection_string,
+        CCloudStorageModule(),
+        use_migrations=False,
+        focus_preview_enabled=True,
+    )
+    engine = create_engine(connection_string)
+    with engine.connect() as connection:
+        row_after = tuple(
+            connection.execute(
+                text(
+                    """
+                    SELECT storage_key, manifest_metadata_json, data_files_json,
+                           artifact_file_count, artifact_file_catalog_sha256,
+                           effective_columns_json, effective_coverage_start_date,
+                           effective_coverage_end_date
+                    FROM preview_requests WHERE request_id = :request_id
+                    """
+                ),
+                {"request_id": request_id},
+            ).one()
+        )
+    engine.dispose()
+    physical_after = (manifest_path.read_bytes(), csv_path.read_bytes())
+
+    upgraded_app = create_app(_settings(connection_string, artifact_root))
+    upgraded_provider = FixedTenantBackendProvider({"production": upgraded_backend})
+    with (
+        patch("core.api.app.ApiTenantBackendProvider", return_value=upgraded_provider),
+        SameThreadApiClient(upgraded_app) as client,
+    ):
+        status_after = client.get(base).json()
+        urls_after = (
+            status_after["package"]["manifest"]["download_url"],
+            status_after["package"]["files"][0]["download_url"],
+            status_after["package"]["download_all_url"],
+        )
+        downloads_after = tuple(tuple(client.get(url).content for _ in range(2)) for url in urls_after)
+    upgraded_backend.dispose()
+
+    assert row_after == row_before
+    assert (
+        physical_after
+        == physical_before
+        == (
+            package.manifest_body,
+            package.data_files[0].body,
+        )
+    )
+    assert all(first == second for first, second in downloads_after)
+    assert tuple(pair[0] for pair in downloads_after) == tuple(pair[0] for pair in downloads_before)

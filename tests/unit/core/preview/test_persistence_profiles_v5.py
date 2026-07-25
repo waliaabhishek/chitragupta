@@ -63,28 +63,16 @@ def test_request_mapper_uses_one_mapping_validator_for_encode_and_explicit_decod
     ]
 
 
-def test_legacy_null_effective_columns_use_frozen_v4_even_if_current_full_is_rebound(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_null_effective_columns_fail_closed_without_legacy_hydration() -> None:
     persistence = _persistence()
-    mapping = _mapping()
-    legacy = mapping.LEGACY_DAILY_FULL_V4_COLUMNS
     row = persistence.request_to_table(_request(status="queued"))
     row.effective_columns_json = None
-    monkeypatch.setattr(mapping, "FOCUS_1_4_FULL_PROFILE_COLUMNS", ("FutureColumn",))
 
-    restored = persistence.request_to_domain(row)
-
-    assert restored.effective_columns is legacy
-    assert restored.effective_columns == legacy
-    assert restored.request_id == "request-1"
-    assert restored.tenant_name == "production"
-    assert restored.ecosystem == "confluent_cloud"
-    assert restored.tenant_id == "tenant-1"
-    assert restored.status.value == "queued"
+    with pytest.raises(ValueError, match="preview effective columns metadata is required"):
+        persistence.request_to_domain(row)
 
 
-def test_ready_v5_null_effective_coverage_fails_closed_while_legacy_null_columns_hydrate() -> None:
+def test_ready_current_row_requires_effective_columns_before_coverage_hydration() -> None:
     persistence = _persistence()
     snapshot = _snapshot()
     ready = _request(
@@ -96,18 +84,30 @@ def test_ready_v5_null_effective_coverage_fails_closed_while_legacy_null_columns
         package=_package(),
     )
     row = persistence.request_to_table(ready)
+    row.effective_columns_json = None
     row.effective_coverage_start_date = None
     row.effective_coverage_end_date = None
 
-    with pytest.raises(ValueError, match="effective coverage"):
+    with pytest.raises(ValueError, match="preview effective columns metadata is required"):
         persistence.request_to_domain(row)
 
-    row.effective_columns_json = None
-    restored = persistence.request_to_domain(row)
-    assert restored.effective_columns is _mapping().LEGACY_DAILY_FULL_V4_COLUMNS
-    assert restored.source_snapshot is not None
-    assert restored.source_snapshot.effective_coverage_start_date == ready.start_date
-    assert restored.source_snapshot.effective_coverage_end_date == ready.end_date
+
+def test_ready_current_row_with_columns_still_requires_effective_coverage() -> None:
+    persistence = _persistence()
+    ready = _request(
+        status="ready",
+        completed_at=datetime(2026, 7, 3, 2, tzinfo=UTC),
+        expires_at=datetime(2026, 7, 10, 2, tzinfo=UTC),
+        source_snapshot=_snapshot(),
+        storage_key="request-1",
+        package=_package(),
+    )
+    row = persistence.request_to_table(ready)
+    row.effective_coverage_start_date = None
+    row.effective_coverage_end_date = None
+
+    with pytest.raises(ValueError, match="current ready preview requires persisted effective coverage bounds"):
+        persistence.request_to_domain(row)
 
 
 def test_invalid_direct_domain_selection_fails_before_table_construction() -> None:

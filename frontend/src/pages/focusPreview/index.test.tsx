@@ -129,7 +129,7 @@ const currentRevision = {
   },
   validation: {
     status: "passed" as const,
-    mapping_profile_version: "focus-1.4-preview-v5",
+    mapping_profile_version: "focus-1.4-preview-v1",
     source_records: 12,
     rows: 10,
     mapping_errors: 0 as const,
@@ -234,7 +234,7 @@ describe("FOCUS Mapping Preview page delegation", () => {
     });
     vi.mocked(fetchFocusPreviewRevision).mockResolvedValue(currentRevisionDetail);
     vi.mocked(fetchFocusPreviewProfile).mockResolvedValue({
-      mapping_profile_version: "focus-1.4-preview-v5",
+      mapping_profile_version: "focus-1.4-preview-v1",
       full_columns: ["BilledCost", "Tags", "AllocatedResourceId"],
       summary_columns: ["AllocatedResourceId", "BilledCost", "Tags"],
       known_gaps: profileKnownGaps,
@@ -360,7 +360,7 @@ describe("FOCUS Mapping Preview page delegation", () => {
     );
     await act(async () => {
       stagingProfile.resolve({
-        mapping_profile_version: "focus-1.4-preview-v5",
+        mapping_profile_version: "focus-1.4-preview-v1",
         full_columns: ["SentinelColumnC"],
         summary_columns: ["SentinelColumnC"],
         known_gaps: [
@@ -377,7 +377,7 @@ describe("FOCUS Mapping Preview page delegation", () => {
 
     await act(async () => {
       productionProfile.resolve({
-        mapping_profile_version: "focus-1.4-preview-v5",
+        mapping_profile_version: "focus-1.4-preview-v1",
         full_columns: ["SentinelColumnA"],
         summary_columns: ["SentinelColumnA"],
         known_gaps: [
@@ -721,7 +721,7 @@ describe("FOCUS Mapping Preview page delegation", () => {
     expect(screen.getByText(/supersedes.*revision-old/i)).toBeTruthy();
     expect(screen.getByText(/superseded by.*revision-current/i)).toBeTruthy();
     expect(screen.getAllByText(/validation passed/i)).toHaveLength(2);
-    expect(screen.getAllByText(/mapping profile.*focus-1\.4-preview-v5/i)).toHaveLength(2);
+    expect(screen.getAllByText(/mapping profile.*focus-1\.4-preview-v1/i)).toHaveLength(2);
     expect(screen.getAllByText(/source records.*12/i)).toHaveLength(2);
     expect(screen.getAllByText(/rows.*10/i)).toHaveLength(2);
     expect(screen.getAllByText(/artifact integrity passed/i)).toHaveLength(2);

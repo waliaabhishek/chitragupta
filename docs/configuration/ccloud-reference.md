@@ -109,7 +109,7 @@ The Confluent Costs API does not return a per-record ISO currency value. The USD
 setting is therefore an explicit customer/operator contract for the supported
 Direct-billed PAYG scope, not provider-supplied record evidence. Compatibility
 aggregate currency is not treated as commercial authority. Generated FOCUS
-`BillingCurrency` remains null, and the v2 manifest reports
+`BillingCurrency` remains null, and the Preview manifest reports
 `provider_billing_currency_field_unavailable`. If the provider later supplies
 authoritative currency, that limitation can be revisited without inventing
 historical values.

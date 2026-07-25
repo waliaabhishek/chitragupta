@@ -217,7 +217,7 @@ def test_profile_endpoint_is_static_code_owned_and_uses_no_runtime_backend_or_da
     assert response.status_code == 200
     payload = response.json()
     assert payload == {
-        "mapping_profile_version": "focus-1.4-preview-v5",
+        "mapping_profile_version": "focus-1.4-preview-v1",
         "full_columns": list(mapping.FOCUS_1_4_FULL_PROFILE_COLUMNS),
         "summary_columns": list(mapping.FOCUS_1_4_SUMMARY_COLUMNS),
         "known_gaps": [

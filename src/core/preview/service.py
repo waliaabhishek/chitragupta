@@ -728,12 +728,17 @@ class PreviewRuntime:
                         )
                     )
                 else:
-                    artifact = uow.requests.expire_ready_request(
-                        request_id=request_id,
-                        ecosystem=ecosystem,
-                        tenant_id=tenant_id,
-                        now=now,
-                    )
+                    try:
+                        artifact = uow.requests.expire_ready_request(
+                            request_id=request_id,
+                            ecosystem=ecosystem,
+                            tenant_id=tenant_id,
+                            now=now,
+                        )
+                    except ValueError as exc:
+                        if str(exc) == "preview effective columns metadata is required":
+                            return
+                        raise
                     if artifact is not None:
                         artifacts.append(artifact)
                     else:

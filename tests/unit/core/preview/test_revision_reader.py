@@ -198,7 +198,7 @@ def test_reader_extracts_validation_summary_from_validated_manifest(tmp_path: Pa
     summary = reader.validation_summary(revision=revision)
 
     assert summary.status == "passed"
-    assert summary.mapping_profile_version == "focus-1.4-preview-v5"
+    assert summary.mapping_profile_version == "focus-1.4-preview-v1"
     assert summary.source_records == 2
     assert summary.rows == 2
     assert summary.mapping_errors == 0

@@ -632,7 +632,12 @@ correlations, reconciliation, or totals.
 
 Every package contains:
 
-- `manifest.json`, using schema `chitragupta.preview-manifest.v2`; and
+The mapping profile `focus-1.4-preview-v1` and manifest schema
+`chitragupta.preview-manifest.v1` are the first release contracts. Pre-release
+development packages are unsupported and fail closed instead of being treated
+as current packages.
+
+- `manifest.json`, using schema `chitragupta.preview-manifest.v1`; and
 - one `cost-and-usage.csv` by default, or ordered files named
   `cost-and-usage-part-00001-of-00003.csv` and so on when the configured byte
   limit requires partitioning.
@@ -651,7 +656,13 @@ and the superseded revision ID. The `files` list contains data files only. The
 status or revision metadata response separately supplies the manifest's own size
 and checksum. The ZIP is a transport wrapper containing `manifest.json` followed
 by the CSV files in manifest order; it is not another data artifact in the
-manifest.
+manifest. Requested manifests validate the complete current request identity,
+tenant, interval, effective columns, target, status, canonical gaps, snapshot,
+evidence, lifecycle, validation, reconciliation, and file checks. Revision
+manifests validate current revision identity, snapshot, Full-profile authority,
+material digest, validation summary, and file correlation. Both use the same
+current schema and mapping authority and enforce canonical gaps plus file order,
+size, and checksums where applicable before delivery.
 
 Both manifest types contain the same complete ordered `known_gaps` array. Each
 object contains exactly the stable `code`, durable customer-facing
@@ -743,9 +754,11 @@ owner-scoped snapshot of every non-null request and revision storage reference,
 then rechecks each apparent finalized orphan against authoritative metadata
 while holding the package lock. Live publishers, referenced packages, and
 reference checks that cannot be completed are preserved. Referenced packages
-from earlier releases remain available, while unverifiable legacy finalized
-paths are left for operator inspection instead of being automatically deleted.
-Deletion or filesystem-synchronization failures are logged and retried.
+that satisfy the current release contract remain available. Pre-release
+development packages are unsupported and fail closed; their physical paths are
+not converted into current packages. Unverifiable finalized paths are left for
+operator inspection instead of being automatically deleted. Deletion or
+filesystem-synchronization failures are logged and retried.
 
 Requested-package submission, history, status, and artifact retrieval perform
 owner recovery after their existing tenant, input, feature-enablement, runtime,

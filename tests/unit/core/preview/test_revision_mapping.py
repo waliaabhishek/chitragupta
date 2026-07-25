@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import csv
 import hashlib
+import io
 import json
 from dataclasses import replace
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from importlib import import_module
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -171,6 +174,181 @@ def test_material_digest_uses_exactly_the_five_declared_semantic_fields() -> Non
         mapping.preview_revision_content_sha256(**{"logical_data_sha256": logical_digest, **change}) != baseline
         for change in changes
     )
+
+
+def test_normalization_against_obsolete_baseline_changes_only_version_cells_and_derived_identity(
+    tmp_path: Path,
+) -> None:
+    mapping = _mapping()
+    models = _models()
+    artifacts = import_module("core.preview.artifacts")
+    assert mapping.MAPPING_PROFILE_VERSION == "focus-1.4-preview-v1"
+    current = _draft(
+        rows=(
+            _row(
+                day=1,
+                x_ChitraguptaMappingProfileVersion=mapping.MAPPING_PROFILE_VERSION,
+            ),
+            _row(
+                day=2,
+                AllocatedResourceId="sa-2",
+                x_ChitraguptaMappingProfileVersion=mapping.MAPPING_PROFILE_VERSION,
+            ),
+        )
+    )
+    current_csv = current.data_files[0].body
+    assert b"focus-1.4-preview-v1" in current_csv
+    baseline_csv = current_csv.replace(
+        b"focus-1.4-preview-v1",
+        b"focus-1.4-preview-v5",
+    )
+    assert baseline_csv != current_csv
+
+    current_rows = list(csv.DictReader(io.StringIO(current_csv.decode(), newline="")))
+    baseline_rows = list(csv.DictReader(io.StringIO(baseline_csv.decode(), newline="")))
+    assert len(current_rows) == len(baseline_rows)
+    for current_row, baseline_row in zip(current_rows, baseline_rows, strict=True):
+        assert current_row.pop("x_ChitraguptaMappingProfileVersion") == "focus-1.4-preview-v1"
+        assert baseline_row.pop("x_ChitraguptaMappingProfileVersion") == "focus-1.4-preview-v5"
+        assert current_row == baseline_row
+
+    baseline_logical_sha256 = hashlib.sha256(baseline_csv).hexdigest()
+    baseline = mapping.PreviewDataPackageDraft(
+        data_files=(
+            models.PreviewArtifactPayload(
+                current.data_files[0].name,
+                current.data_files[0].media_type,
+                current.data_files[0].order,
+                baseline_csv,
+            ),
+        ),
+        source_records=current.source_records,
+        rows=current.rows,
+        reconciliation=current.reconciliation,
+        logical_data_sha256=baseline_logical_sha256,
+    )
+    current_files = _files(current)
+    baseline_files = _files(baseline)
+    assert current.logical_data_sha256 == hashlib.sha256(current_csv).hexdigest()
+    assert current.logical_data_sha256 != baseline.logical_data_sha256
+    assert current_files[0].sha256 != baseline_files[0].sha256
+
+    request = _monthly_request()
+    snapshot = _settled_snapshot()
+    ready_at = datetime(2026, 8, 4, 0, 2, tzinfo=UTC)
+    current_requested_body = mapping.build_requested_preview_manifest(
+        request=request,
+        snapshot=snapshot,
+        draft=current,
+        files=current_files,
+        ready_at=ready_at,
+        expires_at=ready_at + timedelta(days=7),
+    )
+    current_requested = json.loads(current_requested_body)
+    baseline_requested = json.loads(current_requested_body)
+    baseline_requested["schema_version"] = "chitragupta.preview-manifest.v2"
+    baseline_requested["mapping_profile_version"] = "focus-1.4-preview-v5"
+    baseline_requested["validation"]["mapping_profile_version"] = "focus-1.4-preview-v5"
+    baseline_requested["files"][0]["sha256"] = baseline_files[0].sha256
+    baseline_requested_body = (mapping.preview_canonical_json(baseline_requested) + "\n").encode()
+    assert current_requested["schema_version"] == "chitragupta.preview-manifest.v1"
+    assert current_requested["mapping_profile_version"] == "focus-1.4-preview-v1"
+    assert current_requested["files"][0]["sha256"] == current_files[0].sha256
+    assert current_requested_body != baseline_requested_body
+    for field in (
+        "known_gaps",
+        "profile_not_applicable_columns",
+        "source_snapshot",
+        "evidence_coverage",
+        "monthly_status",
+        "reconciliation",
+        "lifecycle",
+        "generated_at",
+        "conformance_status",
+    ):
+        assert current_requested[field] == baseline_requested[field]
+    assert {
+        key: value for key, value in current_requested["validation"].items() if key != "mapping_profile_version"
+    } == {key: value for key, value in baseline_requested["validation"].items() if key != "mapping_profile_version"}
+
+    current_material = mapping.preview_revision_content_sha256(logical_data_sha256=current.logical_data_sha256)
+    baseline_material = mapping.preview_revision_content_sha256(
+        mapping_profile_version="focus-1.4-preview-v5",
+        logical_data_sha256=baseline.logical_data_sha256,
+    )
+    assert current_material != baseline_material
+    current_revision_body = mapping.build_preview_revision_manifest(
+        revision_id="revision-current",
+        tenant_name_at_publication="production",
+        month="2026-07",
+        start_date=date(2026, 7, 1),
+        end_date=date(2026, 8, 1),
+        monthly_status="settled",
+        material_sha256=current_material,
+        supersedes_revision_id=None,
+        snapshot=snapshot,
+        draft=current,
+        files=current_files,
+        published_at=ready_at,
+    )
+    current_revision = json.loads(current_revision_body)
+    baseline_revision = json.loads(current_revision_body)
+    baseline_revision["schema_version"] = "chitragupta.preview-manifest.v2"
+    baseline_revision["mapping_profile_version"] = "focus-1.4-preview-v5"
+    baseline_revision["validation"]["mapping_profile_version"] = "focus-1.4-preview-v5"
+    baseline_revision["logical_data_sha256"] = baseline.logical_data_sha256
+    baseline_revision["material_sha256"] = baseline_material
+    baseline_revision["files"][0]["sha256"] = baseline_files[0].sha256
+    baseline_revision_body = (mapping.preview_canonical_json(baseline_revision) + "\n").encode()
+    assert current_revision["material_sha256"] == current_material
+    assert current_revision["files"][0]["sha256"] == current_files[0].sha256
+    assert current_revision_body != baseline_revision_body
+    for field in (
+        "known_gaps",
+        "source_snapshot",
+        "monthly_status",
+        "reconciliation",
+        "conformance_status",
+        "published_at",
+    ):
+        assert current_revision[field] == baseline_revision[field]
+    assert {
+        key: value for key, value in current_revision["validation"].items() if key != "mapping_profile_version"
+    } == {key: value for key, value in baseline_revision["validation"].items() if key != "mapping_profile_version"}
+
+    store = artifacts.LocalPreviewArtifactStore(tmp_path)
+    owner = artifacts.PreviewArtifactOwner(
+        "production",
+        "confluent_cloud",
+        "tenant-1",
+        storage_backend_fingerprint="a" * 64,
+    )
+    with store.stage_data_files(
+        owner=owner,
+        request_id="current-package",
+        data_files=current.data_files,
+    ) as staged:
+        current_package = staged.publish(manifest_body=current_requested_body)
+    with store.stage_data_files(
+        owner=owner,
+        request_id="baseline-package",
+        data_files=baseline.data_files,
+    ) as staged:
+        baseline_package = staged.publish(manifest_body=baseline_requested_body)
+    with store.open_archive(
+        storage_key=current_package.storage_key,
+        manifest=current_package.manifest,
+        files=current_package.files,
+    ) as archive:
+        current_archive = b"".join(archive.iter_chunks())
+    with store.open_archive(
+        storage_key=baseline_package.storage_key,
+        manifest=baseline_package.manifest,
+        files=baseline_package.files,
+    ) as archive:
+        baseline_archive = b"".join(archive.iter_chunks())
+    assert current_archive != baseline_archive
+    store.close()
 
 
 @pytest.mark.parametrize("logical_digest", ["A" * 64, "short", "g" * 64])

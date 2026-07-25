@@ -98,7 +98,7 @@ const revisionSummary = {
   },
   validation: {
     status: "passed",
-    mapping_profile_version: "focus-1.4-preview-v5",
+    mapping_profile_version: "focus-1.4-preview-v1",
     source_records: 12,
     rows: 10,
     mapping_errors: 0,
@@ -327,7 +327,7 @@ describe("FOCUS Mapping Preview API delegation", () => {
       http.get(
         `${API_BASE}/tenants/production/focus-preview/profile`,
         () => HttpResponse.json({
-          mapping_profile_version: "focus-1.4-preview-v5",
+          mapping_profile_version: "focus-1.4-preview-v1",
           full_columns: ["BilledCost"],
           summary_columns: ["BilledCost"],
           known_gaps: [
@@ -360,7 +360,7 @@ describe("FOCUS Mapping Preview API delegation", () => {
       controller.signal,
     )).resolves.toEqual(revisionDetail);
     await expect(fetchFocusPreviewProfile("production"))
-      .resolves.toMatchObject({ mapping_profile_version: "focus-1.4-preview-v5" });
+      .resolves.toMatchObject({ mapping_profile_version: "focus-1.4-preview-v1" });
     await expect(fetchPreviewArtifact(
       revisionDetail.package.manifest.download_url,
       controller.signal,
@@ -402,7 +402,7 @@ describe("FOCUS Mapping Preview API delegation", () => {
         ({ request }) => {
           seen.push(request.url);
           return HttpResponse.json({
-            mapping_profile_version: "focus-1.4-preview-v5",
+            mapping_profile_version: "focus-1.4-preview-v1",
             full_columns: ["BilledCost"],
             summary_columns: ["BilledCost"],
             known_gaps: [

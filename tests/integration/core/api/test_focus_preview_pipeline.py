@@ -1243,7 +1243,7 @@ def test_workflow_runner_provider_calculation_to_preview_mixed_retry_and_unrelat
         assert csv_response.status_code == 200
         manifest = manifest_response.json()
         assert manifest["source_snapshot"]["source_through"] == a_ready["source_snapshot"]["source_through"]
-        assert manifest["mapping_profile_version"] == "focus-1.4-preview-v5"
+        assert manifest["mapping_profile_version"] == "focus-1.4-preview-v1"
         assert manifest["known_gaps"]
         assert manifest["conformance_status"] == "non_conforming"
         row = next(csv.DictReader(io.StringIO(csv_response.text)))

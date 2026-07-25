@@ -528,16 +528,18 @@ requested-package owner-recovery step.
 
 ### `GET /api/v1/tenants/{tenant_name}/focus-preview/profile`
 
-Return static metadata for the current `focus-1.4-preview-v5` mapping profile:
-`mapping_profile_version`, the ordered `full_columns` allowlist, and the ordered
-20-column `summary_columns` subset. The response also contains `known_gaps`,
-the same canonical ordered public value used by Requested Preview Package and
-Published Preview Revision manifests. Each gap contains exactly `code`,
-customer-facing `description`, and ordered affected `columns`; internal task or
-issue ownership, reviewer terminology, implementation chronology, and
-delivery-process metadata are excluded. The pre-submission UI renders its
-**Current authority gaps** list from this response. See the manifest contract
-below for the complete current gap catalog, which is not repeated here.
+Return static metadata for the first-release `focus-1.4-preview-v1` mapping
+profile: `mapping_profile_version`, the ordered `full_columns` allowlist, and
+the ordered 20-column `summary_columns` subset. The mapping profile and
+`chitragupta.preview-manifest.v1` are the first release contracts. The response
+also contains `known_gaps`, the same canonical ordered public value used by
+Requested Preview Package and Published Preview Revision manifests. Each gap
+contains exactly `code`, customer-facing `description`, and ordered affected
+`columns`; internal task or issue ownership, reviewer terminology,
+implementation chronology, and delivery-process metadata are excluded. The
+pre-submission UI renders its **Current authority gaps** list from this
+response. See the manifest contract below for the complete current gap catalog,
+which is not repeated here.
 
 This endpoint validates tenant existence and the Confluent Cloud ecosystem but
 does not initialize Preview storage or the worker runtime.
@@ -743,20 +745,29 @@ The source snapshot contains nullable `calculation_timestamp`, date-ordered
 `name`, `media_type`, `size_bytes`, `sha256`, optional `order`, and
 `download_url`. It contains no artifact root, storage key, or server path.
 
-A ready package stores `focus-1.4-preview-v5` output using the exact ordered
-effective columns. Full is the legacy-compatible 65 ordered FOCUS columns plus
-12 custom evidence columns; Summary and Custom are projections of those same
-validated rows. The stored manifest declares `conformance_status:
+A ready package stores `focus-1.4-preview-v1` output using the exact ordered
+effective columns. Full is the current 65 ordered FOCUS columns plus 12 custom
+evidence columns; Summary and Custom are projections of those same validated
+rows. The stored manifest uses the first-release
+`chitragupta.preview-manifest.v1` schema and declares `conformance_status:
 non_conforming`, profile version, grain, requested bounds, derived month,
 column profile, effective columns,
 calculation/source coverage, exact known gaps, validation status/counts, cost
 and quantity reconciliation, seven-day lifecycle, and ordered file checksums.
-Mapping/profile validation completes before atomic publication. Before any
-artifact response starts, the API incrementally validates the stored manifest
-against persisted package metadata and incrementally verifies the selected
-artifact's size and SHA-256. Manifest, CSV, and ZIP bodies are then streamed in
-fixed chunks rather than loaded as complete response bodies. The API, UI, and
-CLI do not remap the verified bytes.
+Mapping/profile validation completes before atomic publication. Requested
+manifests validate the complete current request identity, tenant, interval,
+effective columns, target, status, canonical gaps, snapshot, evidence,
+lifecycle, validation, reconciliation, and file checks. Revision manifests
+validate current revision identity, snapshot, Full-profile authority, material
+digest, validation summary, and file correlation. Both use the same current
+schema and mapping authority and enforce canonical gaps plus file order, size,
+and checksums where applicable. A pre-release development package is unsupported
+and fails closed.
+Before any artifact response starts, the API incrementally validates the stored
+manifest against persisted package metadata and incrementally verifies the
+selected artifact's size and SHA-256. Manifest, CSV, and ZIP bodies are then
+streamed in fixed chunks rather than loaded as complete response bodies. The
+API, UI, and CLI do not remap the verified bytes.
 
 Both requested-package and published-revision manifests contain the same
 complete ordered `known_gaps` array. Each object contains exactly `code`,
@@ -1041,13 +1052,13 @@ Eligibility and source diagnostics are:
 | `preview_source_economics_unsupported` | false | Monetary or quantity values are outside the supported tracer. |
 | `preview_source_reconciliation_failed` | false | Source, aggregate, or allocation evidence does not reconcile. |
 | `preview_source_coverage_incomplete` | false | Complete source and aggregate origin coverage does not match. |
-| `preview_mapping_scope_unsupported` | false | The complete source set exceeds the current v5 Full-row mapping scope before profile projection, including multiple native/tier Cost rows associated with one billing origin. |
+| `preview_mapping_scope_unsupported` | false | The complete source set exceeds the current Full-row mapping scope before profile projection, including multiple native/tier Cost rows associated with one billing origin. |
 | `preview_allocation_lineage_incomplete` | false | Persisted calculation lineage is missing, incomplete, corrupt, or structurally inconsistent for one or more billing origins. |
 | `preview_allocation_lineage_unavailable` | true | The ordinary calculation completed, but its Preview lineage capture or persistence did not. Run the pipeline and retry. |
 | `preview_billing_account_unavailable` | false | No authoritative persisted Confluent organization binding is available. |
 | `preview_billing_account_conflicting` | false | Persisted Confluent organization evidence conflicts for the tenant partition. |
 | `preview_provider_context_incomplete` | false | Authoritative resource context is absent or incompatible; all TABLEFLOW rows use this failure because current inventory cannot prove their provider context. |
-| `preview_mapping_validation_failed` | false | A generated Daily Full row or Monthly Full aggregate does not satisfy the current v5 Full-row mapping profile before Full/Summary/Custom projection. |
+| `preview_mapping_validation_failed` | false | A generated Daily Full row or Monthly Full aggregate does not satisfy the current Full-row mapping profile before Full/Summary/Custom projection. |
 
 All accepted native line types can use persisted calculation lineage, including
 organization-wide rows, provider-null promotional allowances, and signed
