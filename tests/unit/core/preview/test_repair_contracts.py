@@ -12,6 +12,7 @@ def test_repair_repository_exposes_only_guarded_transition_methods() -> None:
         "create_queued",
         "get_for_owner",
         "find_active_for_owner",
+        "get_current_progress_for_owner",
         "mark_running",
         "mark_date_running",
         "mark_date_daily_validated",

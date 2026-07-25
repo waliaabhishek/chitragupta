@@ -332,3 +332,40 @@ def test_repair_policy_rejects_disabled_or_unsupported_tenants() -> None:
         repair.repair_policy_from_tenant_config(disabled, created_at=CREATED_AT)
     with pytest.raises(ValueError):
         repair.repair_policy_from_tenant_config(unsupported, created_at=CREATED_AT)
+
+
+@pytest.mark.parametrize(
+    ("completed_dates", "total_dates"),
+    [
+        (-1, 1),
+        (2, 1),
+        (0, 0),
+    ],
+)
+def test_repair_progress_rejects_impossible_date_counts(
+    completed_dates: int,
+    total_dates: int,
+) -> None:
+    repair = _repair_module()
+
+    with pytest.raises(ValueError):
+        repair.PreviewRepairProgress(
+            status=repair.PreviewRepairStatus.RUNNING,
+            completed_dates=completed_dates,
+            total_dates=total_dates,
+        )
+
+
+def test_repair_progress_and_unresolved_history_are_distinct_domain_results() -> None:
+    repair = _repair_module()
+
+    progress = repair.PreviewRepairProgress(
+        status=repair.PreviewRepairStatus.RUNNING,
+        completed_dates=2,
+        total_dates=4,
+    )
+
+    assert progress.completed_dates == 2
+    assert progress.total_dates == 4
+    assert progress.status is repair.PreviewRepairStatus.RUNNING
+    assert repair.PreviewRepairHistoryUnresolved() != progress

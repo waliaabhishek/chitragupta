@@ -51,6 +51,7 @@ process-wide settings, not tenant settings:
 preview:
   artifact_root: /var/lib/chitragupta/focus-preview
   max_workers: 2
+  max_queued_repairs: 8
   max_queued_generations: 8
   max_running_generations_per_tenant: 1
   max_queued_generations_per_tenant: 2
@@ -62,6 +63,7 @@ preview:
 |---|---|---|---|---|
 | `preview.artifact_root` | path | `data/focus-preview` | writable directory | Durable local root for immutable Preview packages. Relative paths resolve from the process working directory. |
 | `preview.max_workers` | int | `2` | 1–16 | Process-local running-generation limit shared by requested packages and scheduled publication. It also remains the worker count for the separate historical-repair runtime. |
+| `preview.max_queued_repairs` | int | `8` | zero or positive | Process-local maximum historical repairs waiting across all tenants. Zero disables waiting but still permits a repair that can start immediately. |
 | `preview.max_queued_generations` | int | `8` | zero or positive | Process-local maximum waiting requested and scheduled generations across all tenants. |
 | `preview.max_running_generations_per_tenant` | int | `1` | positive and no greater than `max_workers` | Maximum running generations for one tenant. |
 | `preview.max_queued_generations_per_tenant` | int | `2` | zero or positive | Maximum waiting generations for one tenant. |
@@ -75,6 +77,13 @@ generation receives HTTP 429 unless it can start immediately, while an eligible
 scheduled tenant-month is deferred to a later periodic cycle. Requested and
 scheduled work share the same process-local running and waiting limits, with
 fair capacity across tenants.
+
+Historical repair uses a separate admission bound: at most
+`preview.max_workers` repairs run and at most
+`preview.max_queued_repairs` repairs wait in each process. A full repair limit
+returns retryable HTTP 429 before a repair is created. Generation and repair
+limits are independent, replicas have independent limits, and only one repair
+may be active per tenant.
 
 Scheduled current monthly revisions are discovered by the ordinary periodic
 worker:

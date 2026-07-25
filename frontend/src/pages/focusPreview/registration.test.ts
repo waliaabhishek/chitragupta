@@ -11,7 +11,8 @@ describe("FOCUS Mapping Preview registration", () => {
 
   it("registers tenant-scoped navigation with the product name", () => {
     expect(layoutSource).toContain('key: "/focus-preview"');
-    expect(layoutSource).toContain('label: "FOCUS Mapping Preview"');
+    expect(layoutSource).toContain("FOCUS Mapping Preview");
+    expect(layoutSource).toContain("count={focusPreviewBadge}");
     expect(layoutSource).toContain("disabled: tenantRequired");
   });
 

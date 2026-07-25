@@ -370,7 +370,7 @@ class SQLModelBackend:
             else:
                 collector.record(
                     PreviewEvidenceIssue(
-                        revision="027",
+                        revision="030",
                         kind=PreviewEvidenceIssueKind.CAPABILITY_MISSING,
                         error_type="PreviewEvidenceStorageModule",
                     )
@@ -410,7 +410,7 @@ class SQLModelBackend:
             return
         if not isinstance(self._storage_module, PreviewEvidenceStorageModule):
             issue = PreviewEvidenceIssue(
-                revision="027",
+                revision="030",
                 kind=PreviewEvidenceIssueKind.CAPABILITY_MISSING,
                 error_type="PreviewEvidenceStorageModule",
             )
@@ -426,12 +426,12 @@ class SQLModelBackend:
             with self._engine.begin() as connection:
                 self._storage_module.prepare_preview_evidence_migration(
                     connection,
-                    target_revision="028",
+                    target_revision="030",
                 )
         except (PreviewEvidenceSchemaError, SQLAlchemyError) as exc:
             issues.append(
                 PreviewEvidenceIssue(
-                    revision="027",
+                    revision="030",
                     kind=(
                         PreviewEvidenceIssueKind.SCHEMA_INCOMPATIBLE
                         if isinstance(exc, PreviewEvidenceSchemaError)

@@ -7,7 +7,7 @@ from dataclasses import replace
 from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING, Literal
 
-from sqlalchemy import delete, exists, or_, update
+from sqlalchemy import case, delete, exists, func, or_, update
 from sqlmodel import Session, col, select
 
 from core.preview.evidence import (
@@ -45,8 +45,11 @@ from core.preview.repair import (
     PreviewRepairDate,
     PreviewRepairDateStatus,
     PreviewRepairFailureStage,
+    PreviewRepairHistoryUnresolved,
+    PreviewRepairProgress,
     PreviewRepairStatus,
 )
+from core.preview.storage_availability import PreviewEvidenceSchemaError
 from core.storage.backends.sqlmodel.tables import PipelineStateTable
 from core.storage.backends.sqlmodel.timestamps import (
     canonical_utc_second,
@@ -57,6 +60,7 @@ from plugins.confluent_cloud.storage.preview_tables import (
     CCloudAllocationLineageRunTable,
     CCloudCostSourceRecordTable,
     CCloudFocusPreviewRepairDateTable,
+    CCloudFocusPreviewRepairHeadTable,
     CCloudFocusPreviewRepairTable,
     CCloudOrganizationAuthorityAttemptTable,
     CCloudSourceCaptureReadinessHistoryTable,
@@ -222,6 +226,22 @@ class SQLModelPreviewRepairRepository:
                 for item in repair.dates
             ]
         )
+        result = self._session.exec(
+            update(CCloudFocusPreviewRepairHeadTable)
+            .where(
+                col(CCloudFocusPreviewRepairHeadTable.ecosystem) == repair.ecosystem,
+                col(CCloudFocusPreviewRepairHeadTable.tenant_id) == repair.tenant_id,
+            )
+            .values(repair_id=repair.repair_id)
+        )
+        if int(getattr(result, "rowcount", 0)) == 0:
+            self._session.add(
+                CCloudFocusPreviewRepairHeadTable(
+                    ecosystem=repair.ecosystem,
+                    tenant_id=repair.tenant_id,
+                    repair_id=repair.repair_id,
+                )
+            )
         self._session.flush()
         created = self._get(repair.repair_id)
         if created is None:
@@ -257,6 +277,60 @@ class SQLModelPreviewRepairRepository:
             .limit(1)
         ).first()
         return None if row is None else self._get(row.repair_id)
+
+    def get_current_progress_for_owner(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+    ) -> PreviewRepairProgress | PreviewRepairHistoryUnresolved | None:
+        head = self._session.get(
+            CCloudFocusPreviewRepairHeadTable,
+            (ecosystem, tenant_id),
+        )
+        if head is None:
+            has_history = self._session.exec(
+                select(
+                    exists().where(
+                        col(CCloudFocusPreviewRepairTable.ecosystem) == ecosystem,
+                        col(CCloudFocusPreviewRepairTable.tenant_id) == tenant_id,
+                    )
+                )
+            ).one()
+            if has_history:
+                raise PreviewEvidenceSchemaError("repair history is missing its current head")
+            return None
+        if head.repair_id is None:
+            return PreviewRepairHistoryUnresolved()
+        parent = self._session.get(CCloudFocusPreviewRepairTable, head.repair_id)
+        if parent is None:
+            raise PreviewEvidenceSchemaError("repair head names a missing repair")
+        if parent.ecosystem != ecosystem or parent.tenant_id != tenant_id:
+            raise PreviewEvidenceSchemaError("repair head owner does not match repair owner")
+        row = self._session.exec(
+            select(
+                func.count(col(CCloudFocusPreviewRepairDateTable.tracking_date)),
+                func.sum(
+                    case(
+                        (
+                            col(CCloudFocusPreviewRepairDateTable.status).in_(
+                                (
+                                    PreviewRepairDateStatus.SUCCEEDED.value,
+                                    PreviewRepairDateStatus.FAILED.value,
+                                )
+                            ),
+                            1,
+                        ),
+                        else_=0,
+                    )
+                ),
+            ).where(col(CCloudFocusPreviewRepairDateTable.repair_id) == head.repair_id)
+        ).one()
+        total_dates, completed_dates = row
+        return PreviewRepairProgress(
+            status=PreviewRepairStatus(parent.status),
+            completed_dates=int(completed_dates or 0),
+            total_dates=int(total_dates),
+        )
 
     def mark_running(self, repair_id: str, *, started_at: datetime) -> PreviewRepair | None:
         result = self._session.exec(

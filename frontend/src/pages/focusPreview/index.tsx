@@ -15,7 +15,7 @@ import {
   type FocusPreviewRevision,
   type FocusPreviewRevisionSummary,
 } from "../../api/focusPreview";
-import { useTenant } from "../../providers/TenantContext";
+import { useReadiness, useTenant } from "../../providers/TenantContext";
 import { getCurrentUtcMonth, getCurrentUtcMonthRange } from "./dateRange";
 
 const { Title, Text } = Typography;
@@ -124,11 +124,13 @@ function PreviewRequestDetails({
 interface PreviewRevisionDetailsProps {
   revision: FocusPreviewRevisionSummary;
   onView: (revisionId: string) => void;
+  disabled: boolean;
 }
 
 function PreviewRevisionDetails({
   revision,
   onView,
+  disabled,
 }: PreviewRevisionDetailsProps): React.JSX.Element {
   return (
     <section aria-label={`Published revision ${revision.revision_id}`}>
@@ -166,7 +168,9 @@ function PreviewRevisionDetails({
         <Text>Source records {revision.validation.source_records}</Text>
         <Text>Rows {revision.validation.rows}</Text>
         <Text>Artifact integrity {revision.validation.artifact_integrity}</Text>
-        <Button onClick={() => onView(revision.revision_id)}>View and download</Button>
+        <Button disabled={disabled} onClick={() => onView(revision.revision_id)}>
+          View and download
+        </Button>
       </Space>
     </section>
   );
@@ -246,6 +250,13 @@ interface FocusPreviewPageProps {
 
 export function FocusPreviewPage({ now = () => new Date() }: FocusPreviewPageProps = {}): React.JSX.Element {
   const { currentTenant } = useTenant();
+  const { readiness } = useReadiness();
+  const focusPreviewReadiness = readiness?.tenants.find(
+    (tenant) => tenant.tenant_name === currentTenant?.tenant_name,
+  );
+  const focusPreviewState = focusPreviewReadiness?.focus_preview_state;
+  const featureBlocked =
+    focusPreviewState === "disabled" || focusPreviewState === "unavailable";
   const [initialRange] = useState(() => getCurrentUtcMonthRange(now()));
   const [grain, setGrain] = useState<"monthly" | "daily">("monthly");
   const [month, setMonth] = useState(() => getCurrentUtcMonth(now()));
@@ -273,10 +284,20 @@ export function FocusPreviewPage({ now = () => new Date() }: FocusPreviewPagePro
   const revisionControllersRef = useRef(new Set<AbortController>());
   const tenantGenerationRef = useRef(0);
   const revisionGenerationRef = useRef(0);
+  const loadedTenantNameRef = useRef<string | null>(null);
   const tenantNameRef = useRef<string | null>(currentTenant?.tenant_name ?? null);
   tenantNameRef.current = currentTenant?.tenant_name ?? null;
 
   useEffect(() => {
+    const nextTenantName = currentTenant?.tenant_name ?? null;
+    const tenantChanged = loadedTenantNameRef.current !== nextTenantName;
+    if (featureBlocked && !tenantChanged) {
+      for (const controller of controllersRef.current) controller.abort();
+      controllersRef.current.clear();
+      revisionControllersRef.current.clear();
+      return;
+    }
+    loadedTenantNameRef.current = nextTenantName;
     tenantGenerationRef.current += 1;
     const generation = tenantGenerationRef.current;
     const controllers = controllersRef.current;
@@ -297,7 +318,7 @@ export function FocusPreviewPage({ now = () => new Date() }: FocusPreviewPagePro
     setRevisionControlsVisible(false);
     setOperationError(null);
     setRevisionError(null);
-    if (!currentTenant) return;
+    if (!currentTenant || featureBlocked) return;
 
     const tenantName = currentTenant.tenant_name;
     const profileController = new AbortController();
@@ -337,9 +358,14 @@ export function FocusPreviewPage({ now = () => new Date() }: FocusPreviewPagePro
       controllers.delete(profileController);
       controllers.delete(historyController);
     };
-  }, [currentTenant]);
+  }, [currentTenant, featureBlocked]);
 
   useEffect(() => {
+    if (featureBlocked) {
+      for (const controller of revisionControllersRef.current) controller.abort();
+      revisionControllersRef.current.clear();
+      return;
+    }
     revisionGenerationRef.current += 1;
     const revisionGeneration = revisionGenerationRef.current;
     const tenantGeneration = tenantGenerationRef.current;
@@ -396,7 +422,7 @@ export function FocusPreviewPage({ now = () => new Date() }: FocusPreviewPagePro
       controllers.delete(controller);
       allControllers.delete(controller);
     };
-  }, [currentTenant, revisionMonth]);
+  }, [currentTenant, revisionMonth, featureBlocked]);
 
   useEffect(() => {
     const controllers = controllersRef.current;
@@ -411,7 +437,7 @@ export function FocusPreviewPage({ now = () => new Date() }: FocusPreviewPagePro
   }, []);
 
   async function submit(): Promise<void> {
-    if (!currentTenant) return;
+    if (!currentTenant || featureBlocked) return;
     const tenantName = currentTenant.tenant_name;
     const generation = tenantGenerationRef.current;
     setBusy(true);
@@ -502,7 +528,7 @@ export function FocusPreviewPage({ now = () => new Date() }: FocusPreviewPagePro
   }
 
   async function refreshRevisions(): Promise<void> {
-    if (!currentTenant) return;
+    if (!currentTenant || featureBlocked) return;
     revisionGenerationRef.current += 1;
     const revisionGeneration = revisionGenerationRef.current;
     const tenantGeneration = tenantGenerationRef.current;
@@ -543,7 +569,7 @@ export function FocusPreviewPage({ now = () => new Date() }: FocusPreviewPagePro
   }
 
   async function loadMoreRevisions(): Promise<void> {
-    if (!currentTenant || !revisionNextCursor) return;
+    if (!currentTenant || !revisionNextCursor || featureBlocked) return;
     const tenantName = currentTenant.tenant_name;
     const tenantGeneration = tenantGenerationRef.current;
     const revisionGeneration = revisionGenerationRef.current;
@@ -579,7 +605,7 @@ export function FocusPreviewPage({ now = () => new Date() }: FocusPreviewPagePro
   }
 
   async function viewRevision(revisionId: string): Promise<void> {
-    if (!currentTenant) return;
+    if (!currentTenant || featureBlocked) return;
     const tenantName = currentTenant.tenant_name;
     const tenantGeneration = tenantGenerationRef.current;
     const revisionGeneration = revisionGenerationRef.current;
@@ -684,6 +710,36 @@ export function FocusPreviewPage({ now = () => new Date() }: FocusPreviewPagePro
   return (
     <Space direction="vertical" size="large" style={{ width: "100%" }}>
       <Title level={2}>FOCUS Mapping Preview</Title>
+      {focusPreviewState === "disabled" && (
+        <Alert
+          type="info"
+          showIcon
+          message={focusPreviewReadiness?.focus_preview_message}
+        />
+      )}
+      {focusPreviewState === "unavailable" && (
+        <Alert
+          type="error"
+          showIcon
+          message={focusPreviewReadiness?.focus_preview_message}
+        />
+      )}
+      {focusPreviewState === "upgrading" && (
+        <Alert
+          type="info"
+          showIcon
+          message="FOCUS Mapping Preview upgrade in progress"
+          description={`Date progress: ${focusPreviewReadiness?.focus_preview_completed_repair_dates ?? 0} of ${focusPreviewReadiness?.focus_preview_total_repair_dates ?? 0} repair dates completed. Existing valid Preview data remains available.`}
+        />
+      )}
+      {focusPreviewState === "degraded" && (
+        <Alert
+          type="warning"
+          showIcon
+          message="FOCUS Mapping Preview repair needs attention"
+          description={`Date progress: ${focusPreviewReadiness?.focus_preview_completed_repair_dates ?? 0} of ${focusPreviewReadiness?.focus_preview_total_repair_dates ?? 0} repair dates completed. Retry the failed dates with a new bounded historical repair. Existing valid Preview data remains available.`}
+        />
+      )}
       <Alert
         type="warning"
         showIcon
@@ -767,7 +823,12 @@ export function FocusPreviewPage({ now = () => new Date() }: FocusPreviewPagePro
             </select>
           </label>
         )}
-        <Button type="primary" loading={busy} disabled={!currentTenant} onClick={() => void submit()}>
+        <Button
+          type="primary"
+          loading={busy}
+          disabled={!currentTenant || featureBlocked}
+          onClick={() => void submit()}
+        >
           Generate preview
         </Button>
       </Space>
@@ -795,7 +856,7 @@ export function FocusPreviewPage({ now = () => new Date() }: FocusPreviewPagePro
               </label>
               <Button
                 loading={revisionBusy}
-                disabled={!currentTenant}
+                disabled={!currentTenant || featureBlocked}
                 onClick={() => void refreshRevisions()}
               >
                 Refresh revisions
@@ -806,6 +867,7 @@ export function FocusPreviewPage({ now = () => new Date() }: FocusPreviewPagePro
             <PreviewRevisionDetails
               key={revision.revision_id}
               revision={revision}
+              disabled={featureBlocked}
               onView={(revisionId) => {
                 void viewRevision(revisionId);
               }}
@@ -820,7 +882,11 @@ export function FocusPreviewPage({ now = () => new Date() }: FocusPreviewPagePro
             />
           )}
           {revisionNextCursor && (
-            <Button loading={revisionBusy} onClick={() => void loadMoreRevisions()}>
+            <Button
+              loading={revisionBusy}
+              disabled={featureBlocked}
+              onClick={() => void loadMoreRevisions()}
+            >
               Load more revisions
             </Button>
           )}

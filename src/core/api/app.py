@@ -163,23 +163,15 @@ def create_app(
                         runner=workflow_runner,
                         backend_provider=backend_provider,
                         max_workers=settings.preview.max_workers,
+                        max_queued_repairs=settings.preview.max_queued_repairs,
                         configured_owners=tuple(
                             (tenant_name, tenant_config)
                             for tenant_name, tenant_config in settings.tenants.items()
                             if tenant_config.focus_preview_enabled
                         ),
                     )
-                    try:
-                        preview_repair_runtime.recover()
-                    except Exception as exc:
-                        logger.error(
-                            "FOCUS Mapping Preview repair recovery unavailable error_type=%s",
-                            type(exc).__name__,
-                        )
-                        preview_repair_runtime.close(wait=True)
-                        preview_repair_runtime = None
-                    else:
-                        app.state.preview_repair_runtime = preview_repair_runtime
+                    preview_repair_runtime.recover()
+                    app.state.preview_repair_runtime = preview_repair_runtime
             if workflow_runner is None:
                 for tenant_name, tenant_config in settings.tenants.items():
                     try:

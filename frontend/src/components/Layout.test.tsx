@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { describe, expect, it, vi } from "vitest";
 import { AppLayout } from "./Layout";
-import { useTenant } from "../providers/TenantContext";
+import { useTenant, useReadiness } from "../providers/TenantContext";
 import { useResourceLinks } from "../providers/ResourceLinkContext";
 
 // Mock TenantContext to avoid provider requirement.
@@ -264,5 +264,145 @@ describe("TASK-197: Links toggle tooltip", () => {
     fireEvent.click(linksSwitch);
 
     expect(mockSetEnabled).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("FOCUS Mapping Preview feature readiness navigation", () => {
+  const currentTenant = {
+    tenant_name: "acme",
+    tenant_id: "t-001",
+    ecosystem: "ccloud",
+    dates_pending: 0,
+    dates_calculated: 10,
+    last_calculated_date: null,
+    topic_attribution_status: "enabled" as const,
+    topic_attribution_error: null,
+  };
+
+  function setFocusState(
+    state: "disabled" | "ready" | "upgrading" | "degraded" | "unavailable",
+  ): void {
+    vi.mocked(useTenant).mockReturnValue({
+      currentTenant,
+      tenants: [currentTenant],
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+      setCurrentTenant: vi.fn(),
+      isReadOnly: false,
+    });
+    vi.mocked(useReadiness).mockReturnValue({
+      appStatus: "ready",
+      readiness: {
+        status: "ready",
+        version: "1.0.0",
+        mode: "both",
+        tenants: [
+          {
+            tenant_name: "acme",
+            tables_ready: true,
+            has_data: true,
+            pipeline_running: false,
+            pipeline_stage: null,
+            pipeline_current_date: null,
+            last_run_status: "completed",
+            last_run_at: null,
+            permanent_failure: null,
+            topic_attribution_status: "enabled",
+            topic_attribution_error: null,
+            focus_preview_state: state,
+            focus_preview_completed_repair_dates:
+              state === "upgrading" || state === "degraded" ? 2 : null,
+            focus_preview_total_repair_dates:
+              state === "upgrading" || state === "degraded" ? 3 : null,
+            focus_preview_message: null,
+          },
+        ],
+      },
+    });
+  }
+
+  it.each([
+    ["disabled", "Not configured"],
+    ["upgrading", "Upgrading"],
+    ["degraded", "Needs retry"],
+    ["unavailable", "Unavailable"],
+  ] as const)("shows the exact %s badge", (state, badge) => {
+    setFocusState(state);
+
+    render(
+      <AppLayout isDark={false} onToggleTheme={vi.fn()}>
+        <div>content</div>
+      </AppLayout>,
+      { wrapper },
+    );
+
+    expect(screen.getByText(badge)).toBeInTheDocument();
+  });
+
+  it("shows no FOCUS badge when ready", () => {
+    setFocusState("ready");
+
+    render(
+      <AppLayout isDark={false} onToggleTheme={vi.fn()}>
+        <div>content</div>
+      </AppLayout>,
+      { wrapper },
+    );
+
+    const item = screen.getByText("FOCUS Mapping Preview").closest("li");
+    expect(item).not.toHaveClass("ant-menu-item-disabled");
+    expect(item?.querySelector(".ant-badge")).toBeNull();
+  });
+
+  it("keeps FOCUS and unrelated navigation enabled while upgrading", () => {
+    setFocusState("upgrading");
+
+    render(
+      <AppLayout isDark={false} onToggleTheme={vi.fn()}>
+        <div>content</div>
+      </AppLayout>,
+      { wrapper },
+    );
+
+    expect(
+      screen.getByText("FOCUS Mapping Preview").closest("li"),
+    ).not.toHaveClass("ant-menu-item-disabled");
+    expect(screen.getByText("Dashboard").closest("li")).not.toHaveClass(
+      "ant-menu-item-disabled",
+    );
+    expect(screen.getByText("Chargebacks").closest("li")).not.toHaveClass(
+      "ant-menu-item-disabled",
+    );
+  });
+
+  it("uses only the selected tenant state", () => {
+    setFocusState("ready");
+    vi.mocked(useReadiness).mockReturnValue({
+      appStatus: "ready",
+      readiness: {
+        ...vi.mocked(useReadiness)().readiness!,
+        tenants: [
+          {
+            ...vi.mocked(useReadiness)().readiness!.tenants[0],
+            tenant_name: "other",
+            focus_preview_state: "upgrading",
+            focus_preview_completed_repair_dates: 1,
+            focus_preview_total_repair_dates: 3,
+          },
+          vi.mocked(useReadiness)().readiness!.tenants[0],
+        ],
+      },
+    });
+
+    render(
+      <AppLayout isDark={false} onToggleTheme={vi.fn()}>
+        <div>content</div>
+      </AppLayout>,
+      { wrapper },
+    );
+
+    expect(screen.queryByText("Upgrading")).not.toBeInTheDocument();
+    expect(screen.getByText("FOCUS Mapping Preview")).toBeInTheDocument();
   });
 });

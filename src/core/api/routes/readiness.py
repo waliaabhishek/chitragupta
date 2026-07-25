@@ -3,12 +3,13 @@ from __future__ import annotations
 import logging
 import time
 from datetime import date
-from typing import TYPE_CHECKING, Annotated
+from typing import TYPE_CHECKING, Annotated, Literal
 
 from fastapi import APIRouter, Depends, Request
 
 if TYPE_CHECKING:
     from core.config.models import TenantConfig
+    from core.preview.repair import PreviewRepairRuntime
     from core.storage.backend_provider import TenantBackendProvider
     from workflow_runner import WorkflowRunner
 
@@ -27,6 +28,77 @@ router = APIRouter(tags=["readiness"])
 _readiness_cache: tuple[ReadinessResponse, float] | None = None
 _READINESS_CACHE_TTL: float = 2.0  # seconds
 
+_PREVIEW_DISABLED = "FOCUS Mapping Preview is not enabled for this tenant."
+_PREVIEW_UNAVAILABLE = "FOCUS Mapping Preview storage is unavailable. Restore storage availability before retrying."
+_PREVIEW_UPGRADING = "Historical repair is in progress; existing valid Preview data remains available."
+_PREVIEW_DEGRADED = (
+    "Historical repair needs attention. Retry the failed dates with a new bounded repair; "
+    "existing valid Preview data remains available."
+)
+
+FocusPreviewReadiness = tuple[
+    Literal["disabled", "ready", "upgrading", "degraded", "unavailable"],
+    int | None,
+    int | None,
+    str | None,
+]
+
+
+def _focus_preview_readiness(
+    *,
+    tenant_config: TenantConfig,
+    backend: object | None,
+    recovery_available: bool | None,
+) -> FocusPreviewReadiness:
+    from core.preview.persistence import PreviewEvidenceStorageBackend
+    from core.preview.repair import PreviewRepairHistoryUnresolved, PreviewRepairStatus
+    from core.preview.storage_availability import PreviewEvidenceAvailabilityState
+
+    if not tenant_config.focus_preview_enabled:
+        return ("disabled", None, None, _PREVIEW_DISABLED)
+    unavailable: FocusPreviewReadiness = (
+        "unavailable",
+        None,
+        None,
+        _PREVIEW_UNAVAILABLE,
+    )
+    if recovery_available is False or not isinstance(backend, PreviewEvidenceStorageBackend):
+        return unavailable
+    if backend.preview_evidence_availability.state is not PreviewEvidenceAvailabilityState.READY:
+        return unavailable
+    try:
+        with backend.create_preview_generation_read_unit_of_work() as uow:
+            progress = uow.repairs.get_current_progress_for_owner(
+                tenant_config.ecosystem,
+                tenant_config.tenant_id,
+            )
+    except Exception:
+        return unavailable
+    if progress is None:
+        return ("ready", None, None, None)
+    if isinstance(progress, PreviewRepairHistoryUnresolved):
+        return unavailable
+    if progress.status in {PreviewRepairStatus.QUEUED, PreviewRepairStatus.RUNNING}:
+        return (
+            "upgrading",
+            progress.completed_dates,
+            progress.total_dates,
+            _PREVIEW_UPGRADING,
+        )
+    if progress.status is PreviewRepairStatus.COMPLETED:
+        return (
+            "ready",
+            progress.completed_dates,
+            progress.total_dates,
+            None,
+        )
+    return (
+        "degraded",
+        progress.completed_dates,
+        progress.total_dates,
+        _PREVIEW_DEGRADED,
+    )
+
 
 def _check_tenant_readiness(
     tenant_name: str,
@@ -35,6 +107,7 @@ def _check_tenant_readiness(
     workflow_runner: WorkflowRunner | None,
     failed_tenants: dict[str, str],
     topic_attribution_status: TopicAttributionStatus,
+    repair_runtime: PreviewRepairRuntime | None = None,
 ) -> TenantReadiness:
     """Check readiness for a single tenant. Pure function over injected dependencies."""
     tables_ready = True
@@ -79,6 +152,32 @@ def _check_tenant_readiness(
         logger.warning("Failed to check readiness for tenant %s", tenant_name, exc_info=True)
         tables_ready = False
 
+    if not tenant_config.focus_preview_enabled:
+        preview_state = _focus_preview_readiness(
+            tenant_config=tenant_config,
+            backend=None,
+            recovery_available=None,
+        )
+    elif not tables_ready:
+        preview_state = ("unavailable", None, None, _PREVIEW_UNAVAILABLE)
+    else:
+        try:
+            with backend_provider.acquire_backend(tenant_name, tenant_config) as backend:
+                preview_state = _focus_preview_readiness(
+                    tenant_config=tenant_config,
+                    backend=backend,
+                    recovery_available=(
+                        None if repair_runtime is None else repair_runtime.recovery_available(tenant_name)
+                    ),
+                )
+        except Exception as exc:
+            logger.warning(
+                "Failed to check FOCUS Preview readiness tenant=%s error_type=%s",
+                tenant_name,
+                type(exc).__name__,
+            )
+            preview_state = ("unavailable", None, None, _PREVIEW_UNAVAILABLE)
+
     return TenantReadiness(
         tenant_name=tenant_name,
         tables_ready=tables_ready,
@@ -91,6 +190,10 @@ def _check_tenant_readiness(
         permanent_failure=permanent_failure,
         topic_attribution_status=topic_attribution_status.status,
         topic_attribution_error=topic_attribution_status.error,
+        focus_preview_state=preview_state[0],
+        focus_preview_completed_repair_dates=preview_state[1],
+        focus_preview_total_repair_dates=preview_state[2],
+        focus_preview_message=preview_state[3],
     )
 
 
@@ -120,6 +223,7 @@ def readiness(
     mode: str = getattr(request.app.state, "mode", "api")
     workflow_runner = getattr(request.app.state, "workflow_runner", None)
     backend_provider = get_backend_provider(request)
+    repair_runtime = getattr(request.app.state, "preview_repair_runtime", None)
 
     failed_tenants: dict[str, str] = {}
     if workflow_runner is not None:
@@ -133,6 +237,7 @@ def readiness(
             workflow_runner=workflow_runner,
             failed_tenants=failed_tenants,
             topic_attribution_status=resolve_topic_attribution_status(cfg.plugin_settings, cfg.ecosystem),
+            repair_runtime=repair_runtime,
         )
         for name, cfg in settings.tenants.items()
     ]

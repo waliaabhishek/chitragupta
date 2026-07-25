@@ -283,6 +283,15 @@ export interface TenantReadiness {
   permanent_failure: string | null;
   topic_attribution_status: "disabled" | "enabled" | "config_error";
   topic_attribution_error: string | null;
+  focus_preview_state:
+    | "disabled"
+    | "ready"
+    | "upgrading"
+    | "degraded"
+    | "unavailable";
+  focus_preview_completed_repair_dates: number | null;
+  focus_preview_total_repair_dates: number | null;
+  focus_preview_message: string | null;
 }
 
 export interface ReadinessResponse {

@@ -62,13 +62,16 @@ Preview's process-wide package settings are separate from the tenant block:
 preview:
   artifact_root: /var/lib/chitragupta/focus-preview
   max_workers: 2
+  max_queued_repairs: 8
   max_csv_file_bytes: null
 ```
 
 The artifact root must be durable and writable by the API and periodic worker;
 separate processes must use the same mounted path. `max_csv_file_bytes` is
 either null for one CSV or a positive byte ceiling for deterministic
-row-boundary parts. See
+row-boundary parts. `max_workers` also bounds running historical repairs, while
+`max_queued_repairs` bounds additional waiting repairs per process. Zero
+disables repair waiting. See
 [FOCUS Mapping Preview](../focus-mapping-preview.md) for the complete user
 workflow and supported customization boundary.
 

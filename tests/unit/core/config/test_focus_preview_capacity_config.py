@@ -10,6 +10,7 @@ def test_preview_capacity_defaults_are_finite_and_match_the_documented_safe_valu
     config = PreviewConfig()
 
     assert config.max_workers == 2
+    assert config.max_queued_repairs == 8
     assert config.max_queued_generations == 8
     assert config.max_running_generations_per_tenant == 1
     assert config.max_queued_generations_per_tenant == 2
@@ -20,6 +21,7 @@ def test_preview_capacity_defaults_are_finite_and_match_the_documented_safe_valu
     ("field", "value"),
     [
         ("max_workers", True),
+        ("max_queued_repairs", False),
         ("max_queued_generations", False),
         ("max_running_generations_per_tenant", True),
         ("max_queued_generations_per_tenant", False),
@@ -40,6 +42,21 @@ def test_preview_capacity_accepts_zero_queue_only_for_both_limits() -> None:
 
     assert config.max_queued_generations == 0
     assert config.max_queued_generations_per_tenant == 0
+
+
+def test_preview_repair_capacity_accepts_zero_waiting_positions() -> None:
+    config = PreviewConfig(max_queued_repairs=0)
+
+    assert config.max_workers == 2
+    assert config.max_queued_repairs == 0
+
+
+@pytest.mark.parametrize("value", [-1, True, False])
+def test_preview_repair_queue_capacity_rejects_negative_and_boolean_values(
+    value: int | bool,
+) -> None:
+    with pytest.raises(ValidationError):
+        PreviewConfig(max_queued_repairs=value)  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize(

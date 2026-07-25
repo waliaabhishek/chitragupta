@@ -3,8 +3,8 @@ from __future__ import annotations
 import logging
 import threading
 import uuid
+from collections import deque
 from collections.abc import Callable
-from concurrent.futures import Executor, ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from enum import StrEnum
@@ -52,6 +52,38 @@ class PreviewRepairFailureStage(StrEnum):
 
 class PreviewRepairWorkerConflictError(RuntimeError):
     """A guarded repair transition lost ownership to incompatible durable state."""
+
+
+class PreviewRepairCapacityUnavailable(RuntimeError):  # noqa: N818 - public contract name
+    """The process-local repair scheduler has no running or waiting capacity."""
+
+
+class PreviewRepairWorkerUnavailableError(RuntimeError):
+    """The repair runtime cannot admit work for the requested tenant."""
+
+
+@dataclass(frozen=True)
+class PreviewRepairProgress:
+    status: PreviewRepairStatus
+    completed_dates: int
+    total_dates: int
+
+    def __post_init__(self) -> None:
+        if self.total_dates < 1:
+            raise ValueError("repair progress must contain at least one date")
+        if not 0 <= self.completed_dates <= self.total_dates:
+            raise ValueError("completed repair dates must be within total dates")
+
+
+@dataclass(frozen=True)
+class PreviewRepairHistoryUnresolved:
+    pass
+
+
+@dataclass(frozen=True)
+class PreviewRepairRecoveryReport:
+    available_tenant_names: frozenset[str]
+    unavailable_tenant_names: frozenset[str]
 
 
 @dataclass(frozen=True)
@@ -218,6 +250,11 @@ class PreviewRepairRepository(Protocol):
     def create_queued(self, repair: PreviewRepair) -> PreviewRepair: ...
     def get_for_owner(self, repair_id: str, ecosystem: str, tenant_id: str) -> PreviewRepair | None: ...
     def find_active_for_owner(self, ecosystem: str, tenant_id: str) -> PreviewRepair | None: ...
+    def get_current_progress_for_owner(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+    ) -> PreviewRepairProgress | PreviewRepairHistoryUnresolved | None: ...
     def mark_running(self, repair_id: str, *, started_at: datetime) -> PreviewRepair | None: ...
     def mark_date_running(
         self, repair_id: str, tracking_date: date, *, started_at: datetime
@@ -293,6 +330,16 @@ class PreviewExecutor(Protocol):
     def shutdown(self, wait: bool = True) -> None: ...
 
 
+def _submit_legacy(executor: PreviewExecutor, fn: Callable[[], None]) -> object:
+    return executor.submit(fn)
+
+
+@dataclass(frozen=True)
+class _PreviewRepairWork:
+    repair: PreviewRepair
+    tenant_config: TenantConfig
+
+
 class PreviewRepairRuntime:
     def __init__(
         self,
@@ -300,48 +347,111 @@ class PreviewRepairRuntime:
         runner: PreviewRepairRunner,
         backend_provider: TenantBackendProvider,
         max_workers: int,
+        max_queued_repairs: int = 8,
         configured_owners: tuple[tuple[str, TenantConfig], ...],
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
         repair_id_factory: Callable[[], str] = lambda: str(uuid.uuid4()),
-        executor: Executor | None = None,
+        executor: PreviewExecutor | None = None,
     ) -> None:
+        if max_workers < 1:
+            raise ValueError("max_workers must be positive")
+        if max_queued_repairs < 0:
+            raise ValueError("max_queued_repairs must not be negative")
         self.runner = runner
         self.backend_provider = backend_provider
         self.clock = clock
         self.repair_id_factory = repair_id_factory
         self.configured_owners = configured_owners
-        self._executor = executor or ThreadPoolExecutor(max_workers=max_workers)
-        self._lock = threading.Lock()
+        self._max_admitted = max_workers + max_queued_repairs
+        self._condition = threading.Condition()
+        self._submission_lock = threading.Lock()
+        self._work: deque[_PreviewRepairWork] = deque()
+        self._admitted = 0
+        self._closed = False
+        self._recovery: dict[str, bool] = {}
+        self._legacy_executor = executor
+        self._workers: tuple[threading.Thread, ...] = ()
+        if executor is None:
+            self._workers = tuple(
+                threading.Thread(
+                    target=self._worker_loop,
+                    name=f"focus-preview-repair-{index + 1}",
+                    daemon=True,
+                )
+                for index in range(max_workers)
+            )
+            for worker in self._workers:
+                worker.start()
 
-    def recover(self) -> None:
+    def recovery_available(self, tenant_name: str) -> bool | None:
+        with self._condition:
+            return self._recovery.get(tenant_name)
+
+    def _recover_owner(
+        self,
+        *,
+        backend: PreviewEvidenceStorageBackend,
+        tenant_name: str,
+        tenant_config: TenantConfig,
+    ) -> None:
         from core.preview.persistence import PreviewEvidenceStorageBackend
 
+        if not isinstance(backend, PreviewEvidenceStorageBackend):
+            raise PreviewRepairWorkerUnavailableError("repair worker is unavailable")
         diagnostic = PreviewDiagnostic(
             code="focus_preview_repair_interrupted",
             message="The repair was interrupted; submit a new bounded repair to retry.",
             retryable=True,
         )
-        for tenant_name, tenant_config in self.configured_owners:
-            with self.backend_provider.acquire_backend(tenant_name, tenant_config) as backend:
-                if not isinstance(backend, PreviewEvidenceStorageBackend):
-                    continue
-                completed_at = canonical_utc_second(
-                    self.clock(),
-                    field="repair.completed_at",
-                )
-                with backend.create_preview_evidence_unit_of_work() as uow:
-                    uow.repairs.fail_interrupted_for_owner(
-                        tenant_config.ecosystem,
-                        tenant_config.tenant_id,
-                        completed_at=completed_at,
-                        diagnostic=diagnostic,
-                    )
-                    uow.commit()
+        completed_at = canonical_utc_second(
+            self.clock(),
+            field="repair.completed_at",
+        )
+        with backend.create_preview_evidence_unit_of_work() as uow:
+            uow.repairs.fail_interrupted_for_owner(
+                tenant_config.ecosystem,
+                tenant_config.tenant_id,
+                completed_at=completed_at,
+                diagnostic=diagnostic,
+            )
+            uow.commit()
+        with self._condition:
+            self._recovery[tenant_name] = True
 
-    def create_queued(
+    def recover(self) -> PreviewRepairRecoveryReport:
+        from core.preview.persistence import PreviewEvidenceStorageBackend
+
+        available: set[str] = set()
+        unavailable: set[str] = set()
+        for tenant_name, tenant_config in self.configured_owners:
+            try:
+                with self.backend_provider.acquire_backend(tenant_name, tenant_config) as backend:
+                    if not isinstance(backend, PreviewEvidenceStorageBackend):
+                        raise PreviewRepairWorkerUnavailableError("repair worker is unavailable")
+                    self._recover_owner(
+                        backend=backend,
+                        tenant_name=tenant_name,
+                        tenant_config=tenant_config,
+                    )
+            except Exception as exc:
+                logger.error(
+                    "FOCUS Preview repair recovery unavailable tenant=%s error_type=%s",
+                    tenant_name,
+                    type(exc).__name__,
+                )
+                unavailable.add(tenant_name)
+                with self._condition:
+                    self._recovery[tenant_name] = False
+            else:
+                available.add(tenant_name)
+        return PreviewRepairRecoveryReport(
+            available_tenant_names=frozenset(available),
+            unavailable_tenant_names=frozenset(unavailable),
+        )
+
+    def _operation(
         self,
         *,
-        backend: PreviewEvidenceStorageBackend,
         tenant_name: str,
         tenant_config: TenantConfig,
         start_date: date,
@@ -381,12 +491,92 @@ class PreviewRepairRuntime:
             diagnostic=None,
             dates=dates,
         )
-        with self._lock, backend.create_preview_evidence_unit_of_work() as uow:
+        return operation
+
+    def create_queued(
+        self,
+        *,
+        backend: PreviewEvidenceStorageBackend,
+        tenant_name: str,
+        tenant_config: TenantConfig,
+        start_date: date,
+        end_date: date,
+        created_at: datetime,
+    ) -> PreviewRepair:
+        operation = self._operation(
+            tenant_name=tenant_name,
+            tenant_config=tenant_config,
+            start_date=start_date,
+            end_date=end_date,
+            created_at=created_at,
+        )
+        with self._submission_lock, backend.create_preview_evidence_unit_of_work() as uow:
             if uow.repairs.find_active_for_owner(operation.ecosystem, operation.tenant_id) is not None:
                 raise RuntimeError("active_repair")
             created = uow.repairs.create_queued(operation)
             uow.commit()
         return created
+
+    def submit(
+        self,
+        *,
+        backend: PreviewEvidenceStorageBackend,
+        tenant_name: str,
+        tenant_config: TenantConfig,
+        start_date: date,
+        end_date: date,
+        created_at: datetime,
+    ) -> PreviewRepair:
+        with self._submission_lock:
+            if self.recovery_available(tenant_name) is False:
+                try:
+                    self._recover_owner(
+                        backend=backend,
+                        tenant_name=tenant_name,
+                        tenant_config=tenant_config,
+                    )
+                except Exception as exc:
+                    with self._condition:
+                        self._recovery[tenant_name] = False
+                    raise PreviewRepairWorkerUnavailableError("repair worker is unavailable") from exc
+            operation = self._operation(
+                tenant_name=tenant_name,
+                tenant_config=tenant_config,
+                start_date=start_date,
+                end_date=end_date,
+                created_at=created_at,
+            )
+            with backend.create_preview_evidence_unit_of_work() as uow:
+                if uow.repairs.find_active_for_owner(operation.ecosystem, operation.tenant_id) is not None:
+                    raise RuntimeError("active_repair")
+                with self._condition:
+                    if self._closed:
+                        raise PreviewRepairWorkerUnavailableError("repair worker is unavailable")
+                    if self._admitted >= self._max_admitted:
+                        raise PreviewRepairCapacityUnavailable("repair capacity is exhausted")
+                    self._admitted += 1
+                try:
+                    created = uow.repairs.create_queued(operation)
+                    uow.commit()
+                except BaseException:
+                    self._release_capacity()
+                    raise
+            work = _PreviewRepairWork(repair=created, tenant_config=tenant_config)
+            if self._legacy_executor is not None:
+                try:
+                    _submit_legacy(
+                        self._legacy_executor,
+                        lambda: self._run_work(work, release=True),
+                    )
+                except Exception as exc:
+                    self._persist_worker_failure(created, tenant_config)
+                    self._release_capacity()
+                    raise PreviewRepairWorkerUnavailableError("repair worker is unavailable") from exc
+                return created
+            with self._condition:
+                self._work.append(work)
+                self._condition.notify()
+            return created
 
     def schedule(
         self,
@@ -394,82 +584,127 @@ class PreviewRepairRuntime:
         *,
         tenant_config: TenantConfig,
     ) -> None:
-        def run() -> None:
-            try:
-                self.runner.run_focus_preview_repair(
-                    repair.repair_id,
-                    repair.tenant_name,
-                    tenant_config,
-                )
-            except Exception as exc:
-                logger.error(
-                    "FOCUS Preview repair worker failed repair_id=%s error_type=%s",
-                    repair.repair_id,
-                    type(exc).__name__,
-                )
-                from core.preview.persistence import PreviewEvidenceStorageBackend
+        if self._legacy_executor is None:
+            raise PreviewRepairWorkerUnavailableError("repair worker is unavailable")
+        _submit_legacy(
+            self._legacy_executor,
+            lambda: self._run_work(
+                _PreviewRepairWork(repair, tenant_config),
+                release=False,
+            ),
+        )
 
-                diagnostic = PreviewDiagnostic(
-                    code="focus_preview_repair_worker_unavailable",
-                    message="The repair worker stopped; submit a new bounded repair to retry.",
-                    retryable=True,
-                )
-                try:
-                    with self.backend_provider.acquire_backend(
-                        repair.tenant_name,
-                        tenant_config,
-                    ) as backend:
-                        if not isinstance(backend, PreviewEvidenceStorageBackend):
-                            return
-                        with backend.create_preview_evidence_unit_of_work() as uow:
-                            current = uow.repairs.get_for_owner(
-                                repair.repair_id,
-                                repair.ecosystem,
-                                repair.tenant_id,
-                            )
-                            if current is None:
-                                return
-                            completed_at = canonical_utc_second(
-                                self.clock(),
-                                field="repair.completed_at",
-                            )
-                            if current.status is PreviewRepairStatus.QUEUED:
-                                failed = uow.repairs.fail_queued_before_execution(
-                                    repair.repair_id,
-                                    completed_at=completed_at,
-                                    diagnostic=diagnostic,
-                                )
-                            elif current.status is PreviewRepairStatus.RUNNING:
-                                failed = uow.repairs.fail_running_worker(
-                                    repair.repair_id,
-                                    completed_at=completed_at,
-                                    diagnostic=diagnostic,
-                                )
-                            else:
-                                return
-                            uow.commit()
-                        if failed is None:
-                            with backend.create_preview_generation_read_unit_of_work() as read_uow:
-                                persisted = read_uow.repairs.get_for_owner(
-                                    repair.repair_id,
-                                    repair.ecosystem,
-                                    repair.tenant_id,
-                                )
-                            if (
-                                persisted is None
-                                or persisted.status is not PreviewRepairStatus.FAILED
-                                or persisted.completed_at != completed_at
-                                or persisted.diagnostic != diagnostic
-                            ):
-                                raise PreviewRepairWorkerConflictError("repair worker failure transition conflicted")
-                except Exception as recovery_exc:
-                    logger.error(
-                        "FOCUS Preview repair worker failure persistence failed repair_id=%s error_type=%s",
+    def _worker_loop(self) -> None:
+        while True:
+            with self._condition:
+                while not self._work and not self._closed:
+                    self._condition.wait()
+                if not self._work:
+                    return
+                work = self._work.popleft()
+            self._run_work(work, release=True)
+
+    def _run_work(self, work: _PreviewRepairWork, *, release: bool) -> None:
+        repair = work.repair
+        tenant_config = work.tenant_config
+        try:
+            self.runner.run_focus_preview_repair(
+                repair.repair_id,
+                repair.tenant_name,
+                tenant_config,
+            )
+        except Exception as exc:
+            logger.error(
+                "FOCUS Preview repair worker failed repair_id=%s error_type=%s",
+                repair.repair_id,
+                type(exc).__name__,
+            )
+            self._persist_worker_failure(repair, tenant_config)
+        finally:
+            if release:
+                self._release_capacity()
+
+    def _persist_worker_failure(
+        self,
+        repair: PreviewRepair,
+        tenant_config: TenantConfig,
+    ) -> None:
+        from core.preview.persistence import PreviewEvidenceStorageBackend
+
+        diagnostic = PreviewDiagnostic(
+            code="focus_preview_repair_worker_unavailable",
+            message="The repair worker stopped; submit a new bounded repair to retry.",
+            retryable=True,
+        )
+        try:
+            with self.backend_provider.acquire_backend(
+                repair.tenant_name,
+                tenant_config,
+            ) as backend:
+                if not isinstance(backend, PreviewEvidenceStorageBackend):
+                    return
+                with backend.create_preview_evidence_unit_of_work() as uow:
+                    current = uow.repairs.get_for_owner(
                         repair.repair_id,
-                        type(recovery_exc).__name__,
+                        repair.ecosystem,
+                        repair.tenant_id,
                     )
+                    if current is None:
+                        return
+                    completed_at = canonical_utc_second(
+                        self.clock(),
+                        field="repair.completed_at",
+                    )
+                    if current.status is PreviewRepairStatus.QUEUED:
+                        failed = uow.repairs.fail_queued_before_execution(
+                            repair.repair_id,
+                            completed_at=completed_at,
+                            diagnostic=diagnostic,
+                        )
+                    elif current.status is PreviewRepairStatus.RUNNING:
+                        failed = uow.repairs.fail_running_worker(
+                            repair.repair_id,
+                            completed_at=completed_at,
+                            diagnostic=diagnostic,
+                        )
+                    else:
+                        return
+                    uow.commit()
+                if failed is None:
+                    with backend.create_preview_generation_read_unit_of_work() as read_uow:
+                        persisted = read_uow.repairs.get_for_owner(
+                            repair.repair_id,
+                            repair.ecosystem,
+                            repair.tenant_id,
+                        )
+                    if (
+                        persisted is None
+                        or persisted.status is not PreviewRepairStatus.FAILED
+                        or persisted.completed_at != completed_at
+                        or persisted.diagnostic != diagnostic
+                    ):
+                        raise PreviewRepairWorkerConflictError("repair worker failure transition conflicted")
+        except Exception as recovery_exc:
+            logger.error(
+                "FOCUS Preview repair worker failure persistence failed repair_id=%s error_type=%s",
+                repair.repair_id,
+                type(recovery_exc).__name__,
+            )
 
-        self._executor.submit(run)
+    def _release_capacity(self) -> None:
+        with self._condition:
+            if self._admitted <= 0:
+                return
+            self._admitted -= 1
+            self._condition.notify_all()
 
     def close(self, *, wait: bool) -> None:
-        self._executor.shutdown(wait=wait)
+        if self._legacy_executor is not None:
+            self._legacy_executor.shutdown(wait=wait)
+            return
+        with self._submission_lock, self._condition:
+            self._closed = True
+            self._condition.notify_all()
+        if wait:
+            for worker in self._workers:
+                worker.join()

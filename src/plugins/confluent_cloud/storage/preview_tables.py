@@ -200,6 +200,25 @@ class CCloudFocusPreviewRepairDateTable(SQLModel, table=True):
     source_correlation_ids_json: str | None = None
 
 
+class CCloudFocusPreviewRepairHeadTable(SQLModel, table=True):
+    __tablename__ = "ccloud_focus_preview_repair_heads"
+    __table_args__ = (
+        PrimaryKeyConstraint("ecosystem", "tenant_id"),
+        Index(
+            "uq_ccloud_focus_preview_repair_head_repair",
+            "repair_id",
+            unique=True,
+        ),
+    )
+
+    ecosystem: str = Field(primary_key=True)
+    tenant_id: str = Field(primary_key=True)
+    repair_id: str | None = Field(
+        default=None,
+        foreign_key="ccloud_focus_preview_repairs.repair_id",
+    )
+
+
 class CCloudOrganizationAuthorityAttemptTable(SQLModel, table=True):
     __tablename__ = "ccloud_organization_authority_attempts"
     __table_args__ = (
@@ -233,6 +252,7 @@ __all__ = [
     "CCloudCostSourceRecordTable",
     "CCloudOrganizationAuthorityAttemptTable",
     "CCloudFocusPreviewRepairDateTable",
+    "CCloudFocusPreviewRepairHeadTable",
     "CCloudFocusPreviewRepairTable",
     "CCloudSourceCaptureReadinessTable",
     "CCloudSourceCaptureReadinessHistoryTable",

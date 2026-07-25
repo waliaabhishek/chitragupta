@@ -557,6 +557,16 @@ class TenantReadiness(BaseModel):
     permanent_failure: str | None
     topic_attribution_status: Literal["disabled", "enabled", "config_error"]
     topic_attribution_error: str | None = None
+    focus_preview_state: Literal[
+        "disabled",
+        "ready",
+        "upgrading",
+        "degraded",
+        "unavailable",
+    ]
+    focus_preview_completed_repair_dates: int | None
+    focus_preview_total_repair_dates: int | None
+    focus_preview_message: str | None
 
 
 class ReadinessResponse(BaseModel):

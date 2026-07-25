@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import io
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -9,9 +9,11 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from alembic.script import ScriptDirectory
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import create_engine, event, inspect, text
+from sqlalchemy.engine import Engine
 
 from core.preview.storage_availability import PreviewEvidenceOfflineMigrationError
+from plugins.confluent_cloud.storage.preview_schema import CCloudPreviewSchemaManager
 
 V27_TABLES = {
     "ccloud_source_capture_readiness_history",
@@ -55,7 +57,7 @@ def test_revision_027_calls_guarded_preview_hook() -> None:
         / "027_add_focus_preview_historical_repair.py"
     )
 
-    assert script.get_current_head() == "029"
+    assert script.get_current_head() == "030"
     source = migration_path.read_text(encoding="utf-8")
     assert 'run_preview_evidence_step("027")' in source
     assert 'run_preview_evidence_downgrade_step("027")' in source
@@ -133,6 +135,9 @@ def test_migration_copies_current_readiness_to_history_without_rewriting_attempt
                     """
                 )
             ).one()
+            history_count = connection.execute(
+                text("SELECT COUNT(*) FROM ccloud_source_capture_readiness_history")
+            ).scalar_one()
             token = connection.execute(
                 text(
                     """
@@ -147,7 +152,90 @@ def test_migration_copies_current_readiness_to_history_without_rewriting_attempt
         engine.dispose()
 
     assert tuple(history) == ("capture-1", 2, attempt_sequence)
+    assert history_count == 1
     assert token == "ordinary-token"
+
+
+def test_readiness_history_copy_loads_each_owner_attempt_group_once(
+    tmp_path: Path,
+) -> None:
+    url = f"sqlite:///{tmp_path / 'grouped-readiness-copy.db'}"
+    command.upgrade(_config(url, selection="confluent_cloud"), "027")
+    engine = create_engine(url)
+    started = datetime(2026, 7, 1, tzinfo=UTC)
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                INSERT INTO ccloud_source_evidence_attempts
+                    (ecosystem, tenant_id, refresh_token, refresh_start, refresh_end,
+                     status, started_at, completed_at, failure_reason)
+                VALUES
+                    ('confluent_cloud', 'tenant-1', 'grouped-token',
+                     :started, :ended, 'complete', :started, :ended, NULL)
+                """
+            ),
+            {"started": started, "ended": datetime(2026, 7, 13, tzinfo=UTC)},
+        )
+        attempt_sequence = connection.execute(
+            text("SELECT attempt_sequence FROM ccloud_source_evidence_attempts")
+        ).scalar_one()
+        connection.execute(
+            text(
+                """
+                INSERT INTO ccloud_source_capture_readiness
+                    (ecosystem, tenant_id, window_start, window_end, capture_id,
+                     captured_at, source_count, attempt_sequence)
+                VALUES
+                    ('confluent_cloud', 'tenant-1', :window_start, :window_end, :capture_id,
+                     :window_end, 1, :attempt_sequence)
+                """
+            ),
+            [
+                {
+                    "window_start": started + timedelta(days=offset),
+                    "window_end": started + timedelta(days=offset + 1),
+                    "capture_id": f"capture-{offset}",
+                    "attempt_sequence": attempt_sequence,
+                }
+                for offset in range(12)
+            ],
+        )
+
+    history_group_loads = 0
+
+    def count_history_group_loads(
+        _connection: object,
+        _cursor: object,
+        statement: str,
+        _parameters: object,
+        _context: object,
+        _executemany: bool,
+    ) -> None:
+        nonlocal history_group_loads
+        normalized = " ".join(statement.lower().split())
+        if (
+            normalized.startswith("select")
+            and "from ccloud_source_capture_readiness_history" in normalized
+            and "where ccloud_source_capture_readiness_history.ecosystem" in normalized
+        ):
+            history_group_loads += 1
+
+    event.listen(Engine, "before_cursor_execute", count_history_group_loads)
+    try:
+        with engine.begin() as connection:
+            CCloudPreviewSchemaManager._copy_readiness_history(connection)
+    finally:
+        event.remove(Engine, "before_cursor_execute", count_history_group_loads)
+
+    with engine.connect() as connection:
+        history_count = connection.execute(
+            text("SELECT COUNT(*) FROM ccloud_source_capture_readiness_history")
+        ).scalar_one()
+    engine.dispose()
+
+    assert history_group_loads == 1
+    assert history_count == 12
 
 
 def test_offline_downgrade_027_preserves_actionable_guarded_error() -> None:

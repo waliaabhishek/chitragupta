@@ -60,9 +60,31 @@ Per-tenant readiness with pipeline state. TTL-cached for 2 seconds.
 | `mode` | string | Run mode (`api`, `worker`, `both`) |
 | `tenants` | list | Per-tenant status (see below) |
 
-**Per-tenant fields:** `tenant_name`, `tables_ready`, `has_data`, `pipeline_running`, `pipeline_stage`, `pipeline_current_date`, `last_run_status`, `last_run_at`, `permanent_failure`, `topic_attribution_status`, `topic_attribution_error`.
+**Per-tenant fields:** `tenant_name`, `tables_ready`, `has_data`,
+`pipeline_running`, `pipeline_stage`, `pipeline_current_date`,
+`last_run_status`, `last_run_at`, `permanent_failure`,
+`topic_attribution_status`, `topic_attribution_error`,
+`focus_preview_state`, `focus_preview_completed_repair_dates`,
+`focus_preview_total_repair_dates`, and `focus_preview_message`.
 
 `topic_attribution_status` is one of `"disabled"` | `"enabled"` | `"config_error"`. `topic_attribution_error` is a string describing the validation failure when `topic_attribution_status` is `"config_error"`, otherwise null.
+
+`focus_preview_state` is one of `disabled`, `ready`, `upgrading`, `degraded`,
+or `unavailable`:
+
+| State | Meaning |
+|---|---|
+| `disabled` | The tenant does not enable FOCUS Mapping Preview. Progress is null. |
+| `ready` | Preview is available and no repair is active. Progress is null before the first repair and total/total after a successful repair. |
+| `upgrading` | A historical repair is queued or running. Existing valid Preview data remains available. |
+| `degraded` | The current repair failed, completed with failed dates, or was interrupted. Existing valid Preview data remains available; submit an explicit bounded repair to retry failed dates. |
+| `unavailable` | Preview readiness cannot be determined safely, including unavailable Preview storage. Progress is null. |
+
+When repair work exists, the completed and total fields report **Date
+progress**. A completed date is durably terminal, whether it succeeded or
+failed. The ratio is lifecycle progress, not data volume or successful-row
+progress. Preview state does not change top-level application readiness or
+disable unrelated billing, chargeback, inventory, and pipeline operations.
 
 ---
 
@@ -565,6 +587,31 @@ Submitting the same range again creates a new operation. Exact-date replacement
 makes retry deterministic without duplicate current lineage. On restart,
 interrupted operations and unfinished `queued`, `running`, or
 `daily_validated` dates are marked failed and are not automatically resumed.
+After successful recovery, readiness reports the interrupted repair as
+`degraded` with explicit retry guidance. If recovery for a tenant cannot
+complete at startup, that tenant's next repair submission retries recovery
+first. Recovery success continues normal submission checks; recovery failure
+returns HTTP 503 with exact detail
+`FOCUS Mapping Preview repair worker is unavailable` and creates no new repair.
+
+Repair admission is process-local. At most `preview.max_workers` repairs run
+and at most `preview.max_queued_repairs` additional repairs wait in each
+process. The existing one-active-repair-per-tenant rule still applies.
+Generation and repair have separate capacity bounds and can run concurrently.
+When repair capacity is full, submission returns HTTP 429:
+
+```json
+{
+  "detail": {
+    "code": "focus_preview_repair_capacity_exhausted",
+    "message": "FOCUS Mapping Preview repair capacity is exhausted.",
+    "retryable": true
+  }
+}
+```
+
+No repair operation is persisted for this response. Wait for admitted repair
+work to finish, then submit again; the API does not retry automatically.
 
 | Condition | Status | Detail |
 |---|---:|---|
@@ -579,6 +626,8 @@ interrupted operations and unfinished `queued`, `running`, or
 | Repair storage unavailable | 503 | `FOCUS Mapping Preview repair storage is unavailable` |
 | Queued/running repair already exists for tenant | 409 | `focus_preview_repair_in_progress` diagnostic |
 | Target tenant is executing pipeline or maintenance work | 409 | `focus_preview_repair_tenant_busy` diagnostic |
+| Target tenant recovery cannot complete | 503 | `FOCUS Mapping Preview repair worker is unavailable`; no new repair |
+| Process-local repair capacity is full | 429 | `focus_preview_repair_capacity_exhausted` diagnostic; no new repair |
 
 ### `GET /api/v1/tenants/{tenant_name}/focus-preview/repairs/{repair_id}`
 

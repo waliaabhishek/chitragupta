@@ -195,7 +195,17 @@ describe("TenantContext", () => {
 // ---------------------------------------------------------------------------
 
 describe("TenantContext — adaptive polling interval", () => {
-  function makeReadiness(pipelineRunning: boolean): ReadinessResponse {
+  function makeReadiness(
+    pipelineRunning: boolean,
+    focusState:
+      | "disabled"
+      | "ready"
+      | "upgrading"
+      | "degraded"
+      | "unavailable" = "ready",
+    completedDates: number | null = null,
+    totalDates: number | null = null,
+  ): ReadinessResponse {
     return {
       status: "ready",
       version: "1.0.0",
@@ -213,6 +223,10 @@ describe("TenantContext — adaptive polling interval", () => {
           permanent_failure: null,
           topic_attribution_status: "disabled" as const,
           topic_attribution_error: null,
+          focus_preview_state: focusState,
+          focus_preview_completed_repair_dates: completedDates,
+          focus_preview_total_repair_dates: totalDates,
+          focus_preview_message: null,
         },
       ],
     };
@@ -307,6 +321,123 @@ describe("TenantContext — adaptive polling interval", () => {
 
     setTimeoutSpy.mockRestore();
   });
+
+  it("polls at 5000ms while a repair is upgrading without making the tenant read-only", async () => {
+    const { server } = await import("../test/mocks/server");
+    server.use(
+      http.get("/api/v1/readiness", () =>
+        HttpResponse.json(makeReadiness(false, "upgrading", 1, 3)),
+      ),
+    );
+    const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
+
+    const { result } = renderHook(() => useTenant(), { wrapper });
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    const delays = setTimeoutSpy.mock.calls
+      .map(([, delay]) => delay)
+      .filter((delay): delay is number => typeof delay === "number");
+    expect(delays).toContain(5000);
+    expect(delays).not.toContain(15000);
+    expect(result.current.isReadOnly).toBe(false);
+    setTimeoutSpy.mockRestore();
+  });
+
+  it("keeps the fast cadence from queued to running and returns to idle after ready", async () => {
+    const { server } = await import("../test/mocks/server");
+    let poll = 0;
+    server.use(
+      http.get("/api/v1/readiness", () => {
+        poll++;
+        if (poll === 1) {
+          return HttpResponse.json(makeReadiness(false, "upgrading", 0, 3));
+        }
+        if (poll === 2) {
+          return HttpResponse.json(makeReadiness(false, "upgrading", 1, 3));
+        }
+        return HttpResponse.json(makeReadiness(false, "ready", 3, 3));
+      }),
+    );
+    vi.useFakeTimers();
+    const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
+    try {
+      renderHook(() => useReadiness(), { wrapper });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(100);
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5001);
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5001);
+      });
+
+      const delays = setTimeoutSpy.mock.calls
+        .map(([, delay]) => delay)
+        .filter((delay): delay is number => typeof delay === "number");
+      expect(delays.filter((delay) => delay === 5000).length).toBeGreaterThanOrEqual(2);
+      expect(delays).toContain(15000);
+    } finally {
+      setTimeoutSpy.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it.each(["degraded", "unavailable"] as const)(
+    "uses the 15000ms idle cadence for terminal %s state",
+    async (focusState) => {
+      const { server } = await import("../test/mocks/server");
+      server.use(
+        http.get("/api/v1/readiness", () =>
+          HttpResponse.json(makeReadiness(false, focusState, 2, 3)),
+        ),
+      );
+      const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
+
+      const { result } = renderHook(() => useTenant(), { wrapper });
+      await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+      const delays = setTimeoutSpy.mock.calls
+        .map(([, delay]) => delay)
+        .filter((delay): delay is number => typeof delay === "number");
+      expect(delays).toContain(15000);
+      expect(delays.filter((delay) => delay === 5000)).toHaveLength(0);
+      setTimeoutSpy.mockRestore();
+    },
+  );
+
+  it("updates readiness identity when durable date progress changes", async () => {
+    const { server } = await import("../test/mocks/server");
+    let completed = 0;
+    server.use(
+      http.get("/api/v1/readiness", () =>
+        HttpResponse.json(
+          makeReadiness(false, "upgrading", completed++, 3),
+        ),
+      ),
+    );
+    vi.useFakeTimers();
+    try {
+      const { result } = renderHook(() => useReadiness(), { wrapper });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(100);
+      });
+      const first = result.current.readiness;
+      expect(first?.tenants[0].focus_preview_completed_repair_dates).toBe(0);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5001);
+      });
+
+      expect(result.current.readiness).not.toBe(first);
+      expect(
+        result.current.readiness?.tenants[0]
+          .focus_preview_completed_repair_dates,
+      ).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -333,6 +464,10 @@ describe("TenantContext — context split (GAP-100)", () => {
         permanent_failure: null,
         topic_attribution_status: "disabled" as const,
         topic_attribution_error: null,
+        focus_preview_state: "ready" as const,
+        focus_preview_completed_repair_dates: null,
+        focus_preview_total_repair_dates: null,
+        focus_preview_message: null,
       })),
     };
   }

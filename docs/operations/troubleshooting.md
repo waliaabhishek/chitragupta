@@ -22,11 +22,14 @@
 **Cause**: The global and per-tenant queued limits are not both zero or both
 positive; the positive per-tenant queued limit is not lower than the global
 limit; or `preview.max_running_generations_per_tenant` exceeds
-`preview.max_workers`.
+`preview.max_workers`. Historical repair configuration is also rejected when
+`preview.max_queued_repairs` is negative or is not an integer.
 
 **Fix**: Use the defaults (`max_workers: 2`, global queued: `8`, per-tenant
-running: `1`, per-tenant queued: `2`) or preserve those relationships. To
-disable waiting, set both queued limits to `0`.
+running: `1`, per-tenant queued: `2`, repair queued: `8`) or preserve those
+relationships. To disable generation waiting, set both generation queue limits
+to `0`. To disable repair waiting independently, set
+`preview.max_queued_repairs: 0`.
 
 ### `username and password required for basic auth`
 
@@ -214,6 +217,46 @@ per-tenant running/queued Preview generation limit.
 
 The remote `chitragupta-preview` CLI exits with code 1 for this response and
 does not retry automatically.
+
+### `HTTP 429` with `focus_preview_repair_capacity_exhausted`
+
+**Cause**: The process has reached its configured running and waiting
+historical-repair capacity.
+
+**Fix**:
+
+- Wait for current repairs to finish, then submit the repair again. The
+  rejected attempt created no repair.
+- Increase `preview.max_queued_repairs` if bounded waiting is appropriate.
+- Increase `preview.max_workers` only after confirming the process can safely
+  run more repair and generation work concurrently.
+- Remember that only one repair may be active per tenant and each replica has
+  independent repair limits.
+
+Repair submission does not retry automatically.
+
+### FOCUS Mapping Preview is `upgrading`, `degraded`, or `unavailable`
+
+**Cause**:
+
+- `upgrading`: a historical repair is queued or running.
+- `degraded`: repair failed, completed with failed dates, or was interrupted
+  during restart.
+- `unavailable`: Preview readiness or storage cannot be read safely, or startup
+  recovery for the tenant did not complete.
+
+**Fix**:
+
+- For `upgrading`, monitor **Date progress** in `GET /api/v1/readiness` and wait
+  for a terminal state. Existing valid packages and unrelated application
+  features remain available.
+- For `degraded`, inspect the durable repair status and submit a new bounded
+  repair for failed dates. Failed dates count as completed lifecycle progress,
+  but the feature remains degraded until a later repair succeeds.
+- For `unavailable`, restore Preview storage and retry. The next repair
+  submission retries interrupted-work recovery for that tenant first. If it
+  returns `FOCUS Mapping Preview repair worker is unavailable`, recovery still
+  failed and no new repair was created.
 
 ### `preview_generation_spool_limit_exceeded`
 

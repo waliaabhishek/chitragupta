@@ -17,6 +17,7 @@ ecosystem: confluent_cloud
 preview:
   artifact_root: /var/lib/chitragupta/focus-preview
   max_workers: 2
+  max_queued_repairs: 8
   max_csv_file_bytes: null
 
 tenants:
@@ -153,6 +154,13 @@ and scheduled tenant-month publication share `preview.max_workers`,
 requested package with retryable HTTP 429 and defers scheduled publication to a
 later periodic cycle. `preview.max_generation_spool_bytes` defaults to 2 GiB
 per running generation and bounds its temporary disk use.
+
+Historical repair is separately bounded to `preview.max_workers` running
+repairs and `preview.max_queued_repairs` waiting repairs per process.
+`max_queued_repairs` defaults to `8`; zero disables waiting. A full repair limit
+returns retryable HTTP 429 before a repair is created. Only one repair may be
+active per tenant. Repair and generation capacity are independent, and each
+replica has its own limits.
 
 `preview.max_csv_file_bytes` controls only physical CSV part boundaries.
 Request grain and Full/Summary/Custom profiles control report shape. FOCUS field

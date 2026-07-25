@@ -15,6 +15,40 @@ import {
 const tenantState = vi.hoisted(() => ({
   current: { tenant_name: "production", tenant_id: "tenant-1" },
 }));
+const readinessState = vi.hoisted(() => ({
+  current: {
+    appStatus: "ready" as const,
+    readiness: {
+      status: "ready",
+      version: "1.0.0",
+      mode: "both",
+      tenants: [
+        {
+          tenant_name: "production",
+          tables_ready: true,
+          has_data: true,
+          pipeline_running: false,
+          pipeline_stage: null,
+          pipeline_current_date: null,
+          last_run_status: "completed",
+          last_run_at: null,
+          permanent_failure: null,
+          topic_attribution_status: "disabled" as const,
+          topic_attribution_error: null,
+          focus_preview_state: "ready" as
+            | "disabled"
+            | "ready"
+            | "upgrading"
+            | "degraded"
+            | "unavailable",
+          focus_preview_completed_repair_dates: null as number | null,
+          focus_preview_total_repair_dates: null as number | null,
+          focus_preview_message: null as string | null,
+        },
+      ],
+    },
+  },
+}));
 
 vi.mock("../../providers/TenantContext", () => ({
   useTenant: vi.fn(() => ({
@@ -26,6 +60,7 @@ vi.mock("../../providers/TenantContext", () => ({
     refetch: vi.fn(),
     isReadOnly: false,
   })),
+  useReadiness: vi.fn(() => readinessState.current),
 }));
 
 vi.mock("../../api/focusPreview", () => ({
@@ -155,6 +190,25 @@ describe("FOCUS Mapping Preview page delegation", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     tenantState.current = { tenant_name: "production", tenant_id: "tenant-1" };
+    readinessState.current.readiness.tenants = [
+      {
+        tenant_name: "production",
+        tables_ready: true,
+        has_data: true,
+        pipeline_running: false,
+        pipeline_stage: null,
+        pipeline_current_date: null,
+        last_run_status: "completed",
+        last_run_at: null,
+        permanent_failure: null,
+        topic_attribution_status: "disabled",
+        topic_attribution_error: null,
+        focus_preview_state: "ready",
+        focus_preview_completed_repair_dates: null,
+        focus_preview_total_repair_dates: null,
+        focus_preview_message: null,
+      },
+    ];
     vi.mocked(listFocusPreviewRequests).mockResolvedValue({
       items: [],
       next_cursor: null,
@@ -1038,5 +1092,143 @@ describe("FOCUS Mapping Preview page delegation", () => {
     expect(await screen.findByText("preview_csv_row_exceeds_file_size_limit")).toBeTruthy();
     expect(screen.getByText("A Preview CSV header or row exceeds the configured file-size limit.")).toBeTruthy();
     expect(screen.getByText(/retryable: no/i)).toBeTruthy();
+  });
+
+  it("shows exact upgrading date progress without volume or percentage wording", async () => {
+    readinessState.current.readiness.tenants[0] = {
+      ...readinessState.current.readiness.tenants[0],
+      focus_preview_state: "upgrading",
+      focus_preview_completed_repair_dates: 2,
+      focus_preview_total_repair_dates: 5,
+      focus_preview_message:
+        "Historical repair is in progress; existing valid Preview data remains available.",
+    };
+
+    render(<FocusPreviewPage />);
+
+    expect(
+      screen.getByText("FOCUS Mapping Preview upgrade in progress"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Date progress: 2 of 5 repair dates completed. Existing valid Preview data remains available.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /generate preview/i })).toBeEnabled();
+    await waitFor(() =>
+      expect(fetchFocusPreviewProfile).toHaveBeenCalledWith(
+        "production",
+        expect.any(AbortSignal),
+      ),
+    );
+    expect(document.body.textContent).not.toMatch(/%|data[- ]volume/i);
+    expect(document.body.textContent).not.toMatch(
+      /repair-[a-z0-9]|TASK-|migration|schema/i,
+    );
+  });
+
+  it("shows degraded retry guidance while keeping existing feature actions enabled", async () => {
+    readinessState.current.readiness.tenants[0] = {
+      ...readinessState.current.readiness.tenants[0],
+      focus_preview_state: "degraded",
+      focus_preview_completed_repair_dates: 4,
+      focus_preview_total_repair_dates: 5,
+      focus_preview_message:
+        "Historical repair needs attention. Retry the failed dates with a new bounded repair; existing valid Preview data remains available.",
+    };
+
+    render(<FocusPreviewPage />);
+
+    expect(
+      screen.getByText("FOCUS Mapping Preview repair needs attention"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Date progress: 4 of 5 repair dates completed. Retry the failed dates with a new bounded historical repair. Existing valid Preview data remains available.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /generate preview/i })).toBeEnabled();
+    await waitFor(() => {
+      expect(listFocusPreviewRequests).toHaveBeenCalled();
+      expect(listFocusPreviewRevisions).toHaveBeenCalled();
+    });
+  });
+
+  it.each([
+    [
+      "disabled",
+      "FOCUS Mapping Preview is not enabled for this tenant.",
+    ],
+    [
+      "unavailable",
+      "FOCUS Mapping Preview storage is unavailable. Restore storage availability before retrying.",
+    ],
+  ] as const)(
+    "%s blocks new feature calls and actions once readiness is known",
+    async (focusState, message) => {
+      readinessState.current.readiness.tenants[0] = {
+        ...readinessState.current.readiness.tenants[0],
+        focus_preview_state: focusState,
+        focus_preview_completed_repair_dates: null,
+        focus_preview_total_repair_dates: null,
+        focus_preview_message: message,
+      };
+
+      render(<FocusPreviewPage />);
+      await act(async () => Promise.resolve());
+
+      expect(screen.getByText(message)).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: /generate preview/i }),
+      ).toBeDisabled();
+      expect(fetchFocusPreviewProfile).not.toHaveBeenCalled();
+      expect(listFocusPreviewRequests).not.toHaveBeenCalled();
+      expect(listFocusPreviewRevisions).not.toHaveBeenCalled();
+    },
+  );
+
+  it("keeps an already loaded immutable download available after storage becomes unavailable", async () => {
+    vi.mocked(listFocusPreviewRequests).mockResolvedValue({
+      items: [
+        {
+          ...baseRequest,
+          status: "ready",
+          completed_at: "2026-07-03T00:01:00Z",
+          expires_at: "2026-07-10T00:01:00Z",
+          package: {
+            manifest: {
+              name: "manifest.json",
+              media_type: "application/json",
+              size_bytes: 3,
+              sha256: "a".repeat(64),
+              download_url: "/api/v1/request-1/manifest",
+            },
+            files: [],
+            download_all_name: "focus-mapping-preview-request-1.zip",
+            download_all_url: "/api/v1/request-1/archive",
+          },
+        },
+      ],
+      next_cursor: null,
+    });
+    const { rerender } = render(<FocusPreviewPage />);
+    expect(
+      await screen.findByRole("button", { name: /download manifest\.json/i }),
+    ).toBeEnabled();
+
+    readinessState.current.readiness.tenants[0] = {
+      ...readinessState.current.readiness.tenants[0],
+      focus_preview_state: "unavailable",
+      focus_preview_message:
+        "FOCUS Mapping Preview storage is unavailable. Restore storage availability before retrying.",
+    };
+    rerender(<FocusPreviewPage />);
+
+    expect(
+      screen.getByRole("button", { name: /download manifest\.json/i }),
+    ).toBeEnabled();
+    expect(
+      screen.getByRole("button", { name: /generate preview/i }),
+    ).toBeDisabled();
   });
 });

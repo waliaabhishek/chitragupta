@@ -62,6 +62,7 @@ class StorageConfig(BaseModel):
 class PreviewConfig(BaseModel):
     artifact_root: Path = Path("data/focus-preview")
     max_workers: int = Field(default=2, gt=0, le=16, strict=True)
+    max_queued_repairs: int = Field(default=8, ge=0, strict=True)
     max_queued_generations: int = Field(default=8, ge=0, strict=True)
     max_running_generations_per_tenant: int = Field(default=1, gt=0, strict=True)
     max_queued_generations_per_tenant: int = Field(default=2, ge=0, strict=True)

@@ -62,9 +62,9 @@ from core.preview.persistence import (
 )
 from core.preview.repair import (
     PreviewRepair,
+    PreviewRepairCapacityUnavailable,
     PreviewRepairRuntime,
-    PreviewRepairStatus,
-    PreviewRepairWorkerConflictError,
+    PreviewRepairWorkerUnavailableError,
     repair_policy_from_tenant_config,
     validate_repair_range,
 )
@@ -651,7 +651,7 @@ def submit_repair(
                 },
             )
         try:
-            repair = runtime.create_queued(
+            repair = runtime.submit(
                 backend=backend,
                 tenant_name=tenant_name,
                 tenant_config=tenant_config,
@@ -659,6 +659,20 @@ def submit_repair(
                 end_date=body.end_date,
                 created_at=created_at,
             )
+        except PreviewRepairCapacityUnavailable:
+            raise HTTPException(
+                429,
+                detail={
+                    "code": "focus_preview_repair_capacity_exhausted",
+                    "message": "FOCUS Mapping Preview repair capacity is exhausted.",
+                    "retryable": True,
+                },
+            ) from None
+        except PreviewRepairWorkerUnavailableError:
+            raise HTTPException(
+                503,
+                detail="FOCUS Mapping Preview repair worker is unavailable",
+            ) from None
         except RuntimeError as exc:
             if str(exc) != "active_repair":
                 raise
@@ -669,42 +683,6 @@ def submit_repair(
                     "message": ("A FOCUS Mapping Preview repair is already queued or running for this tenant."),
                     "retryable": True,
                 },
-            ) from None
-        try:
-            runtime.schedule(repair, tenant_config=tenant_config)
-        except Exception:
-            diagnostic = PreviewDiagnostic(
-                code="focus_preview_repair_worker_unavailable",
-                message="The repair worker is unavailable; submit a new bounded repair to retry.",
-                retryable=True,
-            )
-            completed_at = datetime.now(UTC)
-            with backend.create_preview_evidence_unit_of_work() as uow:
-                failed = uow.repairs.fail_queued_before_execution(
-                    repair.repair_id,
-                    completed_at=completed_at,
-                    diagnostic=diagnostic,
-                )
-                uow.commit()
-            if failed is None:
-                with backend.create_preview_generation_read_unit_of_work() as read_uow:
-                    persisted = read_uow.repairs.get_for_owner(
-                        repair.repair_id,
-                        repair.ecosystem,
-                        repair.tenant_id,
-                    )
-                if (
-                    persisted is None
-                    or persisted.status is not PreviewRepairStatus.FAILED
-                    or persisted.completed_at != completed_at
-                    or persisted.diagnostic != diagnostic
-                ):
-                    raise PreviewRepairWorkerConflictError(
-                        "queued repair scheduling failure transition conflicted"
-                    ) from None
-            raise HTTPException(
-                503,
-                detail="FOCUS Mapping Preview repair worker is unavailable",
             ) from None
     response.headers["Location"] = f"/api/v1/tenants/{tenant_name}/focus-preview/repairs/{repair.repair_id}"
     return _serialize_repair(repair)

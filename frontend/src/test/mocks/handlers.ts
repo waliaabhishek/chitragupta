@@ -80,6 +80,10 @@ export const readinessFixture: ReadinessResponse = {
       permanent_failure: null,
       topic_attribution_status: "disabled",
       topic_attribution_error: null,
+      focus_preview_state: "ready",
+      focus_preview_completed_repair_dates: null,
+      focus_preview_total_repair_dates: null,
+      focus_preview_message: null,
     },
     {
       tenant_name: "globex",
@@ -93,6 +97,10 @@ export const readinessFixture: ReadinessResponse = {
       permanent_failure: null,
       topic_attribution_status: "disabled",
       topic_attribution_error: null,
+      focus_preview_state: "ready",
+      focus_preview_completed_repair_dates: null,
+      focus_preview_total_repair_dates: null,
+      focus_preview_message: null,
     },
   ],
 };

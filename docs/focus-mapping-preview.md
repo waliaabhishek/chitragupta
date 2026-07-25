@@ -31,6 +31,7 @@ must fit inside the configured half-open effective interval.
 preview:
   artifact_root: data/focus-preview
   max_workers: 2
+  max_queued_repairs: 8
   max_queued_generations: 8
   max_running_generations_per_tenant: 1
   max_queued_generations_per_tenant: 2
@@ -90,6 +91,7 @@ The process-wide Preview settings are:
 |---|---:|---|---|
 | `preview.artifact_root` | `data/focus-preview` | Writable local path | Stores immutable requested packages and published monthly revisions. Changing it does not move existing packages. |
 | `preview.max_workers` | `2` | 1–16 | Process-local running-generation limit shared by requested packages and scheduled publication; also the separate repair-runtime worker count. |
+| `preview.max_queued_repairs` | `8` | Zero or a positive integer | Maximum historical repairs waiting across all tenants in one process. Zero permits only repairs that can occupy a running position. |
 | `preview.max_queued_generations` | `8` | Zero or a positive integer | Maximum requested and scheduled generations waiting across all tenants in one process. |
 | `preview.max_running_generations_per_tenant` | `1` | Positive and no greater than `max_workers` | Running-generation limit for one tenant. |
 | `preview.max_queued_generations_per_tenant` | `2` | Zero or a positive integer | Waiting-generation limit for one tenant. |
@@ -102,6 +104,14 @@ limit. Zero disables waiting: an ad-hoc request must start immediately or
 returns retryable HTTP 429, while a scheduled month is deferred. Positive
 queues provide fair capacity across tenants. Limits are per application
 process, not distributed across replicas.
+
+Historical repair has a separate process-local admission bound:
+`preview.max_workers` repairs can run and `preview.max_queued_repairs`
+additional repairs can wait. The existing one-active-repair-per-tenant rule
+still applies. A full repair limit returns retryable HTTP 429 before creating a
+repair. Generation and repair limits are independent, so admitted repair and
+package-generation work can run concurrently. Replicas have independent
+limits.
 
 See the [Confluent Cloud configuration reference](configuration/ccloud-reference.md)
 for the remaining collection and allocation settings.
@@ -150,6 +160,7 @@ volume at `/app/data`:
 preview:
   artifact_root: /app/data/focus-preview
   max_workers: 2
+  max_queued_repairs: 8
   max_queued_generations: 8
   max_running_generations_per_tenant: 1
   max_queued_generations_per_tenant: 2
@@ -233,6 +244,12 @@ nonterminal: Daily Full validation passed, but validation of a wholly selected
 UTC month has not completed. A process interruption marks the operation and
 unfinished dates for that configured tenant owner failed, including work
 created in the same whole second as restart; work is not automatically resumed.
+After successful restart recovery, the repair is `degraded` and requires an
+explicit resubmission. If recovery for that tenant cannot complete at startup,
+the next repair submission retries recovery for that tenant first. A failed
+retry returns
+`503 FOCUS Mapping Preview repair worker is unavailable` without creating a new
+repair.
 
 For each date, the authoritative provider result replaces the exact
 tenant/date billing scope, including an authoritative empty result. The
@@ -249,10 +266,42 @@ same exact-date replacements without duplicate current lineage. API-only mode
 can read retained repair status but returns 503 for POST; disabled tenants
 cannot execute or read repair.
 
+Only one repair may be active for a tenant. Across all tenants in one process,
+up to `preview.max_workers` repairs run and up to
+`preview.max_queued_repairs` additional repairs wait. If that capacity is full,
+submission returns retryable HTTP 429 with
+`focus_preview_repair_capacity_exhausted`; no repair was created. Wait for
+current repair work to finish and submit again. There is no automatic retry.
+
+### Understand Preview readiness and date progress
+
+`GET /api/v1/readiness`, the Preview navigation item, and the Preview page use
+five tenant-scoped states:
+
+| State | Customer behavior |
+|---|---|
+| `disabled` | Preview is not configured for this tenant. |
+| `ready` | Preview is available and no repair is active. |
+| `upgrading` | A repair is queued or running. Existing valid packages and revisions remain available. |
+| `degraded` | A repair failed, completed with failed dates, or was interrupted. Existing valid packages remain available; retry failed dates with a new bounded repair. |
+| `unavailable` | Preview readiness or storage cannot be read safely. Restore availability before retrying. |
+
+During and after repair, **Date progress** is shown as completed repair dates
+out of total requested dates. Both succeeded and failed dates count as
+completed lifecycle progress; failed dates make the feature `degraded`. This is
+not data-volume progress and no percentage is implied.
+
+Only FOCUS Mapping Preview receives these states. Billing, chargeback,
+inventory, the ordinary pipeline, and unrelated navigation remain available.
+Readiness polls every five seconds while a tenant is `upgrading` and returns to
+the normal fifteen-second cadence after the repair reaches a terminal state.
+
 ## 3. Generate and download from the web UI
 
 Open **FOCUS Mapping Preview** at `/focus-preview` and select a tenant. The page:
 
+- displays disabled, upgrading, degraded, and unavailable feature status;
+- labels repair lifecycle counts as **Date progress**;
 - defaults to Monthly and the current UTC month;
 - offers Daily with an inclusive start date and exclusive end date;
 - offers Full, Summary, and Custom column profiles;
@@ -266,6 +315,10 @@ Open **FOCUS Mapping Preview** at `/focus-preview` and select a tenant. The page
 Ready packages show download controls. Expired requests remain in history but
 show no downloads. Failed requests show their persisted diagnostic and whether
 retrying can succeed after the underlying data condition changes.
+Upgrading and degraded states preserve package generation, history, revision,
+and download actions because existing valid Preview data remains available.
+Disabled or unavailable states block new Preview generation and refresh work;
+already loaded immutable downloads remain available.
 
 ## 4. Use the remote CLI
 

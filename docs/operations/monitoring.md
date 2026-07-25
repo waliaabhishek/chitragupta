@@ -66,13 +66,34 @@ GET /api/v1/readiness
         "pipeline_current_date": null,
         "last_run_status": "completed",
         "last_run_at": "2026-03-17T12:00:00Z",
-        "permanent_failure": null
+        "permanent_failure": null,
+        "focus_preview_state": "upgrading",
+        "focus_preview_completed_repair_dates": 12,
+        "focus_preview_total_repair_dates": 31,
+        "focus_preview_message": "Historical repair is in progress; existing valid Preview data remains available."
       }
     ]
   }
 ```
 
 Response is TTL-cached for 2 seconds.
+
+FOCUS Preview readiness is tenant-scoped:
+
+| State | Operational meaning |
+|---|---|
+| `disabled` | Preview is not configured for the tenant. |
+| `ready` | Preview is available and no repair is active. |
+| `upgrading` | A historical repair is queued or running. Existing valid Preview data remains available. |
+| `degraded` | Repair failed, completed with failed dates, or was interrupted. Submit a new bounded repair for the failed dates. |
+| `unavailable` | Preview readiness or storage cannot be determined safely. Restore Preview availability before retrying. |
+
+The completed and total fields are **Date progress**. Succeeded and failed
+dates both count once terminal, so the ratio is not data-volume or success
+progress. An `upgrading`, `degraded`, or `unavailable` Preview state does not
+change generic application readiness or unrelated tenant features. The web
+client polls readiness every five seconds while any tenant is `upgrading` and
+returns to the normal fifteen-second cadence after terminal state.
 
 ## Pipeline status
 
@@ -151,3 +172,16 @@ later periodic cycles, together with worker-cycle completion and the revision
 generation/publication log messages above. Repeated absence while ad-hoc
 requests saturate capacity indicates that process limits or replica sizing need
 tuning.
+
+Track repair-submission HTTP 429 responses separately by
+`detail.code=focus_preview_repair_capacity_exhausted`. The rejected attempt
+created no repair. Sustained responses mean the per-process running limit
+(`preview.max_workers`) and waiting limit (`preview.max_queued_repairs`) are
+full. Wait for current work to finish or adjust process sizing and limits;
+replicas have independent repair capacity.
+
+After restart, interrupted repair work becomes `degraded` and is not resumed
+automatically. Monitor a tenant that remains `unavailable`: its next repair
+submission retries recovery before admission. A repeated
+`FOCUS Mapping Preview repair worker is unavailable` response means recovery
+still cannot complete, and no new repair was created.
