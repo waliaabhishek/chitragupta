@@ -11,6 +11,7 @@ from plugins.confluent_cloud.storage.tables import (
     CCloudAllocationLineagePortionTable,
     CCloudAllocationLineageRunTable,
     CCloudCostSourceTable,
+    CCloudPreviewSourceAllocationLineagePortionTable,
 )
 
 logger = logging.getLogger(__name__)
@@ -251,6 +252,7 @@ __all__ = [
     "CCloudAllocationLineageRunTable",
     "CCloudCostSourceRecordTable",
     "CCloudOrganizationAuthorityAttemptTable",
+    "CCloudPreviewSourceAllocationLineagePortionTable",
     "CCloudFocusPreviewRepairDateTable",
     "CCloudFocusPreviewRepairHeadTable",
     "CCloudFocusPreviewRepairTable",

@@ -346,6 +346,18 @@ def _seed_month(
                 attempt_sequence=attempt.attempt_sequence,
                 captured_at=datetime(2026, 8, 3, 0, 0, 1, tzinfo=UTC),
             )
+            for aggregate, allocation, state in zip(aggregates, allocations, states, strict=True):
+                assert state.calculation_id is not None and state.calculation_completed_at is not None
+                evidence_uow.allocation_lineage.replace_calculation_lineage(
+                    AllocationLineageRunCapture(
+                        ecosystem="confluent_cloud",
+                        tenant_id="tenant-1",
+                        tracking_date=state.tracking_date,
+                        calculation_id=state.calculation_id,
+                        captures=(build_allocation_lineage_capture(origin=aggregate, rows=(allocation,)),),
+                    ),
+                    calculation_completed_at=state.calculation_completed_at,
+                )
             evidence_uow.commit()
 
 

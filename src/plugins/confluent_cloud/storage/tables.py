@@ -180,3 +180,50 @@ class CCloudAllocationLineagePortionTable(SQLModel, table=True):
     method_id: str
     method_version: str
     method_details_json: str
+
+
+class CCloudPreviewSourceAllocationLineagePortionTable(SQLModel, table=True):
+    """Preview-only exact native-source allocation lineage."""
+
+    __tablename__ = "ccloud_preview_source_allocation_lineage_portions"
+    __table_args__ = (
+        PrimaryKeyConstraint(
+            "ecosystem",
+            "tenant_id",
+            "tracking_date",
+            "calculation_id",
+            "source_record_id",
+            "evidence_scope_start",
+            "evidence_scope_end",
+            "portion_ordinal",
+        ),
+        Index(
+            "ix_ccloud_preview_source_lineage_tenant_calculation_date",
+            "tenant_id",
+            "calculation_id",
+            "tracking_date",
+        ),
+    )
+
+    ecosystem: str = Field(primary_key=True)
+    tenant_id: str = Field(primary_key=True)
+    tracking_date: date = Field(primary_key=True)
+    calculation_id: str = Field(primary_key=True)
+    source_record_id: str = Field(primary_key=True)
+    evidence_scope_start: datetime = Field(sa_column=Column(UTCSecondDateTime(), primary_key=True))
+    evidence_scope_end: datetime = Field(sa_column=Column(UTCSecondDateTime(), primary_key=True))
+    origin_timestamp: datetime = Field(sa_column=Column(UTCSecondDateTime(), nullable=False))
+    origin_env_id: str
+    origin_resource_id: str
+    origin_product_type: str
+    origin_product_category: str
+    portion_ordinal: int = Field(primary_key=True)
+    target_kind: str
+    target_id: str | None = Field(default=None)
+    allocated_cost: str
+    allocated_quantity: str
+    allocated_original_cost: str
+    allocation_ratio: str
+    method_id: str
+    method_version: str
+    method_details_json: str

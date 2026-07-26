@@ -186,11 +186,16 @@ class AllocationLineageRun:
     calculation_completed_at: datetime
     status: AllocationLineageRunStatus
     portion_count: int
+    preview_portion_count: int | None = None
 
     def __post_init__(self) -> None:
         if not self.ecosystem.strip() or not self.tenant_id.strip() or not self.calculation_id.strip():
             raise ValueError("lineage identity must not be blank")
-        if not _aware(self.calculation_completed_at) or self.portion_count < 0:
+        if (
+            not _aware(self.calculation_completed_at)
+            or self.portion_count < 0
+            or (self.preview_portion_count is not None and self.preview_portion_count < 0)
+        ):
             raise ValueError("invalid lineage completion")
         if self.status is not AllocationLineageRunStatus.COMPLETE:
             raise ValueError("complete lineage run requires complete status")
@@ -294,6 +299,44 @@ def decode_lineage_method_details(value: str, *, target_kind: str) -> dict[str, 
     return decoded
 
 
+def normalize_preview_source_economics(
+    *,
+    line_type: str | None,
+    amount: Decimal | None,
+    original_amount: Decimal | None,
+    discount_amount: Decimal | None,
+    price: Decimal | None,
+    quantity: Decimal | None,
+) -> tuple[Decimal, Decimal, Decimal, Decimal, Decimal]:
+    """Return finite exact source economics using the Preview PROMO_CREDIT convention."""
+
+    if line_type == "PROMO_CREDIT":
+        price = Decimal(0) if price is None else price
+        quantity = Decimal(0) if quantity is None else quantity
+    values = (amount, original_amount, discount_amount, price, quantity)
+    if any(value is None or not value.is_finite() for value in values):
+        raise ValueError("source economics are incomplete or nonfinite")
+    normalized_amount, normalized_original, normalized_discount, normalized_price, normalized_quantity = values
+    assert normalized_amount is not None
+    assert normalized_original is not None
+    assert normalized_discount is not None
+    assert normalized_price is not None
+    assert normalized_quantity is not None
+    if (
+        line_type != "PROMO_CREDIT"
+        and normalized_price * normalized_quantity != normalized_original
+        or normalized_original - normalized_discount != normalized_amount
+    ):
+        raise ValueError("source economics do not reconcile")
+    return (
+        normalized_amount,
+        normalized_original,
+        normalized_discount,
+        normalized_price,
+        normalized_quantity,
+    )
+
+
 def _aware(value: datetime) -> bool:
     return value.tzinfo is not None and value.utcoffset() is not None
 
@@ -365,6 +408,11 @@ class PreviewAggregateEvidence:
     total_cost: Decimal
     compatibility_currency: str
     granularity: str
+    source_record_id: str = ""
+    evidence_scope_start: datetime | None = None
+    evidence_scope_end: datetime | None = None
+    compatibility_total_cost: Decimal | None = None
+    compatibility_quantity: Decimal | None = None
 
 
 @dataclass(frozen=True)
@@ -392,6 +440,13 @@ class PreviewAllocationEvidence:
     origin_unit_price: Decimal = Decimal(0)
     origin_currency: str = ""
     origin_granularity: str = ""
+    source_record_id: str = ""
+    evidence_scope_start: datetime | None = None
+    evidence_scope_end: datetime | None = None
+    allocated_original_cost: Decimal = Decimal(0)
+    origin_original_cost: Decimal = Decimal(0)
+    compatibility_allocated_cost: Decimal | None = None
+    compatibility_allocated_quantity: Decimal | None = None
 
 
 @dataclass(frozen=True)
@@ -404,6 +459,7 @@ class PreviewAllocationRunEvidence:
     capture_status: AllocationLineageRunStatus
     capture_reason: AllocationLineageUnavailableReason | None
     portion_count: int
+    preview_portion_count: int | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -412,6 +468,7 @@ class PreviewAllocationRunEvidence:
             or not self.calculation_id.strip()
             or not _aware(self.calculation_completed_at)
             or self.portion_count < 0
+            or (self.preview_portion_count is not None and self.preview_portion_count < 0)
         ):
             raise ValueError("invalid allocation lineage run evidence")
         if not isinstance(self.capture_status, AllocationLineageRunStatus):

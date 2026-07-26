@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import csv
+import hashlib
 import io
 import time
 from collections.abc import Iterable
@@ -582,6 +583,27 @@ def _request(client: PipelineApiClient, start: date, end: date) -> dict[str, Any
     raise AssertionError("preview request did not finish")
 
 
+def _request_month(client: PipelineApiClient, month: str) -> dict[str, Any]:
+    submitted = client.post(
+        "/api/v1/tenants/production/focus-preview/requests",
+        json={
+            "grain": "monthly",
+            "month": month,
+            "column_profile": "full",
+        },
+    )
+    assert submitted.status_code == 202
+    request_id = submitted.json()["request_id"]
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        response = client.get(f"/api/v1/tenants/production/focus-preview/requests/{request_id}")
+        assert response.status_code == 200
+        if response.json()["status"] in {"ready", "failed"}:
+            return response.json()
+        time.sleep(0.01)
+    raise AssertionError("monthly preview request did not finish")
+
+
 def _legacy_july_first_snapshot(engine: object) -> dict[str, tuple[object, ...]]:
     statements = {
         "pipeline_state": "SELECT * FROM pipeline_state WHERE tracking_date = '2026-07-01'",
@@ -929,6 +951,286 @@ def test_production_one_day_repair_overlays_broad_ordinary_authority_and_is_idem
         engine.dispose()
     assert lineage == (1, pipeline.calculation_id, pipeline.calculation_id)
     assert source_count == chargeback_count == 1
+
+
+@respx.mock
+def test_same_key_tiers_flow_from_provider_capture_through_sidecar_and_canonical_daily_monthly_api(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def to_thread_inline(function: Any, *args: object, **kwargs: object) -> object:
+        return function(*args, **kwargs)
+
+    async def run_sync_inline(function: Any, *args: object, **_kwargs: object) -> object:
+        return function(*args)
+
+    class TwoPortionHandler(PreviewPipelineHandler):
+        def get_allocator(self, product_type: str) -> Any:
+            del product_type
+
+            def allocate(ctx: AllocationContext) -> AllocationResult:
+                common = {
+                    "ecosystem": ctx.billing_line.ecosystem,
+                    "tenant_id": ctx.billing_line.tenant_id,
+                    "timestamp": ctx.billing_line.timestamp,
+                    "resource_id": ctx.billing_line.resource_id,
+                    "product_category": ctx.billing_line.product_category,
+                    "product_type": ctx.billing_line.product_type,
+                    "cost_type": CostType.USAGE,
+                    "allocation_method": "direct",
+                    "allocation_detail": "direct",
+                    "metadata": {"env_id": "env-1"},
+                }
+                return AllocationResult(
+                    rows=[
+                        ChargebackRow(identity_id="sa-1", amount=Decimal("5"), **common),
+                        ChargebackRow(identity_id="UNALLOCATED", amount=Decimal("3"), **common),
+                    ]
+                )
+
+            return allocate
+
+    monkeypatch.setattr("core.api.app.asyncio.to_thread", to_thread_inline)
+    monkeypatch.setattr(anyio.to_thread, "run_sync", run_sync_inline)
+    provider_items = []
+    for values in (
+        {
+            "id": "tier-a",
+            "amount": "10",
+            "original_amount": "10",
+            "discount_amount": "0",
+            "price": "2",
+            "quantity": "5",
+            "tier_dimensions": {"tier": "a"},
+        },
+        {
+            "id": "tier-b",
+            "description": "Refund Kafka storage usage",
+            "amount": "-2",
+            "original_amount": "-10",
+            "discount_amount": "-8",
+            "price": "2",
+            "quantity": "-5",
+            "tier_dimensions": {"tier": "b"},
+        },
+    ):
+        item = _cost_response().json()["data"][0]
+        item.update(values)
+        provider_items.append(item)
+    costs_route = respx.get("https://api.confluent.cloud/billing/v1/costs")
+
+    def provider_response(request: httpx.Request) -> httpx.Response:
+        start = date.fromisoformat(request.url.params["start_date"])
+        end = date.fromisoformat(request.url.params["end_date"])
+        data = provider_items if start <= date(2026, 7, 1) and end >= date(2026, 7, 2) else []
+        return httpx.Response(200, json={"data": data, "metadata": {}})
+
+    costs_route.side_effect = provider_response
+    connection_string = f"sqlite:///{tmp_path / 'tiered-provider-pipeline.db'}"
+    tenant = TenantConfig(
+        ecosystem="confluent_cloud",
+        tenant_id="tenant-1",
+        lookback_days=45,
+        cutoff_days=1,
+        storage=StorageConfig(connection_string=connection_string),
+        focus_preview=_focus_preview_block(),
+        plugin_settings={
+            "ccloud_api": {"key": "key", "secret": "secret"},  # pragma: allowlist secret
+            "billing_api": {"days_per_query": 30},
+        },
+    )
+    settings = AppSettings(
+        api=ApiConfig(host="127.0.0.1", port=8080),
+        preview=PreviewConfig(artifact_root=tmp_path / "tiered-artifacts", max_workers=1),
+        tenants={"production": tenant},
+    )
+    plugin = PreviewPipelinePlugin(TwoPortionHandler())
+    plugin.initialize(tenant.plugin_settings.model_dump())
+    backend = SQLModelBackend(
+        connection_string,
+        plugin.get_storage_module(),
+        use_migrations=False,
+        focus_preview_enabled=True,
+    )
+    backend.create_tables()
+    orchestrator = ChargebackOrchestrator("production", tenant, plugin, backend)
+    gathered = gather_billing_with_source_evidence(
+        orchestrator,
+        backend,
+        datetime(2026, 7, 26, 9, tzinfo=UTC),
+    )
+    assert gathered == {date(2026, 7, 1)}
+    provider_call_count = costs_route.call_count
+    assert provider_call_count > 0
+    with backend.create_preview_generation_read_unit_of_work() as uow:
+        source_authority = uow.source_readiness.get_current_authority("confluent_cloud", "tenant-1")
+        captured_sources = tuple(
+            uow.cost_evidence.iter_preview_sources(
+                PreviewEvidenceScope(
+                    ecosystem="confluent_cloud",
+                    tenant_id="tenant-1",
+                    start=datetime(2026, 7, 1, tzinfo=UTC),
+                    end=datetime(2026, 7, 2, tzinfo=UTC),
+                )
+            )
+        )
+    assert source_authority is not None and source_authority.status.value == "complete"
+    assert [source.source_record_id for source in captured_sources] == [
+        "provider:tier-a",
+        "provider:tier-b",
+    ]
+
+    with backend.create_unit_of_work() as uow:
+        for resource in (
+            CoreResource(
+                ecosystem="confluent_cloud",
+                tenant_id="tenant-1",
+                resource_id="11111111-2222-4333-8444-555555555555",
+                resource_type="organization",
+                display_name="Provider billing organization",
+                status=ResourceStatus.ACTIVE,
+                metadata={"organization_binding_state": "bound"},
+            ),
+            CoreResource(
+                ecosystem="confluent_cloud",
+                tenant_id="tenant-1",
+                resource_id="env-1",
+                resource_type="environment",
+                display_name="Production",
+                status=ResourceStatus.ACTIVE,
+            ),
+            CoreResource(
+                ecosystem="confluent_cloud",
+                tenant_id="tenant-1",
+                resource_id="lkc-1",
+                resource_type="kafka_cluster",
+                display_name="Orders",
+                parent_id="env-1",
+                status=ResourceStatus.ACTIVE,
+                metadata={"provider_cloud": "AWS", "provider_region": "us-east-1"},
+            ),
+        ):
+            uow.resources.upsert(resource)
+        for day in range(1, 25):
+            uow.pipeline_state.upsert(
+                PipelineState(
+                    ecosystem="confluent_cloud",
+                    tenant_id="tenant-1",
+                    tracking_date=date(2026, 7, day),
+                    billing_gathered=True,
+                    resources_gathered=True,
+                )
+            )
+        uow.commit()
+    assert calculate_with_lineage(orchestrator, backend, date(2026, 7, 1)) == 2
+    for day in range(2, 25):
+        assert calculate_with_lineage(orchestrator, backend, date(2026, 7, day)) == 0
+
+    engine = create_engine(connection_string)
+    try:
+        with engine.connect() as connection:
+            billing = connection.execute(text("SELECT quantity, unit_price, total_cost FROM ccloud_billing")).one()
+            chargebacks = connection.execute(
+                text(
+                    """
+                    SELECT chargeback_dimensions.identity_id, chargeback_facts.amount
+                    FROM chargeback_facts
+                    JOIN chargeback_dimensions USING (dimension_id)
+                    ORDER BY chargeback_dimensions.identity_id
+                    """
+                )
+            ).all()
+            compatibility_count = connection.execute(
+                text(
+                    """
+                    SELECT portion_count FROM ccloud_allocation_lineage_runs
+                    WHERE tracking_date = '2026-07-01'
+                    """
+                )
+            ).scalar_one()
+            sidecar = connection.execute(
+                text(
+                    """
+                    SELECT source_record_id, portion_ordinal, allocated_cost,
+                           allocated_quantity, allocated_original_cost
+                    FROM ccloud_preview_source_allocation_lineage_portions
+                    WHERE tracking_date = '2026-07-01'
+                    ORDER BY source_record_id, portion_ordinal
+                    """
+                )
+            ).all()
+    finally:
+        engine.dispose()
+    assert billing == ("0", "0", "8")
+    assert chargebacks == [("UNALLOCATED", "3"), ("sa-1", "5")]
+    assert compatibility_count == 2
+    assert sidecar == [
+        ("provider:tier-a", 0, "6", "3", "6"),
+        ("provider:tier-a", 1, "4", "2", "4"),
+        ("provider:tier-b", 0, "-1", "-3", "-5"),
+        ("provider:tier-b", 1, "-1", "-2", "-5"),
+    ]
+
+    def csv_bytes(client: PipelineApiClient, result: dict[str, Any]) -> bytes:
+        assert result["status"] == "ready", result["diagnostic"]
+        file_metadata = result["package"]["files"][0]
+        response = client.get(file_metadata["download_url"])
+        assert response.status_code == 200
+        assert hashlib.sha256(response.content).hexdigest() == file_metadata["sha256"]
+        assert client.get(file_metadata["download_url"]).content == response.content
+        return response.content
+
+    app = create_app(settings)
+    client = PipelineApiClient(app, use_lifespan=True, backend=backend)
+    try:
+        app.state.preview_runtime._clock = lambda: datetime(2026, 7, 26, 12, tzinfo=UTC)
+        daily_first = _request(client, date(2026, 7, 1), date(2026, 7, 2))
+        daily_second = _request(client, date(2026, 7, 1), date(2026, 7, 2))
+        monthly = _request_month(client, "2026-07")
+        daily_body = csv_bytes(client, daily_first)
+        assert csv_bytes(client, daily_second) == daily_body
+        monthly_body = csv_bytes(client, monthly)
+        daily_rows = list(csv.DictReader(io.StringIO(daily_body.decode())))
+        monthly_rows = list(csv.DictReader(io.StringIO(monthly_body.decode())))
+        for rows in (daily_rows, monthly_rows):
+            assert len(rows) == 4
+            assert {row["x_ChitraguptaSourceCostId"] for row in rows} == {"tier-a", "tier-b"}
+            assert {row["x_ConfluentTierDimensions"] for row in rows} == {
+                '{"tier":"a"}',
+                '{"tier":"b"}',
+            }
+            assert {row["ListUnitPrice"] for row in rows} == {"2"}
+            totals: dict[str, Decimal] = {}
+            list_totals: dict[str, Decimal] = {}
+            for row in rows:
+                source_id = row["x_ChitraguptaSourceCostId"]
+                totals[source_id] = totals.get(source_id, Decimal(0)) + Decimal(row["BilledCost"])
+                list_totals[source_id] = list_totals.get(source_id, Decimal(0)) + Decimal(row["ListCost"])
+            assert totals == {"tier-a": Decimal("10"), "tier-b": Decimal("-2")}
+            assert list_totals == {"tier-a": Decimal("10"), "tier-b": Decimal("-10")}
+        persisted = create_engine(connection_string)
+        try:
+            with persisted.begin() as connection:
+                connection.execute(
+                    text(
+                        """
+                        DELETE FROM ccloud_preview_source_allocation_lineage_portions
+                        WHERE source_record_id = 'provider:tier-a' AND portion_ordinal = 0
+                        """
+                    )
+                )
+        finally:
+            persisted.dispose()
+        corrupt = _request(client, date(2026, 7, 1), date(2026, 7, 3))
+        assert corrupt["status"] == "failed"
+        assert corrupt["package"] is None
+        assert corrupt["diagnostic"]["code"] == "preview_allocation_lineage_incomplete"
+        assert "provider:tier-a" not in str(corrupt["diagnostic"])
+        assert costs_route.call_count == provider_call_count
+    finally:
+        client.close()
+        backend.dispose()
+        plugin.close()
 
 
 @pytest.mark.parametrize(

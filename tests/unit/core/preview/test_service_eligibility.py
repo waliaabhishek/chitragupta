@@ -530,7 +530,7 @@ def test_more_than_twenty_valid_sources_use_independent_valid_correlation_accumu
         executor.run_all()
         failed = _failed(runtime, backend, queued.request_id)
 
-        assert failed.diagnostic.code == "preview_mapping_scope_unsupported"
+        assert failed.diagnostic.code == "preview_source_reconciliation_failed"
         assert failed.diagnostic.source_correlation_ids == expected
         _assert_no_artifact(failed)
     finally:

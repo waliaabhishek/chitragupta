@@ -4,8 +4,9 @@ import json
 import logging
 from collections.abc import Sequence
 from dataclasses import replace
-from datetime import UTC, date, datetime
-from typing import TYPE_CHECKING, Literal
+from datetime import UTC, date, datetime, time, timedelta
+from decimal import Context, Decimal, localcontext
+from typing import TYPE_CHECKING, Literal, cast
 
 from sqlalchemy import case, delete, exists, func, or_, update
 from sqlmodel import Session, col, select
@@ -22,6 +23,7 @@ from core.preview.evidence import (
     SourceAttemptFailureReason,
     SourceAttemptFinalStatus,
     SourceAttemptStatus,
+    normalize_preview_source_economics,
     source_attempt_origin,
 )
 from core.preview.evidence_capture import (
@@ -63,6 +65,7 @@ from plugins.confluent_cloud.storage.preview_tables import (
     CCloudFocusPreviewRepairHeadTable,
     CCloudFocusPreviewRepairTable,
     CCloudOrganizationAuthorityAttemptTable,
+    CCloudPreviewSourceAllocationLineagePortionTable,
     CCloudSourceCaptureReadinessHistoryTable,
     CCloudSourceCaptureReadinessTable,
     CCloudSourceEvidenceAttemptTable,
@@ -75,6 +78,9 @@ from plugins.confluent_cloud.storage.repositories import (
 from plugins.confluent_cloud.storage.tables import CCloudBillingTable
 
 logger = logging.getLogger(__name__)
+
+_APPORTION_CONTEXT = Context(prec=64)
+_PREVIEW_RATIO_CONTEXT = Context(prec=38)
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -91,6 +97,217 @@ def _utc(value: datetime) -> datetime:
 
 def _require_aware(value: datetime, name: str) -> datetime:
     return canonical_utc_second(value, field=name)
+
+
+def _decimal_text(value: Decimal) -> str:
+    result = format(value, "f")
+    if "." in result:
+        result = result.rstrip("0").rstrip(".")
+    return str(Decimal(result or "0"))
+
+
+def _quantum(values: Sequence[Decimal], *, minimum_places: int = 0) -> Decimal:
+    exponent = min(
+        (value.as_tuple().exponent for value in values if value.is_finite() and value != 0),
+        default=0,
+    )
+    return Decimal(1).scaleb(min(cast("int", exponent), -minimum_places))
+
+
+def _integer_units(values: Sequence[Decimal], quantum: Decimal) -> tuple[int, ...]:
+    units: list[int] = []
+    with localcontext(_APPORTION_CONTEXT):
+        for value in values:
+            if not value.is_finite():
+                raise ValueError("allocation margin is nonfinite")
+            integral = value / quantum
+            if integral != integral.to_integral_value():
+                raise ValueError("allocation margin is not representable at the selected quantum")
+            units.append(int(integral))
+    return tuple(units)
+
+
+def _largest_remainder(total: int, weights: Sequence[int], ordinals: Sequence[int]) -> tuple[int, ...]:
+    if total < 0 or len(weights) != len(ordinals) or any(weight < 0 for weight in weights):
+        raise ValueError("invalid largest-remainder inputs")
+    if not weights:
+        if total:
+            raise ValueError("cannot apportion a nonzero total without columns")
+        return ()
+    weight_total = sum(weights)
+    effective = tuple(weights) if weight_total else tuple(1 for _ in weights)
+    denominator = sum(effective)
+    bases = [total * weight // denominator for weight in effective]
+    remainder_units = total - sum(bases)
+    ranked = sorted(
+        range(len(effective)),
+        key=lambda index: (-(total * effective[index] % denominator), ordinals[index]),
+    )
+    for index in ranked[:remainder_units]:
+        bases[index] += 1
+    return tuple(bases)
+
+
+def _transport_unsigned(
+    row_margins: Sequence[int],
+    column_margins: Sequence[int],
+    ordinals: Sequence[int],
+) -> tuple[tuple[int, ...], ...]:
+    if (
+        len(column_margins) != len(ordinals)
+        or any(value < 0 for value in (*row_margins, *column_margins))
+        or sum(row_margins) != sum(column_margins)
+    ):
+        raise ValueError("invalid transportation margins")
+    if not row_margins:
+        return ()
+    capacities = list(column_margins)
+    remaining_total = sum(capacities)
+    matrix: list[tuple[int, ...]] = []
+    for row_index, row_total in enumerate(row_margins):
+        if row_index == len(row_margins) - 1:
+            matrix.append(tuple(capacities))
+            break
+        if row_total == 0:
+            matrix.append(tuple(0 for _ in capacities))
+            continue
+        if remaining_total <= 0:
+            raise ValueError("transportation capacity is exhausted")
+        bases = [row_total * capacity // remaining_total for capacity in capacities]
+        leftover = row_total - sum(bases)
+        ranked = sorted(
+            range(len(capacities)),
+            key=lambda index: (
+                -(row_total * capacities[index] % remaining_total),
+                ordinals[index],
+            ),
+        )
+        for index in ranked:
+            if leftover == 0:
+                break
+            if bases[index] < capacities[index]:
+                bases[index] += 1
+                leftover -= 1
+        if leftover:
+            raise ValueError("transportation remainder exceeds capacity")
+        for index, value in enumerate(bases):
+            capacities[index] -= value
+        remaining_total -= row_total
+        matrix.append(tuple(bases))
+    return tuple(matrix)
+
+
+def _apportion_signed(
+    source_margins: Sequence[Decimal],
+    generic_margins: Sequence[Decimal],
+    portion_ordinals: Sequence[int],
+    *,
+    minimum_places: int = 0,
+) -> tuple[tuple[Decimal, ...], ...]:
+    if len(generic_margins) != len(portion_ordinals):
+        raise ValueError("allocation columns and ordinals differ")
+    with localcontext(_APPORTION_CONTEXT):
+        if sum(source_margins, Decimal(0)) != sum(generic_margins, Decimal(0)):
+            raise ValueError("source and generic allocation margins differ")
+    quantum = _quantum((*source_margins, *generic_margins), minimum_places=minimum_places)
+    source_units = _integer_units(source_margins, quantum)
+    generic_units = _integer_units(generic_margins, quantum)
+    total = sum(source_units)
+    if not source_units:
+        return ()
+    if total == 0:
+        if any(source_units) or any(generic_units):
+            raise ValueError("zero-net signed margins require the quantity bridge")
+        return tuple(tuple(Decimal(0) for _ in generic_units) for _ in source_units)
+    if any(value and (value > 0) != (total > 0) for value in generic_units):
+        raise ValueError("generic allocation columns have incompatible signs")
+
+    positive_indexes = [index for index, value in enumerate(source_units) if value > 0]
+    negative_indexes = [index for index, value in enumerate(source_units) if value < 0]
+    positive_rows = [source_units[index] for index in positive_indexes]
+    negative_rows = [-source_units[index] for index in negative_indexes]
+    generic_magnitudes = [abs(value) for value in generic_units]
+    if total > 0:
+        negative_columns = _largest_remainder(sum(negative_rows), generic_magnitudes, portion_ordinals)
+        positive_columns = tuple(
+            generic_magnitudes[index] + negative_columns[index] for index in range(len(generic_units))
+        )
+    else:
+        positive_columns = _largest_remainder(sum(positive_rows), generic_magnitudes, portion_ordinals)
+        negative_columns = tuple(
+            generic_magnitudes[index] + positive_columns[index] for index in range(len(generic_units))
+        )
+    positive_matrix = _transport_unsigned(positive_rows, positive_columns, portion_ordinals)
+    negative_matrix = _transport_unsigned(negative_rows, negative_columns, portion_ordinals)
+    positive_by_index = dict(zip(positive_indexes, positive_matrix, strict=True))
+    negative_by_index = dict(zip(negative_indexes, negative_matrix, strict=True))
+    result: list[tuple[Decimal, ...]] = []
+    for index, margin in enumerate(source_units):
+        units = (
+            positive_by_index[index]
+            if margin > 0
+            else tuple(-value for value in negative_by_index[index])
+            if margin < 0
+            else tuple(0 for _ in generic_units)
+        )
+        result.append(tuple(Decimal(value) * quantum for value in units))
+    return tuple(result)
+
+
+def _apportion_zero_net_quantity(
+    *,
+    source_quantities: Sequence[Decimal],
+    generic_allocated_costs: Sequence[Decimal],
+    portion_ordinals: Sequence[int],
+) -> tuple[tuple[Decimal, ...], ...]:
+    if len(generic_allocated_costs) != len(portion_ordinals):
+        raise ValueError("quantity bridge columns and ordinals differ")
+    quantum = _quantum(source_quantities)
+    source_units = _integer_units(source_quantities, quantum)
+    if sum(source_units) != 0:
+        raise ValueError("quantity bridge requires a zero-net source total")
+    if not any(source_units):
+        return tuple(tuple(Decimal(0) for _ in generic_allocated_costs) for _ in source_units)
+    positive_indexes = [index for index, value in enumerate(source_units) if value > 0]
+    negative_indexes = [index for index, value in enumerate(source_units) if value < 0]
+    positive_rows = [source_units[index] for index in positive_indexes]
+    negative_rows = [-source_units[index] for index in negative_indexes]
+    if sum(positive_rows) != sum(negative_rows):
+        raise ValueError("quantity bridge signs do not cancel")
+    cost_quantum = _quantum(generic_allocated_costs)
+    weights = [abs(value) for value in _integer_units(generic_allocated_costs, cost_quantum)]
+    bridge = _largest_remainder(sum(positive_rows), weights, portion_ordinals)
+    positive_matrix = _transport_unsigned(positive_rows, bridge, portion_ordinals)
+    negative_matrix = _transport_unsigned(negative_rows, bridge, portion_ordinals)
+    positive_by_index = dict(zip(positive_indexes, positive_matrix, strict=True))
+    negative_by_index = dict(zip(negative_indexes, negative_matrix, strict=True))
+    result: list[tuple[Decimal, ...]] = []
+    for index, margin in enumerate(source_units):
+        units = (
+            positive_by_index[index]
+            if margin > 0
+            else tuple(-value for value in negative_by_index[index])
+            if margin < 0
+            else tuple(0 for _ in generic_allocated_costs)
+        )
+        result.append(tuple(Decimal(value) * quantum for value in units))
+    return tuple(result)
+
+
+def _apportion_original_cost(
+    original: Decimal,
+    billed_cells: Sequence[Decimal],
+    portion_ordinals: Sequence[int],
+) -> tuple[Decimal, ...]:
+    if not original.is_finite() or len(billed_cells) != len(portion_ordinals):
+        raise ValueError("invalid original-cost apportionment")
+    quantum = _quantum((original, *billed_cells), minimum_places=2)
+    total_units = abs(_integer_units((original,), quantum)[0])
+    billed_quantum = _quantum(billed_cells)
+    weights = [abs(value) for value in _integer_units(billed_cells, billed_quantum)]
+    apportioned = _largest_remainder(total_units, weights, portion_ordinals)
+    sign = -1 if original < 0 else 1
+    return tuple(Decimal(sign * value) * quantum for value in apportioned)
 
 
 def _source_attempt(row: CCloudSourceEvidenceAttemptTable) -> PreviewSourceAttempt:
@@ -863,7 +1080,200 @@ class SQLModelPreviewAllocationLineageRepository:
         *,
         calculation_completed_at: datetime,
     ) -> AllocationLineageRun:
+        complete_origins = [
+            (
+                _require_aware(origin.origin_timestamp, "origin_timestamp"),
+                origin.origin_env_id,
+                origin.origin_resource_id,
+                origin.origin_product_type,
+                origin.origin_product_category,
+            )
+            for origin in capture.captures
+            if origin.status.value == "complete"
+        ]
+        if len(complete_origins) != len(set(complete_origins)):
+            raise ValueError("exact Preview source association is ambiguous")
         self._lineage.replace_calculation_lineage(capture, calculation_completed_at=calculation_completed_at)
+        self._session.execute(
+            delete(CCloudPreviewSourceAllocationLineagePortionTable).where(
+                col(CCloudPreviewSourceAllocationLineagePortionTable.ecosystem) == capture.ecosystem,
+                col(CCloudPreviewSourceAllocationLineagePortionTable.tenant_id) == capture.tenant_id,
+                col(CCloudPreviewSourceAllocationLineagePortionTable.tracking_date) == capture.tracking_date,
+            )
+        )
+        preview_rows: list[CCloudPreviewSourceAllocationLineagePortionTable] = []
+        used_source_keys: set[tuple[str, datetime, datetime]] = set()
+        day_start = datetime.combine(capture.tracking_date, time.min, tzinfo=UTC)
+        day_end = day_start + timedelta(days=1)
+        retained_sources = tuple(
+            self._session.exec(
+                select(CCloudCostSourceRecordTable)
+                .where(
+                    col(CCloudCostSourceRecordTable.ecosystem) == capture.ecosystem,
+                    col(CCloudCostSourceRecordTable.tenant_id) == capture.tenant_id,
+                    col(CCloudCostSourceRecordTable.billing_timestamp) >= day_start,
+                    col(CCloudCostSourceRecordTable.billing_timestamp) < day_end,
+                )
+                .order_by(
+                    col(CCloudCostSourceRecordTable.billing_timestamp),
+                    col(CCloudCostSourceRecordTable.billing_env_id),
+                    col(CCloudCostSourceRecordTable.billing_resource_id),
+                    col(CCloudCostSourceRecordTable.billing_product_type),
+                    col(CCloudCostSourceRecordTable.billing_product_category),
+                    col(CCloudCostSourceRecordTable.source_record_id),
+                    col(CCloudCostSourceRecordTable.evidence_scope_start),
+                    col(CCloudCostSourceRecordTable.evidence_scope_end),
+                )
+            ).all()
+        )
+        sources_by_origin: dict[
+            tuple[datetime, str, str, str, str],
+            list[CCloudCostSourceRecordTable],
+        ] = {}
+        for source in retained_sources:
+            if any(
+                value is None
+                for value in (
+                    source.billing_timestamp,
+                    source.billing_env_id,
+                    source.billing_resource_id,
+                    source.billing_product_type,
+                    source.billing_product_category,
+                )
+            ):
+                continue
+            assert source.billing_timestamp is not None
+            assert source.billing_env_id is not None
+            assert source.billing_resource_id is not None
+            assert source.billing_product_type is not None
+            assert source.billing_product_category is not None
+            origin_key = (
+                _utc(source.billing_timestamp),
+                source.billing_env_id,
+                source.billing_resource_id,
+                source.billing_product_type,
+                source.billing_product_category,
+            )
+            sources_by_origin.setdefault(origin_key, []).append(source)
+        for origin in capture.captures:
+            if origin.status.value != "complete":
+                continue
+            facts = tuple(sorted(origin.facts, key=lambda fact: fact.portion_ordinal))
+            if not facts or tuple(fact.portion_ordinal for fact in facts) != tuple(range(len(facts))):
+                raise ValueError("generic allocation lineage is incomplete")
+            sources = tuple(
+                sources_by_origin.get(
+                    (
+                        _require_aware(origin.origin_timestamp, "origin_timestamp"),
+                        origin.origin_env_id,
+                        origin.origin_resource_id,
+                        origin.origin_product_type,
+                        origin.origin_product_category,
+                    ),
+                    (),
+                )
+            )
+            if not sources:
+                raise ValueError("exact Preview source association is missing")
+            source_amounts: list[Decimal] = []
+            source_quantities: list[Decimal] = []
+            source_originals: list[Decimal] = []
+            for source in sources:
+                key = (
+                    source.source_record_id,
+                    _utc(source.evidence_scope_start),
+                    _utc(source.evidence_scope_end),
+                )
+                if key in used_source_keys or source.malformed:
+                    raise ValueError("exact Preview source association is ambiguous or malformed")
+                used_source_keys.add(key)
+                try:
+                    amount, original_amount, _discount, _price, quantity = normalize_preview_source_economics(
+                        line_type=source.line_type,
+                        amount=None if source.amount is None else Decimal(source.amount),
+                        original_amount=None if source.original_amount is None else Decimal(source.original_amount),
+                        discount_amount=None if source.discount_amount is None else Decimal(source.discount_amount),
+                        price=None if source.price is None else Decimal(source.price),
+                        quantity=None if source.quantity is None else Decimal(source.quantity),
+                    )
+                    decoded_tiers = json.loads(source.tier_dimensions_json)
+                except (ArithmeticError, TypeError, ValueError) as exc:
+                    raise ValueError("exact Preview source economics are invalid") from exc
+                if not isinstance(decoded_tiers, dict):
+                    raise ValueError("exact Preview tier evidence is malformed")
+                source_amounts.append(amount)
+                source_quantities.append(quantity)
+                source_originals.append(original_amount)
+
+            generic_costs = tuple(fact.allocated_cost for fact in facts)
+            generic_quantities = tuple(fact.allocated_quantity for fact in facts)
+            ordinals = tuple(fact.portion_ordinal for fact in facts)
+            with localcontext(_APPORTION_CONTEXT):
+                if sum(source_amounts, Decimal(0)) != sum(generic_costs, Decimal(0)) or sum(
+                    source_quantities, Decimal(0)
+                ) != sum(generic_quantities, Decimal(0)):
+                    raise ValueError("exact Preview source and compatibility margins differ")
+            cost_matrix = _apportion_signed(
+                source_amounts,
+                generic_costs,
+                ordinals,
+                minimum_places=0 if sum(source_quantities, Decimal(0)) == 0 and any(source_quantities) else 2,
+            )
+            if sum(source_quantities, Decimal(0)) == 0 and any(source_quantities):
+                if any(generic_quantities):
+                    raise ValueError("zero-net source quantity requires zero generic columns")
+                quantity_matrix = _apportion_zero_net_quantity(
+                    source_quantities=source_quantities,
+                    generic_allocated_costs=generic_costs,
+                    portion_ordinals=ordinals,
+                )
+            else:
+                quantity_matrix = _apportion_signed(
+                    source_quantities,
+                    generic_quantities,
+                    ordinals,
+                    minimum_places=2,
+                )
+
+            for source_index, source in enumerate(sources):
+                original_cells = _apportion_original_cost(
+                    source_originals[source_index],
+                    cost_matrix[source_index],
+                    ordinals,
+                )
+                for fact_index, fact in enumerate(facts):
+                    allocated_cost = cost_matrix[source_index][fact_index]
+                    source_amount = source_amounts[source_index]
+                    with localcontext(_PREVIEW_RATIO_CONTEXT):
+                        ratio = Decimal(0) if source_amount == 0 else allocated_cost / source_amount
+                    preview_rows.append(
+                        CCloudPreviewSourceAllocationLineagePortionTable(
+                            ecosystem=capture.ecosystem,
+                            tenant_id=capture.tenant_id,
+                            tracking_date=capture.tracking_date,
+                            calculation_id=capture.calculation_id,
+                            source_record_id=source.source_record_id,
+                            evidence_scope_start=_utc(source.evidence_scope_start),
+                            evidence_scope_end=_utc(source.evidence_scope_end),
+                            origin_timestamp=_require_aware(origin.origin_timestamp, "origin_timestamp"),
+                            origin_env_id=origin.origin_env_id,
+                            origin_resource_id=origin.origin_resource_id,
+                            origin_product_type=origin.origin_product_type,
+                            origin_product_category=origin.origin_product_category,
+                            portion_ordinal=fact.portion_ordinal,
+                            target_kind=fact.target_kind.value,
+                            target_id=fact.target_id,
+                            allocated_cost=_decimal_text(allocated_cost),
+                            allocated_quantity=_decimal_text(quantity_matrix[source_index][fact_index]),
+                            allocated_original_cost=_decimal_text(original_cells[fact_index]),
+                            allocation_ratio=_decimal_text(ratio),
+                            method_id=fact.method_id,
+                            method_version=fact.method_version,
+                            method_details_json=fact.method_details_json,
+                        )
+                    )
+        self._session.add_all(preview_rows)
+        self._session.flush()
         portion_count = sum(len(item.facts) for item in capture.captures)
         return AllocationLineageRun(
             ecosystem=capture.ecosystem,
@@ -873,11 +1283,19 @@ class SQLModelPreviewAllocationLineageRepository:
             calculation_completed_at=_require_aware(calculation_completed_at, "calculation_completed_at"),
             status=AllocationLineageRunStatus.COMPLETE,
             portion_count=portion_count,
+            preview_portion_count=len(preview_rows),
         )
 
     def mark_calculation_lineage_unavailable(
         self, value: AllocationLineageUnavailableRun
     ) -> AllocationLineageUnavailableRun:
+        self._session.execute(
+            delete(CCloudPreviewSourceAllocationLineagePortionTable).where(
+                col(CCloudPreviewSourceAllocationLineagePortionTable.ecosystem) == value.ecosystem,
+                col(CCloudPreviewSourceAllocationLineagePortionTable.tenant_id) == value.tenant_id,
+                col(CCloudPreviewSourceAllocationLineagePortionTable.tracking_date) == value.tracking_date,
+            )
+        )
         self._session.execute(
             delete(CCloudAllocationLineagePortionTable).where(
                 col(CCloudAllocationLineagePortionTable.ecosystem) == value.ecosystem,
@@ -939,6 +1357,27 @@ class SQLModelPreviewAllocationLineageRepository:
             == col(CCloudAllocationLineageRunTable.tracking_date),
             ~matching_billing,
         )
+        matching_exact_source = exists().where(
+            col(CCloudCostSourceRecordTable.ecosystem)
+            == col(CCloudPreviewSourceAllocationLineagePortionTable.ecosystem),
+            col(CCloudCostSourceRecordTable.tenant_id)
+            == col(CCloudPreviewSourceAllocationLineagePortionTable.tenant_id),
+            col(CCloudCostSourceRecordTable.source_record_id)
+            == col(CCloudPreviewSourceAllocationLineagePortionTable.source_record_id),
+            col(CCloudCostSourceRecordTable.evidence_scope_start)
+            == col(CCloudPreviewSourceAllocationLineagePortionTable.evidence_scope_start),
+            col(CCloudCostSourceRecordTable.evidence_scope_end)
+            == col(CCloudPreviewSourceAllocationLineagePortionTable.evidence_scope_end),
+        )
+        missing_exact_source = exists().where(
+            col(CCloudPreviewSourceAllocationLineagePortionTable.ecosystem)
+            == col(CCloudAllocationLineageRunTable.ecosystem),
+            col(CCloudPreviewSourceAllocationLineagePortionTable.tenant_id)
+            == col(CCloudAllocationLineageRunTable.tenant_id),
+            col(CCloudPreviewSourceAllocationLineagePortionTable.tracking_date)
+            == col(CCloudAllocationLineageRunTable.tracking_date),
+            ~matching_exact_source,
+        )
         selected_runs = self._session.exec(
             select(CCloudAllocationLineageRunTable).where(
                 col(CCloudAllocationLineageRunTable.ecosystem) == ecosystem,
@@ -947,6 +1386,7 @@ class SQLModelPreviewAllocationLineageRepository:
                     col(CCloudAllocationLineageRunTable.tracking_date) < before,
                     ~matching_calculation,
                     missing_origin,
+                    missing_exact_source,
                 ),
             )
         )
@@ -958,6 +1398,13 @@ class SQLModelPreviewAllocationLineageRepository:
                 col(CCloudAllocationLineagePortionTable.ecosystem) == ecosystem,
                 col(CCloudAllocationLineagePortionTable.tenant_id) == tenant_id,
                 col(CCloudAllocationLineagePortionTable.tracking_date).in_(selected_dates),
+            )
+        )
+        self._session.execute(
+            delete(CCloudPreviewSourceAllocationLineagePortionTable).where(
+                col(CCloudPreviewSourceAllocationLineagePortionTable.ecosystem) == ecosystem,
+                col(CCloudPreviewSourceAllocationLineagePortionTable.tenant_id) == tenant_id,
+                col(CCloudPreviewSourceAllocationLineagePortionTable.tracking_date).in_(selected_dates),
             )
         )
         runs = self._session.execute(

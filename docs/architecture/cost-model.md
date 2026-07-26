@@ -71,6 +71,32 @@ to consume the same aggregated `BillingLineItem` values. Existing generic CSV
 emission and export behavior also remains unchanged; native source rows are not
 substituted into those aggregate-oriented outputs.
 
+#### FOCUS Preview tier authority
+
+FOCUS Preview keeps the generic compatibility aggregation and allocation path
+unchanged, but does not treat a tier-collapsed `BillingLineItem` as pricing
+authority. Retained native Cost records remain the authority for each tier's
+identity, price, quantity, billed cost, and original cost.
+
+A Preview-only exact-source allocation sidecar associates each retained native
+Cost record with the unchanged compatibility allocation portions. It
+deterministically apportions exact signed billed cost, quantity, and original
+cost across those portions. Each native source row reconciles independently,
+and the exact-source columns also reconcile to the compatibility portions.
+Zero-net signed quantity uses a deterministic shared bridge so positive and
+negative native quantities remain traceable while every compatibility quantity
+column remains zero.
+
+Daily and Monthly Preview generation therefore preserve distinct tier origins
+and their pricing evidence. Monthly rows combine only when the complete
+approved row-grain identity, including tier, pricing, Allocation Target,
+SKU-component, and tag evidence, matches.
+
+Preview publication fails closed when exact-source evidence is malformed,
+missing, ambiguous, or does not reconcile. The affected scope produces no
+partial package. This Preview-specific evidence does not change generic billing
+aggregation, allocation results, chargeback behavior, or generic CSV output.
+
 ### Constructed (Self-Managed Kafka, Generic Metrics)
 
 There is no billing API. The engine *constructs* billing lines by:

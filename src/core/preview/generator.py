@@ -7,7 +7,7 @@ import sys
 from bisect import bisect_right
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from contextlib import contextmanager
-from dataclasses import replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime
 from decimal import Decimal, localcontext
 from itertools import batched, chain
@@ -63,6 +63,7 @@ from core.preview.mapping import (
     build_preview_data_package,
     classify_daily_full_source,
     preview_decimal_text,
+    preview_sum_decimals,
     preview_utc_text,
     project_allocated_financials,
     project_daily_portion_full_row,
@@ -345,20 +346,58 @@ def _origin_key(
     resource_id: str,
     native_product: str,
     native_line_type: str,
+    source_record_id: str | None = None,
+    evidence_scope_start: datetime | None = None,
+    evidence_scope_end: datetime | None = None,
 ) -> str:
-    return json.dumps(
-        [
-            preview_utc_text(timestamp),
-            environment_id,
-            resource_id,
-            native_product,
-            native_line_type,
-        ],
-        separators=(",", ":"),
-    )
+    values: list[str] = [
+        preview_utc_text(timestamp),
+        environment_id,
+        resource_id,
+        native_product,
+        native_line_type,
+    ]
+    if source_record_id is not None and evidence_scope_start is not None and evidence_scope_end is not None:
+        values.extend(
+            (
+                source_record_id,
+                preview_utc_text(evidence_scope_start),
+                preview_utc_text(evidence_scope_end),
+            )
+        )
+    return json.dumps(values, separators=(",", ":"))
 
 
 def _selected_origin(selected: SelectedSourceProjection) -> str | None:
+    source = selected.source
+    values = (
+        source.billing_timestamp,
+        source.billing_env_id,
+        source.billing_resource_id,
+        source.billing_product_category,
+        source.billing_product_type,
+    )
+    if any(value is None for value in values):
+        return None
+    timestamp, environment_id, resource_id, native_product, native_line_type = values
+    assert isinstance(timestamp, datetime)
+    assert isinstance(environment_id, str)
+    assert isinstance(resource_id, str)
+    assert isinstance(native_product, str)
+    assert isinstance(native_line_type, str)
+    return _origin_key(
+        timestamp,
+        environment_id,
+        resource_id,
+        native_product,
+        native_line_type,
+        source.source_record_id,
+        source.evidence_scope_start,
+        source.evidence_scope_end,
+    )
+
+
+def _selected_compatibility_origin(selected: SelectedSourceProjection) -> str | None:
     source = selected.source
     values = (
         source.billing_timestamp,
@@ -385,10 +424,26 @@ def _aggregate_origin(aggregate: PreviewAggregateEvidence) -> str:
         aggregate.resource_id,
         aggregate.native_product,
         aggregate.native_line_type,
+        aggregate.source_record_id or None,
+        aggregate.evidence_scope_start,
+        aggregate.evidence_scope_end,
     )
 
 
 def _allocation_origin(allocation: PreviewAllocationEvidence) -> str:
+    return _origin_key(
+        allocation.timestamp,
+        allocation.environment_id,
+        allocation.resource_id,
+        allocation.native_product,
+        allocation.native_line_type,
+        allocation.source_record_id or None,
+        allocation.evidence_scope_start,
+        allocation.evidence_scope_end,
+    )
+
+
+def _allocation_compatibility_origin(allocation: PreviewAllocationEvidence) -> str:
     return _origin_key(
         allocation.timestamp,
         allocation.environment_id,
@@ -442,6 +497,16 @@ def _selected_legacy_key(selected: SelectedSourceProjection) -> str:
     )
 
 
+@dataclass
+class _CompatibilityTotals:
+    source_costs: list[Decimal]
+    source_quantities: list[Decimal]
+    compatibility_cost: Decimal
+    compatibility_quantity: Decimal
+    source_ids: list[str] = field(default_factory=list)
+    expected_mismatch: bool = False
+
+
 class _PreviewEvidenceSpool:
     """Generation-owned external reconciliation store."""
 
@@ -467,6 +532,7 @@ class _PreviewEvidenceSpool:
             CREATE TABLE selected_sources (
                 source_order INTEGER PRIMARY KEY,
                 origin_key TEXT,
+                compatibility_origin_key TEXT,
                 legacy_key TEXT,
                 source_record_id TEXT NOT NULL,
                 source_cost TEXT NOT NULL,
@@ -491,14 +557,19 @@ class _PreviewEvidenceSpool:
             CREATE TABLE allocations (
                 allocation_order INTEGER PRIMARY KEY,
                 origin_key TEXT NOT NULL,
+                compatibility_origin_key TEXT NOT NULL,
                 portion_ordinal INTEGER NOT NULL,
                 target_kind TEXT NOT NULL,
                 target_id TEXT,
                 allocated_cost TEXT NOT NULL,
                 allocated_quantity TEXT NOT NULL,
+                compatibility_allocated_cost TEXT,
+                compatibility_allocated_quantity TEXT,
                 payload BLOB NOT NULL
             );
             CREATE INDEX ix_allocation_origin ON allocations (origin_key, portion_ordinal);
+            CREATE INDEX ix_allocation_compatibility_column
+                ON allocations (compatibility_origin_key, portion_ordinal, allocation_order);
             CREATE INDEX ix_selected_source_cost
                 ON selected_sources (source_cost COLLATE preview_decimal);
             CREATE INDEX ix_selected_source_quantity
@@ -543,13 +614,14 @@ class _PreviewEvidenceSpool:
         self._connection.execute(
             """
             INSERT INTO selected_sources (
-                source_order, origin_key, legacy_key, source_record_id,
+                source_order, origin_key, compatibility_origin_key, legacy_key, source_record_id,
                 source_cost, source_quantity, source_through, payload
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 self._selected_count,
                 origin,
+                _selected_compatibility_origin(selected),
                 _selected_legacy_key(selected) if origin is None else None,
                 source.source_record_id,
                 preview_decimal_text(source.amount or Decimal(0)),
@@ -609,19 +681,38 @@ class _PreviewEvidenceSpool:
 
     def reconcile_sources(self, request: PreviewRequest) -> None:
         self._commit_and_enforce(force=True)
-        legacy_rows = self._connection.execute(
-            "SELECT source_order, legacy_key FROM selected_sources WHERE origin_key IS NULL ORDER BY source_order"
+        self._connection.execute(
+            """
+            UPDATE selected_sources AS source
+            SET origin_key = source.compatibility_origin_key
+            WHERE source.origin_key IS NOT NULL
+              AND source.compatibility_origin_key IS NOT NULL
+              AND NOT EXISTS (
+                  SELECT 1 FROM aggregates AS exact
+                  WHERE exact.origin_key = source.origin_key
+              )
+              AND (
+                  SELECT COUNT(*) FROM aggregates AS compatibility
+                  WHERE compatibility.origin_key = source.compatibility_origin_key
+              ) = 1
+            """
         )
-        for source_order, legacy_key in legacy_rows:
-            matches = self._connection.execute(
-                "SELECT DISTINCT origin_key FROM aggregate_candidates WHERE candidate_key = ? LIMIT 2",
-                (legacy_key,),
-            ).fetchall()
-            if len(matches) == 1:
-                self._connection.execute(
-                    "UPDATE selected_sources SET origin_key = ? WHERE source_order = ?",
-                    (matches[0][0], source_order),
-                )
+        self._connection.execute(
+            """
+            UPDATE selected_sources AS source
+            SET origin_key = (
+                SELECT MIN(candidate.origin_key)
+                FROM aggregate_candidates AS candidate
+                WHERE candidate.candidate_key = source.legacy_key
+            )
+            WHERE source.origin_key IS NULL
+              AND (
+                  SELECT COUNT(DISTINCT candidate.origin_key)
+                  FROM aggregate_candidates AS candidate
+                  WHERE candidate.candidate_key = source.legacy_key
+              ) = 1
+            """
+        )
         self._commit_and_enforce(force=True)
 
         source_count_row = self._connection.execute("SELECT COUNT(*) FROM selected_sources").fetchone()
@@ -705,6 +796,20 @@ class _PreviewEvidenceSpool:
             )
 
         mismatched_correlations: list[str] = []
+        compatibility_totals: dict[str, _CompatibilityTotals] = {}
+
+        def add_mismatch(source_record_id: str) -> None:
+            correlation = public_source_correlation_id(
+                ecosystem=request.ecosystem,
+                tenant_id=request.tenant_id,
+                source_record_id=source_record_id,
+            )
+            position = bisect_right(mismatched_correlations, correlation)
+            nearby = mismatched_correlations[max(0, position - 1) : position + 1]
+            if position < 20 and correlation not in nearby:
+                mismatched_correlations.insert(position, correlation)
+                del mismatched_correlations[20:]
+
         pairs = self._connection.execute(
             """
             SELECT s.source_record_id, s.payload, a.payload
@@ -723,15 +828,42 @@ class _PreviewEvidenceSpool:
             try:
                 reconcile_source_aggregate_evidence(selected=selected, aggregate=aggregate)
             except PreviewFinancialReconciliationError:
-                correlation = public_source_correlation_id(
-                    ecosystem=request.ecosystem,
-                    tenant_id=request.tenant_id,
-                    source_record_id=str(source_record_id),
+                add_mismatch(str(source_record_id))
+            if aggregate.compatibility_total_cost is None or aggregate.compatibility_quantity is None:
+                continue
+            compatibility_origin = _origin_key(
+                aggregate.timestamp,
+                aggregate.environment_id,
+                aggregate.resource_id,
+                aggregate.native_product,
+                aggregate.native_line_type,
+            )
+            current = compatibility_totals.get(compatibility_origin)
+            if current is None:
+                compatibility_totals[compatibility_origin] = _CompatibilityTotals(
+                    source_costs=[aggregate.total_cost],
+                    source_quantities=[aggregate.quantity],
+                    compatibility_cost=aggregate.compatibility_total_cost,
+                    compatibility_quantity=aggregate.compatibility_quantity,
+                    source_ids=[str(source_record_id)],
                 )
-                position = bisect_right(mismatched_correlations, correlation)
-                if position < 20 and correlation not in mismatched_correlations[max(0, position - 1) : position + 1]:
-                    mismatched_correlations.insert(position, correlation)
-                    del mismatched_correlations[20:]
+            else:
+                current.source_costs.append(aggregate.total_cost)
+                current.source_quantities.append(aggregate.quantity)
+                current.source_ids.append(str(source_record_id))
+                if (
+                    aggregate.compatibility_total_cost != current.compatibility_cost
+                    or aggregate.compatibility_quantity != current.compatibility_quantity
+                ):
+                    current.expected_mismatch = True
+        for totals in compatibility_totals.values():
+            if (
+                totals.expected_mismatch
+                or preview_sum_decimals(totals.source_costs) != totals.compatibility_cost
+                or preview_sum_decimals(totals.source_quantities) != totals.compatibility_quantity
+            ):
+                for source_record_id in totals.source_ids:
+                    add_mismatch(source_record_id)
         if mismatched_correlations:
             raise _failure(
                 "preview_source_reconciliation_failed",
@@ -771,18 +903,30 @@ class _PreviewEvidenceSpool:
             self._connection.execute(
                 """
                 INSERT INTO allocations (
-                    allocation_order, origin_key, portion_ordinal,
-                    target_kind, target_id, allocated_cost, allocated_quantity, payload
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    allocation_order, origin_key, compatibility_origin_key, portion_ordinal,
+                    target_kind, target_id, allocated_cost, allocated_quantity,
+                    compatibility_allocated_cost, compatibility_allocated_quantity, payload
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     self._allocation_count,
                     origin,
+                    _allocation_compatibility_origin(allocation),
                     allocation.portion_ordinal,
                     allocation.target_kind,
                     allocation.target_id,
                     preview_decimal_text(allocation.allocated_cost),
                     preview_decimal_text(allocation.allocated_quantity),
+                    (
+                        None
+                        if allocation.compatibility_allocated_cost is None
+                        else preview_decimal_text(allocation.compatibility_allocated_cost)
+                    ),
+                    (
+                        None
+                        if allocation.compatibility_allocated_quantity is None
+                        else preview_decimal_text(allocation.compatibility_allocated_quantity)
+                    ),
                     payload,
                 ),
             )
@@ -796,7 +940,8 @@ class _PreviewEvidenceSpool:
                 run.capture_status is not AllocationLineageRunStatus.COMPLETE
                 or run.capture_reason is not None
                 or run.calculation_completed_at != expected_completion_by_run.get(identity)
-                or run.portion_count != allocation_count_by_run.get(identity, 0)
+                or (run.preview_portion_count if run.preview_portion_count is not None else run.portion_count)
+                != allocation_count_by_run.get(identity, 0)
                 for identity, run in runs_by_identity.items()
             )
         )
@@ -820,6 +965,72 @@ class _PreviewEvidenceSpool:
         ).fetchone()
         if invalid_runs or invalid_scope or missing_aggregate is not None or missing_allocations is not None:
             raise PreviewAllocationLineageError("allocation lineage stream is incomplete")
+
+        partial_compatibility_column = self._connection.execute(
+            """
+            SELECT 1 FROM allocations
+            WHERE (compatibility_allocated_cost IS NULL) !=
+                  (compatibility_allocated_quantity IS NULL)
+            LIMIT 1
+            """
+        ).fetchone()
+        if partial_compatibility_column is not None:
+            raise PreviewAllocationLineageError("allocation lineage stream is incomplete")
+
+        current_column: tuple[str, int] | None = None
+        column_costs: list[Decimal] = []
+        column_quantities: list[Decimal] = []
+        expected_column_cost: Decimal | None = None
+        expected_column_quantity: Decimal | None = None
+        expected_column_mismatch = False
+
+        def finish_compatibility_column() -> None:
+            if current_column is None:
+                return
+            if (
+                expected_column_cost is None
+                or expected_column_quantity is None
+                or expected_column_mismatch
+                or preview_sum_decimals(column_costs) != expected_column_cost
+                or preview_sum_decimals(column_quantities) != expected_column_quantity
+            ):
+                raise PreviewFinancialReconciliationError("exact source columns do not reconcile with compatibility")
+
+        compatibility_rows = self._connection.execute(
+            """
+            SELECT compatibility_origin_key, portion_ordinal,
+                   allocated_cost, allocated_quantity,
+                   compatibility_allocated_cost, compatibility_allocated_quantity
+            FROM allocations
+            WHERE compatibility_allocated_cost IS NOT NULL
+              AND compatibility_allocated_quantity IS NOT NULL
+            ORDER BY compatibility_origin_key, portion_ordinal, allocation_order
+            """
+        )
+        for (
+            compatibility_origin,
+            portion_ordinal,
+            allocated_cost_text,
+            allocated_quantity_text,
+            compatibility_cost_text,
+            compatibility_quantity_text,
+        ) in compatibility_rows:
+            column = str(compatibility_origin), int(portion_ordinal)
+            compatibility_cost = Decimal(str(compatibility_cost_text))
+            compatibility_quantity = Decimal(str(compatibility_quantity_text))
+            if column != current_column:
+                finish_compatibility_column()
+                current_column = column
+                column_costs = []
+                column_quantities = []
+                expected_column_cost = compatibility_cost
+                expected_column_quantity = compatibility_quantity
+                expected_column_mismatch = False
+            elif compatibility_cost != expected_column_cost or compatibility_quantity != expected_column_quantity:
+                expected_column_mismatch = True
+            column_costs.append(Decimal(str(allocated_cost_text)))
+            column_quantities.append(Decimal(str(allocated_quantity_text)))
+        finish_compatibility_column()
 
         current_origin: str | None = None
         current_aggregate: PreviewAggregateEvidence | None = None
@@ -856,15 +1067,22 @@ class _PreviewEvidenceSpool:
         current_aggregate = None
         allocated_cost = Decimal(0)
         allocated_quantity = Decimal(0)
+        allocated_original_cost = Decimal(0)
+        origin_original_cost: Decimal | None = None
 
         def finish_totals() -> None:
-            nonlocal allocated_cost, allocated_quantity
+            nonlocal allocated_cost, allocated_original_cost, allocated_quantity, origin_original_cost
             if current_aggregate is not None and (
-                allocated_cost != current_aggregate.total_cost or allocated_quantity != current_aggregate.quantity
+                allocated_cost != current_aggregate.total_cost
+                or allocated_quantity != current_aggregate.quantity
+                or origin_original_cost is None
+                or allocated_original_cost != origin_original_cost
             ):
                 raise PreviewFinancialReconciliationError("allocation lineage totals do not reconcile")
             allocated_cost = Decimal(0)
             allocated_quantity = Decimal(0)
+            allocated_original_cost = Decimal(0)
+            origin_original_cost = None
 
         total_rows = self._connection.execute(
             "SELECT origin_key, payload FROM allocations ORDER BY origin_key, portion_ordinal, allocation_order"
@@ -887,6 +1105,11 @@ class _PreviewEvidenceSpool:
             with localcontext(PREVIEW_DECIMAL_CONTEXT):
                 allocated_cost += allocation.allocated_cost
                 allocated_quantity += allocation.allocated_quantity
+                allocated_original_cost += allocation.allocated_original_cost
+            if origin_original_cost is None:
+                origin_original_cost = allocation.origin_original_cost
+            elif origin_original_cost != allocation.origin_original_cost:
+                raise PreviewFinancialReconciliationError("allocation lineage totals do not reconcile")
         finish_totals()
 
     def iter_origins(

@@ -69,6 +69,7 @@ class CCloudStorageModule:
             CCloudFocusPreviewRepairHeadTable,
             CCloudFocusPreviewRepairTable,
             CCloudOrganizationAuthorityAttemptTable,
+            CCloudPreviewSourceAllocationLineagePortionTable,
             CCloudSourceCaptureReadinessHistoryTable,
             CCloudSourceCaptureReadinessTable,
             CCloudSourceEvidenceAttemptTable,
@@ -85,6 +86,7 @@ class CCloudStorageModule:
             CCloudOrganizationAuthorityAttemptTable.__table__,  # type: ignore[attr-defined]
             CCloudAllocationLineageRunTable.__table__,  # type: ignore[attr-defined]
             CCloudAllocationLineagePortionTable.__table__,  # type: ignore[attr-defined]
+            CCloudPreviewSourceAllocationLineagePortionTable.__table__,  # type: ignore[attr-defined]
         ]
         SQLModel.metadata.create_all(engine, tables=tables)
 

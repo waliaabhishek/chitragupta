@@ -8,7 +8,7 @@ from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, cast
 
-from sqlalchemy import and_, delete, func, or_, update
+from sqlalchemy import and_, case, delete, exists, func, or_, update
 from sqlmodel import Session, col, select
 
 from core.preview.evidence import (
@@ -21,6 +21,7 @@ from core.preview.evidence import (
     PreviewEvidenceScope,
     PreviewSourceEvidence,
     decode_lineage_decimal,
+    normalize_preview_source_economics,
 )
 from core.preview.evidence_capture import (
     NativeSourceWindow,
@@ -42,6 +43,7 @@ from plugins.confluent_cloud.storage.tables import (
     CCloudAllocationLineageRunTable,
     CCloudBillingTable,
     CCloudCostSourceTable,
+    CCloudPreviewSourceAllocationLineagePortionTable,
 )
 
 if TYPE_CHECKING:
@@ -604,12 +606,85 @@ class CCloudBillingRepository:
     def iter_preview_aggregates(self, scope: PreviewEvidenceScope) -> Iterator[PreviewAggregateEvidence]:
         start, end = exact_utc_half_open_bounds(self._session, scope.start, scope.end)
         statement = (
+            select(CCloudCostSourceTable, CCloudBillingTable)
+            .join(
+                CCloudBillingTable,
+                and_(
+                    col(CCloudBillingTable.ecosystem) == col(CCloudCostSourceTable.ecosystem),
+                    col(CCloudBillingTable.tenant_id) == col(CCloudCostSourceTable.tenant_id),
+                    col(CCloudBillingTable.timestamp) == col(CCloudCostSourceTable.billing_timestamp),
+                    col(CCloudBillingTable.env_id) == col(CCloudCostSourceTable.billing_env_id),
+                    col(CCloudBillingTable.resource_id) == col(CCloudCostSourceTable.billing_resource_id),
+                    col(CCloudBillingTable.product_type) == col(CCloudCostSourceTable.billing_product_type),
+                    col(CCloudBillingTable.product_category) == col(CCloudCostSourceTable.billing_product_category),
+                ),
+            )
+            .where(
+                col(CCloudCostSourceTable.ecosystem) == scope.ecosystem,
+                col(CCloudCostSourceTable.tenant_id) == scope.tenant_id,
+                col(CCloudBillingTable.timestamp) >= start,
+                col(CCloudBillingTable.timestamp) < end,
+            )
+            .order_by(
+                col(CCloudBillingTable.timestamp),
+                col(CCloudBillingTable.env_id),
+                col(CCloudBillingTable.resource_id),
+                col(CCloudBillingTable.product_category),
+                col(CCloudBillingTable.product_type),
+                case((col(CCloudCostSourceTable.amount).like("-%"), 1), else_=0),
+                col(CCloudCostSourceTable.source_record_id),
+                col(CCloudCostSourceTable.evidence_scope_start),
+                col(CCloudCostSourceTable.evidence_scope_end),
+            )
+            .execution_options(yield_per=256, stream_results=True)
+        )
+        rows = self._session.exec(statement).yield_per(256)
+        for source, billing in rows:
+            try:
+                amount, _original, _discount, price, quantity = normalize_preview_source_economics(
+                    line_type=source.line_type,
+                    amount=None if source.amount is None else Decimal(source.amount),
+                    original_amount=None if source.original_amount is None else Decimal(source.original_amount),
+                    discount_amount=None if source.discount_amount is None else Decimal(source.discount_amount),
+                    price=None if source.price is None else Decimal(source.price),
+                    quantity=None if source.quantity is None else Decimal(source.quantity),
+                )
+                yield PreviewAggregateEvidence(
+                    timestamp=_ensure_utc(billing.timestamp),
+                    environment_id=billing.env_id,
+                    resource_id=billing.resource_id,
+                    native_product=billing.product_category,
+                    native_line_type=billing.product_type,
+                    quantity=quantity,
+                    unit_price=price,
+                    total_cost=amount,
+                    compatibility_currency=billing.currency,
+                    granularity=billing.granularity,
+                    source_record_id=source.source_record_id,
+                    evidence_scope_start=_ensure_utc(source.evidence_scope_start),
+                    evidence_scope_end=_ensure_utc(source.evidence_scope_end),
+                    compatibility_total_cost=Decimal(billing.total_cost),
+                    compatibility_quantity=Decimal(billing.quantity),
+                )
+            except (ArithmeticError, TypeError, ValueError) as exc:
+                raise PreviewAllocationEvidenceDecodeError("invalid persisted exact source aggregate") from exc
+        matching_source = exists().where(
+            col(CCloudCostSourceTable.ecosystem) == col(CCloudBillingTable.ecosystem),
+            col(CCloudCostSourceTable.tenant_id) == col(CCloudBillingTable.tenant_id),
+            col(CCloudCostSourceTable.billing_timestamp) == col(CCloudBillingTable.timestamp),
+            col(CCloudCostSourceTable.billing_env_id) == col(CCloudBillingTable.env_id),
+            col(CCloudCostSourceTable.billing_resource_id) == col(CCloudBillingTable.resource_id),
+            col(CCloudCostSourceTable.billing_product_type) == col(CCloudBillingTable.product_type),
+            col(CCloudCostSourceTable.billing_product_category) == col(CCloudBillingTable.product_category),
+        )
+        unmatched = (
             select(CCloudBillingTable)
             .where(
                 col(CCloudBillingTable.ecosystem) == scope.ecosystem,
                 col(CCloudBillingTable.tenant_id) == scope.tenant_id,
                 col(CCloudBillingTable.timestamp) >= start,
                 col(CCloudBillingTable.timestamp) < end,
+                ~matching_source,
             )
             .order_by(
                 col(CCloudBillingTable.timestamp),
@@ -620,19 +695,18 @@ class CCloudBillingRepository:
             )
             .execution_options(yield_per=256, stream_results=True)
         )
-        rows = self._session.exec(statement).yield_per(256)
-        for row in rows:
+        for billing in self._session.exec(unmatched).yield_per(256):
             yield PreviewAggregateEvidence(
-                timestamp=_ensure_utc(row.timestamp),
-                environment_id=row.env_id,
-                resource_id=row.resource_id,
-                native_product=row.product_category,
-                native_line_type=row.product_type,
-                quantity=Decimal(row.quantity),
-                unit_price=Decimal(row.unit_price),
-                total_cost=Decimal(row.total_cost),
-                compatibility_currency=row.currency,
-                granularity=row.granularity,
+                timestamp=_ensure_utc(billing.timestamp),
+                environment_id=billing.env_id,
+                resource_id=billing.resource_id,
+                native_product=billing.product_category,
+                native_line_type=billing.product_type,
+                quantity=Decimal(billing.quantity),
+                unit_price=Decimal(billing.unit_price),
+                total_cost=Decimal(billing.total_cost),
+                compatibility_currency=billing.currency,
+                granularity=billing.granularity,
             )
 
     def find_preview_aggregate_candidates(
@@ -868,8 +942,38 @@ class CCloudChargebackRepository(SQLModelChargebackRepository):
     ) -> Iterator[PreviewAllocationRunEvidence]:
         if not calculation_ids:
             return
+        preview_count = (
+            select(func.count())
+            .select_from(CCloudAllocationLineagePortionTable)
+            .join(
+                CCloudCostSourceTable,
+                and_(
+                    col(CCloudCostSourceTable.ecosystem) == col(CCloudAllocationLineagePortionTable.ecosystem),
+                    col(CCloudCostSourceTable.tenant_id) == col(CCloudAllocationLineagePortionTable.tenant_id),
+                    col(CCloudCostSourceTable.billing_timestamp)
+                    == col(CCloudAllocationLineagePortionTable.origin_timestamp),
+                    col(CCloudCostSourceTable.billing_env_id) == col(CCloudAllocationLineagePortionTable.origin_env_id),
+                    col(CCloudCostSourceTable.billing_resource_id)
+                    == col(CCloudAllocationLineagePortionTable.origin_resource_id),
+                    col(CCloudCostSourceTable.billing_product_type)
+                    == col(CCloudAllocationLineagePortionTable.origin_product_type),
+                    col(CCloudCostSourceTable.billing_product_category)
+                    == col(CCloudAllocationLineagePortionTable.origin_product_category),
+                ),
+            )
+            .where(
+                col(CCloudAllocationLineagePortionTable.ecosystem) == col(CCloudAllocationLineageRunTable.ecosystem),
+                col(CCloudAllocationLineagePortionTable.tenant_id) == col(CCloudAllocationLineageRunTable.tenant_id),
+                col(CCloudAllocationLineagePortionTable.tracking_date)
+                == col(CCloudAllocationLineageRunTable.tracking_date),
+                col(CCloudAllocationLineagePortionTable.calculation_id)
+                == col(CCloudAllocationLineageRunTable.calculation_id),
+            )
+            .correlate(CCloudAllocationLineageRunTable.__table__)  # type: ignore[attr-defined]
+            .scalar_subquery()
+        )
         statement = (
-            select(CCloudAllocationLineageRunTable)
+            select(CCloudAllocationLineageRunTable, preview_count)
             .where(
                 col(CCloudAllocationLineageRunTable.ecosystem) == scope.ecosystem,
                 col(CCloudAllocationLineageRunTable.tenant_id) == scope.tenant_id,
@@ -880,7 +984,7 @@ class CCloudChargebackRepository(SQLModelChargebackRepository):
             .order_by(col(CCloudAllocationLineageRunTable.tracking_date))
             .execution_options(yield_per=256, stream_results=True)
         )
-        for row in self._session.exec(statement).yield_per(256):
+        for row, preview_portion_count in self._session.exec(statement).yield_per(256):
             try:
                 yield PreviewAllocationRunEvidence(
                     ecosystem=row.ecosystem,
@@ -893,6 +997,7 @@ class CCloudChargebackRepository(SQLModelChargebackRepository):
                         None if row.capture_reason is None else AllocationLineageUnavailableReason(row.capture_reason)
                     ),
                     portion_count=row.portion_count,
+                    preview_portion_count=preview_portion_count,
                 )
             except (AttributeError, TypeError, ValueError) as exc:
                 raise PreviewAllocationEvidenceDecodeError("invalid persisted allocation lineage run") from exc
@@ -905,48 +1010,134 @@ class CCloudChargebackRepository(SQLModelChargebackRepository):
         if not calculation_ids:
             return
         statement = (
-            select(CCloudAllocationLineagePortionTable, CCloudBillingTable)
+            select(
+                CCloudPreviewSourceAllocationLineagePortionTable,
+                CCloudCostSourceTable,
+                CCloudBillingTable,
+                CCloudAllocationLineagePortionTable,
+            )
+            .outerjoin(
+                CCloudCostSourceTable,
+                and_(
+                    col(CCloudCostSourceTable.ecosystem)
+                    == col(CCloudPreviewSourceAllocationLineagePortionTable.ecosystem),
+                    col(CCloudCostSourceTable.tenant_id)
+                    == col(CCloudPreviewSourceAllocationLineagePortionTable.tenant_id),
+                    col(CCloudCostSourceTable.source_record_id)
+                    == col(CCloudPreviewSourceAllocationLineagePortionTable.source_record_id),
+                    col(CCloudCostSourceTable.evidence_scope_start)
+                    == col(CCloudPreviewSourceAllocationLineagePortionTable.evidence_scope_start),
+                    col(CCloudCostSourceTable.evidence_scope_end)
+                    == col(CCloudPreviewSourceAllocationLineagePortionTable.evidence_scope_end),
+                ),
+            )
             .join(
                 CCloudBillingTable,
                 and_(
-                    col(CCloudBillingTable.ecosystem) == col(CCloudAllocationLineagePortionTable.ecosystem),
-                    col(CCloudBillingTable.tenant_id) == col(CCloudAllocationLineagePortionTable.tenant_id),
-                    col(CCloudBillingTable.timestamp) == col(CCloudAllocationLineagePortionTable.origin_timestamp),
-                    col(CCloudBillingTable.env_id) == col(CCloudAllocationLineagePortionTable.origin_env_id),
-                    col(CCloudBillingTable.resource_id) == col(CCloudAllocationLineagePortionTable.origin_resource_id),
+                    col(CCloudBillingTable.ecosystem)
+                    == col(CCloudPreviewSourceAllocationLineagePortionTable.ecosystem),
+                    col(CCloudBillingTable.tenant_id)
+                    == col(CCloudPreviewSourceAllocationLineagePortionTable.tenant_id),
+                    col(CCloudBillingTable.timestamp)
+                    == col(CCloudPreviewSourceAllocationLineagePortionTable.origin_timestamp),
+                    col(CCloudBillingTable.env_id)
+                    == col(CCloudPreviewSourceAllocationLineagePortionTable.origin_env_id),
+                    col(CCloudBillingTable.resource_id)
+                    == col(CCloudPreviewSourceAllocationLineagePortionTable.origin_resource_id),
                     col(CCloudBillingTable.product_type)
-                    == col(CCloudAllocationLineagePortionTable.origin_product_type),
+                    == col(CCloudPreviewSourceAllocationLineagePortionTable.origin_product_type),
                     col(CCloudBillingTable.product_category)
-                    == col(CCloudAllocationLineagePortionTable.origin_product_category),
+                    == col(CCloudPreviewSourceAllocationLineagePortionTable.origin_product_category),
                 ),
+                isouter=True,
+            )
+            .join(
+                CCloudAllocationLineagePortionTable,
+                and_(
+                    col(CCloudAllocationLineagePortionTable.ecosystem)
+                    == col(CCloudPreviewSourceAllocationLineagePortionTable.ecosystem),
+                    col(CCloudAllocationLineagePortionTable.tenant_id)
+                    == col(CCloudPreviewSourceAllocationLineagePortionTable.tenant_id),
+                    col(CCloudAllocationLineagePortionTable.tracking_date)
+                    == col(CCloudPreviewSourceAllocationLineagePortionTable.tracking_date),
+                    col(CCloudAllocationLineagePortionTable.calculation_id)
+                    == col(CCloudPreviewSourceAllocationLineagePortionTable.calculation_id),
+                    col(CCloudAllocationLineagePortionTable.origin_timestamp)
+                    == col(CCloudPreviewSourceAllocationLineagePortionTable.origin_timestamp),
+                    col(CCloudAllocationLineagePortionTable.origin_env_id)
+                    == col(CCloudPreviewSourceAllocationLineagePortionTable.origin_env_id),
+                    col(CCloudAllocationLineagePortionTable.origin_resource_id)
+                    == col(CCloudPreviewSourceAllocationLineagePortionTable.origin_resource_id),
+                    col(CCloudAllocationLineagePortionTable.origin_product_type)
+                    == col(CCloudPreviewSourceAllocationLineagePortionTable.origin_product_type),
+                    col(CCloudAllocationLineagePortionTable.origin_product_category)
+                    == col(CCloudPreviewSourceAllocationLineagePortionTable.origin_product_category),
+                    col(CCloudAllocationLineagePortionTable.portion_ordinal)
+                    == col(CCloudPreviewSourceAllocationLineagePortionTable.portion_ordinal),
+                ),
+                isouter=True,
             )
             .where(
-                col(CCloudAllocationLineagePortionTable.ecosystem) == scope.ecosystem,
-                col(CCloudAllocationLineagePortionTable.tenant_id) == scope.tenant_id,
-                col(CCloudAllocationLineagePortionTable.tracking_date) >= scope.start.date(),
-                col(CCloudAllocationLineagePortionTable.tracking_date) < scope.end.date(),
-                col(CCloudAllocationLineagePortionTable.calculation_id).in_(calculation_ids),
+                col(CCloudPreviewSourceAllocationLineagePortionTable.ecosystem) == scope.ecosystem,
+                col(CCloudPreviewSourceAllocationLineagePortionTable.tenant_id) == scope.tenant_id,
+                col(CCloudPreviewSourceAllocationLineagePortionTable.tracking_date) >= scope.start.date(),
+                col(CCloudPreviewSourceAllocationLineagePortionTable.tracking_date) < scope.end.date(),
+                col(CCloudPreviewSourceAllocationLineagePortionTable.calculation_id).in_(calculation_ids),
             )
             .order_by(
-                col(CCloudAllocationLineagePortionTable.origin_timestamp),
-                col(CCloudAllocationLineagePortionTable.origin_env_id),
-                col(CCloudAllocationLineagePortionTable.origin_resource_id),
-                col(CCloudAllocationLineagePortionTable.origin_product_type),
-                col(CCloudAllocationLineagePortionTable.origin_product_category),
-                col(CCloudAllocationLineagePortionTable.portion_ordinal),
+                col(CCloudPreviewSourceAllocationLineagePortionTable.origin_timestamp),
+                col(CCloudPreviewSourceAllocationLineagePortionTable.origin_env_id),
+                col(CCloudPreviewSourceAllocationLineagePortionTable.origin_resource_id),
+                col(CCloudPreviewSourceAllocationLineagePortionTable.origin_product_type),
+                col(CCloudPreviewSourceAllocationLineagePortionTable.origin_product_category),
+                case((col(CCloudCostSourceTable.amount).like("-%"), 1), else_=0),
+                col(CCloudPreviewSourceAllocationLineagePortionTable.source_record_id),
+                col(CCloudPreviewSourceAllocationLineagePortionTable.evidence_scope_start),
+                col(CCloudPreviewSourceAllocationLineagePortionTable.evidence_scope_end),
+                col(CCloudPreviewSourceAllocationLineagePortionTable.portion_ordinal),
             )
             .execution_options(yield_per=256, stream_results=True)
         )
-        for portion, origin in self._session.exec(statement).yield_per(256):
-            allocated_cost = decode_lineage_decimal(portion.allocated_cost)
-            allocated_quantity = decode_lineage_decimal(portion.allocated_quantity)
-            allocation_ratio = decode_lineage_decimal(portion.allocation_ratio)
+        for portion, source, billing, compatibility_portion in self._session.exec(statement).yield_per(256):
+            if source is None or billing is None or compatibility_portion is None:
+                raise PreviewAllocationEvidenceDecodeError("orphaned exact source allocation lineage")
+            if (
+                source.billing_timestamp is None
+                or _ensure_utc(source.billing_timestamp) != _ensure_utc(portion.origin_timestamp)
+                or source.billing_env_id != portion.origin_env_id
+                or source.billing_resource_id != portion.origin_resource_id
+                or source.billing_product_type != portion.origin_product_type
+                or source.billing_product_category != portion.origin_product_category
+                or compatibility_portion.target_kind != portion.target_kind
+                or compatibility_portion.target_id != portion.target_id
+                or compatibility_portion.method_id != portion.method_id
+                or compatibility_portion.method_version != portion.method_version
+                or compatibility_portion.method_details_json != portion.method_details_json
+            ):
+                raise PreviewAllocationEvidenceDecodeError("exact source allocation shape differs from compatibility")
+            try:
+                amount, original, _discount, price, quantity = normalize_preview_source_economics(
+                    line_type=source.line_type,
+                    amount=None if source.amount is None else Decimal(source.amount),
+                    original_amount=None if source.original_amount is None else Decimal(source.original_amount),
+                    discount_amount=None if source.discount_amount is None else Decimal(source.discount_amount),
+                    price=None if source.price is None else Decimal(source.price),
+                    quantity=None if source.quantity is None else Decimal(source.quantity),
+                )
+                allocated_cost = decode_lineage_decimal(portion.allocated_cost)
+                allocated_quantity = decode_lineage_decimal(portion.allocated_quantity)
+                allocated_original = decode_lineage_decimal(portion.allocated_original_cost)
+                allocation_ratio = decode_lineage_decimal(portion.allocation_ratio)
+                compatibility_allocated_cost = decode_lineage_decimal(compatibility_portion.allocated_cost)
+                compatibility_allocated_quantity = decode_lineage_decimal(compatibility_portion.allocated_quantity)
+            except (ArithmeticError, TypeError, ValueError) as exc:
+                raise PreviewAllocationEvidenceDecodeError("invalid persisted exact source allocation") from exc
             yield PreviewAllocationEvidence(
-                timestamp=_ensure_utc(origin.timestamp),
-                environment_id=origin.env_id,
-                resource_id=origin.resource_id,
-                native_product=origin.product_category,
-                native_line_type=origin.product_type,
+                timestamp=_ensure_utc(billing.timestamp),
+                environment_id=billing.env_id,
+                resource_id=billing.resource_id,
+                native_product=billing.product_category,
+                native_line_type=billing.product_type,
                 allocation_target_id=portion.target_id or "UNALLOCATED",
                 allocation_method=portion.method_id,
                 amount=allocated_cost,
@@ -960,11 +1151,18 @@ class CCloudChargebackRepository(SQLModelChargebackRepository):
                 method_id=portion.method_id,
                 method_version=portion.method_version,
                 method_details_json=portion.method_details_json,
-                origin_total_cost=Decimal(origin.total_cost),
-                origin_quantity=Decimal(origin.quantity),
-                origin_unit_price=Decimal(origin.unit_price),
-                origin_currency=origin.currency,
-                origin_granularity=origin.granularity,
+                origin_total_cost=amount,
+                origin_quantity=quantity,
+                origin_unit_price=price,
+                origin_currency=billing.currency,
+                origin_granularity=billing.granularity,
+                source_record_id=source.source_record_id,
+                evidence_scope_start=_ensure_utc(source.evidence_scope_start),
+                evidence_scope_end=_ensure_utc(source.evidence_scope_end),
+                allocated_original_cost=allocated_original,
+                origin_original_cost=original,
+                compatibility_allocated_cost=compatibility_allocated_cost,
+                compatibility_allocated_quantity=compatibility_allocated_quantity,
             )
 
     def find_preview_allocation_candidates(

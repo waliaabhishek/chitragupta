@@ -41,6 +41,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Extend graph explorer grouping to resource and identity views (TASK-245). Environments with more than 20 child resources and identities charged across more than 20 clusters now show grouped summary nodes (`resource_group`, `cluster_group`) with the top-5 highest-cost entities shown individually and expand/collapse support (`expand=resources` or `expand=clusters`), matching the cluster view behavior introduced in TASK-243/244.
 
 ### Fixed
+- Preserve same-key tiered Confluent Cost records as distinct FOCUS Preview
+  origins and Daily/Monthly rows without changing generic compatibility
+  aggregation, allocation, chargeback, or CSV behavior. A Preview-only
+  exact-source sidecar deterministically reconciles signed billed cost,
+  quantity (including zero-net positive/negative sources), and original cost
+  for every retained native tier and compatibility allocation portion.
+  Malformed, missing, ambiguous, or unreconciled evidence fails publication
+  closed with no partial package.
 - Normalize FOCUS Mapping Preview to its first release contracts: mapping profile `focus-1.4-preview-v1` and manifest schema `chitragupta.preview-manifest.v1`. Requested packages and published revisions retain the complete current schema and validation; pre-release development packages are unsupported and fail closed.
 - Source the FOCUS Mapping Preview pre-submission authority-gap list from the backend's canonical ordered three-field gap objects through the existing profile response instead of a duplicate frontend catalog.
 - Canonicalize persisted financial-period and FOCUS Preview lifecycle timestamps to UTC whole seconds on SQLite and PostgreSQL. Migration 029 safely converges identical legacy representations, aborts conflicting or invalid data transactionally, repairs converged lineage counts, and preserves revision-028 SQLite downgrade compatibility. Preview retention now uses durable retry-count ordering and compare-and-set state, while same-second request and repair recovery no longer depends on fabricated sub-second timestamps. Public API and manifest contracts, strict retained-artifact validation and bytes, and financial semantics remain unchanged; a real PostgreSQL CI job verifies migration and rollback behavior.

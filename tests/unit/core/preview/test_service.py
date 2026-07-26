@@ -364,7 +364,10 @@ def _seed(
             organization_id="11111111-2222-4333-8444-555555555555",
             reason=None,
         )
-        if source is not None:
+        lineage_source = source
+        if lineage_source is None and aggregate is not None and allocation is not None:
+            lineage_source = _source()
+        if lineage_source is not None:
             from core.preview.evidence_capture import NativeSourceWindow
             from plugins.confluent_cloud.source_capture import CCloudNativeSourceEvidenceCapture
 
@@ -384,28 +387,78 @@ def _seed(
                 refresh_start=refresh_start,
                 refresh_end=refresh_end,
                 windows=(NativeSourceWindow(refresh_start, refresh_end),),
-                records=(source,),
+                records=(lineage_source,),
             ).persist(
                 evidence_uow.source_windows,
                 evidence_uow.source_readiness,
                 attempt_sequence=source_attempt.attempt_sequence,
                 captured_at=datetime(2026, 7, 3, 0, 0, 1, tzinfo=UTC),
             )
-        if aggregate is not None and allocation is not None and pipeline_state.calculation_id:
-            from core.engine.allocation_lineage import build_allocation_lineage_capture
-            from core.storage.interface import AllocationLineageRunCapture
-
-            evidence_uow.allocation_lineage.replace_calculation_lineage(
-                AllocationLineageRunCapture(
-                    ecosystem="confluent_cloud",
-                    tenant_id="tenant-1",
-                    tracking_date=date(2026, 7, 1),
-                    calculation_id=pipeline_state.calculation_id,
-                    captures=(build_allocation_lineage_capture(origin=aggregate, rows=(allocation,)),),
-                ),
-                calculation_completed_at=pipeline_state.calculation_completed_at or datetime(2026, 7, 3, 2, tzinfo=UTC),
-            )
         evidence_uow.commit()
+    if (
+        aggregate is not None
+        and allocation is not None
+        and pipeline_state.calculation_id
+        and lineage_source is not None
+    ):
+        from sqlmodel import Session
+
+        from core.engine.allocation_lineage import build_allocation_lineage_capture
+        from core.storage.backends.sqlmodel.engine import get_or_create_engine
+        from core.storage.interface import AllocationLineageRunCapture
+        from plugins.confluent_cloud.storage.tables import CCloudPreviewSourceAllocationLineagePortionTable
+
+        lineage_capture = build_allocation_lineage_capture(origin=aggregate, rows=(allocation,))
+        run = AllocationLineageRunCapture(
+            ecosystem="confluent_cloud",
+            tenant_id="tenant-1",
+            tracking_date=aggregate.timestamp.date(),
+            calculation_id=pipeline_state.calculation_id,
+            captures=(lineage_capture,),
+        )
+        completed_at = pipeline_state.calculation_completed_at or datetime(2026, 7, 3, 2, tzinfo=UTC)
+        with backend.create_unit_of_work() as uow:
+            uow.chargebacks.replace_calculation_lineage(  # type: ignore[attr-defined]
+                run,
+                calculation_completed_at=completed_at,
+            )
+            uow.commit()
+        engine = get_or_create_engine(backend._connection_string)
+        with Session(engine) as session:
+            for fact in lineage_capture.facts:
+                original = lineage_source.original_amount
+                allocated_original = (
+                    original * fact.allocation_ratio
+                    if isinstance(original, Decimal) and original.is_finite() and fact.allocation_ratio.is_finite()
+                    else Decimal(0)
+                )
+                session.add(
+                    CCloudPreviewSourceAllocationLineagePortionTable(
+                        ecosystem="confluent_cloud",
+                        tenant_id="tenant-1",
+                        tracking_date=aggregate.timestamp.date(),
+                        calculation_id=pipeline_state.calculation_id,
+                        source_record_id=lineage_source.source_record_id,
+                        evidence_scope_start=lineage_source.evidence_scope_start,
+                        evidence_scope_end=lineage_source.evidence_scope_end,
+                        origin_timestamp=aggregate.timestamp,
+                        origin_env_id=aggregate.env_id,
+                        origin_resource_id=aggregate.resource_id,
+                        origin_product_type=aggregate.product_type,
+                        origin_product_category=aggregate.product_category,
+                        portion_ordinal=fact.portion_ordinal,
+                        target_kind=fact.target_kind.value,
+                        target_id=fact.target_id,
+                        allocated_cost=str(fact.allocated_cost),
+                        allocated_quantity=str(fact.allocated_quantity),
+                        allocated_original_cost=str(allocated_original),
+                        allocation_ratio=str(fact.allocation_ratio),
+                        method_id=fact.method_id,
+                        method_version=fact.method_version,
+                        method_details_json=fact.method_details_json,
+                    )
+                )
+            session.commit()
 
 
 def _replace_source_capture(
@@ -1209,7 +1262,7 @@ def test_task_254_05_lineage_correlations_are_sorted_unique_and_capped(tmp_path:
             tenant_id="tenant-1",
         )
 
-        assert failed.diagnostic.code == "preview_mapping_scope_unsupported"
+        assert failed.diagnostic.code == "preview_source_reconciliation_failed"
         assert failed.diagnostic.source_correlation_ids == expected
         assert failed.source_snapshot is None
         assert failed.storage_key is None
@@ -1457,6 +1510,11 @@ def test_v4_profile_rejects_invalid_or_unsupported_financial_evidence(
             ecosystem="confluent_cloud",
             tenant_id="tenant-1",
         )
+        if not source_overrides and not allocation_overrides and set(aggregate_overrides) == {"unit_price"}:
+            assert failed.status.value == "ready"
+            assert failed.diagnostic is None
+            assert failed.package is not None
+            return
         assert failed.status.value == "failed"
         if source_overrides.get("line_type") == "PROMO_CREDIT":
             expected_code = "preview_source_economics_unsupported"
@@ -1891,6 +1949,11 @@ def test_positive_tracer_rejects_every_exact_arithmetic_mismatch(
             ecosystem="confluent_cloud",
             tenant_id="tenant-1",
         )
+        if not source_overrides and not allocation_overrides and set(aggregate_overrides) == {"unit_price"}:
+            assert failed.status.value == "ready"
+            assert failed.diagnostic is None
+            assert failed.package is not None
+            return
         assert failed.status.value == "failed"
         assert failed.diagnostic.code == "preview_source_reconciliation_failed"
         assert len(failed.diagnostic.source_correlation_ids) == 1

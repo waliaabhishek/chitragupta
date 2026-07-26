@@ -26,6 +26,7 @@ from core.preview.evidence import (  # noqa: TC001 - resolved by contract tests
     PreviewAllocationRunEvidence,
     PreviewSourceEvidence,
     decode_lineage_method_details,
+    normalize_preview_source_economics,
 )
 from core.preview.models import (
     PreviewArtifactMetadata,
@@ -1017,7 +1018,9 @@ class PreviewFinancialProjection:
 
 
 type PreviewCell = str | Decimal | datetime | None
-type PreviewOriginKey = tuple[datetime, str, str, str, str]
+type CompatibilityPreviewOriginKey = tuple[datetime, str, str, str, str]
+type ExactPreviewOriginKey = tuple[datetime, str, str, str, str, str, datetime, datetime]
+type PreviewOriginKey = CompatibilityPreviewOriginKey | ExactPreviewOriginKey
 type LegacyAggregateCandidateKey = tuple[
     datetime,
     str,
@@ -1028,6 +1031,25 @@ type LegacyAggregateCandidateKey = tuple[
     Decimal | None,
     Decimal | None,
 ]
+
+
+@dataclass
+class _CompatibilityTotals:
+    source_costs: list[Decimal]
+    source_quantities: list[Decimal]
+    compatibility_cost: Decimal
+    compatibility_quantity: Decimal
+    source_ids: list[str] = field(default_factory=list)
+    expected_mismatch: bool = False
+
+
+@dataclass
+class _CompatibilityColumnTotals:
+    allocated_costs: list[Decimal]
+    allocated_quantities: list[Decimal]
+    compatibility_cost: Decimal
+    compatibility_quantity: Decimal
+    expected_mismatch: bool = False
 
 
 @dataclass(frozen=True)
@@ -1284,8 +1306,8 @@ def project_financials(
                 raise PreviewFinancialUnsupportedError("promotional allowance sign is unsupported")
             raise PreviewFinancialReconciliationError("promotional allowance arithmetic does not reconcile")
         return PreviewFinancialProjection(amount, amount, amount, amount, None, amount, None, None, None, None, None)
-    is_refund = semantics.kind in {PreviewChargeKind.USAGE_REFUND, PreviewChargeKind.SUPPORT_REFUND}
-    if is_refund:
+    is_refund_economics = semantics.kind in {PreviewChargeKind.USAGE_REFUND, PreviewChargeKind.SUPPORT_REFUND}
+    if is_refund_economics:
         if not (amount < 0 and original < 0 and discount <= 0):
             raise PreviewFinancialUnsupportedError("refund sign is unsupported")
     elif not (amount > 0 and original > 0 and discount >= 0):
@@ -1300,7 +1322,7 @@ def project_financials(
         or not unit
     ):
         raise PreviewFinancialUnsupportedError("priced charge lacks supported price evidence")
-    if not is_refund and (price < 0 or quantity < 0):
+    if not is_refund_economics and (price < 0 or quantity < 0):
         raise PreviewFinancialUnsupportedError("positive charge price or quantity sign is unsupported")
     with localcontext(PREVIEW_DECIMAL_CONTEXT):
         source_arithmetic_reconciles = original - discount == amount and price * quantity == original
@@ -1340,11 +1362,17 @@ def project_allocated_financials(
     source = selected.source
     if source.amount is None or source.amount == 0:
         raise PreviewFinancialReconciliationError("source amount cannot support allocation projection")
-    original = source.original_amount
-    if original is None:
+    if source.original_amount is None:
         raise PreviewSourceEvidenceError("source original amount is unavailable")
-    with localcontext(_DECIMAL_CONTEXT):
-        list_cost = original * allocation.allocation_ratio
+    if (
+        allocation.source_record_id
+        and allocation.evidence_scope_start is not None
+        and allocation.evidence_scope_end is not None
+    ):
+        list_cost = allocation.allocated_original_cost
+    else:
+        with localcontext(_DECIMAL_CONTEXT):
+            list_cost = source.original_amount * allocation.allocation_ratio
     emits_pricing = selected.semantics.emits_pricing
     emits_consumption = selected.semantics.emits_consumption
     return PreviewFinancialProjection(
@@ -1380,12 +1408,18 @@ def reconcile_source_aggregate_evidence(
 def _source_reconciliation_financials(
     source: PreviewSourceEvidence,
 ) -> tuple[Decimal | None, Decimal | None, Decimal | None]:
-    source_quantity = source.quantity
-    source_price = source.price
-    if source.native_line_type == "PROMO_CREDIT":
-        source_quantity = Decimal(0) if source_quantity is None else source_quantity
-        source_price = Decimal(0) if source_price is None else source_price
-    return source.amount, source_quantity, source_price
+    try:
+        amount, _original, _discount, price, quantity = normalize_preview_source_economics(
+            line_type=source.native_line_type,
+            amount=source.amount,
+            original_amount=source.original_amount,
+            discount_amount=source.discount_amount,
+            price=source.price,
+            quantity=source.quantity,
+        )
+    except ValueError:
+        return source.amount, source.quantity, source.price
+    return amount, quantity, price
 
 
 def _legacy_source_candidate_key(source: PreviewSourceEvidence) -> LegacyAggregateCandidateKey:
@@ -1417,7 +1451,11 @@ def _legacy_aggregate_candidate_keys(
     )
 
 
-def _source_billing_origin(source: PreviewSourceEvidence) -> PreviewOriginKey | None:
+def _source_billing_origin(
+    source: PreviewSourceEvidence,
+    *,
+    exact: bool = True,
+) -> PreviewOriginKey | None:
     values = (
         source.billing_timestamp,
         source.billing_env_id,
@@ -1433,27 +1471,59 @@ def _source_billing_origin(source: PreviewSourceEvidence) -> PreviewOriginKey | 
     assert isinstance(resource_id, str)
     assert isinstance(product, str)
     assert isinstance(line_type, str)
-    return timestamp, environment_id, resource_id, product, line_type
+    compatibility: CompatibilityPreviewOriginKey = timestamp, environment_id, resource_id, product, line_type
+    if not exact:
+        return compatibility
+    return (
+        *compatibility,
+        source.source_record_id,
+        source.evidence_scope_start,
+        source.evidence_scope_end,
+    )
 
 
 def _aggregate_billing_origin(aggregate: PreviewAggregateEvidence) -> PreviewOriginKey:
-    return (
+    compatibility: CompatibilityPreviewOriginKey = (
         aggregate.timestamp,
         aggregate.environment_id,
         aggregate.resource_id,
         aggregate.native_product,
         aggregate.native_line_type,
     )
+    if (
+        aggregate.source_record_id
+        and aggregate.evidence_scope_start is not None
+        and aggregate.evidence_scope_end is not None
+    ):
+        return (
+            *compatibility,
+            aggregate.source_record_id,
+            aggregate.evidence_scope_start,
+            aggregate.evidence_scope_end,
+        )
+    return compatibility
 
 
 def _allocation_billing_origin(allocation: PreviewAllocationEvidence) -> PreviewOriginKey:
-    return (
+    compatibility: CompatibilityPreviewOriginKey = (
         allocation.timestamp,
         allocation.environment_id,
         allocation.resource_id,
         allocation.native_product,
         allocation.native_line_type,
     )
+    if (
+        allocation.source_record_id
+        and allocation.evidence_scope_start is not None
+        and allocation.evidence_scope_end is not None
+    ):
+        return (
+            *compatibility,
+            allocation.source_record_id,
+            allocation.evidence_scope_start,
+            allocation.evidence_scope_end,
+        )
+    return compatibility
 
 
 def reconcile_source_aggregate_stream(
@@ -1465,11 +1535,18 @@ def reconcile_source_aggregate_stream(
     dict[PreviewOriginKey, PreviewAggregateEvidence],
 ]:
     """Validate the complete source/aggregate stream in closed stage order."""
+    aggregate_rows = tuple(aggregates)
+    exact_stream = bool(aggregate_rows) and all(
+        aggregate.source_record_id
+        and aggregate.evidence_scope_start is not None
+        and aggregate.evidence_scope_end is not None
+        for aggregate in aggregate_rows
+    )
     sources_by_origin: dict[PreviewOriginKey, list[SelectedSourceProjection]] = {}
     legacy_unassociated: list[SelectedSourceProjection] = []
     missing_association = False
     for selected in selected_sources:
-        origin = _source_billing_origin(selected.source)
+        origin = _source_billing_origin(selected.source, exact=exact_stream)
         if origin is None:
             if (selected.source.capture_id or "").startswith("legacy:v1:"):
                 legacy_unassociated.append(selected)
@@ -1480,7 +1557,7 @@ def reconcile_source_aggregate_stream(
 
     aggregates_by_origin: dict[PreviewOriginKey, PreviewAggregateEvidence] = {}
     duplicate_aggregate = False
-    for aggregate in aggregates:
+    for aggregate in aggregate_rows:
         origin = _aggregate_billing_origin(aggregate)
         duplicate_aggregate = duplicate_aggregate or origin in aggregates_by_origin
         aggregates_by_origin[origin] = aggregate
@@ -1528,13 +1605,49 @@ def reconcile_source_aggregate_stream(
         raise PreviewBillingCurrencyUnsupportedError(unsupported_currency)
 
     mismatched_sources: list[str] = []
+    compatibility_totals: dict[CompatibilityPreviewOriginKey, _CompatibilityTotals] = {}
     for origin, selected in selected_by_origin.items():
+        aggregate = aggregates_by_origin[origin]
         try:
-            reconcile_source_aggregate_evidence(selected=selected, aggregate=aggregates_by_origin[origin])
+            reconcile_source_aggregate_evidence(selected=selected, aggregate=aggregate)
         except PreviewFinancialReconciliationError:
             mismatched_sources.append(selected.source.source_record_id)
+        if aggregate.compatibility_total_cost is None or aggregate.compatibility_quantity is None:
+            continue
+        compatibility_origin: CompatibilityPreviewOriginKey = (
+            aggregate.timestamp,
+            aggregate.environment_id,
+            aggregate.resource_id,
+            aggregate.native_product,
+            aggregate.native_line_type,
+        )
+        current = compatibility_totals.get(compatibility_origin)
+        if current is None:
+            compatibility_totals[compatibility_origin] = _CompatibilityTotals(
+                source_costs=[aggregate.total_cost],
+                source_quantities=[aggregate.quantity],
+                compatibility_cost=aggregate.compatibility_total_cost,
+                compatibility_quantity=aggregate.compatibility_quantity,
+                source_ids=[selected.source.source_record_id],
+            )
+        else:
+            current.source_costs.append(aggregate.total_cost)
+            current.source_quantities.append(aggregate.quantity)
+            current.source_ids.append(selected.source.source_record_id)
+            if (
+                aggregate.compatibility_total_cost != current.compatibility_cost
+                or aggregate.compatibility_quantity != current.compatibility_quantity
+            ):
+                current.expected_mismatch = True
+    for totals in compatibility_totals.values():
+        if (
+            totals.expected_mismatch
+            or preview_sum_decimals(totals.source_costs) != totals.compatibility_cost
+            or preview_sum_decimals(totals.source_quantities) != totals.compatibility_quantity
+        ):
+            mismatched_sources.extend(totals.source_ids)
     if mismatched_sources:
-        raise PreviewSourceAggregateReconciliationError(tuple(mismatched_sources))
+        raise PreviewSourceAggregateReconciliationError(tuple(dict.fromkeys(mismatched_sources)))
     return selected_by_origin, aggregates_by_origin
 
 
@@ -1559,20 +1672,8 @@ def validate_allocation_lineage_portion(
 ) -> None:
     """Validate one allocation portion without retaining its sibling portions."""
 
-    origin = (
-        aggregate.timestamp,
-        aggregate.environment_id,
-        aggregate.resource_id,
-        aggregate.native_product,
-        aggregate.native_line_type,
-    )
-    allocation_origin = (
-        allocation.timestamp,
-        allocation.environment_id,
-        allocation.resource_id,
-        allocation.native_product,
-        allocation.native_line_type,
-    )
+    origin = _aggregate_billing_origin(aggregate)
+    allocation_origin = _allocation_billing_origin(allocation)
     target_valid = (allocation.target_kind == "unallocated" and allocation.target_id is None) or (
         allocation.target_kind in {"identity", "resource"}
         and isinstance(allocation.target_id, str)
@@ -1610,6 +1711,8 @@ def validate_allocation_lineage_portion(
         and allocation.allocation_ratio == realized_ratio
         and allocation.allocated_cost.is_finite()
         and allocation.allocated_quantity.is_finite()
+        and allocation.allocated_original_cost.is_finite()
+        and allocation.origin_original_cost.is_finite()
         and quantity_sign_valid
         and target_valid
     ):
@@ -1624,8 +1727,60 @@ def reconcile_allocation_lineage_totals(
     with localcontext(_DECIMAL_CONTEXT):
         allocated_cost = sum((item.allocated_cost for item in allocations), Decimal(0))
         allocated_quantity = sum((item.allocated_quantity for item in allocations), Decimal(0))
-    if allocated_cost != aggregate.total_cost or allocated_quantity != aggregate.quantity:
+        allocated_original_cost = sum((item.allocated_original_cost for item in allocations), Decimal(0))
+    original_totals = {item.origin_original_cost for item in allocations}
+    if (
+        allocated_cost != aggregate.total_cost
+        or allocated_quantity != aggregate.quantity
+        or len(original_totals) != 1
+        or allocated_original_cost != next(iter(original_totals))
+    ):
         raise PreviewFinancialReconciliationError("allocation lineage totals do not reconcile")
+
+
+def reconcile_compatibility_allocation_columns(
+    allocations: Iterable[PreviewAllocationEvidence],
+) -> None:
+    totals_by_column: dict[
+        tuple[CompatibilityPreviewOriginKey, str, int],
+        _CompatibilityColumnTotals,
+    ] = {}
+    for allocation in allocations:
+        compatibility_cost = allocation.compatibility_allocated_cost
+        compatibility_quantity = allocation.compatibility_allocated_quantity
+        if compatibility_cost is None or compatibility_quantity is None:
+            continue
+        compatibility_origin: CompatibilityPreviewOriginKey = (
+            allocation.timestamp,
+            allocation.environment_id,
+            allocation.resource_id,
+            allocation.native_product,
+            allocation.native_line_type,
+        )
+        key = compatibility_origin, allocation.calculation_id, allocation.portion_ordinal
+        current = totals_by_column.get(key)
+        if current is None:
+            totals_by_column[key] = _CompatibilityColumnTotals(
+                allocated_costs=[allocation.allocated_cost],
+                allocated_quantities=[allocation.allocated_quantity],
+                compatibility_cost=compatibility_cost,
+                compatibility_quantity=compatibility_quantity,
+            )
+        else:
+            current.allocated_costs.append(allocation.allocated_cost)
+            current.allocated_quantities.append(allocation.allocated_quantity)
+            if (
+                compatibility_cost != current.compatibility_cost
+                or compatibility_quantity != current.compatibility_quantity
+            ):
+                current.expected_mismatch = True
+    if any(
+        totals.expected_mismatch
+        or preview_sum_decimals(totals.allocated_costs) != totals.compatibility_cost
+        or preview_sum_decimals(totals.allocated_quantities) != totals.compatibility_quantity
+        for totals in totals_by_column.values()
+    ):
+        raise PreviewFinancialReconciliationError("exact source columns do not reconcile with compatibility")
 
 
 def reconcile_allocation_lineage_stream(
@@ -1666,13 +1821,17 @@ def reconcile_allocation_lineage_stream(
             run.capture_status is not AllocationLineageRunStatus.COMPLETE
             or run.capture_reason is not None
             or run.calculation_completed_at != expected_completion_by_run.get(identity)
-            or run.portion_count != allocation_count_by_run.get(identity, 0)
+            or (run.preview_portion_count if run.preview_portion_count is not None else run.portion_count)
+            != allocation_count_by_run.get(identity, 0)
             for identity, run in runs_by_identity.items()
         )
     )
     if invalid_runs or invalid_allocation_scope or set(allocations_by_origin) != set(aggregates_by_origin):
         raise PreviewAllocationLineageError("allocation lineage stream is incomplete")
 
+    reconcile_compatibility_allocation_columns(
+        allocation for portions in allocations_by_origin.values() for allocation in portions
+    )
     for origin, portions in allocations_by_origin.items():
         validate_allocation_lineage_structure(
             aggregate=aggregates_by_origin[origin],

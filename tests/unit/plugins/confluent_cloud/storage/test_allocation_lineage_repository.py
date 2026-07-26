@@ -124,6 +124,35 @@ def _scope() -> PreviewEvidenceScope:
     )
 
 
+def _persist_exact_source(
+    backend: SQLModelBackend,
+    *,
+    tenant_id: str = "org-1",
+    day: int = 1,
+) -> None:
+    from plugins.confluent_cloud.storage.repositories import _source_to_table
+    from tests.unit.core.preview.test_service import _source
+
+    start = datetime(2026, 7, day, tzinfo=UTC)
+    end = start + timedelta(days=1)
+    source = _source(
+        tenant_id=tenant_id,
+        source_record_id=f"provider:{tenant_id}:{day}",
+        provider_cost_id=f"{tenant_id}:{day}",
+        source_period_start=start,
+        source_period_end=end,
+        evidence_scope_start=start,
+        evidence_scope_end=end,
+        allocation_timestamp=start,
+        retention_timestamp=start,
+        billing_timestamp=start,
+    )
+    engine = get_or_create_engine(backend._connection_string)
+    with Session(engine) as session:
+        session.merge(_source_to_table(source))
+        session.commit()
+
+
 def _set_persisted_run_codec(
     backend: SQLModelBackend,
     *,
@@ -189,6 +218,7 @@ def test_repository_round_trips_run_and_every_fact_through_preview_reader(tmp_pa
     with backend.create_unit_of_work() as uow:
         uow.billing.upsert(_origin())
         uow.commit()
+    _persist_exact_source(backend)
     with backend.create_preview_evidence_unit_of_work() as uow:
         uow.allocation_lineage.replace_calculation_lineage(_run(), calculation_completed_at=completed_at)
         uow.commit()
@@ -242,6 +272,8 @@ def test_preview_run_reader_accepts_only_closed_available_and_unavailable_codecs
     )
     backend.create_tables()
     completed_at = datetime(2026, 7, 3, 4, 5, tzinfo=UTC)
+    if status == "complete":
+        _persist_exact_source(backend)
     with backend.create_preview_evidence_unit_of_work() as uow:
         if status == "complete":
             uow.allocation_lineage.replace_calculation_lineage(
@@ -306,6 +338,7 @@ def test_preview_run_reader_rejects_corrupt_persisted_status_reason_codec(
         focus_preview_enabled=True,
     )
     backend.create_tables()
+    _persist_exact_source(backend)
     with backend.create_preview_evidence_unit_of_work() as uow:
         uow.allocation_lineage.replace_calculation_lineage(
             _run(),
@@ -340,6 +373,7 @@ def test_repository_atomically_replaces_only_the_owned_tenant_date_and_calculati
     with backend.create_unit_of_work() as uow:
         uow.billing.upsert(_origin())
         uow.commit()
+    _persist_exact_source(backend)
     with backend.create_preview_evidence_unit_of_work() as uow:
         uow.allocation_lineage.replace_calculation_lineage(_run(), calculation_completed_at=completed_at)
         uow.allocation_lineage.replace_calculation_lineage(
@@ -386,6 +420,7 @@ def test_failed_mid_replacement_rolls_back_deletes_and_partial_new_rows(tmp_path
     with backend.create_unit_of_work() as uow:
         uow.billing.upsert(_origin())
         uow.commit()
+    _persist_exact_source(backend)
     with backend.create_preview_evidence_unit_of_work() as uow:
         uow.allocation_lineage.replace_calculation_lineage(_run(), calculation_completed_at=completed_at)
         uow.commit()

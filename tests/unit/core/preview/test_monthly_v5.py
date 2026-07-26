@@ -201,6 +201,97 @@ def test_monthly_aggregation_preserves_every_nonadditive_dimension(
     assert {_values(row)[column] for row in rows} == {first, second}
 
 
+def test_monthly_same_compatibility_origin_keeps_distinct_tier_and_price_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monthly = _monthly()
+    monkeypatch.setattr(monthly, "validate_preview_row", lambda **_kwargs: None)
+    first = _row(
+        day=1,
+        x_ConfluentTierDimensions='{"tier":"a"}',
+        ListUnitPrice=Decimal("2"),
+        PricingCurrencyListUnitPrice=Decimal("2"),
+        SkuPriceId="price-a",
+    )
+    second = _row(
+        day=2,
+        x_ConfluentTierDimensions='{"tier":"b"}',
+        ListUnitPrice=Decimal("3"),
+        PricingCurrencyListUnitPrice=Decimal("3"),
+        SkuPriceId="price-b",
+    )
+
+    rows = monthly.aggregate_monthly_full_rows(
+        rows=(first, second),
+        month_start=datetime(2026, 7, 1, tzinfo=UTC),
+        month_end=datetime(2026, 8, 1, tzinfo=UTC),
+    )
+
+    assert len(rows) == 2
+    assert {
+        (
+            _values(row)["x_ConfluentTierDimensions"],
+            _values(row)["ListUnitPrice"],
+            _values(row)["SkuPriceId"],
+        )
+        for row in rows
+    } == {
+        ('{"tier":"a"}', Decimal("2"), "price-a"),
+        ('{"tier":"b"}', Decimal("3"), "price-b"),
+    }
+
+
+def test_monthly_combines_only_matching_tier_price_rows_and_retains_each_exact_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monthly = _monthly()
+    monkeypatch.setattr(monthly, "validate_preview_row", lambda **_kwargs: None)
+    dimensions = {
+        "x_ConfluentTierDimensions": '{"tier":"a"}',
+        "SkuPriceId": "price-a",
+    }
+    first = _row(
+        day=1,
+        billed="3",
+        contracted="4",
+        effective="3",
+        list_cost="4",
+        pricing_cost="3",
+        pricing_quantity="2",
+        consumed_quantity="2",
+        lineage=(_lineage(source_id="provider:tier-a-day-1", day=1),),
+        **dimensions,
+    )
+    second = _row(
+        day=2,
+        billed="5",
+        contracted="6",
+        effective="5",
+        list_cost="6",
+        pricing_cost="5",
+        pricing_quantity="3",
+        consumed_quantity="3",
+        lineage=(_lineage(source_id="provider:tier-a-day-2", day=2),),
+        **dimensions,
+    )
+
+    rows = monthly.aggregate_monthly_full_rows(
+        rows=(first, second),
+        month_start=datetime(2026, 7, 1, tzinfo=UTC),
+        month_end=datetime(2026, 8, 1, tzinfo=UTC),
+    )
+
+    assert len(rows) == 1
+    values = _values(rows[0])
+    assert values["BilledCost"] == Decimal("8")
+    assert values["ListCost"] == Decimal("10")
+    assert values["PricingQuantity"] == Decimal("5")
+    assert {member.source_cost_id for member in rows[0].lineage_members} == {
+        "provider:tier-a-day-1",
+        "provider:tier-a-day-2",
+    }
+
+
 @pytest.mark.parametrize("quantity_column", ["PricingQuantity", "ConsumedQuantity"])
 def test_monthly_aggregation_rejects_mixed_null_quantity(
     monkeypatch: pytest.MonkeyPatch,

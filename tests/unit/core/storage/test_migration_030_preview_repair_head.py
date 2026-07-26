@@ -91,7 +91,7 @@ def test_revision_030_is_head_and_uses_guarded_preview_hook() -> None:
         / "030_add_focus_preview_repair_head.py"
     )
 
-    assert script.get_current_head() == "030"
+    assert script.get_current_head() == "031"
     source = migration_path.read_text(encoding="utf-8")
     assert 'run_preview_evidence_step("030")' in source
     assert 'run_preview_evidence_downgrade_step("030")' in source
@@ -257,7 +257,7 @@ def test_preview_enabled_after_disabled_alembic_upgrade_gets_complete_030_shape(
         backend.dispose()
 
 
-def test_runtime_preview_preparation_targets_revision_030(
+def test_runtime_preview_preparation_targets_revision_031(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -281,7 +281,7 @@ def test_runtime_preview_preparation_targets_revision_030(
     finally:
         backend.dispose()
 
-    assert calls == ["030"]
+    assert calls == ["031"]
 
 
 def test_downgrade_030_removes_only_head_and_preserves_repair_rows(

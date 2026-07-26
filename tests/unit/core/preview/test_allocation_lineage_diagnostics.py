@@ -55,17 +55,7 @@ def _persist_legacy_source(backend: SQLModelBackend) -> None:
 
     engine = get_or_create_engine(backend._connection_string)
     with Session(engine) as session:
-        session.add(
-            _source_to_table(
-                _source(
-                    billing_timestamp=None,
-                    billing_env_id=None,
-                    billing_resource_id=None,
-                    billing_product_type=None,
-                    billing_product_category=None,
-                )
-            )
-        )
+        session.add(_source_to_table(_source()))
         session.commit()
 
 
@@ -296,31 +286,54 @@ def _seed_two_day_origins(
         uow.commit()
     _persist_source_capture(backend, [first_source, second_source])
     with backend.create_preview_evidence_unit_of_work() as evidence_uow:
-        for tracking_date, calculation_id, aggregate, row in (
-            (date(2026, 7, 1), "calculation-1", first_aggregate, first_row),
-            (date(2026, 7, 2), "calculation-2", second_aggregate, second_row),
+        for tracking_date, calculation_id, aggregate, row, source_cost in (
+            (date(2026, 7, 1), "calculation-1", first_aggregate, first_row, first_source_cost),
+            (date(2026, 7, 2), "calculation-2", second_aggregate, second_row, second_source_cost),
         ):
+            lineage_aggregate = replace(
+                aggregate,
+                total_cost=source_cost,
+                unit_price=source_cost,
+            )
+            lineage_row = replace(row, amount=source_cost)
             evidence_uow.allocation_lineage.replace_calculation_lineage(
                 AllocationLineageRunCapture(
                     ecosystem="confluent_cloud",
                     tenant_id="tenant-1",
                     tracking_date=tracking_date,
                     calculation_id=calculation_id,
-                    captures=(build_allocation_lineage_capture(origin=aggregate, rows=(row,)),),
+                    captures=(build_allocation_lineage_capture(origin=lineage_aggregate, rows=(lineage_row,)),),
                 ),
                 calculation_completed_at=completed_at,
             )
         evidence_uow.commit()
-    if second_method_version != "v1":
+    if first_allocated_cost != first_source_cost or second_method_version != "v1":
         engine = get_or_create_engine(backend._connection_string)
         with engine.begin() as connection:
-            connection.execute(
-                text(
-                    "UPDATE ccloud_allocation_lineage_portions "
-                    "SET method_version = :version WHERE origin_resource_id = 'lkc-2'"
-                ),
-                {"version": second_method_version},
-            )
+            if first_allocated_cost != first_source_cost:
+                for table in (
+                    "ccloud_allocation_lineage_portions",
+                    "ccloud_preview_source_allocation_lineage_portions",
+                ):
+                    connection.execute(
+                        text(
+                            f"UPDATE {table} SET allocated_cost = :cost "  # noqa: S608
+                            "WHERE origin_resource_id = 'lkc-1'"
+                        ),
+                        {"cost": str(first_allocated_cost)},
+                    )
+            if second_method_version != "v1":
+                for table in (
+                    "ccloud_allocation_lineage_portions",
+                    "ccloud_preview_source_allocation_lineage_portions",
+                ):
+                    connection.execute(
+                        text(
+                            f"UPDATE {table} SET method_version = :version "  # noqa: S608
+                            "WHERE origin_resource_id = 'lkc-2'"
+                        ),
+                        {"version": second_method_version},
+                    )
 
 
 _STREAM_PERMUTATIONS = (
@@ -458,7 +471,7 @@ def _persist_valid_or_short_lineage(
         product_type=origin.product_type,
         identity_id="sa-1",
         cost_type=CostType.USAGE,
-        amount=amount,
+        amount=Decimal("8"),
         allocation_method="direct",
         allocation_detail="direct",
         metadata={"env_id": "env-1"},
@@ -471,12 +484,24 @@ def _persist_valid_or_short_lineage(
         calculation_id=calculation_id,
         captures=(capture,),
     )
-    with backend.create_unit_of_work() as uow:
-        uow.chargebacks.replace_calculation_lineage(  # type: ignore[attr-defined]
+    with backend.create_preview_evidence_unit_of_work() as uow:
+        uow.allocation_lineage.replace_calculation_lineage(
             run,
             calculation_completed_at=datetime(2026, 7, 3, 2, tzinfo=UTC),
         )
         uow.commit()
+    if amount != Decimal("8"):
+        engine = get_or_create_engine(backend._connection_string)
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    """
+                    UPDATE ccloud_preview_source_allocation_lineage_portions
+                    SET allocated_cost = :amount, allocation_ratio = :ratio
+                    """
+                ),
+                {"amount": str(amount), "ratio": str(amount / Decimal("8"))},
+            )
 
 
 def _persist_invalid_lineage(backend: SQLModelBackend) -> None:
@@ -639,7 +664,7 @@ def test_lineage_calculation_identity_mismatch_fails_closed(tmp_path: Path) -> N
     backend.dispose()
 
 
-def test_multiple_native_tier_sources_for_one_billing_origin_still_fail_scope_before_lineage(tmp_path: Path) -> None:
+def test_multiple_native_tier_sources_reach_exact_reconciliation_before_lineage(tmp_path: Path) -> None:
     backend = _backend(tmp_path)
     first = _associated_source(source_record_id="provider:tier-1", provider_cost_id="tier-1")
     second = _associated_source(
@@ -652,10 +677,11 @@ def test_multiple_native_tier_sources_for_one_billing_origin_still_fail_scope_be
 
     failed = _run_failure(tmp_path, backend)
 
-    assert failed.diagnostic.code == "preview_mapping_scope_unsupported"
-    assert failed.diagnostic.message == "The complete source set exceeds the current Daily Full mapping scope."
+    assert failed.diagnostic.code == "preview_source_reconciliation_failed"
+    assert failed.diagnostic.message == "Persisted source, aggregate, or allocation evidence does not reconcile."
     assert failed.diagnostic.retryable is False
     assert len(failed.diagnostic.source_correlation_ids) == 2
+    assert all("tier-" not in correlation for correlation in failed.diagnostic.source_correlation_ids)
     backend.dispose()
 
 
@@ -766,7 +792,7 @@ def test_corrupt_persisted_portion_fails_lineage_before_reconciliation(
     engine = get_or_create_engine(backend._connection_string)
     with engine.begin() as connection:
         connection.execute(
-            text(f"UPDATE ccloud_allocation_lineage_portions SET {column} = :value"),  # noqa: S608
+            text(f"UPDATE ccloud_preview_source_allocation_lineage_portions SET {column} = :value"),  # noqa: S608
             {"value": value},
         )
 
@@ -796,7 +822,7 @@ def test_isolated_portion_reconciliation_mismatch_has_exact_diagnostic(
     engine = get_or_create_engine(backend._connection_string)
     with engine.begin() as connection:
         connection.execute(
-            text(f"UPDATE ccloud_allocation_lineage_portions SET {assignments}"),  # noqa: S608
+            text(f"UPDATE ccloud_preview_source_allocation_lineage_portions SET {assignments}"),  # noqa: S608
             values,
         )
 
@@ -824,7 +850,10 @@ def test_invalid_unallocated_encoding_fails_closed_lineage_diagnostic(
     engine = get_or_create_engine(backend._connection_string)
     with engine.begin() as connection:
         connection.execute(
-            text("UPDATE ccloud_allocation_lineage_portions SET target_kind = :target_kind, target_id = :target_id"),
+            text(
+                "UPDATE ccloud_preview_source_allocation_lineage_portions "
+                "SET target_kind = :target_kind, target_id = :target_id"
+            ),
             {"target_kind": target_kind, "target_id": target_id},
         )
 
@@ -833,6 +862,187 @@ def test_invalid_unallocated_encoding_fails_closed_lineage_diagnostic(
     assert failed.diagnostic.code == "preview_allocation_lineage_incomplete"
     assert failed.diagnostic.message == "Persisted allocation lineage is incomplete for one or more billing origins."
     assert failed.diagnostic.retryable is False
+    backend.dispose()
+
+
+@pytest.mark.parametrize(
+    "corruption",
+    [
+        "DELETE FROM ccloud_preview_source_allocation_lineage_portions",
+        "UPDATE ccloud_preview_source_allocation_lineage_portions SET method_version = 'v2'",
+        "UPDATE ccloud_preview_source_allocation_lineage_portions SET allocated_cost = '0.0000001'",
+        "UPDATE ccloud_preview_source_allocation_lineage_portions SET allocation_ratio = '0'",
+        "UPDATE ccloud_preview_source_allocation_lineage_portions SET allocation_ratio = '0.7'",
+    ],
+    ids=("missing-sidecar", "shape-corrupt", "decimal-codec-corrupt", "ratio-zero", "ratio-rounded"),
+)
+def test_sidecar_missing_or_corrupt_has_stable_redacted_publication_failure(
+    tmp_path: Path,
+    corruption: str,
+) -> None:
+    backend = _backend(tmp_path)
+    _seed(
+        backend,
+        source=_associated_source(),
+        aggregate=_aggregate(),
+        allocation=_allocation(),
+    )
+    engine = get_or_create_engine(backend._connection_string)
+    with engine.begin() as connection:
+        connection.execute(text(corruption))
+
+    failed = _run_failure(tmp_path, backend)
+
+    assert failed.diagnostic.code == "preview_allocation_lineage_incomplete"
+    assert failed.diagnostic.message == "Persisted allocation lineage is incomplete for one or more billing origins."
+    assert failed.diagnostic.retryable is False
+    assert len(failed.diagnostic.source_correlation_ids) == 1
+    assert "cost-1" not in failed.diagnostic.source_correlation_ids[0]
+    backend.dispose()
+
+
+@pytest.mark.parametrize(
+    "corruption",
+    [
+        "UPDATE ccloud_allocation_lineage_portions SET allocated_cost = '7'",
+        "UPDATE ccloud_allocation_lineage_portions SET allocated_quantity = '4'",
+    ],
+    ids=("compatibility-cost", "compatibility-quantity"),
+)
+def test_compatibility_only_column_corruption_fails_exact_reconciliation(
+    tmp_path: Path,
+    corruption: str,
+) -> None:
+    backend = _backend(tmp_path)
+    _seed(
+        backend,
+        source=_associated_source(),
+        aggregate=_aggregate(),
+        allocation=_allocation(),
+    )
+    engine = get_or_create_engine(backend._connection_string)
+    with engine.begin() as connection:
+        connection.execute(text(corruption))
+
+    failed = _run_failure(tmp_path, backend)
+
+    assert failed.diagnostic.code == "preview_source_reconciliation_failed"
+    assert failed.diagnostic.message == "Persisted source, aggregate, or allocation evidence does not reconcile."
+    assert failed.diagnostic.retryable is False
+    assert len(failed.diagnostic.source_correlation_ids) == 1
+    assert "cost-1" not in failed.diagnostic.source_correlation_ids[0]
+    backend.dispose()
+
+
+def test_duplicate_exact_source_association_rollback_has_stable_publication_failure(
+    tmp_path: Path,
+) -> None:
+    from core.engine.allocation_lineage import build_allocation_lineage_capture
+    from core.storage.interface import AllocationLineageRunCapture
+
+    backend = _backend(tmp_path)
+    source = _associated_source()
+    aggregate = _aggregate()
+    allocation = _allocation()
+    _seed(backend, source=source, aggregate=aggregate)
+    capture = build_allocation_lineage_capture(origin=aggregate, rows=(allocation,))
+    duplicate = AllocationLineageRunCapture(
+        ecosystem="confluent_cloud",
+        tenant_id="tenant-1",
+        tracking_date=date(2026, 7, 1),
+        calculation_id="calculation-1",
+        captures=(capture, capture),
+    )
+    with (
+        pytest.raises(ValueError, match="association is ambiguous"),
+        backend.create_preview_evidence_unit_of_work() as uow,
+    ):
+        uow.allocation_lineage.replace_calculation_lineage(
+            duplicate,
+            calculation_completed_at=datetime(2026, 7, 3, 2, tzinfo=UTC),
+        )
+
+    failed = _run_failure(tmp_path, backend)
+
+    assert failed.diagnostic.code == "preview_allocation_lineage_incomplete"
+    assert failed.diagnostic.message == "Persisted allocation lineage is incomplete for one or more billing origins."
+    assert failed.diagnostic.retryable is False
+    assert len(failed.diagnostic.source_correlation_ids) == 1
+    assert "cost-1" not in failed.diagnostic.source_correlation_ids[0]
+    backend.dispose()
+
+
+def test_zero_net_quantity_sign_reversal_has_stable_redacted_publication_failure(
+    tmp_path: Path,
+) -> None:
+    from core.engine.allocation_lineage import build_allocation_lineage_capture
+    from core.storage.interface import AllocationLineageRunCapture
+
+    backend = _backend(tmp_path)
+    aggregate = _aggregate(total_cost=Decimal("8"), quantity=Decimal(0), unit_price=Decimal(0))
+    charge = _associated_source(
+        source_record_id="provider:charge",
+        provider_cost_id="charge",
+        amount=Decimal("10"),
+        original_amount=Decimal("10"),
+        discount_amount=Decimal(0),
+        price=Decimal("2"),
+        quantity=Decimal("5"),
+        raw_payload={"id": "charge"},
+    )
+    refund = _associated_source(
+        source_record_id="provider:refund",
+        provider_cost_id="refund",
+        description="Refund Kafka storage usage",
+        amount=Decimal("-2"),
+        original_amount=Decimal("-10"),
+        discount_amount=Decimal("-8"),
+        price=Decimal("2"),
+        quantity=Decimal("-5"),
+        raw_payload={"id": "refund"},
+    )
+    _seed(backend, aggregate=aggregate)
+    _persist_source_capture(backend, [charge, refund])
+    rows = (
+        _allocation(amount=Decimal("5")),
+        _allocation(identity_id="UNALLOCATED", amount=Decimal("3")),
+    )
+    capture = build_allocation_lineage_capture(origin=aggregate, rows=rows)
+    with backend.create_preview_evidence_unit_of_work() as uow:
+        uow.allocation_lineage.replace_calculation_lineage(
+            AllocationLineageRunCapture(
+                ecosystem="confluent_cloud",
+                tenant_id="tenant-1",
+                tracking_date=date(2026, 7, 1),
+                calculation_id="calculation-1",
+                captures=(capture,),
+            ),
+            calculation_completed_at=datetime(2026, 7, 3, 2, tzinfo=UTC),
+        )
+        uow.commit()
+    engine = get_or_create_engine(backend._connection_string)
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                UPDATE ccloud_preview_source_allocation_lineage_portions
+                SET allocated_quantity = CASE
+                    WHEN source_record_id = 'provider:charge' AND portion_ordinal = 0 THEN '-3'
+                    WHEN source_record_id = 'provider:charge' AND portion_ordinal = 1 THEN '-2'
+                    WHEN source_record_id = 'provider:refund' AND portion_ordinal = 0 THEN '3'
+                    ELSE '2'
+                END
+                """
+            )
+        )
+
+    failed = _run_failure(tmp_path, backend)
+
+    assert failed.diagnostic.code == "preview_allocation_lineage_incomplete"
+    assert failed.diagnostic.message == "Persisted allocation lineage is incomplete for one or more billing origins."
+    assert failed.diagnostic.retryable is False
+    assert len(failed.diagnostic.source_correlation_ids) == 2
+    assert all("charge" not in item and "refund" not in item for item in failed.diagnostic.source_correlation_ids)
     backend.dispose()
 
 
