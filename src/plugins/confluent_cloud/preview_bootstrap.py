@@ -8,7 +8,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from core.preview.evidence import (
     PreviewEvidenceBootstrapReason,
@@ -30,6 +30,14 @@ if TYPE_CHECKING:
 
 class PreviewEvidenceBootstrapError(RuntimeError):
     """Legacy Preview evidence bootstrap failed."""
+
+
+@runtime_checkable
+class CCloudBootstrappedLineageRefresher(Protocol):
+    def refresh_bootstrapped_lineage(
+        self,
+        capture_ids: tuple[str, ...],
+    ) -> None: ...
 
 
 class _InvalidLegacyEvidenceError(ValueError):
@@ -379,6 +387,12 @@ class CCloudPreviewEvidenceBootstrap:
                     windows[-1].end,
                     readiness,
                 )
+                lineage_refresher = uow.allocation_lineage
+                if not isinstance(lineage_refresher, CCloudBootstrappedLineageRefresher):
+                    raise PreviewEvidenceBootstrapError(
+                        "legacy Preview evidence bootstrap lineage refresh capability is unavailable"
+                    )
+                lineage_refresher.refresh_bootstrapped_lineage(tuple(plan.capture_id for plan in plans))
         except PreviewEvidenceBootstrapConflictError:
             source_readiness.finalize_attempt(
                 attempt.attempt_sequence,

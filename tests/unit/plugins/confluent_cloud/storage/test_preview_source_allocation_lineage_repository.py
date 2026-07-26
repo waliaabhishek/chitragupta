@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 from sqlalchemy import text
 
+from core.models.pipeline import PipelineState
 from core.preview.evidence import (
     AllocationLineageRunStatus,
     AllocationLineageUnavailableReason,
@@ -27,6 +28,7 @@ from core.storage.interface import (
     LineageCaptureStatus,
 )
 from plugins.confluent_cloud.models.billing import CCloudBillingLineItem, CCloudCostSourceRecord
+from plugins.confluent_cloud.preview_bootstrap import CCloudBootstrappedLineageRefresher
 from plugins.confluent_cloud.storage.module import CCloudStorageModule
 
 START = datetime(2026, 7, 1, tzinfo=UTC)
@@ -200,6 +202,34 @@ def _persist_origins(
         uow.commit()
 
 
+def _mark_source_as_bootstrapped_legacy(
+    backend: SQLModelBackend,
+    *,
+    source_record_id: str,
+    capture_id: str,
+) -> None:
+    engine = get_or_create_engine(backend._connection_string)
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                UPDATE ccloud_cost_source_records
+                SET capture_id = :capture_id,
+                    billing_timestamp = NULL,
+                    billing_env_id = NULL,
+                    billing_resource_id = NULL,
+                    billing_product_type = NULL,
+                    billing_product_category = NULL
+                WHERE source_record_id = :source_record_id
+                """
+            ),
+            {
+                "capture_id": capture_id,
+                "source_record_id": source_record_id,
+            },
+        )
+
+
 def _replace(backend: SQLModelBackend, run: AllocationLineageRunCapture) -> Any:
     with backend.create_preview_evidence_unit_of_work() as uow:
         value = uow.allocation_lineage.replace_calculation_lineage(
@@ -210,6 +240,42 @@ def _replace(backend: SQLModelBackend, run: AllocationLineageRunCapture) -> Any:
         return value
 
 
+def _persist_calculated_state_and_generic_lineage(
+    backend: SQLModelBackend,
+    run: AllocationLineageRunCapture,
+) -> None:
+    with backend.create_unit_of_work() as uow:
+        uow.pipeline_state.upsert(
+            PipelineState(
+                ecosystem=run.ecosystem,
+                tenant_id=run.tenant_id,
+                tracking_date=run.tracking_date,
+                billing_gathered=True,
+                resources_gathered=True,
+                chargeback_calculated=True,
+                calculation_id=run.calculation_id,
+                calculation_completed_at=COMPLETED_AT,
+                calculation_run_id=None,
+            )
+        )
+        uow.chargebacks.replace_calculation_lineage(  # type: ignore[attr-defined]
+            run,
+            calculation_completed_at=COMPLETED_AT,
+        )
+        uow.commit()
+
+
+def _refresh_bootstrapped_lineage(
+    backend: SQLModelBackend,
+    capture_ids: tuple[str, ...],
+) -> None:
+    with backend.create_preview_evidence_unit_of_work() as uow:
+        refresher = uow.allocation_lineage
+        assert isinstance(refresher, CCloudBootstrappedLineageRefresher)
+        refresher.refresh_bootstrapped_lineage(capture_ids)
+        uow.commit()
+
+
 def _scope() -> PreviewEvidenceScope:
     return PreviewEvidenceScope(
         ecosystem="confluent_cloud",
@@ -217,6 +283,335 @@ def _scope() -> PreviewEvidenceScope:
         start=START,
         end=END,
     )
+
+
+def test_bootstrap_refresh_derives_legacy_association_and_exact_lineage(
+    backend: SQLModelBackend,
+) -> None:
+    source = _source(
+        "legacy",
+        amount="8",
+        original="10",
+        discount="2",
+        quantity="5",
+        price="2",
+        tier="standard",
+    )
+    _persist_origins(backend, billing=_billing(cost="8", quantity="5"), sources=[source])
+    _mark_source_as_bootstrapped_legacy(
+        backend,
+        source_record_id="provider:legacy",
+        capture_id="legacy:v1:capture-1",
+    )
+    run = _run(
+        (
+            _fact(0, cost="5", quantity="3.125", target_id="sa-1"),
+            _fact(1, cost="3", quantity="1.875", target_id=None),
+        )
+    )
+    _persist_calculated_state_and_generic_lineage(backend, run)
+
+    _refresh_bootstrapped_lineage(backend, ("legacy:v1:capture-1",))
+
+    engine = get_or_create_engine(backend._connection_string)
+    with engine.connect() as connection:
+        association = connection.execute(
+            text(
+                """
+                SELECT billing_timestamp, billing_env_id, billing_resource_id,
+                       billing_product_type, billing_product_category
+                FROM ccloud_cost_source_records
+                WHERE source_record_id = 'provider:legacy'
+                """
+            )
+        ).one()
+        generic_rows = connection.execute(
+            text(
+                """
+                SELECT portion_ordinal, allocated_cost, allocated_quantity
+                FROM ccloud_allocation_lineage_portions
+                ORDER BY portion_ordinal
+                """
+            )
+        ).all()
+    with backend.create_preview_generation_read_unit_of_work() as uow:
+        exact_rows = tuple(uow.allocation_evidence.iter_preview_allocations(_scope(), ("calculation-1",)))
+    assert association[1:] == ("env-1", "lkc-1", "KAFKA_STORAGE", "KAFKA")
+    assert generic_rows == [(0, "5", "3.125"), (1, "3", "1.875")]
+    assert [(row.allocated_cost, row.allocated_original_cost) for row in exact_rows] == [
+        (Decimal("5"), Decimal("6.25")),
+        (Decimal("3"), Decimal("3.75")),
+    ]
+
+
+@pytest.mark.parametrize(
+    "capture_ids",
+    [
+        (),
+        ("",),
+        ("legacy:v1:capture-1", "legacy:v1:capture-1"),
+        ("missing",),
+    ],
+    ids=("empty", "blank", "duplicate", "missing"),
+)
+def test_bootstrap_refresh_rejects_invalid_capture_selection_without_writes(
+    backend: SQLModelBackend,
+    capture_ids: tuple[str, ...],
+) -> None:
+    source = _source(
+        "legacy",
+        amount="8",
+        original="10",
+        discount="2",
+        quantity="5",
+        price="2",
+        tier="standard",
+    )
+    _persist_origins(backend, billing=_billing(cost="8", quantity="5"), sources=[source])
+    _mark_source_as_bootstrapped_legacy(
+        backend,
+        source_record_id="provider:legacy",
+        capture_id="legacy:v1:capture-1",
+    )
+    _persist_calculated_state_and_generic_lineage(
+        backend,
+        _run((_fact(0, cost="8", quantity="5", target_id="sa-1"),)),
+    )
+
+    with pytest.raises(ValueError):
+        _refresh_bootstrapped_lineage(backend, capture_ids)
+
+    engine = get_or_create_engine(backend._connection_string)
+    with engine.connect() as connection:
+        association = connection.execute(
+            text(
+                """
+                SELECT billing_timestamp, billing_env_id, billing_resource_id,
+                       billing_product_type, billing_product_category
+                FROM ccloud_cost_source_records
+                WHERE source_record_id = 'provider:legacy'
+                """
+            )
+        ).one()
+        exact_count = connection.execute(
+            text("SELECT COUNT(*) FROM ccloud_preview_source_allocation_lineage_portions")
+        ).scalar_one()
+    assert association == (None, None, None, None, None)
+    assert exact_count == 0
+
+
+@pytest.mark.parametrize(
+    ("capture_id", "mutation"),
+    [
+        (
+            "legacy:v1:capture-1",
+            "UPDATE ccloud_cost_source_records SET billing_env_id = 'env-1'",
+        ),
+        (
+            "ordinary:capture-1",
+            "UPDATE ccloud_cost_source_records SET capture_id = 'ordinary:capture-1'",
+        ),
+        (
+            "legacy:v1:capture-1",
+            "UPDATE ccloud_cost_source_records SET resource_id = NULL",
+        ),
+        (
+            "legacy:v1:capture-1",
+            "UPDATE ccloud_cost_source_records SET resource_id = 'lkc-other'",
+        ),
+        (
+            "legacy:v1:capture-1",
+            """
+            UPDATE ccloud_cost_source_records
+            SET billing_timestamp = '2026-07-01 00:00:00.000000',
+                billing_env_id = 'env-1',
+                billing_resource_id = 'lkc-other',
+                billing_product_type = 'KAFKA_STORAGE',
+                billing_product_category = 'KAFKA'
+            """,
+        ),
+    ],
+    ids=("partial", "non-legacy", "incomplete", "no-match", "conflicting"),
+)
+def test_bootstrap_refresh_rejects_invalid_legacy_association_without_sidecar(
+    backend: SQLModelBackend,
+    capture_id: str,
+    mutation: str,
+) -> None:
+    source = _source(
+        "legacy",
+        amount="8",
+        original="10",
+        discount="2",
+        quantity="5",
+        price="2",
+        tier="standard",
+    )
+    _persist_origins(backend, billing=_billing(cost="8", quantity="5"), sources=[source])
+    _mark_source_as_bootstrapped_legacy(
+        backend,
+        source_record_id="provider:legacy",
+        capture_id="legacy:v1:capture-1",
+    )
+    _persist_calculated_state_and_generic_lineage(
+        backend,
+        _run((_fact(0, cost="8", quantity="5", target_id="sa-1"),)),
+    )
+    engine = get_or_create_engine(backend._connection_string)
+    with engine.begin() as connection:
+        connection.execute(text(mutation))
+
+    with pytest.raises(ValueError):
+        _refresh_bootstrapped_lineage(backend, (capture_id,))
+
+    with engine.connect() as connection:
+        exact_count = connection.execute(
+            text("SELECT COUNT(*) FROM ccloud_preview_source_allocation_lineage_portions")
+        ).scalar_one()
+    assert exact_count == 0
+
+
+@pytest.mark.parametrize(
+    ("capture_id", "mutation"),
+    [
+        (
+            "legacy:v1:capture-1",
+            "UPDATE ccloud_cost_source_records SET billing_env_id = 'env-1'",
+        ),
+        (
+            "ordinary:capture-1",
+            "UPDATE ccloud_cost_source_records SET capture_id = 'ordinary:capture-1'",
+        ),
+        (
+            "legacy:v1:capture-1",
+            "UPDATE ccloud_cost_source_records SET resource_id = NULL",
+        ),
+        (
+            "legacy:v1:capture-1",
+            "UPDATE ccloud_cost_source_records SET resource_id = 'lkc-other'",
+        ),
+        (
+            "legacy:v1:capture-1",
+            """
+            UPDATE ccloud_cost_source_records
+            SET billing_timestamp = '2026-07-01 00:00:00.000000',
+                billing_env_id = 'env-1',
+                billing_resource_id = 'lkc-other',
+                billing_product_type = 'KAFKA_STORAGE',
+                billing_product_category = 'KAFKA'
+            """,
+        ),
+    ],
+    ids=("partial", "non-legacy", "incomplete", "no-match", "conflicting"),
+)
+def test_ordinary_lineage_rejects_invalid_legacy_association_without_partial_writes(
+    backend: SQLModelBackend,
+    capture_id: str,
+    mutation: str,
+) -> None:
+    source = _source(
+        "legacy",
+        amount="8",
+        original="10",
+        discount="2",
+        quantity="5",
+        price="2",
+        tier="standard",
+    )
+    _persist_origins(backend, billing=_billing(cost="8", quantity="5"), sources=[source])
+    _mark_source_as_bootstrapped_legacy(
+        backend,
+        source_record_id="provider:legacy",
+        capture_id="legacy:v1:capture-1",
+    )
+    engine = get_or_create_engine(backend._connection_string)
+    with engine.begin() as connection:
+        connection.execute(text(mutation))
+
+    with pytest.raises(ValueError):
+        _replace(
+            backend,
+            _run((_fact(0, cost="8", quantity="5", target_id="sa-1"),)),
+        )
+
+    with engine.connect() as connection:
+        counts = connection.execute(
+            text(
+                """
+                SELECT
+                    (SELECT COUNT(*) FROM ccloud_allocation_lineage_runs),
+                    (SELECT COUNT(*) FROM ccloud_allocation_lineage_portions),
+                    (SELECT COUNT(*) FROM ccloud_preview_source_allocation_lineage_portions)
+                """
+            )
+        ).one()
+        persisted_capture = connection.execute(text("SELECT capture_id FROM ccloud_cost_source_records")).scalar_one()
+    assert counts == (0, 0, 0)
+    assert persisted_capture == capture_id
+
+
+def test_ordinary_lineage_rejects_complete_legacy_association_conflicting_with_retained_identity(
+    backend: SQLModelBackend,
+) -> None:
+    source = _source(
+        "legacy",
+        amount="8",
+        original="10",
+        discount="2",
+        quantity="5",
+        price="2",
+        tier="standard",
+    )
+    _persist_origins(
+        backend,
+        billing=replace(_billing(cost="8", quantity="5"), resource_id="lkc-other"),
+        sources=[source],
+    )
+    _mark_source_as_bootstrapped_legacy(
+        backend,
+        source_record_id="provider:legacy",
+        capture_id="legacy:v1:capture-1",
+    )
+    engine = get_or_create_engine(backend._connection_string)
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                UPDATE ccloud_cost_source_records
+                SET billing_timestamp = '2026-07-01 00:00:00.000000',
+                    billing_env_id = 'env-1',
+                    billing_resource_id = 'lkc-other',
+                    billing_product_type = 'KAFKA_STORAGE',
+                    billing_product_category = 'KAFKA'
+                """
+            )
+        )
+    run = _run((_fact(0, cost="8", quantity="5", target_id="sa-1"),))
+    conflicting_run = replace(
+        run,
+        captures=(
+            replace(
+                run.captures[0],
+                origin_resource_id="lkc-other",
+            ),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="billing association conflicts"):
+        _replace(backend, conflicting_run)
+
+    with engine.connect() as connection:
+        counts = connection.execute(
+            text(
+                """
+                SELECT
+                    (SELECT COUNT(*) FROM ccloud_allocation_lineage_runs),
+                    (SELECT COUNT(*) FROM ccloud_allocation_lineage_portions),
+                    (SELECT COUNT(*) FROM ccloud_preview_source_allocation_lineage_portions)
+                """
+            )
+        ).one()
+    assert counts == (0, 0, 0)
 
 
 def test_same_key_tiers_persist_exact_cost_quantity_and_original_cost_cells(

@@ -1094,38 +1094,348 @@ class SQLModelPreviewAllocationLineageRepository:
         if len(complete_origins) != len(set(complete_origins)):
             raise ValueError("exact Preview source association is ambiguous")
         self._lineage.replace_calculation_lineage(capture, calculation_completed_at=calculation_completed_at)
-        self._session.execute(
-            delete(CCloudPreviewSourceAllocationLineagePortionTable).where(
-                col(CCloudPreviewSourceAllocationLineagePortionTable.ecosystem) == capture.ecosystem,
-                col(CCloudPreviewSourceAllocationLineagePortionTable.tenant_id) == capture.tenant_id,
-                col(CCloudPreviewSourceAllocationLineagePortionTable.tracking_date) == capture.tracking_date,
-            )
+        self._associate_ordinary_bootstrapped_sources(capture)
+        return self._replace_exact_calculation_lineage(
+            capture,
+            calculation_completed_at=calculation_completed_at,
+            retained_sources=None,
         )
-        preview_rows: list[CCloudPreviewSourceAllocationLineagePortionTable] = []
-        used_source_keys: set[tuple[str, datetime, datetime]] = set()
+
+    def _associate_ordinary_bootstrapped_sources(
+        self,
+        capture: AllocationLineageRunCapture,
+    ) -> None:
         day_start = datetime.combine(capture.tracking_date, time.min, tzinfo=UTC)
         day_end = day_start + timedelta(days=1)
-        retained_sources = tuple(
+        sources = tuple(
             self._session.exec(
                 select(CCloudCostSourceRecordTable)
                 .where(
                     col(CCloudCostSourceRecordTable.ecosystem) == capture.ecosystem,
                     col(CCloudCostSourceRecordTable.tenant_id) == capture.tenant_id,
-                    col(CCloudCostSourceRecordTable.billing_timestamp) >= day_start,
-                    col(CCloudCostSourceRecordTable.billing_timestamp) < day_end,
+                    col(CCloudCostSourceRecordTable.allocation_timestamp) >= day_start,
+                    col(CCloudCostSourceRecordTable.allocation_timestamp) < day_end,
+                    or_(
+                        col(CCloudCostSourceRecordTable.capture_id).like("legacy:v1:%"),
+                        col(CCloudCostSourceRecordTable.billing_timestamp).is_(None),
+                        col(CCloudCostSourceRecordTable.billing_env_id).is_(None),
+                        col(CCloudCostSourceRecordTable.billing_resource_id).is_(None),
+                        col(CCloudCostSourceRecordTable.billing_product_type).is_(None),
+                        col(CCloudCostSourceRecordTable.billing_product_category).is_(None),
+                    ),
                 )
                 .order_by(
-                    col(CCloudCostSourceRecordTable.billing_timestamp),
-                    col(CCloudCostSourceRecordTable.billing_env_id),
-                    col(CCloudCostSourceRecordTable.billing_resource_id),
-                    col(CCloudCostSourceRecordTable.billing_product_type),
-                    col(CCloudCostSourceRecordTable.billing_product_category),
+                    col(CCloudCostSourceRecordTable.capture_id),
                     col(CCloudCostSourceRecordTable.source_record_id),
                     col(CCloudCostSourceRecordTable.evidence_scope_start),
                     col(CCloudCostSourceRecordTable.evidence_scope_end),
                 )
             ).all()
         )
+        if sources:
+            self._associate_bootstrapped_sources(sources, capture)
+
+    def refresh_bootstrapped_lineage(
+        self,
+        capture_ids: tuple[str, ...],
+    ) -> None:
+        if not capture_ids or any(not capture_id.strip() for capture_id in capture_ids):
+            raise ValueError("bootstrap capture IDs must be nonblank")
+        if len(capture_ids) != len(set(capture_ids)):
+            raise ValueError("bootstrap capture IDs must be unique")
+        retained_sources = tuple(
+            self._session.exec(
+                select(CCloudCostSourceRecordTable)
+                .where(col(CCloudCostSourceRecordTable.capture_id).in_(capture_ids))
+                .order_by(
+                    col(CCloudCostSourceRecordTable.ecosystem),
+                    col(CCloudCostSourceRecordTable.tenant_id),
+                    col(CCloudCostSourceRecordTable.capture_id),
+                    col(CCloudCostSourceRecordTable.allocation_timestamp),
+                    col(CCloudCostSourceRecordTable.source_record_id),
+                    col(CCloudCostSourceRecordTable.evidence_scope_start),
+                    col(CCloudCostSourceRecordTable.evidence_scope_end),
+                )
+            ).all()
+        )
+        found_capture_ids = {source.capture_id for source in retained_sources}
+        if found_capture_ids != set(capture_ids):
+            raise ValueError("bootstrap capture selection is incomplete")
+        owners = {(source.ecosystem, source.tenant_id) for source in retained_sources}
+        if len(owners) != 1:
+            raise ValueError("bootstrap capture selection spans multiple owners")
+        ecosystem, tenant_id = next(iter(owners))
+        tracking_dates = tuple(sorted({_utc(source.allocation_timestamp).date() for source in retained_sources}))
+        for tracking_date in tracking_dates:
+            state = self._session.get(
+                PipelineStateTable,
+                (ecosystem, tenant_id, tracking_date),
+            )
+            if state is None or not state.chargeback_calculated:
+                continue
+            if not state.calculation_id or state.calculation_completed_at is None:
+                raise ValueError("current calculated pipeline state is incomplete")
+            run = self._load_generic_lineage_capture(
+                ecosystem=ecosystem,
+                tenant_id=tenant_id,
+                tracking_date=tracking_date,
+                calculation_id=state.calculation_id,
+                calculation_completed_at=state.calculation_completed_at,
+            )
+            date_sources = tuple(
+                source for source in retained_sources if _utc(source.allocation_timestamp).date() == tracking_date
+            )
+            selected_origins = self._associate_bootstrapped_sources(
+                date_sources,
+                run,
+            )
+            selected_capture = replace(
+                run,
+                captures=tuple(
+                    origin
+                    for origin in run.captures
+                    if (
+                        _require_aware(origin.origin_timestamp, "origin_timestamp"),
+                        origin.origin_env_id,
+                        origin.origin_resource_id,
+                        origin.origin_product_type,
+                        origin.origin_product_category,
+                    )
+                    in selected_origins
+                ),
+            )
+            self._replace_exact_calculation_lineage(
+                selected_capture,
+                calculation_completed_at=state.calculation_completed_at,
+                retained_sources=date_sources,
+            )
+
+    def _load_generic_lineage_capture(
+        self,
+        *,
+        ecosystem: str,
+        tenant_id: str,
+        tracking_date: date,
+        calculation_id: str,
+        calculation_completed_at: datetime,
+    ) -> AllocationLineageRunCapture:
+        from core.storage.interface import (
+            AllocationLineageCapture,
+            AllocationLineageFact,
+            AllocationLineageRunCapture,
+            AllocationTargetKind,
+            LineageCaptureStatus,
+        )
+
+        run = self._session.get(
+            CCloudAllocationLineageRunTable,
+            (ecosystem, tenant_id, tracking_date),
+        )
+        if (
+            run is None
+            or run.calculation_id != calculation_id
+            or run.capture_status != LineageCaptureStatus.COMPLETE.value
+            or _utc(run.calculation_completed_at) != _utc(calculation_completed_at)
+        ):
+            raise ValueError("matching complete generic allocation lineage is unavailable")
+        portions = tuple(
+            self._session.exec(
+                select(CCloudAllocationLineagePortionTable)
+                .where(
+                    col(CCloudAllocationLineagePortionTable.ecosystem) == ecosystem,
+                    col(CCloudAllocationLineagePortionTable.tenant_id) == tenant_id,
+                    col(CCloudAllocationLineagePortionTable.tracking_date) == tracking_date,
+                    col(CCloudAllocationLineagePortionTable.calculation_id) == calculation_id,
+                )
+                .order_by(
+                    col(CCloudAllocationLineagePortionTable.origin_timestamp),
+                    col(CCloudAllocationLineagePortionTable.origin_env_id),
+                    col(CCloudAllocationLineagePortionTable.origin_resource_id),
+                    col(CCloudAllocationLineagePortionTable.origin_product_type),
+                    col(CCloudAllocationLineagePortionTable.origin_product_category),
+                    col(CCloudAllocationLineagePortionTable.portion_ordinal),
+                )
+            ).all()
+        )
+        if len(portions) != run.portion_count:
+            raise ValueError("generic allocation lineage portion count is incomplete")
+        grouped: dict[
+            tuple[datetime, str, str, str, str],
+            list[CCloudAllocationLineagePortionTable],
+        ] = {}
+        for portion in portions:
+            origin_key = (
+                _utc(portion.origin_timestamp),
+                portion.origin_env_id,
+                portion.origin_resource_id,
+                portion.origin_product_type,
+                portion.origin_product_category,
+            )
+            grouped.setdefault(origin_key, []).append(portion)
+        captures: list[AllocationLineageCapture] = []
+        for origin_key, origin_portions in grouped.items():
+            ordinals = tuple(portion.portion_ordinal for portion in origin_portions)
+            if ordinals != tuple(range(len(origin_portions))):
+                raise ValueError("generic allocation lineage ordinals are incomplete")
+            try:
+                facts = tuple(
+                    AllocationLineageFact(
+                        portion_ordinal=portion.portion_ordinal,
+                        target_kind=AllocationTargetKind(portion.target_kind),
+                        target_id=portion.target_id,
+                        allocated_cost=Decimal(portion.allocated_cost),
+                        allocated_quantity=Decimal(portion.allocated_quantity),
+                        allocation_ratio=Decimal(portion.allocation_ratio),
+                        method_id=portion.method_id,
+                        method_version=portion.method_version,
+                        method_details_json=portion.method_details_json,
+                    )
+                    for portion in origin_portions
+                )
+            except (ArithmeticError, TypeError, ValueError) as exc:
+                raise ValueError("generic allocation lineage is invalid") from exc
+            captures.append(
+                AllocationLineageCapture(
+                    origin_timestamp=origin_key[0],
+                    origin_env_id=origin_key[1],
+                    origin_resource_id=origin_key[2],
+                    origin_product_type=origin_key[3],
+                    origin_product_category=origin_key[4],
+                    status=LineageCaptureStatus.COMPLETE,
+                    reason=None,
+                    facts=facts,
+                )
+            )
+        return AllocationLineageRunCapture(
+            ecosystem=ecosystem,
+            tenant_id=tenant_id,
+            tracking_date=tracking_date,
+            calculation_id=calculation_id,
+            captures=tuple(captures),
+        )
+
+    def _associate_bootstrapped_sources(
+        self,
+        retained_sources: tuple[CCloudCostSourceRecordTable, ...],
+        capture: AllocationLineageRunCapture,
+    ) -> set[tuple[datetime, str, str, str, str]]:
+        complete_origins = {
+            (
+                _require_aware(origin.origin_timestamp, "origin_timestamp"),
+                origin.origin_env_id,
+                origin.origin_resource_id,
+                origin.origin_product_type,
+                origin.origin_product_category,
+            )
+            for origin in capture.captures
+            if origin.status.value == "complete"
+        }
+        selected: set[tuple[datetime, str, str, str, str]] = set()
+        for source in retained_sources:
+            if source.capture_id is None or not source.capture_id.startswith("legacy:v1:"):
+                raise ValueError("bootstrap source capture is not legacy evidence")
+            association = (
+                source.billing_timestamp,
+                source.billing_env_id,
+                source.billing_resource_id,
+                source.billing_product_type,
+                source.billing_product_category,
+            )
+            if any(value is None for value in association) and not all(value is None for value in association):
+                raise ValueError("bootstrap source billing association is partial")
+            if source.resource_id is None or source.line_type is None:
+                raise ValueError("bootstrap source mapped identity is incomplete")
+            derived = (
+                _utc(source.allocation_timestamp),
+                source.environment_id or "",
+                source.resource_id,
+                source.line_type,
+                source.product or "",
+            )
+            if all(value is None for value in association):
+                if derived not in complete_origins:
+                    raise ValueError("bootstrap source has no matching generic origin")
+                source.billing_timestamp = derived[0]
+                source.billing_env_id = derived[1]
+                source.billing_resource_id = derived[2]
+                source.billing_product_type = derived[3]
+                source.billing_product_category = derived[4]
+                self._session.add(source)
+            else:
+                assert source.billing_timestamp is not None
+                assert source.billing_env_id is not None
+                assert source.billing_resource_id is not None
+                assert source.billing_product_type is not None
+                assert source.billing_product_category is not None
+                persisted = (
+                    _utc(source.billing_timestamp),
+                    source.billing_env_id,
+                    source.billing_resource_id,
+                    source.billing_product_type,
+                    source.billing_product_category,
+                )
+                if persisted != derived or persisted not in complete_origins:
+                    raise ValueError("bootstrap source billing association conflicts")
+            selected.add(derived)
+        self._session.flush()
+        return selected
+
+    def _replace_exact_calculation_lineage(
+        self,
+        capture: AllocationLineageRunCapture,
+        *,
+        calculation_completed_at: datetime,
+        retained_sources: tuple[CCloudCostSourceRecordTable, ...] | None,
+    ) -> AllocationLineageRun:
+        selected_refresh_sources = retained_sources is not None
+        if retained_sources is None:
+            self._session.execute(
+                delete(CCloudPreviewSourceAllocationLineagePortionTable).where(
+                    col(CCloudPreviewSourceAllocationLineagePortionTable.ecosystem) == capture.ecosystem,
+                    col(CCloudPreviewSourceAllocationLineagePortionTable.tenant_id) == capture.tenant_id,
+                    col(CCloudPreviewSourceAllocationLineagePortionTable.tracking_date) == capture.tracking_date,
+                )
+            )
+        else:
+            for source in retained_sources:
+                self._session.execute(
+                    delete(CCloudPreviewSourceAllocationLineagePortionTable).where(
+                        col(CCloudPreviewSourceAllocationLineagePortionTable.ecosystem) == source.ecosystem,
+                        col(CCloudPreviewSourceAllocationLineagePortionTable.tenant_id) == source.tenant_id,
+                        col(CCloudPreviewSourceAllocationLineagePortionTable.source_record_id)
+                        == source.source_record_id,
+                        col(CCloudPreviewSourceAllocationLineagePortionTable.evidence_scope_start)
+                        == source.evidence_scope_start,
+                        col(CCloudPreviewSourceAllocationLineagePortionTable.evidence_scope_end)
+                        == source.evidence_scope_end,
+                    )
+                )
+        preview_rows: list[CCloudPreviewSourceAllocationLineagePortionTable] = []
+        used_source_keys: set[tuple[str, datetime, datetime]] = set()
+        day_start = datetime.combine(capture.tracking_date, time.min, tzinfo=UTC)
+        day_end = day_start + timedelta(days=1)
+        if retained_sources is None:
+            retained_sources = tuple(
+                self._session.exec(
+                    select(CCloudCostSourceRecordTable)
+                    .where(
+                        col(CCloudCostSourceRecordTable.ecosystem) == capture.ecosystem,
+                        col(CCloudCostSourceRecordTable.tenant_id) == capture.tenant_id,
+                        col(CCloudCostSourceRecordTable.billing_timestamp) >= day_start,
+                        col(CCloudCostSourceRecordTable.billing_timestamp) < day_end,
+                    )
+                    .order_by(
+                        col(CCloudCostSourceRecordTable.billing_timestamp),
+                        col(CCloudCostSourceRecordTable.billing_env_id),
+                        col(CCloudCostSourceRecordTable.billing_resource_id),
+                        col(CCloudCostSourceRecordTable.billing_product_type),
+                        col(CCloudCostSourceRecordTable.billing_product_category),
+                        col(CCloudCostSourceRecordTable.source_record_id),
+                        col(CCloudCostSourceRecordTable.evidence_scope_start),
+                        col(CCloudCostSourceRecordTable.evidence_scope_end),
+                    )
+                ).all()
+            )
         sources_by_origin: dict[
             tuple[datetime, str, str, str, str],
             list[CCloudCostSourceRecordTable],
@@ -1274,6 +1584,8 @@ class SQLModelPreviewAllocationLineageRepository:
                     )
         self._session.add_all(preview_rows)
         self._session.flush()
+        if selected_refresh_sources and len(used_source_keys) != len(retained_sources):
+            raise ValueError("exact Preview source association is missing")
         portion_count = sum(len(item.facts) for item in capture.captures)
         return AllocationLineageRun(
             ecosystem=capture.ecosystem,

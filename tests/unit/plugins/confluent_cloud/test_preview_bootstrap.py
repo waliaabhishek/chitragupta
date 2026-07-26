@@ -10,7 +10,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from alembic import command
-from sqlalchemy import MetaData, Table, create_engine
+from sqlalchemy import MetaData, Table, create_engine, text
 
 from core.preview.evidence import (
     PreviewEvidenceBootstrapReason,
@@ -25,6 +25,7 @@ from core.preview.evidence import (
 from core.preview.evidence_capture import NativeSourceWindow, PreviewEvidenceBootstrapConflictError
 from core.storage.backends.sqlmodel.unit_of_work import SQLModelBackend
 from plugins.confluent_cloud.preview_bootstrap import (
+    CCloudBootstrappedLineageRefresher,
     CCloudPreviewEvidenceBootstrap,
     PreviewEvidenceBootstrapError,
     legacy_capture_id,
@@ -50,6 +51,14 @@ class _UowContext:
     def __exit__(self, *args: object) -> None:
         del args
         self.exit_count += 1
+
+
+class _LineageRefresher:
+    def __init__(self) -> None:
+        self.capture_ids: list[tuple[str, ...]] = []
+
+    def refresh_bootstrapped_lineage(self, capture_ids: tuple[str, ...]) -> None:
+        self.capture_ids.append(capture_ids)
 
 
 def _attempt() -> PreviewSourceAttempt:
@@ -112,8 +121,11 @@ def _bootstrap(
     *,
     authority: object | None = None,
     windows: tuple[NativeSourceWindow, ...] = (),
-) -> tuple[CCloudPreviewEvidenceBootstrap, MagicMock, _UowContext]:
+    lineage_refresher: object | None = None,
+) -> tuple[CCloudPreviewEvidenceBootstrap, MagicMock, _UowContext, _LineageRefresher | object]:
     uow = MagicMock()
+    refresher = _LineageRefresher() if lineage_refresher is None else lineage_refresher
+    uow.allocation_lineage = refresher
     uow.source_readiness.get_current_authority.return_value = authority
     uow.source_readiness.begin_attempt.return_value = _attempt()
     uow.source_windows.list_unassociated_windows.return_value = windows
@@ -129,7 +141,7 @@ def _bootstrap(
         capture_id_factory=lambda *args: "legacy:capture-1",
         refresh_token_factory=lambda: "refresh-1",
     )
-    return bootstrap, uow, context
+    return bootstrap, uow, context, refresher
 
 
 def _run(bootstrap: CCloudPreviewEvidenceBootstrap) -> Any:
@@ -159,7 +171,7 @@ def test_bootstrap_no_write_outcomes_own_one_uow_and_rollback(
     status: PreviewEvidenceBootstrapStatus,
     reason: PreviewEvidenceBootstrapReason | None,
 ) -> None:
-    bootstrap, uow, context = _bootstrap(authority=authority, windows=windows)
+    bootstrap, uow, context, refresher = _bootstrap(authority=authority, windows=windows)
 
     result = _run(bootstrap)
 
@@ -169,11 +181,13 @@ def test_bootstrap_no_write_outcomes_own_one_uow_and_rollback(
     uow.rollback.assert_called_once_with()
     uow.commit.assert_not_called()
     uow.source_readiness.begin_attempt.assert_not_called()
+    assert isinstance(refresher, _LineageRefresher)
+    assert refresher.capture_ids == []
 
 
 def test_valid_legacy_evidence_commits_once_in_the_single_owned_uow() -> None:
     windows = (NativeSourceWindow(START, MID), NativeSourceWindow(MID, NOW))
-    bootstrap, uow, context = _bootstrap(windows=windows)
+    bootstrap, uow, context, refresher = _bootstrap(windows=windows)
 
     result = _run(bootstrap)
 
@@ -189,6 +203,41 @@ def test_valid_legacy_evidence_commits_once_in_the_single_owned_uow() -> None:
         completed_at=NOW,
         reason=None,
     )
+    assert isinstance(refresher, _LineageRefresher)
+    assert refresher.capture_ids == [("legacy:capture-1", "legacy:capture-1")]
+
+
+def test_bootstrap_requires_typed_lineage_refresh_capability_and_rolls_back() -> None:
+    bootstrap, uow, context, _ = _bootstrap(
+        windows=(NativeSourceWindow(START, NOW),),
+        lineage_refresher=object(),
+    )
+
+    with pytest.raises(PreviewEvidenceBootstrapError, match="lineage refresh capability"):
+        _run(bootstrap)
+
+    assert context.enter_count == context.exit_count == 1
+    uow.rollback.assert_called_once_with()
+    uow.commit.assert_not_called()
+    uow.source_readiness.finalize_attempt.assert_not_called()
+
+
+def test_bootstrap_lineage_refresh_failure_rolls_back_without_finalizing() -> None:
+    refresher = MagicMock(spec=CCloudBootstrappedLineageRefresher)
+    refresher.refresh_bootstrapped_lineage.side_effect = ValueError("lineage unavailable")
+    bootstrap, uow, context, _ = _bootstrap(
+        windows=(NativeSourceWindow(START, NOW),),
+        lineage_refresher=refresher,
+    )
+
+    with pytest.raises(PreviewEvidenceBootstrapError, match="legacy Preview evidence bootstrap failed"):
+        _run(bootstrap)
+
+    assert context.enter_count == context.exit_count == 1
+    refresher.refresh_bootstrapped_lineage.assert_called_once_with(("legacy:capture-1",))
+    uow.rollback.assert_called_once_with()
+    uow.commit.assert_not_called()
+    uow.source_readiness.finalize_attempt.assert_not_called()
 
 
 def test_bootstrap_window_plan_retains_only_lightweight_metadata() -> None:
@@ -223,7 +272,7 @@ def test_invalid_legacy_evidence_commits_failed_attempt_without_association() ->
         NativeSourceWindow(START, MID),
         NativeSourceWindow(MID + timedelta(seconds=1), NOW),
     )
-    bootstrap, uow, context = _bootstrap(windows=windows)
+    bootstrap, uow, context, _ = _bootstrap(windows=windows)
 
     result = _run(bootstrap)
 
@@ -240,7 +289,7 @@ def test_invalid_legacy_evidence_commits_failed_attempt_without_association() ->
 
 
 def test_compare_and_set_conflict_rolls_back_savepoint_and_commits_failed_attempt() -> None:
-    bootstrap, uow, context = _bootstrap(windows=(NativeSourceWindow(START, NOW),))
+    bootstrap, uow, context, _ = _bootstrap(windows=(NativeSourceWindow(START, NOW),))
     uow.source_windows.associate_legacy_window.side_effect = PreviewEvidenceBootstrapConflictError("changed")
 
     result = _run(bootstrap)
@@ -258,7 +307,7 @@ def test_compare_and_set_conflict_rolls_back_savepoint_and_commits_failed_attemp
 
 
 def test_bootstrap_commit_failure_rolls_back_once_closes_and_raises_preview_only_error() -> None:
-    bootstrap, uow, context = _bootstrap(windows=(NativeSourceWindow(START, NOW),))
+    bootstrap, uow, context, _ = _bootstrap(windows=(NativeSourceWindow(START, NOW),))
     uow.commit.side_effect = RuntimeError("commit failed")
 
     with pytest.raises(PreviewEvidenceBootstrapError, match="legacy Preview evidence bootstrap failed"):
@@ -415,6 +464,89 @@ def test_real_legacy_mapper_bootstrap_assigns_capture_from_retained_values(
         backend.dispose()
 
 
+def test_revision_018_bootstrap_before_calculation_is_repaired_by_ordinary_lineage(
+    tmp_path: Path,
+) -> None:
+    from core.engine.allocation_lineage import build_allocation_lineage_capture
+    from core.models.pipeline import PipelineState
+    from core.storage.interface import AllocationLineageRunCapture
+    from tests.unit.core.preview.test_service import _aggregate, _allocation
+
+    backend = _real_backend(tmp_path, "018")
+    window = NativeSourceWindow(
+        datetime(2026, 7, 1, tzinfo=UTC),
+        datetime(2026, 7, 2, tzinfo=UTC),
+    )
+    aggregate = _aggregate()
+    allocation = _allocation()
+    completed_at = datetime(2026, 7, 3, 2, tzinfo=UTC)
+    try:
+        result = backend.create_preview_evidence_bootstrap().bootstrap_owner(
+            ecosystem="confluent_cloud",
+            tenant_id="tenant-1",
+            policy_start=window.start,
+            policy_end=window.end,
+        )
+        assert result.status is PreviewEvidenceBootstrapStatus.BOOTSTRAPPED
+
+        with backend.create_unit_of_work() as uow:
+            uow.billing.upsert(aggregate)
+            uow.pipeline_state.upsert(
+                PipelineState(
+                    ecosystem="confluent_cloud",
+                    tenant_id="tenant-1",
+                    tracking_date=aggregate.timestamp.date(),
+                    billing_gathered=True,
+                    resources_gathered=True,
+                    chargeback_calculated=True,
+                    calculation_id="calculation-1",
+                    calculation_completed_at=completed_at,
+                    calculation_run_id=None,
+                )
+            )
+            uow.commit()
+        run = AllocationLineageRunCapture(
+            ecosystem="confluent_cloud",
+            tenant_id="tenant-1",
+            tracking_date=aggregate.timestamp.date(),
+            calculation_id="calculation-1",
+            captures=(
+                build_allocation_lineage_capture(
+                    origin=aggregate,
+                    rows=(allocation,),
+                ),
+            ),
+        )
+        with backend.create_preview_evidence_unit_of_work() as uow:
+            uow.allocation_lineage.replace_calculation_lineage(
+                run,
+                calculation_completed_at=completed_at,
+            )
+            uow.commit()
+
+        engine = create_engine(backend._connection_string)
+        try:
+            with engine.connect() as connection:
+                association = connection.execute(
+                    text(
+                        """
+                        SELECT billing_env_id, billing_resource_id,
+                               billing_product_type, billing_product_category
+                        FROM ccloud_cost_source_records
+                        """
+                    )
+                ).one()
+                sidecar_count = connection.execute(
+                    text("SELECT COUNT(*) FROM ccloud_preview_source_allocation_lineage_portions")
+                ).scalar_one()
+        finally:
+            engine.dispose()
+        assert association == ("env-1", "lkc-1", "KAFKA_STORAGE", "KAFKA")
+        assert sidecar_count == 1
+    finally:
+        backend.dispose()
+
+
 @pytest.mark.parametrize(
     "overrides",
     [
@@ -514,5 +646,57 @@ def test_real_legacy_repository_failure_raises_preview_only_error(
                 policy_start=datetime(2026, 7, 1, tzinfo=UTC),
                 policy_end=datetime(2026, 7, 2, tzinfo=UTC),
             )
+    finally:
+        backend.dispose()
+
+
+def test_real_lineage_refresh_failure_rolls_back_bootstrap_association(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from plugins.confluent_cloud.storage.preview_repositories import (
+        SQLModelPreviewAllocationLineageRepository,
+    )
+
+    backend = _real_backend(tmp_path, "018")
+
+    def fail_refresh(
+        _self: SQLModelPreviewAllocationLineageRepository,
+        _capture_ids: tuple[str, ...],
+    ) -> None:
+        raise ValueError("generic lineage is unavailable")
+
+    monkeypatch.setattr(
+        SQLModelPreviewAllocationLineageRepository,
+        "refresh_bootstrapped_lineage",
+        fail_refresh,
+    )
+    window = NativeSourceWindow(
+        datetime(2026, 7, 1, tzinfo=UTC),
+        datetime(2026, 7, 2, tzinfo=UTC),
+    )
+    try:
+        with pytest.raises(
+            PreviewEvidenceBootstrapError,
+            match="legacy Preview evidence bootstrap failed",
+        ):
+            backend.create_preview_evidence_bootstrap().bootstrap_owner(
+                ecosystem="confluent_cloud",
+                tenant_id="tenant-1",
+                policy_start=window.start,
+                policy_end=window.end,
+            )
+
+        with backend.create_preview_evidence_unit_of_work() as uow:
+            assert uow.source_readiness.get_current_authority("confluent_cloud", "tenant-1") is None
+            retained = tuple(
+                uow.source_windows.iter_unassociated_window(
+                    "confluent_cloud",
+                    "tenant-1",
+                    window,
+                )
+            )
+        assert len(retained) == 1
+        assert retained[0].capture_id is None
     finally:
         backend.dispose()

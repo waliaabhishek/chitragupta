@@ -16,6 +16,7 @@ from tests.unit.core.preview.test_service import (
     ControlledExecutor,
     _aggregate,
     _allocation,
+    _corrupt_persisted_reconciliation_value,
     _replace_source_capture,
     _runtime,
     _seed,
@@ -386,8 +387,27 @@ def test_source_eligibility_diagnostics_travel_through_worker_failure_path(
     expected_code: str,
 ) -> None:
     backend = _backend(tmp_path)
-    source = _source(**source_changes)
-    _seed(backend, source=source, aggregate=_aggregate(), allocation=_allocation())
+    if source_changes == {"amount": 7}:
+        _seed(
+            backend,
+            source=_source(),
+            aggregate=_aggregate(),
+            allocation=_allocation(),
+        )
+        _corrupt_persisted_reconciliation_value(
+            backend,
+            source_overrides=source_changes,
+            aggregate_overrides={},
+            allocation_overrides={},
+        )
+    else:
+        _seed(
+            backend,
+            source=_source(**source_changes),
+            aggregate=_aggregate(),
+            allocation=_allocation(),
+            compatibility_only_lineage=source_changes != {"description": "Prior period refund"},
+        )
     executor = ControlledExecutor()
     runtime = _runtime(tmp_path, backend, executor)
     try:

@@ -32,6 +32,7 @@ from core.config.models import ApiConfig, AppSettings, StorageConfig, TenantConf
 from core.models.identity import CoreIdentity
 from core.models.pipeline import PipelineState
 from core.models.resource import CoreResource, ResourceStatus
+from core.preview.evidence import PreviewEvidenceBootstrapResult
 from core.storage.backends.sqlmodel.unit_of_work import SQLModelBackend
 from plugins.confluent_cloud.storage.module import CCloudStorageModule
 from tests.integration.core.api.backend_provider import FixedTenantBackendProvider, install_backend
@@ -325,15 +326,38 @@ def test_valid_legacy_source_bootstrap_matches_current_package_without_provider_
         focus_preview_enabled=True,
     )
     legacy_backend.create_tables()
-    _seed(legacy_backend, source=None, aggregate=_aggregate(), allocation=_allocation())
+    aggregate = _aggregate()
+    allocation = _allocation()
+    pipeline_state = PipelineState(
+        ecosystem="confluent_cloud",
+        tenant_id="tenant-1",
+        tracking_date=date(2026, 7, 1),
+        billing_gathered=True,
+        resources_gathered=True,
+        chargeback_calculated=True,
+        calculation_id="calculation-1",
+        calculation_completed_at=datetime(2026, 7, 3, 2, tzinfo=UTC),
+        calculation_run_id=None,
+    )
+    _seed(
+        legacy_backend,
+        source=None,
+        synthesize_default_source=False,
+        compatibility_only_lineage=True,
+        aggregate=aggregate,
+        allocation=allocation,
+        state=pipeline_state,
+    )
     try:
-        result = legacy_backend.create_preview_evidence_bootstrap().bootstrap_owner(
-            ecosystem="confluent_cloud",
-            tenant_id="tenant-1",
-            policy_start=datetime(2026, 6, 30, tzinfo=UTC),
-            policy_end=datetime(2026, 7, 3, tzinfo=UTC),
+        from core.storage.tenant_lifecycle import prepare_tenant_backend
+
+        result = prepare_tenant_backend(
+            legacy_backend,
+            "production",
+            _settings(legacy_root).tenants["production"],
         )
 
+        assert isinstance(result, PreviewEvidenceBootstrapResult)
         assert result.status.value == "bootstrapped"
         assert result.bootstrapped_windows == result.bootstrapped_rows == 1
         assert _generate_fixed_package_bytes(legacy_root, legacy_backend) == _generate_fixed_package_bytes(
@@ -818,6 +842,7 @@ def test_primary_api_seam_serializes_safe_diagnostic_correlations_and_no_interna
         source=_source(malformed=True, diagnostics=("provider secret diagnostic",)),
         aggregate=_aggregate(),
         allocation=_allocation(),
+        compatibility_only_lineage=True,
     )
     app, client = _client(settings)
     with client:
@@ -1042,12 +1067,22 @@ def test_primary_api_seam_persists_each_source_eligibility_category(
         focus_preview_enabled=True,
     )
     backend.create_tables()
-    _seed(
-        backend,
-        source=_source(**source_changes),
-        aggregate=_aggregate(),
-        allocation=_allocation(),
-    )
+    if source_changes == {"amount": 7}:
+        _seed(
+            backend,
+            source=_source(),
+            aggregate=_aggregate(),
+            allocation=_allocation(),
+        )
+        _replace_source_capture(backend, [_source(**source_changes)])
+    else:
+        _seed(
+            backend,
+            source=_source(**source_changes),
+            aggregate=_aggregate(),
+            allocation=_allocation(),
+            compatibility_only_lineage=source_changes != {"description": "Prior period refund"},
+        )
     app, client = _client(settings)
     with client:
         install_backend(app, "production", backend)
@@ -1075,6 +1110,7 @@ def test_primary_api_seam_uses_real_source_mapper_for_malformed_diagnostic(tmp_p
         source=_mapper_backed_malformed_source(),
         aggregate=_aggregate(),
         allocation=_allocation(),
+        compatibility_only_lineage=True,
     )
     app, client = _client(settings)
     with client:
@@ -1254,7 +1290,7 @@ def test_primary_api_unknown_persisted_currency_reaches_exact_terminal_status(tm
     )
 
 
-def test_primary_api_multiple_valid_sources_reach_exact_mapping_scope_terminal_status(tmp_path: Path) -> None:
+def test_primary_api_stale_exact_lineage_fails_source_reconciliation(tmp_path: Path) -> None:
     settings = _settings(tmp_path)
     backend = SQLModelBackend(
         settings.tenants["production"].storage.connection_string.get_secret_value(),
@@ -1280,8 +1316,8 @@ def test_primary_api_multiple_valid_sources_reach_exact_mapping_scope_terminal_s
 
     _assert_terminal_failure(
         terminal,
-        code="preview_mapping_scope_unsupported",
-        message="The complete source set exceeds the current Daily Full mapping scope.",
+        code="preview_source_reconciliation_failed",
+        message="Persisted source, aggregate, or allocation evidence does not reconcile.",
         retryable=False,
         correlation_count=2,
     )
@@ -1367,6 +1403,7 @@ def test_primary_api_failure_isolated_across_tenant_databases_and_non_overlappin
         source=_source(malformed=True, diagnostics=("provider malformed",)),
         aggregate=_aggregate(),
         allocation=_allocation(),
+        compatibility_only_lineage=True,
     )
     sandbox_source = _source(
         tenant_id="tenant-2",

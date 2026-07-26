@@ -12,12 +12,14 @@ from decimal import Decimal
 from pathlib import Path
 
 import pytest
+from sqlalchemy import text
 
 from core.config.models import StorageConfig, TenantConfig
 from core.models.chargeback import ChargebackRow, CostType
 from core.models.identity import CoreIdentity
 from core.models.pipeline import PipelineState
 from core.models.resource import CoreResource, ResourceStatus
+from core.storage.backends.sqlmodel.engine import get_or_create_engine
 from core.storage.backends.sqlmodel.unit_of_work import SQLModelBackend
 from plugins.confluent_cloud.models.billing import CCloudBillingLineItem, CCloudCostSourceRecord
 from plugins.confluent_cloud.storage.module import CCloudStorageModule
@@ -268,10 +270,66 @@ def _context_resource(
     )
 
 
+def _replace_preview_lineage(
+    backend: SQLModelBackend,
+    *,
+    aggregate: CCloudBillingLineItem,
+    allocation: ChargebackRow,
+    pipeline_state: PipelineState,
+) -> None:
+    from core.engine.allocation_lineage import build_allocation_lineage_capture
+    from core.storage.interface import AllocationLineageRunCapture
+
+    assert pipeline_state.calculation_id is not None
+    completed_at = pipeline_state.calculation_completed_at or datetime(2026, 7, 3, 2, tzinfo=UTC)
+    run = AllocationLineageRunCapture(
+        ecosystem="confluent_cloud",
+        tenant_id="tenant-1",
+        tracking_date=aggregate.timestamp.date(),
+        calculation_id=pipeline_state.calculation_id,
+        captures=(build_allocation_lineage_capture(origin=aggregate, rows=(allocation,)),),
+    )
+    with backend.create_preview_evidence_unit_of_work() as uow:
+        uow.allocation_lineage.replace_calculation_lineage(
+            run,
+            calculation_completed_at=completed_at,
+        )
+        uow.commit()
+
+
+def _replace_compatibility_only_lineage(
+    backend: SQLModelBackend,
+    *,
+    aggregate: CCloudBillingLineItem,
+    allocation: ChargebackRow,
+    pipeline_state: PipelineState,
+) -> None:
+    from core.engine.allocation_lineage import build_allocation_lineage_capture
+    from core.storage.interface import AllocationLineageRunCapture
+
+    assert pipeline_state.calculation_id is not None
+    completed_at = pipeline_state.calculation_completed_at or datetime(2026, 7, 3, 2, tzinfo=UTC)
+    run = AllocationLineageRunCapture(
+        ecosystem="confluent_cloud",
+        tenant_id="tenant-1",
+        tracking_date=aggregate.timestamp.date(),
+        calculation_id=pipeline_state.calculation_id,
+        captures=(build_allocation_lineage_capture(origin=aggregate, rows=(allocation,)),),
+    )
+    with backend.create_unit_of_work() as uow:
+        uow.chargebacks.replace_calculation_lineage(  # type: ignore[attr-defined]
+            run,
+            calculation_completed_at=completed_at,
+        )
+        uow.commit()
+
+
 def _seed(
     backend: SQLModelBackend,
     *,
     source: CCloudCostSourceRecord | None = None,
+    synthesize_default_source: bool = True,
+    compatibility_only_lineage: bool = False,
     aggregate: CCloudBillingLineItem | None = None,
     allocation: ChargebackRow | None = None,
     state: PipelineState | None = None,
@@ -365,7 +423,7 @@ def _seed(
             reason=None,
         )
         lineage_source = source
-        if lineage_source is None and aggregate is not None and allocation is not None:
+        if lineage_source is None and synthesize_default_source and aggregate is not None and allocation is not None:
             lineage_source = _source()
         if lineage_source is not None:
             from core.preview.evidence_capture import NativeSourceWindow
@@ -395,70 +453,21 @@ def _seed(
                 captured_at=datetime(2026, 7, 3, 0, 0, 1, tzinfo=UTC),
             )
         evidence_uow.commit()
-    if (
-        aggregate is not None
-        and allocation is not None
-        and pipeline_state.calculation_id
-        and lineage_source is not None
-    ):
-        from sqlmodel import Session
-
-        from core.engine.allocation_lineage import build_allocation_lineage_capture
-        from core.storage.backends.sqlmodel.engine import get_or_create_engine
-        from core.storage.interface import AllocationLineageRunCapture
-        from plugins.confluent_cloud.storage.tables import CCloudPreviewSourceAllocationLineagePortionTable
-
-        lineage_capture = build_allocation_lineage_capture(origin=aggregate, rows=(allocation,))
-        run = AllocationLineageRunCapture(
-            ecosystem="confluent_cloud",
-            tenant_id="tenant-1",
-            tracking_date=aggregate.timestamp.date(),
-            calculation_id=pipeline_state.calculation_id,
-            captures=(lineage_capture,),
-        )
-        completed_at = pipeline_state.calculation_completed_at or datetime(2026, 7, 3, 2, tzinfo=UTC)
-        with backend.create_unit_of_work() as uow:
-            uow.chargebacks.replace_calculation_lineage(  # type: ignore[attr-defined]
-                run,
-                calculation_completed_at=completed_at,
+    if aggregate is not None and allocation is not None and pipeline_state.calculation_id:
+        if compatibility_only_lineage:
+            _replace_compatibility_only_lineage(
+                backend,
+                aggregate=aggregate,
+                allocation=allocation,
+                pipeline_state=pipeline_state,
             )
-            uow.commit()
-        engine = get_or_create_engine(backend._connection_string)
-        with Session(engine) as session:
-            for fact in lineage_capture.facts:
-                original = lineage_source.original_amount
-                allocated_original = (
-                    original * fact.allocation_ratio
-                    if isinstance(original, Decimal) and original.is_finite() and fact.allocation_ratio.is_finite()
-                    else Decimal(0)
-                )
-                session.add(
-                    CCloudPreviewSourceAllocationLineagePortionTable(
-                        ecosystem="confluent_cloud",
-                        tenant_id="tenant-1",
-                        tracking_date=aggregate.timestamp.date(),
-                        calculation_id=pipeline_state.calculation_id,
-                        source_record_id=lineage_source.source_record_id,
-                        evidence_scope_start=lineage_source.evidence_scope_start,
-                        evidence_scope_end=lineage_source.evidence_scope_end,
-                        origin_timestamp=aggregate.timestamp,
-                        origin_env_id=aggregate.env_id,
-                        origin_resource_id=aggregate.resource_id,
-                        origin_product_type=aggregate.product_type,
-                        origin_product_category=aggregate.product_category,
-                        portion_ordinal=fact.portion_ordinal,
-                        target_kind=fact.target_kind.value,
-                        target_id=fact.target_id,
-                        allocated_cost=str(fact.allocated_cost),
-                        allocated_quantity=str(fact.allocated_quantity),
-                        allocated_original_cost=str(allocated_original),
-                        allocation_ratio=str(fact.allocation_ratio),
-                        method_id=fact.method_id,
-                        method_version=fact.method_version,
-                        method_details_json=fact.method_details_json,
-                    )
-                )
-            session.commit()
+        elif lineage_source is not None:
+            _replace_preview_lineage(
+                backend,
+                aggregate=aggregate,
+                allocation=allocation,
+                pipeline_state=pipeline_state,
+            )
 
 
 def _replace_source_capture(
@@ -493,6 +502,46 @@ def _replace_source_capture(
             captured_at=datetime(2026, 7, 3, 0, 0, 1, tzinfo=UTC),
         )
         uow.commit()
+
+
+def _corrupt_persisted_reconciliation_value(
+    backend: SQLModelBackend,
+    *,
+    source_overrides: dict[str, object],
+    aggregate_overrides: dict[str, object],
+    allocation_overrides: dict[str, object],
+) -> None:
+    if source_overrides:
+        field, value = next(iter(source_overrides.items()))
+        statements = {
+            "amount": text("UPDATE ccloud_cost_source_records SET amount = :value"),
+            "original_amount": text("UPDATE ccloud_cost_source_records SET original_amount = :value"),
+            "price": text("UPDATE ccloud_cost_source_records SET price = :value"),
+        }
+    elif aggregate_overrides:
+        field, value = next(iter(aggregate_overrides.items()))
+        statements = {
+            "quantity": text("UPDATE ccloud_billing SET quantity = :value"),
+            "unit_price": text("UPDATE ccloud_billing SET unit_price = :value"),
+            "total_cost": text("UPDATE ccloud_billing SET total_cost = :value"),
+        }
+    else:
+        field = "allocated_cost"
+        value = allocation_overrides["amount"]
+        assert isinstance(value, Decimal) and value.is_finite() and value >= 0
+        statements = {
+            "allocated_cost": text(
+                "UPDATE ccloud_preview_source_allocation_lineage_portions SET allocated_cost = :value"
+            )
+        }
+    statement = statements.get(field)
+    assert statement is not None
+    engine = get_or_create_engine(backend._connection_string)
+    with engine.begin() as connection:
+        connection.execute(
+            statement,
+            {"value": str(value)},
+        )
 
 
 def _runtime(tmp_path: Path, backend: SQLModelBackend, executor: ControlledExecutor) -> object:
@@ -1493,12 +1542,33 @@ def test_v4_profile_rejects_invalid_or_unsupported_financial_evidence(
         focus_preview_enabled=True,
     )
     backend.create_tables()
-    _seed(
-        backend,
-        source=_source(**source_overrides),
-        aggregate=_aggregate(**aggregate_overrides),
-        allocation=_allocation(**allocation_overrides),
+    allocation_value = allocation_overrides.get("amount")
+    finite_allocation_corruption = (
+        isinstance(allocation_value, Decimal) and allocation_value.is_finite() and allocation_value >= 0
     )
+    if finite_allocation_corruption:
+        _seed(
+            backend,
+            source=_source(**source_overrides),
+            aggregate=_aggregate(**aggregate_overrides),
+            allocation=_allocation(),
+        )
+        _corrupt_persisted_reconciliation_value(
+            backend,
+            source_overrides={},
+            aggregate_overrides={},
+            allocation_overrides=allocation_overrides,
+        )
+    else:
+        _seed(
+            backend,
+            source=_source(**source_overrides),
+            aggregate=_aggregate(**aggregate_overrides),
+            allocation=_allocation(**allocation_overrides),
+            compatibility_only_lineage=not (
+                not source_overrides and not allocation_overrides and set(aggregate_overrides) == {"unit_price"}
+            ),
+        )
     executor = ControlledExecutor()
     runtime = _runtime(tmp_path, backend, executor)
     try:
@@ -1524,11 +1594,13 @@ def test_v4_profile_rejects_invalid_or_unsupported_financial_evidence(
             expected_code = "preview_source_record_incomplete"
         elif source_overrides:
             expected_code = "preview_source_economics_unsupported"
-        elif isinstance(allocation_overrides.get("amount"), Decimal) and (
-            not allocation_overrides["amount"].is_finite()  # type: ignore[union-attr]
-            or allocation_overrides["amount"] < 0  # type: ignore[operator]
-        ):
-            expected_code = "preview_allocation_lineage_incomplete"
+        elif allocation_overrides:
+            assert isinstance(allocation_value, Decimal)
+            expected_code = (
+                "preview_source_reconciliation_failed"
+                if allocation_value.is_finite() and allocation_value >= 0
+                else "preview_allocation_lineage_incomplete"
+            )
         else:
             expected_code = "preview_source_reconciliation_failed"
         assert failed.diagnostic.code == expected_code
@@ -1934,10 +2006,17 @@ def test_positive_tracer_rejects_every_exact_arithmetic_mismatch(
     backend.create_tables()
     _seed(
         backend,
-        source=_source(**source_overrides),
-        aggregate=_aggregate(**aggregate_overrides),
-        allocation=_allocation(**allocation_overrides),
+        source=_source(),
+        aggregate=_aggregate(),
+        allocation=_allocation(),
     )
+    if not (not source_overrides and not allocation_overrides and set(aggregate_overrides) == {"unit_price"}):
+        _corrupt_persisted_reconciliation_value(
+            backend,
+            source_overrides=source_overrides,
+            aggregate_overrides=aggregate_overrides,
+            allocation_overrides=allocation_overrides,
+        )
     executor = ControlledExecutor()
     runtime = _runtime(tmp_path, backend, executor)
     try:
@@ -1978,7 +2057,13 @@ def test_overlapping_but_not_contained_source_fails_tracer_scope(tmp_path: Path)
         allocation_timestamp=datetime(2026, 6, 30, tzinfo=UTC),
         retention_timestamp=datetime(2026, 6, 30, tzinfo=UTC),
     )
-    _seed(backend, source=source, aggregate=_aggregate(), allocation=_allocation())
+    _seed(
+        backend,
+        source=source,
+        aggregate=_aggregate(),
+        allocation=_allocation(),
+        compatibility_only_lineage=True,
+    )
     executor = ControlledExecutor()
     runtime = _runtime(tmp_path, backend, executor)
     try:
@@ -2062,7 +2147,13 @@ def test_single_malformed_or_incomplete_source_has_snapshot_diagnostic(
             billing_timestamp=datetime(1970, 1, 1, tzinfo=UTC),
             retention_timestamp=source.evidence_scope_end,
         )
-    _seed(backend, source=source, aggregate=_aggregate(), allocation=_allocation())
+    _seed(
+        backend,
+        source=source,
+        aggregate=_aggregate(),
+        allocation=_allocation(),
+        compatibility_only_lineage=True,
+    )
     executor = ControlledExecutor()
     runtime = _runtime(tmp_path, backend, executor)
     try:

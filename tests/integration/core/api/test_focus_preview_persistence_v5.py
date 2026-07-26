@@ -5,7 +5,7 @@ import io
 import json
 import zipfile
 from dataclasses import dataclass, replace
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta, tzinfo
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -76,6 +76,19 @@ def _settings(connection_string: str, artifact_root: Path) -> AppSettings:
             )
         },
     )
+
+
+def _frozen_service_datetime(value: datetime) -> type[datetime]:
+    assert value.tzinfo is not None and value.utcoffset() is not None
+
+    class FrozenServiceDateTime(datetime):
+        @classmethod
+        def now(cls, tz: tzinfo | None = None) -> datetime:
+            if tz is None:
+                return value.replace(tzinfo=None)
+            return value.astimezone(tz)
+
+    return FrozenServiceDateTime
 
 
 @dataclass(frozen=True)
@@ -314,6 +327,10 @@ def test_incomplete_internal_schema_v1_on_current_row_returns_artifact_unavailab
     app = create_app(_settings(connection_string, artifact_root))
     provider = FixedTenantBackendProvider({"production": backend})
     with (
+        patch(
+            "core.preview.service.datetime",
+            _frozen_service_datetime(datetime(2026, 7, 23, tzinfo=UTC)),
+        ),
         patch("core.api.app.ApiTenantBackendProvider", return_value=provider),
         SameThreadApiClient(app) as client,
     ):
@@ -501,7 +518,13 @@ def test_obsolete_revision_021_package_survives_upgrade_physically_but_all_deliv
     assert csv_before == csv_body
 
     app = create_app(_settings(connection_string, artifact_root))
-    with SameThreadApiClient(app) as client:
+    with (
+        patch(
+            "core.preview.service.datetime",
+            _frozen_service_datetime(datetime(2026, 7, 23, tzinfo=UTC)),
+        ),
+        SameThreadApiClient(app) as client,
+    ):
         engine = create_engine(connection_string)
         with engine.connect() as connection:
             persisted_row_before = tuple(
@@ -548,6 +571,7 @@ def test_obsolete_revision_021_package_survives_upgrade_physically_but_all_deliv
         "cutoff_end",
         "monthly_status",
         "expected_month",
+        "frozen_now",
     ),
     [
         (
@@ -562,6 +586,7 @@ def test_obsolete_revision_021_package_survives_upgrade_physically_but_all_deliv
             None,
             None,
             None,
+            datetime(2026, 7, 23, tzinfo=UTC),
         ),
         (
             "current-monthly-summary",
@@ -575,6 +600,7 @@ def test_obsolete_revision_021_package_survives_upgrade_physically_but_all_deliv
             date(2026, 7, 3),
             "provisional",
             "2026-07",
+            datetime(2026, 8, 5, tzinfo=UTC),
         ),
     ],
     ids=("daily", "monthly"),
@@ -592,6 +618,7 @@ def test_current_daily_and_monthly_ready_rows_round_trip_through_sqlite_and_api(
     cutoff_end: date | None,
     monthly_status: str | None,
     expected_month: str | None,
+    frozen_now: datetime,
 ) -> None:
     connection_string = f"sqlite:///{tmp_path / f'{request_id}.db'}"
     artifact_root = tmp_path / f"{request_id}-artifacts"
@@ -670,6 +697,7 @@ def test_current_daily_and_monthly_ready_rows_round_trip_through_sqlite_and_api(
     app = create_app(_settings(connection_string, artifact_root))
     provider = FixedTenantBackendProvider({"production": backend})
     with (
+        patch("core.preview.service.datetime", _frozen_service_datetime(frozen_now)),
         patch("core.api.app.ApiTenantBackendProvider", return_value=provider),
         SameThreadApiClient(app) as client,
     ):
@@ -764,6 +792,10 @@ def test_already_normalized_current_package_is_byte_identical_across_supported_u
     app = create_app(_settings(connection_string, artifact_root))
     provider = FixedTenantBackendProvider({"production": backend})
     with (
+        patch(
+            "core.preview.service.datetime",
+            _frozen_service_datetime(datetime(2026, 7, 23, tzinfo=UTC)),
+        ),
         patch("core.api.app.ApiTenantBackendProvider", return_value=provider),
         SameThreadApiClient(app) as client,
     ):
@@ -807,6 +839,10 @@ def test_already_normalized_current_package_is_byte_identical_across_supported_u
     upgraded_app = create_app(_settings(connection_string, artifact_root))
     upgraded_provider = FixedTenantBackendProvider({"production": upgraded_backend})
     with (
+        patch(
+            "core.preview.service.datetime",
+            _frozen_service_datetime(datetime(2026, 7, 23, tzinfo=UTC)),
+        ),
         patch("core.api.app.ApiTenantBackendProvider", return_value=upgraded_provider),
         SameThreadApiClient(upgraded_app) as client,
     ):

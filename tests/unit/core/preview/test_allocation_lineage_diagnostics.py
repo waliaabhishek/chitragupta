@@ -50,6 +50,20 @@ def _backend(tmp_path: Path, name: str = "preview.db") -> SQLModelBackend:
     return backend
 
 
+def _uncalculated_state() -> PipelineState:
+    return PipelineState(
+        ecosystem="confluent_cloud",
+        tenant_id="tenant-1",
+        tracking_date=date(2026, 7, 1),
+        billing_gathered=True,
+        resources_gathered=True,
+        chargeback_calculated=False,
+        calculation_id=None,
+        calculation_completed_at=None,
+        calculation_run_id=None,
+    )
+
+
 def _persist_legacy_source(backend: SQLModelBackend) -> None:
     from plugins.confluent_cloud.storage.repositories import _source_to_table
 
@@ -538,18 +552,23 @@ def _persist_invalid_lineage(backend: SQLModelBackend) -> None:
         uow.commit()
 
 
-def test_bootstrapped_legacy_source_association_reaches_missing_lineage_diagnostic(tmp_path: Path) -> None:
+def test_bootstrapped_legacy_source_without_current_calculation_reaches_pending_cutoff(
+    tmp_path: Path,
+) -> None:
     backend = _backend(tmp_path)
-    _seed(backend, aggregate=_aggregate())
+    _seed(backend, aggregate=_aggregate(), state=_uncalculated_state())
     _persist_legacy_source(backend)
     _bootstrap_legacy_source(backend)
 
     failed = _run_failure(tmp_path, backend)
 
-    assert failed.diagnostic.code == "preview_allocation_lineage_incomplete"
-    assert failed.diagnostic.message == "Persisted allocation lineage is incomplete for one or more billing origins."
-    assert failed.diagnostic.retryable is False
-    assert len(failed.diagnostic.source_correlation_ids) == 1
+    assert failed.diagnostic.code == "calculation_pending_cutoff_window"
+    assert failed.diagnostic.message == (
+        "One or more requested dates are still inside the configured acquisition cutoff window; "
+        "wait for the dates to enter the acquisition window, run the pipeline, and retry."
+    )
+    assert failed.diagnostic.retryable is True
+    assert failed.diagnostic.source_correlation_ids == ()
     backend.dispose()
 
 
@@ -1232,7 +1251,7 @@ def test_bootstrapped_legacy_association_then_lineage_recalculation_recovers_wit
     tmp_path: Path,
 ) -> None:
     backend = _backend(tmp_path, "legacy-recovery.db")
-    _seed(backend, aggregate=_aggregate())
+    _seed(backend, aggregate=_aggregate(), state=_uncalculated_state())
     _persist_legacy_source(backend)
     _bootstrap_legacy_source(backend)
     plugin = ConfluentCloudPlugin()
