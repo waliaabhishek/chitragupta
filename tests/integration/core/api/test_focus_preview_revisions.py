@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import date
@@ -8,11 +9,14 @@ from importlib import import_module
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import patch
+from uuid import UUID
 
 import anyio
 import anyio.to_thread
 import httpx
 import pytest
+from fastapi import HTTPException
 
 from core.api.app import create_app
 from core.config.models import (
@@ -870,3 +874,46 @@ def test_backend_protocol_narrowing_and_current_read_failure_share_storage_503(t
     assert wrong_backend.json() == expected
     assert failed_read.json() == expected
     assert "private database detail" not in failed_read.text
+
+
+def test_revision_wrapper_preserves_intentional_downstream_http_exception(
+    tmp_path: Path,
+) -> None:
+    with _client(tmp_path, current=_revision()) as (client, _reader):
+        provider = client.app.state.backend_provider
+        assert isinstance(provider, FixedTenantBackendProvider)
+        with patch(
+            "core.api.routes.focus_preview._current_revision",
+            side_effect=HTTPException(503, detail="intentional revision sentinel"),
+        ):
+            response = client.get("/api/v1/tenants/new-label/focus-preview/revisions/current?month=2026-07")
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "intentional revision sentinel"}
+    assert provider.lease_events == [("enter", "new-label"), ("exit", "new-label")]
+
+
+def test_unexpected_revision_exception_reaches_global_handler_without_storage_classification(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    app = create_app(_settings(tmp_path))
+    route_error = RuntimeError("private revision route value")
+    with SameThreadApiClient(app, raise_server_exceptions=False) as client:
+        provider = install_backend(app, "new-label", _Backend())
+        app.state.preview_revision_reader = _Reader(_revision())
+        with (
+            patch("core.api.routes.focus_preview._current_revision", side_effect=route_error),
+            patch("core.api.exception_handler.logger.exception") as log_exception,
+            caplog.at_level(logging.ERROR, logger="core.api.routes.focus_preview"),
+        ):
+            response = client.get("/api/v1/tenants/new-label/focus-preview/revisions/current?month=2026-07")
+
+    assert response.status_code == 500
+    body = response.json()
+    assert body["detail"] == "Internal server error"
+    assert set(body) == {"detail", "error_id"}
+    assert str(UUID(body["error_id"])) == body["error_id"]
+    assert log_exception.call_args.kwargs["exc_info"] is route_error
+    assert provider.lease_events == [("enter", "new-label"), ("exit", "new-label")]
+    assert "FOCUS Mapping Preview backend creation failed" not in caplog.text

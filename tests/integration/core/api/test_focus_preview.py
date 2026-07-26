@@ -18,10 +18,12 @@ from threading import Event, Thread
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, patch
+from uuid import UUID
 
 import anyio.to_thread
 import httpx
 import pytest
+from fastapi import HTTPException
 from sqlalchemy import text
 from sqlmodel import Session
 
@@ -46,6 +48,7 @@ from tests.unit.core.preview.test_service import (
 from tests.unit.plugins.confluent_cloud.test_preview_bootstrap import _seed_legacy_source
 
 if TYPE_CHECKING:
+    from core.storage.interface import StorageBackend
     from plugins.confluent_cloud.models.billing import CCloudCostSourceRecord
 
 
@@ -178,6 +181,51 @@ def _settings(tmp_path: Path, *, ecosystem: str = "confluent_cloud") -> AppSetti
 def _client(settings: AppSettings):
     app = create_app(settings)
     return app, SameThreadApiClient(app)
+
+
+def _create_preview_backend(settings: AppSettings) -> SQLModelBackend:
+    backend = SQLModelBackend(
+        settings.tenants["production"].storage.connection_string.get_secret_value(),
+        CCloudStorageModule(),
+        use_migrations=False,
+        focus_preview_enabled=True,
+    )
+    backend.create_tables()
+    return backend
+
+
+class _ExitFailingTenantBackendProvider(FixedTenantBackendProvider):
+    def __init__(self, backend: StorageBackend, exit_error: BaseException) -> None:
+        super().__init__({"production": backend})
+        self.exit_error = exit_error
+
+    @contextmanager
+    def acquire_backend(
+        self,
+        tenant_name: str,
+        tenant_config: TenantConfig,
+    ) -> Iterator[StorageBackend]:
+        del tenant_config
+        self.acquisitions.append(tenant_name)
+        self.lease_events.append(("enter", tenant_name))
+        try:
+            yield self.backends[tenant_name]
+        finally:
+            self.lease_events.append(("exit", tenant_name))
+            raise self.exit_error
+
+
+def _assert_global_500(
+    response: httpx.Response,
+    log_exception: MagicMock,
+    expected_error: BaseException,
+) -> None:
+    assert response.status_code == 500
+    body = response.json()
+    assert body["detail"] == "Internal server error"
+    assert set(body) == {"detail", "error_id"}
+    assert str(UUID(body["error_id"])) == body["error_id"]
+    assert log_exception.call_args.kwargs["exc_info"] is expected_error
 
 
 def _body() -> dict[str, str]:
@@ -461,16 +509,28 @@ def test_get_runtime_unavailable_precedes_storage_and_not_found(tmp_path: Path, 
 
 
 @pytest.mark.parametrize("suffix", ["", "/manifest", "/files/cost-and-usage.csv", "/archive"])
-def test_storage_unavailable_precedes_request_lookup(tmp_path: Path, suffix: str) -> None:
+def test_storage_unavailable_precedes_request_lookup(
+    tmp_path: Path,
+    suffix: str,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    private_value = "private-invalid-backend-value"
+    invalid_backend = SimpleNamespace(private_value=private_value)
     app, client = _client(_settings(tmp_path))
     with client:
-        provider = FixedTenantBackendProvider({"production": object()})  # type: ignore[dict-item]
+        provider = FixedTenantBackendProvider({"production": invalid_backend})  # type: ignore[dict-item]
         app.state.backend_provider = provider
-        response = client.get(f"/api/v1/tenants/production/focus-preview/requests/missing{suffix}")
+        with caplog.at_level(logging.ERROR, logger="core.api.routes.focus_preview"):
+            response = client.get(f"/api/v1/tenants/production/focus-preview/requests/missing{suffix}")
 
     assert response.status_code == 503
     assert response.json() == {"detail": "FOCUS Mapping Preview storage is unavailable"}
     assert provider.acquisitions == ["production"]
+    assert provider.lease_events == [("enter", "production"), ("exit", "production")]
+    assert "FOCUS Mapping Preview backend protocol validation failed" in caplog.text
+    assert "FOCUS Mapping Preview backend creation failed" not in caplog.text
+    assert private_value not in response.text
+    assert private_value not in caplog.text
 
 
 @pytest.mark.parametrize(
@@ -487,16 +547,158 @@ def test_backend_construction_exception_is_exact_storage_503(
     tmp_path: Path,
     method: str,
     path: str,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
+    private_value = "private-acquisition-value"
+    acquisition_error = RuntimeError(private_value)
+    lease = MagicMock()
+    lease.__enter__.side_effect = acquisition_error
     app, client = _client(_settings(tmp_path))
     with client:
         provider = FixedTenantBackendProvider()
         app.state.backend_provider = provider
-        response = getattr(client, method)(path, json=_body()) if method == "post" else getattr(client, method)(path)
+        with (
+            patch.object(provider, "acquire_backend", return_value=lease) as acquire_backend,
+            caplog.at_level(logging.ERROR, logger="core.api.routes.focus_preview"),
+        ):
+            response = (
+                getattr(client, method)(path, json=_body()) if method == "post" else getattr(client, method)(path)
+            )
 
     assert response.status_code == 503
     assert response.json() == {"detail": "FOCUS Mapping Preview storage is unavailable"}
-    assert "sentinel" not in response.text
+    acquire_backend.assert_called_once()
+    lease.__enter__.assert_called_once_with()
+    lease.__exit__.assert_not_called()
+    assert "FOCUS Mapping Preview backend creation failed tenant=production error_type=RuntimeError" in caplog.text
+    assert "backend protocol validation failed" not in caplog.text
+    assert "backend lease release failed" not in caplog.text
+    assert private_value not in response.text
+    assert private_value not in caplog.text
+
+
+def test_unexpected_requested_exception_reaches_global_handler_with_identity(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    settings = _settings(tmp_path)
+    backend = _create_preview_backend(settings)
+    route_error = RuntimeError("private requested route value")
+    app = create_app(settings)
+    provider = FixedTenantBackendProvider({"production": backend})
+    try:
+        with (
+            patch("core.api.app.ApiTenantBackendProvider", return_value=provider),
+            SameThreadApiClient(app, raise_server_exceptions=False) as client,
+        ):
+            provider.acquisitions.clear()
+            provider.lease_events.clear()
+            with (
+                patch.object(app.state.preview_runtime, "get_request", side_effect=route_error),
+                patch("core.api.exception_handler.logger.exception") as log_exception,
+                caplog.at_level(logging.ERROR, logger="core.api.routes.focus_preview"),
+            ):
+                response = client.get("/api/v1/tenants/production/focus-preview/requests/request-sentinel")
+
+        _assert_global_500(response, log_exception, route_error)
+        assert provider.lease_events == [("enter", "production"), ("exit", "production")]
+        assert "FOCUS Mapping Preview backend creation failed" not in caplog.text
+    finally:
+        backend.dispose()
+
+
+def test_intentional_requested_http_exception_is_preserved_and_releases_lease(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path)
+    backend = _create_preview_backend(settings)
+    app, client = _client(settings)
+    provider = FixedTenantBackendProvider({"production": backend})
+    try:
+        with patch("core.api.app.ApiTenantBackendProvider", return_value=provider), client:
+            provider.acquisitions.clear()
+            provider.lease_events.clear()
+            with patch.object(
+                app.state.preview_runtime,
+                "get_request",
+                side_effect=HTTPException(418, detail="intentional preview sentinel"),
+            ):
+                response = client.get("/api/v1/tenants/production/focus-preview/requests/request-sentinel")
+
+        assert response.status_code == 418
+        assert response.json() == {"detail": "intentional preview sentinel"}
+        assert provider.lease_events == [("enter", "production"), ("exit", "production")]
+    finally:
+        backend.dispose()
+
+
+def test_lease_cleanup_failure_cannot_mask_requested_route_exception(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    settings = _settings(tmp_path)
+    backend = _create_preview_backend(settings)
+    route_error = RuntimeError("private primary route value")
+    cleanup_error = OSError("private cleanup value")
+    provider = _ExitFailingTenantBackendProvider(backend, cleanup_error)
+    startup_provider = FixedTenantBackendProvider({"production": backend})
+    app = create_app(settings)
+    try:
+        with (
+            patch("core.api.app.ApiTenantBackendProvider", return_value=startup_provider),
+            SameThreadApiClient(app, raise_server_exceptions=False) as client,
+        ):
+            app.state.backend_provider = provider
+            app.state.preview_runtime._backend_provider = provider
+            with (
+                patch.object(app.state.preview_runtime, "get_request", side_effect=route_error),
+                patch("core.api.exception_handler.logger.exception") as log_exception,
+                caplog.at_level(logging.ERROR, logger="core.api.routes.focus_preview"),
+            ):
+                response = client.get("/api/v1/tenants/production/focus-preview/requests/request-sentinel")
+
+        _assert_global_500(response, log_exception, route_error)
+        assert provider.lease_events == [("enter", "production"), ("exit", "production")]
+        assert (
+            "FOCUS Mapping Preview backend lease release failed "
+            "tenant=production primary_error_type=RuntimeError release_error_type=OSError"
+        ) in caplog.text
+        assert "private primary route value" not in caplog.text
+        assert "private cleanup value" not in caplog.text
+        assert "FOCUS Mapping Preview backend creation failed" not in caplog.text
+    finally:
+        backend.dispose()
+
+
+def test_lease_cleanup_failure_after_success_reaches_global_handler_with_identity(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    settings = _settings(tmp_path)
+    backend = _create_preview_backend(settings)
+    cleanup_error = OSError("private successful-route cleanup value")
+    provider = _ExitFailingTenantBackendProvider(backend, cleanup_error)
+    startup_provider = FixedTenantBackendProvider({"production": backend})
+    app = create_app(settings)
+    try:
+        with (
+            patch("core.api.app.ApiTenantBackendProvider", return_value=startup_provider),
+            SameThreadApiClient(app, raise_server_exceptions=False) as client,
+        ):
+            app.state.backend_provider = provider
+            app.state.preview_runtime._backend_provider = provider
+            with (
+                patch("core.api.exception_handler.logger.exception") as log_exception,
+                caplog.at_level(logging.ERROR, logger="core.api.routes.focus_preview"),
+            ):
+                response = client.get("/api/v1/tenants/production/focus-preview/requests")
+
+        _assert_global_500(response, log_exception, cleanup_error)
+        assert provider.lease_events == [("enter", "production"), ("exit", "production")]
+        assert "FOCUS Mapping Preview backend creation failed" not in caplog.text
+        assert "private successful-route cleanup value" not in caplog.text
+    finally:
+        backend.dispose()
 
 
 def test_post_worker_unavailable_has_exact_503_body(tmp_path: Path) -> None:

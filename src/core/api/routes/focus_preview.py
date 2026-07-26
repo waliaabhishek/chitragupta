@@ -5,7 +5,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Annotated, cast
+from typing import TYPE_CHECKING, Annotated, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response, StreamingResponse
@@ -57,6 +57,7 @@ from core.preview.models import (
     validate_preview_request_snapshot,
 )
 from core.preview.persistence import (
+    PreviewEffectiveColumnsMetadataMissingError,
     PreviewEvidenceStorageBackend,
     PreviewRequestCursorError,
     PreviewRevisionCursorError,
@@ -89,6 +90,11 @@ from core.preview.service import (
     PreviewWorkerUnavailable,
 )
 from core.storage.backend_provider import TenantBackendProvider  # noqa: TC001
+
+if TYPE_CHECKING:
+    from contextlib import AbstractContextManager
+
+    from core.storage.interface import StorageBackend
 
 router = APIRouter(prefix="/tenants/{tenant_name}/focus-preview", tags=["focus-preview"])
 logger = logging.getLogger(__name__)
@@ -160,26 +166,64 @@ def _repair_runtime(request: Request) -> PreviewRepairRuntime:
     return runtime
 
 
+def _release_preview_backend_lease(
+    lease: AbstractContextManager[StorageBackend],
+    *,
+    tenant_name: str,
+    preserving: BaseException | None,
+) -> None:
+    try:
+        if preserving is None:
+            lease.__exit__(None, None, None)
+        else:
+            lease.__exit__(type(preserving), preserving, preserving.__traceback__)
+    except BaseException as release_error:
+        if preserving is None:
+            raise
+        logger.error(
+            "FOCUS Mapping Preview backend lease release failed tenant=%s primary_error_type=%s release_error_type=%s",
+            tenant_name,
+            type(preserving).__name__,
+            type(release_error).__name__,
+        )
+
+
 @contextmanager
 def _preview_backend(
     provider: TenantBackendProvider,
     tenant_name: str,
     tenant_config: TenantConfig,
+    *,
+    unavailable_detail: str = "FOCUS Mapping Preview storage is unavailable",
 ) -> Iterator[PreviewStorageBackend]:
     try:
-        with provider.acquire_backend(tenant_name, tenant_config) as backend:
-            if not isinstance(backend, PreviewStorageBackend):
-                raise HTTPException(503, detail="FOCUS Mapping Preview storage is unavailable")
-            yield backend
+        lease = provider.acquire_backend(tenant_name, tenant_config)
+        backend = lease.__enter__()
     except Exception as exc:
-        if isinstance(exc, HTTPException):
-            raise
         logger.error(
             "FOCUS Mapping Preview backend creation failed tenant=%s error_type=%s",
             tenant_name,
             type(exc).__name__,
         )
-        raise HTTPException(503, detail="FOCUS Mapping Preview storage is unavailable") from None
+        raise HTTPException(503, detail=unavailable_detail) from None
+
+    if not isinstance(backend, PreviewStorageBackend):
+        error = HTTPException(503, detail=unavailable_detail)
+        logger.error(
+            "FOCUS Mapping Preview backend protocol validation failed tenant=%s backend_type=%s",
+            tenant_name,
+            type(backend).__name__,
+        )
+        _release_preview_backend_lease(lease, tenant_name=tenant_name, preserving=error)
+        raise error
+
+    try:
+        yield backend
+    except BaseException as exc:
+        _release_preview_backend_lease(lease, tenant_name=tenant_name, preserving=exc)
+        raise
+    else:
+        _release_preview_backend_lease(lease, tenant_name=tenant_name, preserving=None)
 
 
 @contextmanager
@@ -216,16 +260,13 @@ def _revision_backend(
     tenant_name: str,
     tenant_config: TenantConfig,
 ) -> Iterator[PreviewStorageBackend]:
-    try:
-        with _preview_backend(provider, tenant_name, tenant_config) as backend:
-            yield backend
-    except HTTPException as exc:
-        if exc.status_code == 503:
-            raise HTTPException(
-                503,
-                detail="FOCUS Mapping Preview revision storage is unavailable",
-            ) from None
-        raise
+    with _preview_backend(
+        provider,
+        tenant_name,
+        tenant_config,
+        unavailable_detail="FOCUS Mapping Preview revision storage is unavailable",
+    ) as backend:
+        yield backend
 
 
 def _check_ecosystem(tenant_config: TenantConfig) -> None:
@@ -549,12 +590,15 @@ def _lookup(
         )
     except PreviewRecoveryUnavailable:
         raise HTTPException(503, detail="FOCUS Mapping Preview recovery is unavailable") from None
-    preview = runtime.get_request(
-        backend=backend,
-        request_id=request_id,
-        ecosystem=tenant_config.ecosystem,
-        tenant_id=tenant_config.tenant_id,
-    )
+    try:
+        preview = runtime.get_request(
+            backend=backend,
+            request_id=request_id,
+            ecosystem=tenant_config.ecosystem,
+            tenant_id=tenant_config.tenant_id,
+        )
+    except PreviewEffectiveColumnsMetadataMissingError:
+        raise HTTPException(503, detail="FOCUS Mapping Preview storage is unavailable") from None
     if preview is None:
         raise HTTPException(404, detail=f"Preview request {request_id!r} not found")
     return runtime, preview
