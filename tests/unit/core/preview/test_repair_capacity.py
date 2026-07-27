@@ -121,6 +121,37 @@ def _row_counts(backend: SQLModelBackend) -> tuple[int, int, int]:
         )
 
 
+def test_create_queued_same_tenant_raises_dedicated_active_error_without_persistence(
+    capacity_backend: SQLModelBackend,
+) -> None:
+    runner = _BlockingRunner()
+    runtime, tenants = _runtime(capacity_backend, runner, workers=1, waiting=0)
+    repair = _repair_module()
+    try:
+        runtime.create_queued(
+            backend=capacity_backend,
+            tenant_name="one",
+            tenant_config=tenants["one"],
+            start_date=date(2026, 7, 1),
+            end_date=date(2026, 7, 2),
+            created_at=datetime(2026, 7, 24, tzinfo=UTC),
+        )
+
+        with pytest.raises(repair.PreviewRepairAlreadyActiveError):
+            runtime.create_queued(
+                backend=capacity_backend,
+                tenant_name="one",
+                tenant_config=tenants["one"],
+                start_date=date(2026, 7, 1),
+                end_date=date(2026, 7, 2),
+                created_at=datetime(2026, 7, 24, tzinfo=UTC),
+            )
+
+        assert _row_counts(capacity_backend) == (1, 1, 1)
+    finally:
+        runtime.close(wait=True)
+
+
 def test_zero_wait_capacity_admits_only_available_running_position(
     capacity_backend: SQLModelBackend,
 ) -> None:
@@ -169,11 +200,12 @@ def test_same_tenant_active_conflict_precedes_global_capacity(
 ) -> None:
     runner = _BlockingRunner()
     runtime, tenants = _runtime(capacity_backend, runner, workers=1, waiting=0)
+    repair = _repair_module()
     try:
         _submit(runtime, capacity_backend, "one", tenants["one"])
         assert runner.started_event.wait(timeout=2)
 
-        with pytest.raises(RuntimeError, match="active_repair"):
+        with pytest.raises(repair.PreviewRepairAlreadyActiveError):
             _submit(runtime, capacity_backend, "one", tenants["one"])
 
         assert _row_counts(capacity_backend) == (1, 1, 1)
@@ -292,12 +324,13 @@ def test_close_prevents_new_admission_and_drains_accepted_work(
 ) -> None:
     runner = _BlockingRunner()
     runtime, tenants = _runtime(capacity_backend, runner, workers=1, waiting=1)
+    repair = _repair_module()
     _submit(runtime, capacity_backend, "one", tenants["one"])
     assert runner.started_event.wait(timeout=2)
     _submit(runtime, capacity_backend, "two", tenants["two"])
 
     runtime.close(wait=False)
-    with pytest.raises(RuntimeError, match="active_repair"):
+    with pytest.raises(repair.PreviewRepairAlreadyActiveError):
         _submit(runtime, capacity_backend, "one", tenants["one"])
     with pytest.raises(RuntimeError, match="worker|closed"):
         _submit(runtime, capacity_backend, "three", tenants["three"])

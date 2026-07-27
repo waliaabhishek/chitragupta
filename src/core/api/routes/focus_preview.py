@@ -65,6 +65,7 @@ from core.preview.persistence import (
 )
 from core.preview.repair import (
     PreviewRepair,
+    PreviewRepairAlreadyActiveError,
     PreviewRepairCapacityUnavailable,
     PreviewRepairRuntime,
     PreviewRepairWorkerUnavailableError,
@@ -726,9 +727,7 @@ def submit_repair(
                 503,
                 detail="FOCUS Mapping Preview repair worker is unavailable",
             ) from None
-        except RuntimeError as exc:
-            if str(exc) != "active_repair":
-                raise
+        except PreviewRepairAlreadyActiveError:
             raise HTTPException(
                 409,
                 detail={

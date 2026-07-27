@@ -54,6 +54,10 @@ class PreviewRepairWorkerConflictError(RuntimeError):
     """A guarded repair transition lost ownership to incompatible durable state."""
 
 
+class PreviewRepairAlreadyActiveError(RuntimeError):
+    """A queued or running repair already exists for the requested tenant."""
+
+
 class PreviewRepairCapacityUnavailable(RuntimeError):  # noqa: N818 - public contract name
     """The process-local repair scheduler has no running or waiting capacity."""
 
@@ -512,7 +516,7 @@ class PreviewRepairRuntime:
         )
         with self._submission_lock, backend.create_preview_evidence_unit_of_work() as uow:
             if uow.repairs.find_active_for_owner(operation.ecosystem, operation.tenant_id) is not None:
-                raise RuntimeError("active_repair")
+                raise PreviewRepairAlreadyActiveError("active_repair")
             created = uow.repairs.create_queued(operation)
             uow.commit()
         return created
@@ -548,7 +552,7 @@ class PreviewRepairRuntime:
             )
             with backend.create_preview_evidence_unit_of_work() as uow:
                 if uow.repairs.find_active_for_owner(operation.ecosystem, operation.tenant_id) is not None:
-                    raise RuntimeError("active_repair")
+                    raise PreviewRepairAlreadyActiveError("active_repair")
                 with self._condition:
                     if self._closed:
                         raise PreviewRepairWorkerUnavailableError("repair worker is unavailable")

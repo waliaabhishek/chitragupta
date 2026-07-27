@@ -319,6 +319,28 @@ class _ControlledRepairExecutor:
         del wait
 
 
+class _RecordingTenantBackendProvider:
+    def __init__(self, backend: SQLModelBackend) -> None:
+        self.backend = backend
+        self.received_exception: BaseException | None = None
+
+    @contextmanager
+    def acquire_backend(
+        self,
+        tenant_name: str,
+        tenant_config: TenantConfig,
+    ) -> Iterator[SQLModelBackend]:
+        del tenant_name, tenant_config
+        try:
+            yield self.backend
+        except BaseException as exc:
+            self.received_exception = exc
+            raise
+
+    def close(self) -> None:
+        return None
+
+
 def _direct_repair_runtime(
     *,
     backend: SQLModelBackend,
@@ -345,6 +367,17 @@ def _direct_request(runtime: object, runner: object) -> Request:
         )
     )
     return Request({"type": "http", "app": app})
+
+
+def _raise_on_submit(
+    monkeypatch: pytest.MonkeyPatch,
+    runtime: object,
+    error: BaseException,
+) -> None:
+    def raise_error(**_kwargs: object) -> object:
+        raise error
+
+    monkeypatch.setattr(runtime, "submit", raise_error)
 
 
 def test_direct_api_busy_precedes_queue_creation_with_exact_body(tmp_path: Path) -> None:
@@ -393,6 +426,107 @@ def test_direct_api_busy_precedes_queue_creation_with_exact_body(tmp_path: Path)
             )
     finally:
         runtime.close(wait=True)
+        backend.dispose()
+
+
+def test_direct_api_dedicated_active_error_message_does_not_change_conflict_response(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from core.api.routes.focus_preview import submit_repair
+    from core.api.schemas import FocusPreviewRepairRequestBody
+    from core.preview import repair
+
+    settings = AppSettings(tenants={"enabled": _tenant(tmp_path)})
+    backend = SQLModelBackend(
+        f"sqlite:///{tmp_path / 'altered-active-message.db'}",
+        CCloudStorageModule(),
+        use_migrations=False,
+        focus_preview_enabled=True,
+    )
+    backend.create_tables()
+    runner = _ProductionRunnerDouble(backend, [])
+    runtime = _direct_repair_runtime(
+        backend=backend,
+        runner=runner,
+        executor=_ControlledRepairExecutor(),
+    )
+    _raise_on_submit(
+        monkeypatch,
+        runtime,
+        repair.PreviewRepairAlreadyActiveError("changed diagnostic wording"),
+    )
+    provider = _RecordingTenantBackendProvider(backend)
+    try:
+        with pytest.raises(HTTPException) as raised:
+            submit_repair(
+                _direct_request(runtime, runner),
+                Response(),
+                "enabled",
+                FocusPreviewRepairRequestBody(
+                    start_date=date(2026, 7, 1),
+                    end_date=date(2026, 7, 2),
+                ),
+                settings,
+                provider,
+            )
+
+        assert raised.value.status_code == 409
+        assert raised.value.detail == {
+            "code": "focus_preview_repair_in_progress",
+            "message": "A FOCUS Mapping Preview repair is already queued or running for this tenant.",
+            "retryable": True,
+        }
+    finally:
+        runtime.close(wait=True)
+        provider.close()
+        backend.dispose()
+
+
+def test_direct_api_generic_legacy_message_runtime_error_reaches_backend_boundary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from core.api.routes.focus_preview import submit_repair
+    from core.api.schemas import FocusPreviewRepairRequestBody
+
+    settings = AppSettings(tenants={"enabled": _tenant(tmp_path)})
+    backend = SQLModelBackend(
+        f"sqlite:///{tmp_path / 'generic-active-message.db'}",
+        CCloudStorageModule(),
+        use_migrations=False,
+        focus_preview_enabled=True,
+    )
+    backend.create_tables()
+    runner = _ProductionRunnerDouble(backend, [])
+    sentinel = RuntimeError("active_repair")
+    runtime = _direct_repair_runtime(
+        backend=backend,
+        runner=runner,
+        executor=_ControlledRepairExecutor(),
+    )
+    _raise_on_submit(monkeypatch, runtime, sentinel)
+    provider = _RecordingTenantBackendProvider(backend)
+    try:
+        with pytest.raises(HTTPException) as raised:
+            submit_repair(
+                _direct_request(runtime, runner),
+                Response(),
+                "enabled",
+                FocusPreviewRepairRequestBody(
+                    start_date=date(2026, 7, 1),
+                    end_date=date(2026, 7, 2),
+                ),
+                settings,
+                provider,
+            )
+
+        assert provider.received_exception is sentinel
+        assert raised.value.status_code == 503
+        assert raised.value.detail == "FOCUS Mapping Preview repair storage is unavailable"
+    finally:
+        runtime.close(wait=True)
+        provider.close()
         backend.dispose()
 
 
