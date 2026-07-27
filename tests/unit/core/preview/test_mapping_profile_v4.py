@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+from dataclasses import FrozenInstanceError
+from importlib import import_module
 from pathlib import Path
 
+import pytest
+
 from core.preview import mapping
+from tests.unit.core.preview.test_revision_mapping import EXPECTED_PUBLIC_KNOWN_GAPS
 
 RESOLVED_GAPS = {
     "allocation_lineage_and_tag_projection_pending",
@@ -31,6 +36,24 @@ TASK_254_05_LINE_TYPES = {
     "TABLEFLOW_NUM_TOPICS",
     "TABLEFLOW_STORAGE",
 }
+
+
+def test_focus_preview_capability_is_one_immutable_literal_authority() -> None:
+    capability_module = import_module("core.preview.capability")
+    validation = import_module("core.preview.manifest_validation")
+    capability = capability_module.FOCUS_PREVIEW_CAPABILITY
+
+    assert capability.mapping_profile_version == "focus-1.4-preview-v1"
+    assert capability.target_focus_version == "1.4"
+    assert capability.conformance_status == "non_conforming"
+    assert capability_module.preview_manifest_known_gaps() == EXPECTED_PUBLIC_KNOWN_GAPS
+    assert mapping.FOCUS_PREVIEW_CAPABILITY is capability
+    assert validation.FOCUS_PREVIEW_CAPABILITY is capability
+    assert capability.mapping_profile_version == mapping.MAPPING_PROFILE_VERSION
+    assert mapping.KNOWN_GAPS is capability.known_gaps
+    assert mapping.preview_manifest_known_gaps() == EXPECTED_PUBLIC_KNOWN_GAPS
+    with pytest.raises(FrozenInstanceError):
+        capability.target_focus_version = "1.5"  # type: ignore[misc]
 
 
 def test_profile_v4_resolves_only_task_254_05_gaps_and_makes_five_columns_applicable() -> None:

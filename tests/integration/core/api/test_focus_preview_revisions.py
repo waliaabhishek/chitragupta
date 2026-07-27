@@ -219,6 +219,11 @@ def _client(
         yield client, reader
 
 
+def _assert_target_contract(body: dict[str, object]) -> None:
+    assert body["target_focus_version"] == "1.4"
+    assert body["conformance_status"] == "non_conforming"
+
+
 def test_current_metadata_uses_live_route_label_and_guarded_urls(tmp_path: Path) -> None:
     revision = _revision(tenant_name_at_publication="old-label")
     with _client(tmp_path, current=revision) as (client, _reader):
@@ -226,6 +231,7 @@ def test_current_metadata_uses_live_route_label_and_guarded_urls(tmp_path: Path)
 
     assert response.status_code == 200
     body = response.json()
+    _assert_target_contract(body)
     assert body["tenant_name"] == "new-label"
     assert body["revision_id"] == "revision-1"
     assert body["self_url"].endswith("month=2026-07&revision_id=revision-1")
@@ -349,6 +355,8 @@ def test_history_lists_current_and_superseded_with_replacement_semantics(tmp_pat
         "revision-old",
     ]
     assert [item["lifecycle"] for item in body["items"]] == ["current", "superseded"]
+    for item in body["items"]:
+        _assert_target_contract(item)
     assert body["items"][0]["validation"] == {
         "status": "passed",
         "mapping_profile_version": "focus-1.4-preview-v1",
@@ -390,6 +398,7 @@ def test_direct_current_and_superseded_detail_and_artifacts_preserve_identity(
 
     assert detail.status_code == 200
     body = detail.json()
+    _assert_target_contract(body)
     assert body["revision_id"] == revision_id
     assert body["lifecycle"] == expected_lifecycle
     assert body["consumer_action"] == "replace_do_not_aggregate"

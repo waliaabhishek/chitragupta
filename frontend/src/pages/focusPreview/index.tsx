@@ -11,7 +11,7 @@ import {
   listFocusPreviewRevisions,
   submitFocusPreview,
   type FocusPreviewColumnProfile,
-  type FocusPreviewKnownGap,
+  type FocusPreviewProfile,
   type FocusPreviewRequest,
   type FocusPreviewRevision,
   type FocusPreviewRevisionSummary,
@@ -237,8 +237,9 @@ export function FocusPreviewPage({ now = () => new Date() }: FocusPreviewPagePro
   const [revisionMonth, setRevisionMonth] = useState(() => getCurrentUtcMonth(now()));
   const [columnProfile, setColumnProfile] = useState<FocusPreviewColumnProfile>("full");
   const [customColumns, setCustomColumns] = useState<string[]>([]);
-  const [fullColumns, setFullColumns] = useState<string[]>([]);
-  const [knownGaps, setKnownGaps] = useState<FocusPreviewKnownGap[]>([]);
+  const [profile, setProfile] = useState<FocusPreviewProfile | null>(null);
+  const fullColumns = profile?.full_columns ?? [];
+  const knownGaps = profile?.known_gaps ?? [];
   const [startDate, setStartDate] = useState(initialRange.startDate);
   const [endDate, setEndDate] = useState(initialRange.endDate);
   const [preview, setPreview] = useState<FocusPreviewRequest | null>(null);
@@ -293,7 +294,7 @@ export function FocusPreviewPage({ now = () => new Date() }: FocusPreviewPagePro
     setRevisionControlsVisible(false);
     setOperationError(null);
     setRevisionError(null);
-    setKnownGaps([]);
+    setProfile(null);
     if (!currentTenant || featureBlocked) return;
 
     const tenantName = currentTenant.tenant_name;
@@ -309,8 +310,7 @@ export function FocusPreviewPage({ now = () => new Date() }: FocusPreviewPagePro
     void fetchFocusPreviewProfile(tenantName, profileController.signal)
       .then((profile) => {
         if (!active(profileController)) return;
-        setFullColumns(profile.full_columns);
-        setKnownGaps(profile.known_gaps);
+        setProfile(profile);
       })
       .catch((error: unknown) => {
         if (active(profileController) && !isAbortError(error)) {
@@ -718,12 +718,14 @@ export function FocusPreviewPage({ now = () => new Date() }: FocusPreviewPagePro
           description={`Date progress: ${focusPreviewReadiness?.focus_preview_completed_repair_dates ?? 0} of ${focusPreviewReadiness?.focus_preview_total_repair_dates ?? 0} repair dates completed. Retry the failed dates with a new bounded historical repair. Existing valid Preview data remains available.`}
         />
       )}
-      <Alert
-        type="warning"
-        showIcon
-        message="Non-conforming preview"
-        description="Every generated manifest declares the current authority gaps."
-      />
+      {profile && (
+        <Alert
+          type="warning"
+          showIcon
+          message={`FOCUS Mapping Preview targets FOCUS ${profile.target_focus_version}`}
+          description={`Conformance status: ${profile.conformance_status}. Current authority gaps are listed below.`}
+        />
+      )}
       <section aria-labelledby="focus-preview-gaps">
         <Title id="focus-preview-gaps" level={4}>Current authority gaps</Title>
         <ul>

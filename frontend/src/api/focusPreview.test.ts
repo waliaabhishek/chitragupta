@@ -8,6 +8,8 @@ const API_BASE = `${API_ORIGIN}/api/v1`;
 const queued = {
   request_id: "request-1",
   tenant_name: "production",
+  target_focus_version: "1.4",
+  conformance_status: "non_conforming",
   grain: "daily",
   start_date: "2026-07-01",
   end_date: "2026-07-02",
@@ -77,6 +79,8 @@ const readyPackage = {
 const revisionSummary = {
   revision_id: "revision-2",
   tenant_name: "production",
+  target_focus_version: "1.4",
+  conformance_status: "non_conforming",
   month: "2026-07",
   start_date: "2026-07-01",
   end_date: "2026-08-01",
@@ -328,6 +332,8 @@ describe("FOCUS Mapping Preview API delegation", () => {
         `${API_BASE}/tenants/production/focus-preview/profile`,
         () => HttpResponse.json({
           mapping_profile_version: "focus-1.4-preview-v1",
+          target_focus_version: "1.4",
+          conformance_status: "non_conforming",
           full_columns: ["BilledCost"],
           summary_columns: ["BilledCost"],
           known_gaps: [
@@ -360,7 +366,11 @@ describe("FOCUS Mapping Preview API delegation", () => {
       controller.signal,
     )).resolves.toEqual(revisionDetail);
     await expect(fetchFocusPreviewProfile("production"))
-      .resolves.toMatchObject({ mapping_profile_version: "focus-1.4-preview-v1" });
+      .resolves.toMatchObject({
+        mapping_profile_version: "focus-1.4-preview-v1",
+        target_focus_version: "1.4",
+        conformance_status: "non_conforming",
+      });
     await expect(fetchPreviewArtifact(
       revisionDetail.package.manifest.download_url,
       controller.signal,
@@ -403,6 +413,8 @@ describe("FOCUS Mapping Preview API delegation", () => {
           seen.push(request.url);
           return HttpResponse.json({
             mapping_profile_version: "focus-1.4-preview-v1",
+            target_focus_version: "1.4",
+            conformance_status: "non_conforming",
             full_columns: ["BilledCost"],
             summary_columns: ["BilledCost"],
             known_gaps: [

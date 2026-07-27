@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 interface CrossClientFixture {
+  profile: Record<string, unknown>;
   status: Record<string, unknown>;
   bodies: Record<string, string>;
 }
@@ -23,6 +24,8 @@ acceptance("FOCUS Preview real-package cross-client fixture", () => {
 
   it("retrieves the captured package through the production API adapter without changing bytes", async () => {
     const fixture = JSON.parse(atob(encodedFixture as string)) as CrossClientFixture;
+    const profilePath =
+      "/api/v1/tenants/production/focus-preview/profile";
     const status = fixture.status as {
       request_id: string;
       package: {
@@ -36,6 +39,12 @@ acceptance("FOCUS Preview real-package cross-client fixture", () => {
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
         const url = new URL(String(input), "http://localhost");
+        if (url.pathname === profilePath) {
+          return new Response(JSON.stringify(fixture.profile), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
         if (url.pathname === statusPath) {
           return new Response(JSON.stringify(fixture.status), {
             status: 200,
@@ -53,11 +62,17 @@ acceptance("FOCUS Preview real-package cross-client fixture", () => {
     );
     const adapter = await import("./focusPreview");
 
+    const profile = await adapter.fetchFocusPreviewProfile("production");
     const fetched = await adapter.fetchFocusPreviewStatus(
       "production",
       status.request_id,
     );
+    expect(profile).toEqual(fixture.profile);
     expect(fetched).toEqual(fixture.status);
+    expect(profile.target_focus_version).toBe("1.4");
+    expect(profile.conformance_status).toBe("non_conforming");
+    expect(fetched.target_focus_version).toBe(profile.target_focus_version);
+    expect(fetched.conformance_status).toBe(profile.conformance_status);
     for (const artifact of [
       fetched.package!.manifest,
       ...fetched.package!.files,
@@ -68,8 +83,15 @@ acceptance("FOCUS Preview real-package cross-client fixture", () => {
       if (artifact.download_url === fetched.package!.manifest.download_url) {
         const manifestText = new TextDecoder().decode(bytes);
         const manifest = JSON.parse(manifestText) as {
+          target_focus_version: string;
+          conformance_status: string;
           known_gaps: Array<Record<string, unknown>>;
         };
+        expect(manifest.target_focus_version).toBe(
+          profile.target_focus_version,
+        );
+        expect(manifest.conformance_status).toBe(profile.conformance_status);
+        expect(manifest.known_gaps).toEqual(profile.known_gaps);
         expect(manifest.known_gaps).toHaveLength(6);
         for (const gap of manifest.known_gaps) {
           expect(Object.keys(gap).sort()).toEqual([

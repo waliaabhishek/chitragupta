@@ -18,6 +18,8 @@ from urllib.parse import urljoin, urlparse, urlunparse
 
 import httpx as _httpx
 
+from core.preview.capability import FOCUS_PREVIEW_CAPABILITY
+
 logger = logging.getLogger(__name__)
 
 _TERMINAL_STATUSES = frozenset({"ready", "failed", "expired"})
@@ -95,17 +97,24 @@ def _add_result_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--json", action="store_true")
 
 
+def _capability_description() -> str:
+    capability = FOCUS_PREVIEW_CAPABILITY
+    display_status = capability.conformance_status.replace("_", "-")
+    return f"FOCUS Mapping Preview targets FOCUS {capability.target_focus_version}; generated data is {display_status}."
+
+
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="chitragupta-preview")
+    description = _capability_description()
+    parser = argparse.ArgumentParser(prog="chitragupta-preview", description=description)
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    daily = subparsers.add_parser("daily-full")
+    daily = subparsers.add_parser("daily-full", help=description, description=description)
     _add_connection_arguments(daily)
     daily.add_argument("--start-date", required=True)
     daily.add_argument("--end-date", required=True)
     daily.add_argument("--output-dir", required=True, type=_local_path)
 
-    request = subparsers.add_parser("request")
+    request = subparsers.add_parser("request", help=description, description=description)
     _add_connection_arguments(request)
     request.add_argument("--month")
     request.add_argument("--start-date")
@@ -118,13 +127,13 @@ def _parser() -> argparse.ArgumentParser:
     request_output.add_argument("--output-dir", type=_local_path)
     request_output.add_argument("--archive")
 
-    status = subparsers.add_parser("status")
+    status = subparsers.add_parser("status", help=description, description=description)
     _add_connection_arguments(status)
     status.add_argument("request_id")
     status.add_argument("--wait", action="store_true")
     _add_result_arguments(status)
 
-    download = subparsers.add_parser("download")
+    download = subparsers.add_parser("download", help=description, description=description)
     _add_connection_arguments(download)
     download.add_argument("request_id")
     download_output = download.add_mutually_exclusive_group(required=True)
@@ -134,14 +143,14 @@ def _parser() -> argparse.ArgumentParser:
     download.add_argument("--output", type=_local_path)
     _add_result_arguments(download)
 
-    revisions = subparsers.add_parser("revisions")
+    revisions = subparsers.add_parser("revisions", help=description, description=description)
     _add_connection_arguments(revisions)
     revisions.add_argument("--month", required=True)
     revisions.add_argument("--limit", type=int, default=20)
     revisions.add_argument("--cursor")
     _add_result_arguments(revisions)
 
-    revision = subparsers.add_parser("revision")
+    revision = subparsers.add_parser("revision", help=description, description=description)
     _add_connection_arguments(revision)
     revision.add_argument("revision_id")
     revision_output = revision.add_mutually_exclusive_group()

@@ -87,6 +87,8 @@ def _revision_detail(
     detail: dict[str, object] = {
         "revision_id": revision_id,
         "tenant_name": "production",
+        "target_focus_version": "1.4",
+        "conformance_status": "non_conforming",
         "month": "2026-07",
         "start_date": "2026-07-01",
         "end_date": "2026-08-01",
@@ -131,6 +133,8 @@ def _history_page() -> dict[str, object]:
     summary_keys = {
         "revision_id",
         "tenant_name",
+        "target_focus_version",
+        "conformance_status",
         "month",
         "start_date",
         "end_date",

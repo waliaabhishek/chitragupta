@@ -38,12 +38,12 @@ from core.preview.artifacts import (  # noqa: TC001 - used by FastAPI route help
     find_preview_artifact_metadata,
     preview_artifact_owner,
 )
+from core.preview.capability import FOCUS_PREVIEW_CAPABILITY
 from core.preview.capacity import PreviewCapacityUnavailable
 from core.preview.eligibility import COMMERCIAL_PROFILE_UNAVAILABLE, diagnostic_detail
 from core.preview.mapping import (
     FOCUS_1_4_FULL_PROFILE_COLUMNS,
     FOCUS_1_4_SUMMARY_COLUMNS,
-    MAPPING_PROFILE_VERSION,
     preview_manifest_known_gaps,
 )
 from core.preview.models import (
@@ -351,6 +351,8 @@ def _serialize(request: PreviewRequest) -> FocusPreviewStatusResponse:
     return FocusPreviewStatusResponse(
         request_id=request.request_id,
         tenant_name=request.tenant_name,
+        target_focus_version=FOCUS_PREVIEW_CAPABILITY.target_focus_version,
+        conformance_status=FOCUS_PREVIEW_CAPABILITY.conformance_status,
         grain=request.grain,
         start_date=request.start_date,
         end_date=request.end_date,
@@ -457,6 +459,8 @@ def _serialize_revision_summary(
     return FocusPreviewRevisionSummaryResponse(
         revision_id=revision.revision_id,
         tenant_name=tenant_name,
+        target_focus_version=FOCUS_PREVIEW_CAPABILITY.target_focus_version,
+        conformance_status=FOCUS_PREVIEW_CAPABILITY.conformance_status,
         month=revision.month,
         start_date=revision.start_date,
         end_date=revision.end_date,
@@ -631,7 +635,9 @@ def get_profile(
     tenant_config = _get_preview_tenant(settings, tenant_name)
     _require_focus_preview_enabled(tenant_config)
     return FocusPreviewProfileResponse(
-        mapping_profile_version=MAPPING_PROFILE_VERSION,
+        mapping_profile_version=FOCUS_PREVIEW_CAPABILITY.mapping_profile_version,
+        target_focus_version=FOCUS_PREVIEW_CAPABILITY.target_focus_version,
+        conformance_status=FOCUS_PREVIEW_CAPABILITY.conformance_status,
         full_columns=list(FOCUS_1_4_FULL_PROFILE_COLUMNS),
         summary_columns=list(FOCUS_1_4_SUMMARY_COLUMNS),
         known_gaps=[FocusPreviewKnownGapResponse.model_validate(gap) for gap in preview_manifest_known_gaps()],

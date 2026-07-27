@@ -10,13 +10,16 @@ from decimal import Decimal, InvalidOperation
 from io import TextIOWrapper
 from typing import Any, Literal, Protocol, cast
 
+from core.preview.capability import (
+    FOCUS_PREVIEW_CAPABILITY,
+    MAPPING_PROFILE_VERSION,
+    preview_manifest_known_gaps,
+)
 from core.preview.mapping import (
     FOCUS_1_4_FULL_PROFILE_COLUMNS,
-    MAPPING_PROFILE_VERSION,
     PREVIEW_MANIFEST_SCHEMA_VERSION,
     PROFILE_NOT_APPLICABLE_COLUMNS,
     preview_decimal_text,
-    preview_manifest_known_gaps,
     preview_revision_content_sha256,
     preview_revision_source_snapshot,
     preview_subtract_decimals,
@@ -326,8 +329,8 @@ def validate_requested_manifest(
     )
     _require_equal(manifest, "column_profile", request.column_profile)
     _require_equal(manifest, "effective_columns", list(request.effective_columns))
-    _require_equal(manifest, "target_focus_version", "1.4")
-    _require_equal(manifest, "conformance_status", "non_conforming")
+    _require_equal(manifest, "target_focus_version", FOCUS_PREVIEW_CAPABILITY.target_focus_version)
+    _require_equal(manifest, "conformance_status", FOCUS_PREVIEW_CAPABILITY.conformance_status)
     _require_equal(manifest, "mapping_profile_version", MAPPING_PROFILE_VERSION)
     _require_equal(manifest, "known_gaps", preview_manifest_known_gaps())
     _require_equal(
@@ -437,10 +440,10 @@ def validate_revision_manifest(
         "source_snapshot",
         preview_revision_source_snapshot(revision.source_snapshot),
     )
-    _require_equal(manifest, "conformance_status", "non_conforming")
+    _require_equal(manifest, "conformance_status", FOCUS_PREVIEW_CAPABILITY.conformance_status)
     _require_equal(manifest, "known_gaps", preview_manifest_known_gaps())
     _require_equal(manifest, "mapping_profile_version", MAPPING_PROFILE_VERSION)
-    _require_equal(manifest, "target_focus_version", "1.4")
+    _require_equal(manifest, "target_focus_version", FOCUS_PREVIEW_CAPABILITY.target_focus_version)
     _require_equal(manifest, "column_profile", "full")
     _require_equal(manifest, "effective_columns", list(FOCUS_1_4_FULL_PROFILE_COLUMNS))
 

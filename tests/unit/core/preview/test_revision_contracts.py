@@ -301,6 +301,8 @@ def test_revision_api_schemas_have_the_exact_public_fields() -> None:
     summary_fields = {
         "revision_id",
         "tenant_name",
+        "target_focus_version",
+        "conformance_status",
         "month",
         "start_date",
         "end_date",

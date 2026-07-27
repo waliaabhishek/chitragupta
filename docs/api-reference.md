@@ -529,20 +529,26 @@ requested-package owner-recovery step.
 ### `GET /api/v1/tenants/{tenant_name}/focus-preview/profile`
 
 Return static metadata for the first-release `focus-1.4-preview-v1` mapping
-profile: `mapping_profile_version`, the ordered `full_columns` allowlist, and
-the ordered 20-column `summary_columns` subset. The mapping profile and
-`chitragupta.preview-manifest.v1` are the first release contracts. The response
-also contains `known_gaps`, the same canonical ordered public value used by
-Requested Preview Package and Published Preview Revision manifests. Each gap
-contains exactly `code`, customer-facing `description`, and ordered affected
-`columns`; internal task or issue ownership, reviewer terminology,
-implementation chronology, and delivery-process metadata are excluded. The
-pre-submission UI renders its **Current authority gaps** list from this
-response. See the manifest contract below for the complete current gap catalog,
-which is not repeated here.
+profile. The response requires `mapping_profile_version`,
+`target_focus_version: "1.4"`, `conformance_status: "non_conforming"`, the
+ordered `full_columns` allowlist, and the ordered 20-column `summary_columns`
+subset. The mapping profile and `chitragupta.preview-manifest.v1` are the first
+release contracts. The response also contains `known_gaps`, the same canonical
+ordered public value used by Requested Preview Package and Published Preview
+Revision manifests. Each gap contains exactly `code`, customer-facing
+`description`, and ordered affected `columns`; internal task or issue
+ownership, reviewer terminology, implementation chronology, and
+delivery-process metadata are excluded. The pre-submission UI renders its
+target-version warning, non-conformance status, and **Current authority gaps**
+from this response. See the manifest contract below for the complete current
+gap catalog, which is not repeated here.
 
 This endpoint validates tenant existence and the Confluent Cloud ecosystem but
 does not initialize Preview storage or the worker runtime.
+
+These target and conformance fields are additions only to the profile, request,
+and revision metadata described below. Repair operations, readiness responses,
+and unrelated API responses are unchanged.
 
 ### `POST /api/v1/tenants/{tenant_name}/focus-preview/repairs`
 
@@ -652,6 +658,10 @@ Create a request. An admitted request returns HTTP 202 with a queued status
 document. Capacity admission follows tenant, ecosystem, input, enablement, and
 runtime validation.
 
+The creation response requires `target_focus_version: "1.4"` and
+`conformance_status: "non_conforming"`. The same fields remain present on every
+subsequent request status/detail representation and recent-request list item.
+
 ```json
 {
   "grain": "daily",
@@ -711,19 +721,22 @@ and expired requests. Ordering is descending by the immutable
 | `limit` | `20` | 1–100 | Maximum items returned. |
 | `cursor` | none | Non-empty request ID | Continue after the prior page's `next_cursor`. |
 
-The response is `{"items":[...],"next_cursor":"..."}`. `next_cursor` is null
-when no later page exists. A missing cursor and a cursor owned by another tenant
-both return 400 `Preview request cursor is invalid`.
+The response is `{"items":[...],"next_cursor":"..."}`. Every item uses the
+request representation, including required `target_focus_version: "1.4"` and
+`conformance_status: "non_conforming"`. `next_cursor` is null when no later page
+exists. A missing cursor and a cursor owned by another tenant both return 400
+`Preview request cursor is invalid`.
 
 ### `GET /api/v1/tenants/{tenant_name}/focus-preview/requests/{request_id}`
 
 Return the tenant-scoped request. The lifecycle is `queued`, `running`, then
 `ready` or `failed`; a ready request becomes `expired` at its fixed cutoff.
 
-Common response fields are `request_id`, `tenant_name`, `grain`, `start_date`,
-`end_date`, derived nullable `month`, `column_profile`, ordered
-`effective_columns`, `status`, `created_at`, `started_at`,
-`completed_at`, `expires_at`, `diagnostic`, `source_snapshot`, and `package`.
+Common response fields are `request_id`, `tenant_name`,
+`target_focus_version: "1.4"`, `conformance_status: "non_conforming"`, `grain`,
+`start_date`, `end_date`, derived nullable `month`, `column_profile`, ordered
+`effective_columns`, `status`, `created_at`, `started_at`, `completed_at`,
+`expires_at`, `diagnostic`, `source_snapshot`, and `package`.
 
 - Queued/running responses have no diagnostic, source snapshot, or package.
 - Failed responses contain `{code, message, retryable}` and no package. Source-
@@ -892,9 +905,11 @@ Return the current published revision for required query `month=YYYY-MM`.
 `revision_id` is optional on this metadata route and acts as a current-revision
 guard when supplied.
 
-The response contains revision identity and month bounds, `monthly_status`,
-`published_at`, nullable predecessor/successor IDs, `lifecycle`,
-`material_sha256`, `source_snapshot`, `validation`, `self_url`, and `package`.
+The response contains revision identity and month bounds,
+`target_focus_version: "1.4"`, `conformance_status: "non_conforming"`,
+`monthly_status`, `published_at`, nullable predecessor/successor IDs,
+`lifecycle`, `material_sha256`, `source_snapshot`, `validation`, `self_url`, and
+`package`.
 The source snapshot reports calculation and source-through freshness, effective
 coverage, evidence-through date, availability cutoff, and Monthly status. The
 validation summary reports the mapping profile, source-record and output-row
@@ -938,8 +953,10 @@ List retained current and superseded revisions newest first for required query
 | `cursor` | none | Non-empty revision ID | Continue after the prior page's `next_cursor`. |
 
 The response is `{"items":[...],"next_cursor":"...","replacement_semantics":"complete_replacement","consumer_action":"replace_do_not_aggregate"}`.
-Each item contains the same lifecycle, freshness, validation, and replacement
-fields as revision detail plus `detail_url`. An unknown cursor, a cursor for a
+Each item contains the same target, conformance, lifecycle, freshness,
+validation, and replacement fields as revision detail plus `detail_url`,
+including required `target_focus_version: "1.4"` and
+`conformance_status: "non_conforming"`. An unknown cursor, a cursor for a
 different tenant/month, or a revision that is no longer publicly retained
 returns 400 `FOCUS Mapping Preview revision cursor is invalid`.
 
@@ -949,6 +966,9 @@ Return one publicly retained revision by immutable ID. Its manifest, individual
 file, and archive URLs address that revision directly and do not use a
 current-revision guard. A superseded revision therefore remains retrievable
 until the billing-scope retention cutoff removes its month from public history.
+The retained detail uses the same required `target_focus_version: "1.4"` and
+`conformance_status: "non_conforming"` fields as current revision detail and
+revision list items.
 
 #### Retained revision artifact endpoints
 

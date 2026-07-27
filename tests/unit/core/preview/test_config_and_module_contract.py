@@ -51,6 +51,7 @@ def test_preview_cli_entry_point_is_registered() -> None:
     "module_name",
     [
         "__init__",
+        "capability",
         "models",
         "eligibility",
         "evidence",

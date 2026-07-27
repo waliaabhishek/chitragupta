@@ -238,6 +238,11 @@ def _body() -> dict[str, str]:
     }
 
 
+def _assert_target_contract(body: dict[str, object]) -> None:
+    assert body["target_focus_version"] == "1.4"
+    assert body["conformance_status"] == "non_conforming"
+
+
 def _wait_for_terminal(
     client: SameThreadApiClient,
     request_id: str,
@@ -805,6 +810,8 @@ def test_focus_preview_status_routes_publish_typed_openapi_response_contract(tmp
     assert set(response_schema["required"]) == {
         "request_id",
         "tenant_name",
+        "target_focus_version",
+        "conformance_status",
         "grain",
         "start_date",
         "end_date",
@@ -852,6 +859,7 @@ def test_primary_api_seam_serializes_safe_diagnostic_correlations_and_no_interna
         body = _wait_for_terminal(client, submitted.json()["request_id"])
 
     assert body["status"] == "failed"
+    _assert_target_contract(body)
     assert body["diagnostic"]["code"] == "preview_source_record_malformed"
     assert len(body["diagnostic"]["source_correlation_ids"]) == 1
     assert body["diagnostic"]["source_correlation_ids"][0].startswith("src:v1:")
@@ -2088,6 +2096,8 @@ def test_production_app_default_runtime_serves_exact_stored_ready_package_withou
 
         body_json = status.json()
         assert body_json["status"] == "ready"
+        _assert_target_contract(submitted.json())
+        _assert_target_contract(body_json)
         assert "queued" in statuses
         assert body_json["diagnostic"] is None
         assert body_json["expires_at"] is not None
@@ -2120,6 +2130,7 @@ def test_production_app_default_runtime_serves_exact_stored_ready_package_withou
         recent = client.get("/api/v1/tenants/production/focus-preview/requests?limit=20")
         assert recent.status_code == 200
         assert [item["request_id"] for item in recent.json()["items"]] == [request_id]
+        _assert_target_contract(recent.json()["items"][0])
         assert recent.json()["next_cursor"] is None
         generic_export_after = client.post("/api/v1/tenants/production/export", json=export_request)
         assert generic_export_after.status_code == 200
@@ -2156,6 +2167,7 @@ def test_exact_expiry_transitions_before_status_and_blocks_every_download(tmp_pa
         app.state.preview_runtime._clock = lambda: persisted.expires_at
 
         status = client.get(f"/api/v1/tenants/production/focus-preview/requests/{request_id}")
+        expired_page = client.get("/api/v1/tenants/production/focus-preview/requests?limit=20")
         responses = [
             client.get(package["manifest"]["download_url"]),
             client.get(package["files"][0]["download_url"]),
@@ -2164,8 +2176,12 @@ def test_exact_expiry_transitions_before_status_and_blocks_every_download(tmp_pa
 
         assert status.status_code == 200
         assert status.json()["status"] == "expired"
+        _assert_target_contract(status.json())
         assert status.json()["expires_at"] == ready["expires_at"]
         assert status.json()["package"] is None
+        assert expired_page.status_code == 200
+        assert expired_page.json()["items"][0]["status"] == "expired"
+        _assert_target_contract(expired_page.json()["items"][0])
         assert [(response.status_code, response.json()) for response in responses] == [
             (410, {"detail": f"Preview request '{request_id}' expired at {ready['expires_at']}"}),
         ] * 3
@@ -2598,6 +2614,8 @@ def test_api_observes_running_between_queued_and_ready(tmp_path: Path) -> None:
                 queued = client.post("/api/v1/tenants/production/focus-preview/requests", json=_body())
                 assert queued.status_code == 202
                 assert queued.json()["status"] == "queued"
+                queued_page = client.get("/api/v1/tenants/production/focus-preview/requests?limit=20")
+                assert queued_page.json()["items"][0]["status"] == "queued"
                 worker = Thread(target=executor.run)
                 worker.start()
                 assert entered.wait(5)
@@ -2609,6 +2627,8 @@ def test_api_observes_running_between_queued_and_ready(tmp_path: Path) -> None:
                 assert running.json()["started_at"] == "2026-07-04T00:00:00Z"
                 assert running.json()["source_snapshot"] is None
                 assert running.json()["package"] is None
+                running_page = client.get("/api/v1/tenants/production/focus-preview/requests?limit=20")
+                assert running_page.json()["items"][0]["status"] == "running"
                 for suffix in ("/manifest", "/files/cost-and-usage.csv", "/archive"):
                     blocked_download = client.get(
                         f"/api/v1/tenants/production/focus-preview/requests/request-running{suffix}"
@@ -2626,6 +2646,17 @@ def test_api_observes_running_between_queued_and_ready(tmp_path: Path) -> None:
                 ]
                 ready = client.get("/api/v1/tenants/production/focus-preview/requests/request-running")
                 assert ready.json()["status"] == "ready"
+                ready_page = client.get("/api/v1/tenants/production/focus-preview/requests?limit=20")
+                assert ready_page.json()["items"][0]["status"] == "ready"
+                for response_body in (
+                    queued.json(),
+                    queued_page.json()["items"][0],
+                    running.json(),
+                    running_page.json()["items"][0],
+                    ready.json(),
+                    ready_page.json()["items"][0],
+                ):
+                    _assert_target_contract(response_body)
     finally:
         release.set()
         if worker is not None:
@@ -2666,6 +2697,10 @@ def test_failed_request_downloads_return_exact_409(tmp_path: Path, suffix: str) 
         request_id = submitted.json()["request_id"]
         terminal = _wait_for_terminal(client, request_id)
         assert terminal["status"] == "failed"
+        _assert_target_contract(terminal)
+        failed_page = client.get("/api/v1/tenants/production/focus-preview/requests?limit=20")
+        assert failed_page.json()["items"][0]["status"] == "failed"
+        _assert_target_contract(failed_page.json()["items"][0])
         response = client.get(f"/api/v1/tenants/production/focus-preview/requests/{request_id}{suffix}")
 
     assert response.status_code == 409

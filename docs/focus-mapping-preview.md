@@ -313,6 +313,9 @@ Open **FOCUS Mapping Preview** at `/focus-preview` and select a tenant. The page
 - offers Daily with an inclusive start date and exclusive end date;
 - offers Full, Summary, and Custom column profiles;
 - loads the supported Custom column allowlist from the API;
+- renders the target FOCUS 1.4 warning, `non_conforming` status, and ordered
+  authority gaps from the active tenant's `/profile` response without a
+  component-owned fallback;
 - submits and polls the asynchronous request;
 - lists recent requests and supports cursor-based **Load more**;
 - shows calculation time, source-through time, Monthly provisional/settled
@@ -333,6 +336,9 @@ already loaded immutable downloads remain available.
 checkout with `uv run`. Include `/api/v1` in `--api-url` and repeat
 `--header NAME=VALUE` for deployment-specific authentication or proxy headers.
 Duplicate header names are preserved on submission, polling, and downloads.
+Top-level help and help for `daily-full`, `request`, `status`, `download`,
+`revisions`, and `revision` identify FOCUS Mapping Preview, target FOCUS 1.4,
+and state that generated data is non-conforming.
 
 Chitragupta's REST API has no built-in authentication. Deployments must protect
 the complete Preview route prefix—including repair, package submission,
@@ -466,7 +472,7 @@ All paths are under `/api/v1/tenants/{tenant_name}/focus-preview`.
 
 | Method and path | Purpose |
 |---|---|
-| `GET /profile` | Return the mapping profile version, ordered Full/Summary column allowlists, and canonical ordered public `known_gaps`. |
+| `GET /profile` | Return target FOCUS 1.4, `non_conforming` status, the mapping profile version, ordered Full/Summary column allowlists, and canonical ordered public `known_gaps`. |
 | `POST /repairs` | In `both` mode, create a durable historical repair for an eligible retained UTC interval. |
 | `GET /repairs/{repair_id}` | Read durable operation and per-date repair status. |
 | `POST /requests` | Create an asynchronous Daily or Monthly request. |
@@ -485,13 +491,20 @@ All paths are under `/api/v1/tenants/{tenant_name}/focus-preview`.
 | `GET /revisions/{revision_id}/files/{file_name}` | Download one retained revision CSV part. |
 | `GET /revisions/{revision_id}/archive` | Stream a retained revision ZIP. |
 
-The pre-submission UI renders **Current authority gaps** from the existing
-tenant-scoped `/profile` response. Its `known_gaps` value is the same canonical
-ordered public value used by Requested Preview Package and Published Preview
-Revision manifests. Each gap contains exactly `code`, customer-facing
-`description`, and ordered affected `columns`; internal ownership and
-delivery-process metadata are excluded. The complete current catalog remains
-documented once in the manifest contract below.
+The pre-submission UI renders its target-version warning, non-conformance
+status, and **Current authority gaps** from the existing tenant-scoped
+`/profile` response. Its `known_gaps` value is the same canonical ordered public
+value used by Requested Preview Package and Published Preview Revision
+manifests. Each gap contains exactly `code`, customer-facing `description`, and
+ordered affected `columns`; internal ownership and delivery-process metadata
+are excluded. The complete current catalog remains documented once in the
+manifest contract below.
+
+Profile, request creation/status/detail/list metadata, current and retained
+revision summary/detail/list metadata, and both manifest types consume one
+code-owned capability authority for exact `target_focus_version: "1.4"` and
+`conformance_status: "non_conforming"` values. Clients forward those API values
+without reinterpreting them.
 
 Daily request:
 
@@ -655,21 +668,24 @@ and SHA-256 values are deterministic for the same source snapshot and request
 parameters.
 
 The manifest's `package_type` distinguishes `requested_preview_package` from
-`published_preview_revision`. Both record mapping profile, effective columns,
-source/calculation coverage, validation, reconciliation, and ordered file
-metadata. Requested manifests include request scope and seven-day lifecycle;
-revision manifests include revision identity, publication time, monthly status,
-and the superseded revision ID. The `files` list contains data files only. The
-status or revision metadata response separately supplies the manifest's own size
-and checksum. The ZIP is a transport wrapper containing `manifest.json` followed
-by the CSV files in manifest order; it is not another data artifact in the
-manifest. Requested manifests validate the complete current request identity,
-tenant, interval, effective columns, target, status, canonical gaps, snapshot,
-evidence, lifecycle, validation, reconciliation, and file checks. Revision
-manifests validate current revision identity, snapshot, Full-profile authority,
-material digest, validation summary, and file correlation. Both use the same
-current schema and mapping authority and enforce canonical gaps plus file order,
-size, and checksums where applicable before delivery.
+`published_preview_revision`. Both declare `target_focus_version: "1.4"` and
+`conformance_status: "non_conforming"` from the same capability authority as
+request and revision API metadata, and record mapping profile, effective
+columns, source/calculation coverage, validation, reconciliation, and ordered
+file metadata. Requested manifests include request scope and seven-day
+lifecycle; revision manifests include revision identity, publication time,
+monthly status, and the superseded revision ID. The `files` list contains data
+files only. The status or revision metadata response separately supplies the
+manifest's own size and checksum. The ZIP is a transport wrapper containing
+`manifest.json` followed by the CSV files in manifest order; it is not another
+data artifact in the manifest. Requested manifests validate the complete
+current request identity, tenant, interval, effective columns, target, status,
+canonical gaps, snapshot, evidence, lifecycle, validation, reconciliation, and
+file checks. Revision manifests validate current revision identity, snapshot,
+Full-profile authority, material digest, validation summary, and file
+correlation. Both use the same current schema and mapping authority and enforce
+canonical gaps plus file order, size, and checksums where applicable before
+delivery.
 
 Both manifest types contain the same complete ordered `known_gaps` array. Each
 object contains exactly the stable `code`, durable customer-facing

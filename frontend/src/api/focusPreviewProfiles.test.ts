@@ -57,6 +57,8 @@ describe("FOCUS Preview grain and profile API contracts", () => {
           {
             request_id: "request-1",
             tenant_name: "production",
+            target_focus_version: "1.4",
+            conformance_status: "non_conforming",
             grain: body.grain,
             start_date: "2026-07-01",
             end_date: body.grain === "monthly" ? "2026-08-01" : "2026-07-02",
@@ -99,6 +101,8 @@ describe("FOCUS Preview grain and profile API contracts", () => {
       http.get(`${API_BASE}/tenants/production/focus-preview/profile`, () =>
         HttpResponse.json({
           mapping_profile_version: "focus-1.4-preview-v1",
+          target_focus_version: "1.4",
+          conformance_status: "non_conforming",
           full_columns: ["BilledCost", "Tags"],
           summary_columns: ["BilledCost"],
           known_gaps: knownGaps,
@@ -111,6 +115,8 @@ describe("FOCUS Preview grain and profile API contracts", () => {
 
     expect(profile).toEqual({
       mapping_profile_version: "focus-1.4-preview-v1",
+      target_focus_version: "1.4",
+      conformance_status: "non_conforming",
       full_columns: ["BilledCost", "Tags"],
       summary_columns: ["BilledCost"],
       known_gaps: knownGaps,

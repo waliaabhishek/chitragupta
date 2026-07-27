@@ -8,6 +8,10 @@ from typing import Annotated, Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from core.models.counts import TypeStatusCounts  # noqa: TC001
+from core.preview.capability import (  # noqa: TC001  # Pydantic resolves these response annotations
+    PreviewConformanceStatus,
+    PreviewTargetFocusVersion,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -158,6 +162,8 @@ class FocusPreviewKnownGapResponse(BaseModel):
 
 class FocusPreviewProfileResponse(BaseModel):
     mapping_profile_version: str
+    target_focus_version: PreviewTargetFocusVersion
+    conformance_status: PreviewConformanceStatus
     full_columns: list[str]
     summary_columns: list[str]
     known_gaps: list[FocusPreviewKnownGapResponse]
@@ -182,6 +188,8 @@ class FocusPreviewPackageResponse(BaseModel):
 class FocusPreviewResponse(BaseModel):
     request_id: str
     tenant_name: str
+    target_focus_version: PreviewTargetFocusVersion
+    conformance_status: PreviewConformanceStatus
     grain: Literal["daily", "monthly"]
     start_date: date
     end_date: date
@@ -213,6 +221,8 @@ class FocusPreviewRevisionValidationSummaryResponse(BaseModel):
 class FocusPreviewRevisionSummaryResponse(BaseModel):
     revision_id: str
     tenant_name: str
+    target_focus_version: PreviewTargetFocusVersion
+    conformance_status: PreviewConformanceStatus
     month: str
     start_date: date
     end_date: date

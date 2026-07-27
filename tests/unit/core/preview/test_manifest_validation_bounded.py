@@ -284,8 +284,14 @@ def test_requested_and_revision_builders_share_exact_first_release_authorities(
     try:
         assert mapping.MAPPING_PROFILE_VERSION == "focus-1.4-preview-v1"
         assert mapping.PREVIEW_MANIFEST_SCHEMA_VERSION == "chitragupta.preview-manifest.v1"
-        assert requested["mapping_profile_version"] == mapping.MAPPING_PROFILE_VERSION
-        assert revision_manifest["mapping_profile_version"] == mapping.MAPPING_PROFILE_VERSION
+        expected_capability = {
+            "mapping_profile_version": "focus-1.4-preview-v1",
+            "target_focus_version": "1.4",
+            "conformance_status": "non_conforming",
+            "known_gaps": EXPECTED_PUBLIC_KNOWN_GAPS,
+        }
+        assert {field: requested[field] for field in expected_capability} == expected_capability
+        assert {field: revision_manifest[field] for field in expected_capability} == expected_capability
         assert requested["schema_version"] == mapping.PREVIEW_MANIFEST_SCHEMA_VERSION
         assert revision_manifest["schema_version"] == mapping.PREVIEW_MANIFEST_SCHEMA_VERSION
     finally:
@@ -314,6 +320,7 @@ def test_revision_validation_rejects_obsolete_schema_even_when_manifest_is_other
     [
         ("mapping_profile_version", "focus-1.4-preview-v5"),
         ("target_focus_version", "1.3"),
+        ("conformance_status", "conforming"),
         ("column_profile", "summary"),
         ("effective_columns", ["BilledCost"]),
     ],
@@ -329,12 +336,16 @@ def test_revision_validation_rejects_self_consistent_obsolete_material_authority
     if field == "mapping_profile_version":
         manifest["validation"]["mapping_profile_version"] = obsolete_value
     mapping = preview_module("mapping")
-    obsolete_material = mapping.preview_revision_content_sha256(
-        mapping_profile_version=manifest["mapping_profile_version"],
-        target_focus_version=manifest["target_focus_version"],
-        column_profile=manifest["column_profile"],
-        effective_columns=tuple(manifest["effective_columns"]),
-        logical_data_sha256=manifest["logical_data_sha256"],
+    obsolete_material = (
+        mapping.preview_revision_content_sha256(
+            mapping_profile_version=manifest["mapping_profile_version"],
+            target_focus_version=manifest["target_focus_version"],
+            column_profile=manifest["column_profile"],
+            effective_columns=tuple(manifest["effective_columns"]),
+            logical_data_sha256=manifest["logical_data_sha256"],
+        )
+        if field != "conformance_status"
+        else manifest["material_sha256"]
     )
     manifest["material_sha256"] = obsolete_material
     obsolete_revision = replace(revision, material_sha256=obsolete_material)

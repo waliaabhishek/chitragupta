@@ -218,6 +218,8 @@ def test_profile_endpoint_is_static_code_owned_and_uses_no_runtime_backend_or_da
     payload = response.json()
     assert payload == {
         "mapping_profile_version": "focus-1.4-preview-v1",
+        "target_focus_version": "1.4",
+        "conformance_status": "non_conforming",
         "full_columns": list(mapping.FOCUS_1_4_FULL_PROFILE_COLUMNS),
         "summary_columns": list(mapping.FOCUS_1_4_SUMMARY_COLUMNS),
         "known_gaps": [
@@ -286,7 +288,13 @@ def test_openapi_exposes_both_grains_all_profiles_month_and_effective_columns(tm
     post = schema["paths"]["/api/v1/tenants/{tenant_name}/focus-preview/requests"]["post"]
     request_schema = post["requestBody"]["content"]["application/json"]["schema"]
     response_schema = schema["components"]["schemas"]["FocusPreviewResponse"]
+    profile_schema = schema["components"]["schemas"]["FocusPreviewProfileResponse"]
+    revision_schema = schema["components"]["schemas"]["FocusPreviewRevisionSummaryResponse"]
 
     assert request_schema["discriminator"]["propertyName"] == "grain"
     assert {"month", "effective_columns"} <= response_schema["properties"].keys()
     assert "/api/v1/tenants/{tenant_name}/focus-preview/profile" in schema["paths"]
+    for contract_schema in (profile_schema, response_schema, revision_schema):
+        assert {"target_focus_version", "conformance_status"} <= set(contract_schema["required"])
+        assert contract_schema["properties"]["target_focus_version"]["const"] == "1.4"
+        assert contract_schema["properties"]["conformance_status"]["const"] == "non_conforming"

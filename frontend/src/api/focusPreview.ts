@@ -28,7 +28,12 @@ export interface FocusPreviewSourceSnapshot {
   monthly_status: "provisional" | "settled" | null;
 }
 
-export interface FocusPreviewRequest {
+export interface FocusPreviewTargetContract {
+  target_focus_version: "1.4";
+  conformance_status: "non_conforming";
+}
+
+export interface FocusPreviewRequest extends FocusPreviewTargetContract {
   request_id: string;
   tenant_name: string;
   grain: "daily" | "monthly";
@@ -66,7 +71,7 @@ export interface FocusPreviewRevisionValidationSummary {
   artifact_integrity: "passed";
 }
 
-export interface FocusPreviewRevisionSummary {
+export interface FocusPreviewRevisionSummary extends FocusPreviewTargetContract {
   revision_id: string;
   tenant_name: string;
   month: string;
@@ -143,7 +148,7 @@ export interface FocusPreviewKnownGap {
   columns: string[];
 }
 
-export interface FocusPreviewProfile {
+export interface FocusPreviewProfile extends FocusPreviewTargetContract {
   mapping_profile_version: string;
   full_columns: string[];
   summary_columns: string[];

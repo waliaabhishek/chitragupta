@@ -76,6 +76,8 @@ vi.mock("../../api/focusPreview", () => ({
 const baseRequest = {
   request_id: "request-1",
   tenant_name: "production",
+  target_focus_version: "1.4" as const,
+  conformance_status: "non_conforming" as const,
   grain: "daily" as const,
   start_date: "2026-07-01",
   end_date: "2026-07-02",
@@ -108,6 +110,8 @@ const profileKnownGaps = [
 const currentRevision = {
   revision_id: "revision-current",
   tenant_name: "production",
+  target_focus_version: "1.4" as const,
+  conformance_status: "non_conforming" as const,
   month: "2026-07",
   start_date: "2026-07-01",
   end_date: "2026-08-01",
@@ -235,6 +239,8 @@ describe("FOCUS Mapping Preview page delegation", () => {
     vi.mocked(fetchFocusPreviewRevision).mockResolvedValue(currentRevisionDetail);
     vi.mocked(fetchFocusPreviewProfile).mockResolvedValue({
       mapping_profile_version: "focus-1.4-preview-v1",
+      target_focus_version: "1.4",
+      conformance_status: "non_conforming",
       full_columns: ["BilledCost", "Tags", "AllocatedResourceId"],
       summary_columns: ["AllocatedResourceId", "BilledCost", "Tags"],
       known_gaps: profileKnownGaps,
@@ -275,7 +281,14 @@ describe("FOCUS Mapping Preview page delegation", () => {
       "production",
       expect.any(AbortSignal),
     ));
-    expect(screen.getByText(/non-conforming/i)).toBeTruthy();
+    expect(
+      screen.getByText("FOCUS Mapping Preview targets FOCUS 1.4"),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(
+        "Conformance status: non_conforming. Current authority gaps are listed below.",
+      ),
+    ).toBeTruthy();
     const gapsSection = screen
       .getByRole("heading", { name: "Current authority gaps" })
       .closest("section");
@@ -305,7 +318,11 @@ describe("FOCUS Mapping Preview page delegation", () => {
 
     await waitFor(() => expect(fetchFocusPreviewProfile).toHaveBeenCalled());
     expect(screen.getByRole("button", { name: /generate preview/i })).toBeEnabled();
-    expect(screen.getByText(/non-conforming/i)).toBeInTheDocument();
+    expect(
+      screen.queryByText(/FOCUS Mapping Preview targets FOCUS/i),
+    ).toBeNull();
+    expect(screen.queryByText(/Conformance status:/i)).toBeNull();
+    expect(screen.queryByText(/non-conforming/i)).toBeNull();
     const gapsSection = screen
       .getByRole("heading", { name: "Current authority gaps" })
       .closest("section");
@@ -324,6 +341,11 @@ describe("FOCUS Mapping Preview page delegation", () => {
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /generate preview/i })).toBeEnabled();
     expect(screen.queryByText(/sensitive profile transport detail/i)).toBeNull();
+    expect(
+      screen.queryByText(/FOCUS Mapping Preview targets FOCUS/i),
+    ).toBeNull();
+    expect(screen.queryByText(/Conformance status:/i)).toBeNull();
+    expect(screen.queryByText(/non-conforming/i)).toBeNull();
     const gapsSection = screen
       .getByRole("heading", { name: "Current authority gaps" })
       .closest("section");
@@ -361,6 +383,8 @@ describe("FOCUS Mapping Preview page delegation", () => {
     await act(async () => {
       stagingProfile.resolve({
         mapping_profile_version: "focus-1.4-preview-v1",
+        target_focus_version: "1.4",
+        conformance_status: "non_conforming",
         full_columns: ["SentinelColumnC"],
         summary_columns: ["SentinelColumnC"],
         known_gaps: [
@@ -378,6 +402,8 @@ describe("FOCUS Mapping Preview page delegation", () => {
     await act(async () => {
       productionProfile.resolve({
         mapping_profile_version: "focus-1.4-preview-v1",
+        target_focus_version: "1.4",
+        conformance_status: "non_conforming",
         full_columns: ["SentinelColumnA"],
         summary_columns: ["SentinelColumnA"],
         known_gaps: [

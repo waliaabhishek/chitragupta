@@ -44,6 +44,7 @@ def _inline_startup_threads(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_one_real_stored_package_has_identical_api_cli_frontend_and_persisted_hashes(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     settings = _settings(tmp_path)
     backend = SQLModelBackend(
@@ -58,6 +59,9 @@ def test_one_real_stored_package_has_identical_api_cli_frontend_and_persisted_ha
     output_dir = tmp_path / "cli-output"
     with SameThreadApiClient(app) as client:
         install_backend(app, "production", backend)
+        profile_response = client.get("/api/v1/tenants/production/focus-preview/profile")
+        assert profile_response.status_code == 200
+        profile = profile_response.json()
         submitted = client.post("/api/v1/tenants/production/focus-preview/requests", json=_body())
         status = _wait_for_terminal(client, submitted.json()["request_id"])
         assert status["status"] == "ready"
@@ -85,6 +89,22 @@ def test_one_real_stored_package_has_identical_api_cli_frontend_and_persisted_ha
             )
             == 0
         )
+        capsys.readouterr()
+        assert (
+            cli.main(
+                [
+                    "status",
+                    "--api-url",
+                    "http://testserver/api/v1",
+                    "--tenant",
+                    "production",
+                    status["request_id"],
+                    "--json",
+                ]
+            )
+            == 0
+        )
+        cli_status = json.loads(capsys.readouterr().out)
 
         with backend.create_preview_metadata_read_unit_of_work() as uow:
             persisted = uow.requests.get_for_owner(status["request_id"], "confluent_cloud", "tenant-1")
@@ -94,13 +114,26 @@ def test_one_real_stored_package_has_identical_api_cli_frontend_and_persisted_ha
         assert persisted_metadata == expected
         assert {name: hashlib.sha256(body).hexdigest() for name, body in api_bodies.items()} == expected
         assert {name: hashlib.sha256((output_dir / name).read_bytes()).hexdigest() for name in api_bodies} == expected
+        manifest = json.loads(api_bodies["manifest.json"])
+        expected_contract = {
+            "target_focus_version": "1.4",
+            "conformance_status": "non_conforming",
+        }
+        assert {field: profile[field] for field in expected_contract} == expected_contract
+        assert {field: status[field] for field in expected_contract} == expected_contract
+        assert {field: cli_status[field] for field in expected_contract} == expected_contract
+        assert {field: manifest[field] for field in expected_contract} == expected_contract
+        assert profile["known_gaps"] == manifest["known_gaps"]
 
         response_bodies = {
             artifact["download_url"]: base64.b64encode(api_bodies[artifact["name"]]).decode() for artifact in artifacts
         }
         response_bodies[package["download_all_url"]] = base64.b64encode(archive.content).decode()
         encoded_fixture = base64.b64encode(
-            json.dumps({"status": status, "bodies": response_bodies}, sort_keys=True).encode()
+            json.dumps(
+                {"profile": profile, "status": status, "bodies": response_bodies},
+                sort_keys=True,
+            ).encode()
         ).decode()
 
     environment = {

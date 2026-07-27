@@ -19,6 +19,13 @@ from typing import Literal, cast
 import core.preview.models as preview_models
 from core.models.identity import Identity  # noqa: TC001 - resolved by contract tests
 from core.models.resource import Resource  # noqa: TC001 - resolved by contract tests
+from core.preview.capability import (
+    FOCUS_PREVIEW_CAPABILITY,
+    KNOWN_GAPS,
+    MAPPING_PROFILE_VERSION,
+)
+from core.preview.capability import KnownGap as KnownGap
+from core.preview.capability import preview_manifest_known_gaps as preview_manifest_known_gaps
 from core.preview.evidence import (  # noqa: TC001 - resolved by contract tests
     AllocationLineageRunStatus,
     PreviewAggregateEvidence,
@@ -48,7 +55,6 @@ from core.preview.spooling import (
 )
 from core.storage.interface import ResourceRepository  # noqa: TC001 - resolved by contract tests
 
-MAPPING_PROFILE_VERSION = "focus-1.4-preview-v1"
 PREVIEW_MANIFEST_SCHEMA_VERSION = "chitragupta.preview-manifest.v1"
 PREVIEW_DECIMAL_CONTEXT = Context(prec=38)
 _DECIMAL_CONTEXT = PREVIEW_DECIMAL_CONTEXT
@@ -625,65 +631,6 @@ def validate_preview_effective_columns(
         valid = False
     if not valid:
         raise PreviewEffectiveColumnsError("preview effective columns do not match the selected profile")
-
-
-@dataclass(frozen=True)
-class KnownGap:
-    code: str
-    description: str
-    owner_task: str
-    columns: tuple[str, ...]
-
-
-KNOWN_GAPS = (
-    KnownGap(
-        "provider_billing_currency_field_unavailable",
-        "Confluent Costs records do not carry a per-record billing currency.",
-        "TASK-254.03",
-        ("BillingCurrency",),
-    ),
-    KnownGap(
-        "invoice_identity_unavailable",
-        "Post-issuance invoice identity is unavailable.",
-        "TASK-254.04",
-        ("InvoiceDetailId", "InvoiceId"),
-    ),
-    KnownGap(
-        "invoice_issuer_name_unavailable",
-        "Provider legal invoice-issuer evidence is unavailable.",
-        "TASK-254.04",
-        ("InvoiceIssuerName",),
-    ),
-    KnownGap(
-        "provider_host_display_name_unavailable",
-        "HostProviderName contains the raw provider cloud code, not a provider display name.",
-        "TASK-254.04",
-        ("HostProviderName",),
-    ),
-    KnownGap(
-        "provider_region_display_name_unavailable",
-        "Confluent inventory does not provide a distinct region display name.",
-        "TASK-254.04",
-        ("RegionName",),
-    ),
-    KnownGap(
-        "derived_sku_identity_not_provider_authoritative",
-        "SKU values are deterministic Chitragupta-derived evidence, not provider-issued identifiers.",
-        "TASK-254.04",
-        ("SkuId", "SkuMeter", "SkuPriceDetails", "SkuPriceId", "x_ChitraguptaSkuComponents"),
-    ),
-)
-
-
-def preview_manifest_known_gaps() -> list[dict[str, object]]:
-    return [
-        {
-            "code": gap.code,
-            "description": gap.description,
-            "columns": list(gap.columns),
-        }
-        for gap in KNOWN_GAPS
-    ]
 
 
 PROFILE_NOT_APPLICABLE_COLUMNS = tuple(
@@ -2813,7 +2760,7 @@ def preview_revision_content_sha256(
     *,
     logical_data_sha256: str,
     mapping_profile_version: str = MAPPING_PROFILE_VERSION,
-    target_focus_version: str = "1.4",
+    target_focus_version: str = FOCUS_PREVIEW_CAPABILITY.target_focus_version,
     column_profile: PreviewColumnProfile = "full",
     effective_columns: tuple[str, ...] = FOCUS_1_4_FULL_PROFILE_COLUMNS,
 ) -> str:
@@ -2965,8 +2912,8 @@ def build_requested_preview_manifest(
         "month": preview_month(grain=request.grain, start_date=request.start_date, end_date=request.end_date),
         "column_profile": request.column_profile,
         "effective_columns": list(request.effective_columns),
-        "target_focus_version": "1.4",
-        "conformance_status": "non_conforming",
+        "target_focus_version": FOCUS_PREVIEW_CAPABILITY.target_focus_version,
+        "conformance_status": FOCUS_PREVIEW_CAPABILITY.conformance_status,
         "mapping_profile_version": MAPPING_PROFILE_VERSION,
         "known_gaps": preview_manifest_known_gaps(),
         "profile_not_applicable_columns": list(PROFILE_NOT_APPLICABLE_COLUMNS),
@@ -3062,8 +3009,8 @@ def build_preview_revision_manifest(
     if published_at.tzinfo is None or published_at.utcoffset() is None:
         raise PreviewMappingError("published_at must be timezone-aware")
     _validate_rendered_file_metadata(draft, files)
-    mapping_profile_version = MAPPING_PROFILE_VERSION
-    target_focus_version = "1.4"
+    mapping_profile_version = FOCUS_PREVIEW_CAPABILITY.mapping_profile_version
+    target_focus_version = FOCUS_PREVIEW_CAPABILITY.target_focus_version
     column_profile: PreviewColumnProfile = "full"
     effective_columns = FOCUS_1_4_FULL_PROFILE_COLUMNS
     recomputed = preview_revision_content_sha256(
@@ -3094,7 +3041,7 @@ def build_preview_revision_manifest(
         "effective_columns": list(effective_columns),
         "logical_data_sha256": draft.logical_data_sha256,
         "material_sha256": material_sha256,
-        "conformance_status": "non_conforming",
+        "conformance_status": FOCUS_PREVIEW_CAPABILITY.conformance_status,
         "known_gaps": preview_manifest_known_gaps(),
         "source_snapshot": preview_revision_source_snapshot(snapshot),
         "validation": {

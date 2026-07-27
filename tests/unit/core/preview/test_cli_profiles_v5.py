@@ -91,6 +91,28 @@ def _invoke(
 
 
 @pytest.mark.parametrize(
+    "command",
+    [None, "daily-full", "request", "status", "download", "revisions", "revision"],
+)
+def test_product_help_declares_one_focus_target_and_conformance_contract(
+    command: str | None,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    parser = preview_module("cli")._parser()
+    if command is None:
+        help_text = parser.format_help()
+    else:
+        with pytest.raises(SystemExit) as exc_info:
+            parser.parse_args([command, "--help"])
+        assert exc_info.value.code == 0
+        help_text = capsys.readouterr().out
+
+    assert "FOCUS Mapping Preview" in help_text
+    assert "FOCUS 1.4" in help_text
+    assert "non-conforming" in help_text
+
+
+@pytest.mark.parametrize(
     ("arguments", "expected_body", "effective"),
     [
         (

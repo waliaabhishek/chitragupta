@@ -81,6 +81,8 @@ def _status(status: str, package: dict[str, object] | None = None) -> dict[str, 
     return {
         "request_id": "request-1",
         "tenant_name": "production",
+        "target_focus_version": "1.4",
+        "conformance_status": "non_conforming",
         "grain": "daily",
         "start_date": "2026-07-01",
         "end_date": "2026-07-02",
