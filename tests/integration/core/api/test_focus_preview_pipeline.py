@@ -561,15 +561,25 @@ class PipelineApiClient:
         self._loop.close()
 
 
-def _request(client: PipelineApiClient, start: date, end: date) -> dict[str, Any]:
+def _request(
+    client: PipelineApiClient,
+    start: date,
+    end: date,
+    *,
+    column_profile: str = "full",
+    columns: tuple[str, ...] | None = None,
+) -> dict[str, Any]:
+    body: dict[str, object] = {
+        "grain": "daily",
+        "start_date": start.isoformat(),
+        "end_date": end.isoformat(),
+        "column_profile": column_profile,
+    }
+    if columns is not None:
+        body["columns"] = list(columns)
     submitted = client.post(
         "/api/v1/tenants/production/focus-preview/requests",
-        json={
-            "grain": "daily",
-            "start_date": start.isoformat(),
-            "end_date": end.isoformat(),
-            "column_profile": "full",
-        },
+        json=body,
     )
     assert submitted.status_code == 202
     request_id = submitted.json()["request_id"]
@@ -1180,17 +1190,49 @@ def test_same_key_tiers_flow_from_provider_capture_through_sidecar_and_canonical
         assert client.get(file_metadata["download_url"]).content == response.content
         return response.content
 
+    def manifest_json(client: PipelineApiClient, result: dict[str, Any]) -> dict[str, Any]:
+        response = client.get(result["package"]["manifest"]["download_url"])
+        assert response.status_code == 200
+        return response.json()
+
     app = create_app(settings)
     client = PipelineApiClient(app, use_lifespan=True, backend=backend)
     try:
         app.state.preview_runtime._clock = lambda: datetime(2026, 7, 26, 12, tzinfo=UTC)
         daily_first = _request(client, date(2026, 7, 1), date(2026, 7, 2))
         daily_second = _request(client, date(2026, 7, 1), date(2026, 7, 2))
+        daily_summary = _request(
+            client,
+            date(2026, 7, 1),
+            date(2026, 7, 2),
+            column_profile="summary",
+        )
+        custom_columns = (
+            "AllocatedResourceId",
+            "BilledCost",
+            "ListCost",
+            "PricingQuantity",
+            "ConsumedQuantity",
+            "ConsumedUnit",
+            "x_ChitraguptaSourceCostId",
+            "x_ConfluentTierDimensions",
+        )
+        daily_custom = _request(
+            client,
+            date(2026, 7, 1),
+            date(2026, 7, 2),
+            column_profile="custom",
+            columns=custom_columns,
+        )
         monthly = _request_month(client, "2026-07")
         daily_body = csv_bytes(client, daily_first)
         assert csv_bytes(client, daily_second) == daily_body
+        summary_body = csv_bytes(client, daily_summary)
+        custom_body = csv_bytes(client, daily_custom)
         monthly_body = csv_bytes(client, monthly)
         daily_rows = list(csv.DictReader(io.StringIO(daily_body.decode())))
+        summary_rows = list(csv.DictReader(io.StringIO(summary_body.decode())))
+        custom_rows = list(csv.DictReader(io.StringIO(custom_body.decode())))
         monthly_rows = list(csv.DictReader(io.StringIO(monthly_body.decode())))
         for rows in (daily_rows, monthly_rows):
             assert len(rows) == 4
@@ -1202,12 +1244,68 @@ def test_same_key_tiers_flow_from_provider_capture_through_sidecar_and_canonical
             assert {row["ListUnitPrice"] for row in rows} == {"2"}
             totals: dict[str, Decimal] = {}
             list_totals: dict[str, Decimal] = {}
+            consumed_totals: dict[str, Decimal] = {}
             for row in rows:
                 source_id = row["x_ChitraguptaSourceCostId"]
                 totals[source_id] = totals.get(source_id, Decimal(0)) + Decimal(row["BilledCost"])
                 list_totals[source_id] = list_totals.get(source_id, Decimal(0)) + Decimal(row["ListCost"])
+                consumed_totals[source_id] = consumed_totals.get(source_id, Decimal(0)) + Decimal(
+                    row["ConsumedQuantity"]
+                )
+                assert row["ConsumedQuantity"] == row["PricingQuantity"]
+                assert row["ConsumedUnit"] == row["PricingUnit"] == "GB"
             assert totals == {"tier-a": Decimal("10"), "tier-b": Decimal("-2")}
             assert list_totals == {"tier-a": Decimal("10"), "tier-b": Decimal("-10")}
+            assert consumed_totals == {"tier-a": Decimal("5"), "tier-b": Decimal("-5")}
+            assert {
+                (
+                    row["x_ChitraguptaSourceCostId"],
+                    row["AllocatedResourceId"],
+                    row["ConsumedQuantity"],
+                )
+                for row in rows
+            } == {
+                ("tier-a", "sa-1", "3"),
+                ("tier-a", "", "2"),
+                ("tier-b", "sa-1", "-3"),
+                ("tier-b", "", "-2"),
+            }
+        assert daily_summary["effective_columns"] == list(csv.DictReader(io.StringIO(summary_body.decode())).fieldnames)
+        assert daily_custom["effective_columns"] == list(custom_columns)
+        assert csv.DictReader(io.StringIO(custom_body.decode())).fieldnames == list(custom_columns)
+        assert len(summary_rows) == len(custom_rows) == len(daily_rows)
+        stable_identity_columns = (
+            "AllocatedResourceId",
+            "BilledCost",
+        )
+        daily_identity = {tuple(row[column] for column in stable_identity_columns) for row in daily_rows}
+        assert {tuple(row[column] for column in stable_identity_columns) for row in summary_rows} == daily_identity
+        assert {tuple(row[column] for column in stable_identity_columns) for row in custom_rows} == daily_identity
+        assert {
+            (
+                row["x_ChitraguptaSourceCostId"],
+                row["AllocatedResourceId"],
+                row["ConsumedQuantity"],
+                row["ConsumedUnit"],
+            )
+            for row in custom_rows
+        } == {
+            ("tier-a", "sa-1", "3", "GB"),
+            ("tier-a", "", "2", "GB"),
+            ("tier-b", "sa-1", "-3", "GB"),
+            ("tier-b", "", "-2", "GB"),
+        }
+        manifests = [manifest_json(client, result) for result in (daily_first, daily_summary, daily_custom)]
+        assert all(manifest["validation"]["rows"] == 4 for manifest in manifests)
+        assert all(manifest["reconciliation"] == manifests[0]["reconciliation"] for manifest in manifests[1:])
+        assert manifests[0]["reconciliation"] == {
+            "source_cost": "8",
+            "allocated_cost": "8",
+            "difference": "0",
+            "source_quantity": "0",
+            "allocated_quantity": "0",
+            "quantity_difference": "0",
+        }
         persisted = create_engine(connection_string)
         try:
             with persisted.begin() as connection:

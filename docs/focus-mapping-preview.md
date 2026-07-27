@@ -183,6 +183,13 @@ resource/identity inventory for the requested evidence interval. It fails the
 whole request when required evidence is missing or inconsistent; it never emits
 a partial package.
 
+For accepted metered Usage and Usage refunds, `ConsumedQuantity` equals the
+exact persisted allocated quantity for that portion and `ConsumedUnit` equals
+the retained normalized Billing API unit. `PricingQuantity` and `PricingUnit`
+use the same portion quantity and unit. Purchase/Support, Support refunds, and
+Credit rows keep both consumed fields null. Distinct tiers retain their own
+quantity, unit, and tier identity.
+
 For enabled tenants, the ordinary pipeline captures that evidence and provider
 organization authority once as part of its normal refresh/calculation work.
 Package requests and scheduled revisions reuse the persisted values; generation

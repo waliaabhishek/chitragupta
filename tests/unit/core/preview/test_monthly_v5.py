@@ -174,6 +174,7 @@ def test_monthly_aggregation_sums_exact_cost_quantity_and_signed_discount(
         ("x_ChitraguptaAllocationRatio", Decimal("0.5"), Decimal("0.25")),
         ("x_ChitraguptaAllocationMethodVersion", "v1", "v2"),
         ("PricingUnit", "GB", "TB"),
+        ("ConsumedUnit", "GB", "TB"),
         ("ListUnitPrice", Decimal("2"), Decimal("3")),
         ("Tags", '{"team":"a"}', '{"team":"b"}'),
         ("ChargeCategory", "Usage", "Credit"),
@@ -208,6 +209,7 @@ def test_monthly_same_compatibility_origin_keeps_distinct_tier_and_price_evidenc
     monkeypatch.setattr(monthly, "validate_preview_row", lambda **_kwargs: None)
     first = _row(
         day=1,
+        consumed_quantity="2",
         x_ConfluentTierDimensions='{"tier":"a"}',
         ListUnitPrice=Decimal("2"),
         PricingCurrencyListUnitPrice=Decimal("2"),
@@ -215,6 +217,7 @@ def test_monthly_same_compatibility_origin_keeps_distinct_tier_and_price_evidenc
     )
     second = _row(
         day=2,
+        consumed_quantity="-5",
         x_ConfluentTierDimensions='{"tier":"b"}',
         ListUnitPrice=Decimal("3"),
         PricingCurrencyListUnitPrice=Decimal("3"),
@@ -233,11 +236,13 @@ def test_monthly_same_compatibility_origin_keeps_distinct_tier_and_price_evidenc
             _values(row)["x_ConfluentTierDimensions"],
             _values(row)["ListUnitPrice"],
             _values(row)["SkuPriceId"],
+            _values(row)["ConsumedQuantity"],
+            _values(row)["ConsumedUnit"],
         )
         for row in rows
     } == {
-        ('{"tier":"a"}', Decimal("2"), "price-a"),
-        ('{"tier":"b"}', Decimal("3"), "price-b"),
+        ('{"tier":"a"}', Decimal("2"), "price-a", Decimal("2"), "GB"),
+        ('{"tier":"b"}', Decimal("3"), "price-b", Decimal("-5"), "GB"),
     }
 
 
@@ -286,6 +291,8 @@ def test_monthly_combines_only_matching_tier_price_rows_and_retains_each_exact_s
     assert values["BilledCost"] == Decimal("8")
     assert values["ListCost"] == Decimal("10")
     assert values["PricingQuantity"] == Decimal("5")
+    assert values["ConsumedQuantity"] == Decimal("5")
+    assert values["ConsumedUnit"] == "GB"
     assert {member.source_cost_id for member in rows[0].lineage_members} == {
         "provider:tier-a-day-1",
         "provider:tier-a-day-2",

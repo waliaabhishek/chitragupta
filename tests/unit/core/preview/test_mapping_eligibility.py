@@ -49,10 +49,24 @@ def test_authoritative_source_classifier_rejects_structural_or_semantic_conflict
 
 
 @pytest.mark.parametrize(
-    ("changes", "expected_kind", "expected_category", "expected_frequency", "expected_rule"),
+    (
+        "changes",
+        "expected_kind",
+        "expected_category",
+        "expected_frequency",
+        "expected_rule",
+        "expected_consumption",
+    ),
     [
-        ({}, "metered_usage", "Usage", "Usage-Based", "kafka"),
-        ({"native_line_type": "KAFKA_STREAMS"}, "metered_usage", "Usage", "Usage-Based", "kafka"),
+        ({}, "metered_usage", "Usage", "Usage-Based", "kafka", True),
+        (
+            {"native_line_type": "KAFKA_STREAMS"},
+            "metered_usage",
+            "Usage",
+            "Usage-Based",
+            "kafka",
+            True,
+        ),
         (
             {
                 "native_product": "SUPPORT_CLOUD_BUSINESS",
@@ -65,6 +79,7 @@ def test_authoritative_source_classifier_rejects_structural_or_semantic_conflict
             "Purchase",
             "Recurring",
             "support",
+            False,
         ),
         (
             {
@@ -83,6 +98,7 @@ def test_authoritative_source_classifier_rejects_structural_or_semantic_conflict
             "Credit",
             "One-Time",
             "promotional_credit",
+            False,
         ),
         (
             {
@@ -96,6 +112,7 @@ def test_authoritative_source_classifier_rejects_structural_or_semantic_conflict
             "Usage",
             "Usage-Based",
             "kafka",
+            True,
         ),
     ],
 )
@@ -106,6 +123,7 @@ def test_authoritative_source_classifier_returns_typed_charge_semantics(
     expected_category: str,
     expected_frequency: str,
     expected_rule: str,
+    expected_consumption: bool,
 ) -> None:
     mapping = preview_module("mapping")
 
@@ -120,6 +138,7 @@ def test_authoritative_source_classifier_returns_typed_charge_semantics(
     assert result.semantics.charge_category == expected_category
     assert result.semantics.charge_frequency == expected_frequency
     assert result.semantics.service_rule_key.value == expected_rule
+    assert result.semantics.emits_consumption is expected_consumption
 
 
 @pytest.mark.parametrize(
@@ -165,13 +184,29 @@ def test_non_refund_native_promo_credit_remains_one_time_credit_despite_support_
 
 
 @pytest.mark.parametrize(
-    ("native_product", "description", "kind", "category", "frequency", "rule_key"),
+    (
+        "native_product",
+        "description",
+        "kind",
+        "category",
+        "frequency",
+        "rule_key",
+        "expected_consumption",
+    ),
     [
-        ("KAFKA", "Refund Kafka usage", "usage_refund", "Usage", "Usage-Based", "kafka"),
-        ("CONNECT", "Refund Connect usage", "usage_refund", "Usage", "Usage-Based", "connect"),
-        ("CUSTOM_CONNECT", "Refund custom Connect usage", "usage_refund", "Usage", "Usage-Based", "connect"),
-        ("KSQL", "Refund ksqlDB usage", "usage_refund", "Usage", "Usage-Based", "ksqldb"),
-        ("FLINK", "Refund Flink usage", "usage_refund", "Usage", "Usage-Based", "flink"),
+        ("KAFKA", "Refund Kafka usage", "usage_refund", "Usage", "Usage-Based", "kafka", True),
+        ("CONNECT", "Refund Connect usage", "usage_refund", "Usage", "Usage-Based", "connect", True),
+        (
+            "CUSTOM_CONNECT",
+            "Refund custom Connect usage",
+            "usage_refund",
+            "Usage",
+            "Usage-Based",
+            "connect",
+            True,
+        ),
+        ("KSQL", "Refund ksqlDB usage", "usage_refund", "Usage", "Usage-Based", "ksqldb", True),
+        ("FLINK", "Refund Flink usage", "usage_refund", "Usage", "Usage-Based", "flink", True),
         (
             "STREAM_GOVERNANCE",
             "Refund governance usage",
@@ -179,6 +214,7 @@ def test_non_refund_native_promo_credit_remains_one_time_credit_despite_support_
             "Usage",
             "Usage-Based",
             "data_governance",
+            True,
         ),
         (
             "CLUSTER_LINK",
@@ -187,10 +223,27 @@ def test_non_refund_native_promo_credit_remains_one_time_credit_despite_support_
             "Usage",
             "Usage-Based",
             "cluster_link",
+            True,
         ),
-        ("AUDIT_LOG", "Refund audit log usage", "usage_refund", "Usage", "Usage-Based", "audit_log"),
-        ("TABLEFLOW", "Refund Tableflow usage", "usage_refund", "Usage", "Usage-Based", "tableflow"),
-        ("USM", "Refund USM usage", "usage_refund", "Usage", "Usage-Based", "usm"),
+        (
+            "AUDIT_LOG",
+            "Refund audit log usage",
+            "usage_refund",
+            "Usage",
+            "Usage-Based",
+            "audit_log",
+            True,
+        ),
+        (
+            "TABLEFLOW",
+            "Refund Tableflow usage",
+            "usage_refund",
+            "Usage",
+            "Usage-Based",
+            "tableflow",
+            True,
+        ),
+        ("USM", "Refund USM usage", "usage_refund", "Usage", "Usage-Based", "usm", True),
         (
             "SUPPORT_CLOUD_BASIC",
             "Refund support subscription",
@@ -198,6 +251,7 @@ def test_non_refund_native_promo_credit_remains_one_time_credit_despite_support_
             "Purchase",
             "Recurring",
             "support",
+            False,
         ),
         (
             "SUPPORT_CLOUD_DEVELOPER",
@@ -206,6 +260,7 @@ def test_non_refund_native_promo_credit_remains_one_time_credit_despite_support_
             "Purchase",
             "Recurring",
             "support",
+            False,
         ),
         (
             "SUPPORT_CLOUD_BUSINESS",
@@ -214,6 +269,7 @@ def test_non_refund_native_promo_credit_remains_one_time_credit_despite_support_
             "Purchase",
             "Recurring",
             "support",
+            False,
         ),
         (
             "SUPPORT_CLOUD_PREMIER",
@@ -222,6 +278,7 @@ def test_non_refund_native_promo_credit_remains_one_time_credit_despite_support_
             "Purchase",
             "Recurring",
             "support",
+            False,
         ),
     ],
 )
@@ -233,6 +290,7 @@ def test_promo_credit_refund_uses_every_native_product_authority_once(
     category: str,
     frequency: str,
     rule_key: str,
+    expected_consumption: bool,
 ) -> None:
     mapping = preview_module("mapping")
     source = replace(
@@ -243,7 +301,8 @@ def test_promo_credit_refund_uses_every_native_product_authority_once(
         amount=Decimal("-8"),
         original_amount=Decimal("-10"),
         discount_amount=Decimal("-2"),
-        price=Decimal("-2"),
+        price=Decimal("2"),
+        quantity=Decimal("-5"),
     )
 
     result = mapping.classify_daily_full_source(
@@ -257,6 +316,14 @@ def test_promo_credit_refund_uses_every_native_product_authority_once(
     assert result.semantics.charge_category == category
     assert result.semantics.charge_frequency == frequency
     assert result.semantics.service_rule_key.value == rule_key
+    assert result.semantics.emits_consumption is expected_consumption
+    projection = mapping.project_financials(
+        source=source,
+        semantics=result.semantics,
+        billed_share=source.amount,
+    )
+    assert projection.consumed_quantity == (Decimal("-5") if expected_consumption else None)
+    assert projection.consumed_unit == ("GB" if expected_consumption else None)
 
 
 def test_promotional_allowance_financial_projection_keeps_signed_costs_and_omits_pricing(
@@ -305,6 +372,13 @@ def test_promotional_allowance_financial_projection_keeps_signed_costs_and_omits
     [
         ({"amount": Decimal("0")}, "PreviewFinancialUnsupportedError"),
         ({"amount": Decimal("NaN")}, "PreviewFinancialUnsupportedError"),
+        ({"price": None}, "PreviewFinancialUnsupportedError"),
+        ({"price": Decimal("NaN")}, "PreviewFinancialUnsupportedError"),
+        ({"price": Decimal("0")}, "PreviewFinancialUnsupportedError"),
+        ({"quantity": None}, "PreviewFinancialUnsupportedError"),
+        ({"quantity": Decimal("NaN")}, "PreviewFinancialUnsupportedError"),
+        ({"quantity": Decimal("0")}, "PreviewFinancialUnsupportedError"),
+        ({"unit": None}, "PreviewFinancialUnsupportedError"),
         ({"amount": Decimal("7")}, "PreviewFinancialReconciliationError"),
     ],
 )

@@ -1247,7 +1247,7 @@ def classify_daily_full_source(
                 product_rule.original_frequency,
                 product_rule.service_rule_key,
                 True,
-                False,
+                kind is PreviewChargeKind.USAGE_REFUND,
             )
         )
 
@@ -1270,7 +1270,16 @@ def classify_daily_full_source(
         category = product_rule.original_category
         frequency = product_rule.original_frequency
         kind = PreviewChargeKind.SUPPORT_REFUND if category == "Purchase" else PreviewChargeKind.USAGE_REFUND
-        return AcceptedPreviewSource(PreviewChargeSemantics(kind, category, frequency, inferred_key, True, False))
+        return AcceptedPreviewSource(
+            PreviewChargeSemantics(
+                kind,
+                category,
+                frequency,
+                inferred_key,
+                True,
+                kind is PreviewChargeKind.USAGE_REFUND,
+            )
+        )
     if promotion or (support and line_type != "SUPPORT"):
         return RejectedPreviewSource(PreviewSourceIssue.CHARGE_CLASSIFICATION_AMBIGUOUS)
     if line_type == "SUPPORT":
@@ -1280,7 +1289,7 @@ def classify_daily_full_source(
             )
         )
     return AcceptedPreviewSource(
-        PreviewChargeSemantics(PreviewChargeKind.METERED_USAGE, "Usage", "Usage-Based", inferred_key, True, False)
+        PreviewChargeSemantics(PreviewChargeKind.METERED_USAGE, "Usage", "Usage-Based", inferred_key, True, True)
     )
 
 
@@ -2156,6 +2165,11 @@ def validate_preview_row(
         if (values[left] is None) != (values[right] is None):
             missing = left if values[left] is None else right
             raise PreviewRowValidationError(PreviewRowRuleId.DEPENDENT_FIELDS, column=missing)
+    consumption_is_emitted = values["ConsumedQuantity"] is not None
+    if values["ChargeCategory"] == "Usage" and values["SkuPriceId"] is not None and not consumption_is_emitted:
+        raise PreviewRowValidationError(PreviewRowRuleId.DEPENDENT_FIELDS, column="ConsumedQuantity")
+    if values["ChargeCategory"] != "Usage" and consumption_is_emitted:
+        raise PreviewRowValidationError(PreviewRowRuleId.DEPENDENT_FIELDS, column="ConsumedQuantity")
     if values["SubAccountId"] is not None:
         for column in ("SubAccountName", "SubAccountType"):
             if values[column] is None:

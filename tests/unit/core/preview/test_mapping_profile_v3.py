@@ -1036,6 +1036,7 @@ def test_every_accepted_native_line_type_executes_the_classifier_with_its_exact_
 
     assert isinstance(result, mapping.AcceptedPreviewSource)
     assert result.semantics.service_rule_key is mapping.PreviewServiceRuleKey(expected_service_rule)
+    assert result.semantics.emits_consumption is (expected_service_rule not in {"support", "promotional_credit"})
 
 
 @pytest.mark.parametrize(
@@ -1045,8 +1046,9 @@ def test_every_accepted_native_line_type_executes_the_classifier_with_its_exact_
         for service_rule, expected in EXPECTED_SERVICE_RULES.items()
     ),
 )
-def test_current_service_rules_do_not_claim_identical_consumption_grain_without_provider_authority(
+def test_every_accepted_native_line_type_emits_consumption_only_for_metered_usage(
     valid_source_evidence: Any,
+    valid_allocation_evidence: Any,
     service_rule: str,
     native_line_type: str,
     native_product: str,
@@ -1084,14 +1086,91 @@ def test_current_service_rules_do_not_claim_identical_consumption_grain_without_
     )
     assert isinstance(result, mapping.AcceptedPreviewSource)
 
-    assert result.semantics.emits_consumption is False
+    expected_consumption = service_rule not in {"support", "promotional_credit"}
+    assert result.semantics.emits_consumption is expected_consumption
     financials = mapping.project_financials(
         source=source,
         semantics=result.semantics,
         billed_share=source.amount,
     )
-    assert financials.consumed_quantity is None
-    assert financials.consumed_unit is None
+    assert financials.consumed_quantity == (source.quantity if expected_consumption else None)
+    assert financials.consumed_unit == (source.unit if expected_consumption else None)
+    if expected_consumption:
+        assert financials.consumed_quantity == financials.pricing_quantity
+        assert financials.consumed_unit == financials.pricing_unit
+    selected = mapping.SelectedSourceProjection(source, result.semantics, financials)
+    allocation = replace(
+        valid_allocation_evidence,
+        allocated_cost=Decimal("2"),
+        allocated_quantity=Decimal("1.25"),
+        allocation_ratio=Decimal("0.25"),
+    )
+    projected = mapping.project_allocated_financials(
+        selected=selected,
+        allocation=allocation,
+    )
+    assert projected.consumed_quantity == (Decimal("1.25") if expected_consumption else None)
+    assert projected.consumed_unit == (source.unit if expected_consumption else None)
+
+
+@pytest.mark.parametrize(
+    ("description", "amount", "original", "discount", "quantity", "target_id", "portion_quantity"),
+    [
+        ("Kafka storage usage", "8", "10", "2", "5", "sa-1", "3"),
+        ("Kafka storage usage", "8", "10", "2", "5", "UNALLOCATED", "2"),
+        ("Refund Kafka storage usage", "-2", "-10", "-8", "-5", "sa-1", "-3"),
+        ("Refund Kafka storage usage", "-2", "-10", "-8", "-5", "UNALLOCATED", "-2"),
+    ],
+)
+def test_metered_usage_projects_exact_allocated_and_unallocated_consumed_quantity(
+    valid_source_evidence: Any,
+    valid_allocation_evidence: Any,
+    description: str,
+    amount: str,
+    original: str,
+    discount: str,
+    quantity: str,
+    target_id: str,
+    portion_quantity: str,
+) -> None:
+    mapping = preview_module("mapping")
+    source = replace(
+        valid_source_evidence,
+        native_description=description,
+        amount=Decimal(amount),
+        original_amount=Decimal(original),
+        discount_amount=Decimal(discount),
+        quantity=Decimal(quantity),
+    )
+    classification = mapping.classify_daily_full_source(
+        request_start=REQUEST_START,
+        request_end=REQUEST_END,
+        source=source,
+    )
+    assert isinstance(classification, mapping.AcceptedPreviewSource)
+    selected = mapping.SelectedSourceProjection(
+        source,
+        classification.semantics,
+        mapping.project_financials(
+            source=source,
+            semantics=classification.semantics,
+            billed_share=source.amount,
+        ),
+    )
+    allocated_quantity = Decimal(portion_quantity)
+    projected = mapping.project_allocated_financials(
+        selected=selected,
+        allocation=replace(
+            valid_allocation_evidence,
+            allocation_target_id=target_id,
+            target_id=target_id,
+            allocated_quantity=allocated_quantity,
+        ),
+    )
+
+    assert projected.pricing_quantity == allocated_quantity
+    assert projected.consumed_quantity == allocated_quantity
+    assert projected.pricing_unit == projected.consumed_unit == "GB"
 
 
 def test_line_type_enum_covers_every_accepted_provider_line_type_exactly_once() -> None:
@@ -1329,6 +1408,7 @@ def test_validate_preview_row_rejects_noncanonical_or_wrong_shape_json(
 @pytest.mark.parametrize(
     ("column", "value", "expected_column"),
     [
+        ("ConsumedQuantity", None, "ConsumedQuantity"),
         ("ConsumedUnit", None, "ConsumedUnit"),
         ("PricingQuantity", None, "PricingQuantity"),
         ("SubAccountName", None, "SubAccountName"),
@@ -1349,6 +1429,46 @@ def test_validate_preview_row_enforces_dependent_field_pairs(
 
     assert caught.value.rule_id is mapping.PreviewRowRuleId.DEPENDENT_FIELDS
     assert caught.value.column == expected_column
+
+
+def test_validate_preview_row_rejects_priced_usage_without_consumed_fields() -> None:
+    mapping = preview_module("mapping")
+    row = _valid_row_projection(mapping)
+    row = _replace_target(mapping, row, "ConsumedQuantity", None)
+    row = _replace_target(mapping, row, "ConsumedUnit", None)
+    row = replace(
+        row,
+        financials=replace(
+            row.financials,
+            consumed_quantity=None,
+            consumed_unit=None,
+        ),
+    )
+
+    with pytest.raises(mapping.PreviewRowValidationError) as caught:
+        _validate(mapping, row)
+
+    assert caught.value.rule_id is mapping.PreviewRowRuleId.DEPENDENT_FIELDS
+    assert caught.value.column == "ConsumedQuantity"
+
+
+@pytest.mark.parametrize("charge_category", ["Purchase", "Credit"])
+def test_validate_preview_row_rejects_consumption_for_non_usage_categories(
+    charge_category: str,
+) -> None:
+    mapping = preview_module("mapping")
+    row = _replace_target(
+        mapping,
+        _valid_row_projection(mapping),
+        "ChargeCategory",
+        charge_category,
+    )
+
+    with pytest.raises(mapping.PreviewRowValidationError) as caught:
+        _validate(mapping, row)
+
+    assert caught.value.rule_id is mapping.PreviewRowRuleId.DEPENDENT_FIELDS
+    assert caught.value.column == "ConsumedQuantity"
 
 
 def test_validate_preview_row_enforces_frozen_financial_projection() -> None:

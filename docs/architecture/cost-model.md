@@ -92,6 +92,13 @@ and their pricing evidence. Monthly rows combine only when the complete
 approved row-grain identity, including tier, pricing, Allocation Target,
 SKU-component, and tag evidence, matches.
 
+For accepted metered Usage and Usage refunds, the exact-source sidecar's
+persisted allocated quantity is the shared authority for `PricingQuantity` and
+`ConsumedQuantity` on each portion. `PricingUnit` and `ConsumedUnit` share the
+retained normalized Billing API unit. Purchase/Support, Support refunds, and
+Credit rows keep consumed quantity and unit null. Each tier retains its own
+identity, quantity, and unit.
+
 Preview publication fails closed when exact-source evidence is malformed,
 missing, ambiguous, or does not reconcile. The affected scope produces no
 partial package. This Preview-specific evidence does not change generic billing

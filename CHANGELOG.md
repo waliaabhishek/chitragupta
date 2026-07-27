@@ -41,6 +41,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Extend graph explorer grouping to resource and identity views (TASK-245). Environments with more than 20 child resources and identities charged across more than 20 clusters now show grouped summary nodes (`resource_group`, `cluster_group`) with the top-5 highest-cost entities shown individually and expand/collapse support (`expand=resources` or `expand=clusters`), matching the cluster view behavior introduced in TASK-243/244.
 
 ### Fixed
+- Populate `ConsumedQuantity` and `ConsumedUnit` for accepted metered FOCUS
+  Preview Usage and Usage refunds from each portion's exact persisted allocated
+  quantity and retained Billing API unit. Pricing uses the same quantity/unit
+  contract, while Purchase/Support, Support refunds, and Credit remain null and
+  distinct tiers retain their own identity and quantity.
 - Preserve same-key tiered Confluent Cost records as distinct FOCUS Preview
   origins and Daily/Monthly rows without changing generic compatibility
   aggregation, allocation, chargeback, or CSV behavior. A Preview-only

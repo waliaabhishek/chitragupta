@@ -748,6 +748,10 @@ def test_bounded_monthly_grouping_preserves_cells_with_sublinear_python_peak(
         assert [(row.target_values, row.custom_values, row.financials) for row in bounded] == [
             (row.target_values, row.custom_values, row.financials) for row in baseline
         ]
+        consumed_index = preview_module("mapping").FOCUS_1_4_FULL_COLUMNS.index("ConsumedQuantity")
+        unit_index = preview_module("mapping").FOCUS_1_4_FULL_COLUMNS.index("ConsumedUnit")
+        assert bounded[0].target_values[consumed_index] == Decimal("4")
+        assert bounded[0].target_values[unit_index] == "GB"
     finally:
         parity_workspace.close()
 
@@ -773,6 +777,8 @@ def test_bounded_monthly_grouping_preserves_cells_with_sublinear_python_peak(
         _current, peak = tracemalloc.get_traced_memory()
         tracemalloc.stop()
         assert len(result) == 1
+        consumed_index = preview_module("mapping").FOCUS_1_4_FULL_COLUMNS.index("ConsumedQuantity")
+        assert result[0].target_values[consumed_index] == Decimal("20000")
         assert peak < 8 * 1024 * 1024
         assert large_workspace.used_bytes < large_workspace.limit_bytes
     finally:
