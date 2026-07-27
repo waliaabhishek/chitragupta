@@ -245,6 +245,9 @@ def _tenant_config(
         lookback_days=40,
         cutoff_days=cutoff_days,
         storage=config.StorageConfig(connection_string=connection_string),
+        plugin_settings={
+            "ccloud_api": {"key": "key", "secret": "secret"},  # pragma: allowlist secret
+        },
         focus_preview=config.FocusPreviewTenantConfig(
             commercial_profile="direct_payg",
             billing_currency="USD",

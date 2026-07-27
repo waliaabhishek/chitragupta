@@ -24,6 +24,7 @@ from core.config.models import AppSettings, FeaturesConfig, PreviewConfig
 from core.engine.orchestrator import PipelineRunResult
 from core.models.pipeline import PipelineState
 from core.models.resource import CoreResource, ResourceStatus
+from core.preview.service import PreviewRuntime
 from core.storage.backends.sqlmodel.unit_of_work import SQLModelBackend
 from core.storage.interface import AllocationLineageRunCapture
 from plugins.confluent_cloud.storage.module import CCloudStorageModule
@@ -518,6 +519,12 @@ def test_periodic_publication_lifecycle_is_visible_through_real_current_api(
         preview=PreviewConfig(artifact_root=artifact_root, max_workers=1),
         tenants={"production": tenant},
     )
+    preview_runtime_init = PreviewRuntime.__init__
+
+    def fixed_preview_runtime_init(runtime: PreviewRuntime, **kwargs: Any) -> None:
+        preview_runtime_init(runtime, **kwargs, clock=lambda: datetime(2026, 7, 26, tzinfo=UTC))
+
+    monkeypatch.setattr(PreviewRuntime, "__init__", fixed_preview_runtime_init)
     seed_backend = SQLModelBackend(
         connection_string,
         CCloudStorageModule(),

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
@@ -9,6 +10,9 @@ from core.storage.backends.sqlmodel.timestamps import canonical_utc_second
 
 if TYPE_CHECKING:
     from sqlmodel import Session
+
+
+logger = logging.getLogger(__name__)
 
 
 def exact_utc_half_open_bounds(
