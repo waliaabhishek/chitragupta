@@ -86,6 +86,7 @@ def valid_allocation_evidence() -> Any:
         native_product="KAFKA",
         native_line_type="KAFKA_STORAGE",
         allocation_target_id="sa-1",
+        target_id="sa-1",
         allocation_method="direct",
         amount=Decimal("8"),
     )

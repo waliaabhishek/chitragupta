@@ -1431,6 +1431,53 @@ def test_validate_preview_row_enforces_dependent_field_pairs(
     assert caught.value.column == expected_column
 
 
+@pytest.mark.parametrize(
+    ("allocated_resource_id", "allocated_resource_name", "allocated_tags", "is_valid"),
+    [
+        pytest.param(None, "service-account", None, False, id="unallocated-name"),
+        pytest.param(None, None, "{}", False, id="unallocated-empty-tags"),
+        pytest.param(None, None, '{"team":"alpha"}', False, id="unallocated-nonempty-tags"),
+        pytest.param(None, "service-account", "{}", False, id="unallocated-name-and-tags"),
+        pytest.param(None, None, None, True, id="unallocated-all-null"),
+        pytest.param("sa-1", None, None, True, id="allocated-id-only"),
+        pytest.param("sa-1", "service-account", None, True, id="allocated-name"),
+        pytest.param("sa-1", None, "{}", True, id="allocated-tags"),
+        pytest.param(
+            "sa-1",
+            "service-account",
+            '{"team":"alpha"}',
+            True,
+            id="allocated-name-and-tags",
+        ),
+    ],
+)
+def test_validate_preview_row_enforces_allocated_resource_dependencies(
+    allocated_resource_id: str | None,
+    allocated_resource_name: str | None,
+    allocated_tags: str | None,
+    *,
+    is_valid: bool,
+) -> None:
+    mapping = preview_module("mapping")
+    row = _valid_row_projection(mapping)
+    for column, value in (
+        ("AllocatedResourceId", allocated_resource_id),
+        ("AllocatedResourceName", allocated_resource_name),
+        ("AllocatedTags", allocated_tags),
+    ):
+        row = _replace_target(mapping, row, column, value)
+
+    if is_valid:
+        _validate(mapping, row)
+        return
+
+    with pytest.raises(mapping.PreviewRowValidationError) as caught:
+        _validate(mapping, row)
+
+    assert caught.value.rule_id is mapping.PreviewRowRuleId.DEPENDENT_FIELDS
+    assert caught.value.column == "AllocatedResourceId"
+
+
 def test_validate_preview_row_rejects_priced_usage_without_consumed_fields() -> None:
     mapping = preview_module("mapping")
     row = _valid_row_projection(mapping)

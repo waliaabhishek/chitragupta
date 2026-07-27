@@ -375,6 +375,14 @@ def test_real_production_lineage_projects_multiple_origins_actual_portions_and_f
         retrieved_parts = [client.get(item["download_url"]).content for item in files]
         assert [len(body) for body in retrieved_parts] == [item["size_bytes"] for item in files]
         assert [hashlib.sha256(body).hexdigest() for body in retrieved_parts] == [item["sha256"] for item in files]
+        assert [hashlib.sha256(body).hexdigest() for body in retrieved_parts] == [
+            "9fe8007b740666aba032cb5215e34785e8bfa9a1c9563cfb717013b550486cd4",  # pragma: allowlist secret
+            "cdc15d1e0cfdbd80ca178f98932e6fc00eb1eb732f820f59cfde46013b618dad",  # pragma: allowlist secret
+            "b3769b4f302599dac0fefc62911a41d5020a0469351e3a731202e2f01b942a21",  # pragma: allowlist secret
+            "6a1a4e32d5eb5ab999b660111d34a7ee7e480845ce91081f2a28602bc1d3c9a4",  # pragma: allowlist secret
+            "2dd63bf4242a5883f1ea111fdb131ef90e14282bce585dbff83d2095e3056a29",  # pragma: allowlist secret
+            "042a79a23f9272e93f94fa61e004f5889e5338b5c84a90aa5632f2306145b64f",  # pragma: allowlist secret
+        ]
         with backend.create_preview_metadata_read_unit_of_work() as uow:
             persisted = uow.requests.get_for_owner(
                 ready["request_id"],
@@ -440,12 +448,39 @@ def test_real_production_lineage_projects_multiple_origins_actual_portions_and_f
         support = [row for row in rows if row["x_ChitraguptaSourceCostId"] == "cost-support"]
         assert {row["AllocatedResourceId"] for row in support} == {"sa-1", "user-1"}
         assert {row["BilledCost"] for row in support} == {"2.5"}
+        expected_allocated_fields = {
+            ("cost-link", "lkc-1", "Orders", '{"origin":"cluster"}', '{"origin":"cluster"}'),
+            ("cost-kafka", "sa-1", "Orders producer", '{"team":"alpha"}', '{"origin":"cluster"}'),
+            ("cost-kafka", "user-1", "Orders owner", '{"team":"beta"}', '{"origin":"cluster"}'),
+            ("cost-support", "sa-1", "Orders producer", '{"team":"alpha"}', "{}"),
+            ("cost-support", "user-1", "Orders owner", '{"team":"beta"}', "{}"),
+        }
+        assert {
+            (
+                row["x_ChitraguptaSourceCostId"],
+                row["AllocatedResourceId"],
+                row["AllocatedResourceName"],
+                row["AllocatedTags"],
+                row["Tags"],
+            )
+            for row in rows
+            if row["AllocatedResourceId"]
+        } == expected_allocated_fields
         unallocated = next(row for row in rows if row["x_ChitraguptaSourceCostId"] == "cost-audit")
         assert unallocated["AllocatedResourceId"] == ""
         assert unallocated["AllocatedResourceName"] == ""
         assert unallocated["AllocatedTags"] == ""
         assert unallocated["Tags"] == "{}"
         assert "UNALLOCATED" not in first_bytes.decode()
+        mapping = __import__("core.preview.mapping", fromlist=["FOCUS_1_4_FULL_PROFILE_COLUMNS"])
+        sentinel_columns = (
+            "AllocatedResourceId",
+            "AllocatedResourceName",
+            "AllocatedTags",
+            "Tags",
+            *mapping.CUSTOM_EVIDENCE_COLUMNS,
+        )
+        assert all("UNALLOCATED" not in row[column] for row in rows for column in sentinel_columns)
         assert {row["x_ChitraguptaAllocationMethodVersion"] for row in rows} == {"v1"}
         assert all(json.loads(row["AllocatedMethodDetails"])["target_kind"] for row in rows)
         assert tag_calls == [
@@ -453,7 +488,6 @@ def test_real_production_lineage_projects_multiple_origins_actual_portions_and_f
             ("identity", ("sa-1", "user-1")),
         ]
 
-        mapping = __import__("core.preview.mapping", fromlist=["FOCUS_1_4_FULL_PROFILE_COLUMNS"])
         custom_columns = ["BilledCost", "AllocatedResourceId", "x_ChitraguptaAllocationRatio"]
         profile_columns = {
             "full": list(mapping.FOCUS_1_4_FULL_PROFILE_COLUMNS),
@@ -493,6 +527,66 @@ def test_real_production_lineage_projects_multiple_origins_actual_portions_and_f
             assert next(csv.reader(io.StringIO(monthly_bytes.decode()))) == profile_columns[profile]
             if profile in {"full", "custom"}:
                 assert sum(Decimal(row["BilledCost"]) for row in monthly_rows) == Decimal("16")
+        app.state.preview_runtime._clock = lambda: datetime(2026, 7, 5, tzinfo=UTC)
+        monthly_full = _profile_request(
+            client,
+            {"grain": "monthly", "month": "2026-07", "column_profile": "full"},
+        )
+        assert monthly_full["status"] == "ready"
+        assert monthly_full["grain"] == "monthly"
+        assert monthly_full["month"] == "2026-07"
+        assert monthly_full["start_date"] == "2026-07-01"
+        assert monthly_full["end_date"] == "2026-08-01"
+        assert monthly_full["column_profile"] == "full"
+        assert monthly_full["effective_columns"] == profile_columns["full"]
+        assert monthly_full["source_snapshot"]["monthly_status"] == "provisional"
+        assert monthly_full["source_snapshot"]["effective_coverage_end_date"] == "2026-07-04"
+        monthly_files = monthly_full["package"]["files"]
+        assert len(monthly_files) > 1
+        assert [item["order"] for item in monthly_files] == list(range(1, len(monthly_files) + 1))
+        assert [item["name"] for item in monthly_files] == [
+            f"cost-and-usage-part-{index:05d}-of-{len(monthly_files):05d}.csv"
+            for index in range(1, len(monthly_files) + 1)
+        ]
+        monthly_parts = [client.get(item["download_url"]).content for item in monthly_files]
+        assert [len(body) for body in monthly_parts] == [item["size_bytes"] for item in monthly_files]
+        assert [hashlib.sha256(body).hexdigest() for body in monthly_parts] == [
+            item["sha256"] for item in monthly_files
+        ]
+        assert [hashlib.sha256(body).hexdigest() for body in monthly_parts] == [
+            "acb6b31a2d52c2a5e0cba5d406df57a2a19b5355df4e3c1ad7eb357fb35eec7c",  # pragma: allowlist secret
+            "5f831989ad3340924a929204f48e2400d402ff2ca682ff98e4ab47497dbe1385",  # pragma: allowlist secret
+            "b88baba61a31632d5e24e6506656cc4612a6bc3b1971f258ed3f80e2e087622b",  # pragma: allowlist secret
+            "a92943707c521273271ef26a9398d811bfab399a5d567879780d7eef91a2e87e",  # pragma: allowlist secret
+            "1a7866d9342b8bdb8648623c3153513d8be3a93ed4ae9e39650785d5d77dd81f",  # pragma: allowlist secret
+            "4b338e5b86cad304ad3aeddea3b74465510bba83a872c7bb153f73ed09952785",  # pragma: allowlist secret
+        ]
+        monthly_full_bytes, monthly_full_rows = _csv_rows(client, monthly_full)
+        assert len(monthly_full_rows) == 6
+        assert sum(Decimal(row["BilledCost"]) for row in monthly_full_rows) == Decimal("18")
+        assert sum(Decimal(row["PricingQuantity"]) for row in monthly_full_rows) == Decimal("7")
+        assert [
+            (row["x_ChitraguptaSourceCostId"], row["AllocatedResourceId"], row["BilledCost"])
+            for row in monthly_full_rows
+        ] == first_row_order
+        assert {
+            (
+                row["x_ChitraguptaSourceCostId"],
+                row["AllocatedResourceId"],
+                row["AllocatedResourceName"],
+                row["AllocatedTags"],
+                row["Tags"],
+            )
+            for row in monthly_full_rows
+            if row["AllocatedResourceId"]
+        } == expected_allocated_fields
+        monthly_unallocated = next(row for row in monthly_full_rows if row["x_ChitraguptaSourceCostId"] == "cost-audit")
+        assert monthly_unallocated["AllocatedResourceId"] == ""
+        assert monthly_unallocated["AllocatedResourceName"] == ""
+        assert monthly_unallocated["AllocatedTags"] == ""
+        assert monthly_unallocated["Tags"] == "{}"
+        assert "UNALLOCATED" not in monthly_full_bytes.decode()
+        assert all("UNALLOCATED" not in row[column] for row in monthly_full_rows for column in sentinel_columns)
         assert cost_route.call_count == 1
         assert len(respx.calls) == provider_calls_before_preview
 
@@ -502,6 +596,8 @@ def test_real_production_lineage_projects_multiple_origins_actual_portions_and_f
             uow.commit()
         repeated_bytes, _ = _csv_rows(client, ready)
         assert repeated_bytes == first_bytes
+        repeated_monthly_bytes, _ = _csv_rows(client, monthly_full)
+        assert repeated_monthly_bytes == monthly_full_bytes
 
         original_sources = CCloudBillingRepository.iter_preview_sources
         original_aggregates = CCloudBillingRepository.iter_preview_aggregates

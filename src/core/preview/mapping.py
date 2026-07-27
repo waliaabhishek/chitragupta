@@ -2127,6 +2127,13 @@ def validate_preview_row(
         raise PreviewRowValidationError(PreviewRowRuleId.DEPENDENT_FIELDS, column="ResourceType")
     if values["ResourceId"] is None and any(values[column] is not None for column in ("ResourceName", "ResourceType")):
         raise PreviewRowValidationError(PreviewRowRuleId.DEPENDENT_FIELDS, column="ResourceId")
+    if values["AllocatedResourceId"] is None and any(
+        values[column] is not None for column in ("AllocatedResourceName", "AllocatedTags")
+    ):
+        raise PreviewRowValidationError(
+            PreviewRowRuleId.DEPENDENT_FIELDS,
+            column="AllocatedResourceId",
+        )
     sku_columns = ("SkuId", "SkuMeter", "SkuPriceDetails", "SkuPriceId")
     pricing_is_emitted = any(
         values[column] is not None
