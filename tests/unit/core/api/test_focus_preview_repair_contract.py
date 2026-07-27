@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, date, datetime
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Literal
+from unittest.mock import patch
+from uuid import UUID
 
 import pytest
-from fastapi import HTTPException, Request, Response
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
@@ -20,6 +23,10 @@ from core.config.models import (
     FocusPreviewTenantConfig,
     StorageConfig,
     TenantConfig,
+)
+from core.preview.storage_availability import (
+    PreviewEvidenceAvailability,
+    PreviewEvidenceAvailabilityState,
 )
 from core.storage.backends.sqlmodel.unit_of_work import SQLModelBackend
 from plugins.confluent_cloud.storage.module import CCloudStorageModule
@@ -165,22 +172,47 @@ def test_unknown_unsupported_and_disabled_tenants_precede_runtime_backend_checks
     assert unsupported.status_code == 400
     assert unsupported.json() == {"detail": "FOCUS Mapping Preview currently supports only Confluent Cloud tenants"}
     assert disabled.status_code == 409
-    assert disabled.json()["detail"]["code"] == "preview_commercial_profile_unavailable"
+    assert disabled.json() == {
+        "detail": {
+            "code": "preview_commercial_profile_unavailable",
+            "message": ("An explicit Direct-billed PAYG profile does not cover the requested interval."),
+            "retryable": False,
+        }
+    }
 
 
 def test_api_only_valid_post_fails_before_backend_acquisition_when_worker_is_absent(
     tmp_path: Path,
 ) -> None:
-    app = create_app(_settings(tmp_path), mode="api")
+    settings = AppSettings(tenants={"enabled": _tenant(tmp_path)})
+    backend = SQLModelBackend(
+        f"sqlite:///{tmp_path / 'missing-repair-runtime.db'}",
+        CCloudStorageModule(),
+        use_migrations=False,
+        focus_preview_enabled=True,
+    )
+    backend.create_tables()
+    runner = _ProductionRunnerDouble(backend, [])
+    app = create_app(
+        settings,
+        workflow_runner=runner,  # type: ignore[arg-type]
+        mode="api",
+    )
 
-    with TestClient(app) as client:
-        response = client.post(
-            "/api/v1/tenants/enabled/focus-preview/repairs",
-            json={"start_date": "2026-07-01", "end_date": "2026-07-02"},
-        )
+    try:
+        with TestClient(app) as client:
+            runner.clear_lease_observations()
+            response = client.post(
+                "/api/v1/tenants/enabled/focus-preview/repairs",
+                json={"start_date": "2026-07-01", "end_date": "2026-07-02"},
+            )
 
-    assert response.status_code == 503
-    assert response.json() == {"detail": "FOCUS Mapping Preview repair worker is unavailable"}
+        assert response.status_code == 503
+        assert response.json() == {"detail": "FOCUS Mapping Preview repair worker is unavailable"}
+        assert runner.acquisitions == []
+        assert runner.lease_events == []
+    finally:
+        backend.dispose()
 
 
 @pytest.mark.parametrize(
@@ -234,6 +266,42 @@ def test_exact_range_error_bodies_precede_runtime_and_backend(
     assert response.json() == {"detail": detail}
 
 
+class _ProductionBackendLease:
+    def __init__(
+        self,
+        runner: _ProductionRunnerDouble,
+        tenant_name: str,
+        backend: object,
+        *,
+        enter_error: BaseException | None,
+        exit_error: BaseException | None,
+    ) -> None:
+        self.runner = runner
+        self.tenant_name = tenant_name
+        self.backend = backend
+        self.enter_error = enter_error
+        self.exit_error = exit_error
+
+    def __enter__(self) -> object:
+        self.runner.lease_events.append(("enter", self.tenant_name))
+        if self.enter_error is not None:
+            raise self.enter_error
+        return self.backend
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: object,
+    ) -> Literal[False]:
+        del exc_type, traceback
+        self.runner.lease_events.append(("exit", self.tenant_name))
+        self.runner.exit_exceptions.append(exc_value)
+        if self.exit_error is not None:
+            raise self.exit_error
+        return False
+
+
 class _ProductionRunnerDouble:
     """Complete shape consumed by the application lifespan for this contract."""
 
@@ -242,15 +310,37 @@ class _ProductionRunnerDouble:
         self.events = events
         self.busy = False
         self.preview_generation_scheduler = None
+        self.acquisitions: list[str] = []
+        self.lease_events: list[tuple[str, str]] = []
+        self.exit_exceptions: list[BaseException | None] = []
+        self.next_backend: object | None = None
+        self.next_enter_error: BaseException | None = None
+        self.next_exit_error: BaseException | None = None
 
-    @contextmanager
     def acquire_backend(
         self,
         tenant_name: str,
         tenant_config: TenantConfig,
-    ) -> Iterator[SQLModelBackend]:
-        del tenant_name, tenant_config
-        yield self.backend
+    ) -> _ProductionBackendLease:
+        del tenant_config
+        self.acquisitions.append(tenant_name)
+        backend = self.backend if self.next_backend is None else self.next_backend
+        lease = _ProductionBackendLease(
+            self,
+            tenant_name,
+            backend,
+            enter_error=self.next_enter_error,
+            exit_error=self.next_exit_error,
+        )
+        self.next_backend = None
+        self.next_enter_error = None
+        self.next_exit_error = None
+        return lease
+
+    def clear_lease_observations(self) -> None:
+        self.acquisitions.clear()
+        self.lease_events.clear()
+        self.exit_exceptions.clear()
 
     def run_focus_preview_repair(
         self,
@@ -270,6 +360,80 @@ class _ProductionRunnerDouble:
     def drain(self, timeout: float) -> None:
         del timeout
         self.events.append("runner-drain")
+
+
+class _UnavailableEvidenceBackend:
+    """Full repair-evidence protocol shape with controlled availability."""
+
+    def __init__(self, backend: SQLModelBackend) -> None:
+        self.backend = backend
+
+    @property
+    def preview_evidence_availability(self) -> PreviewEvidenceAvailability:
+        return PreviewEvidenceAvailability(PreviewEvidenceAvailabilityState.UNAVAILABLE)
+
+    def create_preview_evidence_unit_of_work(self) -> Any:
+        return self.backend.create_preview_evidence_unit_of_work()
+
+    def create_preview_generation_read_unit_of_work(self) -> Any:
+        return self.backend.create_preview_generation_read_unit_of_work()
+
+    def create_preview_evidence_bootstrap(self) -> Any:
+        return self.backend.create_preview_evidence_bootstrap()
+
+    def mark_preview_evidence_bootstrap_unavailable(self, error_type: str) -> None:
+        self.backend.mark_preview_evidence_bootstrap_unavailable(error_type)
+
+
+class _UnreadableEvidenceBackend(_UnavailableEvidenceBackend):
+    def __init__(self, backend: SQLModelBackend, error: BaseException) -> None:
+        super().__init__(backend)
+        self.error = error
+
+    @property
+    def preview_evidence_availability(self) -> PreviewEvidenceAvailability:
+        raise self.error
+
+
+def _assert_global_500(
+    response: Any,
+    log_exception: Any,
+    expected_error: BaseException,
+) -> None:
+    assert response.status_code == 500
+    body = response.json()
+    assert body["detail"] == "Internal server error"
+    assert set(body) == {"detail", "error_id"}
+    assert str(UUID(body["error_id"])) == body["error_id"]
+    assert log_exception.call_args.kwargs["exc_info"] is expected_error
+
+
+def _valid_repair_body() -> dict[str, str]:
+    return {"start_date": "2026-07-01", "end_date": "2026-07-02"}
+
+
+@pytest.fixture
+def production_repair_app(
+    tmp_path: Path,
+) -> Iterator[tuple[FastAPI, _ProductionRunnerDouble]]:
+    settings = AppSettings(tenants={"enabled": _tenant(tmp_path)})
+    backend = SQLModelBackend(
+        f"sqlite:///{tmp_path / 'repair-contract.db'}",
+        CCloudStorageModule(),
+        use_migrations=False,
+        focus_preview_enabled=True,
+    )
+    backend.create_tables()
+    runner = _ProductionRunnerDouble(backend, [])
+    yield (
+        create_app(
+            settings,
+            workflow_runner=runner,  # type: ignore[arg-type]
+            mode="both",
+        ),
+        runner,
+    )
+    backend.dispose()
 
 
 def test_both_mode_production_lifespan_constructs_repair_runtime_and_closes_it_before_runner(
@@ -483,51 +647,253 @@ def test_direct_api_dedicated_active_error_message_does_not_change_conflict_resp
         backend.dispose()
 
 
-def test_direct_api_generic_legacy_message_runtime_error_reaches_backend_boundary(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
+def test_production_repair_entry_failure_is_exact_storage_503_without_exit(
+    production_repair_app: tuple[FastAPI, _ProductionRunnerDouble],
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    from core.api.routes.focus_preview import submit_repair
-    from core.api.schemas import FocusPreviewRepairRequestBody
-
-    settings = AppSettings(tenants={"enabled": _tenant(tmp_path)})
-    backend = SQLModelBackend(
-        f"sqlite:///{tmp_path / 'generic-active-message.db'}",
-        CCloudStorageModule(),
-        use_migrations=False,
-        focus_preview_enabled=True,
-    )
-    backend.create_tables()
-    runner = _ProductionRunnerDouble(backend, [])
-    sentinel = RuntimeError("active_repair")
-    runtime = _direct_repair_runtime(
-        backend=backend,
-        runner=runner,
-        executor=_ControlledRepairExecutor(),
-    )
-    _raise_on_submit(monkeypatch, runtime, sentinel)
-    provider = _RecordingTenantBackendProvider(backend)
-    try:
-        with pytest.raises(HTTPException) as raised:
-            submit_repair(
-                _direct_request(runtime, runner),
-                Response(),
-                "enabled",
-                FocusPreviewRepairRequestBody(
-                    start_date=date(2026, 7, 1),
-                    end_date=date(2026, 7, 2),
-                ),
-                settings,
-                provider,
+    app, runner = production_repair_app
+    private_value = "private repair acquisition value"
+    sentinel = RuntimeError(private_value)
+    with TestClient(app) as client:
+        runner.clear_lease_observations()
+        runner.next_enter_error = sentinel
+        with (
+            patch.object(app.state.preview_repair_runtime, "submit") as submit,
+            caplog.at_level(logging.ERROR, logger="core.api.routes.focus_preview"),
+        ):
+            response = client.post(
+                "/api/v1/tenants/enabled/focus-preview/repairs",
+                json=_valid_repair_body(),
             )
 
-        assert provider.received_exception is sentinel
-        assert raised.value.status_code == 503
-        assert raised.value.detail == "FOCUS Mapping Preview repair storage is unavailable"
-    finally:
-        runtime.close(wait=True)
-        provider.close()
-        backend.dispose()
+    assert response.status_code == 503
+    assert response.json() == {"detail": "FOCUS Mapping Preview repair storage is unavailable"}
+    submit.assert_not_called()
+    assert runner.acquisitions == ["enabled"]
+    assert runner.lease_events == [("enter", "enabled")]
+    assert runner.exit_exceptions == []
+    assert ("FOCUS Mapping Preview repair backend failed tenant=enabled error_type=RuntimeError") in caplog.text
+    assert private_value not in response.text
+    assert private_value not in caplog.text
+
+
+def test_production_repair_invalid_backend_protocol_is_exact_storage_503_and_releases(
+    production_repair_app: tuple[FastAPI, _ProductionRunnerDouble],
+) -> None:
+    app, runner = production_repair_app
+    with TestClient(app) as client:
+        runner.clear_lease_observations()
+        runner.next_backend = SimpleNamespace(private_value="private invalid protocol")
+        with patch.object(app.state.preview_repair_runtime, "submit") as submit:
+            response = client.post(
+                "/api/v1/tenants/enabled/focus-preview/repairs",
+                json=_valid_repair_body(),
+            )
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "FOCUS Mapping Preview repair storage is unavailable"}
+    submit.assert_not_called()
+    assert runner.acquisitions == ["enabled"]
+    assert runner.lease_events == [
+        ("enter", "enabled"),
+        ("exit", "enabled"),
+    ]
+    assert len(runner.exit_exceptions) == 1
+    assert isinstance(runner.exit_exceptions[0], HTTPException)
+    assert "private invalid protocol" not in response.text
+
+
+def test_production_repair_unavailable_evidence_is_exact_storage_503_and_releases(
+    production_repair_app: tuple[FastAPI, _ProductionRunnerDouble],
+) -> None:
+    app, runner = production_repair_app
+    with TestClient(app) as client:
+        runner.clear_lease_observations()
+        runner.next_backend = _UnavailableEvidenceBackend(runner.backend)
+        with patch.object(app.state.preview_repair_runtime, "submit") as submit:
+            response = client.post(
+                "/api/v1/tenants/enabled/focus-preview/repairs",
+                json=_valid_repair_body(),
+            )
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "FOCUS Mapping Preview repair storage is unavailable"}
+    submit.assert_not_called()
+    assert runner.acquisitions == ["enabled"]
+    assert runner.lease_events == [
+        ("enter", "enabled"),
+        ("exit", "enabled"),
+    ]
+    assert len(runner.exit_exceptions) == 1
+    assert isinstance(runner.exit_exceptions[0], HTTPException)
+
+
+def test_production_repair_unreadable_evidence_is_exact_storage_503_and_releases(
+    production_repair_app: tuple[FastAPI, _ProductionRunnerDouble],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    app, runner = production_repair_app
+    private_value = "private repair availability value"
+    sentinel = RuntimeError(private_value)
+    with TestClient(app) as client:
+        runner.clear_lease_observations()
+        runner.next_backend = _UnreadableEvidenceBackend(runner.backend, sentinel)
+        with (
+            patch.object(app.state.preview_repair_runtime, "submit") as submit,
+            caplog.at_level(logging.ERROR, logger="core.api.routes.focus_preview"),
+        ):
+            response = client.post(
+                "/api/v1/tenants/enabled/focus-preview/repairs",
+                json=_valid_repair_body(),
+            )
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "FOCUS Mapping Preview repair storage is unavailable"}
+    submit.assert_not_called()
+    assert runner.acquisitions == ["enabled"]
+    assert runner.lease_events == [
+        ("enter", "enabled"),
+        ("exit", "enabled"),
+    ]
+    assert len(runner.exit_exceptions) == 1
+    assert isinstance(runner.exit_exceptions[0], HTTPException)
+    assert ("FOCUS Mapping Preview repair backend failed tenant=enabled error_type=RuntimeError") in caplog.text
+    assert private_value not in response.text
+    assert private_value not in caplog.text
+
+
+def test_production_repair_intentional_http_exception_keeps_identity_and_releases(
+    production_repair_app: tuple[FastAPI, _ProductionRunnerDouble],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    app, runner = production_repair_app
+    sentinel = HTTPException(418, detail={"code": "intentional_repair_sentinel"})
+    with TestClient(app) as client:
+        runner.clear_lease_observations()
+        with (
+            patch.object(
+                app.state.preview_repair_runtime,
+                "submit",
+                side_effect=sentinel,
+            ),
+            caplog.at_level(logging.ERROR, logger="core.api.routes.focus_preview"),
+        ):
+            response = client.post(
+                "/api/v1/tenants/enabled/focus-preview/repairs",
+                json=_valid_repair_body(),
+            )
+
+    assert response.status_code == 418
+    assert response.json() == {"detail": {"code": "intentional_repair_sentinel"}}
+    assert runner.lease_events == [
+        ("enter", "enabled"),
+        ("exit", "enabled"),
+    ]
+    assert runner.exit_exceptions == [sentinel]
+    assert "FOCUS Mapping Preview repair backend failed" not in caplog.text
+
+
+def test_production_repair_unexpected_exception_reaches_global_handler_with_identity(
+    production_repair_app: tuple[FastAPI, _ProductionRunnerDouble],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    app, runner = production_repair_app
+    private_value = "private unexpected repair value"
+    sentinel = RuntimeError(private_value)
+    with TestClient(app, raise_server_exceptions=False) as client:
+        runner.clear_lease_observations()
+        with (
+            patch.object(
+                app.state.preview_repair_runtime,
+                "submit",
+                side_effect=sentinel,
+            ),
+            patch("core.api.exception_handler.logger.exception") as log_exception,
+            caplog.at_level(logging.ERROR, logger="core.api.routes.focus_preview"),
+        ):
+            response = client.post(
+                "/api/v1/tenants/enabled/focus-preview/repairs",
+                json=_valid_repair_body(),
+            )
+
+    _assert_global_500(response, log_exception, sentinel)
+    assert runner.lease_events == [
+        ("enter", "enabled"),
+        ("exit", "enabled"),
+    ]
+    assert runner.exit_exceptions == [sentinel]
+    assert "FOCUS Mapping Preview repair backend failed" not in caplog.text
+    assert "repair storage is unavailable" not in caplog.text
+    assert private_value not in caplog.text
+
+
+def test_production_repair_exit_failure_cannot_mask_primary_exception(
+    production_repair_app: tuple[FastAPI, _ProductionRunnerDouble],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    app, runner = production_repair_app
+    primary_private_value = "private primary repair value"
+    release_private_value = "private release repair value"
+    primary_error = RuntimeError(primary_private_value)
+    release_error = OSError(release_private_value)
+    with TestClient(app, raise_server_exceptions=False) as client:
+        runner.clear_lease_observations()
+        runner.next_exit_error = release_error
+        with (
+            patch.object(
+                app.state.preview_repair_runtime,
+                "submit",
+                side_effect=primary_error,
+            ),
+            patch("core.api.exception_handler.logger.exception") as log_exception,
+            caplog.at_level(logging.ERROR, logger="core.api.routes.focus_preview"),
+        ):
+            response = client.post(
+                "/api/v1/tenants/enabled/focus-preview/repairs",
+                json=_valid_repair_body(),
+            )
+
+    _assert_global_500(response, log_exception, primary_error)
+    assert runner.lease_events == [
+        ("enter", "enabled"),
+        ("exit", "enabled"),
+    ]
+    assert runner.exit_exceptions == [primary_error]
+    assert (
+        "FOCUS Mapping Preview backend lease release failed "
+        "tenant=enabled primary_error_type=RuntimeError "
+        "release_error_type=OSError"
+    ) in caplog.text
+    assert "FOCUS Mapping Preview repair backend failed" not in caplog.text
+    assert primary_private_value not in caplog.text
+    assert release_private_value not in caplog.text
+
+
+def test_production_repair_exit_failure_after_success_reaches_global_handler(
+    production_repair_app: tuple[FastAPI, _ProductionRunnerDouble],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    app, runner = production_repair_app
+    private_value = "private successful repair release value"
+    release_error = OSError(private_value)
+    with TestClient(app, raise_server_exceptions=False) as client:
+        runner.clear_lease_observations()
+        runner.next_exit_error = release_error
+        with (
+            patch("core.api.exception_handler.logger.exception") as log_exception,
+            caplog.at_level(logging.ERROR, logger="core.api.routes.focus_preview"),
+        ):
+            response = client.get("/api/v1/tenants/enabled/focus-preview/repairs/absent")
+
+    _assert_global_500(response, log_exception, release_error)
+    assert runner.lease_events == [
+        ("enter", "enabled"),
+        ("exit", "enabled"),
+    ]
+    assert runner.exit_exceptions == [None]
+    assert "FOCUS Mapping Preview repair backend failed" not in caplog.text
+    assert "repair storage is unavailable" not in caplog.text
+    assert private_value not in caplog.text
 
 
 def test_direct_api_scheduling_failure_persists_exact_durable_failure(
@@ -775,6 +1141,7 @@ def test_production_post_persists_complete_queue_location_active_guard_and_resta
     app = create_app(settings, workflow_runner=runner, mode="both")  # type: ignore[arg-type]
 
     with TestClient(app) as client:
+        runner.clear_lease_observations()
         response = client.post(
             "/api/v1/tenants/enabled/focus-preview/repairs",
             json={"start_date": "2026-07-01", "end_date": "2026-07-04"},
@@ -807,8 +1174,23 @@ def test_production_post_persists_complete_queue_location_active_guard_and_resta
         assert retained.status_code == 200
         assert retained.json()["repair_id"] == repair_id
 
+    assert runner.acquisitions == ["enabled", "enabled", "enabled"]
+    assert runner.lease_events == [
+        ("enter", "enabled"),
+        ("exit", "enabled"),
+        ("enter", "enabled"),
+        ("exit", "enabled"),
+        ("enter", "enabled"),
+        ("exit", "enabled"),
+    ]
+    assert len(runner.exit_exceptions) == 3
+    assert runner.exit_exceptions[0] is None
+    assert isinstance(runner.exit_exceptions[1], HTTPException)
+    assert runner.exit_exceptions[2] is None
+
     restarted = create_app(settings, workflow_runner=runner, mode="api")  # type: ignore[arg-type]
     with TestClient(restarted) as client:
+        runner.clear_lease_observations()
         retained = client.get(
             f"/api/v1/tenants/enabled/focus-preview/repairs/{repair_id}",
         )
@@ -820,4 +1202,12 @@ def test_production_post_persists_complete_queue_location_active_guard_and_resta
     assert retained.json()["repair_id"] == repair_id
     assert absent.status_code == 404
     assert absent.json() == {"detail": "FOCUS Mapping Preview repair 'absent' not found"}
+    assert runner.acquisitions == ["enabled", "enabled"]
+    assert runner.lease_events == [
+        ("enter", "enabled"),
+        ("exit", "enabled"),
+        ("enter", "enabled"),
+        ("exit", "enabled"),
+    ]
+    assert runner.exit_exceptions == [None, None]
     backend.dispose()

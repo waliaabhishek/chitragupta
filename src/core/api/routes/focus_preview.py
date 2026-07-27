@@ -237,22 +237,45 @@ def _repair_backend(
     from core.preview.storage_availability import PreviewEvidenceAvailabilityState
 
     try:
-        with provider.acquire_backend(tenant_name, tenant_config) as backend:
-            if (
-                not isinstance(backend, PreviewEvidenceStorageBackend)
-                or backend.preview_evidence_availability.state is not PreviewEvidenceAvailabilityState.READY
-            ):
-                raise HTTPException(503, detail="FOCUS Mapping Preview repair storage is unavailable")
-            yield backend
+        lease = provider.acquire_backend(tenant_name, tenant_config)
+        backend = lease.__enter__()
     except Exception as exc:
-        if isinstance(exc, HTTPException):
-            raise
         logger.error(
             "FOCUS Mapping Preview repair backend failed tenant=%s error_type=%s",
             tenant_name,
             type(exc).__name__,
         )
         raise HTTPException(503, detail="FOCUS Mapping Preview repair storage is unavailable") from None
+
+    if not isinstance(backend, PreviewEvidenceStorageBackend):
+        error = HTTPException(503, detail="FOCUS Mapping Preview repair storage is unavailable")
+        _release_preview_backend_lease(lease, tenant_name=tenant_name, preserving=error)
+        raise error
+
+    try:
+        evidence_ready = backend.preview_evidence_availability.state is PreviewEvidenceAvailabilityState.READY
+    except Exception as exc:
+        error = HTTPException(503, detail="FOCUS Mapping Preview repair storage is unavailable")
+        logger.error(
+            "FOCUS Mapping Preview repair backend failed tenant=%s error_type=%s",
+            tenant_name,
+            type(exc).__name__,
+        )
+        _release_preview_backend_lease(lease, tenant_name=tenant_name, preserving=error)
+        raise error from None
+
+    if not evidence_ready:
+        error = HTTPException(503, detail="FOCUS Mapping Preview repair storage is unavailable")
+        _release_preview_backend_lease(lease, tenant_name=tenant_name, preserving=error)
+        raise error
+
+    try:
+        yield backend
+    except BaseException as exc:
+        _release_preview_backend_lease(lease, tenant_name=tenant_name, preserving=exc)
+        raise
+    else:
+        _release_preview_backend_lease(lease, tenant_name=tenant_name, preserving=None)
 
 
 @contextmanager
