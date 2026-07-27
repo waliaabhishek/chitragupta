@@ -61,9 +61,6 @@ filterwarnings = [
     # temporarily disagrees with the SQLModel metadata.  Harmless and
     # unfixable without abandoning batch_alter_table.
     "ignore:Table '_alembic_tmp_:sqlalchemy.exc.SAWarning",
-    # In-memory SQLite connections in tests may be GC'd before explicit
-    # dispose(); harmless for :memory: databases.
-    "ignore:unclosed database:ResourceWarning",
 ]
 
 [tool.ruff]

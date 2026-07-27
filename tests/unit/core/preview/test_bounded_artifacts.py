@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import hashlib
+import sqlite3
+import tomllib
 import tracemalloc
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, date, datetime
@@ -24,6 +27,193 @@ from tests.unit.core.preview.test_service import (
     _source,
     _tenant_config,
 )
+
+
+class _TrackedSqliteConnection:
+    def __init__(self, connection: sqlite3.Connection, tracker: _DirectSqliteConnectionTracker) -> None:
+        self._connection = connection
+        self._tracker = tracker
+        self._closed = False
+
+    def execute(self, sql: str, parameters: Any = ()) -> sqlite3.Cursor:
+        self._tracker.executions.append((sql, parameters))
+        if self._tracker.fail_query is not None and self._tracker.fail_query in sql:
+            raise sqlite3.OperationalError("synthetic tracked query failure")
+        return self._connection.execute(sql, parameters)
+
+    def executemany(self, sql: str, parameters: Any) -> sqlite3.Cursor:
+        return self._connection.executemany(sql, parameters)
+
+    def executescript(self, sql_script: str) -> sqlite3.Cursor:
+        return self._connection.executescript(sql_script)
+
+    def cursor(self, *args: object, **kwargs: object) -> sqlite3.Cursor:
+        return self._connection.cursor(*args, **kwargs)
+
+    def commit(self) -> None:
+        self._connection.commit()
+
+    def rollback(self) -> None:
+        self._connection.rollback()
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._connection.close()
+        self._closed = True
+        self._tracker.explicit_closes += 1
+        self._tracker.live -= 1
+
+    def __enter__(self) -> _TrackedSqliteConnection:
+        self._connection.__enter__()
+        return self
+
+    def __exit__(self, *args: object) -> bool | None:
+        if self._closed:
+            return None
+        return self._connection.__exit__(*args)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._connection, name)
+
+
+class _DirectSqliteConnectionTracker:
+    def __init__(self, real_connect: Any, target_path: Path | None = None) -> None:
+        self._real_connect = real_connect
+        self._target_path = target_path
+        self._connections: list[_TrackedSqliteConnection] = []
+        self.opens = 0
+        self.explicit_closes = 0
+        self.live = 0
+        self.max_live = 0
+        self.executions: list[tuple[str, Any]] = []
+        self.fail_query: str | None = None
+
+    def connect(self, *args: object, **kwargs: object) -> Any:
+        database = args[0] if args else kwargs.get("database")
+        tracks = self._tracks(database)
+        if tracks and len(args) < 5 and "check_same_thread" not in kwargs:
+            kwargs = {**kwargs, "check_same_thread": False}
+        connection = self._real_connect(*args, **kwargs)
+        if not tracks:
+            return connection
+        tracked = _TrackedSqliteConnection(connection, self)
+        self._connections.append(tracked)
+        self.opens += 1
+        self.live += 1
+        self.max_live = max(self.max_live, self.live)
+        return tracked
+
+    def _tracks(self, database: object) -> bool:
+        if database is None:
+            return False
+        path = Path(str(database))
+        if self._target_path is not None:
+            return path == self._target_path
+        return path.name == "projection.sqlite" and path.parent.name.endswith(".workspace")
+
+    def cleanup(self) -> None:
+        for connection in self._connections:
+            if not connection._closed:
+                connection._connection.close()
+                connection._closed = True
+                self.live -= 1
+
+
+def _install_direct_sqlite_tracker(
+    spooling: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    target_path: Path | None = None,
+) -> _DirectSqliteConnectionTracker:
+    tracker = _DirectSqliteConnectionTracker(spooling.sqlite3.connect, target_path)
+    monkeypatch.setattr(spooling.sqlite3, "connect", tracker.connect)
+    return tracker
+
+
+def _artifact_catalog(tmp_path: Path, *, count: int = 257) -> tuple[Path, tuple[tuple[Any, ...], ...]]:
+    root = tmp_path / "catalog.workspace"
+    root.mkdir()
+    catalog_path = root / "projection.sqlite"
+    expected: list[tuple[Any, ...]] = []
+    connection = sqlite3.connect(catalog_path)
+    try:
+        connection.execute(
+            """
+            CREATE TABLE artifacts (
+                file_order INTEGER PRIMARY KEY,
+                name TEXT NOT NULL UNIQUE,
+                media_type TEXT NOT NULL,
+                path TEXT NOT NULL,
+                size_bytes INTEGER NOT NULL,
+                sha256 TEXT NOT NULL
+            )
+            """
+        )
+        for order in range(1, count + 1):
+            body = f"row-{order:04d}\n".encode()
+            path = root / f"part-{order:04d}.csv"
+            path.write_bytes(body)
+            name = path.name
+            media_type = "text/csv"
+            sha256 = hashlib.sha256(body).hexdigest()
+            expected.append((name, media_type, order, path, len(body), sha256, body))
+        connection.executemany(
+            """
+            INSERT INTO artifacts (file_order, name, media_type, path, size_bytes, sha256)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                (order, name, media_type, str(path), size_bytes, sha256)
+                for name, media_type, order, path, size_bytes, sha256, _body in expected
+            ),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+    return catalog_path, tuple(expected)
+
+
+def _payload_value(payload: Any) -> tuple[Any, ...]:
+    body = b"".join(payload.body.iter_chunks(chunk_size=3))
+    return (
+        payload.name,
+        payload.media_type,
+        payload.order,
+        payload.body.path,
+        payload.body.size_bytes,
+        payload.body.sha256,
+        body,
+    )
+
+
+def _metadata_value(metadata: Any) -> tuple[Any, ...]:
+    return (
+        metadata.name,
+        metadata.media_type,
+        metadata.order,
+        metadata.size_bytes,
+        metadata.sha256,
+    )
+
+
+def _expected_metadata(expected: tuple[tuple[Any, ...], ...]) -> tuple[tuple[Any, ...], ...]:
+    return tuple(
+        (name, media_type, order, size_bytes, sha256)
+        for name, media_type, order, _path, size_bytes, sha256, _body in expected
+    )
+
+
+def _collection_case(
+    spooling: Any,
+    catalog_path: Path,
+    expected: tuple[tuple[Any, ...], ...],
+    collection_name: str,
+) -> tuple[Any, tuple[tuple[Any, ...], ...], Any]:
+    payloads = spooling.PreviewSpooledArtifactCollection(catalog_path)
+    if collection_name == "payload":
+        return payloads, expected, _payload_value
+    return payloads.metadata, _expected_metadata(expected), _metadata_value
 
 
 def test_verified_artifact_stream_hashes_before_return_and_yields_exact_stored_chunks(
@@ -284,6 +474,269 @@ def test_concurrent_sqlite_workspaces_do_not_mutate_process_global_temp_director
     finally:
         for workspace in workspaces:
             workspace.close()
+
+
+def test_workspace_sqlite_connection_explicitly_closes_after_success(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spooling = preview_module("spooling")
+    workspace = spooling.PreviewGenerationWorkspace(
+        8 * 1024 * 1024,
+        root=tmp_path / "success.workspace",
+    )
+    database_path = workspace.root / "projection.sqlite"
+    tracker = _install_direct_sqlite_tracker(spooling, monkeypatch, target_path=database_path)
+    try:
+        with workspace.sqlite_connection(database_path) as connection:
+            connection.execute("CREATE TABLE control (value INTEGER NOT NULL)")
+        assert tracker.opens == tracker.explicit_closes == 1
+        assert tracker.live == 0
+    finally:
+        tracker.cleanup()
+        workspace.close()
+
+
+def test_workspace_sqlite_connection_explicitly_closes_before_exception_propagates(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spooling = preview_module("spooling")
+    workspace = spooling.PreviewGenerationWorkspace(
+        8 * 1024 * 1024,
+        root=tmp_path / "exception.workspace",
+    )
+    database_path = workspace.root / "projection.sqlite"
+    tracker = _install_direct_sqlite_tracker(spooling, monkeypatch, target_path=database_path)
+    try:
+        with (
+            pytest.raises(RuntimeError, match="consumer failure"),
+            workspace.sqlite_connection(database_path),
+        ):
+            raise RuntimeError("consumer failure")
+        assert tracker.opens == tracker.explicit_closes == 1
+        assert tracker.live == 0
+    finally:
+        tracker.cleanup()
+        workspace.close()
+
+
+@pytest.mark.parametrize("collection_name", ["payload", "metadata"])
+def test_spooled_collection_scalar_and_index_operations_close_before_returning_or_raising(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    collection_name: str,
+) -> None:
+    spooling = preview_module("spooling")
+    catalog_path, expected = _artifact_catalog(tmp_path, count=3)
+    collection, expected_values, value_of = _collection_case(spooling, catalog_path, expected, collection_name)
+    tracker = _install_direct_sqlite_tracker(spooling, monkeypatch, target_path=catalog_path)
+    try:
+        assert len(collection) == 3
+        assert tracker.live == 0
+        assert value_of(collection[1]) == expected_values[1]
+        assert tracker.live == 0
+        assert value_of(collection[-1]) == expected_values[-1]
+        assert tracker.live == 0
+        with pytest.raises(IndexError):
+            collection[3]
+        assert tracker.live == 0
+        with pytest.raises(IndexError):
+            collection[-4]
+        assert tracker.live == 0
+        assert tracker.opens == tracker.explicit_closes
+    finally:
+        tracker.cleanup()
+
+
+@pytest.mark.parametrize("collection_name", ["payload", "metadata"])
+def test_spooled_collection_complete_iteration_preserves_exact_values_and_closes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    collection_name: str,
+) -> None:
+    spooling = preview_module("spooling")
+    catalog_path, expected = _artifact_catalog(tmp_path, count=3)
+    collection, expected_values, value_of = _collection_case(spooling, catalog_path, expected, collection_name)
+    tracker = _install_direct_sqlite_tracker(spooling, monkeypatch, target_path=catalog_path)
+    try:
+        assert tuple(value_of(item) for item in collection) == expected_values
+        assert tracker.live == 0
+        assert tracker.opens == tracker.explicit_closes
+    finally:
+        tracker.cleanup()
+
+
+@pytest.mark.parametrize("collection_name", ["payload", "metadata"])
+def test_spooled_collection_partial_and_consumer_aborted_iteration_never_yield_with_live_connection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    collection_name: str,
+) -> None:
+    spooling = preview_module("spooling")
+    catalog_path, expected = _artifact_catalog(tmp_path, count=3)
+    collection, expected_values, value_of = _collection_case(spooling, catalog_path, expected, collection_name)
+    tracker = _install_direct_sqlite_tracker(spooling, monkeypatch, target_path=catalog_path)
+    try:
+        retained_iterator = iter(collection)
+        assert value_of(next(retained_iterator)) == expected_values[0]
+        assert tracker.live == 0
+
+        for item in collection:
+            assert value_of(item) == expected_values[0]
+            assert tracker.live == 0
+            break
+
+        with pytest.raises(RuntimeError, match="consumer failure"):
+            for item in collection:
+                assert value_of(item) == expected_values[0]
+                assert tracker.live == 0
+                raise RuntimeError("consumer failure")
+        assert tracker.live == 0
+        assert tracker.opens == tracker.explicit_closes
+    finally:
+        tracker.cleanup()
+
+
+@pytest.mark.parametrize("collection_name", ["payload", "metadata"])
+def test_spooled_collection_query_exception_closes_before_propagating(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    collection_name: str,
+) -> None:
+    spooling = preview_module("spooling")
+    catalog_path, expected = _artifact_catalog(tmp_path, count=3)
+    collection, _expected_values, _value_of = _collection_case(spooling, catalog_path, expected, collection_name)
+    tracker = _install_direct_sqlite_tracker(spooling, monkeypatch, target_path=catalog_path)
+    tracker.fail_query = "SELECT COUNT(*)"
+    try:
+        with pytest.raises(sqlite3.OperationalError, match="synthetic tracked query failure"):
+            len(collection)
+        assert tracker.live == 0
+        assert tracker.opens == tracker.explicit_closes == 1
+    finally:
+        tracker.cleanup()
+
+
+@pytest.mark.parametrize("collection_name", ["payload", "metadata"])
+def test_spooled_collection_multi_batch_iteration_is_bounded_ordered_and_connection_free(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    collection_name: str,
+) -> None:
+    spooling = preview_module("spooling")
+    catalog_path, expected = _artifact_catalog(tmp_path)
+    collection, expected_values, value_of = _collection_case(spooling, catalog_path, expected, collection_name)
+    tracker = _install_direct_sqlite_tracker(spooling, monkeypatch, target_path=catalog_path)
+    try:
+        assert tuple(value_of(item) for item in collection) == expected_values
+        iteration_queries = [
+            (sql, parameters)
+            for sql, parameters in tracker.executions
+            if "FROM artifacts" in sql and "file_order >" in sql
+        ]
+        assert len(iteration_queries) >= 2
+        assert all("LIMIT ?" in sql for sql, _parameters in iteration_queries)
+        assert all(tuple(parameters)[-1] == spooling.SQLITE_BATCH_SIZE for _sql, parameters in iteration_queries)
+        assert tracker.max_live == 1
+        assert tracker.live == 0
+        assert tracker.opens == tracker.explicit_closes
+    finally:
+        tracker.cleanup()
+
+
+@pytest.mark.parametrize("collection_name", ["payload", "metadata"])
+def test_repeated_spooled_catalog_access_returns_live_count_to_zero_after_every_operation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    collection_name: str,
+) -> None:
+    spooling = preview_module("spooling")
+    catalog_path, _expected = _artifact_catalog(tmp_path, count=3)
+    payloads = spooling.PreviewSpooledArtifactCollection(catalog_path)
+    collection = payloads if collection_name == "payload" else payloads.metadata
+    tracker = _install_direct_sqlite_tracker(spooling, monkeypatch, target_path=catalog_path)
+    try:
+        for _repeat in range(3):
+            assert len(collection) == 3
+            assert tracker.live == 0
+            assert collection[1].order == 2
+            assert tracker.live == 0
+            assert tuple(item.order for item in collection) == (1, 2, 3)
+            assert tracker.live == 0
+            retained_iterator = iter(collection)
+            assert next(retained_iterator).order == 1
+            assert tracker.live == 0
+        assert tracker.opens == tracker.explicit_closes
+    finally:
+        tracker.cleanup()
+
+
+def test_repeated_real_bounded_package_construction_and_staging_close_all_direct_connections(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    artifacts = preview_module("artifacts")
+    mapping = preview_module("mapping")
+    spooling = preview_module("spooling")
+    store = artifacts.LocalPreviewArtifactStore(tmp_path / "artifacts")
+    request = _monthly_request()
+    snapshot = _settled_snapshot()
+    rows = (
+        _row(day=2, AllocatedResourceId="sa-b"),
+        _row(day=1, AllocatedResourceId="sa-a"),
+    )
+    reconciliation = mapping.PreviewPackageReconciliation(
+        source_records=2,
+        source_cost=Decimal("16"),
+        allocated_cost=Decimal("16"),
+        source_quantity=Decimal("10"),
+        allocated_quantity=Decimal("10"),
+    )
+    baseline = mapping.build_preview_data_package(
+        request=request,
+        snapshot=snapshot,
+        full_rows=rows,
+        reconciliation=reconciliation,
+        max_csv_file_bytes=None,
+    )
+    lines = baseline.data_files[0].body.splitlines(keepends=True)
+    part_limit = len(lines[0]) + max(len(line) for line in lines[1:])
+    tracker = _install_direct_sqlite_tracker(spooling, monkeypatch)
+    try:
+        for repeat in range(3):
+            generation = store.begin_generation(
+                owner=_owner(),
+                request_id=f"repeated-direct-sqlite-{repeat}",
+                max_spool_bytes=16 * 1024 * 1024,
+            )
+            try:
+                draft = mapping.build_bounded_preview_data_package(
+                    request=request,
+                    snapshot=snapshot,
+                    full_rows=iter(rows),
+                    reconciliation=reconciliation,
+                    max_csv_file_bytes=part_limit,
+                    max_generation_spool_bytes=generation.workspace.limit_bytes,
+                    workspace=generation.workspace,
+                )
+                assert tracker.live == 0
+                generation.stage_data_files(draft.data_files)
+                assert tracker.live == 0
+            finally:
+                generation.close()
+            assert tracker.live == 0
+        assert tracker.opens > 0
+        assert tracker.opens == tracker.explicit_closes
+    finally:
+        tracker.cleanup()
+
+
+def test_pytest_configuration_does_not_hide_unclosed_database_resource_warnings() -> None:
+    project = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+    warning_filters = project["tool"]["pytest"]["ini_options"]["filterwarnings"]
+
+    assert not any("unclosed database" in item and "ResourceWarning" in item for item in warning_filters)
 
 
 def test_explicit_workspace_close_surfaces_and_logs_cleanup_failure(

@@ -13,6 +13,7 @@ from sqlalchemy import create_engine, text
 
 from core.api.app import create_app
 from core.config.models import AppSettings, PreviewConfig, StorageConfig, TenantConfig
+from core.preview import spooling
 from core.storage.backends.sqlmodel.unit_of_work import SQLModelBackend
 from tests.integration.core.api.test_focus_preview_pipeline import (
     PipelineApiClient,
@@ -22,11 +23,13 @@ from tests.integration.core.api.test_focus_preview_pipeline import (
     _focus_preview_block,
     _mock_organization_api,
 )
+from tests.unit.core.preview.test_bounded_artifacts import _install_direct_sqlite_tracker
 from tests.unit.core.storage.test_migration_019_focus_preview import _alembic_config
 from workflow_runner import WorkflowRunner
 
 if TYPE_CHECKING:
     import httpx
+    import pytest
 
 RELEASE_HEAD = "ddebea2fe0a8"
 START = date(2026, 6, 1)
@@ -369,7 +372,11 @@ def _assert_repaired_state_agrees(
 @respx.mock
 def test_v210_retained_month_fails_then_production_rest_repair_enables_daily_and_monthly_preview(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
 ) -> None:
+    direct_sqlite = _install_direct_sqlite_tracker(spooling, monkeypatch)
+    request.addfinalizer(direct_sqlite.cleanup)
     connection_string = f"sqlite:///{tmp_path / 'v2.1.0-upgrade.db'}"
     config = _alembic_config(connection_string)
     command.upgrade(config, RELEASE_HEAD)
@@ -532,3 +539,7 @@ def test_v210_retained_month_fails_then_production_rest_repair_enables_daily_and
         assert retained.json()["status"] == "completed"
     finally:
         restarted_client.close()
+
+    assert direct_sqlite.opens > 0
+    assert direct_sqlite.opens == direct_sqlite.explicit_closes
+    assert direct_sqlite.live == 0

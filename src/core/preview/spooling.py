@@ -17,6 +17,16 @@ logger = logging.getLogger(__name__)
 SQLITE_BATCH_SIZE = 256
 
 
+@contextmanager
+def _catalog_connection(path: Path) -> Iterator[sqlite3.Connection]:
+    connection = sqlite3.connect(path)
+    try:
+        with connection:
+            yield connection
+    finally:
+        connection.close()
+
+
 class PreviewGenerationSpoolLimitError(OSError):
     """A generation exceeded its configured disk-spool budget."""
 
@@ -208,7 +218,7 @@ class PreviewSpooledArtifactCollection(Sequence[PreviewArtifactPayload]):
         self._catalog_path = catalog_path
 
     def __len__(self) -> int:
-        with sqlite3.connect(self._catalog_path) as connection:
+        with _catalog_connection(self._catalog_path) as connection:
             value = connection.execute("SELECT COUNT(*) FROM artifacts").fetchone()
         assert value is not None
         return int(value[0])
@@ -218,14 +228,21 @@ class PreviewSpooledArtifactCollection(Sequence[PreviewArtifactPayload]):
         return PreviewSpooledArtifactMetadataCollection(self._catalog_path)
 
     def __iter__(self) -> Iterator[PreviewArtifactPayload]:
-        with sqlite3.connect(self._catalog_path) as connection:
-            rows = connection.execute(
-                """
-                SELECT name, media_type, file_order, path, size_bytes, sha256
-                FROM artifacts
-                ORDER BY file_order
-                """
-            )
+        last_order = 0
+        while True:
+            with _catalog_connection(self._catalog_path) as connection:
+                rows = connection.execute(
+                    """
+                    SELECT name, media_type, file_order, path, size_bytes, sha256
+                    FROM artifacts
+                    WHERE file_order > ?
+                    ORDER BY file_order
+                    LIMIT ?
+                    """,
+                    (last_order, SQLITE_BATCH_SIZE),
+                ).fetchall()
+            if not rows:
+                return
             for name, media_type, order, path, size_bytes, sha256 in rows:
                 yield PreviewArtifactPayload(
                     name=str(name),
@@ -237,6 +254,7 @@ class PreviewSpooledArtifactCollection(Sequence[PreviewArtifactPayload]):
                         sha256=str(sha256),
                     ),
                 )
+            last_order = int(rows[-1][2])
 
     @overload
     def __getitem__(self, index: int) -> PreviewArtifactPayload: ...
@@ -251,7 +269,7 @@ class PreviewSpooledArtifactCollection(Sequence[PreviewArtifactPayload]):
         normalized = index if index >= 0 else count + index
         if normalized < 0 or normalized >= count:
             raise IndexError(index)
-        with sqlite3.connect(self._catalog_path) as connection:
+        with _catalog_connection(self._catalog_path) as connection:
             row = connection.execute(
                 """
                 SELECT name, media_type, file_order, path, size_bytes, sha256
@@ -278,20 +296,27 @@ class PreviewSpooledArtifactMetadataCollection(Sequence[PreviewArtifactMetadata]
         self._catalog_path = catalog_path
 
     def __len__(self) -> int:
-        with sqlite3.connect(self._catalog_path) as connection:
+        with _catalog_connection(self._catalog_path) as connection:
             value = connection.execute("SELECT COUNT(*) FROM artifacts").fetchone()
         assert value is not None
         return int(value[0])
 
     def __iter__(self) -> Iterator[PreviewArtifactMetadata]:
-        with sqlite3.connect(self._catalog_path) as connection:
-            rows = connection.execute(
-                """
-                SELECT name, media_type, size_bytes, sha256, file_order
-                FROM artifacts
-                ORDER BY file_order
-                """
-            )
+        last_order = 0
+        while True:
+            with _catalog_connection(self._catalog_path) as connection:
+                rows = connection.execute(
+                    """
+                    SELECT name, media_type, size_bytes, sha256, file_order
+                    FROM artifacts
+                    WHERE file_order > ?
+                    ORDER BY file_order
+                    LIMIT ?
+                    """,
+                    (last_order, SQLITE_BATCH_SIZE),
+                ).fetchall()
+            if not rows:
+                return
             for name, media_type, size_bytes, sha256, order in rows:
                 yield PreviewArtifactMetadata(
                     str(name),
@@ -300,6 +325,7 @@ class PreviewSpooledArtifactMetadataCollection(Sequence[PreviewArtifactMetadata]
                     str(sha256),
                     int(order),
                 )
+            last_order = int(rows[-1][4])
 
     @overload
     def __getitem__(self, index: int) -> PreviewArtifactMetadata: ...
@@ -317,7 +343,7 @@ class PreviewSpooledArtifactMetadataCollection(Sequence[PreviewArtifactMetadata]
         normalized = index if index >= 0 else count + index
         if normalized < 0 or normalized >= count:
             raise IndexError(index)
-        with sqlite3.connect(self._catalog_path) as connection:
+        with _catalog_connection(self._catalog_path) as connection:
             row = connection.execute(
                 """
                 SELECT name, media_type, size_bytes, sha256, file_order
