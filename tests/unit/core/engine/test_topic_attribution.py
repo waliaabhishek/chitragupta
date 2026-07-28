@@ -232,45 +232,53 @@ class TestTopicAttributionPipelineStateFlags:
 
     def test_mark_needs_recalculation_resets_topic_attribution_calculated(self) -> None:
         """mark_needs_recalculation() → topic_attribution_calculated=False, topic_overlay_gathered stays True."""
+        from sqlalchemy import event
         from sqlmodel import Session, SQLModel, create_engine
 
         from core.storage.backends.sqlmodel.repositories import SQLModelPipelineStateRepository
         from core.storage.backends.sqlmodel.tables import PipelineStateTable
 
         engine = create_engine("sqlite://", echo=False)
-        SQLModel.metadata.create_all(engine)
+        connection_closed = MagicMock()
+        event.listen(engine, "close", connection_closed)
+        try:
+            SQLModel.metadata.create_all(engine)
 
-        with Session(engine) as session:
-            # Insert a pipeline state with both flags True
-            ps = PipelineStateTable(
-                ecosystem="eco",
-                tenant_id="t1",
-                tracking_date=date(2026, 1, 1),
-                billing_gathered=True,
-                resources_gathered=True,
-                chargeback_calculated=True,
-                topic_overlay_gathered=True,
-                topic_attribution_calculated=True,
-            )
-            session.add(ps)
-            session.commit()
-
-            repo = SQLModelPipelineStateRepository(session)
-            repo.mark_needs_recalculation("eco", "t1", date(2026, 1, 1))
-            session.commit()
-
-            from sqlmodel import select
-
-            result = session.exec(
-                select(PipelineStateTable).where(
-                    PipelineStateTable.ecosystem == "eco",
-                    PipelineStateTable.tenant_id == "t1",
+            with Session(engine) as session:
+                # Insert a pipeline state with both flags True
+                ps = PipelineStateTable(
+                    ecosystem="eco",
+                    tenant_id="t1",
+                    tracking_date=date(2026, 1, 1),
+                    billing_gathered=True,
+                    resources_gathered=True,
+                    chargeback_calculated=True,
+                    topic_overlay_gathered=True,
+                    topic_attribution_calculated=True,
                 )
-            ).first()
+                session.add(ps)
+                session.commit()
 
-            assert result is not None
-            assert result.topic_attribution_calculated is False
-            assert result.topic_overlay_gathered is True  # unchanged
+                repo = SQLModelPipelineStateRepository(session)
+                repo.mark_needs_recalculation("eco", "t1", date(2026, 1, 1))
+                session.commit()
+
+                from sqlmodel import select
+
+                result = session.exec(
+                    select(PipelineStateTable).where(
+                        PipelineStateTable.ecosystem == "eco",
+                        PipelineStateTable.tenant_id == "t1",
+                    )
+                ).first()
+
+                assert result is not None
+                assert result.topic_attribution_calculated is False
+                assert result.topic_overlay_gathered is True  # unchanged
+        finally:
+            engine.dispose(close=True)
+
+        connection_closed.assert_called_once()
 
     def test_pipeline_state_to_domain_maps_new_fields(self) -> None:
         """pipeline_state_to_domain maps topic_overlay_gathered and topic_attribution_calculated."""
