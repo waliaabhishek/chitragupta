@@ -785,7 +785,9 @@ API, UI, and CLI do not remap the verified bytes.
 Both requested-package and published-revision manifests contain the same
 complete ordered `known_gaps` array. Each object contains exactly `code`,
 `description`, and ordered `columns`; internal ownership and delivery-process
-metadata have no public field or alias:
+metadata have no public field or alias. Fallback classification adds no
+fallback-specific manifest fields, and does not change the schema or canonical
+gap catalog:
 
 ```json
 [
@@ -1055,6 +1057,14 @@ incomplete calculation diagnostic.
 
 Eligibility and source diagnostics are:
 
+An ordinary nonblank line type that is not in the current mapping table does
+not produce a failure diagnostic by itself. It maps to `Usage` /
+`Usage-Based` when all other evidence is complete and valid. Recognized native
+products reuse their current service mapping; unknown native products use the
+FOCUS Other taxonomy with the exact native product as `ServiceName`. Existing
+Support, promotional-credit, refund, correction, contradiction, malformed
+record, provider-context, lineage, and reconciliation checks retain precedence.
+
 | Code | Retryable | Meaning |
 |---|---:|---|
 | `preview_commercial_profile_unavailable` | false | The optional tenant block is absent or its Direct-billed PAYG effective interval does not contain the request. |
@@ -1063,8 +1073,7 @@ Eligibility and source diagnostics are:
 | `preview_source_record_malformed` | false | Persisted provider source evidence is malformed. |
 | `preview_source_scope_unsupported` | false | Source evidence is not fully contained in the effective Daily or Monthly evidence interval. |
 | `preview_charge_classification_ambiguous` | false | Credit/refund/adjustment/correction-like semantics are not authoritative. |
-| `preview_source_line_type_unknown` | false | A source record has no line type. |
-| `preview_source_line_type_unsupported` | false | A provider line type is unknown to this release. |
+| `preview_source_line_type_unknown` | false | A source record has a missing or blank native line type. |
 | `preview_source_mapping_unavailable` | false | A known line type lacks required mapping evidence, such as a returned unit for `KAFKA_STREAMS`. |
 | `preview_source_record_incomplete` | false | Required Preview evidence is absent. |
 | `preview_evidence_storage_unavailable` | false | Enabled Preview evidence storage or its schema is unavailable. Generic chargeback storage remains usable. |
@@ -1080,16 +1089,17 @@ Eligibility and source diagnostics are:
 | `preview_provider_context_incomplete` | false | Authoritative resource context is absent or incompatible; all TABLEFLOW rows use this failure because current inventory cannot prove their provider context. |
 | `preview_mapping_validation_failed` | false | A generated Daily Full row or Monthly Full aggregate does not satisfy the current Full-row mapping profile before Full/Summary/Custom projection. |
 
-All accepted native line types can use persisted calculation lineage, including
-organization-wide rows, provider-null promotional allowances, and signed
-refunds. TABLEFLOW still returns `preview_provider_context_incomplete` because
-current inventory cannot prove its provider context. Missing legacy billing
-association is recovered locally when retained legacy evidence is valid;
-unreadable or ambiguous legacy evidence remains fail-closed. A later ordinary
-provider gather and calculation can establish new current evidence. Missing or
-invalid lineage returns `preview_allocation_lineage_incomplete`; exact cost or quantity
-shortfall/overage returns `preview_source_reconciliation_failed`. These failures
-are non-retryable, carry at most 20 sorted safe correlations, and persist null
+Known and fallback-mapped native line types use persisted calculation lineage,
+including organization-wide rows, provider-null promotional allowances, and
+signed refunds. Fallback does not recalculate allocation. TABLEFLOW still
+returns `preview_provider_context_incomplete` because current inventory cannot
+prove its provider context. Missing legacy billing association is recovered
+locally when retained legacy evidence is valid; unreadable or ambiguous legacy
+evidence remains fail-closed. A later ordinary provider gather and calculation
+can establish new current evidence. Missing or invalid lineage returns
+`preview_allocation_lineage_incomplete`; exact cost or quantity shortfall or
+overage returns `preview_source_reconciliation_failed`. These failures are
+non-retryable, carry at most 20 sorted safe correlations, and persist null
 source snapshot and package fields; manifest/file retrieval remains unavailable.
 
 Incomplete persisted calculation metadata has precedence over acquisition,

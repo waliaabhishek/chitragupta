@@ -733,8 +733,10 @@ object contains exactly the stable `code`, durable customer-facing
 ```
 
 The manifest contract has no public ownership or delivery-process field or
-alias. These provider-authority gaps remain unresolved, and both package types
-retain `conformance_status: non_conforming`.
+alias. Fallback classification does not add counts, line-type lists, or any
+other fallback-specific manifest field; the schema and canonical `known_gaps`
+catalog remain unchanged. These provider-authority gaps remain unresolved, and
+both package types retain `conformance_status: non_conforming`.
 
 A requested package is downloadable for exactly seven days from durable ready
 publication. At `expires_at`, status becomes `expired` and all downloads return
@@ -822,6 +824,17 @@ logically material Settled revision is published.
 ## Current output boundaries
 
 - `BillingAccountId` comes from the persisted Confluent organization ID.
+- A nonblank previously unseen Confluent line type remains previewable when it
+  has ordinary usage semantics and complete evidence. It maps to `Usage` /
+  `Usage-Based`. A recognized native product reuses its existing service
+  mapping; an unknown native product uses `ServiceCategory=Other`,
+  `ServiceSubcategory=Other (Other)`, and the exact native product as
+  `ServiceName`. Native product and line-type evidence is preserved unchanged.
+- Fallback projection reuses the persisted allocation result and the existing
+  provider-context relationships for the concrete origin resource. Missing
+  resource/environment evidence, missing related provider authority,
+  Support/promotional-credit/correction evidence, contradictory classification,
+  or an unresolvable refund remains fail-closed for the whole requested scope.
 - Native promotional-credit rows are retained as `Credit` / `One-Time`, even
   when provider product, unit, price, and quantity fields are null. Supported
   refunds retain their source classification and signed financial values.

@@ -301,9 +301,6 @@ describe("FOCUS Mapping Preview page delegation", () => {
     });
     expect(document.body.textContent).not.toContain("TASK-");
     expect(screen.queryByText(/^Owner:/i)).toBeNull();
-    expect(screen.queryByText("allocation_lineage_and_tag_projection_pending")).toBeNull();
-    expect(screen.queryByText("allocation_ratio_deferred")).toBeNull();
-    expect(screen.queryByText("allocation_method_version_deferred")).toBeNull();
     expect(screen.queryByText("Billing account and issuer mapping is pending.")).toBeNull();
     expect(screen.queryByText("Authoritative provider billing-period mapping is pending.")).toBeNull();
     expect(screen.queryByText("Provider applicability and mapping are pending.")).toBeNull();

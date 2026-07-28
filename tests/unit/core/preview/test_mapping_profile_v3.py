@@ -120,45 +120,6 @@ CUSTOM_RULE_AUTHORITIES = (
     ),
 )
 
-READY_NATIVE_LINE_TYPES = frozenset(
-    {
-        "KAFKA_STORAGE",
-        "KAFKA_PARTITION",
-        "KAFKA_NETWORK_READ",
-        "KAFKA_NETWORK_WRITE",
-        "KAFKA_BASE",
-        "KAFKA_NUM_CKUS",
-        "CONNECT_CAPACITY",
-        "CONNECT_NUM_TASKS",
-        "CONNECT_THROUGHPUT",
-        "CUSTOM_CONNECT_NUM_TASKS",
-        "CUSTOM_CONNECT_THROUGHPUT",
-        "KSQL_NUM_CSUS",
-        "FLINK_NUM_CFUS",
-        "GOVERNANCE_BASE",
-        "SCHEMA_REGISTRY",
-        "NUM_RULES",
-    }
-)
-
-TASK_254_05_NATIVE_LINE_TYPES = frozenset(
-    {
-        "AUDIT_LOG_READ",
-        "SUPPORT",
-        "PROMO_CREDIT",
-        "KAFKA_REST_PRODUCE",
-        "KAFKA_STREAMS",
-        "CONNECT_NUM_RECORDS",
-        "CLUSTER_LINKING_PER_LINK",
-        "CLUSTER_LINKING_READ",
-        "CLUSTER_LINKING_WRITE",
-        "USM_CONNECTED_NODE",
-        "TABLEFLOW_DATA_PROCESSED",
-        "TABLEFLOW_NUM_TOPICS",
-        "TABLEFLOW_STORAGE",
-    }
-)
-
 EXPECTED_SERVICE_RULES = {
     "kafka": (
         (
@@ -273,6 +234,15 @@ EXPECTED_SERVICE_RULES = {
         "Other (Other)",
         "organization_wide",
         "organization_wide",
+        (),
+    ),
+    "other": (
+        (),
+        "Other",
+        None,
+        "Other (Other)",
+        "resource_specific",
+        "fallback_resource_relationship",
         (),
     ),
 }
@@ -795,9 +765,7 @@ def test_focus_rule_table_is_the_complete_ordered_65_column_authority() -> None:
     assert tuple((rule.column, rule.source, rule.transformation) for rule in rules) == TARGET_RULE_AUTHORITIES
     assert all(rule.validator is not None for rule in rules)
     assert {
-        rule.column: (rule.gap_code, rule.owner_task)
-        for rule in rules
-        if rule.applicability.value in {"deferred", "declared_gap"}
+        rule.column: (rule.gap_code, rule.owner_task) for rule in rules if rule.applicability.value == "declared_gap"
     } == {
         "BillingCurrency": ("provider_billing_currency_field_unavailable", "TASK-254.03"),
         "HostProviderName": ("provider_host_display_name_unavailable", "TASK-254.04"),
@@ -825,7 +793,7 @@ def test_custom_rule_table_is_the_complete_ordered_evidence_authority() -> None:
     assert tuple((rule.column, rule.source, rule.transformation) for rule in rules) == CUSTOM_RULE_AUTHORITIES
     assert all(rule.validator is not None for rule in rules)
     for rule in rules:
-        if rule.applicability.value in {"deferred", "declared_gap"}:
+        if rule.applicability.value == "declared_gap":
             assert rule.gap_code
             assert rule.owner_task
 
@@ -847,67 +815,18 @@ def test_service_and_native_product_rule_tables_are_closed_immutable_authorities
     assert len(line_type_owners) == len(set(line_type_owners))
 
 
-def test_native_line_readiness_is_the_exact_typed_immutable_v1_authority() -> None:
-    mapping = preview_module("mapping")
-
-    assert tuple((member.name, member.value) for member in mapping.PreviewLineageReadiness) == (
-        ("READY", "ready"),
-        ("TASK_254_05", "task_254_05"),
-    )
-    assert not hasattr(mapping.FOCUS_1_4_NATIVE_LINE_READINESS_V1, "__setitem__")
-    accepted_line_types = {
-        line_type for rule in mapping.FOCUS_1_4_SERVICE_RULES_V1.values() for line_type in rule.native_line_types
-    }
-    assert set(mapping.FOCUS_1_4_NATIVE_LINE_READINESS_V1) == accepted_line_types
-    assert {
-        line_type
-        for line_type, readiness in mapping.FOCUS_1_4_NATIVE_LINE_READINESS_V1.items()
-        if readiness is mapping.PreviewLineageReadiness.READY
-    } == READY_NATIVE_LINE_TYPES | TASK_254_05_NATIVE_LINE_TYPES
-    assert {
-        line_type
-        for line_type, readiness in mapping.FOCUS_1_4_NATIVE_LINE_READINESS_V1.items()
-        if readiness is mapping.PreviewLineageReadiness.TASK_254_05
-    } == frozenset()
-
-    with pytest.raises(TypeError):
-        mapping.FOCUS_1_4_NATIVE_LINE_READINESS_V1["KAFKA_STORAGE"] = (  # type: ignore[index]
-            mapping.PreviewLineageReadiness.TASK_254_05
-        )
-
-
-@pytest.mark.parametrize("drift", ("missing", "extra", "wrong-readiness"))
-def test_profile_self_validation_rejects_native_line_readiness_drift(
-    monkeypatch: pytest.MonkeyPatch,
-    drift: str,
-) -> None:
-    mapping = preview_module("mapping")
-    readiness = dict(mapping.FOCUS_1_4_NATIVE_LINE_READINESS_V1)
-    if drift == "missing":
-        readiness.pop("KAFKA_STORAGE")
-    elif drift == "extra":
-        readiness["FUTURE_PROVIDER_LINE"] = mapping.PreviewLineageReadiness.READY
-    else:
-        readiness["KAFKA_STORAGE"] = mapping.PreviewLineageReadiness.TASK_254_05
-    monkeypatch.setattr(
-        mapping,
-        "FOCUS_1_4_NATIVE_LINE_READINESS_V1",
-        MappingProxyType(readiness),
-    )
-
-    with pytest.raises(mapping.PreviewProfileDefinitionError):
-        mapping._validate_profile_definition()
-
-
-def test_preview_service_consumes_native_line_readiness_authority_without_a_private_set() -> None:
+def test_closed_native_line_allowlist_authority_and_generator_guard_are_removed() -> None:
     mapping = preview_module("mapping")
     generator = preview_module("generator")
+    authority_name = "FOCUS_1_4_NATIVE_LINE_" + "READINESS_V1"
+    enum_name = "PreviewLineage" + "Readiness"
     generate_source = inspect.getsource(generator.PreviewPackageGenerator.generate)
 
-    assert generator.FOCUS_1_4_NATIVE_LINE_READINESS_V1 is mapping.FOCUS_1_4_NATIVE_LINE_READINESS_V1
-    assert "FOCUS_1_4_NATIVE_LINE_READINESS_V1" in generate_source
-    assert not hasattr(generator, "_TASK_254_05_DEFERRED_NATIVE_LINE_TYPES")
-    assert "_TASK_254_05_DEFERRED_NATIVE_LINE_TYPES" not in generate_source
+    assert not hasattr(mapping, authority_name)
+    assert not hasattr(mapping, enum_name)
+    assert not hasattr(generator, authority_name)
+    assert authority_name not in generate_source
+    assert enum_name not in generate_source
 
 
 def test_service_rule_table_matches_the_exact_v3_taxonomy_and_context_matrix() -> None:
@@ -1044,6 +963,7 @@ def test_every_accepted_native_line_type_executes_the_classifier_with_its_exact_
     tuple(
         (service_rule, expected[0][0], COMPATIBLE_PRODUCT_BY_SERVICE_RULE[service_rule])
         for service_rule, expected in EXPECTED_SERVICE_RULES.items()
+        if expected[0]
     ),
 )
 def test_every_accepted_native_line_type_emits_consumption_only_for_metered_usage(
@@ -1173,13 +1093,52 @@ def test_metered_usage_projects_exact_allocated_and_unallocated_consumed_quantit
     assert projected.pricing_unit == projected.consumed_unit == "GB"
 
 
-def test_line_type_enum_covers_every_accepted_provider_line_type_exactly_once() -> None:
+def test_native_line_type_evidence_is_open_nonblank_text() -> None:
     mapping = preview_module("mapping")
-    expected_line_types = tuple(line_type for rule in EXPECTED_SERVICE_RULES.values() for line_type in rule[0])
     line_type_rule = next(rule for rule in mapping.CUSTOM_EVIDENCE_RULES if rule.column == "x_ConfluentLineType")
 
-    assert line_type_rule.validator is mapping.PreviewValidatorKind.ENUM
-    assert line_type_rule.allowed_values == expected_line_types
+    assert line_type_rule.validator is mapping.PreviewValidatorKind.TEXT
+    assert line_type_rule.allowed_values is None
+    native_line_type = "Future Usage / β"
+    components = json.loads(
+        _valid_row_projection(mapping).custom_values[
+            mapping.CUSTOM_EVIDENCE_COLUMNS.index("x_ChitraguptaSkuComponents")
+        ]
+    )
+    components["sku"]["line_type"] = native_line_type
+    components["sku_price"]["line_type"] = native_line_type
+    row = _replace_custom(
+        mapping,
+        _valid_row_projection(mapping),
+        "x_ConfluentLineType",
+        native_line_type,
+    )
+    row = _replace_custom(
+        mapping,
+        row,
+        "x_ChitraguptaSkuComponents",
+        mapping._canonical_json(components),
+    )
+    row = _replace_target(mapping, row, "SkuId", mapping._hash_key("sku", components["sku"]))
+    row = _replace_target(
+        mapping,
+        row,
+        "SkuPriceDetails",
+        mapping._canonical_json(components["sku_price"]),
+    )
+    row = _replace_target(
+        mapping,
+        row,
+        "SkuPriceId",
+        mapping._hash_key("sku-price", components["sku_price"]),
+    )
+    _validate(mapping, row)
+
+    with pytest.raises(mapping.PreviewRowValidationError) as caught:
+        _validate(mapping, _replace_custom(mapping, row, "x_ConfluentLineType", ""))
+
+    assert caught.value.rule_id is mapping.PreviewRowRuleId.TYPE
+    assert caught.value.column == "x_ConfluentLineType"
 
 
 @pytest.mark.parametrize(
@@ -1202,6 +1161,36 @@ def test_profile_self_validation_rejects_service_rule_matrix_drift(
         rules[mapping.PreviewServiceRuleKey.KAFKA],
         **{field: replacement},
     )
+    monkeypatch.setattr(mapping, "FOCUS_1_4_SERVICE_RULES_V1", MappingProxyType(rules))
+
+    with pytest.raises(mapping.PreviewProfileDefinitionError):
+        mapping._validate_profile_definition()
+
+
+@pytest.mark.parametrize("drift", ("other-static-name", "other-origin-types", "known-fallback-strategy"))
+def test_profile_self_validation_confines_dynamic_fallback_contract_to_other(
+    monkeypatch: pytest.MonkeyPatch,
+    drift: str,
+) -> None:
+    mapping = preview_module("mapping")
+    rules = dict(mapping.FOCUS_1_4_SERVICE_RULES_V1)
+    if drift == "known-fallback-strategy":
+        key = mapping.PreviewServiceRuleKey.KAFKA
+        rules[key] = replace(
+            rules[key],
+            context_strategy="fallback_resource_relationship",
+            allowed_origin_resource_types=(),
+        )
+    else:
+        key = mapping.PreviewServiceRuleKey.OTHER
+        rules[key] = replace(
+            rules[key],
+            **(
+                {"service_name": "Invented provider catalogue name"}
+                if drift == "other-static-name"
+                else {"allowed_origin_resource_types": ("connector",)}
+            ),
+        )
     monkeypatch.setattr(mapping, "FOCUS_1_4_SERVICE_RULES_V1", MappingProxyType(rules))
 
     with pytest.raises(mapping.PreviewProfileDefinitionError):
@@ -1259,7 +1248,6 @@ def test_profile_rules_and_known_gaps_have_exact_bidirectional_ownership() -> No
     rule_columns: dict[tuple[str, str], list[str]] = {}
     for rule in (*mapping.FOCUS_1_4_COLUMN_RULES, *mapping.CUSTOM_EVIDENCE_RULES):
         if rule.applicability in {
-            mapping.PreviewApplicability.DEFERRED,
             mapping.PreviewApplicability.DECLARED_GAP,
         }:
             assert rule.gap_code is not None
@@ -1644,7 +1632,6 @@ def test_validate_preview_row_requires_sku_evidence_when_pricing_is_emitted() ->
     [
         ("x_ChitraguptaBillingScopeId", "wrong-scope", "derived_key"),
         ("x_ChitraguptaMappingProfileVersion", "focus-1.4-daily-full-v2", "allowed_value"),
-        ("x_ConfluentLineType", "FUTURE_PROVIDER_LINE", "allowed_value"),
     ],
 )
 def test_validate_preview_row_recomputes_exact_custom_profile_authorities(
@@ -1886,14 +1873,16 @@ def test_tableflow_rule_truthfully_declares_provider_context_unsupported() -> No
     assert rule.allowed_origin_resource_types == ()
 
 
+@pytest.mark.parametrize("native_line_type", ("TABLEFLOW_DATA_PROCESSED", "FUTURE_TABLEFLOW_METER"))
 def test_tableflow_fails_provider_context_before_any_resource_lookup(
     valid_source_evidence: object,
+    native_line_type: str,
 ) -> None:
     mapping = preview_module("mapping")
     source = replace(
         valid_source_evidence,
         native_product="TABLEFLOW",
-        native_line_type="TABLEFLOW_DATA_PROCESSED",
+        native_line_type=native_line_type,
         native_description="Tableflow data processed",
         resource_id="lkc-1:topic:orders",
     )

@@ -24,8 +24,16 @@ REQUEST_END = datetime(2026, 7, 2, tzinfo=UTC)
         ),
         ({"native_description": "Prior period correction"}, "preview_charge_classification_ambiguous"),
         ({"native_line_type": None}, "preview_source_line_type_unknown"),
+        ({"native_line_type": "   "}, "preview_source_line_type_unknown"),
         ({"native_line_type": "KAFKA_STREAMS", "unit": None}, "preview_source_mapping_unavailable"),
-        ({"native_line_type": "FUTURE_LINE_TYPE"}, "preview_source_line_type_unsupported"),
+        (
+            {"native_line_type": "FUTURE_METER", "resource_id": None},
+            "preview_source_record_incomplete",
+        ),
+        (
+            {"native_line_type": "FUTURE_METER", "environment_id": None},
+            "preview_source_record_incomplete",
+        ),
         ({"resource_id": None}, "preview_source_record_incomplete"),
         ({"native_product": "CONNECT"}, "preview_charge_classification_ambiguous"),
     ],
@@ -139,6 +147,112 @@ def test_authoritative_source_classifier_returns_typed_charge_semantics(
     assert result.semantics.charge_frequency == expected_frequency
     assert result.semantics.service_rule_key.value == expected_rule
     assert result.semantics.emits_consumption is expected_consumption
+
+
+@pytest.mark.parametrize(
+    (
+        "native_product",
+        "expected_rule",
+        "expected_service_name",
+    ),
+    [
+        ("KAFKA", "kafka", None),
+        ("Provider Product / β", "other", "Provider Product / β"),
+    ],
+)
+def test_unknown_usage_line_type_uses_recognized_or_other_service_mapping(
+    valid_source_evidence: object,
+    native_product: str,
+    expected_rule: str,
+    expected_service_name: str | None,
+) -> None:
+    mapping = preview_module("mapping")
+    source = replace(
+        valid_source_evidence,
+        native_product=native_product,
+        native_line_type="Future Usage / β",
+        native_description="Ordinary metered usage",
+    )
+
+    result = mapping.classify_daily_full_source(
+        request_start=REQUEST_START,
+        request_end=REQUEST_END,
+        source=source,
+    )
+
+    assert isinstance(result, mapping.AcceptedPreviewSource)
+    assert result.semantics.kind is mapping.PreviewChargeKind.METERED_USAGE
+    assert result.semantics.charge_category == "Usage"
+    assert result.semantics.charge_frequency == "Usage-Based"
+    assert result.semantics.service_rule_key.value == expected_rule
+    assert result.semantics.service_name_override == expected_service_name
+    assert result.semantics.emits_pricing is True
+    assert result.semantics.emits_consumption is True
+
+
+@pytest.mark.parametrize(
+    ("native_line_type", "native_product", "changes", "expected_kind"),
+    [
+        ("SUPPORT_OVERAGE", "KAFKA", {}, None),
+        ("PROMO_CREDIT_V2", "KAFKA", {}, None),
+        ("CORRECTION_USAGE", "KAFKA", {}, None),
+        (
+            "REFUND_USAGE",
+            "KAFKA",
+            {
+                "amount": Decimal("-8"),
+                "original_amount": Decimal("-10"),
+                "discount_amount": Decimal("-2"),
+                "price": Decimal("-2"),
+                "quantity": Decimal("5"),
+            },
+            "usage_refund",
+        ),
+        (
+            "REFUND_USAGE",
+            "Provider Product / β",
+            {
+                "amount": Decimal("-8"),
+                "original_amount": Decimal("-10"),
+                "discount_amount": Decimal("-2"),
+                "price": Decimal("-2"),
+                "quantity": Decimal("5"),
+            },
+            None,
+        ),
+    ],
+)
+def test_unknown_line_type_tokens_preserve_exception_precedence(
+    valid_source_evidence: object,
+    native_line_type: str,
+    native_product: str,
+    changes: dict[str, object],
+    expected_kind: str | None,
+) -> None:
+    mapping = preview_module("mapping")
+    source = replace(
+        valid_source_evidence,
+        native_line_type=native_line_type,
+        native_product=native_product,
+        native_description="Ordinary metered usage",
+        **changes,
+    )
+
+    result = mapping.classify_daily_full_source(
+        request_start=REQUEST_START,
+        request_end=REQUEST_END,
+        source=source,
+    )
+
+    if expected_kind is None:
+        assert isinstance(result, mapping.RejectedPreviewSource)
+        assert result.issue is mapping.PreviewSourceIssue.CHARGE_CLASSIFICATION_AMBIGUOUS
+    else:
+        assert isinstance(result, mapping.AcceptedPreviewSource)
+        assert result.semantics.kind.value == expected_kind
+        assert result.semantics.charge_category == "Usage"
+        assert result.semantics.charge_frequency == "Usage-Based"
+        assert result.semantics.service_rule_key is mapping.PreviewServiceRuleKey.KAFKA
 
 
 @pytest.mark.parametrize(
@@ -406,8 +520,13 @@ def test_financial_projection_owns_numeric_acceptability_and_arithmetic(
 
 def test_source_issue_is_str_enum_with_stable_values() -> None:
     mapping = preview_module("mapping")
+    eligibility = preview_module("eligibility")
 
     assert str(mapping.PreviewSourceIssue.MAPPING_UNAVAILABLE) == "preview_source_mapping_unavailable"
+    assert not hasattr(mapping.PreviewSourceIssue, "LINE_TYPE_" + "UNSUPPORTED")
+    diagnostic = eligibility.source_issue_diagnostic(mapping.PreviewSourceIssue.LINE_TYPE_UNKNOWN, ())
+    assert diagnostic.code == "preview_source_line_type_unknown"
+    assert diagnostic.message == "One or more source records have a missing or blank native line type."
 
 
 def test_mapping_profile_and_currency_gap_advance_without_mapping_billing_currency() -> None:

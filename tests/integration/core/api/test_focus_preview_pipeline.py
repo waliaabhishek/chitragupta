@@ -4,6 +4,7 @@ import asyncio
 import csv
 import hashlib
 import io
+import json
 import time
 from collections.abc import Iterable
 from datetime import UTC, date, datetime, timedelta
@@ -220,7 +221,7 @@ def _cost_response(**overrides: object) -> httpx.Response:
     )
 
 
-_REAL_BUNDLE_MAPPING_SCOPE_CASES: tuple[tuple[str, dict[str, object]], ...] = (
+_REAL_BUNDLE_KNOWN_LINE_CASES: tuple[tuple[str, dict[str, object]], ...] = (
     (
         "kafka-rest-produce",
         {
@@ -1331,13 +1332,241 @@ def test_same_key_tiers_flow_from_provider_capture_through_sidecar_and_canonical
         plugin.close()
 
 
+@respx.mock
+def test_real_calculate_unknown_allocator_publishes_daily_and_monthly_known_plus_fallback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def to_thread_inline(function: Any, *args: object, **kwargs: object) -> object:
+        return function(*args, **kwargs)
+
+    async def run_sync_inline(function: Any, *args: object, **_kwargs: object) -> object:
+        return function(*args)
+
+    monkeypatch.setattr("core.api.app.asyncio.to_thread", to_thread_inline)
+    monkeypatch.setattr(anyio.to_thread, "run_sync", run_sync_inline)
+
+    class FallbackPreviewPipelinePlugin(PreviewPipelinePlugin):
+        def get_fallback_allocator(self) -> Any:
+            return ConfluentCloudPlugin.get_fallback_allocator(self)
+
+    known_item = _cost_response().json()["data"][0]
+    fallback_item = {
+        **known_item,
+        "id": "future-cost",
+        "product": "Provider Product / β",
+        "line_type": "FUTURE_USAGE_β",
+        "amount": "6",
+        "original_amount": "6",
+        "discount_amount": "0",
+        "price": "2",
+        "quantity": "3",
+        "description": "Ordinary provider usage",
+        "resource": {
+            "id": "lcc-1",
+            "display_name": "Orders sink",
+            "environment": {"id": "env-1"},
+        },
+    }
+    costs_route = respx.get("https://api.confluent.cloud/billing/v1/costs")
+
+    def provider_response(request: httpx.Request) -> httpx.Response:
+        start = date.fromisoformat(request.url.params["start_date"])
+        end = date.fromisoformat(request.url.params["end_date"])
+        data = [known_item, fallback_item] if start <= date(2026, 7, 1) and end >= date(2026, 7, 2) else []
+        return httpx.Response(200, json={"data": data, "metadata": {}})
+
+    costs_route.side_effect = provider_response
+    connection_string = f"sqlite:///{tmp_path / 'fallback-provider-pipeline.db'}"
+    tenant = TenantConfig(
+        ecosystem="confluent_cloud",
+        tenant_id="tenant-1",
+        lookback_days=45,
+        cutoff_days=1,
+        storage=StorageConfig(connection_string=connection_string),
+        focus_preview=_focus_preview_block(),
+        plugin_settings={
+            "ccloud_api": {"key": "key", "secret": "secret"},  # pragma: allowlist secret
+            "billing_api": {"days_per_query": 30},
+        },
+    )
+    settings = AppSettings(
+        api=ApiConfig(host="127.0.0.1", port=8080),
+        preview=PreviewConfig(artifact_root=tmp_path / "fallback-artifacts", max_workers=1),
+        tenants={"production": tenant},
+    )
+    plugin = FallbackPreviewPipelinePlugin(PreviewPipelineHandler())
+    plugin.initialize(tenant.plugin_settings.model_dump())
+    backend = SQLModelBackend(
+        connection_string,
+        plugin.get_storage_module(),
+        use_migrations=False,
+        focus_preview_enabled=True,
+    )
+    backend.create_tables()
+    orchestrator = ChargebackOrchestrator("production", tenant, plugin, backend)
+    gathered = gather_billing_with_source_evidence(
+        orchestrator,
+        backend,
+        datetime(2026, 7, 26, 9, tzinfo=UTC),
+    )
+    assert gathered == {date(2026, 7, 1)}
+    provider_call_count = costs_route.call_count
+    assert provider_call_count > 0
+    with backend.create_unit_of_work() as uow:
+        for resource in (
+            CoreResource(
+                ecosystem="confluent_cloud",
+                tenant_id="tenant-1",
+                resource_id="11111111-2222-4333-8444-555555555555",
+                resource_type="organization",
+                display_name="Provider billing organization",
+                status=ResourceStatus.ACTIVE,
+                metadata={"organization_binding_state": "bound"},
+            ),
+            CoreResource(
+                ecosystem="confluent_cloud",
+                tenant_id="tenant-1",
+                resource_id="env-1",
+                resource_type="environment",
+                display_name="Production",
+                status=ResourceStatus.ACTIVE,
+            ),
+            CoreResource(
+                ecosystem="confluent_cloud",
+                tenant_id="tenant-1",
+                resource_id="lkc-1",
+                resource_type="kafka_cluster",
+                display_name="Orders",
+                parent_id="env-1",
+                status=ResourceStatus.ACTIVE,
+                metadata={"provider_cloud": "AWS", "provider_region": "us-east-1"},
+            ),
+            CoreResource(
+                ecosystem="confluent_cloud",
+                tenant_id="tenant-1",
+                resource_id="lcc-1",
+                resource_type="connector",
+                display_name="Orders sink",
+                parent_id="lkc-1",
+                status=ResourceStatus.ACTIVE,
+                metadata={
+                    "env_id": "env-1",
+                    "provider_cloud": "WRONG",
+                    "provider_region": "wrong-region",
+                },
+            ),
+        ):
+            uow.resources.upsert(resource)
+        for day in range(1, 25):
+            uow.pipeline_state.upsert(
+                PipelineState(
+                    ecosystem="confluent_cloud",
+                    tenant_id="tenant-1",
+                    tracking_date=date(2026, 7, day),
+                    billing_gathered=True,
+                    resources_gathered=True,
+                )
+            )
+        uow.commit()
+    assert calculate_with_lineage(orchestrator, backend, date(2026, 7, 1)) == 2
+    for day in range(2, 25):
+        assert calculate_with_lineage(orchestrator, backend, date(2026, 7, day)) == 0
+
+    with backend.create_read_only_unit_of_work() as uow:
+        chargebacks = uow.chargebacks.find_by_date("confluent_cloud", "tenant-1", date(2026, 7, 1))
+    fallback_chargebacks = [row for row in chargebacks if row.product_type == "FUTURE_USAGE_β"]
+    assert len(fallback_chargebacks) == 1
+    assert fallback_chargebacks[0].identity_id == "lcc-1"
+    assert fallback_chargebacks[0].amount == Decimal("6")
+    assert fallback_chargebacks[0].allocation_method == "unknown"
+    assert fallback_chargebacks[0].allocation_detail == "using_unknown_allocator"
+
+    app = create_app(settings)
+    client = PipelineApiClient(app, use_lifespan=True, backend=backend)
+    try:
+        app.state.preview_runtime._clock = lambda: datetime(2026, 7, 26, 12, tzinfo=UTC)
+        export_request = {"start_date": "2026-07-01", "end_date": "2026-07-02"}
+        generic_before = client.post("/api/v1/tenants/production/export", json=export_request)
+        assert generic_before.status_code == 200
+        assert b"FUTURE_USAGE_" in generic_before.content
+        assert b",unknown," in generic_before.content
+
+        daily = _request(client, date(2026, 7, 1), date(2026, 7, 2))
+        monthly = _request_month(client, "2026-07")
+        assert daily["status"] == monthly["status"] == "ready"
+        assert daily["diagnostic"] is monthly["diagnostic"] is None
+
+        package_rows: list[list[dict[str, str]]] = []
+        manifests: list[dict[str, Any]] = []
+        for result in (daily, monthly):
+            csv_response = client.get(result["package"]["files"][0]["download_url"])
+            manifest_response = client.get(result["package"]["manifest"]["download_url"])
+            assert csv_response.status_code == manifest_response.status_code == 200
+            rows = list(csv.DictReader(io.StringIO(csv_response.text)))
+            manifest = manifest_response.json()
+            package_rows.append(rows)
+            manifests.append(manifest)
+            assert len(rows) == 2
+            assert manifest["target_focus_version"] == "1.4"
+            assert manifest["conformance_status"] == "non_conforming"
+            assert manifest["mapping_profile_version"] == "focus-1.4-preview-v1"
+            assert manifest["validation"]["source_records"] == 2
+            assert manifest["validation"]["rows"] == 2
+            assert manifest["reconciliation"] == {
+                "source_cost": "14",
+                "allocated_cost": "14",
+                "difference": "0",
+                "source_quantity": "8",
+                "allocated_quantity": "8",
+                "quantity_difference": "0",
+            }
+            assert all("fallback" not in key.casefold() for key in manifest)
+
+        assert set(manifests[0]) == set(manifests[1])
+        assert manifests[0]["known_gaps"] == manifests[1]["known_gaps"]
+        for rows in package_rows:
+            rows_by_line_type = {row["x_ConfluentLineType"]: row for row in rows}
+            assert set(rows_by_line_type) == {"KAFKA_STORAGE", "FUTURE_USAGE_β"}
+            known = rows_by_line_type["KAFKA_STORAGE"]
+            fallback = rows_by_line_type["FUTURE_USAGE_β"]
+            assert known["ServiceName"] == "Confluent Cloud Apache Kafka"
+            assert known["ChargeCategory"] == "Usage"
+            assert known["ChargeFrequency"] == "Usage-Based"
+            assert fallback["ChargeCategory"] == "Usage"
+            assert fallback["ChargeFrequency"] == "Usage-Based"
+            assert fallback["ServiceCategory"] == "Other"
+            assert fallback["ServiceName"] == "Provider Product / β"
+            assert fallback["ServiceSubcategory"] == "Other (Other)"
+            assert fallback["x_ConfluentProduct"] == "Provider Product / β"
+            assert fallback["AllocatedMethodId"] == "unknown"
+            assert fallback["x_ChitraguptaAllocationMethodVersion"] == "v1"
+            assert json.loads(fallback["AllocatedMethodDetails"])["allocation_detail"] == ("using_unknown_allocator")
+            assert fallback["ResourceId"] == "lcc-1"
+            assert fallback["ResourceName"] == "Orders sink"
+            assert fallback["ResourceType"] == "connector"
+            assert fallback["HostProviderName"] == "AWS"
+            assert fallback["RegionId"] == "us-east-1"
+            assert fallback["BilledCost"] == "6"
+            assert fallback["ConsumedQuantity"] == "3"
+
+        generic_after = client.post("/api/v1/tenants/production/export", json=export_request)
+        assert generic_after.status_code == 200
+        assert generic_after.content == generic_before.content
+        assert costs_route.call_count == provider_call_count
+    finally:
+        client.close()
+        backend.dispose()
+        plugin.close()
+
+
 @pytest.mark.parametrize(
     ("case_id", "provider_overrides"),
-    _REAL_BUNDLE_MAPPING_SCOPE_CASES,
-    ids=[case_id for case_id, _ in _REAL_BUNDLE_MAPPING_SCOPE_CASES],
+    _REAL_BUNDLE_KNOWN_LINE_CASES,
+    ids=[case_id for case_id, _ in _REAL_BUNDLE_KNOWN_LINE_CASES],
 )
 @respx.mock
-def test_real_bundle_deferred_native_lines_fail_mapping_scope_before_later_preview_reads(
+def test_real_bundle_known_native_lines_retain_current_mapping_and_context_behavior(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     case_id: str,

@@ -96,8 +96,7 @@ _SOURCE_DIAGNOSTICS = {
     PreviewSourceIssue.CHARGE_CLASSIFICATION_AMBIGUOUS: (
         "One or more credit, refund, adjustment, or correction-like records cannot be classified authoritatively."
     ),
-    PreviewSourceIssue.LINE_TYPE_UNKNOWN: "One or more source records have no supported line type.",
-    PreviewSourceIssue.LINE_TYPE_UNSUPPORTED: "One or more Confluent Costs API line types are unsupported.",
+    PreviewSourceIssue.LINE_TYPE_UNKNOWN: "One or more source records have a missing or blank native line type.",
     PreviewSourceIssue.MAPPING_UNAVAILABLE: (
         "One or more known source line types do not yet have a complete Preview mapping."
     ),

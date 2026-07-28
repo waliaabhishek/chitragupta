@@ -130,6 +130,16 @@ def _files(draft: Any) -> tuple[Any, ...]:
     )
 
 
+def _all_object_keys(value: object) -> set[str]:
+    if isinstance(value, dict):
+        return {str(key) for key in value} | {
+            nested_key for nested in value.values() for nested_key in _all_object_keys(nested)
+        }
+    if isinstance(value, list):
+        return {nested_key for nested in value for nested_key in _all_object_keys(nested)}
+    return set()
+
+
 def test_logical_digest_is_independent_of_physical_partitioning() -> None:
     mapping = _mapping()
     unpartitioned = _draft()
@@ -156,6 +166,82 @@ def test_header_only_month_has_stable_logical_and_material_identity() -> None:
     assert mapping.preview_revision_content_sha256(
         logical_data_sha256=first.logical_data_sha256
     ) == mapping.preview_revision_content_sha256(logical_data_sha256=second.logical_data_sha256)
+
+
+def test_requested_and_revision_manifests_do_not_change_for_fallback_classification() -> None:
+    mapping = _mapping()
+    baseline = _draft(
+        rows=(
+            _row(
+                x_ConfluentProduct="KAFKA",
+                x_ConfluentLineType="KAFKA_STORAGE",
+                ServiceCategory="Integration",
+                ServiceName="Confluent Cloud Apache Kafka",
+                ServiceSubcategory="Messaging",
+            ),
+        )
+    )
+    fallback = _draft(
+        rows=(
+            _row(
+                x_ConfluentProduct="Provider Product / β",
+                x_ConfluentLineType="Future Usage / β",
+                ServiceCategory="Other",
+                ServiceName="Provider Product / β",
+                ServiceSubcategory="Other (Other)",
+            ),
+        )
+    )
+    request = _monthly_request()
+    snapshot = _settled_snapshot()
+    ready_at = datetime(2026, 8, 4, tzinfo=UTC)
+
+    def requested(draft: Any) -> dict[str, Any]:
+        return json.loads(
+            mapping.build_requested_preview_manifest(
+                request=request,
+                snapshot=snapshot,
+                draft=draft,
+                files=_files(draft),
+                ready_at=ready_at,
+                expires_at=ready_at + timedelta(days=7),
+            )
+        )
+
+    def revision(draft: Any) -> dict[str, Any]:
+        material = mapping.preview_revision_content_sha256(logical_data_sha256=draft.logical_data_sha256)
+        return json.loads(
+            mapping.build_preview_revision_manifest(
+                revision_id="revision-1",
+                tenant_name_at_publication="production",
+                month="2026-07",
+                start_date=date(2026, 7, 1),
+                end_date=date(2026, 8, 1),
+                monthly_status="settled",
+                material_sha256=material,
+                supersedes_revision_id=None,
+                snapshot=snapshot,
+                draft=draft,
+                files=_files(draft),
+                published_at=ready_at,
+            )
+        )
+
+    baseline_requested = requested(baseline)
+    fallback_requested = requested(fallback)
+    baseline_revision = revision(baseline)
+    fallback_revision = revision(fallback)
+
+    assert set(fallback_requested) == set(baseline_requested)
+    assert set(fallback_revision) == set(baseline_revision)
+    assert set(fallback_requested["validation"]) == set(baseline_requested["validation"])
+    assert set(fallback_revision["validation"]) == set(baseline_revision["validation"])
+    assert fallback_requested["known_gaps"] == baseline_requested["known_gaps"]
+    assert fallback_revision["known_gaps"] == baseline_revision["known_gaps"]
+    assert_public_known_gaps(fallback_requested)
+    assert_public_known_gaps(fallback_revision)
+    assert all("fallback" not in key.casefold() for key in _all_object_keys(fallback_requested))
+    assert all("fallback" not in key.casefold() for key in _all_object_keys(fallback_revision))
 
 
 def test_material_digest_uses_exactly_the_five_declared_semantic_fields() -> None:

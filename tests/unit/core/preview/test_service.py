@@ -15,7 +15,7 @@ import pytest
 from sqlalchemy import text
 
 from core.config.models import StorageConfig, TenantConfig
-from core.models.chargeback import ChargebackRow, CostType
+from core.models.chargeback import AllocationDetail, ChargebackRow, CostType
 from core.models.identity import CoreIdentity
 from core.models.pipeline import PipelineState
 from core.models.resource import CoreResource, ResourceStatus
@@ -115,102 +115,6 @@ def _source(**overrides: object) -> CCloudCostSourceRecord:
     return CCloudCostSourceRecord(**values)  # type: ignore[arg-type]
 
 
-_PROMO_REFUND_DESCRIPTIONS = {
-    "KAFKA": "Refund Kafka usage",
-    "CONNECT": "Refund Connect usage",
-    "KSQL": "Refund ksqlDB usage",
-    "AUDIT_LOG": "Refund audit log usage",
-    "STREAM_GOVERNANCE": "Refund governance usage",
-    "CLUSTER_LINK": "Refund cluster linking usage",
-    "CUSTOM_CONNECT": "Refund custom Connect usage",
-    "FLINK": "Refund Flink usage",
-    "TABLEFLOW": "Refund Tableflow usage",
-    "SUPPORT_CLOUD_BASIC": "Refund support subscription",
-    "SUPPORT_CLOUD_DEVELOPER": "Refund support subscription",
-    "SUPPORT_CLOUD_BUSINESS": "Refund support subscription",
-    "SUPPORT_CLOUD_PREMIER": "Refund support subscription",
-    "USM": "Refund USM usage",
-}
-
-TASK_254_05_SOURCE_CASES: tuple[tuple[str, dict[str, object]], ...] = (
-    (
-        "kafka-rest-produce",
-        {
-            "product": "KAFKA",
-            "line_type": "KAFKA_REST_PRODUCE",
-            "description": "Kafka REST produce usage",
-        },
-    ),
-    (
-        "kafka-streams",
-        {"product": "KAFKA", "line_type": "KAFKA_STREAMS", "description": "Kafka Streams usage"},
-    ),
-    (
-        "connect-records",
-        {
-            "product": "CONNECT",
-            "line_type": "CONNECT_NUM_RECORDS",
-            "description": "Connect records usage",
-        },
-    ),
-    (
-        "cluster-link-per-link",
-        {
-            "product": "CLUSTER_LINK",
-            "line_type": "CLUSTER_LINKING_PER_LINK",
-            "description": "Cluster Linking per-link usage",
-        },
-    ),
-    (
-        "cluster-link-read",
-        {
-            "product": "CLUSTER_LINK",
-            "line_type": "CLUSTER_LINKING_READ",
-            "description": "Cluster Linking read usage",
-        },
-    ),
-    (
-        "cluster-link-write",
-        {
-            "product": "CLUSTER_LINK",
-            "line_type": "CLUSTER_LINKING_WRITE",
-            "description": "Cluster Linking write usage",
-        },
-    ),
-    (
-        "usm-connected-node",
-        {"product": "USM", "line_type": "USM_CONNECTED_NODE", "description": "USM connected node usage"},
-    ),
-    (
-        "promotional-allowance",
-        {
-            "line_type": "PROMO_CREDIT",
-            "description": "Promotional allowance",
-            "amount": Decimal("-5"),
-            "original_amount": Decimal("-5"),
-            "discount_amount": Decimal("0"),
-            "price": None,
-            "quantity": None,
-            "unit": None,
-        },
-    ),
-) + tuple(
-    (
-        f"promo-refund-{product.lower().replace('_', '-')}",
-        {
-            "product": product,
-            "line_type": "PROMO_CREDIT",
-            "description": description,
-            "amount": Decimal("-8"),
-            "original_amount": Decimal("-10"),
-            "discount_amount": Decimal("-2"),
-            "price": Decimal("-2"),
-        },
-    )
-    for product, description in _PROMO_REFUND_DESCRIPTIONS.items()
-)
-
-
 def _aggregate(**overrides: object) -> CCloudBillingLineItem:
     values: dict[str, object] = {
         "ecosystem": "confluent_cloud",
@@ -249,6 +153,40 @@ def _allocation(**overrides: object) -> ChargebackRow:
     }
     values.update(overrides)
     return ChargebackRow(**values)  # type: ignore[arg-type]
+
+
+def _fallback_evidence(
+    *,
+    product: str,
+    line_type: str,
+    resource_id: str = "lkc-1",
+    resource_name: str = "Orders",
+) -> tuple[CCloudCostSourceRecord, CCloudBillingLineItem, ChargebackRow]:
+    source = _source(
+        product=product,
+        line_type=line_type,
+        description="Ordinary provider usage",
+        resource_id=resource_id,
+        resource_name=resource_name,
+        billing_resource_id=resource_id,
+        billing_product_type=line_type,
+        billing_product_category=product,
+    )
+    aggregate = _aggregate(
+        resource_id=resource_id,
+        product_category=product,
+        product_type=line_type,
+    )
+    allocation = _allocation(
+        resource_id=resource_id,
+        product_category=product,
+        product_type=line_type,
+        identity_id=resource_id,
+        cost_type=CostType.SHARED,
+        allocation_method="unknown",
+        allocation_detail=AllocationDetail.USING_UNKNOWN_ALLOCATOR,
+    )
+    return source, aggregate, allocation
 
 
 def _context_resource(
@@ -882,6 +820,386 @@ def test_daily_full_package_maps_provider_financial_account_sku_and_invoice_evid
         backend.dispose()
 
 
+@pytest.mark.parametrize(
+    ("native_product", "expected_category", "expected_name", "expected_subcategory"),
+    [
+        ("KAFKA", "Integration", "Confluent Cloud Apache Kafka", "Messaging"),
+        ("Provider Product / β", "Other", "Provider Product / β", "Other (Other)"),
+    ],
+)
+def test_fallback_package_preserves_native_evidence_allocation_lineage_and_manifest_contract(
+    tmp_path: Path,
+    native_product: str,
+    expected_category: str,
+    expected_name: str,
+    expected_subcategory: str,
+) -> None:
+    backend = SQLModelBackend(
+        f"sqlite:///{tmp_path / 'preview.db'}",
+        CCloudStorageModule(),
+        use_migrations=False,
+        focus_preview_enabled=True,
+    )
+    backend.create_tables()
+    native_line_type = "Future Usage / β"
+    source, aggregate, allocation = _fallback_evidence(
+        product=native_product,
+        line_type=native_line_type,
+    )
+    _seed(backend, source=source, aggregate=aggregate, allocation=allocation)
+    executor = ControlledExecutor()
+    runtime = _runtime(tmp_path, backend, executor)
+    try:
+        queued = _submit(runtime, backend)
+        executor.run_all()
+        ready = runtime.get_request(
+            backend=backend,
+            request_id=queued.request_id,
+            ecosystem="confluent_cloud",
+            tenant_id="tenant-1",
+        )
+
+        assert ready.status.value == "ready", ready.diagnostic
+        rows = list(
+            csv.DictReader(io.StringIO(runtime.read_file_bytes(ready, "cost-and-usage.csv").decode(), newline=""))
+        )
+        assert len(rows) == 1
+        row = rows[0]
+        assert row["ChargeCategory"] == "Usage"
+        assert row["ChargeFrequency"] == "Usage-Based"
+        assert row["ServiceCategory"] == expected_category
+        assert row["ServiceName"] == expected_name
+        assert row["ServiceSubcategory"] == expected_subcategory
+        assert row["x_ConfluentProduct"] == native_product
+        assert row["x_ConfluentLineType"] == native_line_type
+        assert row["AllocatedMethodId"] == "unknown"
+        assert row["x_ChitraguptaAllocationMethodVersion"] == "v1"
+        assert json.loads(row["AllocatedMethodDetails"]) == {
+            "allocation_detail": "using_unknown_allocator",
+            "metadata": {"env_id": "env-1"},
+            "target_kind": "resource",
+        }
+        assert row["AllocatedResourceId"] == "lkc-1"
+        assert row["BilledCost"] == row["EffectiveCost"] == "8"
+        assert row["ConsumedQuantity"] == row["PricingQuantity"] == "5"
+
+        manifest = json.loads(runtime.read_manifest_bytes(ready))
+        assert set(manifest) == {
+            "column_profile",
+            "conformance_status",
+            "effective_columns",
+            "end_date",
+            "evidence_coverage",
+            "files",
+            "generated_at",
+            "grain",
+            "known_gaps",
+            "lifecycle",
+            "mapping_profile_version",
+            "month",
+            "monthly_status",
+            "package_type",
+            "profile_not_applicable_columns",
+            "reconciliation",
+            "request_id",
+            "schema_version",
+            "source_snapshot",
+            "start_date",
+            "target_focus_version",
+            "tenant_name",
+            "validation",
+        }
+        assert set(manifest["validation"]) == {
+            "artifact_integrity",
+            "mapping_errors",
+            "mapping_profile_version",
+            "rows",
+            "source_records",
+            "status",
+        }
+        assert_public_known_gaps(manifest)
+        assert manifest["target_focus_version"] == "1.4"
+        assert manifest["conformance_status"] == "non_conforming"
+        assert manifest["mapping_profile_version"] == "focus-1.4-preview-v1"
+        assert manifest["validation"]["source_records"] == manifest["validation"]["rows"] == 1
+        assert manifest["reconciliation"] == {
+            "source_cost": "8",
+            "allocated_cost": "8",
+            "difference": "0",
+            "source_quantity": "5",
+            "allocated_quantity": "5",
+            "quantity_difference": "0",
+        }
+        assert all("fallback" not in key.casefold() for key in manifest)
+    finally:
+        runtime.close()
+        backend.dispose()
+
+
+def test_unknown_product_connector_uses_parent_provider_authority_and_preserves_origin(
+    tmp_path: Path,
+) -> None:
+    backend = SQLModelBackend(
+        f"sqlite:///{tmp_path / 'preview.db'}",
+        CCloudStorageModule(),
+        use_migrations=False,
+        focus_preview_enabled=True,
+    )
+    backend.create_tables()
+    source, aggregate, allocation = _fallback_evidence(
+        product="Provider Connector Product",
+        line_type="FUTURE_CONNECT_METER",
+        resource_id="lcc-1",
+        resource_name="Orders sink",
+    )
+    _seed(
+        backend,
+        source=source,
+        aggregate=aggregate,
+        allocation=allocation,
+        include_resource=False,
+    )
+    with backend.create_unit_of_work() as uow:
+        uow.resources.upsert(
+            _context_resource(
+                "lkc-parent",
+                "kafka_cluster",
+                metadata={"provider_cloud": "GCP", "provider_region": "us-west2"},
+            )
+        )
+        uow.resources.upsert(
+            _context_resource(
+                "lcc-1",
+                "connector",
+                parent_id="lkc-parent",
+                metadata={
+                    "env_id": "env-1",
+                    "provider_cloud": "WRONG",
+                    "provider_region": "wrong-region",
+                },
+            )
+        )
+        uow.commit()
+    executor = ControlledExecutor()
+    runtime = _runtime(tmp_path, backend, executor)
+    try:
+        queued = _submit(runtime, backend)
+        executor.run_all()
+        ready = runtime.get_request(
+            backend=backend,
+            request_id=queued.request_id,
+            ecosystem="confluent_cloud",
+            tenant_id="tenant-1",
+        )
+
+        assert ready.status.value == "ready", ready.diagnostic
+        [row] = list(
+            csv.DictReader(io.StringIO(runtime.read_file_bytes(ready, "cost-and-usage.csv").decode(), newline=""))
+        )
+        assert row["ResourceId"] == "lcc-1"
+        assert row["ResourceName"] == "Provider lcc-1"
+        assert row["ResourceType"] == "connector"
+        assert row["HostProviderName"] == "GCP"
+        assert row["RegionId"] == "us-west2"
+        assert row["AllocatedResourceId"] == "lcc-1"
+    finally:
+        runtime.close()
+        backend.dispose()
+
+
+def test_unknown_product_connector_without_parent_fails_all_or_nothing(
+    tmp_path: Path,
+) -> None:
+    backend = SQLModelBackend(
+        f"sqlite:///{tmp_path / 'preview.db'}",
+        CCloudStorageModule(),
+        use_migrations=False,
+        focus_preview_enabled=True,
+    )
+    backend.create_tables()
+    source, aggregate, allocation = _fallback_evidence(
+        product="Provider Connector Product",
+        line_type="FUTURE_CONNECT_METER",
+        resource_id="lcc-1",
+    )
+    _seed(
+        backend,
+        source=source,
+        aggregate=aggregate,
+        allocation=allocation,
+        include_resource=False,
+    )
+    with backend.create_unit_of_work() as uow:
+        uow.resources.upsert(
+            _context_resource(
+                "lcc-1",
+                "connector",
+                parent_id="lkc-missing",
+                metadata={"provider_cloud": "AWS", "provider_region": "us-east-1"},
+            )
+        )
+        uow.commit()
+    executor = ControlledExecutor()
+    runtime = _runtime(tmp_path, backend, executor)
+    try:
+        queued = _submit(runtime, backend)
+        executor.run_all()
+        failed = runtime.get_request(
+            backend=backend,
+            request_id=queued.request_id,
+            ecosystem="confluent_cloud",
+            tenant_id="tenant-1",
+        )
+
+        assert failed.status.value == "failed"
+        assert failed.diagnostic.code == "preview_provider_context_incomplete"
+        assert failed.package is None
+        assert failed.storage_key is None
+    finally:
+        runtime.close()
+        backend.dispose()
+
+
+@pytest.mark.parametrize(
+    ("origin", "authority", "expected_provider"),
+    [
+        (
+            _context_resource(
+                "lksqlc-1",
+                "ksqldb_cluster",
+                metadata={
+                    "kafka_cluster_id": "lkc-authority",
+                    "provider_cloud": "WRONG",
+                    "provider_region": "wrong-region",
+                },
+            ),
+            _context_resource(
+                "lkc-authority",
+                "kafka_cluster",
+                metadata={"provider_cloud": "GCP", "provider_region": "us-west2"},
+            ),
+            ("GCP", "us-west2"),
+        ),
+        (
+            _context_resource(
+                "lfstmt-1",
+                "flink_statement",
+                metadata={
+                    "compute_pool_id": "lfcp-authority",
+                    "provider_cloud": "WRONG",
+                    "provider_region": "wrong-region",
+                },
+            ),
+            _context_resource(
+                "lfcp-authority",
+                "flink_compute_pool",
+                metadata={"provider_cloud": "AZURE", "provider_region": "westus2"},
+            ),
+            ("AZURE", "westus2"),
+        ),
+        (
+            _context_resource(
+                "lfcp-1",
+                "flink_compute_pool",
+                metadata={"provider_cloud": "AWS", "provider_region": "us-east-2"},
+            ),
+            None,
+            ("AWS", "us-east-2"),
+        ),
+        (
+            _context_resource(
+                "lksqlc-missing",
+                "ksqldb_cluster",
+                metadata={"kafka_cluster_id": "missing"},
+            ),
+            None,
+            None,
+        ),
+        (
+            _context_resource(
+                "lfstmt-missing",
+                "flink_statement",
+                metadata={"compute_pool_id": "missing"},
+            ),
+            None,
+            None,
+        ),
+    ],
+    ids=(
+        "ksqldb-kafka-authority",
+        "flink-statement-pool-authority",
+        "flink-pool-self-authority",
+        "ksqldb-missing-kafka-reference",
+        "flink-statement-missing-pool-reference",
+    ),
+)
+def test_unknown_product_fallback_uses_relationship_aware_provider_authority(
+    tmp_path: Path,
+    origin: CoreResource,
+    authority: CoreResource | None,
+    expected_provider: tuple[str, str] | None,
+) -> None:
+    backend = SQLModelBackend(
+        f"sqlite:///{tmp_path / 'preview.db'}",
+        CCloudStorageModule(),
+        use_migrations=False,
+        focus_preview_enabled=True,
+    )
+    backend.create_tables()
+    source, aggregate, allocation = _fallback_evidence(
+        product="Provider Product",
+        line_type="FUTURE_PROVIDER_METER",
+        resource_id=origin.resource_id,
+        resource_name=f"Provider {origin.resource_id}",
+    )
+    _seed(
+        backend,
+        source=source,
+        aggregate=aggregate,
+        allocation=allocation,
+        include_resource=False,
+    )
+    with backend.create_unit_of_work() as uow:
+        uow.resources.upsert(origin)
+        if authority is not None:
+            uow.resources.upsert(authority)
+        uow.commit()
+    executor = ControlledExecutor()
+    runtime = _runtime(tmp_path, backend, executor)
+    try:
+        queued = _submit(runtime, backend)
+        executor.run_all()
+        result = runtime.get_request(
+            backend=backend,
+            request_id=queued.request_id,
+            ecosystem="confluent_cloud",
+            tenant_id="tenant-1",
+        )
+
+        if expected_provider is None:
+            assert result.status.value == "failed"
+            assert result.diagnostic.code == "preview_provider_context_incomplete"
+            assert result.package is None
+            assert result.storage_key is None
+        else:
+            assert result.status.value == "ready", result.diagnostic
+            [row] = list(
+                csv.DictReader(
+                    io.StringIO(
+                        runtime.read_file_bytes(result, "cost-and-usage.csv").decode(),
+                        newline="",
+                    )
+                )
+            )
+            assert row["ResourceId"] == origin.resource_id
+            assert row["ResourceName"] == origin.display_name
+            assert row["ResourceType"] == origin.resource_type
+            assert (row["HostProviderName"], row["RegionId"]) == expected_provider
+    finally:
+        runtime.close()
+        backend.dispose()
+
+
 def test_mapping_profile_partitions_every_column_exactly_once() -> None:
     mapping = preview_module("mapping")
     all_columns = (*mapping.FOCUS_1_4_FULL_COLUMNS, *mapping.CUSTOM_EVIDENCE_COLUMNS)
@@ -1210,62 +1528,7 @@ def test_promo_refund_reaches_provider_context_failures_after_v4_lineage(
         backend.dispose()
 
 
-@pytest.mark.parametrize(
-    ("case_id", "source_overrides"),
-    TASK_254_05_SOURCE_CASES,
-    ids=[case_id for case_id, _ in TASK_254_05_SOURCE_CASES],
-)
-def test_every_task_254_05_native_line_reaches_v4_coverage_without_an_origin(
-    tmp_path: Path,
-    case_id: str,
-    source_overrides: dict[str, object],
-) -> None:
-    backend = SQLModelBackend(
-        f"sqlite:///{tmp_path / 'preview.db'}",
-        CCloudStorageModule(),
-        use_migrations=False,
-        focus_preview_enabled=True,
-    )
-    backend.create_tables()
-    source = _source(
-        source_record_id=f"provider:{case_id}",
-        provider_cost_id=case_id,
-        raw_payload={"id": case_id},
-        **source_overrides,
-    )
-    _seed(backend, source=source)
-    executor = ControlledExecutor()
-    runtime = _runtime(tmp_path, backend, executor)
-
-    try:
-        queued = _submit(runtime, backend)
-        executor.run_all()
-        failed = runtime.get_request(
-            backend=backend,
-            request_id=queued.request_id,
-            ecosystem="confluent_cloud",
-            tenant_id="tenant-1",
-        )
-
-        assert failed.status.value == "failed"
-        expected_code = (
-            "preview_provider_context_incomplete"
-            if source.product == "TABLEFLOW"
-            else "preview_source_coverage_incomplete"
-        )
-        assert failed.diagnostic.code == expected_code
-        assert failed.diagnostic.retryable is False
-        assert len(failed.diagnostic.source_correlation_ids) == 1
-        assert failed.diagnostic.source_correlation_ids[0].startswith("src:v1:")
-        assert failed.source_snapshot is None
-        assert failed.storage_key is None
-        assert failed.package is None
-    finally:
-        runtime.close()
-        backend.dispose()
-
-
-def test_task_254_05_lineage_correlations_are_sorted_unique_and_capped(tmp_path: Path) -> None:
+def test_lineage_correlations_are_sorted_unique_and_capped(tmp_path: Path) -> None:
     eligibility = __import__("core.preview.eligibility", fromlist=["public_source_correlation_id"])
     backend = SQLModelBackend(
         f"sqlite:///{tmp_path / 'preview.db'}",
@@ -1280,11 +1543,11 @@ def test_task_254_05_lineage_correlations_are_sorted_unique_and_capped(tmp_path:
     )
     sources = [
         _source(
-            source_record_id=f"provider:deferred-{index:02}",
-            provider_cost_id=f"deferred-{index:02}",
+            source_record_id=f"provider:source-{index:02}",
+            provider_cost_id=f"source-{index:02}",
             line_type="KAFKA_STREAMS",
             description="Kafka Streams usage",
-            raw_payload={"id": f"deferred-{index:02}"},
+            raw_payload={"id": f"source-{index:02}"},
         )
         for index in range(25)
     ]
@@ -1313,68 +1576,6 @@ def test_task_254_05_lineage_correlations_are_sorted_unique_and_capped(tmp_path:
 
         assert failed.diagnostic.code == "preview_source_reconciliation_failed"
         assert failed.diagnostic.source_correlation_ids == expected
-        assert failed.source_snapshot is None
-        assert failed.storage_key is None
-        assert failed.package is None
-    finally:
-        runtime.close()
-        backend.dispose()
-
-
-@pytest.mark.parametrize(
-    ("issue_overrides", "expected_code"),
-    [
-        ({"malformed": True}, "preview_source_record_malformed"),
-        ({"line_type": "FUTURE_LINE"}, "preview_source_line_type_unsupported"),
-        ({"amount": Decimal("0")}, "preview_source_economics_unsupported"),
-        ({"original_amount": Decimal("11")}, "preview_source_reconciliation_failed"),
-    ],
-    ids=("structural", "classification", "financial", "arithmetic"),
-)
-def test_complete_source_issue_precedence_wins_before_task_254_05_lineage_gate(
-    tmp_path: Path,
-    issue_overrides: dict[str, object],
-    expected_code: str,
-) -> None:
-    backend = SQLModelBackend(
-        f"sqlite:///{tmp_path / 'preview.db'}",
-        CCloudStorageModule(),
-        use_migrations=False,
-        focus_preview_enabled=True,
-    )
-    backend.create_tables()
-    _seed(backend)
-    sources = [
-        _source(
-            source_record_id="provider:deferred",
-            provider_cost_id="deferred",
-            line_type="KAFKA_STREAMS",
-            description="Kafka Streams usage",
-            raw_payload={"id": "deferred"},
-        ),
-        _source(
-            source_record_id="provider:issue",
-            provider_cost_id="issue",
-            raw_payload={"id": "issue"},
-            **issue_overrides,
-        ),
-    ]
-    _replace_source_capture(backend, sources)
-    executor = ControlledExecutor()
-    runtime = _runtime(tmp_path, backend, executor)
-
-    try:
-        queued = _submit(runtime, backend)
-        executor.run_all()
-        failed = runtime.get_request(
-            backend=backend,
-            request_id=queued.request_id,
-            ecosystem="confluent_cloud",
-            tenant_id="tenant-1",
-        )
-
-        assert failed.diagnostic.code == expected_code
-        assert len(failed.diagnostic.source_correlation_ids) == 1
         assert failed.source_snapshot is None
         assert failed.storage_key is None
         assert failed.package is None

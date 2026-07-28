@@ -33,7 +33,6 @@ from core.preview.evidence import (
     SourceAttemptStatus,
 )
 from core.preview.mapping import (
-    FOCUS_1_4_NATIVE_LINE_READINESS_V1,
     FOCUS_1_4_SERVICE_RULES_V1,
     PREVIEW_DECIMAL_CONTEXT,
     AcceptedPreviewSource,
@@ -46,7 +45,6 @@ from core.preview.mapping import (
     PreviewFinancialReconciliationError,
     PreviewFinancialUnsupportedError,
     PreviewFullRow,
-    PreviewLineageReadiness,
     PreviewMappingError,
     PreviewMappingScopeError,
     PreviewPackageReconciliation,
@@ -279,7 +277,6 @@ _ISSUE_PRECEDENCE = {
     PreviewSourceIssue.CHARGE_CLASSIFICATION_AMBIGUOUS: 2,
     PreviewSourceIssue.LINE_TYPE_UNKNOWN: 3,
     PreviewSourceIssue.MAPPING_UNAVAILABLE: 4,
-    PreviewSourceIssue.LINE_TYPE_UNSUPPORTED: 5,
     PreviewSourceIssue.RECORD_INCOMPLETE: 6,
     PreviewSourceIssue.ECONOMICS_UNSUPPORTED: 7,
     PreviewSourceIssue.RECONCILIATION_FAILED: 8,
@@ -1567,9 +1564,6 @@ class PreviewPackageGenerator:
                         issue_correlations = capped_correlations([*issue_correlations, correlation])
                     continue
                 assert isinstance(classification, AcceptedPreviewSource)
-                assert candidate.native_line_type is not None
-                if FOCUS_1_4_NATIVE_LINE_READINESS_V1[candidate.native_line_type] is not PreviewLineageReadiness.READY:
-                    raise PreviewMappingScopeError("native line type lacks allocation lineage readiness")
                 rule = FOCUS_1_4_SERVICE_RULES_V1[classification.semantics.service_rule_key]
                 unsupported_provider_context = (
                     unsupported_provider_context or rule.context_strategy == "unsupported_provider_context"

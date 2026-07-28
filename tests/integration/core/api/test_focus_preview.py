@@ -1051,7 +1051,7 @@ def _mapper_backed_malformed_source() -> CCloudCostSourceRecord:
         ),
         ({"description": "Prior period refund"}, "preview_charge_classification_ambiguous"),
         ({"line_type": ""}, "preview_source_line_type_unknown"),
-        ({"line_type": "FUTURE_LINE"}, "preview_source_line_type_unsupported"),
+        ({"line_type": "SUPPORT_OVERAGE"}, "preview_charge_classification_ambiguous"),
         ({"line_type": "SUPPORT"}, "preview_charge_classification_ambiguous"),
         (
             {"line_type": "SUPPORT", "product": "SUPPORT_CLOUD_BUSINESS", "description": "Support subscription"},
@@ -1131,7 +1131,7 @@ def test_primary_api_seam_uses_real_source_mapper_for_malformed_diagnostic(tmp_p
     assert len(body["diagnostic"]["source_correlation_ids"]) == 1
 
 
-def test_primary_api_unknown_unsupported_line_precedes_valid_kafka_streams(tmp_path: Path) -> None:
+def test_primary_api_unknown_usage_line_reaches_source_coverage_gate(tmp_path: Path) -> None:
     settings = _settings(tmp_path)
     backend = SQLModelBackend(
         settings.tenants["production"].storage.connection_string.get_secret_value(),
@@ -1155,8 +1155,8 @@ def test_primary_api_unknown_unsupported_line_precedes_valid_kafka_streams(tmp_p
         body = _wait_for_terminal(client, submitted.json()["request_id"])
 
     assert body["status"] == "failed"
-    assert body["diagnostic"]["code"] == "preview_source_line_type_unsupported"
-    assert len(body["diagnostic"]["source_correlation_ids"]) == 1
+    assert body["diagnostic"]["code"] == "preview_source_coverage_incomplete"
+    assert len(body["diagnostic"]["source_correlation_ids"]) == 2
 
 
 def test_primary_api_seam_missing_focus_preview_fails_only_requested_scope(tmp_path: Path) -> None:

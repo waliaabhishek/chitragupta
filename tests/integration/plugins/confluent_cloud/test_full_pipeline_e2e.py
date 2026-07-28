@@ -156,9 +156,9 @@ class TestFullPipelineWithAllProductTypes:
 class TestPreviewResourceTypeProductionOwnership:
     """TASK-254.04 must leave the production allocation bundle unchanged."""
 
-    def test_deferred_native_types_have_no_dedicated_owner_or_allocator(self) -> None:
+    def test_fallback_native_types_have_no_dedicated_owner_or_allocator(self) -> None:
         bundle = EcosystemBundle.build(_initialized_plugin())
-        deferred_unowned = {
+        fallback_unowned = {
             "KAFKA_REST_PRODUCE",
             "KAFKA_STREAMS",
             "CONNECT_NUM_RECORDS",
@@ -166,9 +166,9 @@ class TestPreviewResourceTypeProductionOwnership:
             "PROMO_CREDIT",
         }
 
-        assert deferred_unowned.isdisjoint(bundle.product_type_to_handler)
+        assert fallback_unowned.isdisjoint(bundle.product_type_to_handler)
         for handler in bundle.handlers.values():
-            for product_type in deferred_unowned:
+            for product_type in fallback_unowned:
                 with pytest.raises(ValueError, match=f"Unknown product type: {product_type}"):
                     handler.get_allocator(product_type)
 

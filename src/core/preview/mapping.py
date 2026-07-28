@@ -163,7 +163,6 @@ class PreviewSourceIssue(StrEnum):
     SCOPE_UNSUPPORTED = "preview_source_scope_unsupported"
     CHARGE_CLASSIFICATION_AMBIGUOUS = "preview_charge_classification_ambiguous"
     LINE_TYPE_UNKNOWN = "preview_source_line_type_unknown"
-    LINE_TYPE_UNSUPPORTED = "preview_source_line_type_unsupported"
     MAPPING_UNAVAILABLE = "preview_source_mapping_unavailable"
     RECORD_INCOMPLETE = "preview_source_record_incomplete"
     ECONOMICS_UNSUPPORTED = "preview_source_economics_unsupported"
@@ -179,7 +178,6 @@ class FocusFeatureLevel(StrEnum):
 class PreviewApplicability(StrEnum):
     APPLICABLE = "applicable"
     NOT_APPLICABLE = "not_applicable"
-    DEFERRED = "deferred"
     DECLARED_GAP = "declared_gap"
 
 
@@ -405,7 +403,6 @@ _NOT_APPLICABLE = frozenset(
         "PricingCurrencyContractedUnitPrice",
     }
 )
-_DEFERRED: frozenset[str] = frozenset()
 _DECLARED_GAPS = {
     "BillingCurrency": ("provider_billing_currency_field_unavailable", "TASK-254.03"),
     "HostProviderName": ("provider_host_display_name_unavailable", "TASK-254.04"),
@@ -425,9 +422,6 @@ def _target_rule(column: str, level: str, allows_null: bool) -> FocusColumnRule:
     gap_code = owner = None
     if column in _NOT_APPLICABLE:
         applicability = PreviewApplicability.NOT_APPLICABLE
-    elif column in _DEFERRED:
-        applicability = PreviewApplicability.DEFERRED
-        gap_code, owner = "allocation_lineage_and_tag_projection_pending", "TASK-254.05"
     elif column in _DECLARED_GAPS:
         applicability = PreviewApplicability.DECLARED_GAP
         gap_code, owner = _DECLARED_GAPS[column]
@@ -537,7 +531,7 @@ _CUSTOM_SPECS = (
         "TASK-254.04",
     ),
     ("x_ConfluentProduct", True, PreviewApplicability.APPLICABLE, PreviewValidatorKind.TEXT, None, None),
-    ("x_ConfluentLineType", False, PreviewApplicability.APPLICABLE, PreviewValidatorKind.ENUM, None, None),
+    ("x_ConfluentLineType", False, PreviewApplicability.APPLICABLE, PreviewValidatorKind.TEXT, None, None),
     ("x_ConfluentDescription", False, PreviewApplicability.APPLICABLE, PreviewValidatorKind.TEXT, None, None),
     ("x_ConfluentDiscountAmount", False, PreviewApplicability.APPLICABLE, PreviewValidatorKind.DECIMAL, None, None),
     ("x_ConfluentNetworkAccessType", True, PreviewApplicability.APPLICABLE, PreviewValidatorKind.TEXT, None, None),
@@ -577,7 +571,7 @@ CUSTOM_EVIDENCE_RULES = tuple(
         source=_CUSTOM_RULE_AUTHORITIES[column][0],
         transformation=_CUSTOM_RULE_AUTHORITIES[column][1],
         validator=validator,
-        allowed_values=(_ACCEPTED_PROVIDER_LINE_TYPES if column == "x_ConfluentLineType" else None),
+        allowed_values=None,
         gap_code=gap,
         owner_task=owner,
     )
@@ -669,11 +663,7 @@ class PreviewServiceRuleKey(StrEnum):
     USM = "usm"
     SUPPORT = "support"
     PROMOTIONAL_CREDIT = "promotional_credit"
-
-
-class PreviewLineageReadiness(StrEnum):
-    READY = "ready"
-    TASK_254_05 = "task_254_05"
+    OTHER = "other"
 
 
 @dataclass(frozen=True)
@@ -681,7 +671,7 @@ class FocusServiceRule:
     key: PreviewServiceRuleKey
     native_line_types: tuple[str, ...]
     service_category: str
-    service_name: str
+    service_name: str | None
     service_subcategory: str
     resource_shape: PreviewResourceShape
     context_strategy: PreviewContextStrategy
@@ -695,6 +685,7 @@ type PreviewContextStrategy = Literal[
     "flink_pool_or_reference",
     "organization_wide",
     "unsupported_provider_context",
+    "fallback_resource_relationship",
 ]
 
 
@@ -725,7 +716,7 @@ def _service_rule(
     key: PreviewServiceRuleKey,
     line_types: tuple[str, ...],
     category: str,
-    name: str,
+    name: str | None,
     subcategory: str,
     shape: PreviewResourceShape,
     strategy: PreviewContextStrategy,
@@ -845,48 +836,18 @@ _FOCUS_1_4_SERVICE_RULE_DEFINITIONS_V1 = (
         "organization_wide",
         (),
     ),
+    _service_rule(
+        PreviewServiceRuleKey.OTHER,
+        (),
+        "Other",
+        None,
+        "Other (Other)",
+        PreviewResourceShape.RESOURCE_SPECIFIC,
+        "fallback_resource_relationship",
+        (),
+    ),
 )
 FOCUS_1_4_SERVICE_RULES_V1 = MappingProxyType({rule.key: rule for rule in _FOCUS_1_4_SERVICE_RULE_DEFINITIONS_V1})
-
-_READY_NATIVE_LINE_TYPES_V1 = (
-    "KAFKA_STORAGE",
-    "KAFKA_PARTITION",
-    "KAFKA_NETWORK_READ",
-    "KAFKA_NETWORK_WRITE",
-    "KAFKA_BASE",
-    "KAFKA_NUM_CKUS",
-    "CONNECT_CAPACITY",
-    "CONNECT_NUM_TASKS",
-    "CONNECT_THROUGHPUT",
-    "CUSTOM_CONNECT_NUM_TASKS",
-    "CUSTOM_CONNECT_THROUGHPUT",
-    "KSQL_NUM_CSUS",
-    "FLINK_NUM_CFUS",
-    "GOVERNANCE_BASE",
-    "SCHEMA_REGISTRY",
-    "NUM_RULES",
-)
-_TASK_254_05_NATIVE_LINE_TYPES_V1 = (
-    "AUDIT_LOG_READ",
-    "SUPPORT",
-    "PROMO_CREDIT",
-    "KAFKA_REST_PRODUCE",
-    "KAFKA_STREAMS",
-    "CONNECT_NUM_RECORDS",
-    "CLUSTER_LINKING_PER_LINK",
-    "CLUSTER_LINKING_READ",
-    "CLUSTER_LINKING_WRITE",
-    "USM_CONNECTED_NODE",
-    "TABLEFLOW_DATA_PROCESSED",
-    "TABLEFLOW_NUM_TOPICS",
-    "TABLEFLOW_STORAGE",
-)
-FOCUS_1_4_NATIVE_LINE_READINESS_V1 = MappingProxyType(
-    {
-        **{line_type: PreviewLineageReadiness.READY for line_type in _READY_NATIVE_LINE_TYPES_V1},
-        **{line_type: PreviewLineageReadiness.READY for line_type in _TASK_254_05_NATIVE_LINE_TYPES_V1},
-    }
-)
 
 
 @dataclass(frozen=True)
@@ -934,6 +895,7 @@ class PreviewChargeSemantics:
     service_rule_key: PreviewServiceRuleKey
     emits_pricing: bool
     emits_consumption: bool
+    service_name_override: str | None = None
 
 
 @dataclass(frozen=True)
@@ -1140,7 +1102,7 @@ def classify_daily_full_source(
         and source.evidence_scope_start < source.evidence_scope_end
     ):
         return RejectedPreviewSource(PreviewSourceIssue.SCOPE_UNSUPPORTED)
-    if not source.native_line_type:
+    if not source.native_line_type or not source.native_line_type.strip():
         return RejectedPreviewSource(PreviewSourceIssue.LINE_TYPE_UNKNOWN)
     if not source.provider_cost_id or not source.native_description:
         return RejectedPreviewSource(PreviewSourceIssue.RECORD_INCOMPLETE)
@@ -1154,8 +1116,16 @@ def classify_daily_full_source(
     line_type = source.native_line_type
     if line_type == "KAFKA_STREAMS" and not source.unit:
         return RejectedPreviewSource(PreviewSourceIssue.MAPPING_UNAVAILABLE)
-    if line_type not in {"SUPPORT", "PROMO_CREDIT"} and _service_key_for_line_type(line_type) is None:
-        return RejectedPreviewSource(PreviewSourceIssue.LINE_TYPE_UNSUPPORTED)
+    inferred_key = _service_key_for_line_type(line_type)
+    is_fallback = inferred_key is None
+    if is_fallback:
+        refund, promotion, support, ambiguous = _semantic_flags(
+            source.native_product or "",
+            source.native_description,
+            line_type,
+        )
+        if ambiguous:
+            return RejectedPreviewSource(PreviewSourceIssue.CHARGE_CLASSIFICATION_AMBIGUOUS)
 
     if line_type == "PROMO_CREDIT" and not refund:
         return AcceptedPreviewSource(
@@ -1169,9 +1139,50 @@ def classify_daily_full_source(
             )
         )
 
-    if not source.native_product:
+    if not source.native_product or not source.native_product.strip():
         return RejectedPreviewSource(PreviewSourceIssue.RECORD_INCOMPLETE)
     product_rule = NATIVE_PRODUCT_SERVICE_RULES_V1.get(source.native_product)
+    if is_fallback:
+        if promotion or support:
+            return RejectedPreviewSource(PreviewSourceIssue.CHARGE_CLASSIFICATION_AMBIGUOUS)
+        if product_rule is None:
+            if refund:
+                return RejectedPreviewSource(PreviewSourceIssue.CHARGE_CLASSIFICATION_AMBIGUOUS)
+            inferred_key = PreviewServiceRuleKey.OTHER
+            service_name_override = source.native_product
+        else:
+            if product_rule.original_category == "Purchase":
+                return RejectedPreviewSource(PreviewSourceIssue.CHARGE_CLASSIFICATION_AMBIGUOUS)
+            inferred_key = product_rule.service_rule_key
+            service_name_override = None
+        rule = FOCUS_1_4_SERVICE_RULES_V1[inferred_key]
+        if rule.resource_shape is PreviewResourceShape.RESOURCE_SPECIFIC and (
+            not source.resource_id or not source.environment_id
+        ):
+            return RejectedPreviewSource(PreviewSourceIssue.RECORD_INCOMPLETE)
+        if refund:
+            assert product_rule is not None
+            return AcceptedPreviewSource(
+                PreviewChargeSemantics(
+                    PreviewChargeKind.USAGE_REFUND,
+                    product_rule.original_category,
+                    product_rule.original_frequency,
+                    inferred_key,
+                    True,
+                    True,
+                )
+            )
+        return AcceptedPreviewSource(
+            PreviewChargeSemantics(
+                PreviewChargeKind.METERED_USAGE,
+                "Usage",
+                "Usage-Based",
+                inferred_key,
+                True,
+                True,
+                service_name_override,
+            )
+        )
     if product_rule is None:
         return RejectedPreviewSource(PreviewSourceIssue.CHARGE_CLASSIFICATION_AMBIGUOUS)
     if line_type == "PROMO_CREDIT":
@@ -1198,7 +1209,6 @@ def classify_daily_full_source(
             )
         )
 
-    inferred_key = _service_key_for_line_type(line_type)
     if line_type == "SUPPORT":
         inferred_key = PreviewServiceRuleKey.SUPPORT
         if not support or product_rule.service_rule_key is not inferred_key:
@@ -1867,20 +1877,34 @@ def _resolve_provider_resource_context(
         raise PreviewProviderContextIncompleteError("provider relationship is unsupported")
     if rule.resource_shape is PreviewResourceShape.ORGANIZATION_WIDE:
         return PreviewResourceContext(None, None, None, None, None)
-    if origin_resource is None or origin_resource.resource_type not in rule.allowed_origin_resource_types:
+    if origin_resource is None or (
+        rule.context_strategy != "fallback_resource_relationship"
+        and origin_resource.resource_type not in rule.allowed_origin_resource_types
+    ):
         raise PreviewProviderContextIncompleteError("origin resource type is incompatible")
     if origin_resource.resource_id != source.resource_id or not source.environment_id:
         raise PreviewProviderContextIncompleteError("origin resource identity is incompatible")
     authority: Resource | None = origin_resource
     ecosystem = origin_resource.ecosystem
     tenant_id = origin_resource.tenant_id
+    context_strategy = rule.context_strategy
+    if context_strategy == "fallback_resource_relationship":
+        match origin_resource.resource_type:
+            case "connector":
+                context_strategy = "connector_parent_kafka"
+            case "ksqldb_cluster":
+                context_strategy = "ksqldb_kafka_reference"
+            case "flink_statement" | "flink_compute_pool":
+                context_strategy = "flink_pool_or_reference"
+            case _:
+                context_strategy = "self"
 
     def find_resource(resource_id: str) -> Resource | None:
         if resource_by_id is not None:
             return resource_by_id.get(resource_id)
         return resources.get(ecosystem, tenant_id, resource_id)
 
-    if rule.context_strategy == "connector_parent_kafka":
+    if context_strategy == "connector_parent_kafka":
         if origin_resource.metadata.get("env_id") != source.environment_id:
             raise PreviewProviderContextIncompleteError("connector environment is incompatible")
         authority = find_resource(origin_resource.parent_id or "")
@@ -1891,7 +1915,7 @@ def _resolve_provider_resource_context(
             or authority.parent_id != source.environment_id
         ):
             raise PreviewProviderContextIncompleteError("connector parent is not Kafka")
-    elif rule.context_strategy == "ksqldb_kafka_reference":
+    elif context_strategy == "ksqldb_kafka_reference":
         if origin_resource.parent_id != source.environment_id:
             raise PreviewProviderContextIncompleteError("ksqlDB environment is incompatible")
         reference = origin_resource.metadata.get("kafka_cluster_id")
@@ -1903,7 +1927,7 @@ def _resolve_provider_resource_context(
             or authority.parent_id != source.environment_id
         ):
             raise PreviewProviderContextIncompleteError("ksqlDB Kafka reference is incompatible")
-    elif rule.context_strategy == "flink_pool_or_reference" and origin_resource.resource_type == "flink_statement":
+    elif context_strategy == "flink_pool_or_reference" and origin_resource.resource_type == "flink_statement":
         if origin_resource.parent_id != source.environment_id:
             raise PreviewProviderContextIncompleteError("Flink statement environment is incompatible")
         reference = origin_resource.metadata.get("compute_pool_id")
@@ -1981,13 +2005,12 @@ def validate_daily_full_mapping(
 def _validate_cell(value: PreviewCell, rule: FocusColumnRule | CustomEvidenceRule) -> None:
     if value is None:
         if (
-            rule.applicability
-            in {PreviewApplicability.NOT_APPLICABLE, PreviewApplicability.DEFERRED, PreviewApplicability.DECLARED_GAP}
+            rule.applicability in {PreviewApplicability.NOT_APPLICABLE, PreviewApplicability.DECLARED_GAP}
             or rule.allows_null
         ):
             return
         raise PreviewRowValidationError(PreviewRowRuleId.NULLABILITY, column=rule.column)
-    if rule.applicability in {PreviewApplicability.NOT_APPLICABLE, PreviewApplicability.DEFERRED}:
+    if rule.applicability is PreviewApplicability.NOT_APPLICABLE:
         raise PreviewRowValidationError(PreviewRowRuleId.APPLICABILITY, column=rule.column)
     match rule.validator:
         case PreviewValidatorKind.DECIMAL:
@@ -2022,10 +2045,7 @@ def _rule_gap_ownership(
     ownership: dict[tuple[str, str], list[str]] = {}
     all_rules: tuple[FocusColumnRule | CustomEvidenceRule, ...] = (*target_rules, *custom_rules)
     for rule in all_rules:
-        if rule.applicability not in {
-            PreviewApplicability.DEFERRED,
-            PreviewApplicability.DECLARED_GAP,
-        }:
+        if rule.applicability is not PreviewApplicability.DECLARED_GAP:
             if rule.gap_code is not None or rule.owner_task is not None:
                 raise PreviewProfileDefinitionError(f"non-gap rule has gap ownership: {rule.column}")
             continue
@@ -2078,7 +2098,7 @@ def validate_preview_row(
             (
                 rule.column
                 for rule in all_rules
-                if rule.applicability in {PreviewApplicability.DEFERRED, PreviewApplicability.DECLARED_GAP}
+                if rule.applicability is PreviewApplicability.DECLARED_GAP
                 and (not rule.gap_code or not rule.owner_task)
             ),
             None,
@@ -2093,7 +2113,7 @@ def validate_preview_row(
                 if authoritative.get(rule.column)
                 != (
                     (rule.gap_code, rule.owner_task)
-                    if rule.applicability in {PreviewApplicability.DEFERRED, PreviewApplicability.DECLARED_GAP}
+                    if rule.applicability is PreviewApplicability.DECLARED_GAP
                     else None
                 )
             ),
@@ -2396,7 +2416,7 @@ def _project_daily_full_row(
             "ResourceType": resource_context.resource_type,
             "ServiceProviderName": "Confluent Cloud",
             "ServiceCategory": service.service_category,
-            "ServiceName": service.service_name,
+            "ServiceName": semantics.service_name_override or service.service_name,
             "ServiceSubcategory": service.service_subcategory,
             "SkuId": sku_id,
             "SkuMeter": financials.pricing_unit,
@@ -3096,10 +3116,7 @@ def _validate_profile_definition() -> None:
         if (
             not rule.source
             or not rule.transformation
-            or (
-                rule.applicability in {PreviewApplicability.DEFERRED, PreviewApplicability.DECLARED_GAP}
-                and (not rule.gap_code or not rule.owner_task)
-            )
+            or (rule.applicability is PreviewApplicability.DECLARED_GAP and (not rule.gap_code or not rule.owner_task))
         ):
             raise PreviewProfileDefinitionError(f"profile rule is incomplete: {rule.column}")
         if rule.validator is PreviewValidatorKind.ENUM and not rule.allowed_values:
@@ -3111,7 +3128,7 @@ def _validate_profile_definition() -> None:
             not custom_rule.source
             or not custom_rule.transformation
             or (
-                custom_rule.applicability in {PreviewApplicability.DEFERRED, PreviewApplicability.DECLARED_GAP}
+                custom_rule.applicability is PreviewApplicability.DECLARED_GAP
                 and (not custom_rule.gap_code or not custom_rule.owner_task)
             )
         ):
@@ -3137,6 +3154,21 @@ def _validate_profile_definition() -> None:
         if key is not service_rule.key:
             raise PreviewProfileDefinitionError("service rule key disagrees with its authority key")
         line_type_owners.extend(service_rule.native_line_types)
+        if key is PreviewServiceRuleKey.OTHER:
+            if (
+                service_rule.service_name is not None
+                or service_rule.native_line_types
+                or service_rule.resource_shape is not PreviewResourceShape.RESOURCE_SPECIFIC
+                or service_rule.context_strategy != "fallback_resource_relationship"
+                or service_rule.allowed_origin_resource_types
+            ):
+                raise PreviewProfileDefinitionError("Other fallback service context is invalid")
+        elif (
+            service_rule.service_name is None
+            or not service_rule.native_line_types
+            or service_rule.context_strategy == "fallback_resource_relationship"
+        ):
+            raise PreviewProfileDefinitionError("non-Other service rule uses fallback-only configuration")
         if service_rule.context_strategy == "organization_wide":
             if (
                 service_rule.resource_shape is not PreviewResourceShape.ORGANIZATION_WIDE
@@ -3150,6 +3182,9 @@ def _validate_profile_definition() -> None:
                 or service_rule.allowed_origin_resource_types
             ):
                 raise PreviewProfileDefinitionError("unsupported provider context rule is invalid")
+        elif service_rule.context_strategy == "fallback_resource_relationship":
+            if key is not PreviewServiceRuleKey.OTHER:
+                raise PreviewProfileDefinitionError("fallback provider context rule is invalid")
         elif (
             service_rule.resource_shape is not PreviewResourceShape.RESOURCE_SPECIFIC
             or not service_rule.allowed_origin_resource_types
@@ -3162,6 +3197,7 @@ def _validate_profile_definition() -> None:
             "flink_pool_or_reference": {("flink_compute_pool", "flink_statement")},
             "organization_wide": {()},
             "unsupported_provider_context": {()},
+            "fallback_resource_relationship": {()},
         }
         if service_rule.allowed_origin_resource_types not in expected_context_types[service_rule.context_strategy]:
             raise PreviewProfileDefinitionError("service context strategy and origin types disagree")
@@ -3180,14 +3216,6 @@ def _validate_profile_definition() -> None:
         raise PreviewProfileDefinitionError("native line types have multiple service owners")
     if tuple(line_type_owners) != _ACCEPTED_PROVIDER_LINE_TYPES:
         raise PreviewProfileDefinitionError("accepted native line type coverage is invalid")
-    expected_readiness = {
-        **{line_type: PreviewLineageReadiness.READY for line_type in _READY_NATIVE_LINE_TYPES_V1},
-        **{line_type: PreviewLineageReadiness.READY for line_type in _TASK_254_05_NATIVE_LINE_TYPES_V1},
-    }
-    if dict(FOCUS_1_4_NATIVE_LINE_READINESS_V1) != expected_readiness or set(expected_readiness) != set(
-        line_type_owners
-    ):
-        raise PreviewProfileDefinitionError("native line readiness authority is invalid")
     if unsupported_context_keys != [PreviewServiceRuleKey.TABLEFLOW]:
         raise PreviewProfileDefinitionError("TABLEFLOW must be the sole unsupported provider context")
     if set(NATIVE_PRODUCT_SERVICE_RULES_V1) != set(_PRODUCT_KEYS):
