@@ -34,6 +34,34 @@ from tests.integration.core.api.backend_provider import FixedTenantBackendProvid
 
 POST_PATH = "/api/v1/tenants/{tenant_name}/focus-preview/repairs"
 GET_PATH = "/api/v1/tenants/{tenant_name}/focus-preview/repairs/{repair_id}"
+_REPAIR_ADMISSION_AT = datetime(
+    2026,
+    7,
+    23,
+    23,
+    59,
+    59,
+    987654,
+    tzinfo=UTC,
+)
+
+
+class _RepairAdmissionDatetime(datetime):
+    @classmethod
+    def now(cls, tz: object = None) -> datetime:
+        del tz
+        return _REPAIR_ADMISSION_AT
+
+
+@pytest.fixture(autouse=True)
+def _pin_repair_route_clock(monkeypatch: pytest.MonkeyPatch) -> None:
+    from core.api.routes import focus_preview
+
+    monkeypatch.setattr(
+        focus_preview,
+        "datetime",
+        _RepairAdmissionDatetime,
+    )
 
 
 def _tenant(
@@ -1217,16 +1245,6 @@ def test_production_post_persists_complete_queue_location_active_guard_and_resta
 def test_production_post_with_omitted_end_persists_admission_created_at(
     tmp_path: Path,
 ) -> None:
-    from core.api.routes import focus_preview
-
-    admission_at = datetime(2026, 7, 23, 23, 59, 59, 987654, tzinfo=UTC)
-
-    class AdmissionDatetime(datetime):
-        @classmethod
-        def now(cls, tz: object = None) -> datetime:
-            del tz
-            return admission_at
-
     settings = AppSettings(
         tenants={
             "enabled": _tenant(
@@ -1246,14 +1264,7 @@ def test_production_post_with_omitted_end_persists_admission_created_at(
     app = create_app(settings, workflow_runner=runner, mode="both")  # type: ignore[arg-type]
 
     try:
-        with (
-            TestClient(app) as client,
-            patch.object(
-                focus_preview,
-                "datetime",
-                AdmissionDatetime,
-            ),
-        ):
+        with TestClient(app) as client:
             response = client.post(
                 "/api/v1/tenants/enabled/focus-preview/repairs",
                 json={"start_date": "2026-07-01", "end_date": "2026-07-02"},
