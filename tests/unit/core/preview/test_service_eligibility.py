@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -263,6 +264,98 @@ def test_worker_uses_submission_clock_for_policy_even_when_queue_starts_later(tm
         failed = _failed(runtime, backend, queued.request_id)
 
         assert failed.diagnostic.code == "calculation_unavailable"
+    finally:
+        runtime.close()
+        backend.dispose()
+
+
+def test_omitted_end_uses_request_creation_date_after_utc_midnight_queue_delay(
+    tmp_path: Path,
+) -> None:
+    backend = _backend(tmp_path)
+    _seed(backend, source=_source(), aggregate=_aggregate(), allocation=_allocation())
+    executor = ControlledExecutor()
+    current_time = [datetime(2026, 7, 4, 23, 59, 59, tzinfo=UTC)]
+    artifacts = __import__("core.preview.artifacts", fromlist=["LocalPreviewArtifactStore"])
+    service = __import__("core.preview.service", fromlist=["PreviewRuntime"])
+    runtime = service.PreviewRuntime(
+        artifact_store=artifacts.LocalPreviewArtifactStore(tmp_path / "artifacts"),
+        backend_provider=FixedTenantBackendProvider({"production": backend}),
+        max_workers=1,
+        clock=lambda: current_time[0],
+        request_id_factory=lambda: "request-midnight",
+        executor=executor,
+    )
+    generate = MagicMock(wraps=runtime._package_generator.generate)  # noqa: SLF001
+    runtime._package_generator.generate = generate  # type: ignore[method-assign]  # noqa: SLF001
+    block = _block()
+    del block["effective_end_date"]
+    tenant = _tenant(
+        backend._connection_string,
+        focus_preview=block,
+        cutoff_days=1,
+    )
+    try:
+        queued = _submit(
+            runtime,
+            backend,
+            tenant,
+            start_date=date(2026, 7, 1),
+            end_date=date(2026, 7, 2),
+        )
+        current_time[0] = datetime(2026, 7, 5, 0, 0, 1, tzinfo=UTC)
+        executor.run_all()
+        ready = _failed(runtime, backend, queued.request_id)
+
+        assert queued.created_at == datetime(2026, 7, 4, 23, 59, 59, tzinfo=UTC)
+        assert ready.status.value == "ready"
+        assert generate.call_args.kwargs["policy"].effective_end_date == date(2026, 7, 4)
+    finally:
+        runtime.close()
+        backend.dispose()
+
+
+def test_omitted_end_does_not_widen_after_utc_midnight_queue_delay(
+    tmp_path: Path,
+) -> None:
+    backend = _backend(tmp_path)
+    _seed(
+        backend,
+        state=_state(date(2026, 7, 4), calculated=True),
+    )
+    executor = ControlledExecutor()
+    current_time = [datetime(2026, 7, 4, 23, 59, 59, tzinfo=UTC)]
+    artifacts = __import__("core.preview.artifacts", fromlist=["LocalPreviewArtifactStore"])
+    service = __import__("core.preview.service", fromlist=["PreviewRuntime"])
+    runtime = service.PreviewRuntime(
+        artifact_store=artifacts.LocalPreviewArtifactStore(tmp_path / "artifacts"),
+        backend_provider=FixedTenantBackendProvider({"production": backend}),
+        max_workers=1,
+        clock=lambda: current_time[0],
+        request_id_factory=lambda: "request-midnight-ineligible",
+        executor=executor,
+    )
+    block = _block()
+    del block["effective_end_date"]
+    tenant = _tenant(
+        backend._connection_string,
+        focus_preview=block,
+        cutoff_days=1,
+    )
+    try:
+        queued = _submit(
+            runtime,
+            backend,
+            tenant,
+            start_date=date(2026, 7, 4),
+            end_date=date(2026, 7, 5),
+        )
+        current_time[0] = datetime(2026, 7, 5, 0, 0, 1, tzinfo=UTC)
+        executor.run_all()
+        failed = _failed(runtime, backend, queued.request_id)
+
+        assert failed.status.value == "failed"
+        assert failed.diagnostic.code == "preview_commercial_profile_unavailable"
     finally:
         runtime.close()
         backend.dispose()

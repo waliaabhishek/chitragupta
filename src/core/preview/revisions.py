@@ -236,8 +236,16 @@ class PreviewRevisionService:
         if focus is None:
             return ()
         policy = policy_from_tenant_config(tenant_config, created_at=now)
-        start = max(_month_start(policy.acquisition_start_date), focus.effective_start_date)
-        end = min(policy.acquisition_end_date, focus.effective_end_date)
+        assert policy.effective_start_date is not None
+        assert policy.effective_end_date is not None
+        start = max(
+            _month_start(policy.acquisition_start_date),
+            policy.effective_start_date,
+        )
+        end = min(
+            policy.acquisition_end_date,
+            policy.effective_end_date,
+        )
         current = _month_start(start)
         if current < start:
             current = _next_month(current)

@@ -952,7 +952,7 @@ class WorkflowRunner:
 
                 policy = policy_from_tenant_config(
                     tenant_config,
-                    created_at=datetime.now(UTC),
+                    created_at=operation.created_at,
                 )
                 for repair_date in operation.dates:
                     tracking_date = repair_date.tracking_date
@@ -1555,12 +1555,14 @@ class WorkflowRunner:
                 def run_scheduled(
                     tenant_name: str = tenant_name,
                     month: str = month,
+                    cycle_at: datetime = now,
                     completion: threading.Event = completion,
                 ) -> None:
                     try:
                         self._run_scheduled_revision(
                             tenant_name=tenant_name,
                             month=month,
+                            cycle_at=cycle_at,
                         )
                     finally:
                         completion.set()
@@ -1580,6 +1582,7 @@ class WorkflowRunner:
         *,
         tenant_name: str,
         month: str,
+        cycle_at: datetime,
     ) -> None:
         manager = self._revision_manager
         config = self._settings.tenants.get(tenant_name)
@@ -1601,7 +1604,7 @@ class WorkflowRunner:
                         tenant_name=tenant_name,
                         tenant_config=config,
                         backend=leased_runtime.storage,
-                        now=datetime.now(UTC),
+                        now=cycle_at,
                         month=month,
                     )
             except Exception as exc:

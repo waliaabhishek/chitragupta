@@ -31,7 +31,8 @@ tenants:
       commercial_profile: direct_payg
       billing_currency: USD
       effective_start_date: 2026-01-01
-      effective_end_date: 2027-01-01
+      # Optional fixed exclusive override:
+      # effective_end_date: 2027-01-01
     storage:
       connection_string: "sqlite:///data/ccloud.db"
     plugin_settings:
@@ -85,7 +86,7 @@ tenants:
 | `focus_preview.commercial_profile` | string | required in block | Must be `direct_payg`. |
 | `focus_preview.billing_currency` | string | `USD` | Three-letter code normalized to uppercase. Only USD is currently eligible. |
 | `focus_preview.effective_start_date` | date | required in block | Inclusive start of the commercial declaration. |
-| `focus_preview.effective_end_date` | date | required in block | Exclusive end; must be after the start and contain the complete Preview request. |
+| `focus_preview.effective_end_date` | date | omitted | Optional exclusive end; when supplied, it must be after the start and is a fixed hard override. |
 
 ## FOCUS Mapping Preview eligibility
 
@@ -96,17 +97,18 @@ artifact, or evidence storage. The tenant continues normal billing collection,
 chargeback calculation, generic export, and emission without Preview-specific
 organization, raw-source, allocation-lineage, or retention work. When supplied,
 `focus_preview.commercial_profile` is required and must be `direct_payg`.
-The effective dates form a non-empty half-open interval; the request's inclusive
-start and exclusive end must both fit within it.
+`focus_preview.effective_start_date` is required and inclusive.
+`focus_preview.effective_end_date` is optional and exclusive. When it is
+omitted, each operation resolves the exclusive end once from its own UTC anchor:
+an ad-hoc request's creation time, a scheduled publication cycle's timestamp,
+or a repair's durable creation time. Queue delay, processing, restart, or
+crossing UTC midnight does not change that operation's resolved end. When an
+explicit end is configured, it remains the fixed exclusive hard override.
 
-The effective dates are also required and have no defaults. They are the
-operator's explicit statement of when the supported commercial arrangement
-applied. A default covering all history could incorrectly apply today's terms
-to older billing data, while a default beginning today would unexpectedly block
-historical packages. The dates therefore bound commercial eligibility only;
-they do not configure acquisition, lookback, or retention. Open-ended
-declarations are not currently supported. For an ongoing arrangement, choose a
-future review boundary and extend it before it expires.
+The resolved commercial interval does not configure or widen acquisition,
+`lookback_days`, `cutoff_days`, or `retention_days`. Complete persisted
+calculation, source, allocation-lineage, reconciliation, and mapping evidence
+remains required and fail-closed.
 
 `focus_preview.billing_currency` defaults to `USD`. Values such as `usd` or
 ` USD ` normalize to `USD`; malformed or non-string values fail configuration
@@ -129,12 +131,13 @@ history, or a promise that billing and Metrics API inputs still exist for
 reconstruction. `retention_days` is separate but does not introduce a
 multi-year completed-chargeback archive.
 
-Historical repair has no YAML override and does not widen these boundaries. A
-repair interval must fit completely inside the intersection of the configured
-effective interval, current lookback/cutoff window, and retained-data interval.
-New repair submission is available only through REST in `both` mode. API-only
-deployments can read a retained operation but cannot execute one; disabled
-tenants create no repair infrastructure.
+Historical repair has no separate YAML override and does not widen these
+boundaries. A repair interval must fit completely inside the intersection of
+the commercial interval resolved at its durable UTC creation time, current
+lookback/cutoff window, and retained-data interval. New repair submission is
+available only through REST in `both` mode. API-only deployments can read a
+retained operation but cannot execute one; disabled tenants create no repair
+infrastructure.
 
 Repair uses `ccloud_api` credentials to reacquire authoritative Costs API
 history for each selected date and may use historical Telemetry, Prometheus, or

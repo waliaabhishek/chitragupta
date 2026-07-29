@@ -41,6 +41,7 @@ def _tenant(
     *,
     ecosystem: str = "confluent_cloud",
     enabled: bool = True,
+    effective_end: date | None = date(2026, 12, 31),
 ) -> TenantConfig:
     return TenantConfig(
         ecosystem=ecosystem,
@@ -55,7 +56,7 @@ def _tenant(
             FocusPreviewTenantConfig(
                 commercial_profile="direct_payg",
                 effective_start_date=date(2026, 1, 1),
-                effective_end_date=date(2026, 12, 31),
+                effective_end_date=effective_end,
             )
             if enabled
             else None
@@ -1211,3 +1212,60 @@ def test_production_post_persists_complete_queue_location_active_guard_and_resta
     ]
     assert runner.exit_exceptions == [None, None]
     backend.dispose()
+
+
+def test_production_post_with_omitted_end_persists_admission_created_at(
+    tmp_path: Path,
+) -> None:
+    from core.api.routes import focus_preview
+
+    admission_at = datetime(2026, 7, 23, 23, 59, 59, 987654, tzinfo=UTC)
+
+    class AdmissionDatetime(datetime):
+        @classmethod
+        def now(cls, tz: object = None) -> datetime:
+            del tz
+            return admission_at
+
+    settings = AppSettings(
+        tenants={
+            "enabled": _tenant(
+                tmp_path,
+                effective_end=None,
+            )
+        }
+    )
+    backend = SQLModelBackend(
+        f"sqlite:///{tmp_path / 'omitted-end-production-repair.db'}",
+        CCloudStorageModule(),
+        use_migrations=False,
+        focus_preview_enabled=True,
+    )
+    backend.create_tables()
+    runner = _ProductionRunnerDouble(backend, [])
+    app = create_app(settings, workflow_runner=runner, mode="both")  # type: ignore[arg-type]
+
+    try:
+        with (
+            TestClient(app) as client,
+            patch.object(
+                focus_preview,
+                "datetime",
+                AdmissionDatetime,
+            ),
+        ):
+            response = client.post(
+                "/api/v1/tenants/enabled/focus-preview/repairs",
+                json={"start_date": "2026-07-01", "end_date": "2026-07-02"},
+            )
+            assert response.status_code == 202
+            payload = response.json()
+            assert payload["created_at"] == "2026-07-23T23:59:59Z"
+
+            retained = client.get(
+                f"/api/v1/tenants/enabled/focus-preview/repairs/{payload['repair_id']}",
+            )
+            assert retained.status_code == 200
+            assert retained.json()["created_at"] == "2026-07-23T23:59:59Z"
+    finally:
+        backend.dispose()

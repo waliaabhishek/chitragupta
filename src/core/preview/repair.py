@@ -10,6 +10,7 @@ from datetime import UTC, date, datetime, time, timedelta
 from enum import StrEnum
 from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable
 
+from core.preview.eligibility import policy_from_tenant_config
 from core.preview.models import PreviewDiagnostic
 from core.time_precision import canonical_utc_second
 
@@ -218,16 +219,21 @@ def repair_policy_from_tenant_config(
     retained_start = retention_cutoff.date()
     if retention_cutoff.timetz().replace(tzinfo=None) != time.min:
         retained_start += timedelta(days=1)
-    preview = tenant_config.focus_preview
+    eligibility = policy_from_tenant_config(
+        tenant_config,
+        created_at=created_at,
+    )
+    assert eligibility.effective_start_date is not None
+    assert eligibility.effective_end_date is not None
     return PreviewRepairPolicy(
         eligible_start_date=max(
-            preview.effective_start_date,
-            now.date() - timedelta(days=tenant_config.lookback_days),
+            eligibility.effective_start_date,
+            eligibility.acquisition_start_date,
             retained_start,
         ),
         eligible_end_date=min(
-            preview.effective_end_date,
-            now.date() - timedelta(days=tenant_config.cutoff_days),
+            eligibility.effective_end_date,
+            eligibility.acquisition_end_date,
         ),
     )
 

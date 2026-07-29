@@ -52,7 +52,7 @@ def _repair_date(
 def _tenant_config(
     *,
     effective_start: date = date(2026, 1, 1),
-    effective_end: date = date(2026, 12, 31),
+    effective_end: date | None = date(2026, 12, 31),
     lookback_days: int = 200,
     cutoff_days: int = 5,
     retention_days: int = 250,
@@ -296,6 +296,40 @@ def test_repair_policy_intersects_effective_lookback_cutoff_and_complete_retenti
     # first completely retained date. Cutoff excludes 2026-07-17 onward.
     assert policy.eligible_start_date == date(2026, 1, 24)
     assert policy.eligible_end_date == date(2026, 7, 17)
+
+
+def test_repair_policy_accepts_omitted_end_while_preserving_narrower_cutoff() -> None:
+    repair = _repair_module()
+    tenant = _tenant_config(
+        effective_end=None,
+        lookback_days=200,
+        cutoff_days=1,
+        retention_days=250,
+    )
+
+    policy = repair.repair_policy_from_tenant_config(
+        tenant,
+        created_at=datetime.fromisoformat("2026-07-22T18:30:00-07:00"),
+    )
+
+    assert policy.eligible_end_date == date(2026, 7, 22)
+
+
+def test_repair_policy_preserves_explicit_end_as_hard_upper_bound() -> None:
+    repair = _repair_module()
+    tenant = _tenant_config(
+        effective_end=date(2026, 7, 10),
+        lookback_days=200,
+        cutoff_days=1,
+        retention_days=250,
+    )
+
+    policy = repair.repair_policy_from_tenant_config(
+        tenant,
+        created_at=datetime(2026, 7, 23, tzinfo=UTC),
+    )
+
+    assert policy.eligible_end_date == date(2026, 7, 10)
 
 
 def test_repair_policy_uses_utc_for_retention_ceiling() -> None:

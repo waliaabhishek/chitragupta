@@ -3,7 +3,7 @@ from __future__ import annotations
 import threading
 from datetime import UTC, date, datetime
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import workflow_runner
 from core.config.models import (
@@ -39,7 +39,12 @@ class _PreviewBackend:
         self.dispose_calls += 1
 
 
-def _tenant(*, ecosystem: str = "confluent_cloud", enabled: bool = True) -> TenantConfig:
+def _tenant(
+    *,
+    ecosystem: str = "confluent_cloud",
+    enabled: bool = True,
+    effective_end: date | None = date(2026, 8, 1),
+) -> TenantConfig:
     return TenantConfig(
         ecosystem=ecosystem,
         tenant_id="tenant-1",
@@ -49,7 +54,7 @@ def _tenant(*, ecosystem: str = "confluent_cloud", enabled: bool = True) -> Tena
             FocusPreviewTenantConfig(
                 commercial_profile="direct_payg",
                 effective_start_date=date(2026, 7, 1),
-                effective_end_date=date(2026, 8, 1),
+                effective_end_date=effective_end,
             )
             if enabled
             else None
@@ -148,6 +153,39 @@ def test_scheduled_publication_and_revision_retention_skip_owned_tenant() -> Non
     manager.eligible_months.assert_called_once()
     manager.publish_eligible_month.assert_not_called()
     manager.cleanup_retention.assert_not_called()
+
+
+def test_scheduled_discovery_and_admitted_work_use_exact_cycle_timestamp_across_midnight() -> None:
+    cycle_at = datetime(2026, 7, 31, 23, 59, 59, tzinfo=UTC)
+    after_midnight = datetime(2026, 8, 1, 0, 0, 1, tzinfo=UTC)
+
+    class AfterMidnightDatetime(datetime):
+        @classmethod
+        def now(cls, tz: object = None) -> datetime:
+            del tz
+            return after_midnight
+
+    manager = MagicMock()
+    manager.eligible_months.return_value = ("2026-07",)
+    runner = _runner(
+        publisher=manager,
+        tenant=_tenant(effective_end=None),
+    )
+    try:
+        with patch.object(workflow_runner, "datetime", AfterMidnightDatetime):
+            completions = runner._publish_scheduled_revisions(  # noqa: SLF001
+                {"production": _result()},
+                now=cycle_at,
+            )
+            assert len(completions) == 1
+            assert completions[0].wait(5)
+
+        manager.eligible_months.assert_called_once()
+        manager.publish_eligible_month.assert_called_once()
+        assert manager.eligible_months.call_args.kwargs["now"] == cycle_at
+        assert manager.publish_eligible_month.call_args.kwargs["now"] == cycle_at
+    finally:
+        runner.close()
 
 
 def test_periodic_cleanup_covers_every_cached_owner_once_despite_publication_and_owner_failures() -> None:

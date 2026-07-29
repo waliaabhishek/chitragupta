@@ -21,11 +21,16 @@ block is optional because all process-wide settings have defaults. This example
 sets only `artifact_root` to keep its generated packages separate from the
 default `data/focus-preview` directory.
 
-The effective dates are the period for which the operator confirms that the
-tenant was Direct PAYG in USD. The start date is included and the end date is
-excluded. Preview rejects a request unless its complete date range fits inside
-that declaration. These dates do not control collection, lookback, or
-retention.
+`effective_start_date` is required and included. This example omits
+`effective_end_date`, so each ad-hoc request, scheduled cycle, or repair resolves
+its exclusive end once from its own UTC creation or cycle date. Configure an
+explicit end when a fixed commercial termination boundary is known; it remains
+an exclusive hard override.
+
+The resolved commercial interval does not widen `lookback_days`, `cutoff_days`,
+or `retention_days`. The pipeline must still have complete persisted
+calculation, source, allocation-lineage, reconciliation, and mapping evidence
+for the requested interval.
 
 The sample output is static and uses fictional IDs. A real run uses the billing
 dates, organization, environments, resources, allocations, costs, and
@@ -133,9 +138,9 @@ uv run chitragupta-preview download \
 ```
 
 The requested interval must contain dates for which your pipeline has complete
-retained Preview evidence. Change the dates in `request.json` and the tenant's
-`focus_preview` effective interval together when the included July 2026 date is
-not applicable to your data.
+retained Preview evidence and must end no later than the operation's exclusive
+commercial end. Change the dates in `request.json` when the included July 2026
+date is not applicable to your data.
 
 ## What the sample means
 

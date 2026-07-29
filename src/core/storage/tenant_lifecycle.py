@@ -4,6 +4,7 @@ import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from core.preview.eligibility import policy_from_tenant_config
 from core.preview.persistence import PreviewEvidenceStorageBackend
 from core.preview.storage_availability import (
     PreviewEvidenceAvailabilityState,
@@ -55,13 +56,25 @@ def prepare_tenant_backend(
         and storage.preview_evidence_availability.state is PreviewEvidenceAvailabilityState.READY
     ):
         try:
-            policy = config.focus_preview
-            assert policy is not None
+            preview_policy = policy_from_tenant_config(
+                config,
+                created_at=datetime.now(UTC),
+            )
+            assert preview_policy.effective_start_date is not None
+            assert preview_policy.effective_end_date is not None
             bootstrap_result = storage.create_preview_evidence_bootstrap().bootstrap_owner(
                 ecosystem=config.ecosystem,
                 tenant_id=config.tenant_id,
-                policy_start=datetime.combine(policy.effective_start_date, datetime.min.time(), tzinfo=UTC),
-                policy_end=datetime.combine(policy.effective_end_date, datetime.min.time(), tzinfo=UTC),
+                policy_start=datetime.combine(
+                    preview_policy.effective_start_date,
+                    datetime.min.time(),
+                    tzinfo=UTC,
+                ),
+                policy_end=datetime.combine(
+                    preview_policy.effective_end_date,
+                    datetime.min.time(),
+                    tzinfo=UTC,
+                ),
             )
         except Exception as exc:
             error_type = type(exc).__name__

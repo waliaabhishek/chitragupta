@@ -23,11 +23,11 @@ tenants:
     focus_preview:
       commercial_profile: direct_payg
       billing_currency: USD
-      # Dates when this tenant is known to be Direct PAYG in USD.
-      # The start is included, the end is excluded, and Preview refuses
-      # requests that are not completely inside this interval.
+      # The start is included. With no effective_end_date, each operation
+      # resolves its exclusive end once from its own current UTC anchor date.
       effective_start_date: 2026-01-01
-      effective_end_date: 2027-01-01
+      # Set a fixed exclusive hard override when the end is known:
+      # effective_end_date: 2027-01-01
 
     storage:
       backend: sqlmodel

@@ -129,7 +129,7 @@ tenants:
       commercial_profile: direct_payg
       billing_currency: USD       # optional; defaults to normalized USD
       effective_start_date: 2026-01-01
-      effective_end_date: 2027-01-01
+      # effective_end_date: 2027-01-01  # optional fixed exclusive override
 ```
 
 | Field | Type | Default | Constraints | Description |
@@ -137,8 +137,15 @@ tenants:
 | `focus_preview` | mapping | absent | Confluent Cloud only | Optional block. Absence remains valid application configuration but every Preview request fails closed. |
 | `focus_preview.commercial_profile` | string | required in block | `direct_payg` | Declares the supported Direct-billed PAYG arrangement. |
 | `focus_preview.billing_currency` | string | `USD` | three ASCII letters | Normalized uppercase. Non-USD loads but Preview fails without conversion. |
-| `focus_preview.effective_start_date` | date | required in block | before end | Inclusive start of the commercial declaration. |
-| `focus_preview.effective_end_date` | date | required in block | after start | Exclusive end; the complete request must be contained in the interval. |
+| `focus_preview.effective_start_date` | date | required in block | before an explicit end | Inclusive start of the commercial declaration. |
+| `focus_preview.effective_end_date` | date | omitted | after start when supplied | Optional exclusive end. Omission resolves an end per operation from its UTC anchor date; an explicit value is a fixed hard override. |
+
+For an omitted end, an ad-hoc request uses its UTC creation date, one scheduled
+publication cycle uses its cycle timestamp's UTC date for discovery and
+generation, and a repair uses its durable UTC creation date throughout
+processing and restart. These resolved ends do not widen `lookback_days`,
+`cutoff_days`, `retention_days`, or calculation, source, allocation-lineage,
+reconciliation, and mapping evidence requirements.
 
 Confluent's Costs API does not supply a per-record ISO currency value. USD is the
 current configured contract, while generated `BillingCurrency` remains null and
@@ -147,12 +154,13 @@ the manifest identifies the provider-field limitation. See the
 for the fail-closed rules and retention boundary.
 
 Historical repair has no separate eligibility override. Its bounded UTC range
-must fit within the intersection of `focus_preview` effective dates, the current
-`lookback_days` and `cutoff_days` acquisition window, and the complete
-`retention_days` interval. Submission is REST-only and requires `both` mode;
-`api` mode can read retained status but cannot execute repair. Valid Confluent
-Cloud billing credentials, retained provider history, and any historical
-metrics required by the configured allocation paths must still be available.
+must fit within the intersection of the commercial interval resolved at the
+repair's durable creation time, the current `lookback_days` and `cutoff_days`
+acquisition window, and the complete `retention_days` interval. Submission is
+REST-only and requires `both` mode; `api` mode can read retained status but
+cannot execute repair. Valid Confluent Cloud billing credentials, retained
+provider history, and any historical metrics required by the configured
+allocation paths must still be available.
 
 See [FOCUS Mapping Preview](../focus-mapping-preview.md) for the complete setup,
 request, download, package, expiry, and customization workflow.

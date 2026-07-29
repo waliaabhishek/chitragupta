@@ -37,14 +37,18 @@ no currency field. This suggests dollar denomination without establishing a
 universal USD contract. USD is therefore Chitragupta's current supported and
 default currency, not a provider-authoritative per-record value.
 
-The effective dates are mandatory when `focus_preview` is enabled and have no
-defaults. Preview cannot safely assume that today's commercial terms applied to all
-historical billing data, so it rejects any request that is not completely inside
-this declaration. The start date is included and the end date is excluded. These
-dates do not control collection, lookback, or retention. The current design requires
-a finite end date. There is no “ongoing indefinitely” option. For an ongoing system,
-you must choose a future review boundary and extend it later. That is a legitimate
-cognitive-load rough edge at the moment.
+`effective_start_date` is required when `focus_preview` is enabled and is
+included in the commercial interval. `effective_end_date` is optional and
+exclusive. When omitted, each operation resolves the exclusive end once from
+its own UTC anchor date: the ad-hoc request creation time, scheduled publication
+cycle time, or durable repair creation time. Queue delay, later execution,
+restart, or crossing UTC midnight does not change that operation's resolved
+interval. Configure `effective_end_date` to use a fixed exclusive hard override,
+such as a known commercial termination date.
+
+The effective interval does not control or widen collection, `lookback_days`,
+`cutoff_days`, `retention_days`, or the persisted calculation, source,
+allocation-lineage, reconciliation, and mapping evidence required for Preview.
 
 ```yaml
 preview:
@@ -68,7 +72,8 @@ tenants:
       commercial_profile: direct_payg
       billing_currency: USD
       effective_start_date: 2026-01-01
-      effective_end_date: 2027-01-01
+      # Optional fixed exclusive override:
+      # effective_end_date: 2027-01-01
     storage:
       connection_string: sqlite:///data/ccloud.db
     plugin_settings:
@@ -254,14 +259,17 @@ curl \
   -H 'Authorization: Bearer <token>'
 ```
 
-The submitted range must be contained in the intersection of the configured
-`focus_preview` effective interval, current `lookback_days` and `cutoff_days`
-window, and complete `retention_days` interval. Future dates, disabled tenants,
-unsupported ecosystems, and ranges outside that scope are rejected before
-pipeline data changes. The operation also requires active Confluent Cloud
-billing credentials, retained provider billing history, and any historical
-Telemetry, Prometheus, or Flink metrics required by the configured allocators.
-Configuration does not guarantee that those external histories still exist.
+The submitted range must be contained in the intersection of the repair's
+commercial interval, current `lookback_days` and `cutoff_days` window, and
+complete `retention_days` interval. When `effective_end_date` is omitted, the
+commercial end is resolved once from the repair's durable UTC creation date and
+remains unchanged during processing or after restart. Future dates, disabled
+tenants, unsupported ecosystems, and ranges outside that scope are rejected
+before pipeline data changes. The operation also requires active Confluent
+Cloud billing credentials, retained provider billing history, and any
+historical Telemetry, Prometheus, or Flink metrics required by the configured
+allocators. Configuration does not guarantee that those external histories
+still exist.
 
 Repair processes dates in ascending order and continues after expected
 per-date failures. Each date has durable status, timestamps, optional
@@ -568,14 +576,16 @@ fields, pagination, status behavior, errors, and diagnostic codes.
 ## 6. Browse and retrieve published monthly revisions
 
 The periodic worker evaluates every calendar-month scope whose start is inside
-both the tenant's current `lookback_days` acquisition window and the configured
-`focus_preview` effective interval. It generates a revision candidate only after
-the month has ended by at least 72 hours and the configured acquisition cutoff
-covers the full month. The first automatic revision publishes only when complete
-full-month calculation and source coverage, reconciliation, and mapping
-validation produce a Settled result. This includes a valid settlement-ready
-header-only month with no cost rows. A failure for one month publishes nothing
-for that month and does not replace its current revision.
+both the tenant's current `lookback_days` acquisition window and the
+`focus_preview` commercial interval. When `effective_end_date` is omitted, one
+scheduled cycle uses that cycle's UTC date as its exclusive end for both month
+discovery and generation. It generates a revision candidate only after the
+month has ended by at least 72 hours and the configured acquisition cutoff
+covers the full month. The first automatic revision publishes only when
+complete full-month calculation and source coverage, reconciliation, and
+mapping validation produce a Settled result. This includes a valid
+settlement-ready header-only month with no cost rows. A failure for one month
+publishes nothing for that month and does not replace its current revision.
 
 Published revisions use the Full profile. A month can have these transitions:
 
@@ -822,11 +832,11 @@ requested-package owner-recovery step.
 | Choose columns | Full, Summary, or Custom profile | Full emits 65 FOCUS columns plus 12 evidence columns; Summary emits its fixed 20-column subset; Custom uses only names returned by `GET /profile`. |
 | Choose physical part size | `preview.max_csv_file_bytes` | Changes filenames and part boundaries only; rows and totals are unchanged. |
 | Choose package storage/capacity | `preview.artifact_root`, `preview.max_workers`, queue/per-tenant limits, `preview.max_generation_spool_bytes` | Requested and scheduled generation share process-local capacity; the spool ceiling applies to each running generation. |
-| Declare Preview commercial scope | Tenant `focus_preview` block | Currently Direct-billed PAYG and USD only. |
+| Declare Preview commercial scope | Tenant `focus_preview` block | Currently Direct-billed PAYG and USD only. `effective_start_date` is required; an omitted `effective_end_date` resolves per operation from its UTC anchor date, while an explicit end is a fixed exclusive override. |
 | Change allocation inputs | Existing Confluent allocator/identity settings | Takes effect through a later ordinary recalculation or explicit historical repair; Preview package generation reads the persisted result and never recalculates ratios. |
 | Enable automatic monthly publication | `features.enable_periodic_refresh` | Publication occurs after successful periodic cycles only. |
 | Control when periodic cycles run | `features.refresh_interval` | Interval in seconds; this is not a separate revision schedule. |
-| Control eligible publication months | Tenant `lookback_days`, `cutoff_days`, and `focus_preview` effective dates | Automatic generation also waits at least 72 hours after month end and requires the acquisition cutoff to cover the complete month. These controls are not archival-retention settings. |
+| Control eligible publication months | Tenant `lookback_days`, `cutoff_days`, and `focus_preview` effective interval | Automatic generation also waits at least 72 hours after month end and requires the acquisition cutoff to cover the complete month. These controls are not archival-retention settings. |
 
 The mapping profile itself is code-owned. Changing FOCUS field mappings,
 service/charge classification, derived SKU rules, canonical row ordering,

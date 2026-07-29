@@ -392,6 +392,41 @@ def test_prepare_tenant_backend_skips_bootstrap_unless_preview_schema_is_ready(t
     backend.create_preview_evidence_bootstrap.assert_not_called()
 
 
+def test_prepare_tenant_backend_resolves_finite_bootstrap_end_when_omitted(
+    tmp_path: Path,
+) -> None:
+    from core.storage.tenant_lifecycle import prepare_tenant_backend
+
+    backend = preview_evidence_backend_double()
+    bootstrap = backend.create_preview_evidence_bootstrap.return_value
+    bootstrap.bootstrap_owner.return_value = PreviewEvidenceBootstrapResult(
+        status=PreviewEvidenceBootstrapStatus.ALREADY_CURRENT,
+        bootstrapped_windows=0,
+        bootstrapped_rows=0,
+        reason=None,
+    )
+    tenant = _tenant(tmp_path).model_copy(
+        update={
+            "focus_preview": FocusPreviewTenantConfig(
+                commercial_profile="direct_payg",
+                effective_start_date="2026-01-01",
+                effective_end_date=None,
+            )
+        }
+    )
+    earliest = datetime.now(UTC).date()
+
+    with patch("core.storage.tenant_lifecycle.cleanup_orphaned_pipeline_run"):
+        prepare_tenant_backend(backend, "production", tenant)
+
+    latest = datetime.now(UTC).date()
+    bootstrap.bootstrap_owner.assert_called_once()
+    call_kwargs = bootstrap.bootstrap_owner.call_args.kwargs
+    assert call_kwargs["policy_start"] == datetime(2026, 1, 1, tzinfo=UTC)
+    assert call_kwargs["policy_end"].tzinfo is UTC
+    assert earliest <= call_kwargs["policy_end"].date() <= latest
+
+
 def test_api_owner_retains_generic_backend_but_preview_fails_closed_after_bootstrap_exception(
     tmp_path: Path,
 ) -> None:

@@ -49,7 +49,11 @@ class _ControlledExecutor:
         del wait
 
 
-def _tenant(tmp_path: Path) -> TenantConfig:
+def _tenant(
+    tmp_path: Path,
+    *,
+    effective_end: date | None = date(2026, 12, 31),
+) -> TenantConfig:
     return TenantConfig(
         ecosystem="confluent_cloud",
         tenant_id="tenant-1",
@@ -60,7 +64,7 @@ def _tenant(tmp_path: Path) -> TenantConfig:
         focus_preview=FocusPreviewTenantConfig(
             commercial_profile="direct_payg",
             effective_start_date=date(2026, 1, 1),
-            effective_end_date=date(2026, 12, 31),
+            effective_end_date=effective_end,
         ),
     )
 
@@ -568,6 +572,83 @@ def test_retry_after_runtime_recovery_succeeds_without_duplicate_current_evidenc
     finally:
         runtime.close(wait=True)
         backend.dispose()
+
+
+def test_reconstructed_runner_uses_durable_repair_created_at_after_midnight(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created_at = datetime(2026, 7, 23, 23, 59, 59, 987654, tzinfo=UTC)
+    tenant = _tenant(tmp_path, effective_end=None)
+    backend = SQLModelBackend(
+        tenant.storage.connection_string.get_secret_value(),
+        CCloudStorageModule(),
+        use_migrations=False,
+        focus_preview_enabled=True,
+    )
+    backend.create_tables()
+    _seed_retained_state(backend)
+    initial_runner = WorkflowRunner(AppSettings(tenants={"production": tenant}), MagicMock())
+    runtime = PreviewRepairRuntime(
+        runner=initial_runner,
+        backend_provider=FixedTenantBackendProvider({"production": backend}),
+        max_workers=1,
+        configured_owners=(("production", tenant),),
+        executor=_ControlledExecutor(),
+    )
+    queued = runtime.create_queued(
+        backend=backend,
+        tenant_name="production",
+        tenant_config=tenant,
+        start_date=DAY,
+        end_date=DAY + timedelta(days=1),
+        created_at=created_at,
+    )
+    runtime.close(wait=True)
+    backend.dispose()
+
+    reopened = SQLModelBackend(
+        tenant.storage.connection_string.get_secret_value(),
+        CCloudStorageModule(),
+        use_migrations=False,
+        focus_preview_enabled=True,
+    )
+    reopened.create_tables()
+    orchestrator = MagicMock()
+    orchestrator.repair_historical_date.return_value = _successful_result()
+    restarted_runner = WorkflowRunner(
+        AppSettings(tenants={"production": tenant}),
+        MagicMock(),
+    )
+    restarted_runner._tenant_runtimes["production"] = TenantRuntime(  # noqa: SLF001
+        tenant_name="production",
+        plugin=MagicMock(),
+        storage=reopened,
+        orchestrator=orchestrator,
+        config_hash=_config_hash(tenant),
+        created_at=created_at + timedelta(days=1),
+    )
+    generate = MagicMock(return_value=(MagicMock(), MagicMock()))
+    monkeypatch.setattr(
+        "core.preview.generator.PreviewPackageGenerator.generate",
+        generate,
+    )
+    try:
+        persisted = _read(reopened, queued.repair_id)
+        assert persisted.created_at == datetime(2026, 7, 23, 23, 59, 59, tzinfo=UTC)
+
+        restarted_runner.run_focus_preview_repair(
+            queued.repair_id,
+            "production",
+            tenant,
+        )
+
+        assert generate.call_count == 1
+        assert generate.call_args.kwargs["policy"].effective_end_date == date(2026, 7, 23)
+        assert _read(reopened, queued.repair_id).status.value == "completed"
+    finally:
+        restarted_runner.close()
+        reopened.dispose()
 
 
 def test_active_repair_claim_blocks_same_tenant_but_not_another_tenant(

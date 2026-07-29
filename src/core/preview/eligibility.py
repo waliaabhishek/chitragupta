@@ -46,11 +46,12 @@ def policy_from_tenant_config(
         raise ValueError("created_at must be timezone-aware")
     anchor_date = created_at.astimezone(UTC).date()
     configured = tenant_config.focus_preview
+    effective_end_date = None if configured is None else configured.effective_end_date or anchor_date
     return PreviewEligibilityPolicy(
         commercial_profile=configured.commercial_profile if configured else None,
         billing_currency=configured.billing_currency if configured else None,
         effective_start_date=configured.effective_start_date if configured else None,
-        effective_end_date=configured.effective_end_date if configured else None,
+        effective_end_date=effective_end_date,
         acquisition_start_date=anchor_date - timedelta(days=tenant_config.lookback_days),
         acquisition_end_date=anchor_date - timedelta(days=tenant_config.cutoff_days),
     )

@@ -77,6 +77,38 @@ def test_policy_uses_created_at_utc_date_and_half_open_acquisition_bounds() -> N
     assert policy.billing_currency == "USD"
 
 
+def test_policy_resolves_omitted_end_from_created_at_utc_date() -> None:
+    eligibility = _eligibility()
+    block = _block()
+    del block["effective_end_date"]
+    created_at = datetime.fromisoformat("2026-07-04T18:30:00-07:00")
+
+    policy = eligibility.policy_from_tenant_config(
+        _tenant(
+            focus_preview=block,
+            lookback_days=10,
+            cutoff_days=2,
+        ),
+        created_at=created_at,
+    )
+
+    assert policy.effective_start_date == date(2026, 1, 1)
+    assert policy.effective_end_date == date(2026, 7, 5)
+    assert policy.acquisition_start_date == date(2026, 6, 25)
+    assert policy.acquisition_end_date == date(2026, 7, 3)
+
+
+def test_policy_preserves_explicit_end_when_it_differs_from_created_at() -> None:
+    eligibility = _eligibility()
+
+    policy = eligibility.policy_from_tenant_config(
+        _tenant(focus_preview=_block(effective_end_date="2026-06-01")),
+        created_at=datetime(2026, 7, 5, tzinfo=UTC),
+    )
+
+    assert policy.effective_end_date == date(2026, 6, 1)
+
+
 def test_policy_rejects_naive_created_at() -> None:
     eligibility = _eligibility()
 
@@ -99,6 +131,8 @@ def test_missing_focus_preview_fails_closed() -> None:
     assert diagnostic.code == "preview_commercial_profile_unavailable"
     assert diagnostic.message == "An explicit Direct-billed PAYG profile does not cover the requested interval."
     assert diagnostic.retryable is False
+    assert policy.effective_start_date is None
+    assert policy.effective_end_date is None
 
 
 @pytest.mark.parametrize(

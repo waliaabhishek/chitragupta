@@ -87,7 +87,7 @@ class FocusPreviewTenantConfig(BaseModel):
     commercial_profile: Literal["direct_payg"]
     billing_currency: str = "USD"
     effective_start_date: date
-    effective_end_date: date
+    effective_end_date: date | None = None
 
     @field_validator("billing_currency", mode="before")
     @classmethod
@@ -101,7 +101,7 @@ class FocusPreviewTenantConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_effective_interval(self) -> FocusPreviewTenantConfig:
-        if self.effective_start_date >= self.effective_end_date:
+        if self.effective_end_date is not None and self.effective_start_date >= self.effective_end_date:
             raise ValueError("focus_preview.effective_start_date must be before effective_end_date")
         return self
 

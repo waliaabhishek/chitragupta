@@ -43,6 +43,39 @@ def test_focus_preview_defaults_billing_currency_to_usd() -> None:
     assert tenant.focus_preview.effective_end_date == date(2027, 1, 1)
 
 
+def test_focus_preview_allows_omitted_effective_end_date() -> None:
+    block = _focus_preview()
+    del block["effective_end_date"]
+
+    tenant = _tenant(focus_preview=block)
+
+    assert tenant.focus_preview is not None
+    assert tenant.focus_preview.commercial_profile == "direct_payg"
+    assert tenant.focus_preview.effective_start_date == date(2026, 1, 1)
+    assert tenant.focus_preview.effective_end_date is None
+    assert tenant.focus_preview_enabled is True
+
+
+def test_focus_preview_omitted_end_does_not_make_effective_start_optional() -> None:
+    block = _focus_preview()
+    del block["effective_start_date"]
+    del block["effective_end_date"]
+
+    with pytest.raises(ValidationError):
+        _tenant(focus_preview=block)
+
+
+def test_focus_preview_omitted_end_allows_future_effective_start() -> None:
+    block = _focus_preview(effective_start_date="2030-01-01")
+    del block["effective_end_date"]
+
+    tenant = _tenant(focus_preview=block)
+
+    assert tenant.focus_preview is not None
+    assert tenant.focus_preview.effective_start_date == date(2030, 1, 1)
+    assert tenant.focus_preview.effective_end_date is None
+
+
 @pytest.mark.parametrize("currency", ["usd", " USD ", "uSd"])
 def test_focus_preview_normalizes_currency(currency: str) -> None:
     tenant = _tenant(focus_preview=_focus_preview(billing_currency=currency))

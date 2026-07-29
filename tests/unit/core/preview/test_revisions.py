@@ -69,14 +69,16 @@ class _Generator:
     def __init__(self, states: list[tuple[str, str] | BaseException]) -> None:
         self.states = states
         self.requests: list[Any] = []
+        self.policies: list[Any] = []
 
     @property
     def max_generation_spool_bytes(self) -> int:
         return 2_147_483_648
 
     def generate(self, *, backend: Any, request: Any, policy: Any, workspace: Any) -> tuple[Any, Any]:
-        del backend, policy, workspace
+        del backend, workspace
         self.requests.append(request)
+        self.policies.append(policy)
         state = self.states.pop(0)
         if isinstance(state, BaseException):
             raise state
@@ -237,6 +239,7 @@ def _tenant_config(
     connection_string: str = "sqlite:///unused.db",
     *,
     cutoff_days: int = 5,
+    effective_end: date | None = date(2026, 8, 1),
 ) -> Any:
     config = import_module("core.config.models")
     return config.TenantConfig(
@@ -252,7 +255,7 @@ def _tenant_config(
             commercial_profile="direct_payg",
             billing_currency="USD",
             effective_start_date=date(2026, 7, 1),
-            effective_end_date=date(2026, 8, 1),
+            effective_end_date=effective_end,
         ),
     )
 
@@ -318,6 +321,27 @@ def test_scheduled_publication_skips_incomplete_month_before_generation_and_proj
     assert backend.read_uows == []
     assert backend.write_uows == []
     assert list(tmp_path.iterdir()) == []
+
+
+def test_scheduled_publication_uses_cycle_timestamp_for_omitted_end_and_request(
+    tmp_path: Path,
+) -> None:
+    cycle_at = datetime(2026, 8, 6, 0, 0, 1, tzinfo=UTC)
+    generator = _Generator([("settled", "july")])
+    service, _store = _service(tmp_path, generator)
+    backend = _Backend()
+
+    published = service.publish_eligible_month(
+        tenant_name="production",
+        tenant_config=_tenant_config(effective_end=None),
+        backend=backend,
+        now=cycle_at,
+        month="2026-07",
+    )
+
+    assert published is not None
+    assert generator.requests[0].created_at == cycle_at
+    assert generator.policies[0].effective_end_date == date(2026, 8, 6)
 
 
 def test_publication_state_machine_replaces_only_material_settled_revisions(tmp_path: Path) -> None:
