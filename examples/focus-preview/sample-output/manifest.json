@@ -1,0 +1,145 @@
+{
+  "column_profile": "custom",
+  "conformance_status": "non_conforming",
+  "effective_columns": [
+    "BillingAccountId",
+    "SubAccountId",
+    "ResourceId",
+    "ResourceName",
+    "ServiceName",
+    "ChargePeriodStart",
+    "ChargePeriodEnd",
+    "BilledCost",
+    "EffectiveCost",
+    "ConsumedQuantity",
+    "ConsumedUnit",
+    "AllocatedResourceId"
+  ],
+  "end_date": "2026-07-02",
+  "evidence_coverage": {
+    "availability_cutoff_end_date": null,
+    "end_date": "2026-07-02",
+    "end_exclusive": true,
+    "evidence_through_date": "2026-07-01",
+    "start_date": "2026-07-01"
+  },
+  "files": [
+    {
+      "media_type": "text/csv",
+      "name": "cost-and-usage.csv",
+      "order": 1,
+      "sha256": "5026b6a1600964c89b3c9af353ca6aa57bcec373c25750592d7c84236d953088",
+      "size_bytes": 285
+    }
+  ],
+  "generated_at": "2026-07-04T00:00:00Z",
+  "grain": "daily",
+  "known_gaps": [
+    {
+      "code": "provider_billing_currency_field_unavailable",
+      "columns": [
+        "BillingCurrency"
+      ],
+      "description": "Confluent Costs records do not carry a per-record billing currency."
+    },
+    {
+      "code": "invoice_identity_unavailable",
+      "columns": [
+        "InvoiceDetailId",
+        "InvoiceId"
+      ],
+      "description": "Post-issuance invoice identity is unavailable."
+    },
+    {
+      "code": "invoice_issuer_name_unavailable",
+      "columns": [
+        "InvoiceIssuerName"
+      ],
+      "description": "Provider legal invoice-issuer evidence is unavailable."
+    },
+    {
+      "code": "provider_host_display_name_unavailable",
+      "columns": [
+        "HostProviderName"
+      ],
+      "description": "HostProviderName contains the raw provider cloud code, not a provider display name."
+    },
+    {
+      "code": "provider_region_display_name_unavailable",
+      "columns": [
+        "RegionName"
+      ],
+      "description": "Confluent inventory does not provide a distinct region display name."
+    },
+    {
+      "code": "derived_sku_identity_not_provider_authoritative",
+      "columns": [
+        "SkuId",
+        "SkuMeter",
+        "SkuPriceDetails",
+        "SkuPriceId",
+        "x_ChitraguptaSkuComponents"
+      ],
+      "description": "SKU values are deterministic Chitragupta-derived evidence, not provider-issued identifiers."
+    }
+  ],
+  "lifecycle": {
+    "expires_at": "2026-07-11T00:00:00Z",
+    "ready_at": "2026-07-04T00:00:00Z",
+    "retention_days": 7
+  },
+  "mapping_profile_version": "focus-1.4-preview-v1",
+  "month": null,
+  "monthly_status": null,
+  "package_type": "requested_preview_package",
+  "profile_not_applicable_columns": [
+    "AvailabilityZone",
+    "CapacityReservationId",
+    "CapacityReservationStatus",
+    "ChargeClass",
+    "CommitmentDiscountCategory",
+    "CommitmentDiscountId",
+    "CommitmentDiscountName",
+    "CommitmentDiscountQuantity",
+    "CommitmentDiscountStatus",
+    "CommitmentDiscountType",
+    "CommitmentDiscountUnit",
+    "CommitmentProgramEligibilityDetails",
+    "ContractApplied",
+    "ContractedUnitPrice",
+    "PricingCurrencyContractedUnitPrice"
+  ],
+  "reconciliation": {
+    "allocated_cost": "8",
+    "allocated_quantity": "5",
+    "difference": "0",
+    "quantity_difference": "0",
+    "source_cost": "8",
+    "source_quantity": "5"
+  },
+  "request_id": "request-example-001",
+  "schema_version": "chitragupta.preview-manifest.v1",
+  "source_snapshot": {
+    "calculation_coverage": [
+      {
+        "calculation_completed_at": "2026-07-03T00:00:00Z",
+        "calculation_id": "calculation-1",
+        "calculation_run_id": 1,
+        "tracking_date": "2026-07-01"
+      }
+    ],
+    "calculation_timestamp": "2026-07-03T00:00:00Z",
+    "source_through": "2026-07-03T00:00:00Z"
+  },
+  "start_date": "2026-07-01",
+  "target_focus_version": "1.4",
+  "tenant_name": "ccloud-prod",
+  "validation": {
+    "artifact_integrity": "passed",
+    "mapping_errors": 0,
+    "mapping_profile_version": "focus-1.4-preview-v1",
+    "rows": 1,
+    "source_records": 1,
+    "status": "passed"
+  }
+}

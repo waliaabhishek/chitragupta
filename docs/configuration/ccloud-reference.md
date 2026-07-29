@@ -99,6 +99,15 @@ organization, raw-source, allocation-lineage, or retention work. When supplied,
 The effective dates form a non-empty half-open interval; the request's inclusive
 start and exclusive end must both fit within it.
 
+The effective dates are also required and have no defaults. They are the
+operator's explicit statement of when the supported commercial arrangement
+applied. A default covering all history could incorrectly apply today's terms
+to older billing data, while a default beginning today would unexpectedly block
+historical packages. The dates therefore bound commercial eligibility only;
+they do not configure acquisition, lookback, or retention. Open-ended
+declarations are not currently supported. For an ongoing arrangement, choose a
+future review boundary and extend it before it expires.
+
 `focus_preview.billing_currency` defaults to `USD`. Values such as `usd` or
 ` USD ` normalize to `USD`; malformed or non-string values fail configuration
 loading. A valid non-USD code loads so the request can return the stable

@@ -5,6 +5,9 @@ allocation data already stored by Chitragupta into an immutable FOCUS 1.4 Cost
 and Usage package. Packages are explicitly marked `non_conforming` because
 some provider-authoritative FOCUS fields are unavailable.
 
+For a minimal configuration, request, and representative package, see the
+[runnable walkthrough](https://github.com/waliaabhishek/chitragupta/tree/main/examples/focus-preview).
+
 Package generation does not call Confluent Cloud, gather data, calculate
 allocations, edit stored records, or recreate historical evidence. Run the
 ordinary pipeline first. A separate operator-requested historical repair can
@@ -23,9 +26,25 @@ evidence.
 
 ## 1. Configure the tenant and package storage
 
-Preview currently supports Confluent Cloud tenants with a Direct-billed PAYG
-commercial profile and USD billing contract. The complete requested interval
-must fit inside the configured half-open effective interval.
+FOCUS Preview currently supports Confluent Cloud tenants with a direct-billed PAYG
+commercial profile and USD billing contract. The Confluent Cloud Costs API does
+not identify a commercial profile, so `direct_payg` is a Chitragupta eligibility
+declaration rather than provider-supplied evidence.
+
+The [Costs API](https://docs.confluent.io/cloud/current/ccloud/list-billing-v-1-costs/)
+describes `price` and `discount_amount` as values “in dollars,” but its schema has
+no currency field. This suggests dollar denomination without establishing a
+universal USD contract. USD is therefore Chitragupta's current supported and
+default currency, not a provider-authoritative per-record value.
+
+The effective dates are mandatory when `focus_preview` is enabled and have no
+defaults. Preview cannot safely assume that today's commercial terms applied to all
+historical billing data, so it rejects any request that is not completely inside
+this declaration. The start date is included and the end date is excluded. These
+dates do not control collection, lookback, or retention. The current design requires
+a finite end date. There is no “ongoing indefinitely” option. For an ongoing system,
+you must choose a future review boundary and extend it later. That is a legitimate
+cognitive-load rough edge at the moment.
 
 ```yaml
 preview:

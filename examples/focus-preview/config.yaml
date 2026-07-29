@@ -1,0 +1,41 @@
+logging:
+  level: INFO
+
+features:
+  enable_periodic_refresh: true
+  refresh_interval: 3600
+
+api:
+  host: "127.0.0.1"
+  port: 8080
+
+preview:
+  artifact_root: data/focus-preview-example
+
+tenants:
+  ccloud-prod:
+    ecosystem: confluent_cloud
+    tenant_id: "${CCLOUD_TENANT_ID}"
+    lookback_days: 200
+    cutoff_days: 5
+    retention_days: 250
+
+    focus_preview:
+      commercial_profile: direct_payg
+      billing_currency: USD
+      # Dates when this tenant is known to be Direct PAYG in USD.
+      # The start is included, the end is excluded, and Preview refuses
+      # requests that are not completely inside this interval.
+      effective_start_date: 2026-01-01
+      effective_end_date: 2027-01-01
+
+    storage:
+      backend: sqlmodel
+      connection_string: "sqlite:///data/focus-preview-example.db"
+
+    plugin_settings:
+      ccloud_api:
+        key: "${CCLOUD_API_KEY}"
+        secret: "${CCLOUD_API_SECRET}"
+      billing_api:
+        days_per_query: 15
