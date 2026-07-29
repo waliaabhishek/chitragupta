@@ -181,24 +181,34 @@ class TestCleanupRetentionOverlayConfigAccess:
         assert not isinstance(mock_plugin, OverlayPlugin)
 
         mock_backend, mock_uow = _make_mock_backend_with_uow()
+        mock_uow.pipeline_state.delete_before.return_value = 0
 
         tenant = _make_tenant(ecosystem="eco", tenant_id="tid1", retention_days=30)
         settings = _make_settings(tenants={"t1": tenant})
-        runner = WorkflowRunner(settings, MagicMock())
+        plugin_registry = MagicMock()
+        runner = WorkflowRunner(settings, plugin_registry)
 
         runtime = TenantRuntime(
             tenant_name="t1",
             plugin=mock_plugin,
             storage=mock_backend,
             orchestrator=MagicMock(),
-            config_hash="abc123",
+            config_hash=_config_hash(tenant),
             created_at=datetime.now(UTC),
         )
         runner._tenant_runtimes["t1"] = runtime
 
-        runner._cleanup_retention()
+        try:
+            runner._cleanup_retention()
 
-        mock_uow.topic_attributions.delete_before.assert_not_called()
+            plugin_registry.create.assert_not_called()
+            mock_uow.billing.delete_before.assert_called_once()
+            mock_uow.topic_attributions.delete_before.assert_not_called()
+        finally:
+            runner.close()
+
+        mock_backend.dispose.assert_called_once_with()
+        mock_plugin.close.assert_called_once_with()
 
 
 class TestRunTenantTaEmitter:
