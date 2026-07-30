@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -42,6 +43,7 @@ def _make_mock_backend_with_uow() -> tuple[MagicMock, MagicMock]:
     mock_uow.resources.delete_before.return_value = 0
     mock_uow.identities.delete_before.return_value = 0
     mock_uow.chargebacks.delete_before.return_value = 0
+    mock_uow.pipeline_state.delete_before.return_value = 0
     mock_uow.topic_attributions.delete_before.return_value = 0
     return mock_backend, mock_uow
 
@@ -171,7 +173,9 @@ class TestRunTenantOverlayConfigAccess:
 class TestCleanupRetentionOverlayConfigAccess:
     """_cleanup_retention must access topic attribution config via runtime.plugin, not getattr on config."""
 
-    def test_cleanup_retention_accesses_ta_config_via_plugin(self, tmp_path: Path) -> None:
+    def test_cleanup_retention_accesses_ta_config_via_plugin(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
         from plugins.confluent_cloud.config import TopicAttributionConfig
 
         ta_config = TopicAttributionConfig(enabled=True, retention_days=45)
@@ -196,12 +200,22 @@ class TestCleanupRetentionOverlayConfigAccess:
         )
         runner._tenant_runtimes["t1"] = runtime
 
-        runner._cleanup_retention()
+        with caplog.at_level(logging.ERROR, logger="workflow_runner"):
+            runner._cleanup_retention()
 
         # New behavior: TA config accessed via plugin, not config.plugin_settings
         mock_plugin.get_overlay_config.assert_called_with("topic_attribution")
+        mock_uow.billing.delete_before.assert_called_once()
+        mock_uow.resources.delete_before.assert_called_once()
+        mock_uow.identities.delete_before.assert_called_once()
+        mock_uow.chargebacks.delete_before.assert_called_once()
+        mock_uow.pipeline_state.delete_before.assert_called_once()
+        mock_uow.commit.assert_called_once_with()
+        assert "Tenant t1: retention cleanup failed" not in caplog.messages
 
-    def test_cleanup_retention_plugin_without_overlay_plugin_no_ta_cleanup(self, tmp_path: Path) -> None:
+    def test_cleanup_retention_plugin_without_overlay_plugin_no_ta_cleanup(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
         from core.plugin.protocols import OverlayPlugin
 
         mock_plugin = MagicMock(
@@ -220,7 +234,6 @@ class TestCleanupRetentionOverlayConfigAccess:
         assert not isinstance(mock_plugin, OverlayPlugin)
 
         mock_backend, mock_uow = _make_mock_backend_with_uow()
-        mock_uow.pipeline_state.delete_before.return_value = 0
 
         tenant = _make_tenant(tmp_path, ecosystem="eco", tenant_id="tid1", retention_days=30)
         settings = _make_settings(tenants={"t1": tenant})
@@ -238,11 +251,13 @@ class TestCleanupRetentionOverlayConfigAccess:
         runner._tenant_runtimes["t1"] = runtime
 
         try:
-            runner._cleanup_retention()
+            with caplog.at_level(logging.ERROR, logger="workflow_runner"):
+                runner._cleanup_retention()
 
             plugin_registry.create.assert_not_called()
             mock_uow.billing.delete_before.assert_called_once()
             mock_uow.topic_attributions.delete_before.assert_not_called()
+            assert "Tenant t1: retention cleanup failed" not in caplog.messages
         finally:
             runner.close()
 
