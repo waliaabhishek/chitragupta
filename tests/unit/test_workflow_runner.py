@@ -2208,7 +2208,19 @@ class TestCleanupRetentionTopicAttribution:
         mock_uow.identities.delete_before.return_value = 0
         mock_uow.chargebacks.delete_before.return_value = 0
         mock_uow.topic_attributions.delete_before.return_value = 0
+        mock_uow.pipeline_state.delete_before.return_value = 0
         return mock_backend, mock_uow
+
+    def _make_overlay_plugin(self, overlay_config: Any) -> MagicMock:
+        from core.plugin.protocols import EcosystemPlugin, OverlayPlugin
+        from plugins.confluent_cloud.plugin import ConfluentCloudPlugin
+
+        plugin: MagicMock = MagicMock(spec=ConfluentCloudPlugin)
+        plugin.get_overlay_config.return_value = overlay_config
+        protocol_candidate: object = plugin
+        assert isinstance(protocol_candidate, OverlayPlugin)
+        assert isinstance(protocol_candidate, EcosystemPlugin)
+        return plugin
 
     def _make_tenant_with_ta(self, *, ta_enabled: bool, ta_retention_days: int = 30) -> TenantConfig:
         from core.metrics.config import MetricsConnectionConfig
@@ -2230,7 +2242,10 @@ class TestCleanupRetentionTopicAttribution:
             plugin_settings=plugin_settings,
         )
 
-    def test_calls_topic_attributions_delete_before_when_enabled(self) -> None:
+    def test_calls_topic_attributions_delete_before_when_enabled(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
         from plugins.confluent_cloud.config import TopicAttributionConfig
 
         mock_backend, mock_uow = self._make_mock_backend_with_uow()
@@ -2238,8 +2253,7 @@ class TestCleanupRetentionTopicAttribution:
         settings = _make_settings(tenants={"t1": tenant})
         runner = WorkflowRunner(settings, MagicMock())
         ta_config = TopicAttributionConfig(enabled=True, retention_days=60)
-        plugin = MagicMock()
-        plugin.get_overlay_config = MagicMock(return_value=ta_config)
+        plugin = self._make_overlay_plugin(ta_config)
         runtime = TenantRuntime(
             tenant_name="t1",
             plugin=plugin,
@@ -2249,11 +2263,18 @@ class TestCleanupRetentionTopicAttribution:
             created_at=datetime.now(UTC),
         )
         runner._tenant_runtimes["t1"] = runtime
-        runner._cleanup_retention()
+        with caplog.at_level(logging.ERROR, logger="workflow_runner"):
+            runner._cleanup_retention()
 
+        plugin.get_overlay_config.assert_called_once_with("topic_attribution")
         mock_uow.topic_attributions.delete_before.assert_called_once()
+        mock_uow.commit.assert_called_once_with()
+        assert "Tenant t1: retention cleanup failed" not in caplog.messages
 
-    def test_uses_topic_attribution_retention_days_not_tenant_retention_days(self) -> None:
+    def test_uses_topic_attribution_retention_days_not_tenant_retention_days(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
         """ta_config.retention_days (60) must be used, not config.retention_days (30)."""
         from datetime import timedelta
 
@@ -2264,8 +2285,7 @@ class TestCleanupRetentionTopicAttribution:
         settings = _make_settings(tenants={"t1": tenant})
         runner = WorkflowRunner(settings, MagicMock())
         ta_config = TopicAttributionConfig(enabled=True, retention_days=60)
-        plugin = MagicMock()
-        plugin.get_overlay_config = MagicMock(return_value=ta_config)
+        plugin = self._make_overlay_plugin(ta_config)
         runtime = TenantRuntime(
             tenant_name="t1",
             plugin=plugin,
@@ -2275,50 +2295,71 @@ class TestCleanupRetentionTopicAttribution:
             created_at=datetime.now(UTC),
         )
         runner._tenant_runtimes["t1"] = runtime
-        runner._cleanup_retention()
+        cleanup_now = datetime(2026, 7, 22, 15, 30, tzinfo=UTC)
+        expected_cutoff = cleanup_now - timedelta(days=60)
+        with caplog.at_level(logging.ERROR, logger="workflow_runner"):
+            runner._cleanup_retention(now=cleanup_now)
 
-        call_args = mock_uow.topic_attributions.delete_before.call_args
-        cutoff: datetime = call_args[0][2]  # positional: ecosystem, tenant_id, cutoff
+        plugin.get_overlay_config.assert_called_once_with("topic_attribution")
+        mock_uow.topic_attributions.delete_before.assert_called_once_with(
+            "confluent_cloud",
+            "tid1",
+            expected_cutoff,
+        )
+        mock_uow.commit.assert_called_once_with()
+        assert "Tenant t1: retention cleanup failed" not in caplog.messages
 
-        # cutoff must be approximately now() - 60 days (not 30)
-        expected_approx = datetime.now(UTC) - timedelta(days=60)
-        delta = abs((cutoff - expected_approx).total_seconds())
-        assert delta < 5, f"Expected cutoff ~60 days ago, got {cutoff} (delta={delta}s)"
+    def test_skips_topic_attribution_cleanup_when_overlay_config_disabled(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        from plugins.confluent_cloud.config import TopicAttributionConfig
 
-    def test_skips_topic_attribution_cleanup_when_disabled(self) -> None:
         mock_backend, mock_uow = self._make_mock_backend_with_uow()
         tenant = self._make_tenant_with_ta(ta_enabled=False)
         settings = _make_settings(tenants={"t1": tenant})
         runner = WorkflowRunner(settings, MagicMock())
+        plugin = self._make_overlay_plugin(TopicAttributionConfig(enabled=False, retention_days=60))
         runtime = TenantRuntime(
             tenant_name="t1",
-            plugin=MagicMock(),
+            plugin=plugin,
             storage=mock_backend,
             orchestrator=MagicMock(),
             config_hash=_config_hash(tenant),
             created_at=datetime.now(UTC),
         )
         runner._tenant_runtimes["t1"] = runtime
-        runner._cleanup_retention()
+        with caplog.at_level(logging.ERROR, logger="workflow_runner"):
+            runner._cleanup_retention()
 
+        plugin.get_overlay_config.assert_called_once_with("topic_attribution")
         mock_uow.topic_attributions.delete_before.assert_not_called()
+        mock_uow.commit.assert_called_once_with()
+        assert "Tenant t1: retention cleanup failed" not in caplog.messages
 
-    def test_skips_topic_attribution_cleanup_when_no_plugin_settings(self) -> None:
-        """Tenants without TopicAttributionConfig must not touch topic_attributions."""
+    def test_skips_topic_attribution_cleanup_when_overlay_config_missing(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Overlay plugins returning no topic-attribution config must not touch topic_attributions."""
         mock_backend, mock_uow = self._make_mock_backend_with_uow()
-        # Use a plain tenant with no topic_attribution in plugin_settings
         tenant = _make_tenant(tenant_id="tid1", retention_days=30)
         settings = _make_settings(tenants={"t1": tenant})
         runner = WorkflowRunner(settings, MagicMock())
+        plugin = self._make_overlay_plugin(None)
         runtime = TenantRuntime(
             tenant_name="t1",
-            plugin=MagicMock(),
+            plugin=plugin,
             storage=mock_backend,
             orchestrator=MagicMock(),
             config_hash=_config_hash(tenant),
             created_at=datetime.now(UTC),
         )
         runner._tenant_runtimes["t1"] = runtime
-        runner._cleanup_retention()
+        with caplog.at_level(logging.ERROR, logger="workflow_runner"):
+            runner._cleanup_retention()
 
+        plugin.get_overlay_config.assert_called_once_with("topic_attribution")
         mock_uow.topic_attributions.delete_before.assert_not_called()
+        mock_uow.commit.assert_called_once_with()
+        assert "Tenant t1: retention cleanup failed" not in caplog.messages
