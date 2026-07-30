@@ -97,7 +97,7 @@ uv sync --group dev
 uv run pytest
 
 # Lint and type check
-uv run ruff check src tests
+uv run ruff check
 uv run mypy src
 ```
 
