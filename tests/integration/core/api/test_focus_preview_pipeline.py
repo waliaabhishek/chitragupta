@@ -807,15 +807,28 @@ def test_mixed_tenants_normal_pipeline_keeps_preview_evidence_enabled_only(
 def test_production_one_day_repair_overlays_broad_ordinary_authority_and_is_idempotent(
     tmp_path: Path,
 ) -> None:
-    tracking_date = date(2026, 7, 1)
+    reference_now = datetime.now(UTC)
+    reference_date = reference_now.date()
+    lookback_days = 30
+    cutoff_days = 5
+    retention_days = 90
+    tracking_age_days = cutoff_days + ((lookback_days - cutoff_days) // 2)
+    tracking_date = reference_date - timedelta(days=tracking_age_days)
+    ordinary_start_date = reference_date - timedelta(days=lookback_days)
+    focus_preview = {
+        "commercial_profile": "direct_payg",
+        "billing_currency": "USD",
+        "effective_start_date": (ordinary_start_date - timedelta(days=2)).isoformat(),
+        "effective_end_date": reference_date.isoformat(),
+    }
     tenant = TenantConfig(
         ecosystem="confluent_cloud",
         tenant_id="tenant-1",
-        lookback_days=30,
-        cutoff_days=5,
-        retention_days=90,
+        lookback_days=lookback_days,
+        cutoff_days=cutoff_days,
+        retention_days=retention_days,
         storage=StorageConfig(connection_string=f"sqlite:///{tmp_path / 'repair-overlay.db'}"),
-        focus_preview=_focus_preview_block(),
+        focus_preview=focus_preview,
         plugin_settings={
             "ccloud_api": {"key": "key", "secret": "secret"},  # pragma: allowlist secret
             "min_refresh_gap_seconds": 0,
