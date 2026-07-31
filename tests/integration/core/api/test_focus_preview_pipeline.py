@@ -1223,6 +1223,7 @@ def test_same_key_tiers_flow_from_provider_capture_through_sidecar_and_canonical
         )
         custom_columns = (
             "AllocatedResourceId",
+            "BillingCurrency",
             "BilledCost",
             "ListCost",
             "PricingQuantity",
@@ -1250,6 +1251,7 @@ def test_same_key_tiers_flow_from_provider_capture_through_sidecar_and_canonical
         monthly_rows = list(csv.DictReader(io.StringIO(monthly_body.decode())))
         for rows in (daily_rows, monthly_rows):
             assert len(rows) == 4
+            assert {row["BillingCurrency"] for row in rows} == {"USD"}
             assert {row["x_ChitraguptaSourceCostId"] for row in rows} == {"tier-a", "tier-b"}
             assert {row["x_ConfluentTierDimensions"] for row in rows} == {
                 '{"tier":"a"}',
@@ -1288,6 +1290,7 @@ def test_same_key_tiers_flow_from_provider_capture_through_sidecar_and_canonical
         assert daily_custom["effective_columns"] == list(custom_columns)
         assert csv.DictReader(io.StringIO(custom_body.decode())).fieldnames == list(custom_columns)
         assert len(summary_rows) == len(custom_rows) == len(daily_rows)
+        assert {row["BillingCurrency"] for row in summary_rows} == {"USD"}
         stable_identity_columns = (
             "AllocatedResourceId",
             "BilledCost",
@@ -1299,19 +1302,24 @@ def test_same_key_tiers_flow_from_provider_capture_through_sidecar_and_canonical
             (
                 row["x_ChitraguptaSourceCostId"],
                 row["AllocatedResourceId"],
+                row["BillingCurrency"],
                 row["ConsumedQuantity"],
                 row["ConsumedUnit"],
             )
             for row in custom_rows
         } == {
-            ("tier-a", "sa-1", "3", "GB"),
-            ("tier-a", "", "2", "GB"),
-            ("tier-b", "sa-1", "-3", "GB"),
-            ("tier-b", "", "-2", "GB"),
+            ("tier-a", "sa-1", "USD", "3", "GB"),
+            ("tier-a", "", "USD", "2", "GB"),
+            ("tier-b", "sa-1", "USD", "-3", "GB"),
+            ("tier-b", "", "USD", "-2", "GB"),
         }
         manifests = [manifest_json(client, result) for result in (daily_first, daily_summary, daily_custom)]
         assert all(manifest["validation"]["rows"] == 4 for manifest in manifests)
         assert all(manifest["reconciliation"] == manifests[0]["reconciliation"] for manifest in manifests[1:])
+        assert all(
+            "provider_billing_currency_field_unavailable" not in {gap["code"] for gap in manifest["known_gaps"]}
+            for manifest in manifests
+        )
         assert manifests[0]["reconciliation"] == {
             "source_cost": "8",
             "allocated_cost": "8",
@@ -1887,12 +1895,13 @@ def test_workflow_runner_provider_calculation_to_preview_mixed_retry_and_unrelat
         assert manifest["source_snapshot"]["source_through"] == a_ready["source_snapshot"]["source_through"]
         assert manifest["mapping_profile_version"] == "focus-1.4-preview-v1"
         assert manifest["known_gaps"]
+        assert "provider_billing_currency_field_unavailable" not in {gap["code"] for gap in manifest["known_gaps"]}
         assert manifest["conformance_status"] == "non_conforming"
         row = next(csv.DictReader(io.StringIO(csv_response.text)))
         assert row["BillingAccountId"] == "11111111-2222-4333-8444-555555555555"
         assert row["BillingAccountId"] != tenant.tenant_id
         assert row["BillingAccountName"] == "Provider billing organization"
-        assert row["BillingCurrency"] == ""
+        assert row["BillingCurrency"] == "USD"
         assert row["BillingPeriodStart"] == "2026-07-01T00:00:00Z"
         assert row["BillingPeriodEnd"] == "2026-08-01T00:00:00Z"
         assert row["HostProviderName"] == "AWS"

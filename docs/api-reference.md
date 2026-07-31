@@ -514,7 +514,10 @@ support Daily or Monthly grain and Full, Summary, or Custom column profiles. The
 tenant's optional `focus_preview`
 block must establish a `direct_payg` commercial profile over the complete
 request interval. `billing_currency` defaults to normalized `USD`; any other
-configured currency fails closed without conversion.
+configured currency fails closed without conversion. Eligible rows copy that
+normalized setting into `BillingCurrency` as scope authority. The Confluent
+Costs API does not provide a per-record currency field, and Preview does not
+infer the value from individual records.
 
 For setup and complete UI/CLI workflows, start with
 [FOCUS Mapping Preview](focus-mapping-preview.md). This section is the HTTP
@@ -813,11 +816,6 @@ gap catalog:
 
 ```json
 [
-  {
-    "code": "provider_billing_currency_field_unavailable",
-    "description": "Confluent Costs records do not carry a per-record billing currency.",
-    "columns": ["BillingCurrency"]
-  },
   {
     "code": "invoice_identity_unavailable",
     "description": "Post-issuance invoice identity is unavailable.",

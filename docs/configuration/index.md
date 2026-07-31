@@ -136,7 +136,7 @@ tenants:
 |---|---|---|---|---|
 | `focus_preview` | mapping | absent | Confluent Cloud only | Optional block. Absence remains valid application configuration but every Preview request fails closed. |
 | `focus_preview.commercial_profile` | string | required in block | `direct_payg` | Declares the supported Direct-billed PAYG arrangement. |
-| `focus_preview.billing_currency` | string | `USD` | three ASCII letters | Normalized uppercase. Non-USD loads but Preview fails without conversion. |
+| `focus_preview.billing_currency` | string | `USD` | three ASCII letters | Normalized uppercase and emitted as `BillingCurrency` for eligible rows. Non-USD loads but Preview fails without conversion. |
 | `focus_preview.effective_start_date` | date | required in block | before an explicit end | Inclusive start of the commercial declaration. |
 | `focus_preview.effective_end_date` | date | omitted | after start when supplied | Optional exclusive end. Omission resolves an end per operation from its UTC anchor date; an explicit value is a fixed hard override. |
 
@@ -147,9 +147,10 @@ processing and restart. These resolved ends do not widen `lookback_days`,
 `cutoff_days`, `retention_days`, or calculation, source, allocation-lineage,
 reconciliation, and mapping evidence requirements.
 
-Confluent's Costs API does not supply a per-record ISO currency value. USD is the
-current configured contract, while generated `BillingCurrency` remains null and
-the manifest identifies the provider-field limitation. See the
+Confluent's Costs API does not supply a per-record ISO currency value. Eligible
+rows copy the normalized operator-configured USD scope into `BillingCurrency`;
+the value is scope authority, not per-record inference. Non-USD remains
+fail-closed and Preview performs no conversion. See the
 [Confluent Cloud reference](ccloud-reference.md#focus-mapping-preview-eligibility)
 for the fail-closed rules and retention boundary.
 

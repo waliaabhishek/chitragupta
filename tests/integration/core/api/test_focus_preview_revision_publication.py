@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import hashlib
 import io
 import json
@@ -676,6 +677,7 @@ def test_periodic_publication_lifecycle_is_visible_through_real_current_api(
         file_response = client.get(body["package"]["files"][0]["download_url"])
         assert file_response.status_code == 200
         first_file_body = file_response.content
+        assert next(csv.DictReader(io.StringIO(file_response.text)))["BillingCurrency"] == "USD"
         archive = client.get(body["package"]["download_all_url"])
         assert archive.status_code == 200
         assert archive.headers["content-type"].startswith("application/zip")
@@ -699,6 +701,9 @@ def test_periodic_publication_lifecycle_is_visible_through_real_current_api(
         assert superseded_manifest.status_code == 200
         superseded_manifest_body = superseded_manifest.content
         assert_public_known_gaps(superseded_manifest.json())
+        superseded_file = client.get(superseded.json()["package"]["files"][0]["download_url"])
+        assert superseded_file.status_code == 200
+        assert next(csv.DictReader(io.StringIO(superseded_file.text)))["BillingCurrency"] == "USD"
         superseded_archive = client.get(superseded.json()["package"]["download_all_url"])
         assert superseded_archive.status_code == 200
         superseded_archive_body = superseded_archive.content

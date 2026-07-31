@@ -36,13 +36,6 @@
   "grain": "daily",
   "known_gaps": [
     {
-      "code": "provider_billing_currency_field_unavailable",
-      "columns": [
-        "BillingCurrency"
-      ],
-      "description": "Confluent Costs records do not carry a per-record billing currency."
-    },
-    {
       "code": "invoice_identity_unavailable",
       "columns": [
         "InvoiceDetailId",

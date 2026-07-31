@@ -529,11 +529,17 @@ def test_source_issue_is_str_enum_with_stable_values() -> None:
     assert diagnostic.message == "One or more source records have a missing or blank native line type."
 
 
-def test_mapping_profile_and_currency_gap_advance_without_mapping_billing_currency() -> None:
+def test_mapping_profile_and_public_gap_catalogue_drop_only_billing_currency_gap() -> None:
     mapping = preview_module("mapping")
     gaps = {gap.code: gap for gap in mapping.KNOWN_GAPS}
 
     assert mapping.MAPPING_PROFILE_VERSION == "focus-1.4-preview-v1"
     assert "commercial_arrangement_and_billing_currency_authority_pending" not in gaps
-    assert gaps["provider_billing_currency_field_unavailable"].columns == ("BillingCurrency",)
-    assert gaps["provider_billing_currency_field_unavailable"].owner_task == "TASK-254.03"
+    assert "provider_billing_currency_field_unavailable" not in gaps
+    assert set(gaps) == {
+        "invoice_identity_unavailable",
+        "invoice_issuer_name_unavailable",
+        "provider_host_display_name_unavailable",
+        "provider_region_display_name_unavailable",
+        "derived_sku_identity_not_provider_authoritative",
+    }

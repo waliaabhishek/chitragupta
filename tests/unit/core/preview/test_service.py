@@ -752,7 +752,7 @@ def test_daily_full_package_maps_provider_financial_account_sku_and_invoice_evid
         assert rows[0]["BillingAccountId"] != "tenant-1"
         assert rows[0]["BillingAccountName"] == "Provider billing organization"
         assert rows[0]["BillingAccountType"] == "Organization"
-        assert rows[0]["BillingCurrency"] == ""
+        assert rows[0]["BillingCurrency"] == "USD"
         assert rows[0]["BillingPeriodStart"] == "2026-07-01T00:00:00Z"
         assert rows[0]["BillingPeriodEnd"] == "2026-08-01T00:00:00Z"
         assert rows[0]["ChargeClass"] == ""
@@ -801,6 +801,7 @@ def test_daily_full_package_maps_provider_financial_account_sku_and_invoice_evid
         assert manifest["mapping_profile_version"] == "focus-1.4-preview-v1"
         assert_public_known_gaps(manifest)
         gap_codes = {gap["code"] for gap in manifest["known_gaps"]}
+        assert "provider_billing_currency_field_unavailable" not in gap_codes
         assert "task_254_04_applicability_and_provider_mapping_pending" not in gap_codes
         assert "billing_account_and_issuer_mapping_pending" not in gap_codes
         assert "provider_host_display_name_unavailable" in gap_codes

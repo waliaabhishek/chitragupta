@@ -51,9 +51,10 @@ focus_preview:
 
 Omitting the block leaves configuration valid but makes Preview fail closed.
 Only `direct_payg` with a request contained in the half-open effective interval
-is supported. Non-USD values are not converted. Confluent's Costs API does not
-provide per-record ISO currency, so generated FOCUS `BillingCurrency` remains
-null even when configured/default USD makes the request eligible. See the
+is supported. Eligible rows copy the normalized operator-configured USD value
+into FOCUS `BillingCurrency`. Confluent's Costs API does not provide per-record
+ISO currency, so the value is scope authority rather than per-record inference.
+Non-USD values remain fail-closed and are not converted. See the
 [Confluent Cloud reference](../configuration/ccloud-reference.md#focus-mapping-preview-eligibility).
 
 Preview's process-wide package settings are separate from the tenant block:

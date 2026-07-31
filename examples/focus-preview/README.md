@@ -32,6 +32,13 @@ or `retention_days`. The pipeline must still have complete persisted
 calculation, source, allocation-lineage, reconciliation, and mapping evidence
 for the requested interval.
 
+The configured `billing_currency: USD` is normalized and copied into
+`BillingCurrency` whenever the selected output includes that column. It is
+authority for the eligible Direct-billed PAYG scope, not a value inferred from
+individual Confluent Costs API records, which do not contain a per-record
+currency field. Non-USD scopes remain fail-closed, and Preview performs no
+currency conversion.
+
 The sample output is static and uses fictional IDs. A real run uses the billing
 dates, organization, environments, resources, allocations, costs, and
 quantities already persisted for your tenant.
@@ -157,7 +164,8 @@ records:
 - zero cost and quantity reconciliation differences;
 - mapping and artifact-integrity validation;
 - the CSV byte size and SHA-256 checksum;
-- the current provider-authority gaps; and
+- the current provider-authority gaps, excluding `BillingCurrency`, which uses
+  the configured eligible-scope authority; and
 - the requested package's fixed seven-day download lifecycle.
 
 The manifest is formatted for readability here. Downloaded manifests use the

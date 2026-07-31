@@ -31,12 +31,6 @@ FOCUS_PREVIEW_CAPABILITY = FocusPreviewCapability(
     conformance_status="non_conforming",
     known_gaps=(
         KnownGap(
-            "provider_billing_currency_field_unavailable",
-            "Confluent Costs records do not carry a per-record billing currency.",
-            "TASK-254.03",
-            ("BillingCurrency",),
-        ),
-        KnownGap(
             "invoice_identity_unavailable",
             "Post-issuance invoice identity is unavailable.",
             "TASK-254.04",

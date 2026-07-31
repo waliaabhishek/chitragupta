@@ -113,13 +113,13 @@ def test_full_summary_and_custom_project_the_same_canonical_hidden_row_order(
     mapping = _mapping()
     monkeypatch.setattr(mapping, "validate_preview_row", lambda **_kwargs: None)
     rows = (
-        _row(day=1, AllocatedResourceId="sa-b", Tags='{"team":"b"}'),
-        _row(day=2, AllocatedResourceId="sa-a", Tags='{"team":"a"}'),
+        _row(day=1, AllocatedResourceId="sa-b", Tags='{"team":"b"}', BillingCurrency="USD"),
+        _row(day=2, AllocatedResourceId="sa-a", Tags='{"team":"a"}', BillingCurrency="USD"),
     )
     profiles = {
         "full": mapping.FOCUS_1_4_FULL_PROFILE_COLUMNS,
         "summary": mapping.FOCUS_1_4_SUMMARY_COLUMNS,
-        "custom": ("AllocatedResourceId", "Tags", "BilledCost"),
+        "custom": ("AllocatedResourceId", "BillingCurrency", "Tags", "BilledCost"),
     }
     rendered = {name: _draft(name, columns, rows) for name, columns in profiles.items()}
 
@@ -136,6 +136,7 @@ def test_full_summary_and_custom_project_the_same_canonical_hidden_row_order(
         }
     custom_rows = list(csv.DictReader(io.StringIO(rendered["custom"].data_files[0].body.decode())))
     assert [row["AllocatedResourceId"] for row in custom_rows] == ["sa-a", "sa-b"]
+    assert {row["BillingCurrency"] for row in custom_rows} == {"USD"}
 
 
 @pytest.mark.parametrize(

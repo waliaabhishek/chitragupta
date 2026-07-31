@@ -151,7 +151,9 @@ closed with `preview_commercial_profile_unavailable` until the operator declares
 `commercial_profile: direct_payg` and a containing effective interval.
 `billing_currency` defaults to normalized `USD`; non-USD fails Preview with no
 currency conversion. Confluent's Costs API does not provide per-record ISO
-currency, so `BillingCurrency` remains null in generated output.
+currency. Eligible rows use the normalized configured value as billing-scope
+authority for `BillingCurrency`, not as a value inferred from each provider
+record.
 
 Do not increase `lookback_days` in an attempt to recover absent Preview history.
 Its maximum remains 364 and it defines acquisition/recalculation eligibility,

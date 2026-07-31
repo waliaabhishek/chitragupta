@@ -1395,6 +1395,8 @@ class PreviewPackageGenerator:
                 diagnostic = request_eligibility_diagnostic(request=request, policy=policy)
                 if diagnostic is not None:
                     raise PreviewGenerationError(diagnostic)
+                billing_currency = policy.billing_currency
+                assert billing_currency == "USD"
                 snapshot = PreviewSourceSnapshot(
                     calculation_timestamp=None,
                     calculation_coverage=(),
@@ -1427,6 +1429,8 @@ class PreviewPackageGenerator:
             diagnostic = request_eligibility_diagnostic(request=request, policy=policy)
             if diagnostic is not None:
                 raise PreviewGenerationError(diagnostic)
+            billing_currency = policy.billing_currency
+            assert billing_currency == "USD"
             authority_slices = _resolve_source_authority(
                 uow.source_readiness,
                 request.ecosystem,
@@ -1897,7 +1901,11 @@ class PreviewPackageGenerator:
                                     )
 
                 full_rows: Iterable[PreviewFullRow] = (
-                    project_daily_portion_full_row(prepared=prepared, provider_context=provider_context)
+                    project_daily_portion_full_row(
+                        prepared=prepared,
+                        provider_context=provider_context,
+                        billing_currency=billing_currency,
+                    )
                     for prepared in package_rows()
                 )
                 if request.grain == "monthly":

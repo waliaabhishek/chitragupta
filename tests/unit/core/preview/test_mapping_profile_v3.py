@@ -36,7 +36,11 @@ TARGET_RULE_AUTHORITIES = (
     ("BillingAccountId", "bound provider organization resource", "copy the provider organization identifier"),
     ("BillingAccountName", "bound provider organization resource", "copy its optional display name"),
     ("BillingAccountType", "mapping profile", "emit Organization"),
-    ("BillingCurrency", "none", "remain null under the TASK-254.03 provider-field gap"),
+    (
+        "BillingCurrency",
+        "PreviewEligibilityPolicy.billing_currency",
+        "copy the normalized configured billing currency for eligible direct-billed USD PAYG preview scope",
+    ),
     ("BillingPeriodEnd", "source.source_period_start", "derive the exclusive next UTC month boundary"),
     ("BillingPeriodStart", "source.source_period_start", "derive the inclusive UTC month boundary"),
     ("CapacityReservationId", "none", "not applicable to Direct PAYG"),
@@ -319,6 +323,7 @@ def _valid_row_projection(mapping: Any) -> Any:
             "BillingAccountId": "org-1",
             "BillingAccountName": "Provider organization",
             "BillingAccountType": "Organization",
+            "BillingCurrency": "USD",
             "BillingPeriodEnd": datetime(2026, 8, 1, tzinfo=UTC),
             "BillingPeriodStart": datetime(2026, 7, 1, tzinfo=UTC),
             "ChargeCategory": "Usage",
@@ -536,6 +541,7 @@ def _package_row(
     full_row = mapping.project_daily_portion_full_row(
         prepared=prepared,
         provider_context=provider_context,
+        billing_currency="USD",
     )
     draft = mapping.build_preview_data_package(
         request=request,
@@ -767,7 +773,6 @@ def test_focus_rule_table_is_the_complete_ordered_65_column_authority() -> None:
     assert {
         rule.column: (rule.gap_code, rule.owner_task) for rule in rules if rule.applicability.value == "declared_gap"
     } == {
-        "BillingCurrency": ("provider_billing_currency_field_unavailable", "TASK-254.03"),
         "HostProviderName": ("provider_host_display_name_unavailable", "TASK-254.04"),
         "InvoiceDetailId": ("invoice_identity_unavailable", "TASK-254.04"),
         "InvoiceId": ("invoice_identity_unavailable", "TASK-254.04"),
@@ -1288,6 +1293,29 @@ def test_validate_preview_row_accepts_the_complete_valid_projection() -> None:
 
 
 @pytest.mark.parametrize(
+    ("value", "rule_id"),
+    [
+        (None, "nullability"),
+        ("", "allowed_value"),
+        ("US1", "allowed_value"),
+        ("EUR", "allowed_value"),
+    ],
+)
+def test_validate_preview_row_rejects_missing_blank_malformed_or_scope_inconsistent_billing_currency(
+    value: object,
+    rule_id: str,
+) -> None:
+    mapping = preview_module("mapping")
+    row = _replace_target(mapping, _valid_row_projection(mapping), "BillingCurrency", value)
+
+    with pytest.raises(mapping.PreviewRowValidationError) as caught:
+        _validate(mapping, row)
+
+    assert caught.value.rule_id is mapping.PreviewRowRuleId(rule_id)
+    assert caught.value.column == "BillingCurrency"
+
+
+@pytest.mark.parametrize(
     ("column", "value", "rule_id"),
     [
         ("BillingAccountId", None, "nullability"),
@@ -1570,7 +1598,7 @@ def test_validate_preview_row_keeps_invoice_fields_separate_from_custom_correlat
 def test_validate_preview_row_requires_declared_gap_coverage_for_gap_null() -> None:
     mapping = preview_module("mapping")
     rules = tuple(
-        replace(rule, gap_code=None, owner_task=None) if rule.column == "BillingCurrency" else rule
+        replace(rule, gap_code=None, owner_task=None) if rule.column == "RegionName" else rule
         for rule in mapping.FOCUS_1_4_COLUMN_RULES
     )
 
@@ -1578,31 +1606,24 @@ def test_validate_preview_row_requires_declared_gap_coverage_for_gap_null() -> N
         _validate(mapping, _valid_row_projection(mapping), target_rules=rules)
 
     assert caught.value.rule_id is mapping.PreviewRowRuleId.GAP_COVERAGE
-    assert caught.value.column == "BillingCurrency"
+    assert caught.value.column == "RegionName"
 
 
-@pytest.mark.parametrize(
-    ("column", "value"),
-    [("BillingCurrency", "USD"), ("RegionName", "US East")],
-)
-def test_validate_preview_row_enforces_declared_gap_required_nulls(
-    column: str,
-    value: str,
-) -> None:
+def test_validate_preview_row_keeps_region_name_as_a_declared_required_null_gap() -> None:
     mapping = preview_module("mapping")
-    row = _replace_target(mapping, _valid_row_projection(mapping), column, value)
+    row = _replace_target(mapping, _valid_row_projection(mapping), "RegionName", "US East")
 
     with pytest.raises(mapping.PreviewRowValidationError) as caught:
         _validate(mapping, row)
 
     assert caught.value.rule_id is mapping.PreviewRowRuleId.GAP_COVERAGE
-    assert caught.value.column == column
+    assert caught.value.column == "RegionName"
 
 
 def test_validate_preview_row_enforces_exact_declared_gap_ownership() -> None:
     mapping = preview_module("mapping")
     rules = tuple(
-        replace(rule, gap_code="invoice_identity_unavailable") if rule.column == "BillingCurrency" else rule
+        replace(rule, gap_code="invoice_identity_unavailable") if rule.column == "RegionName" else rule
         for rule in mapping.FOCUS_1_4_COLUMN_RULES
     )
 
@@ -1610,7 +1631,7 @@ def test_validate_preview_row_enforces_exact_declared_gap_ownership() -> None:
         _validate(mapping, _valid_row_projection(mapping), target_rules=rules)
 
     assert caught.value.rule_id is mapping.PreviewRowRuleId.GAP_COVERAGE
-    assert caught.value.column == "BillingCurrency"
+    assert caught.value.column == "RegionName"
 
 
 def test_validate_preview_row_requires_sku_evidence_when_pricing_is_emitted() -> None:
@@ -2205,7 +2226,7 @@ def test_package_manifest_reports_the_complete_validated_v3_profile(
     valid_allocation_evidence: Any,
 ) -> None:
     mapping = preview_module("mapping")
-    _row, manifest = _package_row(
+    row, manifest = _package_row(
         mapping,
         source=valid_source_evidence,
         aggregate=valid_aggregate_evidence,
@@ -2213,6 +2234,7 @@ def test_package_manifest_reports_the_complete_validated_v3_profile(
         include_manifest=True,
     )
 
+    assert row["BillingCurrency"] == "USD"
     assert manifest["mapping_profile_version"] == "focus-1.4-preview-v1"
     assert manifest["schema_version"] == "chitragupta.preview-manifest.v1"
     assert manifest["conformance_status"] == "non_conforming"

@@ -78,9 +78,10 @@ tenants:
     # Existing configs load without this block, but Preview requests then fail
     # closed. Enable only for a Direct-billed PAYG scope whose complete request
     # interval is contained in the half-open [start, end) dates below.
-    # billing_currency defaults to USD and is normalized to uppercase. Confluent's
-    # Costs API does not return per-record ISO currency; non-USD fails Preview and
-    # no currency conversion is performed. Generated BillingCurrency remains null.
+    # billing_currency defaults to USD and is normalized to uppercase. Eligible
+    # rows use it as BillingCurrency scope authority. Confluent's Costs API does
+    # not return per-record ISO currency; non-USD fails Preview and no currency
+    # conversion is performed.
     # focus_preview:
     #   commercial_profile: direct_payg
     #   billing_currency: USD

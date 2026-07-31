@@ -165,6 +165,24 @@ def test_monthly_aggregation_sums_exact_cost_quantity_and_signed_discount(
     assert values["ChargePeriodEnd"] == datetime(2026, 8, 1, tzinfo=UTC)
 
 
+def test_monthly_aggregation_preserves_supported_billing_currency(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monthly = _monthly()
+    monkeypatch.setattr(monthly, "validate_preview_row", lambda **_kwargs: None)
+
+    rows = monthly.aggregate_monthly_full_rows(
+        rows=(
+            _row(day=1, BillingCurrency="USD"),
+            _row(day=2, BillingCurrency="USD", AllocatedResourceId="sa-2"),
+        ),
+        month_start=datetime(2026, 7, 1, tzinfo=UTC),
+        month_end=datetime(2026, 8, 1, tzinfo=UTC),
+    )
+
+    assert {_values(row)["BillingCurrency"] for row in rows} == {"USD"}
+
+
 @pytest.mark.parametrize(
     ("column", "first", "second"),
     [

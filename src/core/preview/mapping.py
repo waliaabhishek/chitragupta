@@ -296,7 +296,10 @@ _TARGET_RULE_AUTHORITIES = {
     "BillingAccountId": ("bound provider organization resource", "copy the provider organization identifier"),
     "BillingAccountName": ("bound provider organization resource", "copy its optional display name"),
     "BillingAccountType": ("mapping profile", "emit Organization"),
-    "BillingCurrency": ("none", "remain null under the TASK-254.03 provider-field gap"),
+    "BillingCurrency": (
+        "PreviewEligibilityPolicy.billing_currency",
+        "copy the normalized configured billing currency for eligible direct-billed USD PAYG preview scope",
+    ),
     "BillingPeriodEnd": ("source.source_period_start", "derive the exclusive next UTC month boundary"),
     "BillingPeriodStart": ("source.source_period_start", "derive the inclusive UTC month boundary"),
     "CapacityReservationId": ("none", "not applicable to Direct PAYG"),
@@ -377,6 +380,7 @@ _DECIMAL_COLUMNS = frozenset(
 _DATETIME_COLUMNS = frozenset({"BillingPeriodEnd", "BillingPeriodStart", "ChargePeriodEnd", "ChargePeriodStart"})
 _ENUM_VALUES = {
     "BillingAccountType": ("Organization",),
+    "BillingCurrency": ("USD",),
     "ChargeCategory": ("Usage", "Purchase", "Credit"),
     "ChargeClass": ("Correction",),
     "ChargeFrequency": ("Usage-Based", "Recurring", "One-Time"),
@@ -404,7 +408,6 @@ _NOT_APPLICABLE = frozenset(
     }
 )
 _DECLARED_GAPS = {
-    "BillingCurrency": ("provider_billing_currency_field_unavailable", "TASK-254.03"),
     "HostProviderName": ("provider_host_display_name_unavailable", "TASK-254.04"),
     "InvoiceDetailId": ("invoice_identity_unavailable", "TASK-254.04"),
     "InvoiceId": ("invoice_identity_unavailable", "TASK-254.04"),
@@ -2018,7 +2021,7 @@ def _validate_cell(value: PreviewCell, rule: FocusColumnRule | CustomEvidenceRul
         case PreviewValidatorKind.DATETIME:
             valid = isinstance(value, datetime) and value.tzinfo is not None and value.utcoffset() is not None
         case PreviewValidatorKind.ENUM:
-            valid = isinstance(value, str) and bool(value)
+            valid = isinstance(value, str) and (bool(value) or rule.column == "BillingCurrency")
         case PreviewValidatorKind.IDENTIFIER | PreviewValidatorKind.TEXT:
             valid = isinstance(value, str) and bool(value.strip())
         case PreviewValidatorKind.JSON:
@@ -2120,9 +2123,8 @@ def validate_preview_row(
             None,
         )
         raise PreviewRowValidationError(PreviewRowRuleId.GAP_COVERAGE, column=column)
-    for column in ("BillingCurrency", "RegionName"):
-        if values[column] is not None:
-            raise PreviewRowValidationError(PreviewRowRuleId.GAP_COVERAGE, column=column)
+    if values["RegionName"] is not None:
+        raise PreviewRowValidationError(PreviewRowRuleId.GAP_COVERAGE, column="RegionName")
 
     dependent_groups = (
         ("ConsumedQuantity", "ConsumedUnit"),
@@ -2345,6 +2347,7 @@ def _project_daily_full_row(
     resource_context: PreviewResourceContext,
     identity: Identity | Resource | None,
     environment: Resource | None,
+    billing_currency: str,
     origin_tags_json: str = "{}",
     allocated_tags_json: str | None = None,
 ) -> dict[str, PreviewCell]:
@@ -2390,6 +2393,7 @@ def _project_daily_full_row(
             "BillingAccountId": provider_context.billing_account_id,
             "BillingAccountName": provider_context.billing_account_name,
             "BillingAccountType": "Organization",
+            "BillingCurrency": billing_currency,
             "BillingPeriodEnd": billing_end,
             "BillingPeriodStart": billing_start,
             "ChargeCategory": semantics.charge_category,
@@ -2447,6 +2451,7 @@ def project_daily_portion_full_row(
     *,
     prepared: PreparedPreviewPackageRow,
     provider_context: PreviewProviderContext,
+    billing_currency: str,
 ) -> PreviewFullRow:
     values = _project_daily_full_row(
         evidence=prepared.evidence,
@@ -2454,6 +2459,7 @@ def project_daily_portion_full_row(
         resource_context=prepared.resource_context,
         identity=prepared.allocated_entity,
         environment=prepared.environment,
+        billing_currency=billing_currency,
         origin_tags_json=prepared.origin_tags_json,
         allocated_tags_json=prepared.allocated_tags_json,
     )

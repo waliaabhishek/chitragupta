@@ -18,11 +18,6 @@ from tests.unit.core.preview.test_monthly_v5 import _row
 
 EXPECTED_PUBLIC_KNOWN_GAPS: list[dict[str, object]] = [
     {
-        "code": "provider_billing_currency_field_unavailable",
-        "description": "Confluent Costs records do not carry a per-record billing currency.",
-        "columns": ["BillingCurrency"],
-    },
-    {
         "code": "invoice_identity_unavailable",
         "description": "Post-issuance invoice identity is unavailable.",
         "columns": ["InvoiceDetailId", "InvoiceId"],

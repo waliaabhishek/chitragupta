@@ -35,7 +35,11 @@ The [Costs API](https://docs.confluent.io/cloud/current/ccloud/list-billing-v-1-
 describes `price` and `discount_amount` as values “in dollars,” but its schema has
 no currency field. This suggests dollar denomination without establishing a
 universal USD contract. USD is therefore Chitragupta's current supported and
-default currency, not a provider-authoritative per-record value.
+default currency, not a provider-authoritative per-record value. Eligible rows
+copy the normalized operator-configured `focus_preview.billing_currency` into
+`BillingCurrency`. The setting is authority for the eligible billing scope,
+not an inference from each Costs API record. Non-USD scopes remain fail-closed,
+and Preview performs no currency conversion.
 
 `effective_start_date` is required when `focus_preview` is enabled and is
 included in the commercial interval. `effective_end_date` is optional and
@@ -735,11 +739,6 @@ object contains exactly the stable `code`, durable customer-facing
 ```json
 [
   {
-    "code": "provider_billing_currency_field_unavailable",
-    "description": "Confluent Costs records do not carry a per-record billing currency.",
-    "columns": ["BillingCurrency"]
-  },
-  {
     "code": "invoice_identity_unavailable",
     "description": "Post-issuance invoice identity is unavailable.",
     "columns": ["InvoiceDetailId", "InvoiceId"]
@@ -882,9 +881,10 @@ logically material Settled revision is published.
 - Preview projects the persisted allocation portions produced by the ordinary
   calculation. It does not reconstruct billing rows from chargebacks or
   recalculate allocation ratios.
-- Confluent Cost records do not provide per-record ISO currency, so
-  `BillingCurrency` is null even though USD is the required commercial
-  contract. No currency conversion occurs.
+- `BillingCurrency` copies the normalized operator-configured currency for the
+  eligible Direct-billed PAYG scope. Confluent Cost records do not provide a
+  per-record ISO currency, so the value is not inferred from individual
+  records. Only USD is currently eligible, and no currency conversion occurs.
 - `HostProviderName` and `RegionId` preserve the provider values; a separate
   provider region display name is unavailable, so `RegionName` is null.
 - Invoice identity and issuer fields are unavailable.

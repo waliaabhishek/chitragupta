@@ -376,12 +376,12 @@ def test_real_production_lineage_projects_multiple_origins_actual_portions_and_f
         assert [len(body) for body in retrieved_parts] == [item["size_bytes"] for item in files]
         assert [hashlib.sha256(body).hexdigest() for body in retrieved_parts] == [item["sha256"] for item in files]
         assert [hashlib.sha256(body).hexdigest() for body in retrieved_parts] == [
-            "9fe8007b740666aba032cb5215e34785e8bfa9a1c9563cfb717013b550486cd4",  # pragma: allowlist secret
-            "cdc15d1e0cfdbd80ca178f98932e6fc00eb1eb732f820f59cfde46013b618dad",  # pragma: allowlist secret
-            "b3769b4f302599dac0fefc62911a41d5020a0469351e3a731202e2f01b942a21",  # pragma: allowlist secret
-            "6a1a4e32d5eb5ab999b660111d34a7ee7e480845ce91081f2a28602bc1d3c9a4",  # pragma: allowlist secret
-            "2dd63bf4242a5883f1ea111fdb131ef90e14282bce585dbff83d2095e3056a29",  # pragma: allowlist secret
-            "042a79a23f9272e93f94fa61e004f5889e5338b5c84a90aa5632f2306145b64f",  # pragma: allowlist secret
+            "9f625f75098fe60975cdfc5a6bdb34fa1face3633c1ae54ec3ec95bd6329de7f",  # pragma: allowlist secret
+            "c66090fbe37a2e0092bf80ff07980ab99d32d7a3d231e6d8c3e5f6682cbfb98f",  # pragma: allowlist secret
+            "3f6d072508034739ecf305ab86bace73a2d74cda4b4263c7ac0beaf13e732531",  # pragma: allowlist secret
+            "ae86fa02418cf346a5251aaae1fbbca1b423ca1850400831da08d3da81e0a15d",  # pragma: allowlist secret
+            "beeb80870ede15a0934a5c5765eda9a90852d9a9069a4b36b21e04b331cd1001",  # pragma: allowlist secret
+            "88148829c0671d105a56c8020ab2bb050e07155d3556c4d8c104a762730b618d",  # pragma: allowlist secret
         ]
         with backend.create_preview_metadata_read_unit_of_work() as uow:
             persisted = uow.requests.get_for_owner(
@@ -554,12 +554,12 @@ def test_real_production_lineage_projects_multiple_origins_actual_portions_and_f
             item["sha256"] for item in monthly_files
         ]
         assert [hashlib.sha256(body).hexdigest() for body in monthly_parts] == [
-            "acb6b31a2d52c2a5e0cba5d406df57a2a19b5355df4e3c1ad7eb357fb35eec7c",  # pragma: allowlist secret
-            "5f831989ad3340924a929204f48e2400d402ff2ca682ff98e4ab47497dbe1385",  # pragma: allowlist secret
-            "b88baba61a31632d5e24e6506656cc4612a6bc3b1971f258ed3f80e2e087622b",  # pragma: allowlist secret
-            "a92943707c521273271ef26a9398d811bfab399a5d567879780d7eef91a2e87e",  # pragma: allowlist secret
-            "1a7866d9342b8bdb8648623c3153513d8be3a93ed4ae9e39650785d5d77dd81f",  # pragma: allowlist secret
-            "4b338e5b86cad304ad3aeddea3b74465510bba83a872c7bb153f73ed09952785",  # pragma: allowlist secret
+            "ee027b9e9ad33d404ec0721bcc7d9e5baf0f406ea38063e769f80f87b5a3c661",  # pragma: allowlist secret
+            "c3c8458e0c9e5a8a0acb8eaa3a54e2b21aaed5f5e2ab9511b6b4fc0f3a119940",  # pragma: allowlist secret
+            "1d5148d029dc36726999364a777fdef7ad5ea7ea2b0b7c202cec767c368aa93a",  # pragma: allowlist secret
+            "f2b98c653bf40ca07331e5b02e8fc59b33c34b00df92201b15d93bcfbf0e2f6a",  # pragma: allowlist secret
+            "4a448322cbd6bd00f2a2c2384db4c9b2869ad3e5dc1650b3f4a259d735d983ac",  # pragma: allowlist secret
+            "9c495f0a81cbad583b63895b078bf9e9ae3a573e683adaa5844234b7c019078e",  # pragma: allowlist secret
         ]
         monthly_full_bytes, monthly_full_rows = _csv_rows(client, monthly_full)
         assert len(monthly_full_rows) == 6

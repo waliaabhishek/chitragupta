@@ -224,11 +224,6 @@ def test_profile_endpoint_is_static_code_owned_and_uses_no_runtime_backend_or_da
         "summary_columns": list(mapping.FOCUS_1_4_SUMMARY_COLUMNS),
         "known_gaps": [
             {
-                "code": "provider_billing_currency_field_unavailable",
-                "description": "Confluent Costs records do not carry a per-record billing currency.",
-                "columns": ["BillingCurrency"],
-            },
-            {
                 "code": "invoice_identity_unavailable",
                 "description": "Post-issuance invoice identity is unavailable.",
                 "columns": ["InvoiceDetailId", "InvoiceId"],
@@ -240,7 +235,7 @@ def test_profile_endpoint_is_static_code_owned_and_uses_no_runtime_backend_or_da
             },
             {
                 "code": "provider_host_display_name_unavailable",
-                "description": ("HostProviderName contains the raw provider cloud code, not a provider display name."),
+                "description": "HostProviderName contains the raw provider cloud code, not a provider display name.",
                 "columns": ["HostProviderName"],
             },
             {

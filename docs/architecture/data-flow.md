@@ -320,9 +320,9 @@ can persist up to 20 sorted, unique, opaque tenant-scoped correlations; raw
 provider identities and payload fields never enter the public diagnostic.
 
 Confluent's Costs API currently omits per-record ISO currency. Configured/default
-USD establishes the eligible commercial contract, but it does not become source
-evidence: mapped `BillingCurrency` remains null and the manifest records
-`provider_billing_currency_field_unavailable`. No currency conversion occurs.
+USD establishes the eligible commercial contract and is copied into mapped
+`BillingCurrency` as billing-scope authority, not provider-record evidence.
+Non-USD remains fail-closed, and no currency conversion occurs.
 The maximum 364-day `lookback_days` is an acquisition/recalculation boundary,
 not retention or a reconstruction promise.
 

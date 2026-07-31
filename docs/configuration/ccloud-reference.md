@@ -119,11 +119,10 @@ relabeling. There is no currency conversion of stored monetary values.
 The Confluent Costs API does not return a per-record ISO currency value. The USD
 setting is therefore an explicit customer/operator contract for the supported
 Direct-billed PAYG scope, not provider-supplied record evidence. Compatibility
-aggregate currency is not treated as commercial authority. Generated FOCUS
-`BillingCurrency` remains null, and the Preview manifest reports
-`provider_billing_currency_field_unavailable`. If the provider later supplies
-authoritative currency, that limitation can be revisited without inventing
-historical values.
+aggregate currency is not treated as commercial authority. Eligible rows copy
+the normalized setting into FOCUS `BillingCurrency`; the value applies to the
+configured scope and is not inferred from individual Costs API records. Non-USD
+scopes remain fail-closed, and Preview performs no relabeling or conversion.
 
 `lookback_days` remains capped at 364 because it controls current provider
 acquisition and recalculation. `lookback_days` is not retention, archival

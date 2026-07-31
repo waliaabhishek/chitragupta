@@ -1238,3 +1238,40 @@ def test_bounded_monthly_grouping_preserves_cells_with_sublinear_python_peak(
         if tracemalloc.is_tracing():
             tracemalloc.stop()
         large_workspace.close()
+
+
+def test_bounded_monthly_grouping_preserves_supported_billing_currency_and_revalidates_rows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monthly = preview_module("monthly")
+    spooling = preview_module("spooling")
+    mapping = preview_module("mapping")
+    validated: list[Any] = []
+
+    def validate(**kwargs: object) -> None:
+        validated.append(kwargs["row"])
+
+    monkeypatch.setattr(monthly, "validate_preview_row", validate)
+    workspace = spooling.PreviewGenerationWorkspace(8 * 1024 * 1024)
+    month_start = datetime(2026, 7, 1, tzinfo=UTC)
+    month_end = datetime(2026, 8, 1, tzinfo=UTC)
+    try:
+        rows = tuple(
+            monthly.aggregate_monthly_full_rows_bounded(
+                rows=iter(
+                    (
+                        _row(day=1, BillingCurrency="USD"),
+                        _row(day=2, BillingCurrency="USD"),
+                    )
+                ),
+                month_start=month_start,
+                month_end=month_end,
+                workspace=workspace,
+            )
+        )
+    finally:
+        workspace.close()
+
+    billing_currency_index = mapping.FOCUS_1_4_FULL_COLUMNS.index("BillingCurrency")
+    assert [row.target_values[billing_currency_index] for row in rows] == ["USD"]
+    assert validated == list(rows)
