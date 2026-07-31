@@ -23,6 +23,7 @@ _ONLINE_ENABLED_UPGRADE_COMMAND = (
     "uv run alembic -c src/core/storage/migrations/alembic.ini -x focus_preview=confluent_cloud upgrade head"
 )
 _DOWNGRADE_TARGETS = {
+    "032": "031",
     "030": "029",
     "028": "027",
     "027": "026",

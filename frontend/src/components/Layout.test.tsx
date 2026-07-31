@@ -316,6 +316,8 @@ describe("FOCUS Mapping Preview feature readiness navigation", () => {
             focus_preview_total_repair_dates:
               state === "upgrading" || state === "degraded" ? 3 : null,
             focus_preview_message: null,
+            focus_preview_ordinary_retention: null,
+            focus_preview_evidence_retention: null,
           },
         ],
       },
@@ -372,6 +374,51 @@ describe("FOCUS Mapping Preview feature readiness navigation", () => {
       "ant-menu-item-disabled",
     );
     expect(screen.getByText("Chargebacks").closest("li")).not.toHaveClass(
+      "ant-menu-item-disabled",
+    );
+  });
+
+  it("keeps the existing degraded badge and navigation availability for retention-only failures", () => {
+    setFocusState("degraded");
+    vi.mocked(useReadiness).mockReturnValue({
+      appStatus: "ready",
+      readiness: {
+        ...vi.mocked(useReadiness)().readiness!,
+        tenants: [
+          {
+            ...vi.mocked(useReadiness)().readiness!.tenants[0],
+            focus_preview_completed_repair_dates: null,
+            focus_preview_total_repair_dates: null,
+            focus_preview_message:
+              "Retention cleanup needs attention. Review the latest retention outcome and worker logs; existing valid Preview data remains available.",
+            focus_preview_ordinary_retention: {
+              attempted_at: "2026-07-30T23:25:01Z",
+              status: "failure",
+              diagnostic: {
+                code: "focus_preview_ordinary_retention_failed",
+                message:
+                  "Ordinary tenant retention cleanup failed. Review worker logs and restore tenant storage; existing valid Preview data remains available.",
+                error_type: "OperationalError",
+              },
+            },
+            focus_preview_evidence_retention: null,
+          },
+        ],
+      },
+    });
+
+    render(
+      <AppLayout isDark={false} onToggleTheme={vi.fn()}>
+        <div>content</div>
+      </AppLayout>,
+      { wrapper },
+    );
+
+    expect(screen.getByText("Needs retry")).toBeInTheDocument();
+    expect(
+      screen.getByText("FOCUS Mapping Preview").closest("li"),
+    ).not.toHaveClass("ant-menu-item-disabled");
+    expect(screen.getByText("Dashboard").closest("li")).not.toHaveClass(
       "ant-menu-item-disabled",
     );
   });

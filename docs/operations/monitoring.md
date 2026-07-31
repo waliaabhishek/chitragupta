@@ -67,10 +67,24 @@ GET /api/v1/readiness
         "last_run_status": "completed",
         "last_run_at": "2026-03-17T12:00:00Z",
         "permanent_failure": null,
-        "focus_preview_state": "upgrading",
+        "focus_preview_state": "degraded",
         "focus_preview_completed_repair_dates": 12,
         "focus_preview_total_repair_dates": 31,
-        "focus_preview_message": "Historical repair is in progress; existing valid Preview data remains available."
+        "focus_preview_message": "Retention cleanup needs attention while historical repair is in progress. Existing valid Preview data remains available.",
+        "focus_preview_ordinary_retention": {
+          "attempted_at": "2026-03-17T12:05:00Z",
+          "status": "failure",
+          "diagnostic": {
+            "code": "focus_preview_ordinary_retention_failed",
+            "message": "Ordinary tenant retention cleanup failed. Review worker logs and restore tenant storage; existing valid Preview data remains available.",
+            "error_type": "OperationalError"
+          }
+        },
+        "focus_preview_evidence_retention": {
+          "attempted_at": "2026-03-16T12:05:00Z",
+          "status": "success",
+          "diagnostic": null
+        }
       }
     ]
   }
@@ -83,17 +97,29 @@ FOCUS Preview readiness is tenant-scoped:
 | State | Operational meaning |
 |---|---|
 | `disabled` | Preview is not configured for the tenant. |
-| `ready` | Preview is available and no repair is active. |
+| `ready` | Preview is available and no repair or retention cause needs attention. |
 | `upgrading` | A historical repair is queued or running. Existing valid Preview data remains available. |
-| `degraded` | Repair failed, completed with failed dates, or was interrupted. Submit a new bounded repair for the failed dates. |
+| `degraded` | Historical repair or either retention cleanup needs attention. Use repair progress and the two structured retention outcomes to identify each cause. |
 | `unavailable` | Preview readiness or storage cannot be determined safely. Restore Preview availability before retrying. |
 
 The completed and total fields are **Date progress**. Succeeded and failed
 dates both count once terminal, so the ratio is not data-volume or success
-progress. An `upgrading`, `degraded`, or `unavailable` Preview state does not
-change generic application readiness or unrelated tenant features. The web
-client polls readiness every five seconds while any tenant is `upgrading` and
-returns to the normal fifteen-second cadence after terminal state.
+progress.
+
+Monitor `focus_preview_ordinary_retention` and
+`focus_preview_evidence_retention` separately. Each is null until an outcome is
+available; otherwise `attempted_at`, `status`, and `diagnostic` describe the
+latest recorded attempt. On failure, alert on the diagnostic code and use its
+operator-facing message with worker logs. A later success clears the diagnostic
+only for that cleanup kind. The other retention outcome and repair progress
+remain visible, so multiple causes are not collapsed into one status.
+
+An `upgrading`, `degraded`, or `unavailable` Preview state does not change
+generic application readiness or unrelated tenant features. Existing valid
+Preview packages and revisions remain available during retention degradation.
+The web client polls readiness every five seconds while any tenant is
+`upgrading` and returns to the normal fifteen-second cadence after terminal
+state.
 
 ## Pipeline status
 

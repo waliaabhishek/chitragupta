@@ -69,10 +69,21 @@ key. A retained zero-portion or unavailable run remains valid when its
 calculation identity still matches pipeline state. Repeating cleanup after
 success makes no additional changes.
 
-This cleanup is separate from generic billing and chargeback cleanup. If
-Preview evidence cleanup fails, its transaction is rolled back, the failure is
-logged for operators, and a later scheduled cycle retries it. Generic cleanup
-and chargeback operation remain independent.
+This cleanup is separate from ordinary tenant retention. For enabled tenants,
+readiness reports the latest recorded ordinary cleanup attempt and Preview
+evidence cleanup attempt as two independent structured outcomes. Each outcome
+includes its attempt time, success or failure status, and a redacted diagnostic
+when operator action is required.
+
+If Preview evidence cleanup fails, its transaction is rolled back without
+reversing a committed ordinary cleanup. If ordinary cleanup fails, Preview
+evidence cleanup is not started for that cycle. Either recorded failure makes
+Preview `degraded`; inspect the matching readiness diagnostic and worker logs,
+restore the affected storage or cleanup dependency, and allow a later scheduled
+cycle to retry. A later success replaces only the matching failure outcome.
+The other retention outcome and any historical repair state remain unchanged.
+Existing valid Preview data and unrelated billing, chargeback, inventory, and
+pipeline operations remain available while cleanup is degraded.
 
 While disabled, tenants create or access no new Preview evidence and run no
 Preview retention work. Disabling Preview does not delete evidence that was

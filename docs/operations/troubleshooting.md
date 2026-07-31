@@ -240,8 +240,9 @@ Repair submission does not retry automatically.
 **Cause**:
 
 - `upgrading`: a historical repair is queued or running.
-- `degraded`: repair failed, completed with failed dates, or was interrupted
-  during restart.
+- `degraded`: repair failed, completed with failed dates, was interrupted
+  during restart, or the latest recorded ordinary or Preview evidence retention
+  attempt failed. Repair and retention causes can exist together.
 - `unavailable`: Preview readiness or storage cannot be read safely, or startup
   recovery for the tenant did not complete.
 
@@ -250,13 +251,25 @@ Repair submission does not retry automatically.
 - For `upgrading`, monitor **Date progress** in `GET /api/v1/readiness` and wait
   for a terminal state. Existing valid packages and unrelated application
   features remain available.
-- For `degraded`, inspect the durable repair status and submit a new bounded
-  repair for failed dates. Failed dates count as completed lifecycle progress,
-  but the feature remains degraded until a later repair succeeds.
+- For `degraded`, inspect repair progress plus
+  `focus_preview_ordinary_retention` and
+  `focus_preview_evidence_retention` in `GET /api/v1/readiness`.
+  - If repair needs attention, submit a new bounded repair for failed dates.
+    Failed dates count as completed lifecycle progress.
+  - If a retention outcome failed, follow its operator-facing diagnostic,
+    inspect worker logs, restore the affected storage or cleanup dependency, and
+    allow the next scheduled cycle to retry.
+  - A later successful cleanup replaces only its matching failure. Preview
+    remains degraded while the other retention outcome or repair still needs
+    attention.
 - For `unavailable`, restore Preview storage and retry. The next repair
   submission retries interrupted-work recovery for that tenant first. If it
   returns `FOCUS Mapping Preview repair worker is unavailable`, recovery still
   failed and no new repair was created.
+
+Existing valid Preview packages and revisions remain available while repair or
+retention is degraded. Billing, chargeback, inventory, and ordinary pipeline
+operations remain independent.
 
 ### `preview_generation_spool_limit_exceeded`
 

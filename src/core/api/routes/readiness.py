@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import time
+from dataclasses import dataclass
 from datetime import date
 from typing import TYPE_CHECKING, Annotated, Literal
 
@@ -10,12 +11,18 @@ from fastapi import APIRouter, Depends, Request
 if TYPE_CHECKING:
     from core.config.models import TenantConfig
     from core.preview.repair import PreviewRepairRuntime
+    from core.preview.retention import PreviewRetentionOutcome
     from core.storage.backend_provider import TenantBackendProvider
     from workflow_runner import WorkflowRunner
 
 from core.api import API_VERSION
 from core.api.dependencies import get_backend_provider, get_settings
-from core.api.schemas import ReadinessResponse, TenantReadiness
+from core.api.schemas import (
+    FocusPreviewRetentionDiagnosticResponse,
+    FocusPreviewRetentionOutcomeResponse,
+    ReadinessResponse,
+    TenantReadiness,
+)
 from core.api.topic_attribution_status import TopicAttributionStatus, resolve_topic_attribution_status
 from core.config.models import AppSettings  # noqa: TC001  # FastAPI evaluates annotations at runtime
 
@@ -35,13 +42,39 @@ _PREVIEW_DEGRADED = (
     "Historical repair needs attention. Retry the failed dates with a new bounded repair; "
     "existing valid Preview data remains available."
 )
+_PREVIEW_RETENTION_DEGRADED = (
+    "Retention cleanup needs attention. Review the latest retention outcome and worker logs; "
+    "existing valid Preview data remains available."
+)
+_PREVIEW_REPAIR_AND_RETENTION_DEGRADED = (
+    "Historical repair and retention cleanup need attention. Retry failed repair dates after "
+    "retention cleanup succeeds; existing valid Preview data remains available."
+)
+_PREVIEW_REPAIR_RUNNING_AND_RETENTION_DEGRADED = (
+    "Retention cleanup needs attention while historical repair is in progress. "
+    "Existing valid Preview data remains available."
+)
 
-FocusPreviewReadiness = tuple[
-    Literal["disabled", "ready", "upgrading", "degraded", "unavailable"],
-    int | None,
-    int | None,
-    str | None,
-]
+
+@dataclass(frozen=True)
+class FocusPreviewReadiness:
+    state: Literal["disabled", "ready", "upgrading", "degraded", "unavailable"]
+    completed_repair_dates: int | None
+    total_repair_dates: int | None
+    message: str | None
+    ordinary_retention: PreviewRetentionOutcome | None
+    evidence_retention: PreviewRetentionOutcome | None
+
+
+def _unavailable_preview_readiness() -> FocusPreviewReadiness:
+    return FocusPreviewReadiness(
+        state="unavailable",
+        completed_repair_dates=None,
+        total_repair_dates=None,
+        message=_PREVIEW_UNAVAILABLE,
+        ordinary_retention=None,
+        evidence_retention=None,
+    )
 
 
 def _focus_preview_readiness(
@@ -52,16 +85,19 @@ def _focus_preview_readiness(
 ) -> FocusPreviewReadiness:
     from core.preview.persistence import PreviewEvidenceStorageBackend
     from core.preview.repair import PreviewRepairHistoryUnresolved, PreviewRepairStatus
+    from core.preview.retention import PreviewRetentionOutcomeStatus
     from core.preview.storage_availability import PreviewEvidenceAvailabilityState
 
     if not tenant_config.focus_preview_enabled:
-        return ("disabled", None, None, _PREVIEW_DISABLED)
-    unavailable: FocusPreviewReadiness = (
-        "unavailable",
-        None,
-        None,
-        _PREVIEW_UNAVAILABLE,
-    )
+        return FocusPreviewReadiness(
+            state="disabled",
+            completed_repair_dates=None,
+            total_repair_dates=None,
+            message=_PREVIEW_DISABLED,
+            ordinary_retention=None,
+            evidence_retention=None,
+        )
+    unavailable = _unavailable_preview_readiness()
     if recovery_available is False or not isinstance(backend, PreviewEvidenceStorageBackend):
         return unavailable
     if backend.preview_evidence_availability.state is not PreviewEvidenceAvailabilityState.READY:
@@ -72,31 +108,94 @@ def _focus_preview_readiness(
                 tenant_config.ecosystem,
                 tenant_config.tenant_id,
             )
+            outcomes = uow.retention_outcomes.get_latest_for_owner(
+                tenant_config.ecosystem,
+                tenant_config.tenant_id,
+            )
     except Exception:
         return unavailable
-    if progress is None:
-        return ("ready", None, None, None)
     if isinstance(progress, PreviewRepairHistoryUnresolved):
         return unavailable
+
+    completed_dates = None if progress is None else progress.completed_dates
+    total_dates = None if progress is None else progress.total_dates
+    retention_failed = any(
+        outcome is not None and outcome.status is PreviewRetentionOutcomeStatus.FAILURE
+        for outcome in (outcomes.ordinary, outcomes.preview_evidence)
+    )
+    if retention_failed:
+        if progress is not None and progress.status in {
+            PreviewRepairStatus.QUEUED,
+            PreviewRepairStatus.RUNNING,
+        }:
+            message = _PREVIEW_REPAIR_RUNNING_AND_RETENTION_DEGRADED
+        elif progress is not None and progress.status is not PreviewRepairStatus.COMPLETED:
+            message = _PREVIEW_REPAIR_AND_RETENTION_DEGRADED
+        else:
+            message = _PREVIEW_RETENTION_DEGRADED
+        return FocusPreviewReadiness(
+            state="degraded",
+            completed_repair_dates=completed_dates,
+            total_repair_dates=total_dates,
+            message=message,
+            ordinary_retention=outcomes.ordinary,
+            evidence_retention=outcomes.preview_evidence,
+        )
+    if progress is None:
+        return FocusPreviewReadiness(
+            state="ready",
+            completed_repair_dates=None,
+            total_repair_dates=None,
+            message=None,
+            ordinary_retention=outcomes.ordinary,
+            evidence_retention=outcomes.preview_evidence,
+        )
     if progress.status in {PreviewRepairStatus.QUEUED, PreviewRepairStatus.RUNNING}:
-        return (
-            "upgrading",
-            progress.completed_dates,
-            progress.total_dates,
-            _PREVIEW_UPGRADING,
+        return FocusPreviewReadiness(
+            state="upgrading",
+            completed_repair_dates=progress.completed_dates,
+            total_repair_dates=progress.total_dates,
+            message=_PREVIEW_UPGRADING,
+            ordinary_retention=outcomes.ordinary,
+            evidence_retention=outcomes.preview_evidence,
         )
     if progress.status is PreviewRepairStatus.COMPLETED:
-        return (
-            "ready",
-            progress.completed_dates,
-            progress.total_dates,
-            None,
+        return FocusPreviewReadiness(
+            state="ready",
+            completed_repair_dates=progress.completed_dates,
+            total_repair_dates=progress.total_dates,
+            message=None,
+            ordinary_retention=outcomes.ordinary,
+            evidence_retention=outcomes.preview_evidence,
         )
-    return (
-        "degraded",
-        progress.completed_dates,
-        progress.total_dates,
-        _PREVIEW_DEGRADED,
+    return FocusPreviewReadiness(
+        state="degraded",
+        completed_repair_dates=progress.completed_dates,
+        total_repair_dates=progress.total_dates,
+        message=_PREVIEW_DEGRADED,
+        ordinary_retention=outcomes.ordinary,
+        evidence_retention=outcomes.preview_evidence,
+    )
+
+
+def _retention_outcome_response(
+    outcome: PreviewRetentionOutcome | None,
+) -> FocusPreviewRetentionOutcomeResponse | None:
+    if outcome is None:
+        return None
+    diagnostic = (
+        None
+        if outcome.diagnostic is None
+        else FocusPreviewRetentionDiagnosticResponse(
+            code=outcome.diagnostic.code,
+            message=outcome.diagnostic.message,
+            error_type=outcome.diagnostic.error_type,
+        )
+    )
+    return FocusPreviewRetentionOutcomeResponse(
+        attempted_at=outcome.attempted_at,
+        status=outcome.status.value,
+        diagnostic=diagnostic,
     )
 
 
@@ -159,7 +258,7 @@ def _check_tenant_readiness(
             recovery_available=None,
         )
     elif not tables_ready:
-        preview_state = ("unavailable", None, None, _PREVIEW_UNAVAILABLE)
+        preview_state = _unavailable_preview_readiness()
     else:
         try:
             with backend_provider.acquire_backend(tenant_name, tenant_config) as backend:
@@ -176,7 +275,7 @@ def _check_tenant_readiness(
                 tenant_name,
                 type(exc).__name__,
             )
-            preview_state = ("unavailable", None, None, _PREVIEW_UNAVAILABLE)
+            preview_state = _unavailable_preview_readiness()
 
     return TenantReadiness(
         tenant_name=tenant_name,
@@ -190,10 +289,12 @@ def _check_tenant_readiness(
         permanent_failure=permanent_failure,
         topic_attribution_status=topic_attribution_status.status,
         topic_attribution_error=topic_attribution_status.error,
-        focus_preview_state=preview_state[0],
-        focus_preview_completed_repair_dates=preview_state[1],
-        focus_preview_total_repair_dates=preview_state[2],
-        focus_preview_message=preview_state[3],
+        focus_preview_state=preview_state.state,
+        focus_preview_completed_repair_dates=preview_state.completed_repair_dates,
+        focus_preview_total_repair_dates=preview_state.total_repair_dates,
+        focus_preview_message=preview_state.message,
+        focus_preview_ordinary_retention=_retention_outcome_response(preview_state.ordinary_retention),
+        focus_preview_evidence_retention=_retention_outcome_response(preview_state.evidence_retention),
     )
 
 

@@ -227,6 +227,8 @@ describe("TenantContext — adaptive polling interval", () => {
           focus_preview_completed_repair_dates: completedDates,
           focus_preview_total_repair_dates: totalDates,
           focus_preview_message: null,
+          focus_preview_ordinary_retention: null,
+          focus_preview_evidence_retention: null,
         },
       ],
     };
@@ -468,6 +470,8 @@ describe("TenantContext — context split (GAP-100)", () => {
         focus_preview_completed_repair_dates: null,
         focus_preview_total_repair_dates: null,
         focus_preview_message: null,
+        focus_preview_ordinary_retention: null,
+        focus_preview_evidence_retention: null,
       })),
     };
   }
@@ -587,5 +591,69 @@ describe("TenantContext — context split (GAP-100)", () => {
       expect(result.current.readiness).not.toBeNull();
     });
     expect(result.current.appStatus).toBeDefined();
+  });
+
+  it("retention outcome field changes propagate through the readiness fingerprint", async () => {
+    const { server } = await import("../test/mocks/server");
+
+    let first = true;
+    server.use(
+      http.get("/api/v1/readiness", () => {
+        if (first) {
+          first = false;
+          return HttpResponse.json(
+            makeReadinessForTenants([{ name: "acme", running: false }]),
+          );
+        }
+        return HttpResponse.json({
+          ...makeReadinessForTenants([{ name: "acme", running: false }]),
+          tenants: [
+            {
+              ...makeReadinessForTenants([{ name: "acme", running: false }])
+                .tenants[0],
+              focus_preview_state: "degraded" as const,
+              focus_preview_message:
+                "Retention cleanup needs attention. Review the latest retention outcome and worker logs; existing valid Preview data remains available.",
+              focus_preview_ordinary_retention: {
+                attempted_at: "2026-07-30T23:25:01Z",
+                status: "failure" as const,
+                diagnostic: {
+                  code: "focus_preview_ordinary_retention_failed",
+                  message:
+                    "Ordinary tenant retention cleanup failed. Review worker logs and restore tenant storage; existing valid Preview data remains available.",
+                  error_type: "OperationalError",
+                },
+              },
+              focus_preview_evidence_retention: null,
+            },
+          ],
+        });
+      }),
+    );
+
+    vi.useFakeTimers();
+    try {
+      const { result } = renderHook(() => useReadiness(), { wrapper });
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(200);
+      });
+      expect(result.current.readiness?.tenants[0].focus_preview_state).toBe(
+        "ready",
+      );
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(15001);
+      });
+      expect(result.current.readiness?.tenants[0].focus_preview_state).toBe(
+        "degraded",
+      );
+      expect(
+        result.current.readiness?.tenants[0].focus_preview_ordinary_retention
+          ?.diagnostic?.code,
+      ).toBe("focus_preview_ordinary_retention_failed");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

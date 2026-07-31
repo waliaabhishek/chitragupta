@@ -84,6 +84,8 @@ export const readinessFixture: ReadinessResponse = {
       focus_preview_completed_repair_dates: null,
       focus_preview_total_repair_dates: null,
       focus_preview_message: null,
+      focus_preview_ordinary_retention: null,
+      focus_preview_evidence_retention: null,
     },
     {
       tenant_name: "globex",
@@ -101,6 +103,8 @@ export const readinessFixture: ReadinessResponse = {
       focus_preview_completed_repair_dates: null,
       focus_preview_total_repair_dates: null,
       focus_preview_message: null,
+      focus_preview_ordinary_retention: null,
+      focus_preview_evidence_retention: null,
     },
   ],
 };

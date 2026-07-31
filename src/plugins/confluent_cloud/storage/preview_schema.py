@@ -99,13 +99,13 @@ def _source_v18() -> sa.Table:
 
 def _source_for_revision(target_revision: str) -> sa.Table:
     table = _source_v18()
-    if target_revision in {"021", "026", "027", "028", "030", "031"}:
+    if target_revision in {"021", "026", "027", "028", "030", "031", "032"}:
         table.append_column(sa.Column("billing_timestamp", sa.DateTime(timezone=True), nullable=True))
         table.append_column(sa.Column("billing_env_id", sa.String(), nullable=True))
         table.append_column(sa.Column("billing_resource_id", sa.String(), nullable=True))
         table.append_column(sa.Column("billing_product_type", sa.String(), nullable=True))
         table.append_column(sa.Column("billing_product_category", sa.String(), nullable=True))
-    if target_revision in {"026", "027", "028", "030", "031"}:
+    if target_revision in {"026", "027", "028", "030", "031", "032"}:
         table.append_column(sa.Column("capture_id", sa.String(), nullable=True))
     return table
 
@@ -119,7 +119,7 @@ def _sqlmodel_table(model: type[object]) -> sa.Table:
 
 def _expected_tables(target_revision: str) -> tuple[sa.Table, ...]:
     tables = [_source_for_revision(target_revision)]
-    if target_revision in {"021", "026", "027", "028", "030", "031"}:
+    if target_revision in {"021", "026", "027", "028", "030", "031", "032"}:
         from plugins.confluent_cloud.storage.preview_tables import (
             CCloudAllocationLineagePortionTable,
             CCloudAllocationLineageRunTable,
@@ -131,7 +131,7 @@ def _expected_tables(target_revision: str) -> tuple[sa.Table, ...]:
                 _sqlmodel_table(CCloudAllocationLineagePortionTable),
             )
         )
-    if target_revision in {"026", "027", "028", "030", "031"}:
+    if target_revision in {"026", "027", "028", "030", "031", "032"}:
         from plugins.confluent_cloud.storage.preview_tables import (
             CCloudOrganizationAuthorityAttemptTable,
             CCloudSourceCaptureReadinessTable,
@@ -145,7 +145,7 @@ def _expected_tables(target_revision: str) -> tuple[sa.Table, ...]:
                 _sqlmodel_table(CCloudOrganizationAuthorityAttemptTable),
             )
         )
-    if target_revision in {"027", "028", "030", "031"}:
+    if target_revision in {"027", "028", "030", "031", "032"}:
         from plugins.confluent_cloud.storage.preview_tables import (
             CCloudFocusPreviewRepairDateTable,
             CCloudFocusPreviewRepairTable,
@@ -159,22 +159,28 @@ def _expected_tables(target_revision: str) -> tuple[sa.Table, ...]:
                 _sqlmodel_table(CCloudFocusPreviewRepairDateTable),
             )
         )
-    if target_revision in {"028", "030", "031"}:
+    if target_revision in {"028", "030", "031", "032"}:
         from core.preview.persistence import PreviewArtifactFileTable
 
         tables.append(_sqlmodel_table(PreviewArtifactFileTable))
-    if target_revision in {"030", "031"}:
+    if target_revision in {"030", "031", "032"}:
         from plugins.confluent_cloud.storage.preview_tables import (
             CCloudFocusPreviewRepairHeadTable,
         )
 
         tables.append(_sqlmodel_table(CCloudFocusPreviewRepairHeadTable))
-    if target_revision == "031":
+    if target_revision in {"031", "032"}:
         from plugins.confluent_cloud.storage.preview_tables import (
             CCloudPreviewSourceAllocationLineagePortionTable,
         )
 
         tables.append(_sqlmodel_table(CCloudPreviewSourceAllocationLineagePortionTable))
+    if target_revision == "032":
+        from plugins.confluent_cloud.storage.preview_tables import (
+            CCloudFocusPreviewRetentionOutcomeTable,
+        )
+
+        tables.append(_sqlmodel_table(CCloudFocusPreviewRetentionOutcomeTable))
     return tuple(tables)
 
 
@@ -244,9 +250,9 @@ def _allowed_missing_columns(table_name: str, target_revision: str) -> frozenset
     if table_name != _SOURCE_TABLE:
         return frozenset()
     allowed: tuple[str, ...] = ()
-    if target_revision in {"021", "026", "027", "028", "030", "031"}:
+    if target_revision in {"021", "026", "027", "028", "030", "031", "032"}:
         allowed += _V21_COLUMNS
-    if target_revision in {"026", "027", "028", "030", "031"}:
+    if target_revision in {"026", "027", "028", "030", "031", "032"}:
         allowed += _V26_COLUMNS
     return frozenset(allowed)
 
@@ -520,9 +526,9 @@ def _downgrade_artifact_catalog(connection: Connection) -> None:
 
 class CCloudPreviewSchemaManager:
     def prepare(self, connection: Connection, *, target_revision: str) -> None:
-        if target_revision not in {"018", "021", "026", "027", "028", "030", "031"}:
+        if target_revision not in {"018", "021", "026", "027", "028", "030", "031", "032"}:
             raise ValueError(f"unknown Preview evidence target revision: {target_revision}")
-        if target_revision in {"028", "030", "031"}:
+        if target_revision in {"028", "030", "031", "032"}:
             _prepare_artifact_catalog_parents(connection)
         plans = tuple(
             _plan_table_repair(connection, table, target_revision=target_revision)
@@ -530,9 +536,9 @@ class CCloudPreviewSchemaManager:
         )
         for plan in plans:
             plan.apply(connection)
-        if target_revision in {"027", "028", "030", "031"}:
+        if target_revision in {"027", "028", "030", "031", "032"}:
             self._copy_readiness_history(connection)
-        if target_revision in {"030", "031"}:
+        if target_revision in {"030", "031", "032"}:
             self._backfill_repair_heads(connection)
 
     @staticmethod
@@ -654,6 +660,11 @@ class CCloudPreviewSchemaManager:
     def downgrade(self, connection: Connection, *, target_revision: str) -> None:
         inspector = inspect(connection)
         names = set(inspector.get_table_names())
+        if target_revision == "032":
+            name = "ccloud_focus_preview_retention_outcomes"
+            if name in names:
+                sa.Table(name, sa.MetaData(), autoload_with=connection).drop(connection)
+            return
         if target_revision == "031":
             name = "ccloud_preview_source_allocation_lineage_portions"
             if name in names:

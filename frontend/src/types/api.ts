@@ -271,6 +271,18 @@ export interface HealthResponse {
 
 // --- Readiness ---
 
+export interface FocusPreviewRetentionDiagnostic {
+  code: string;
+  message: string;
+  error_type: string;
+}
+
+export interface FocusPreviewRetentionOutcome {
+  attempted_at: string;
+  status: "success" | "failure";
+  diagnostic: FocusPreviewRetentionDiagnostic | null;
+}
+
 export interface TenantReadiness {
   tenant_name: string;
   tables_ready: boolean;
@@ -292,6 +304,8 @@ export interface TenantReadiness {
   focus_preview_completed_repair_dates: number | null;
   focus_preview_total_repair_dates: number | null;
   focus_preview_message: string | null;
+  focus_preview_ordinary_retention: FocusPreviewRetentionOutcome | null;
+  focus_preview_evidence_retention: FocusPreviewRetentionOutcome | null;
 }
 
 export interface ReadinessResponse {

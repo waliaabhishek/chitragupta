@@ -68,6 +68,7 @@ class CCloudStorageModule:
             CCloudFocusPreviewRepairDateTable,
             CCloudFocusPreviewRepairHeadTable,
             CCloudFocusPreviewRepairTable,
+            CCloudFocusPreviewRetentionOutcomeTable,
             CCloudOrganizationAuthorityAttemptTable,
             CCloudPreviewSourceAllocationLineagePortionTable,
             CCloudSourceCaptureReadinessHistoryTable,
@@ -83,6 +84,7 @@ class CCloudStorageModule:
             CCloudFocusPreviewRepairTable.__table__,  # type: ignore[attr-defined]
             CCloudFocusPreviewRepairDateTable.__table__,  # type: ignore[attr-defined]
             CCloudFocusPreviewRepairHeadTable.__table__,  # type: ignore[attr-defined]
+            CCloudFocusPreviewRetentionOutcomeTable.__table__,  # type: ignore[attr-defined]
             CCloudOrganizationAuthorityAttemptTable.__table__,  # type: ignore[attr-defined]
             CCloudAllocationLineageRunTable.__table__,  # type: ignore[attr-defined]
             CCloudAllocationLineagePortionTable.__table__,  # type: ignore[attr-defined]

@@ -51,6 +51,13 @@ from core.preview.repair import (
     PreviewRepairProgress,
     PreviewRepairStatus,
 )
+from core.preview.retention import (
+    PreviewRetentionCleanupKind,
+    PreviewRetentionDiagnostic,
+    PreviewRetentionOutcome,
+    PreviewRetentionOutcomeSet,
+    PreviewRetentionOutcomeStatus,
+)
 from core.preview.storage_availability import PreviewEvidenceSchemaError
 from core.storage.backends.sqlmodel.tables import PipelineStateTable
 from core.storage.backends.sqlmodel.timestamps import (
@@ -64,6 +71,7 @@ from plugins.confluent_cloud.storage.preview_tables import (
     CCloudFocusPreviewRepairDateTable,
     CCloudFocusPreviewRepairHeadTable,
     CCloudFocusPreviewRepairTable,
+    CCloudFocusPreviewRetentionOutcomeTable,
     CCloudOrganizationAuthorityAttemptTable,
     CCloudPreviewSourceAllocationLineagePortionTable,
     CCloudSourceCaptureReadinessHistoryTable,
@@ -384,6 +392,102 @@ def _repair_date(row: CCloudFocusPreviewRepairDateTable) -> PreviewRepairDate:
             row.source_correlation_ids_json,
         ),
     )
+
+
+def _retention_outcome(
+    row: CCloudFocusPreviewRetentionOutcomeTable,
+) -> PreviewRetentionOutcome:
+    diagnostic_values = (
+        row.diagnostic_code,
+        row.diagnostic_message,
+        row.diagnostic_error_type,
+    )
+    if all(value is None for value in diagnostic_values):
+        diagnostic = None
+    elif all(value is not None for value in diagnostic_values):
+        diagnostic = PreviewRetentionDiagnostic(
+            code=cast("str", row.diagnostic_code),
+            message=cast("str", row.diagnostic_message),
+            error_type=cast("str", row.diagnostic_error_type),
+        )
+    else:
+        raise ValueError("incomplete persisted retention diagnostic")
+    return PreviewRetentionOutcome(
+        owner=row.tenant_id,
+        cleanup_kind=PreviewRetentionCleanupKind(row.cleanup_kind),
+        attempted_at=_utc(row.attempted_at),
+        status=PreviewRetentionOutcomeStatus(row.status),
+        diagnostic=diagnostic,
+    )
+
+
+class SQLModelPreviewRetentionOutcomeRepository:
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def upsert_latest(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        outcome: PreviewRetentionOutcome,
+    ) -> None:
+        if not ecosystem.strip() or not tenant_id.strip():
+            raise ValueError("retention outcome storage owner must not be blank")
+        if outcome.owner != tenant_id:
+            raise ValueError("retention outcome owner must match tenant_id")
+        values = {
+            "attempted_at": _require_aware(outcome.attempted_at, "attempted_at"),
+            "status": outcome.status.value,
+            "diagnostic_code": None if outcome.diagnostic is None else outcome.diagnostic.code,
+            "diagnostic_message": None if outcome.diagnostic is None else outcome.diagnostic.message,
+            "diagnostic_error_type": (None if outcome.diagnostic is None else outcome.diagnostic.error_type),
+        }
+        result = self._session.exec(
+            update(CCloudFocusPreviewRetentionOutcomeTable)
+            .where(
+                col(CCloudFocusPreviewRetentionOutcomeTable.ecosystem) == ecosystem,
+                col(CCloudFocusPreviewRetentionOutcomeTable.tenant_id) == tenant_id,
+                col(CCloudFocusPreviewRetentionOutcomeTable.cleanup_kind) == outcome.cleanup_kind.value,
+            )
+            .values(**values)
+        )
+        if int(getattr(result, "rowcount", 0)) == 0:
+            self._session.add(
+                CCloudFocusPreviewRetentionOutcomeTable(
+                    ecosystem=ecosystem,
+                    tenant_id=tenant_id,
+                    cleanup_kind=outcome.cleanup_kind.value,
+                    **values,
+                )
+            )
+            self._session.flush()
+
+    def get_latest_for_owner(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+    ) -> PreviewRetentionOutcomeSet:
+        try:
+            rows = self._session.exec(
+                select(CCloudFocusPreviewRetentionOutcomeTable).where(
+                    col(CCloudFocusPreviewRetentionOutcomeTable.ecosystem) == ecosystem,
+                    col(CCloudFocusPreviewRetentionOutcomeTable.tenant_id) == tenant_id,
+                )
+            ).all()
+            by_kind: dict[PreviewRetentionCleanupKind, PreviewRetentionOutcome] = {}
+            for row in rows:
+                outcome = _retention_outcome(row)
+                if outcome.cleanup_kind in by_kind:
+                    raise ValueError("duplicate persisted retention cleanup kind")
+                by_kind[outcome.cleanup_kind] = outcome
+            return PreviewRetentionOutcomeSet(
+                ordinary=by_kind.get(PreviewRetentionCleanupKind.ORDINARY),
+                preview_evidence=by_kind.get(PreviewRetentionCleanupKind.PREVIEW_EVIDENCE),
+            )
+        except PreviewEvidenceSchemaError:
+            raise
+        except (TypeError, ValueError) as exc:
+            raise PreviewEvidenceSchemaError("persisted retention outcome is invalid") from exc
 
 
 class SQLModelPreviewRepairRepository:

@@ -1412,8 +1412,10 @@ class WorkflowRunner:
         exact_cutoff = cleanup_now.astimezone(UTC) - timedelta(days=config.retention_days)
         calculation_cutoff_date = exact_cutoff.date()
         calculation_cutoff = datetime.combine(calculation_cutoff_date, datetime.min.time(), tzinfo=UTC)
+        preview_backend: object | None = None
         try:
             with self._acquire_runtime(name, config) as runtime:
+                preview_backend = runtime.storage
                 with runtime.storage.create_unit_of_work() as uow:
                     deleted_billing = uow.billing.delete_before(
                         config.ecosystem,
@@ -1502,20 +1504,110 @@ class WorkflowRunner:
                                 + lineage_deleted.runs
                                 + organization_deleted
                             )
-                        except Exception:
+                            self._record_focus_retention_outcome(
+                                name,
+                                config,
+                                preview_backend,
+                                cleanup_kind="preview_evidence",
+                                attempted_at=cleanup_now,
+                            )
+                        except Exception as exc:
+                            self._record_focus_retention_outcome(
+                                name,
+                                config,
+                                preview_backend,
+                                cleanup_kind="preview_evidence",
+                                attempted_at=cleanup_now,
+                                error=exc,
+                            )
                             logger.exception(
                                 "Tenant %s: Preview evidence retention cleanup failed",
                                 name,
                             )
-            if total_deleted > 0:
-                logger.info(
-                    "Tenant %s: retention cleanup deleted %d records (before %s)",
+                if total_deleted > 0:
+                    logger.info(
+                        "Tenant %s: retention cleanup deleted %d records (before %s)",
+                        name,
+                        total_deleted,
+                        calculation_cutoff_date,
+                    )
+                self._record_focus_retention_outcome(
                     name,
-                    total_deleted,
-                    calculation_cutoff_date,
+                    config,
+                    preview_backend,
+                    cleanup_kind="ordinary",
+                    attempted_at=cleanup_now,
                 )
-        except Exception:
+        except Exception as exc:
+            if preview_backend is not None:
+                try:
+                    with self._acquire_runtime(name, config) as outcome_runtime:
+                        self._record_focus_retention_outcome(
+                            name,
+                            config,
+                            outcome_runtime.storage,
+                            cleanup_kind="ordinary",
+                            attempted_at=cleanup_now,
+                            error=exc,
+                        )
+                except Exception:
+                    logger.warning(
+                        "Tenant %s: retention outcome recording runtime acquisition failed",
+                        name,
+                    )
             logger.exception("Tenant %s: retention cleanup failed", name)
+
+    @staticmethod
+    def _record_focus_retention_outcome(
+        name: str,
+        config: TenantConfig,
+        backend: object,
+        *,
+        cleanup_kind: Literal["ordinary", "preview_evidence"],
+        attempted_at: datetime,
+        error: BaseException | None = None,
+    ) -> None:
+        if not config.focus_preview_enabled:
+            return
+        try:
+            from core.preview.persistence import PreviewEvidenceStorageBackend
+            from core.preview.retention import (
+                PreviewRetentionCleanupKind,
+                PreviewRetentionOutcome,
+                PreviewRetentionOutcomeStatus,
+                canonical_retention_attempt,
+                retention_failure_diagnostic,
+            )
+            from core.preview.storage_availability import PreviewEvidenceAvailabilityState
+
+            if not isinstance(backend, PreviewEvidenceStorageBackend):
+                return
+            if backend.preview_evidence_availability.state is not PreviewEvidenceAvailabilityState.READY:
+                return
+            kind = PreviewRetentionCleanupKind(cleanup_kind)
+            outcome = PreviewRetentionOutcome(
+                owner=config.tenant_id,
+                cleanup_kind=kind,
+                attempted_at=canonical_retention_attempt(attempted_at),
+                status=(
+                    PreviewRetentionOutcomeStatus.SUCCESS if error is None else PreviewRetentionOutcomeStatus.FAILURE
+                ),
+                diagnostic=(None if error is None else retention_failure_diagnostic(kind, error)),
+            )
+            with backend.create_preview_evidence_unit_of_work() as uow:
+                uow.retention_outcomes.upsert_latest(
+                    config.ecosystem,
+                    config.tenant_id,
+                    outcome,
+                )
+                uow.commit()
+        except Exception as exc:
+            logger.warning(
+                "Tenant %s: retention outcome recording failed cleanup_kind=%s error_type=%s",
+                name,
+                cleanup_kind,
+                type(exc).__name__,
+            )
 
     def _publish_scheduled_revisions(
         self,

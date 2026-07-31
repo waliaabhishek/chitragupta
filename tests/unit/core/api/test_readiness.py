@@ -19,6 +19,12 @@ from core.config.models import (
     TenantConfig,
 )
 from core.models.pipeline import PipelineState
+from core.preview.retention import (
+    PreviewRetentionCleanupKind,
+    PreviewRetentionOutcome,
+    PreviewRetentionOutcomeStatus,
+    retention_failure_diagnostic,
+)
 from core.storage.backends.sqlmodel.unit_of_work import SQLModelBackend
 from plugins.confluent_cloud.storage.module import CCloudStorageModule
 from tests.integration.core.api.backend_provider import FixedTenantBackendProvider, install_backend
@@ -308,6 +314,90 @@ def _create_repair(backend: SQLModelBackend, repair: object) -> None:
         uow.commit()
 
 
+def _write_retention_outcome(
+    backend: SQLModelBackend,
+    tenant: TenantConfig,
+    *,
+    kind: PreviewRetentionCleanupKind,
+    status: PreviewRetentionOutcomeStatus,
+    attempted_at: datetime,
+) -> None:
+    error = RuntimeError(f"{kind.value} cleanup failed")
+    with backend.create_preview_evidence_unit_of_work() as uow:
+        uow.retention_outcomes.upsert_latest(
+            tenant.ecosystem,
+            tenant.tenant_id,
+            PreviewRetentionOutcome(
+                owner=tenant.tenant_id,
+                cleanup_kind=kind,
+                attempted_at=attempted_at,
+                status=status,
+                diagnostic=(
+                    retention_failure_diagnostic(kind, error)
+                    if status is PreviewRetentionOutcomeStatus.FAILURE
+                    else None
+                ),
+            ),
+        )
+        uow.commit()
+
+
+def _set_repair_state(
+    backend: SQLModelBackend,
+    *,
+    repair_id: str,
+    parent_status: str,
+    date_statuses: tuple[str, str, str],
+) -> None:
+    now = datetime(2026, 7, 24, tzinfo=UTC)
+    with backend._engine.begin() as connection:  # noqa: SLF001
+        connection.execute(
+            text(
+                """
+                UPDATE ccloud_focus_preview_repairs
+                SET status = :status,
+                    started_at = :now,
+                    completed_at = CASE WHEN :status IN
+                        ('completed', 'completed_with_failures', 'failed')
+                        THEN :now ELSE NULL END,
+                    diagnostic_code = CASE WHEN :status = 'failed' THEN 'failed' ELSE NULL END,
+                    diagnostic_message = CASE WHEN :status = 'failed' THEN 'retry' ELSE NULL END,
+                    diagnostic_retryable = CASE WHEN :status = 'failed' THEN 1 ELSE NULL END
+                WHERE repair_id = :repair_id
+                """
+            ),
+            {"status": parent_status, "now": now, "repair_id": repair_id},
+        )
+        rows = tuple(
+            connection.execute(
+                text(
+                    """
+                    SELECT tracking_date
+                    FROM ccloud_focus_preview_repair_dates
+                    WHERE repair_id = :repair_id
+                    ORDER BY tracking_date
+                    """
+                ),
+                {"repair_id": repair_id},
+            ).scalars()
+        )
+        for tracking_date, status in zip(rows, date_statuses, strict=True):
+            connection.execute(
+                text(
+                    """
+                    UPDATE ccloud_focus_preview_repair_dates
+                    SET status = :status
+                    WHERE repair_id = :repair_id AND tracking_date = :tracking_date
+                    """
+                ),
+                {
+                    "status": status,
+                    "repair_id": repair_id,
+                    "tracking_date": tracking_date,
+                },
+            )
+
+
 def test_tenant_readiness_schema_requires_five_state_preview_contract() -> None:
     from core.api.schemas import TenantReadiness
 
@@ -326,7 +416,21 @@ def test_tenant_readiness_schema_requires_five_state_preview_contract() -> None:
         "focus_preview_completed_repair_dates",
         "focus_preview_total_repair_dates",
         "focus_preview_message",
+        "focus_preview_ordinary_retention",
+        "focus_preview_evidence_retention",
     } <= required
+
+
+def test_disabled_preview_exposes_null_structured_retention_outcomes() -> None:
+    result = _call_check(
+        latest_run=None,
+        count=1,
+        workflow_runner=None,
+    )
+
+    assert result.focus_preview_state == "disabled"
+    assert result.focus_preview_ordinary_retention is None
+    assert result.focus_preview_evidence_retention is None
 
 
 def test_disabled_preview_does_not_probe_storage_or_recovery() -> None:
@@ -338,16 +442,24 @@ def test_disabled_preview_does_not_probe_storage_or_recovery() -> None:
         focus_preview=None,
     )
 
-    assert _focus_preview_readiness(
+    state = _focus_preview_readiness(
         tenant_config=tenant,
         backend=object(),
         recovery_available=False,
+    )
+    assert (
+        state.state,
+        state.completed_repair_dates,
+        state.total_repair_dates,
+        state.message,
     ) == (
         "disabled",
         None,
         None,
         "FOCUS Mapping Preview is not enabled for this tenant.",
     )
+    assert state.ordinary_retention is None
+    assert state.evidence_retention is None
 
 
 def test_enabled_preview_without_repair_history_is_ready(tmp_path: Path) -> None:
@@ -355,11 +467,19 @@ def test_enabled_preview_without_repair_history_is_ready(tmp_path: Path) -> None
 
     backend = _preview_backend(tmp_path, "ready")
     try:
-        assert _focus_preview_readiness(
+        state = _focus_preview_readiness(
             tenant_config=_preview_tenant(tmp_path),
             backend=backend,
             recovery_available=True,
+        )
+        assert (
+            state.state,
+            state.completed_repair_dates,
+            state.total_repair_dates,
+            state.message,
         ) == ("ready", None, None, None)
+        assert state.ordinary_retention is None
+        assert state.evidence_retention is None
     finally:
         backend.dispose()
 
@@ -386,22 +506,23 @@ def test_failed_recovery_and_storage_failure_are_feature_unavailable(
                 tenant_id=tenant.tenant_id,
             ),
         )
-        assert (
-            _focus_preview_readiness(
+        for candidate_backend, recovery_available in (
+            (backend, False),
+            (object(), True),
+        ):
+            state = _focus_preview_readiness(
                 tenant_config=tenant,
-                backend=backend,
-                recovery_available=False,
+                backend=candidate_backend,
+                recovery_available=recovery_available,
             )
-            == unavailable
-        )
-        assert (
-            _focus_preview_readiness(
-                tenant_config=tenant,
-                backend=object(),
-                recovery_available=True,
-            )
-            == unavailable
-        )
+            assert (
+                state.state,
+                state.completed_repair_dates,
+                state.total_repair_dates,
+                state.message,
+            ) == unavailable
+            assert state.ordinary_retention is None
+            assert state.evidence_retention is None
     finally:
         backend.dispose()
 
@@ -515,14 +636,206 @@ def test_preview_state_and_date_progress_come_from_durable_current_repair(
                     {"status": status, "tracking_date": tracking_date},
                 )
 
-        assert (
-            _focus_preview_readiness(
-                tenant_config=tenant,
-                backend=backend,
-                recovery_available=True,
-            )
-            == expected
+        state = _focus_preview_readiness(
+            tenant_config=tenant,
+            backend=backend,
+            recovery_available=True,
         )
+        assert (
+            state.state,
+            state.completed_repair_dates,
+            state.total_repair_dates,
+            state.message,
+        ) == expected
+        assert state.ordinary_retention is None
+        assert state.evidence_retention is None
+    finally:
+        backend.dispose()
+
+
+@pytest.mark.parametrize(
+    ("repair_status", "date_statuses", "completed_dates"),
+    [
+        ("queued", ("queued", "queued", "queued"), 0),
+        ("running", ("succeeded", "running", "queued"), 1),
+    ],
+)
+def test_retention_failure_degrades_active_repair_without_losing_progress_or_cause(
+    tmp_path: Path,
+    repair_status: str,
+    date_statuses: tuple[str, str, str],
+    completed_dates: int,
+) -> None:
+    from core.api.routes.readiness import _focus_preview_readiness
+
+    tenant = _preview_tenant(tmp_path)
+    backend = _preview_backend(tmp_path, f"retention-{repair_status}")
+    attempted_at = datetime(2026, 7, 30, 22, 1, tzinfo=UTC)
+    try:
+        _create_repair(
+            backend,
+            _queued_repair(
+                "repair-active",
+                tenant_name="production",
+                tenant_id=tenant.tenant_id,
+            ),
+        )
+        if repair_status == "running":
+            _set_repair_state(
+                backend,
+                repair_id="repair-active",
+                parent_status=repair_status,
+                date_statuses=date_statuses,
+            )
+        _write_retention_outcome(
+            backend,
+            tenant,
+            kind=PreviewRetentionCleanupKind.ORDINARY,
+            status=PreviewRetentionOutcomeStatus.FAILURE,
+            attempted_at=attempted_at,
+        )
+
+        state = _focus_preview_readiness(
+            tenant_config=tenant,
+            backend=backend,
+            recovery_available=True,
+        )
+
+        assert state.state == "degraded"
+        assert state.completed_repair_dates == completed_dates
+        assert state.total_repair_dates == 3
+        assert state.message == (
+            "Retention cleanup needs attention while historical repair is in progress. "
+            "Existing valid Preview data remains available."
+        )
+        assert state.ordinary_retention is not None
+        assert state.ordinary_retention.cleanup_kind is PreviewRetentionCleanupKind.ORDINARY
+        assert state.ordinary_retention.status is PreviewRetentionOutcomeStatus.FAILURE
+        assert state.ordinary_retention.attempted_at == attempted_at
+        assert state.ordinary_retention.diagnostic == retention_failure_diagnostic(
+            PreviewRetentionCleanupKind.ORDINARY,
+            RuntimeError("ordinary cleanup failed"),
+        )
+        assert state.evidence_retention is None
+    finally:
+        backend.dispose()
+
+
+def test_retention_recovery_clears_only_matching_cause_and_preserves_failed_repair(
+    tmp_path: Path,
+) -> None:
+    from core.api.routes.readiness import _focus_preview_readiness
+
+    tenant = _preview_tenant(tmp_path)
+    backend = _preview_backend(tmp_path, "retention-and-repair-failures")
+    ordinary_failure_at = datetime(2026, 7, 30, 22, 1, tzinfo=UTC)
+    evidence_failure_at = datetime(2026, 7, 30, 22, 2, tzinfo=UTC)
+    try:
+        _create_repair(
+            backend,
+            _queued_repair(
+                "repair-failed",
+                tenant_name="production",
+                tenant_id=tenant.tenant_id,
+            ),
+        )
+        _set_repair_state(
+            backend,
+            repair_id="repair-failed",
+            parent_status="completed_with_failures",
+            date_statuses=("succeeded", "failed", "succeeded"),
+        )
+        _write_retention_outcome(
+            backend,
+            tenant,
+            kind=PreviewRetentionCleanupKind.ORDINARY,
+            status=PreviewRetentionOutcomeStatus.FAILURE,
+            attempted_at=ordinary_failure_at,
+        )
+        _write_retention_outcome(
+            backend,
+            tenant,
+            kind=PreviewRetentionCleanupKind.PREVIEW_EVIDENCE,
+            status=PreviewRetentionOutcomeStatus.FAILURE,
+            attempted_at=evidence_failure_at,
+        )
+
+        combined = _focus_preview_readiness(
+            tenant_config=tenant,
+            backend=backend,
+            recovery_available=True,
+        )
+        assert (
+            combined.state,
+            combined.completed_repair_dates,
+            combined.total_repair_dates,
+            combined.message,
+        ) == (
+            "degraded",
+            3,
+            3,
+            "Historical repair and retention cleanup need attention. Retry failed repair dates after "
+            "retention cleanup succeeds; existing valid Preview data remains available.",
+        )
+        assert combined.ordinary_retention is not None
+        assert combined.ordinary_retention.status is PreviewRetentionOutcomeStatus.FAILURE
+        assert combined.evidence_retention is not None
+        assert combined.evidence_retention.status is PreviewRetentionOutcomeStatus.FAILURE
+
+        ordinary_success_at = datetime(2026, 7, 30, 22, 3, tzinfo=UTC)
+        _write_retention_outcome(
+            backend,
+            tenant,
+            kind=PreviewRetentionCleanupKind.ORDINARY,
+            status=PreviewRetentionOutcomeStatus.SUCCESS,
+            attempted_at=ordinary_success_at,
+        )
+        evidence_still_failed = _focus_preview_readiness(
+            tenant_config=tenant,
+            backend=backend,
+            recovery_available=True,
+        )
+        assert (
+            evidence_still_failed.state,
+            evidence_still_failed.completed_repair_dates,
+            evidence_still_failed.total_repair_dates,
+        ) == ("degraded", 3, 3)
+        assert evidence_still_failed.ordinary_retention is not None
+        assert evidence_still_failed.ordinary_retention.status is PreviewRetentionOutcomeStatus.SUCCESS
+        assert evidence_still_failed.ordinary_retention.attempted_at == ordinary_success_at
+        assert evidence_still_failed.ordinary_retention.diagnostic is None
+        assert evidence_still_failed.evidence_retention == combined.evidence_retention
+
+        evidence_success_at = datetime(2026, 7, 30, 22, 4, tzinfo=UTC)
+        _write_retention_outcome(
+            backend,
+            tenant,
+            kind=PreviewRetentionCleanupKind.PREVIEW_EVIDENCE,
+            status=PreviewRetentionOutcomeStatus.SUCCESS,
+            attempted_at=evidence_success_at,
+        )
+        repair_still_failed = _focus_preview_readiness(
+            tenant_config=tenant,
+            backend=backend,
+            recovery_available=True,
+        )
+        assert (
+            repair_still_failed.state,
+            repair_still_failed.completed_repair_dates,
+            repair_still_failed.total_repair_dates,
+            repair_still_failed.message,
+        ) == (
+            "degraded",
+            3,
+            3,
+            "Historical repair needs attention. Retry the failed dates with a new bounded repair; "
+            "existing valid Preview data remains available.",
+        )
+        assert repair_still_failed.ordinary_retention == evidence_still_failed.ordinary_retention
+        assert repair_still_failed.evidence_retention is not None
+        assert repair_still_failed.evidence_retention.status is PreviewRetentionOutcomeStatus.SUCCESS
+        assert repair_still_failed.evidence_retention.attempted_at == evidence_success_at
+        assert repair_still_failed.evidence_retention.diagnostic is None
     finally:
         backend.dispose()
 
@@ -558,8 +871,11 @@ def test_unresolved_history_is_unavailable(tmp_path: Path) -> None:
             backend=backend,
             recovery_available=True,
         )
-        assert state[0] == "unavailable"
-        assert state[1:3] == (None, None)
+        assert state.state == "unavailable"
+        assert state.completed_repair_dates is None
+        assert state.total_repair_dates is None
+        assert state.ordinary_retention is None
+        assert state.evidence_retention is None
     finally:
         backend.dispose()
 

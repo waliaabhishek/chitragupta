@@ -31,7 +31,7 @@ def test_revision_028_defines_preview_artifact_catalog_migration_in_current_chai
         / "028_add_preview_artifact_file_catalog.py"
     )
 
-    assert script.get_current_head() == "031"
+    assert script.get_current_head() == "032"
     source = migration_path.read_text(encoding="utf-8")
     assert 'run_preview_evidence_step("028")' in source
     assert 'run_preview_evidence_downgrade_step("028")' in source

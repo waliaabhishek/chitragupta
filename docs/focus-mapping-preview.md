@@ -315,9 +315,9 @@ five tenant-scoped states:
 | State | Customer behavior |
 |---|---|
 | `disabled` | Preview is not configured for this tenant. |
-| `ready` | Preview is available and no repair is active. |
+| `ready` | Preview is available and no repair or retention cause needs attention. |
 | `upgrading` | A repair is queued or running. Existing valid packages and revisions remain available. |
-| `degraded` | A repair failed, completed with failed dates, or was interrupted. Existing valid packages remain available; retry failed dates with a new bounded repair. |
+| `degraded` | Repair or retention cleanup needs attention. Existing valid packages and revisions remain available; use repair progress and the structured retention outcomes to identify each cause. |
 | `unavailable` | Preview readiness or storage cannot be read safely. Restore availability before retrying. |
 
 During and after repair, **Date progress** is shown as completed repair dates
@@ -325,8 +325,20 @@ out of total requested dates. Both succeeded and failed dates count as
 completed lifecycle progress; failed dates make the feature `degraded`. This is
 not data-volume progress and no percentage is implied.
 
+Readiness reports the latest ordinary tenant retention attempt in
+`focus_preview_ordinary_retention` and the latest Preview evidence retention
+attempt in `focus_preview_evidence_retention`. Each structured outcome contains
+its attempt time, success or failure status, and an operator-facing diagnostic
+on failure. Either failure makes Preview `degraded`, including while repair is
+queued or running. Follow the matching diagnostic and worker logs, restore the
+affected storage or cleanup dependency, and allow the next scheduled cycle to
+retry. A later success clears only its matching retention failure; the other
+retention outcome and repair progress remain intact.
+
 Only FOCUS Mapping Preview receives these states. Billing, chargeback,
 inventory, the ordinary pipeline, and unrelated navigation remain available.
+Existing valid Preview packages and revisions also remain available during
+retention degradation.
 Readiness polls every five seconds while a tenant is `upgrading` and returns to
 the normal fifteen-second cadence after the repair reaches a terminal state.
 

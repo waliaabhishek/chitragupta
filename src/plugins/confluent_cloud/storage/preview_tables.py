@@ -220,6 +220,35 @@ class CCloudFocusPreviewRepairHeadTable(SQLModel, table=True):
     )
 
 
+class CCloudFocusPreviewRetentionOutcomeTable(SQLModel, table=True):
+    __tablename__ = "ccloud_focus_preview_retention_outcomes"
+    __table_args__ = (
+        PrimaryKeyConstraint("ecosystem", "tenant_id", "cleanup_kind"),
+        Index(
+            "ix_ccloud_focus_preview_retention_owner",
+            "ecosystem",
+            "tenant_id",
+        ),
+        CheckConstraint(
+            "cleanup_kind IN ('ordinary','preview_evidence')",
+            name="ck_ccloud_focus_preview_retention_kind",
+        ),
+        CheckConstraint(
+            "status IN ('success','failure')",
+            name="ck_ccloud_focus_preview_retention_status",
+        ),
+    )
+
+    ecosystem: str = Field(primary_key=True)
+    tenant_id: str = Field(primary_key=True)
+    cleanup_kind: str = Field(primary_key=True)
+    attempted_at: datetime = Field(sa_column=Column(UTCSecondDateTime(), nullable=False))
+    status: str
+    diagnostic_code: str | None = Field(default=None)
+    diagnostic_message: str | None = Field(default=None)
+    diagnostic_error_type: str | None = Field(default=None)
+
+
 class CCloudOrganizationAuthorityAttemptTable(SQLModel, table=True):
     __tablename__ = "ccloud_organization_authority_attempts"
     __table_args__ = (
@@ -256,6 +285,7 @@ __all__ = [
     "CCloudFocusPreviewRepairDateTable",
     "CCloudFocusPreviewRepairHeadTable",
     "CCloudFocusPreviewRepairTable",
+    "CCloudFocusPreviewRetentionOutcomeTable",
     "CCloudSourceCaptureReadinessTable",
     "CCloudSourceCaptureReadinessHistoryTable",
     "CCloudSourceEvidenceAttemptTable",

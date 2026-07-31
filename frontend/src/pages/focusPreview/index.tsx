@@ -231,6 +231,18 @@ export function FocusPreviewPage({ now = () => new Date() }: FocusPreviewPagePro
   const focusPreviewState = focusPreviewReadiness?.focus_preview_state;
   const featureBlocked =
     focusPreviewState === "disabled" || focusPreviewState === "unavailable";
+  const retentionFailures = [
+    {
+      label: "Ordinary tenant retention",
+      outcome: focusPreviewReadiness?.focus_preview_ordinary_retention,
+    },
+    {
+      label: "FOCUS Preview evidence retention",
+      outcome: focusPreviewReadiness?.focus_preview_evidence_retention,
+    },
+  ].flatMap(({ label, outcome }) =>
+    outcome?.status === "failure" ? [{ label, outcome }] : [],
+  );
   const [initialRange] = useState(() => getCurrentUtcMonthRange(now()));
   const [grain, setGrain] = useState<"monthly" | "daily">("monthly");
   const [month, setMonth] = useState(() => getCurrentUtcMonth(now()));
@@ -710,7 +722,35 @@ export function FocusPreviewPage({ now = () => new Date() }: FocusPreviewPagePro
           description={`Date progress: ${focusPreviewReadiness?.focus_preview_completed_repair_dates ?? 0} of ${focusPreviewReadiness?.focus_preview_total_repair_dates ?? 0} repair dates completed. Existing valid Preview data remains available.`}
         />
       )}
-      {focusPreviewState === "degraded" && (
+      {focusPreviewState === "degraded" && retentionFailures.length > 0 && (
+        <Alert
+          type="warning"
+          showIcon
+          message="Retention cleanup needs attention"
+          description={
+            <Space direction="vertical">
+              <Text>{focusPreviewReadiness?.focus_preview_message}</Text>
+              {focusPreviewReadiness?.focus_preview_total_repair_dates !== null && (
+                <Text>
+                  Date progress:{" "}
+                  {focusPreviewReadiness?.focus_preview_completed_repair_dates ?? 0} of{" "}
+                  {focusPreviewReadiness?.focus_preview_total_repair_dates ?? 0} repair
+                  dates completed.
+                </Text>
+              )}
+              {retentionFailures.map(({ label, outcome }) => (
+                <Text key={outcome.diagnostic?.code ?? label}>
+                  {label} attempted {outcome.attempted_at}. Diagnostic{" "}
+                  <Text code>{outcome.diagnostic?.code}</Text>. Error type{" "}
+                  <Text code>{outcome.diagnostic?.error_type}</Text>.{" "}
+                  {outcome.diagnostic?.message}
+                </Text>
+              ))}
+            </Space>
+          }
+        />
+      )}
+      {focusPreviewState === "degraded" && retentionFailures.length === 0 && (
         <Alert
           type="warning"
           showIcon

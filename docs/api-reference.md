@@ -65,7 +65,9 @@ Per-tenant readiness with pipeline state. TTL-cached for 2 seconds.
 `last_run_status`, `last_run_at`, `permanent_failure`,
 `topic_attribution_status`, `topic_attribution_error`,
 `focus_preview_state`, `focus_preview_completed_repair_dates`,
-`focus_preview_total_repair_dates`, and `focus_preview_message`.
+`focus_preview_total_repair_dates`, `focus_preview_message`,
+`focus_preview_ordinary_retention`, and
+`focus_preview_evidence_retention`.
 
 `topic_attribution_status` is one of `"disabled"` | `"enabled"` | `"config_error"`. `topic_attribution_error` is a string describing the validation failure when `topic_attribution_status` is `"config_error"`, otherwise null.
 
@@ -75,16 +77,36 @@ or `unavailable`:
 | State | Meaning |
 |---|---|
 | `disabled` | The tenant does not enable FOCUS Mapping Preview. Progress is null. |
-| `ready` | Preview is available and no repair is active. Progress is null before the first repair and total/total after a successful repair. |
+| `ready` | Preview is available and no repair or retention cause needs attention. Progress is null before the first repair and total/total after a successful repair. |
 | `upgrading` | A historical repair is queued or running. Existing valid Preview data remains available. |
-| `degraded` | The current repair failed, completed with failed dates, or was interrupted. Existing valid Preview data remains available; submit an explicit bounded repair to retry failed dates. |
+| `degraded` | Historical repair or retention cleanup needs attention. Existing valid Preview data remains available; use the repair progress and structured retention outcomes to choose the operator action. |
 | `unavailable` | Preview readiness cannot be determined safely, including unavailable Preview storage. Progress is null. |
 
 When repair work exists, the completed and total fields report **Date
 progress**. A completed date is durably terminal, whether it succeeded or
 failed. The ratio is lifecycle progress, not data volume or successful-row
-progress. Preview state does not change top-level application readiness or
-disable unrelated billing, chargeback, inventory, and pipeline operations.
+progress.
+
+The two retention fields report the latest recorded attempt independently:
+
+| Field | Cleanup represented |
+|---|---|
+| `focus_preview_ordinary_retention` | Ordinary tenant pipeline and configured overlay retention |
+| `focus_preview_evidence_retention` | Preview source, readiness, allocation-lineage, and organization-authority retention |
+
+Each field is null before an outcome is available. Otherwise it contains
+`attempted_at`, `status` (`success` or `failure`), and `diagnostic`. A successful
+outcome has a null diagnostic. A failure includes a stable `code`, an
+operator-facing `message`, and a redacted `error_type`. A later successful
+attempt replaces only the matching cleanup outcome and clears its diagnostic;
+the other cleanup outcome and historical repair progress remain independent.
+Any recorded retention failure makes Preview `degraded`, including while a
+repair is queued, running, or already degraded.
+
+Preview state does not change top-level application readiness or disable
+unrelated billing, chargeback, inventory, and pipeline operations. Existing
+valid Preview packages and revisions remain available while retention cleanup
+needs attention.
 
 ---
 

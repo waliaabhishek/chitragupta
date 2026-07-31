@@ -200,10 +200,14 @@ class TestTenantReadinessTopicAttributionStatus:
             focus_preview_completed_repair_dates=None,
             focus_preview_total_repair_dates=None,
             focus_preview_message="FOCUS Mapping Preview is not enabled for this tenant.",
+            focus_preview_ordinary_retention=None,
+            focus_preview_evidence_retention=None,
         )
         data = readiness.model_dump()
         assert data["topic_attribution_status"] == "disabled"
         assert data["topic_attribution_error"] is None
+        assert data["focus_preview_ordinary_retention"] is None
+        assert data["focus_preview_evidence_retention"] is None
         assert "topic_attribution_enabled" not in data
 
 

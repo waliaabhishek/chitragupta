@@ -560,6 +560,22 @@ class HealthResponse(BaseModel):
 # --- Readiness ---
 
 
+class FocusPreviewRetentionDiagnosticResponse(BaseModel):
+    """Redaction-safe diagnostic for a failed retention cleanup."""
+
+    code: str
+    message: str
+    error_type: str
+
+
+class FocusPreviewRetentionOutcomeResponse(BaseModel):
+    """Latest durable outcome for one FOCUS Preview retention path."""
+
+    attempted_at: datetime
+    status: Literal["success", "failure"]
+    diagnostic: FocusPreviewRetentionDiagnosticResponse | None
+
+
 class TenantReadiness(BaseModel):
     """Per-tenant readiness state for the readiness endpoint."""
 
@@ -584,6 +600,8 @@ class TenantReadiness(BaseModel):
     focus_preview_completed_repair_dates: int | None
     focus_preview_total_repair_dates: int | None
     focus_preview_message: str | None
+    focus_preview_ordinary_retention: FocusPreviewRetentionOutcomeResponse | None
+    focus_preview_evidence_retention: FocusPreviewRetentionOutcomeResponse | None
 
 
 class ReadinessResponse(BaseModel):

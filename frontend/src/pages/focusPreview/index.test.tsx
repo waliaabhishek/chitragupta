@@ -44,6 +44,24 @@ const readinessState = vi.hoisted(() => ({
           focus_preview_completed_repair_dates: null as number | null,
           focus_preview_total_repair_dates: null as number | null,
           focus_preview_message: null as string | null,
+          focus_preview_ordinary_retention: null as {
+            attempted_at: string;
+            status: "success" | "failure";
+            diagnostic: {
+              code: string;
+              message: string;
+              error_type: string;
+            } | null;
+          } | null,
+          focus_preview_evidence_retention: null as {
+            attempted_at: string;
+            status: "success" | "failure";
+            diagnostic: {
+              code: string;
+              message: string;
+              error_type: string;
+            } | null;
+          } | null,
         },
       ],
     },
@@ -224,6 +242,8 @@ describe("FOCUS Mapping Preview page delegation", () => {
         focus_preview_completed_repair_dates: null,
         focus_preview_total_repair_dates: null,
         focus_preview_message: null,
+        focus_preview_ordinary_retention: null,
+        focus_preview_evidence_retention: null,
       },
     ];
     vi.mocked(listFocusPreviewRequests).mockResolvedValue({
@@ -1266,6 +1286,42 @@ describe("FOCUS Mapping Preview page delegation", () => {
       expect(listFocusPreviewRequests).toHaveBeenCalled();
       expect(listFocusPreviewRevisions).toHaveBeenCalled();
     });
+  });
+
+  it("shows retention-specific degraded guidance with attempt time, diagnostic code, and sanitized error type", async () => {
+    readinessState.current.readiness.tenants[0] = {
+      ...readinessState.current.readiness.tenants[0],
+      focus_preview_state: "degraded",
+      focus_preview_completed_repair_dates: null,
+      focus_preview_total_repair_dates: null,
+      focus_preview_message:
+        "Retention cleanup needs attention. Review the latest retention outcome and worker logs; existing valid Preview data remains available.",
+      focus_preview_ordinary_retention: {
+        attempted_at: "2026-07-30T23:25:01Z",
+        status: "failure",
+        diagnostic: {
+          code: "focus_preview_ordinary_retention_failed",
+          message:
+            "Ordinary tenant retention cleanup failed. Review worker logs and restore tenant storage; existing valid Preview data remains available.",
+          error_type: "OperationalError",
+        },
+      },
+      focus_preview_evidence_retention: {
+        attempted_at: "2026-07-30T23:40:01Z",
+        status: "success",
+        diagnostic: null,
+      },
+    };
+
+    render(<FocusPreviewPage />);
+
+    expect(
+      screen.getByText("Retention cleanup needs attention"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("focus_preview_ordinary_retention_failed")).toBeInTheDocument();
+    expect(screen.getByText(/OperationalError/i)).toBeInTheDocument();
+    expect(screen.getByText(/2026-07-30T23:25:01Z/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /generate preview/i })).toBeEnabled();
   });
 
   it.each([

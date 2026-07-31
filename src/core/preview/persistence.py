@@ -74,6 +74,7 @@ from core.preview.organization_authority import (  # noqa: TC001
     PreviewOrganizationAuthorityWriter,
 )
 from core.preview.repair import PreviewRepairRepository  # noqa: TC001
+from core.preview.retention import PreviewRetentionOutcomeRepository  # noqa: TC001
 from core.preview.storage_availability import PreviewEvidenceAvailability  # noqa: TC001
 from core.storage.backends.sqlmodel.mappers import ensure_utc, ensure_utc_strict
 from core.storage.backends.sqlmodel.tables import PipelineStateTable
@@ -2520,6 +2521,7 @@ class PreviewGenerationReadUnitOfWork(Protocol):
     identities: IdentityRepository
     tags: EntityTagRepository
     repairs: PreviewRepairRepository
+    retention_outcomes: PreviewRetentionOutcomeRepository
 
     def __enter__(self) -> Self: ...
     def __exit__(
@@ -2537,6 +2539,7 @@ class PreviewEvidenceWriteUnitOfWork(Protocol):
     source_readiness: PreviewSourceReadinessWriter
     organization_authority: PreviewOrganizationAuthorityWriter
     repairs: PreviewRepairRepository
+    retention_outcomes: PreviewRetentionOutcomeRepository
 
     def __enter__(self) -> Self: ...
     def __exit__(
