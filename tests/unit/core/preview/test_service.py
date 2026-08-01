@@ -765,7 +765,8 @@ def test_daily_full_package_maps_provider_financial_account_sku_and_invoice_evid
         assert rows[0]["RegionName"] == ""
         assert rows[0]["InvoiceId"] == ""
         assert rows[0]["InvoiceDetailId"] == ""
-        assert rows[0]["InvoiceIssuerName"] == ""
+        assert rows[0]["InvoiceIssuerName"] == "Confluent Cloud"
+        assert rows[0]["ServiceProviderName"] == rows[0]["InvoiceIssuerName"]
         assert rows[0]["ListUnitPrice"] == "2"
         assert rows[0]["PricingCategory"] == "Standard"
         assert rows[0]["PricingCurrency"] == "USD"

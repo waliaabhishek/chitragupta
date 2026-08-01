@@ -10,6 +10,7 @@ import anyio.to_thread
 import pytest
 
 from tests.integration.core.api.test_focus_preview import _client, _settings
+from tests.unit.core.preview.test_revision_mapping import EXPECTED_PUBLIC_KNOWN_GAPS
 
 
 @pytest.fixture(autouse=True)
@@ -222,41 +223,7 @@ def test_profile_endpoint_is_static_code_owned_and_uses_no_runtime_backend_or_da
         "conformance_status": "non_conforming",
         "full_columns": list(mapping.FOCUS_1_4_FULL_PROFILE_COLUMNS),
         "summary_columns": list(mapping.FOCUS_1_4_SUMMARY_COLUMNS),
-        "known_gaps": [
-            {
-                "code": "invoice_identity_unavailable",
-                "description": "Post-issuance invoice identity is unavailable.",
-                "columns": ["InvoiceDetailId", "InvoiceId"],
-            },
-            {
-                "code": "invoice_issuer_name_unavailable",
-                "description": "Provider legal invoice-issuer evidence is unavailable.",
-                "columns": ["InvoiceIssuerName"],
-            },
-            {
-                "code": "provider_host_display_name_unavailable",
-                "description": "HostProviderName contains the raw provider cloud code, not a provider display name.",
-                "columns": ["HostProviderName"],
-            },
-            {
-                "code": "provider_region_display_name_unavailable",
-                "description": "Confluent inventory does not provide a distinct region display name.",
-                "columns": ["RegionName"],
-            },
-            {
-                "code": "derived_sku_identity_not_provider_authoritative",
-                "description": (
-                    "SKU values are deterministic Chitragupta-derived evidence, not provider-issued identifiers."
-                ),
-                "columns": [
-                    "SkuId",
-                    "SkuMeter",
-                    "SkuPriceDetails",
-                    "SkuPriceId",
-                    "x_ChitraguptaSkuComponents",
-                ],
-            },
-        ],
+        "known_gaps": EXPECTED_PUBLIC_KNOWN_GAPS,
     }
     serialize_known_gaps.assert_called_once_with()
     assert all(set(gap) == {"code", "description", "columns"} for gap in payload["known_gaps"])

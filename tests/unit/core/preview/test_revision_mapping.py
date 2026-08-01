@@ -23,11 +23,6 @@ EXPECTED_PUBLIC_KNOWN_GAPS: list[dict[str, object]] = [
         "columns": ["InvoiceDetailId", "InvoiceId"],
     },
     {
-        "code": "invoice_issuer_name_unavailable",
-        "description": "Provider legal invoice-issuer evidence is unavailable.",
-        "columns": ["InvoiceIssuerName"],
-    },
-    {
         "code": "provider_host_display_name_unavailable",
         "description": "HostProviderName contains the raw provider cloud code, not a provider display name.",
         "columns": ["HostProviderName"],
@@ -226,6 +221,11 @@ def test_requested_and_revision_manifests_do_not_change_for_fallback_classificat
     fallback_requested = requested(fallback)
     baseline_revision = revision(baseline)
     fallback_revision = revision(fallback)
+
+    for draft in (baseline, fallback):
+        row = next(csv.DictReader(io.StringIO(draft.data_files[0].body.decode(), newline="")))
+        assert row["InvoiceIssuerName"] == mapping.CONFLUENT_CLOUD_PARTICIPATING_ENTITY_NAME
+        assert row["InvoiceId"] == row["InvoiceDetailId"] == ""
 
     assert set(fallback_requested) == set(baseline_requested)
     assert set(fallback_revision) == set(baseline_revision)

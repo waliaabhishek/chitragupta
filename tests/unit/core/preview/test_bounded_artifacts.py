@@ -1165,6 +1165,7 @@ def test_bounded_monthly_grouping_preserves_cells_with_sublinear_python_peak(
 ) -> None:
     monthly = preview_module("monthly")
     spooling = preview_module("spooling")
+    mapping = preview_module("mapping")
     monkeypatch.setattr(monthly, "validate_preview_row", lambda **_kwargs: None)
     month_start = datetime(2026, 7, 1, tzinfo=UTC)
     month_end = datetime(2026, 8, 1, tzinfo=UTC)
@@ -1201,10 +1202,12 @@ def test_bounded_monthly_grouping_preserves_cells_with_sublinear_python_peak(
         assert [(row.target_values, row.custom_values, row.financials) for row in bounded] == [
             (row.target_values, row.custom_values, row.financials) for row in baseline
         ]
-        consumed_index = preview_module("mapping").FOCUS_1_4_FULL_COLUMNS.index("ConsumedQuantity")
-        unit_index = preview_module("mapping").FOCUS_1_4_FULL_COLUMNS.index("ConsumedUnit")
+        consumed_index = mapping.FOCUS_1_4_FULL_COLUMNS.index("ConsumedQuantity")
+        unit_index = mapping.FOCUS_1_4_FULL_COLUMNS.index("ConsumedUnit")
+        issuer_index = mapping.FOCUS_1_4_FULL_COLUMNS.index("InvoiceIssuerName")
         assert bounded[0].target_values[consumed_index] == Decimal("4")
         assert bounded[0].target_values[unit_index] == "GB"
+        assert bounded[0].target_values[issuer_index] == mapping.CONFLUENT_CLOUD_PARTICIPATING_ENTITY_NAME
     finally:
         parity_workspace.close()
 
@@ -1273,5 +1276,7 @@ def test_bounded_monthly_grouping_preserves_supported_billing_currency_and_reval
         workspace.close()
 
     billing_currency_index = mapping.FOCUS_1_4_FULL_COLUMNS.index("BillingCurrency")
+    issuer_index = mapping.FOCUS_1_4_FULL_COLUMNS.index("InvoiceIssuerName")
     assert [row.target_values[billing_currency_index] for row in rows] == ["USD"]
+    assert [row.target_values[issuer_index] for row in rows] == [mapping.CONFLUENT_CLOUD_PARTICIPATING_ENTITY_NAME]
     assert validated == list(rows)

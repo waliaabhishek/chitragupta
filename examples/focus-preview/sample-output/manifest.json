@@ -44,13 +44,6 @@
       "description": "Post-issuance invoice identity is unavailable."
     },
     {
-      "code": "invoice_issuer_name_unavailable",
-      "columns": [
-        "InvoiceIssuerName"
-      ],
-      "description": "Provider legal invoice-issuer evidence is unavailable."
-    },
-    {
       "code": "provider_host_display_name_unavailable",
       "columns": [
         "HostProviderName"

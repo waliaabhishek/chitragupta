@@ -568,6 +568,13 @@ target-version warning, non-conformance status, and **Current authority gaps**
 from this response. See the manifest contract below for the complete current
 gap catalog, which is not repeated here.
 
+For the eligible Direct-billed PAYG scope, the mapping profile supplies
+`Confluent Cloud` as the participating-entity value for both
+`ServiceProviderName` and `InvoiceIssuerName`. `InvoiceIssuerName` is not a
+per-record field supplied by the Confluent Costs API. Invoice-issuer-assigned
+`InvoiceId` and `InvoiceDetailId` remain unavailable and null; Preview does not
+fabricate them or perform invoice reconciliation.
+
 This endpoint validates tenant existence and the Confluent Cloud ecosystem but
 does not initialize Preview storage or the worker runtime.
 
@@ -820,11 +827,6 @@ gap catalog:
     "code": "invoice_identity_unavailable",
     "description": "Post-issuance invoice identity is unavailable.",
     "columns": ["InvoiceDetailId", "InvoiceId"]
-  },
-  {
-    "code": "invoice_issuer_name_unavailable",
-    "description": "Provider legal invoice-issuer evidence is unavailable.",
-    "columns": ["InvoiceIssuerName"]
   },
   {
     "code": "provider_host_display_name_unavailable",

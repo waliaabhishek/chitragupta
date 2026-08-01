@@ -744,11 +744,6 @@ object contains exactly the stable `code`, durable customer-facing
     "columns": ["InvoiceDetailId", "InvoiceId"]
   },
   {
-    "code": "invoice_issuer_name_unavailable",
-    "description": "Provider legal invoice-issuer evidence is unavailable.",
-    "columns": ["InvoiceIssuerName"]
-  },
-  {
     "code": "provider_host_display_name_unavailable",
     "description": "HostProviderName contains the raw provider cloud code, not a provider display name.",
     "columns": ["HostProviderName"]
@@ -887,7 +882,11 @@ logically material Settled revision is published.
   records. Only USD is currently eligible, and no currency conversion occurs.
 - `HostProviderName` and `RegionId` preserve the provider values; a separate
   provider region display name is unavailable, so `RegionName` is null.
-- Invoice identity and issuer fields are unavailable.
+- `InvoiceIssuerName` is `Confluent Cloud`, the mapping profile's participating
+  entity value for the eligible Direct-billed PAYG scope. It is not a per-record
+  field supplied by the Confluent Costs API.
+- Invoice-issuer-assigned `InvoiceId` and `InvoiceDetailId` remain unavailable
+  and null; Preview does not fabricate them or perform invoice reconciliation.
 - SKU identities are deterministic Chitragupta-derived values, not
   provider-issued identifiers.
 - TABLEFLOW rows currently fail closed when provider context cannot be proven.
@@ -905,7 +904,6 @@ FOCUS Export until all of these gates are met:
   authoritative price-list relationship;
 - invoice-issuer-assigned `InvoiceId` and `InvoiceDetailId` values after the
   source charges have been associated with an invoice;
-- authoritative invoice-issuer semantics;
 - complete coverage of every applicable FOCUS field and its native source
   semantics;
 - official FOCUS metadata; and

@@ -677,7 +677,12 @@ def test_periodic_publication_lifecycle_is_visible_through_real_current_api(
         file_response = client.get(body["package"]["files"][0]["download_url"])
         assert file_response.status_code == 200
         first_file_body = file_response.content
-        assert next(csv.DictReader(io.StringIO(file_response.text)))["BillingCurrency"] == "USD"
+        first_row = next(csv.DictReader(io.StringIO(file_response.text)))
+        assert first_row["BillingCurrency"] == "USD"
+        assert first_row["InvoiceIssuerName"] == "Confluent Cloud"
+        assert first_row["ServiceProviderName"] == first_row["InvoiceIssuerName"]
+        assert first_row["InvoiceId"] == ""
+        assert first_row["InvoiceDetailId"] == ""
         archive = client.get(body["package"]["download_all_url"])
         assert archive.status_code == 200
         assert archive.headers["content-type"].startswith("application/zip")
@@ -703,7 +708,12 @@ def test_periodic_publication_lifecycle_is_visible_through_real_current_api(
         assert_public_known_gaps(superseded_manifest.json())
         superseded_file = client.get(superseded.json()["package"]["files"][0]["download_url"])
         assert superseded_file.status_code == 200
-        assert next(csv.DictReader(io.StringIO(superseded_file.text)))["BillingCurrency"] == "USD"
+        superseded_row = next(csv.DictReader(io.StringIO(superseded_file.text)))
+        assert superseded_row["BillingCurrency"] == "USD"
+        assert superseded_row["InvoiceIssuerName"] == "Confluent Cloud"
+        assert superseded_row["ServiceProviderName"] == superseded_row["InvoiceIssuerName"]
+        assert superseded_row["InvoiceId"] == ""
+        assert superseded_row["InvoiceDetailId"] == ""
         superseded_archive = client.get(superseded.json()["package"]["download_all_url"])
         assert superseded_archive.status_code == 200
         superseded_archive_body = superseded_archive.content

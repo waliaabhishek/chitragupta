@@ -92,7 +92,7 @@ acceptance("FOCUS Preview real-package cross-client fixture", () => {
         );
         expect(manifest.conformance_status).toBe(profile.conformance_status);
         expect(manifest.known_gaps).toEqual(profile.known_gaps);
-        expect(manifest.known_gaps).toHaveLength(5);
+        expect(manifest.known_gaps).toHaveLength(4);
         for (const gap of manifest.known_gaps) {
           expect(Object.keys(gap).sort()).toEqual([
             "code",

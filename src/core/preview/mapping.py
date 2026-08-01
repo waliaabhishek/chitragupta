@@ -57,6 +57,7 @@ from core.storage.interface import ResourceRepository  # noqa: TC001 - resolved 
 
 PREVIEW_MANIFEST_SCHEMA_VERSION = "chitragupta.preview-manifest.v1"
 PREVIEW_DECIMAL_CONTEXT = Context(prec=38)
+CONFLUENT_CLOUD_PARTICIPATING_ENTITY_NAME = "Confluent Cloud"
 _DECIMAL_CONTEXT = PREVIEW_DECIMAL_CONTEXT
 logger = logging.getLogger(__name__)
 
@@ -327,7 +328,10 @@ _TARGET_RULE_AUTHORITIES = {
     "HostProviderName": ("resource.metadata.provider_cloud", "copy the raw provider cloud code unchanged"),
     "InvoiceDetailId": ("none", "remain null under the invoice identity gap"),
     "InvoiceId": ("none", "remain null under the invoice identity gap"),
-    "InvoiceIssuerName": ("none", "remain null under the invoice issuer gap"),
+    "InvoiceIssuerName": (
+        "mapping profile participating-entity authority",
+        "emit the canonical Confluent Cloud entity for eligible direct-billed PAYG invoice issuer",
+    ),
     "ListCost": ("financial projection", "copy allocated original_amount"),
     "ListUnitPrice": ("financial projection", "copy native price after exact arithmetic"),
     "PricingCategory": ("mapping profile", "emit Standard when SKU pricing is emitted"),
@@ -342,7 +346,10 @@ _TARGET_RULE_AUTHORITIES = {
     "ResourceId": ("origin provider resource", "copy its provider identifier"),
     "ResourceName": ("origin provider resource then source", "copy inventory display name with native fallback"),
     "ResourceType": ("origin provider resource", "copy its concrete resource type"),
-    "ServiceProviderName": ("mapping profile", "emit Confluent Cloud"),
+    "ServiceProviderName": (
+        "mapping profile participating-entity authority",
+        "emit the canonical Confluent Cloud entity for eligible direct-billed PAYG service provider",
+    ),
     "ServiceCategory": ("versioned service rule", "copy its FOCUS category"),
     "ServiceName": ("versioned service rule", "copy its service name"),
     "ServiceSubcategory": ("versioned service rule", "copy its FOCUS subcategory"),
@@ -384,8 +391,10 @@ _ENUM_VALUES = {
     "ChargeCategory": ("Usage", "Purchase", "Credit"),
     "ChargeClass": ("Correction",),
     "ChargeFrequency": ("Usage-Based", "Recurring", "One-Time"),
+    "InvoiceIssuerName": (CONFLUENT_CLOUD_PARTICIPATING_ENTITY_NAME,),
     "PricingCategory": ("Standard",),
     "PricingCurrency": ("USD",),
+    "ServiceProviderName": (CONFLUENT_CLOUD_PARTICIPATING_ENTITY_NAME,),
     "SubAccountType": ("Environment",),
 }
 _NOT_APPLICABLE = frozenset(
@@ -411,7 +420,6 @@ _DECLARED_GAPS = {
     "HostProviderName": ("provider_host_display_name_unavailable", "TASK-254.04"),
     "InvoiceDetailId": ("invoice_identity_unavailable", "TASK-254.04"),
     "InvoiceId": ("invoice_identity_unavailable", "TASK-254.04"),
-    "InvoiceIssuerName": ("invoice_issuer_name_unavailable", "TASK-254.04"),
     "RegionName": ("provider_region_display_name_unavailable", "TASK-254.04"),
     "SkuId": ("derived_sku_identity_not_provider_authoritative", "TASK-254.04"),
     "SkuMeter": ("derived_sku_identity_not_provider_authoritative", "TASK-254.04"),
@@ -2325,7 +2333,7 @@ def validate_preview_row(
             column="x_ChitraguptaBillingScopeId",
         )
 
-    for column in ("InvoiceId", "InvoiceDetailId", "InvoiceIssuerName"):
+    for column in ("InvoiceId", "InvoiceDetailId"):
         if values[column] is not None:
             raise PreviewRowValidationError(PreviewRowRuleId.INVOICE_SEPARATION, column=column)
 
@@ -2406,6 +2414,7 @@ def _project_daily_full_row(
             "ContractedCost": financials.contracted_cost,
             "EffectiveCost": financials.effective_cost,
             "HostProviderName": resource_context.host_provider_code,
+            "InvoiceIssuerName": CONFLUENT_CLOUD_PARTICIPATING_ENTITY_NAME,
             "ListCost": financials.list_cost,
             "ListUnitPrice": financials.list_unit_price,
             "PricingCategory": "Standard" if semantics.emits_pricing else None,
@@ -2418,7 +2427,7 @@ def _project_daily_full_row(
             "ResourceId": resource_context.resource_id,
             "ResourceName": resource_context.resource_name,
             "ResourceType": resource_context.resource_type,
-            "ServiceProviderName": "Confluent Cloud",
+            "ServiceProviderName": CONFLUENT_CLOUD_PARTICIPATING_ENTITY_NAME,
             "ServiceCategory": service.service_category,
             "ServiceName": semantics.service_name_override or service.service_name,
             "ServiceSubcategory": service.service_subcategory,

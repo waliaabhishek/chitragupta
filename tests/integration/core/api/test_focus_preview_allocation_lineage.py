@@ -376,12 +376,12 @@ def test_real_production_lineage_projects_multiple_origins_actual_portions_and_f
         assert [len(body) for body in retrieved_parts] == [item["size_bytes"] for item in files]
         assert [hashlib.sha256(body).hexdigest() for body in retrieved_parts] == [item["sha256"] for item in files]
         assert [hashlib.sha256(body).hexdigest() for body in retrieved_parts] == [
-            "9f625f75098fe60975cdfc5a6bdb34fa1face3633c1ae54ec3ec95bd6329de7f",  # pragma: allowlist secret
-            "c66090fbe37a2e0092bf80ff07980ab99d32d7a3d231e6d8c3e5f6682cbfb98f",  # pragma: allowlist secret
-            "3f6d072508034739ecf305ab86bace73a2d74cda4b4263c7ac0beaf13e732531",  # pragma: allowlist secret
-            "ae86fa02418cf346a5251aaae1fbbca1b423ca1850400831da08d3da81e0a15d",  # pragma: allowlist secret
-            "beeb80870ede15a0934a5c5765eda9a90852d9a9069a4b36b21e04b331cd1001",  # pragma: allowlist secret
-            "88148829c0671d105a56c8020ab2bb050e07155d3556c4d8c104a762730b618d",  # pragma: allowlist secret
+            "c01969b550db8f8f55a9b83fdb6766c711042358e30cc7709e785fb5023e798d",  # pragma: allowlist secret
+            "ad443b5163606231b74e165f2068f7363bb60b4d1777574e0f08c4665e4bebd6",  # pragma: allowlist secret
+            "4ff2f0197163254ad9f5e3850bd78dd3d9d09dec5f1fbe342f6ad17d532cdc26",  # pragma: allowlist secret
+            "5044621458ca4ddeadac6a96c0f5aff0a2ce8a9c98dc0d1ed778e81e102e3ba5",  # pragma: allowlist secret
+            "abd93997ef6d9c67178ece2bec88b35983270e805b59dfbbf9a86f1cfb6c26e7",  # pragma: allowlist secret
+            "75d2c1bad73239486e05445243bdfb8da64fd8b9037fb8742f2237c908d4dbe8",  # pragma: allowlist secret
         ]
         with backend.create_preview_metadata_read_unit_of_work() as uow:
             persisted = uow.requests.get_for_owner(
@@ -422,6 +422,10 @@ def test_real_production_lineage_projects_multiple_origins_actual_portions_and_f
             assert [archive.read(item["name"]) for item in files] == retrieved_parts
         first_bytes, rows = _csv_rows(client, ready)
         assert len(rows) == 6
+        assert {row["InvoiceIssuerName"] for row in rows} == {"Confluent Cloud"}
+        assert all(row["ServiceProviderName"] == row["InvoiceIssuerName"] for row in rows)
+        assert {row["InvoiceId"] for row in rows} == {""}
+        assert {row["InvoiceDetailId"] for row in rows} == {""}
         first_row_order = [
             (row["x_ChitraguptaSourceCostId"], row["AllocatedResourceId"], row["BilledCost"]) for row in rows
         ]
@@ -554,15 +558,19 @@ def test_real_production_lineage_projects_multiple_origins_actual_portions_and_f
             item["sha256"] for item in monthly_files
         ]
         assert [hashlib.sha256(body).hexdigest() for body in monthly_parts] == [
-            "ee027b9e9ad33d404ec0721bcc7d9e5baf0f406ea38063e769f80f87b5a3c661",  # pragma: allowlist secret
-            "c3c8458e0c9e5a8a0acb8eaa3a54e2b21aaed5f5e2ab9511b6b4fc0f3a119940",  # pragma: allowlist secret
-            "1d5148d029dc36726999364a777fdef7ad5ea7ea2b0b7c202cec767c368aa93a",  # pragma: allowlist secret
-            "f2b98c653bf40ca07331e5b02e8fc59b33c34b00df92201b15d93bcfbf0e2f6a",  # pragma: allowlist secret
-            "4a448322cbd6bd00f2a2c2384db4c9b2869ad3e5dc1650b3f4a259d735d983ac",  # pragma: allowlist secret
-            "9c495f0a81cbad583b63895b078bf9e9ae3a573e683adaa5844234b7c019078e",  # pragma: allowlist secret
+            "524475b460a0e12d9dd073926006439f92fa28457302926191d8c6343702a4db",  # pragma: allowlist secret
+            "c6210b82ed4d83da56aeb681473c5d775001a3a0021f8c9fb559408dbb84d99e",  # pragma: allowlist secret
+            "3640f628985aefd2dd936faa73df2cb177c71327339c5b2e9147ff298e1c0fbc",  # pragma: allowlist secret
+            "56ba62e59aec20175e6faf47960be9702e5518efd79f5c7a17dbac804ef039b3",  # pragma: allowlist secret
+            "164afc511415a4e94fe79c39f19d74599604c2f43d2327026083a34f78db151f",  # pragma: allowlist secret
+            "5b4c681ac6b665756ef560676ab26d900934110ab1082fc8937ff1c06199bb25",  # pragma: allowlist secret
         ]
         monthly_full_bytes, monthly_full_rows = _csv_rows(client, monthly_full)
         assert len(monthly_full_rows) == 6
+        assert {row["InvoiceIssuerName"] for row in monthly_full_rows} == {"Confluent Cloud"}
+        assert all(row["ServiceProviderName"] == row["InvoiceIssuerName"] for row in monthly_full_rows)
+        assert {row["InvoiceId"] for row in monthly_full_rows} == {""}
+        assert {row["InvoiceDetailId"] for row in monthly_full_rows} == {""}
         assert sum(Decimal(row["BilledCost"]) for row in monthly_full_rows) == Decimal("18")
         assert sum(Decimal(row["PricingQuantity"]) for row in monthly_full_rows) == Decimal("7")
         assert [

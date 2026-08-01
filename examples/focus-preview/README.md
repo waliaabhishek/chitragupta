@@ -39,6 +39,13 @@ individual Confluent Costs API records, which do not contain a per-record
 currency field. Non-USD scopes remain fail-closed, and Preview performs no
 currency conversion.
 
+For the eligible Direct-billed PAYG scope, the mapping profile uses
+`Confluent Cloud` as the participating entity for both `ServiceProviderName`
+and `InvoiceIssuerName`. The issuer name is profile authority, not a per-record
+field from the Confluent Costs API. Invoice-issuer-assigned `InvoiceId` and
+`InvoiceDetailId` remain unavailable and null; Preview does not fabricate them
+or perform invoice reconciliation.
+
 The sample output is static and uses fictional IDs. A real run uses the billing
 dates, organization, environments, resources, allocations, costs, and
 quantities already persisted for your tenant.
@@ -164,8 +171,8 @@ records:
 - zero cost and quantity reconciliation differences;
 - mapping and artifact-integrity validation;
 - the CSV byte size and SHA-256 checksum;
-- the current provider-authority gaps, excluding `BillingCurrency`, which uses
-  the configured eligible-scope authority; and
+- the current provider-authority gaps; `BillingCurrency` and
+  `InvoiceIssuerName` use eligible-scope mapping authority and are not gaps; and
 - the requested package's fixed seven-day download lifecycle.
 
 The manifest is formatted for readability here. Downloaded manifests use the

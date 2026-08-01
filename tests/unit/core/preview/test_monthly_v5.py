@@ -53,6 +53,7 @@ def _row(
             "BilledCost": Decimal(billed),
             "ContractedCost": Decimal(contracted),
             "EffectiveCost": Decimal(effective),
+            "InvoiceIssuerName": mapping.CONFLUENT_CLOUD_PARTICIPATING_ENTITY_NAME,
             "ListCost": Decimal(list_cost),
             "PricingCurrencyEffectiveCost": Decimal(pricing_cost),
             "PricingQuantity": None if pricing_quantity is None else Decimal(pricing_quantity),
@@ -169,6 +170,7 @@ def test_monthly_aggregation_preserves_supported_billing_currency(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monthly = _monthly()
+    mapping = _mapping()
     monkeypatch.setattr(monthly, "validate_preview_row", lambda **_kwargs: None)
 
     rows = monthly.aggregate_monthly_full_rows(
@@ -181,6 +183,7 @@ def test_monthly_aggregation_preserves_supported_billing_currency(
     )
 
     assert {_values(row)["BillingCurrency"] for row in rows} == {"USD"}
+    assert {_values(row)["InvoiceIssuerName"] for row in rows} == {mapping.CONFLUENT_CLOUD_PARTICIPATING_ENTITY_NAME}
 
 
 @pytest.mark.parametrize(

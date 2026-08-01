@@ -105,6 +105,8 @@ def test_package_csv_header_exactly_matches_manifest_effective_columns(
     assert tuple(manifest["effective_columns"]) == effective
     assert tuple(csv_rows[0]) == effective
     assert len(csv_rows) == 2
+    if profile == "full":
+        assert csv_rows[1][effective.index("InvoiceIssuerName")] == mapping.CONFLUENT_CLOUD_PARTICIPATING_ENTITY_NAME
 
 
 def test_full_summary_and_custom_project_the_same_canonical_hidden_row_order(

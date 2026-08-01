@@ -37,12 +37,6 @@ FOCUS_PREVIEW_CAPABILITY = FocusPreviewCapability(
             ("InvoiceDetailId", "InvoiceId"),
         ),
         KnownGap(
-            "invoice_issuer_name_unavailable",
-            "Provider legal invoice-issuer evidence is unavailable.",
-            "TASK-254.04",
-            ("InvoiceIssuerName",),
-        ),
-        KnownGap(
             "provider_host_display_name_unavailable",
             "HostProviderName contains the raw provider cloud code, not a provider display name.",
             "TASK-254.04",

@@ -68,7 +68,11 @@ TARGET_RULE_AUTHORITIES = (
     ("HostProviderName", "resource.metadata.provider_cloud", "copy the raw provider cloud code unchanged"),
     ("InvoiceDetailId", "none", "remain null under the invoice identity gap"),
     ("InvoiceId", "none", "remain null under the invoice identity gap"),
-    ("InvoiceIssuerName", "none", "remain null under the invoice issuer gap"),
+    (
+        "InvoiceIssuerName",
+        "mapping profile participating-entity authority",
+        "emit the canonical Confluent Cloud entity for eligible direct-billed PAYG invoice issuer",
+    ),
     ("ListCost", "financial projection", "copy allocated original_amount"),
     ("ListUnitPrice", "financial projection", "copy native price after exact arithmetic"),
     ("PricingCategory", "mapping profile", "emit Standard when SKU pricing is emitted"),
@@ -83,7 +87,11 @@ TARGET_RULE_AUTHORITIES = (
     ("ResourceId", "origin provider resource", "copy its provider identifier"),
     ("ResourceName", "origin provider resource then source", "copy inventory display name with native fallback"),
     ("ResourceType", "origin provider resource", "copy its concrete resource type"),
-    ("ServiceProviderName", "mapping profile", "emit Confluent Cloud"),
+    (
+        "ServiceProviderName",
+        "mapping profile participating-entity authority",
+        "emit the canonical Confluent Cloud entity for eligible direct-billed PAYG service provider",
+    ),
     ("ServiceCategory", "versioned service rule", "copy its FOCUS category"),
     ("ServiceName", "versioned service rule", "copy its service name"),
     ("ServiceSubcategory", "versioned service rule", "copy its FOCUS subcategory"),
@@ -336,6 +344,7 @@ def _valid_row_projection(mapping: Any) -> Any:
             "ContractedCost": Decimal("10"),
             "EffectiveCost": Decimal("8"),
             "HostProviderName": "AWS",
+            "InvoiceIssuerName": "Confluent Cloud",
             "ListCost": Decimal("10"),
             "ListUnitPrice": Decimal("2"),
             "PricingCategory": "Standard",
@@ -776,7 +785,6 @@ def test_focus_rule_table_is_the_complete_ordered_65_column_authority() -> None:
         "HostProviderName": ("provider_host_display_name_unavailable", "TASK-254.04"),
         "InvoiceDetailId": ("invoice_identity_unavailable", "TASK-254.04"),
         "InvoiceId": ("invoice_identity_unavailable", "TASK-254.04"),
-        "InvoiceIssuerName": ("invoice_issuer_name_unavailable", "TASK-254.04"),
         "RegionName": ("provider_region_display_name_unavailable", "TASK-254.04"),
         "SkuId": ("derived_sku_identity_not_provider_authoritative", "TASK-254.04"),
         "SkuMeter": ("derived_sku_identity_not_provider_authoritative", "TASK-254.04"),
@@ -1293,6 +1301,30 @@ def test_validate_preview_row_accepts_the_complete_valid_projection() -> None:
 
 
 @pytest.mark.parametrize(
+    ("column", "value", "rule_id"),
+    [
+        ("InvoiceIssuerName", None, "nullability"),
+        ("InvoiceIssuerName", "", "type"),
+        ("InvoiceIssuerName", "Confluent, Inc.", "allowed_value"),
+        ("ServiceProviderName", "Confluent, Inc.", "allowed_value"),
+    ],
+)
+def test_validate_preview_row_requires_the_single_canonical_confluent_participating_entity(
+    column: str,
+    value: object,
+    rule_id: str,
+) -> None:
+    mapping = preview_module("mapping")
+    row = _replace_target(mapping, _valid_row_projection(mapping), column, value)
+
+    with pytest.raises(mapping.PreviewRowValidationError) as caught:
+        _validate(mapping, row)
+
+    assert caught.value.rule_id is mapping.PreviewRowRuleId(rule_id)
+    assert caught.value.column == column
+
+
+@pytest.mark.parametrize(
     ("value", "rule_id"),
     [
         (None, "nullability"),
@@ -1583,7 +1615,7 @@ def test_validate_preview_row_recomputes_derived_sku_contract(column: str) -> No
     assert caught.value.column == column
 
 
-@pytest.mark.parametrize("column", ["InvoiceId", "InvoiceDetailId", "InvoiceIssuerName"])
+@pytest.mark.parametrize("column", ["InvoiceId", "InvoiceDetailId"])
 def test_validate_preview_row_keeps_invoice_fields_separate_from_custom_correlations(column: str) -> None:
     mapping = preview_module("mapping")
     row = _replace_target(mapping, _valid_row_projection(mapping), column, "billing-scope-1")
@@ -2235,6 +2267,10 @@ def test_package_manifest_reports_the_complete_validated_v3_profile(
     )
 
     assert row["BillingCurrency"] == "USD"
+    assert row["InvoiceIssuerName"] == "Confluent Cloud"
+    assert row["ServiceProviderName"] == row["InvoiceIssuerName"]
+    assert row["InvoiceId"] == ""
+    assert row["InvoiceDetailId"] == ""
     assert manifest["mapping_profile_version"] == "focus-1.4-preview-v1"
     assert manifest["schema_version"] == "chitragupta.preview-manifest.v1"
     assert manifest["conformance_status"] == "non_conforming"

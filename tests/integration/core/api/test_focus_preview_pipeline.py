@@ -36,6 +36,7 @@ from tests.integration.core.api.preview_pipeline_helpers import (
     calculate_with_lineage,
     gather_billing_with_source_evidence,
 )
+from tests.unit.core.preview.test_revision_mapping import assert_public_known_gaps
 from tests.unit.core.storage.test_migration_019_focus_preview import (
     _alembic_config,
     _seed_legacy_rows,
@@ -1225,6 +1226,7 @@ def test_same_key_tiers_flow_from_provider_capture_through_sidecar_and_canonical
             "AllocatedResourceId",
             "BillingCurrency",
             "BilledCost",
+            "InvoiceIssuerName",
             "ListCost",
             "PricingQuantity",
             "ConsumedQuantity",
@@ -1246,12 +1248,18 @@ def test_same_key_tiers_flow_from_provider_capture_through_sidecar_and_canonical
         custom_body = csv_bytes(client, daily_custom)
         monthly_body = csv_bytes(client, monthly)
         daily_rows = list(csv.DictReader(io.StringIO(daily_body.decode())))
-        summary_rows = list(csv.DictReader(io.StringIO(summary_body.decode())))
-        custom_rows = list(csv.DictReader(io.StringIO(custom_body.decode())))
+        summary_reader = csv.DictReader(io.StringIO(summary_body.decode()))
+        summary_rows = list(summary_reader)
+        custom_reader = csv.DictReader(io.StringIO(custom_body.decode()))
+        custom_rows = list(custom_reader)
         monthly_rows = list(csv.DictReader(io.StringIO(monthly_body.decode())))
         for rows in (daily_rows, monthly_rows):
             assert len(rows) == 4
             assert {row["BillingCurrency"] for row in rows} == {"USD"}
+            assert {row["ServiceProviderName"] for row in rows} == {"Confluent Cloud"}
+            assert {row["InvoiceIssuerName"] for row in rows} == {"Confluent Cloud"}
+            assert {row["InvoiceId"] for row in rows} == {""}
+            assert {row["InvoiceDetailId"] for row in rows} == {""}
             assert {row["x_ChitraguptaSourceCostId"] for row in rows} == {"tier-a", "tier-b"}
             assert {row["x_ConfluentTierDimensions"] for row in rows} == {
                 '{"tier":"a"}',
@@ -1286,10 +1294,11 @@ def test_same_key_tiers_flow_from_provider_capture_through_sidecar_and_canonical
                 ("tier-b", "sa-1", "-3"),
                 ("tier-b", "", "-2"),
             }
-        assert daily_summary["effective_columns"] == list(csv.DictReader(io.StringIO(summary_body.decode())).fieldnames)
+        assert daily_summary["effective_columns"] == list(summary_reader.fieldnames or ())
         assert daily_custom["effective_columns"] == list(custom_columns)
-        assert csv.DictReader(io.StringIO(custom_body.decode())).fieldnames == list(custom_columns)
+        assert list(custom_reader.fieldnames or ()) == list(custom_columns)
         assert len(summary_rows) == len(custom_rows) == len(daily_rows)
+        assert "InvoiceIssuerName" not in (summary_reader.fieldnames or ())
         assert {row["BillingCurrency"] for row in summary_rows} == {"USD"}
         stable_identity_columns = (
             "AllocatedResourceId",
@@ -1305,21 +1314,20 @@ def test_same_key_tiers_flow_from_provider_capture_through_sidecar_and_canonical
                 row["BillingCurrency"],
                 row["ConsumedQuantity"],
                 row["ConsumedUnit"],
+                row["InvoiceIssuerName"],
             )
             for row in custom_rows
         } == {
-            ("tier-a", "sa-1", "USD", "3", "GB"),
-            ("tier-a", "", "USD", "2", "GB"),
-            ("tier-b", "sa-1", "USD", "-3", "GB"),
-            ("tier-b", "", "USD", "-2", "GB"),
+            ("tier-a", "sa-1", "USD", "3", "GB", "Confluent Cloud"),
+            ("tier-a", "", "USD", "2", "GB", "Confluent Cloud"),
+            ("tier-b", "sa-1", "USD", "-3", "GB", "Confluent Cloud"),
+            ("tier-b", "", "USD", "-2", "GB", "Confluent Cloud"),
         }
-        manifests = [manifest_json(client, result) for result in (daily_first, daily_summary, daily_custom)]
+        manifests = [manifest_json(client, result) for result in (daily_first, daily_summary, daily_custom, monthly)]
         assert all(manifest["validation"]["rows"] == 4 for manifest in manifests)
         assert all(manifest["reconciliation"] == manifests[0]["reconciliation"] for manifest in manifests[1:])
-        assert all(
-            "provider_billing_currency_field_unavailable" not in {gap["code"] for gap in manifest["known_gaps"]}
-            for manifest in manifests
-        )
+        for manifest in manifests:
+            assert_public_known_gaps(manifest)
         assert manifests[0]["reconciliation"] == {
             "source_cost": "8",
             "allocated_cost": "8",
