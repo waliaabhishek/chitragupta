@@ -329,6 +329,9 @@ def test_stage_or_publish_failure_leaves_failed_request_and_no_ready_package(
                 raise OSError("stage failed")
             self.generation.stage_data_files(data_files)
 
+        def stage_metadata_file(self, metadata_file: object) -> None:
+            self.generation.stage_metadata_file(metadata_file)
+
         def publish(self, *, manifest_body: bytes) -> object:
             if failure_point == "publish":
                 raise OSError("publish failed")
@@ -507,6 +510,9 @@ def test_worker_ready_path_preserves_validation_artifact_and_compare_and_set_ord
         def stage_data_files(self, data_files: object) -> None:
             self._generation.stage_data_files(data_files)
             events.append("data-staged-fsynced")
+
+        def stage_metadata_file(self, metadata_file: object) -> None:
+            self._generation.stage_metadata_file(metadata_file)
 
         def publish(self, *, manifest_body: bytes) -> object:
             events.append("published")

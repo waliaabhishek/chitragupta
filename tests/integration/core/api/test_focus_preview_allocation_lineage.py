@@ -161,10 +161,11 @@ def _seed_context(backend: SQLModelBackend) -> tuple[int, int, int]:
 
 
 def _csv_rows(client: PipelineApiClient, ready: dict[str, Any]) -> tuple[bytes, list[dict[str, str]]]:
+    data_files = [artifact for artifact in ready["package"]["files"] if artifact["media_type"] == "text/csv"]
     bodies = []
     rows: list[dict[str, str]] = []
     header: bytes | None = None
-    for artifact in ready["package"]["files"]:
+    for artifact in data_files:
         response = client.get(artifact["download_url"])
         assert response.status_code == 200
         body = response.content
@@ -364,17 +365,26 @@ def test_real_production_lineage_projects_multiple_origins_actual_portions_and_f
             "quantity_difference": "0",
         }
         files = ready["package"]["files"]
-        assert len(files) > 1
-        assert [item["order"] for item in files] == list(range(1, len(files) + 1))
-        assert [item["name"] for item in files] == [
-            f"cost-and-usage-part-{index:05d}-of-{len(files):05d}.csv" for index in range(1, len(files) + 1)
+        assert len(files) > 2
+        data_files = files[:-1]
+        metadata_file = files[-1]
+        assert [item["order"] for item in data_files] == list(range(1, len(data_files) + 1))
+        assert metadata_file["name"] == "focus-metadata.json"
+        assert metadata_file["media_type"] == "application/json"
+        assert metadata_file["order"] == len(files)
+        assert [item["name"] for item in data_files] == [
+            f"cost-and-usage-part-{index:05d}-of-{len(data_files):05d}.csv" for index in range(1, len(data_files) + 1)
         ]
         assert manifest["files"] == [
             {key: item[key] for key in ("name", "media_type", "size_bytes", "sha256", "order")} for item in files
         ]
-        retrieved_parts = [client.get(item["download_url"]).content for item in files]
-        assert [len(body) for body in retrieved_parts] == [item["size_bytes"] for item in files]
-        assert [hashlib.sha256(body).hexdigest() for body in retrieved_parts] == [item["sha256"] for item in files]
+        retrieved_parts = [client.get(item["download_url"]).content for item in data_files]
+        metadata_response = client.get(metadata_file["download_url"])
+        assert metadata_response.status_code == 200
+        metadata = metadata_response.json()["x_ChitraguptaPreviewMetadata"]
+        assert [item["name"] for item in metadata["dataset_artifacts"]] == [item["name"] for item in data_files]
+        assert [len(body) for body in retrieved_parts] == [item["size_bytes"] for item in data_files]
+        assert [hashlib.sha256(body).hexdigest() for body in retrieved_parts] == [item["sha256"] for item in data_files]
         assert [hashlib.sha256(body).hexdigest() for body in retrieved_parts] == [
             "c01969b550db8f8f55a9b83fdb6766c711042358e30cc7709e785fb5023e798d",  # pragma: allowlist secret
             "ad443b5163606231b74e165f2068f7363bb60b4d1777574e0f08c4665e4bebd6",  # pragma: allowlist secret
@@ -419,7 +429,8 @@ def test_real_production_lineage_projects_multiple_origins_actual_portions_and_f
         with zipfile.ZipFile(io.BytesIO(archive_response.content)) as archive:
             assert archive.namelist() == ["manifest.json", *[item["name"] for item in files]]
             assert archive.read("manifest.json") == manifest_response.content
-            assert [archive.read(item["name"]) for item in files] == retrieved_parts
+            assert [archive.read(item["name"]) for item in data_files] == retrieved_parts
+            assert archive.read(metadata_file["name"]) == metadata_response.content
         first_bytes, rows = _csv_rows(client, ready)
         assert len(rows) == 6
         assert {row["InvoiceIssuerName"] for row in rows} == {"Confluent Cloud"}
@@ -547,15 +558,21 @@ def test_real_production_lineage_projects_multiple_origins_actual_portions_and_f
         assert monthly_full["source_snapshot"]["effective_coverage_end_date"] == "2026-07-04"
         monthly_files = monthly_full["package"]["files"]
         assert len(monthly_files) > 1
-        assert [item["order"] for item in monthly_files] == list(range(1, len(monthly_files) + 1))
-        assert [item["name"] for item in monthly_files] == [
-            f"cost-and-usage-part-{index:05d}-of-{len(monthly_files):05d}.csv"
-            for index in range(1, len(monthly_files) + 1)
+        monthly_data_files = monthly_files[:-1]
+        monthly_metadata_file = monthly_files[-1]
+        assert monthly_metadata_file["name"] == "focus-metadata.json"
+        assert monthly_metadata_file["media_type"] == "application/json"
+        assert monthly_metadata_file["order"] == len(monthly_files)
+        assert [item["order"] for item in monthly_data_files] == list(range(1, len(monthly_data_files) + 1))
+        assert [item["name"] for item in monthly_data_files] == [
+            f"cost-and-usage-part-{index:05d}-of-00006.csv" for index in range(1, 7)
         ]
-        monthly_parts = [client.get(item["download_url"]).content for item in monthly_files]
-        assert [len(body) for body in monthly_parts] == [item["size_bytes"] for item in monthly_files]
+        monthly_parts = [client.get(item["download_url"]).content for item in monthly_data_files]
+        monthly_metadata_response = client.get(monthly_metadata_file["download_url"])
+        assert monthly_metadata_response.status_code == 200
+        assert [len(body) for body in monthly_parts] == [item["size_bytes"] for item in monthly_data_files]
         assert [hashlib.sha256(body).hexdigest() for body in monthly_parts] == [
-            item["sha256"] for item in monthly_files
+            item["sha256"] for item in monthly_data_files
         ]
         assert [hashlib.sha256(body).hexdigest() for body in monthly_parts] == [
             "524475b460a0e12d9dd073926006439f92fa28457302926191d8c6343702a4db",  # pragma: allowlist secret

@@ -57,6 +57,7 @@ def test_preview_cli_entry_point_is_registered() -> None:
         "evidence",
         "persistence",
         "mapping",
+        "focus_metadata",
         "artifacts",
         "generator",
         "revisions",

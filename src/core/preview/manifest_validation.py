@@ -15,6 +15,7 @@ from core.preview.capability import (
     MAPPING_PROFILE_VERSION,
     preview_manifest_known_gaps,
 )
+from core.preview.focus_metadata import FOCUS_METADATA_FILE_NAME, FOCUS_METADATA_MEDIA_TYPE
 from core.preview.mapping import (
     FOCUS_1_4_FULL_PROFILE_COLUMNS,
     PREVIEW_MANIFEST_SCHEMA_VERSION,
@@ -234,6 +235,22 @@ def _artifact_declaration(item: Any) -> dict[str, object]:
     }
 
 
+def _validate_package_file_catalog(files: tuple[Any, ...]) -> None:
+    metadata_files = tuple(item for item in files if item.name == FOCUS_METADATA_FILE_NAME)
+    if not metadata_files:
+        return
+    if len(metadata_files) != 1:
+        raise PreviewManifestValidationError("stored preview manifest metadata declaration is inconsistent")
+    metadata = metadata_files[0]
+    if files[-1] != metadata or metadata.media_type != FOCUS_METADATA_MEDIA_TYPE or metadata.order != len(files):
+        raise PreviewManifestValidationError("stored preview manifest metadata declaration is inconsistent")
+    data_files = files[:-1]
+    if tuple(item.order for item in data_files) != tuple(range(1, len(data_files) + 1)) or any(
+        item.media_type != "text/csv" or not item.name.endswith(".csv") for item in data_files
+    ):
+        raise PreviewManifestValidationError("stored preview manifest data declarations are inconsistent")
+
+
 def _require_equal(manifest: Mapping[str, Any], field: str, expected: object) -> None:
     if manifest.get(field) != expected:
         raise PreviewManifestValidationError(f"stored preview manifest {field} is inconsistent")
@@ -308,9 +325,9 @@ def validate_requested_manifest(
     positioned at byte zero for delivery.
     """
 
-    expected_files = (
-        _artifact_declaration(item) for item in (() if request.package is None else request.package.files)
-    )
+    package_files = () if request.package is None else request.package.files
+    _validate_package_file_catalog(package_files)
+    expected_files = (_artifact_declaration(item) for item in package_files)
     manifest = _parse_manifest(stream, expected_files)
     if not isinstance(manifest, dict):
         raise PreviewManifestValidationError("stored preview manifest is invalid")
@@ -419,6 +436,7 @@ def validate_revision_manifest(
 ) -> PreviewRevisionValidationSummary:
     """Incrementally validate a revision manifest and rewind it for delivery."""
 
+    _validate_package_file_catalog(revision.package.files)
     manifest = _parse_manifest(
         stream,
         (_artifact_declaration(item) for item in revision.package.files),

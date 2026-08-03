@@ -317,6 +317,15 @@ def test_settled_monthly_positive_sources_use_real_calculate_lineage_and_persist
                 "allocated_quantity": "2",
                 "quantity_difference": "0",
             }
+            assert ready["package"]["files"][-1]["name"] == "focus-metadata.json"
+            metadata = client.get(ready["package"]["files"][-1]["download_url"])
+            assert metadata.status_code == 200
+            assert metadata.json()["x_ChitraguptaPreviewMetadata"]["delivery"] == {
+                "delivery_handling": "one_off_download",
+                "correction_handling": "not_a_correction_series",
+                "snapshot": "complete_requested_snapshot",
+                "consumer_action": "consume_as_immutable_requested_package",
+            }
             assert len(respx.calls) == 0
 
         with backend._engine.connect() as connection:
@@ -382,6 +391,7 @@ def test_complete_zero_portion_lineage_is_ready_without_enrichment_reads_for_all
             manifest = client.get(ready["package"]["manifest"]["download_url"])
             assert manifest.status_code == 200
             assert manifest.json()["mapping_profile_version"] == "focus-1.4-preview-v1"
+            assert ready["package"]["files"][-1]["name"] == "focus-metadata.json"
             assert len(list(csv.reader(io.StringIO(_csv(client, ready).decode())))) == 1
         engine = create_engine(backend._connection_string)
         with engine.connect() as connection:

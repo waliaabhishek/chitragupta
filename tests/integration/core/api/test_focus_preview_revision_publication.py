@@ -419,7 +419,6 @@ def test_requested_package_expires_at_seven_days_independently_of_revision_reten
     backend = SQLModelBackend(
         connection_string,
         CCloudStorageModule(),
-        use_migrations=False,
         focus_preview_enabled=True,
     )
     backend.create_tables()
@@ -493,6 +492,62 @@ def test_requested_package_expires_at_seven_days_independently_of_revision_reten
             assert at_expiry.json()["package"] is None
     finally:
         publisher_store.close()
+
+
+def test_requested_runtime_rejects_corrupted_focus_metadata_before_ready(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from core.preview import service as service_module
+
+    connection_string = f"sqlite:///{tmp_path / 'requested-corrupt-metadata.db'}"
+    artifact_root = tmp_path / "requested-corrupt-metadata-artifacts"
+    backend = SQLModelBackend(
+        connection_string,
+        CCloudStorageModule(),
+        use_migrations=False,
+        focus_preview_enabled=True,
+    )
+    backend.create_tables()
+    _seed_month(backend, billed_cost=Decimal("8"))
+    tenant = _tenant_config(connection_string)
+    settings = AppSettings(
+        preview=PreviewConfig(artifact_root=artifact_root, max_workers=1),
+        tenants={"production": tenant},
+    )
+    original_builder = service_module.build_requested_focus_metadata_artifact
+
+    def corrupted_builder(**kwargs: Any) -> Any:
+        return replace(original_builder(**kwargs), body=b"{")
+
+    monkeypatch.setattr(service_module, "build_requested_focus_metadata_artifact", corrupted_builder)
+    app = create_app(settings)
+    with SameThreadApiClient(app) as client:
+        install_backend(app, "production", backend)
+        submitted = client.post(
+            "/api/v1/tenants/production/focus-preview/requests",
+            json=_body(),
+        )
+        assert submitted.status_code == 202
+        terminal = _wait_for_terminal(client, submitted.json()["request_id"])
+
+    assert terminal["status"] == "failed"
+    assert terminal["package"] is None
+    assert terminal["diagnostic"] == {
+        "code": "preview_generation_failed",
+        "message": "FOCUS Mapping Preview generation failed.",
+        "retryable": True,
+    }
+    with backend.create_preview_metadata_read_unit_of_work() as uow:
+        persisted = uow.requests.get_for_owner(
+            terminal["request_id"],
+            "confluent_cloud",
+            "tenant-1",
+        )
+    assert persisted is not None
+    assert persisted.status.value == "failed"
+    assert persisted.package is None
+    backend.dispose()
 
 
 def test_periodic_publication_lifecycle_is_visible_through_real_current_api(
@@ -570,6 +625,7 @@ def test_periodic_publication_lifecycle_is_visible_through_real_current_api(
 
     requested_manifest_body = b""
     requested_file_body = b""
+    requested_metadata_body = b""
     requested_archive_body = b""
     request_app = create_app(settings)
     with SameThreadApiClient(request_app) as client:
@@ -584,15 +640,25 @@ def test_periodic_publication_lifecycle_is_visible_through_real_current_api(
         assert requested["status"] == "ready", requested["diagnostic"]
         assert requested["source_snapshot"]["monthly_status"] == "provisional"
         package = requested["package"]
+        assert package["files"][-1]["name"] == "focus-metadata.json"
         requested_manifest = client.get(package["manifest"]["download_url"])
         requested_file = client.get(package["files"][0]["download_url"])
+        requested_metadata = client.get(package["files"][-1]["download_url"])
         assert requested_manifest.status_code == 200
         assert requested_file.status_code == 200
+        assert requested_metadata.status_code == 200
+        assert requested_metadata.json()["x_ChitraguptaPreviewMetadata"]["delivery"] == {
+            "delivery_handling": "one_off_download",
+            "correction_handling": "not_a_correction_series",
+            "snapshot": "complete_requested_snapshot",
+            "consumer_action": "consume_as_immutable_requested_package",
+        }
         archive = client.get(package["download_all_url"])
         assert archive.status_code == 200
         assert archive.headers["content-type"].startswith("application/zip")
         requested_manifest_body = requested_manifest.content
         requested_file_body = requested_file.content
+        requested_metadata_body = requested_metadata.content
         requested_archive_body = archive.content
 
     _run_periodic_cycle(runner, _result(), now=datetime(2026, 7, 20, tzinfo=UTC))
@@ -659,8 +725,10 @@ def test_periodic_publication_lifecycle_is_visible_through_real_current_api(
     app = create_app(settings)
     first_manifest_body = b""
     first_file_body = b""
+    first_metadata_body = b""
     first_archive_body = b""
     superseded_manifest_body = b""
+    superseded_metadata_body = b""
     superseded_archive_body = b""
     with SameThreadApiClient(app) as client:
         install_backend(app, "production", backend)
@@ -669,13 +737,39 @@ def test_periodic_publication_lifecycle_is_visible_through_real_current_api(
         body = metadata.json()
         assert body["revision_id"] == "revision-2"
         assert body["monthly_status"] == "settled"
+        assert body["package"]["files"][-1]["name"] == "focus-metadata.json"
         manifest_response = client.get(body["package"]["manifest"]["download_url"])
         assert manifest_response.status_code == 200
         first_manifest_body = manifest_response.content
         assert client.get(body["package"]["manifest"]["download_url"]).content == first_manifest_body
         assert_public_known_gaps(manifest_response.json())
         file_response = client.get(body["package"]["files"][0]["download_url"])
+        metadata_response = client.get(body["package"]["files"][-1]["download_url"])
         assert file_response.status_code == 200
+        assert metadata_response.status_code == 200
+        assert metadata_response.json()["x_ChitraguptaPreviewMetadata"]["delivery"] == {
+            "delivery_handling": "Overwrite",
+            "correction_handling": "Replacement",
+            "snapshot": "complete",
+            "consumer_action": "replace_do_not_aggregate",
+        }
+        first_metadata_body = metadata_response.content
+        first_metadata = metadata_response.json()["x_ChitraguptaPreviewMetadata"]
+        first_metadata_ids = {
+            "schema_id": first_metadata["x_ChitraguptaPreviewSchema"]["schema_id"],
+            "dataset_instance_id": first_metadata["x_ChitraguptaPreviewDatasetInstance"]["dataset_instance_id"],
+            "recency_id": first_metadata["x_ChitraguptaPreviewRecency"]["recency_id"],
+        }
+        repeated_metadata = client.get(body["package"]["files"][-1]["download_url"])
+        assert repeated_metadata.content == first_metadata_body
+        repeated_focus_metadata = repeated_metadata.json()["x_ChitraguptaPreviewMetadata"]
+        assert {
+            "schema_id": repeated_focus_metadata["x_ChitraguptaPreviewSchema"]["schema_id"],
+            "dataset_instance_id": repeated_focus_metadata["x_ChitraguptaPreviewDatasetInstance"][
+                "dataset_instance_id"
+            ],
+            "recency_id": repeated_focus_metadata["x_ChitraguptaPreviewRecency"]["recency_id"],
+        } == first_metadata_ids
         first_file_body = file_response.content
         first_row = next(csv.DictReader(io.StringIO(file_response.text)))
         assert first_row["BillingCurrency"] == "USD"
@@ -689,6 +783,7 @@ def test_periodic_publication_lifecycle_is_visible_through_real_current_api(
         first_archive_body = archive.content
         with zipfile.ZipFile(io.BytesIO(first_archive_body)) as packaged:
             assert packaged.read("manifest.json") == first_manifest_body
+            assert packaged.read("focus-metadata.json") == first_metadata_body
 
         history = client.get("/api/v1/tenants/production/focus-preview/revisions?month=2026-07&limit=2")
         assert history.status_code == 200
@@ -707,7 +802,21 @@ def test_periodic_publication_lifecycle_is_visible_through_real_current_api(
         superseded_manifest_body = superseded_manifest.content
         assert_public_known_gaps(superseded_manifest.json())
         superseded_file = client.get(superseded.json()["package"]["files"][0]["download_url"])
+        superseded_metadata = client.get(superseded.json()["package"]["files"][-1]["download_url"])
         assert superseded_file.status_code == 200
+        assert superseded_metadata.status_code == 200
+        superseded_metadata_body = superseded_metadata.content
+        superseded_focus_metadata = superseded_metadata.json()["x_ChitraguptaPreviewMetadata"]
+        superseded_metadata_ids = {
+            "schema_id": superseded_focus_metadata["x_ChitraguptaPreviewSchema"]["schema_id"],
+            "dataset_instance_id": superseded_focus_metadata["x_ChitraguptaPreviewDatasetInstance"][
+                "dataset_instance_id"
+            ],
+            "recency_id": superseded_focus_metadata["x_ChitraguptaPreviewRecency"]["recency_id"],
+        }
+        assert first_metadata_ids["schema_id"] == superseded_metadata_ids["schema_id"]
+        assert first_metadata_ids["dataset_instance_id"] != superseded_metadata_ids["dataset_instance_id"]
+        assert first_metadata_ids["recency_id"] != superseded_metadata_ids["recency_id"]
         superseded_row = next(csv.DictReader(io.StringIO(superseded_file.text)))
         assert superseded_row["BillingCurrency"] == "USD"
         assert superseded_row["InvoiceIssuerName"] == "Confluent Cloud"
@@ -719,6 +828,7 @@ def test_periodic_publication_lifecycle_is_visible_through_real_current_api(
         superseded_archive_body = superseded_archive.content
         with zipfile.ZipFile(io.BytesIO(superseded_archive.content)) as packaged:
             assert packaged.read("manifest.json") == superseded_manifest.content
+            assert packaged.read("focus-metadata.json") == superseded_metadata_body
 
         stale = client.get(
             "/api/v1/tenants/production/focus-preview/revisions/current/manifest?month=2026-07&revision_id=revision-1"
@@ -739,6 +849,14 @@ def test_periodic_publication_lifecycle_is_visible_through_real_current_api(
         assert renamed_manifest.content == first_manifest_body
         assert renamed_manifest.json()["tenant_name"] == "production"
         assert client.get(renamed_body["package"]["files"][0]["download_url"]).content == first_file_body
+        assert client.get(renamed_body["package"]["files"][-1]["download_url"]).content == first_metadata_body
+        renamed_metadata = client.get(renamed_body["package"]["files"][-1]["download_url"])
+        renamed_focus_metadata = renamed_metadata.json()["x_ChitraguptaPreviewMetadata"]
+        assert {
+            "schema_id": renamed_focus_metadata["x_ChitraguptaPreviewSchema"]["schema_id"],
+            "dataset_instance_id": renamed_focus_metadata["x_ChitraguptaPreviewDatasetInstance"]["dataset_instance_id"],
+            "recency_id": renamed_focus_metadata["x_ChitraguptaPreviewRecency"]["recency_id"],
+        } == first_metadata_ids
         assert client.get(renamed_body["package"]["download_all_url"]).content == first_archive_body
         assert client.get("/api/v1/tenants/production/focus-preview/revisions/current?month=2026-07").status_code == 404
 
@@ -784,6 +902,7 @@ def test_periodic_publication_lifecycle_is_visible_through_real_current_api(
         retained_request_package = retained_request.json()["package"]
         assert client.get(retained_request_package["manifest"]["download_url"]).content == requested_manifest_body
         assert client.get(retained_request_package["files"][0]["download_url"]).content == requested_file_body
+        assert client.get(retained_request_package["files"][-1]["download_url"]).content == requested_metadata_body
         assert client.get(retained_request_package["download_all_url"]).content == requested_archive_body
         retained_current = client.get("/api/v1/tenants/production/focus-preview/revisions/current?month=2026-07")
         retained_old = client.get("/api/v1/tenants/production/focus-preview/revisions/revision-1")
@@ -794,8 +913,24 @@ def test_periodic_publication_lifecycle_is_visible_through_real_current_api(
         old_package = retained_old.json()["package"]
         assert client.get(current_package["manifest"]["download_url"]).content == first_manifest_body
         assert client.get(current_package["files"][0]["download_url"]).content == first_file_body
+        assert client.get(current_package["files"][-1]["download_url"]).content == first_metadata_body
         assert client.get(current_package["download_all_url"]).content == first_archive_body
         assert client.get(old_package["manifest"]["download_url"]).content == superseded_manifest_body
+        assert client.get(old_package["files"][-1]["download_url"]).content == superseded_metadata_body
+        retained_current_metadata = client.get(current_package["files"][-1]["download_url"])
+        retained_old_metadata = client.get(old_package["files"][-1]["download_url"])
+        retained_current_focus = retained_current_metadata.json()["x_ChitraguptaPreviewMetadata"]
+        retained_old_focus = retained_old_metadata.json()["x_ChitraguptaPreviewMetadata"]
+        assert {
+            "schema_id": retained_current_focus["x_ChitraguptaPreviewSchema"]["schema_id"],
+            "dataset_instance_id": retained_current_focus["x_ChitraguptaPreviewDatasetInstance"]["dataset_instance_id"],
+            "recency_id": retained_current_focus["x_ChitraguptaPreviewRecency"]["recency_id"],
+        } == first_metadata_ids
+        assert {
+            "schema_id": retained_old_focus["x_ChitraguptaPreviewSchema"]["schema_id"],
+            "dataset_instance_id": retained_old_focus["x_ChitraguptaPreviewDatasetInstance"]["dataset_instance_id"],
+            "recency_id": retained_old_focus["x_ChitraguptaPreviewRecency"]["recency_id"],
+        } == superseded_metadata_ids
         assert client.get(old_package["download_all_url"]).content == superseded_archive_body
 
     cleanup = publisher.cleanup_retention(
@@ -1932,6 +2067,99 @@ def test_builder_supplied_material_mismatch_is_rejected_through_periodic_publish
     assert all(response.status_code == 200 for response in responses)
     with engine.connect() as connection:
         assert connection.execute(text("SELECT COUNT(*) FROM preview_revisions")).scalar_one() == 1
+    engine.dispose()
+    runner.close()
+    backend.dispose()
+
+
+def test_corrupted_revision_focus_metadata_cannot_replace_current_revision(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from core.preview import revisions as revision_module
+    from core.preview.artifacts import LocalPreviewArtifactStore
+    from core.preview.generator import PreviewPackageGenerator
+
+    connection_string = f"sqlite:///{tmp_path / 'revision-corrupt-metadata.db'}"
+    backend = SQLModelBackend(
+        connection_string,
+        CCloudStorageModule(),
+        use_migrations=False,
+        focus_preview_enabled=True,
+    )
+    backend.create_tables()
+    _seed_month(backend, billed_cost=Decimal("8"))
+    tenant = _tenant_config(connection_string)
+    root = tmp_path / "revision-corrupt-metadata-artifacts"
+    store = LocalPreviewArtifactStore(root)
+    service = revision_module.PreviewRevisionService(
+        artifact_store=store,
+        package_generator=PreviewPackageGenerator(max_csv_file_bytes=None),
+        revision_id_factory=iter(("revision-metadata-current", "revision-metadata-corrupt")).__next__,
+    )
+    settings = AppSettings(
+        features=FeaturesConfig(enable_periodic_refresh=True, refresh_interval=1),
+        preview=PreviewConfig(artifact_root=root, max_workers=1),
+        tenants={"production": tenant},
+    )
+    runner = WorkflowRunner(
+        settings,
+        MagicMock(),
+        revision_manager=service,
+        owned_preview_artifact_store=store,
+    )
+    runner._tenant_runtimes["production"] = TenantRuntime(  # noqa: SLF001
+        tenant_name="production",
+        plugin=MagicMock(),
+        storage=backend,
+        orchestrator=MagicMock(),
+        config_hash=workflow_runner._config_hash(settings.tenants["production"]),  # noqa: SLF001
+        created_at=datetime(2026, 8, 7, tzinfo=UTC),
+    )
+
+    _run_periodic_cycle(runner, _result(), now=datetime(2026, 8, 7, tzinfo=UTC))
+    app = create_app(settings)
+    with SameThreadApiClient(app) as client:
+        install_backend(app, "production", backend)
+        original_current = client.get("/api/v1/tenants/production/focus-preview/revisions/current?month=2026-07")
+        assert original_current.status_code == 200
+        original_body = original_current.json()
+        original_metadata = client.get(original_body["package"]["files"][-1]["download_url"])
+        assert original_metadata.status_code == 200
+        original_metadata_body = original_metadata.content
+
+    engine = create_engine(connection_string)
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE resources SET display_name = 'replacement blocked by corrupt metadata' "
+                "WHERE tenant_id = 'tenant-1' AND resource_type = 'organization'"
+            )
+        )
+    original_builder = revision_module.build_revision_focus_metadata_artifact
+
+    def corrupted_builder(**kwargs: Any) -> Any:
+        return replace(original_builder(**kwargs), body=b"{")
+
+    monkeypatch.setattr(revision_module, "build_revision_focus_metadata_artifact", corrupted_builder)
+    _run_periodic_cycle(runner, _result(), now=datetime(2026, 8, 7, tzinfo=UTC))
+
+    with SameThreadApiClient(app) as client:
+        install_backend(app, "production", backend)
+        retained_current = client.get("/api/v1/tenants/production/focus-preview/revisions/current?month=2026-07")
+        assert retained_current.status_code == 200
+        retained_body = retained_current.json()
+        assert retained_body["revision_id"] == "revision-metadata-current"
+        retained_metadata = client.get(retained_body["package"]["files"][-1]["download_url"])
+        assert retained_metadata.status_code == 200
+        assert retained_metadata.content == original_metadata_body
+    with engine.connect() as connection:
+        revisions = (
+            connection.execute(text("SELECT revision_id, is_current FROM preview_revisions ORDER BY revision_id"))
+            .mappings()
+            .all()
+        )
+    assert revisions == [{"revision_id": "revision-metadata-current", "is_current": True}]
     engine.dispose()
     runner.close()
     backend.dispose()

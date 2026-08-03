@@ -363,7 +363,8 @@ Open **FOCUS Mapping Preview** at `/focus-preview` and select a tenant. The page
 - lists recent requests and supports cursor-based **Load more**;
 - shows calculation time, source-through time, Monthly provisional/settled
   state, completion time, and expiry; and
-- downloads `manifest.json`, any individual CSV part, or the complete ZIP.
+- downloads `manifest.json`, any individual CSV part, `focus-metadata.json`, or
+  the complete ZIP.
 
 Ready packages show download controls. Expired requests remain in history but
 show no downloads. Failed requests show their persisted diagnostic and whether
@@ -522,16 +523,16 @@ All paths are under `/api/v1/tenants/{tenant_name}/focus-preview`.
 | `GET /requests?limit=20&cursor={request_id}` | List requests newest first. `limit` is 1–100; `next_cursor` continues the list. |
 | `GET /requests/{request_id}` | Read status, freshness, diagnostics, expiry, and ready package metadata. |
 | `GET /requests/{request_id}/manifest` | Download exact `manifest.json` bytes. |
-| `GET /requests/{request_id}/files/{file_name}` | Download one enumerated CSV part. |
+| `GET /requests/{request_id}/files/{file_name}` | Download one enumerated CSV or metadata artifact. |
 | `GET /requests/{request_id}/archive` | Stream the complete deterministic ZIP. |
 | `GET /revisions/current?month=YYYY-MM` | Return the current published monthly revision and guarded artifact URLs. |
 | `GET /revisions/current/manifest?month=YYYY-MM&revision_id=...` | Download the guarded current revision manifest. |
-| `GET /revisions/current/files/{file_name}?month=YYYY-MM&revision_id=...` | Download one guarded current revision CSV part. |
+| `GET /revisions/current/files/{file_name}?month=YYYY-MM&revision_id=...` | Download one guarded current revision CSV or metadata artifact. |
 | `GET /revisions/current/archive?month=YYYY-MM&revision_id=...` | Stream the guarded current revision ZIP. |
 | `GET /revisions?month=YYYY-MM&limit=20&cursor={revision_id}` | List current and superseded revisions newest first. |
 | `GET /revisions/{revision_id}` | Return one retained revision and its direct artifact URLs. |
 | `GET /revisions/{revision_id}/manifest` | Download a retained revision manifest. |
-| `GET /revisions/{revision_id}/files/{file_name}` | Download one retained revision CSV part. |
+| `GET /revisions/{revision_id}/files/{file_name}` | Download one retained revision CSV or metadata artifact. |
 | `GET /revisions/{revision_id}/archive` | Stream a retained revision ZIP. |
 
 The pre-submission UI renders its target-version warning, non-conformance
@@ -624,8 +625,8 @@ The web UI's **Published monthly revisions** section has an independent month
 selector. It lists current and superseded revisions newest first, including
 publication state, calculation and source freshness, validation results, and
 predecessor/successor links. Select **View and download** to retrieve the
-manifest, an individual CSV part, or the complete ZIP for that retained
-revision.
+manifest, an individual CSV part, `focus-metadata.json`, or the complete ZIP
+for that retained revision.
 
 The remote CLI offers the same history and retrieval workflow:
 
@@ -690,9 +691,7 @@ retention cutoff is no longer listed or retrievable.
 Persisted financial-period keys and Preview lifecycle state use aware UTC
 whole-second timestamps on both SQLite and PostgreSQL. This includes the
 timestamps embedded in persisted request calculation coverage and revision
-source snapshots. Public API fields and manifest shapes remain unchanged, and
-strict validation of retained manifests and artifact sizes, checksums, and bytes
-is unchanged. Timestamp canonicalization does not alter financial amounts,
+source snapshots. Timestamp canonicalization does not alter financial amounts,
 correlations, reconciliation, or totals.
 
 Every package contains:
@@ -702,10 +701,12 @@ The mapping profile `focus-1.4-preview-v1` and manifest schema
 development packages are unsupported and fail closed instead of being treated
 as current packages.
 
-- `manifest.json`, using schema `chitragupta.preview-manifest.v1`; and
+- `manifest.json`, using schema `chitragupta.preview-manifest.v1`;
 - one `cost-and-usage.csv` by default, or ordered files named
   `cost-and-usage-part-00001-of-00003.csv` and so on when the configured byte
-  limit requires partitioning.
+  limit requires partitioning; and
+- `focus-metadata.json`, a canonical JSON metadata artifact listed after every
+  CSV part.
 
 Each CSV part is UTF-8 with LF line endings and repeats the same selected
 header. Rows are never split between parts. Part ordering, names, bytes, sizes,
@@ -719,11 +720,12 @@ request and revision API metadata, and record mapping profile, effective
 columns, source/calculation coverage, validation, reconciliation, and ordered
 file metadata. Requested manifests include request scope and seven-day
 lifecycle; revision manifests include revision identity, publication time,
-monthly status, and the superseded revision ID. The `files` list contains data
-files only. The status or revision metadata response separately supplies the
-manifest's own size and checksum. The ZIP is a transport wrapper containing
-`manifest.json` followed by the CSV files in manifest order; it is not another
-data artifact in the manifest. Requested manifests validate the complete
+monthly status, and the superseded revision ID. The `files` list contains the
+CSV data artifacts followed by `focus-metadata.json`. The status or revision
+metadata response separately supplies the manifest's own size and checksum.
+The ZIP is a transport wrapper containing `manifest.json` followed by every
+declared file in manifest order; it is not another data artifact in the
+manifest. Requested manifests validate the complete
 current request identity, tenant, interval, effective columns, target, status,
 canonical gaps, snapshot, evidence, lifecycle, validation, reconciliation, and
 file checks. Revision manifests validate current revision identity, snapshot,
@@ -731,6 +733,40 @@ Full-profile authority, material digest, validation summary, and file
 correlation. Both use the same current schema and mapping authority and enforce
 canonical gaps plus file order, size, and checksums where applicable before
 delivery.
+
+### Import metadata and authority boundaries
+
+`focus-metadata.json` is programmatically accessible import metadata for the
+package's data generator, dataset instance, recency, exact emitted schema, data
+artifact relationships, and delivery semantics. All contract sections use the
+`x_ChitraguptaPreview...` namespace. This is intentionally nonstandard Preview
+metadata: it does not contain official FOCUS `DataGenerator`,
+`DatasetInstance`, `Recency`, or `Schema` objects, does not emit
+`Schema.FocusVersion`, and does not claim that the CSV conforms to FOCUS 1.4.
+`target_focus_version: "1.4"` identifies the target vocabulary only. A consumer
+that requires a conforming FOCUS Export must reject this Preview package.
+
+Importers should read `dataset_artifacts` in order, apply the exact ordered
+column definitions in `x_ChitraguptaPreviewSchema`, and use the referenced
+dataset, schema, and recency IDs for correlation. IDs are deterministic from
+logical package and schema inputs; request IDs, revision IDs, lifecycle
+timestamps, file sizes, and file checksums are not identity inputs.
+
+The Chitragupta manifest remains the sole authority for file checksums, file
+sizes, request expiry, revision and supersession state, known gaps, and package
+lifecycle. `focus-metadata.json` points to that authority and does not duplicate
+it. Generation parses and canonically rebuilds the metadata after staging. A
+missing, malformed, stale, non-canonical, or internally inconsistent metadata
+artifact prevents a request from becoming Ready and prevents a revision from
+becoming current.
+
+API, CLI, web UI, individual-file download, and Download All serve the same
+stored immutable metadata bytes without client-specific transformation.
+One-off requested packages declare `not_a_correction_series` and must be
+consumed as an immutable requested snapshot. Published monthly revisions
+declare FOCUS Replacement correction handling with Overwrite delivery: each
+revision is a complete current snapshot. Consumers replace the prior revision
+and must never aggregate current and superseded revisions.
 
 Both manifest types contain the same complete ordered `known_gaps` array. Each
 object contains exactly the stable `code`, durable customer-facing
@@ -906,7 +942,7 @@ FOCUS Export until all of these gates are met:
   source charges have been associated with an invoice;
 - complete coverage of every applicable FOCUS field and its native source
   semantics;
-- official FOCUS metadata; and
+- official conforming FOCUS metadata; and
 - conformance validation appropriate to the target FOCUS version.
 
 Passing Preview mapping validation, publishing a Settled revision, or using

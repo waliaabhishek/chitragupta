@@ -24,6 +24,11 @@ from core.preview.eligibility import (
     PreviewEligibilityPolicy,
     policy_from_tenant_config,
 )
+from core.preview.focus_metadata import (
+    build_requested_focus_metadata_artifact,
+    compose_package_artifacts,
+    validate_requested_focus_metadata_artifact,
+)
 from core.preview.generator import PreviewGenerationError, PreviewPackageGenerator
 from core.preview.manifest_validation import validate_requested_manifest
 from core.preview.mapping import (
@@ -550,14 +555,38 @@ class PreviewRuntime:
                         policy=policy,
                         workspace=generation.workspace,
                     )
-                    generation.stage_data_files(draft.data_files)
+                    data_files = tuple(draft.data_files)
+                    generation.stage_data_files(data_files)
                     ready_at = self._clock().astimezone(UTC).replace(microsecond=0)
                     expires_at = ready_at + timedelta(days=7)
+                    focus_metadata = build_requested_focus_metadata_artifact(
+                        request=running,
+                        snapshot=snapshot,
+                        draft=draft,
+                        data_files=data_files,
+                        ready_at=ready_at,
+                        expires_at=expires_at,
+                    )
+                    package_files = compose_package_artifacts(
+                        data_files=data_files,
+                        focus_metadata=focus_metadata,
+                    )
+                    generation.stage_metadata_file(focus_metadata)
+                    staged_files = generation.files
+                    validate_requested_focus_metadata_artifact(
+                        request=running,
+                        snapshot=snapshot,
+                        draft=draft,
+                        package_files=package_files,
+                        staged_files=staged_files,
+                        ready_at=ready_at,
+                        expires_at=expires_at,
+                    )
                     manifest_body = build_requested_preview_manifest(
                         request=running,
                         snapshot=snapshot,
                         draft=draft,
-                        files=generation.files,
+                        files=staged_files,
                         ready_at=ready_at,
                         expires_at=expires_at,
                     )

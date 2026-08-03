@@ -561,9 +561,8 @@ subset. The mapping profile and `chitragupta.preview-manifest.v1` are the first
 release contracts. The response also contains `known_gaps`, the same canonical
 ordered public value used by Requested Preview Package and Published Preview
 Revision manifests. Each gap contains exactly `code`, customer-facing
-`description`, and ordered affected `columns`; internal task or issue
-ownership, reviewer terminology, implementation chronology, and
-delivery-process metadata are excluded. The pre-submission UI renders its
+`description`, and ordered affected `columns`; internal ownership and delivery
+process metadata are excluded. The pre-submission UI renders its
 target-version warning, non-conformance status, and **Current authority gaps**
 from this response. See the manifest contract below for the complete current
 gap catalog, which is not repeated here.
@@ -884,12 +883,29 @@ Return the exact stored `manifest.json` bytes for a ready request.
 ### `GET /api/v1/tenants/{tenant_name}/focus-preview/requests/{request_id}/files/{file_name}`
 
 Return the exact stored bytes for a file enumerated by a ready request. The
-package contains one or more ordered CSV files declared by `package.files`.
+package contains one or more ordered CSV files followed by
+`focus-metadata.json`, all declared by `package.files`. The metadata file uses
+`application/json` and the CSV files use `text/csv`.
+
+`focus-metadata.json` provides nonstandard `x_ChitraguptaPreview...` Data
+Generator, Dataset Instance, Recency, exact emitted-schema, artifact-linkage,
+and delivery information. It targets the FOCUS 1.4 vocabulary but does not emit
+official FOCUS Schema metadata or `Schema.FocusVersion`, and it does not claim
+conformance. Importers that require a conforming FOCUS Export must reject the
+Preview package. The Chitragupta manifest remains the only authority for sizes,
+checksums, request expiry, revisions, known gaps, and package lifecycle.
+
+Requested metadata declares `correction_handling: not_a_correction_series` and
+`delivery_handling: one_off_download`. Metadata is validated for canonical
+bytes, freshness, schema, artifact order, internal IDs, and truthful
+non-conformance after staging and before Ready publication. API, remote CLI,
+web UI, individual-file download, and archive paths expose the same stored
+metadata bytes.
 
 ### `GET /api/v1/tenants/{tenant_name}/focus-preview/requests/{request_id}/archive`
 
 Stream a deterministic ZIP for a ready request. The archive contains
-`manifest.json` followed by data files in manifest order and is returned as
+`manifest.json` followed by CSV and metadata files in manifest order and is returned as
 `application/zip` with filename
 `focus-mapping-preview-{request_id}.zip`. The archive is a transport wrapper and
 is not listed as a manifest data artifact.
@@ -908,6 +924,11 @@ mapping validation produce a settled result. A later material settled correction
 atomically replaces the current revision. Failed calculation, eligibility,
 reconciliation, validation, artifact, or persistence work leaves the prior
 current revision unchanged.
+
+Published monthly metadata declares FOCUS Replacement correction handling with
+Overwrite delivery. Every revision is a complete snapshot; consumers use the
+current revision and never add or merge it with superseded revisions. This
+correction-series contract does not apply to one-off requested packages.
 
 Existing persisted provisional revisions remain available under the ordinary
 supersession and retention rules. The first valid settled revision supersedes a
@@ -938,7 +959,8 @@ The source snapshot reports calculation and source-through freshness, effective
 coverage, evidence-through date, availability cutoff, and Monthly status. The
 validation summary reports the mapping profile, source-record and output-row
 counts, zero mapping errors, and passed artifact integrity. Package metadata
-contains the manifest, ordered CSV files, and ZIP download URL. Every returned
+contains the manifest, ordered CSV files, final `focus-metadata.json`, and ZIP
+download URL. Every returned
 current-artifact URL includes both `month` and `revision_id`.
 
 #### Current revision artifact endpoints
@@ -946,7 +968,7 @@ current-artifact URL includes both `month` and `revision_id`.
 | Endpoint | Result |
 |---|---|
 | `GET /revisions/current/manifest?month=YYYY-MM&revision_id=...` | Exact validated `manifest.json` bytes. |
-| `GET /revisions/current/files/{file_name}?month=YYYY-MM&revision_id=...` | Exact validated bytes for one declared CSV part. |
+| `GET /revisions/current/files/{file_name}?month=YYYY-MM&revision_id=...` | Exact validated bytes for one declared CSV or metadata artifact. |
 | `GET /revisions/current/archive?month=YYYY-MM&revision_id=...` | `application/zip` stream named `focus-mapping-preview-{month}-{revision_id}.zip`. |
 
 The table paths are relative to the tenant Preview prefix. Artifact
@@ -999,7 +1021,7 @@ revision list items.
 | Endpoint | Result |
 |---|---|
 | `GET /revisions/{revision_id}/manifest` | Exact validated `manifest.json` bytes. |
-| `GET /revisions/{revision_id}/files/{file_name}` | Exact validated bytes for one declared CSV part. |
+| `GET /revisions/{revision_id}/files/{file_name}` | Exact validated bytes for one declared CSV or metadata artifact. |
 | `GET /revisions/{revision_id}/archive` | `application/zip` stream named `focus-mapping-preview-{month}-{revision_id}.zip`. |
 
 All revision list/detail responses state

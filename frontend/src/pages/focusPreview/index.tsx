@@ -101,7 +101,7 @@ function PreviewRequestDetails({
             {request.package!.files.map((item) => (
               <Button
                 key={item.name}
-                aria-label={`Download cost and usage; Download ${item.name}`}
+                aria-label={`Download ${item.name}`}
                 onClick={() => onDownload(item.download_url, item.name)}
               >
                 Download {item.name}

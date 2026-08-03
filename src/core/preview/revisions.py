@@ -19,6 +19,11 @@ from core.preview.artifacts import (  # noqa: TC001 - resolved by runtime protoc
     preview_artifact_owner,
 )
 from core.preview.eligibility import policy_from_tenant_config
+from core.preview.focus_metadata import (
+    build_revision_focus_metadata_artifact,
+    compose_package_artifacts,
+    validate_revision_focus_metadata_artifact,
+)
 from core.preview.generator import PreviewGenerationError, PreviewPackageGenerator, utc_now
 from core.preview.manifest_validation import validate_revision_manifest
 from core.preview.mapping import (
@@ -375,7 +380,42 @@ class PreviewRevisionService:
                     raise ValueError("candidate supersedes identity does not match expected current revision")
                 stored = None
                 try:
-                    generation.stage_data_files(draft.data_files)
+                    data_files = tuple(draft.data_files)
+                    focus_metadata = build_revision_focus_metadata_artifact(
+                        revision_id=candidate.revision_id,
+                        tenant_name_at_publication=candidate.tenant_name_at_publication,
+                        month=candidate.month,
+                        start_date=candidate.start_date,
+                        end_date=candidate.end_date,
+                        monthly_status=candidate.monthly_status,
+                        material_sha256=candidate.material_sha256,
+                        supersedes_revision_id=candidate.supersedes_revision_id,
+                        snapshot=candidate.source_snapshot,
+                        draft=draft,
+                        data_files=data_files,
+                        published_at=candidate.published_at,
+                    )
+                    package_files = compose_package_artifacts(
+                        data_files=data_files,
+                        focus_metadata=focus_metadata,
+                    )
+                    generation.stage_data_files(package_files)
+                    staged_files = generation.files
+                    validate_revision_focus_metadata_artifact(
+                        revision_id=candidate.revision_id,
+                        tenant_name_at_publication=candidate.tenant_name_at_publication,
+                        month=candidate.month,
+                        start_date=candidate.start_date,
+                        end_date=candidate.end_date,
+                        monthly_status=candidate.monthly_status,
+                        material_sha256=candidate.material_sha256,
+                        supersedes_revision_id=candidate.supersedes_revision_id,
+                        snapshot=candidate.source_snapshot,
+                        draft=draft,
+                        package_files=package_files,
+                        staged_files=staged_files,
+                        published_at=candidate.published_at,
+                    )
                     manifest = build_preview_revision_manifest(
                         revision_id=candidate.revision_id,
                         tenant_name_at_publication=candidate.tenant_name_at_publication,
@@ -387,7 +427,7 @@ class PreviewRevisionService:
                         supersedes_revision_id=candidate.supersedes_revision_id,
                         snapshot=candidate.source_snapshot,
                         draft=draft,
-                        files=generation.files,
+                        files=staged_files,
                         published_at=candidate.published_at,
                     )
                     stored = generation.publish(manifest_body=manifest)

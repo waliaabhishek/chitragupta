@@ -116,6 +116,8 @@ class PreviewGenerationPackage(PreviewStagedPackage, Protocol):
 
     def stage_data_files(self, data_files: Sequence[PreviewArtifactPayload]) -> None: ...
 
+    def stage_metadata_file(self, metadata_file: PreviewArtifactPayload) -> None: ...
+
 
 @runtime_checkable
 class PreviewArchiveStream(Protocol):
@@ -331,38 +333,9 @@ class _LocalPreviewStagedPackage:
         bounded_metadata = data_files.metadata if isinstance(data_files, PreviewSpooledArtifactCollection) else None
         metadata: list[PreviewArtifactMetadata] = []
         for item in data_files:
-            name = _safe_segment(item.name)
-            size_bytes, sha256 = spooled_body_metadata(item.body)
-            item_metadata = PreviewArtifactMetadata(
-                name=name,
-                media_type=item.media_type,
-                size_bytes=size_bytes,
-                sha256=sha256,
-                order=item.order,
-            )
+            item_metadata = self._stage_file(item)
             if bounded_metadata is None:
                 metadata.append(item_metadata)
-            target = self._staging / name
-            staged_hasher = hashlib.sha256()
-            staged_size = 0
-            if isinstance(item.body, PreviewSpooledBody):
-                with item.body.open() as source:
-                    while chunk := source.read(64 * 1024):
-                        staged_hasher.update(chunk)
-                        staged_size += len(chunk)
-                if (staged_size, staged_hasher.hexdigest()) != (size_bytes, sha256):
-                    raise PreviewArtifactIntegrityError("spooled preview artifact changed during staging")
-                item.body.path.rename(target)
-            else:
-                self._workspace.record_write(len(item.body))
-                with target.open("xb") as handle:
-                    handle.write(item.body)
-                    handle.flush()
-                    os.fsync(handle.fileno())
-                staged_hasher.update(item.body)
-                staged_size = len(item.body)
-                if (staged_size, staged_hasher.hexdigest()) != (size_bytes, sha256):
-                    raise PreviewArtifactIntegrityError("preview artifact changed during staging")
         file_metadata = tuple(metadata) if bounded_metadata is None else bounded_metadata
         if any(item.order != index for index, item in enumerate(file_metadata, start=1)):
             raise ValueError("package file order must be contiguous")
@@ -371,6 +344,53 @@ class _LocalPreviewStagedPackage:
         self._workspace.enforce_limit()
         _fsync_directory(self._staging)
         self._files = cast("tuple[PreviewArtifactMetadata, ...]", file_metadata)
+
+    def stage_metadata_file(self, metadata_file: PreviewArtifactPayload) -> None:
+        if self._closed or self._published:
+            raise RuntimeError("generation package is no longer stageable")
+        if self._files is None:
+            raise RuntimeError("generation data files have not been staged")
+        file_metadata = (*self._files, self._stage_file(metadata_file))
+        if any(item.order != index for index, item in enumerate(file_metadata, start=1)):
+            raise ValueError("package file order must be contiguous")
+        if len({item.name for item in file_metadata}) != len(file_metadata):
+            raise ValueError("package artifact names must be unique")
+        self._workspace.enforce_limit()
+        _fsync_directory(self._staging)
+        self._files = file_metadata
+
+    def _stage_file(self, item: PreviewArtifactPayload) -> PreviewArtifactMetadata:
+        name = _safe_segment(item.name)
+        size_bytes, sha256 = spooled_body_metadata(item.body)
+        item_metadata = PreviewArtifactMetadata(
+            name=name,
+            media_type=item.media_type,
+            size_bytes=size_bytes,
+            sha256=sha256,
+            order=item.order,
+        )
+        target = self._staging / name
+        staged_hasher = hashlib.sha256()
+        staged_size = 0
+        if isinstance(item.body, PreviewSpooledBody):
+            with item.body.open() as source:
+                while chunk := source.read(64 * 1024):
+                    staged_hasher.update(chunk)
+                    staged_size += len(chunk)
+            if (staged_size, staged_hasher.hexdigest()) != (size_bytes, sha256):
+                raise PreviewArtifactIntegrityError("spooled preview artifact changed during staging")
+            item.body.path.rename(target)
+        else:
+            self._workspace.record_write(len(item.body))
+            with target.open("xb") as handle:
+                handle.write(item.body)
+                handle.flush()
+                os.fsync(handle.fileno())
+            staged_hasher.update(item.body)
+            staged_size = len(item.body)
+            if (staged_size, staged_hasher.hexdigest()) != (size_bytes, sha256):
+                raise PreviewArtifactIntegrityError("preview artifact changed during staging")
+        return item_metadata
 
     def publish(self, *, manifest_body: bytes) -> PreviewStoredPackage:
         if self._closed or self._published:

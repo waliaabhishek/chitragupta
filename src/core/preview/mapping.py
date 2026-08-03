@@ -2822,8 +2822,10 @@ def _validate_rendered_file_metadata(
     draft: PreviewDataPackageDraft,
     files: Iterable[PreviewArtifactMetadata],
 ) -> None:
+    rendered_files = tuple(files)
     missing = object()
-    for payload, metadata in zip_longest(draft.data_files, files, fillvalue=missing):
+    data_file_metadata = rendered_files[: len(draft.data_files)]
+    for payload, metadata in zip_longest(draft.data_files, data_file_metadata, fillvalue=missing):
         if payload is missing or metadata is missing:
             raise PreviewMappingError("artifact metadata does not match rendered package bytes")
         assert isinstance(payload, PreviewArtifactPayload)

@@ -66,6 +66,8 @@ def test_one_real_stored_package_has_identical_api_cli_frontend_and_persisted_ha
         status = _wait_for_terminal(client, submitted.json()["request_id"])
         assert status["status"] == "ready"
         package = status["package"]
+        assert package["files"][-1]["name"] == "focus-metadata.json"
+        assert package["files"][-1]["media_type"] == "application/json"
         artifacts = [package["manifest"], *package["files"]]
         api_bodies = {artifact["name"]: client.get(artifact["download_url"]).content for artifact in artifacts}
         archive = client.get(package["download_all_url"])
@@ -115,6 +117,7 @@ def test_one_real_stored_package_has_identical_api_cli_frontend_and_persisted_ha
         assert {name: hashlib.sha256(body).hexdigest() for name, body in api_bodies.items()} == expected
         assert {name: hashlib.sha256((output_dir / name).read_bytes()).hexdigest() for name in api_bodies} == expected
         manifest = json.loads(api_bodies["manifest.json"])
+        metadata = json.loads(api_bodies["focus-metadata.json"])
         expected_contract = {
             "target_focus_version": "1.4",
             "conformance_status": "non_conforming",
@@ -124,6 +127,13 @@ def test_one_real_stored_package_has_identical_api_cli_frontend_and_persisted_ha
         assert {field: cli_status[field] for field in expected_contract} == expected_contract
         assert {field: manifest[field] for field in expected_contract} == expected_contract
         assert profile["known_gaps"] == manifest["known_gaps"]
+        assert metadata["x_ChitraguptaPreviewMetadata"]["delivery"]["correction_handling"] == "not_a_correction_series"
+        assert metadata["x_ChitraguptaPreviewMetadata"]["delivery"]["consumer_action"] == (
+            "consume_as_immutable_requested_package"
+        )
+        assert [item["name"] for item in metadata["x_ChitraguptaPreviewMetadata"]["dataset_artifacts"]] == [
+            artifact["name"] for artifact in package["files"][:-1]
+        ]
 
         response_bodies = {
             artifact["download_url"]: base64.b64encode(api_bodies[artifact["name"]]).decode() for artifact in artifacts

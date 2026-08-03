@@ -653,7 +653,7 @@ def test_controlled_runtime_commits_queued_before_running_and_reaches_ready(tmp_
         assert ready.source_snapshot.source_through == datetime(2026, 7, 3, tzinfo=UTC)
         assert ready.source_snapshot.calculation_timestamp == datetime(2026, 7, 3, 2, tzinfo=UTC)
         assert ready.package.manifest.name == "manifest.json"
-        assert [file.name for file in ready.package.files] == ["cost-and-usage.csv"]
+        assert [file.name for file in ready.package.files] == ["cost-and-usage.csv", "focus-metadata.json"]
     finally:
         runtime.close()
         backend.dispose()

@@ -88,11 +88,12 @@ then:
 3. Select **Custom** and choose the columns listed in `request.json`. Full and
    Summary are available when you do not need a custom projection.
 4. Click **Generate preview**. The page submits and polls the request.
-5. In **Recent requests**, download `manifest.json`, an individual CSV part, or
-   **Download All** as a ZIP.
+5. In **Recent requests**, download `manifest.json`, an individual CSV part,
+   `focus-metadata.json`, or **Download All** as a ZIP.
 
 The same page shows **Published monthly revisions**. Select a month, choose
-**View and download**, then download its manifest, CSV parts, or complete ZIP.
+**View and download**, then download its manifest, CSV parts, metadata, or
+complete ZIP.
 
 ## Generate and export from the CLI
 
@@ -175,8 +176,27 @@ records:
   `InvoiceIssuerName` use eligible-scope mapping authority and are not gaps; and
 - the requested package's fixed seven-day download lifecycle.
 
+[`sample-output/focus-metadata.json`](sample-output/focus-metadata.json) is the
+exact canonical metadata artifact stored beside the CSV. It describes the data
+generator, deterministic dataset/schema/recency identities, source freshness,
+the exact ordered Custom columns, and the CSV relationship. Its
+`x_ChitraguptaPreview...` sections are nonstandard import metadata for a
+non-conforming Preview artifact, not official FOCUS Schema metadata and not a
+FOCUS 1.4 conformance claim.
+
+Importers should use the metadata schema and artifact links to interpret the
+CSV, while treating `manifest.json` as the only authority for checksums, sizes,
+expiry, revisions, known gaps, and lifecycle. The API, remote CLI, web UI,
+individual-file download, and Download All return the same stored metadata
+bytes. This requested sample declares `not_a_correction_series`; it is one
+immutable requested snapshot. Published monthly revisions instead declare
+Replacement correction handling with Overwrite delivery. Each published
+revision is a complete current snapshot, so consumers replace the prior
+revision and never aggregate revisions.
+
 The manifest is formatted for readability here. Downloaded manifests use the
-same JSON values in canonical compact form.
+same JSON values in canonical compact form. The sample metadata file is already
+in its exact canonical stored form, including its trailing newline.
 
 For Monthly, Summary, Full, published-revision, repair, UI, and authentication
 workflows, see [`docs/focus-mapping-preview.md`](../../docs/focus-mapping-preview.md).

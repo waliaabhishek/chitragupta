@@ -69,6 +69,15 @@ const readyPackage = {
         download_url:
           "/api/v1/tenants/production/focus-preview/requests/request-1/files/cost-and-usage-part-00002-of-00002.csv",
       },
+      {
+        name: "focus-metadata.json",
+        media_type: "application/json",
+        size_bytes: 99,
+        sha256: "d".repeat(64),
+        order: 3,
+        download_url:
+          "/api/v1/tenants/production/focus-preview/requests/request-1/files/focus-metadata.json",
+      },
     ],
     download_all_name: "focus-mapping-preview-request-1.zip",
     download_all_url:
@@ -136,6 +145,15 @@ const revisionDetail = {
         order: 1,
         download_url:
           "/api/v1/tenants/production/focus-preview/revisions/revision-2/files/cost-and-usage.csv",
+      },
+      {
+        name: "focus-metadata.json",
+        media_type: "application/json",
+        size_bytes: 99,
+        sha256: "c".repeat(64),
+        order: 2,
+        download_url:
+          "/api/v1/tenants/production/focus-preview/revisions/revision-2/files/focus-metadata.json",
       },
     ],
     download_all_name: "focus-mapping-preview-revision-2.zip",
@@ -527,6 +545,7 @@ describe("FOCUS Mapping Preview API delegation", () => {
     expect(status.package!.files.map((file) => file.name)).toEqual([
       "cost-and-usage-part-00001-of-00002.csv",
       "cost-and-usage-part-00002-of-00002.csv",
+      "focus-metadata.json",
     ]);
     expect([...new Uint8Array(await archive.arrayBuffer())]).toEqual([
       0x50, 0x4b, 0x03, 0x04, 0x07,

@@ -199,6 +199,14 @@ const currentRevisionDetail = {
         order: 1,
         download_url: `${currentRevision.detail_url}/files/cost-and-usage.csv`,
       },
+      {
+        name: "focus-metadata.json",
+        media_type: "application/json",
+        size_bytes: 5,
+        sha256: "c".repeat(64),
+        order: 2,
+        download_url: `${currentRevision.detail_url}/files/focus-metadata.json`,
+      },
     ],
     download_all_name: "focus-mapping-preview-revision-current.zip",
     download_all_url: `${currentRevision.detail_url}/archive`,
@@ -461,6 +469,14 @@ describe("FOCUS Mapping Preview page delegation", () => {
             order: 1,
             download_url: "/api/v1/cost-and-usage.csv",
           },
+          {
+            name: "focus-metadata.json",
+            media_type: "application/json",
+            size_bytes: 5,
+            sha256: "c".repeat(64),
+            order: 2,
+            download_url: "/api/v1/focus-metadata.json",
+          },
         ],
         download_all_name: "focus-mapping-preview-request-1.zip",
         download_all_url: "/api/v1/archive",
@@ -477,7 +493,10 @@ describe("FOCUS Mapping Preview page delegation", () => {
       await screen.findByRole("button", { name: /download manifest/i }),
     );
     await user.click(
-      screen.getByRole("button", { name: /download cost and usage/i }),
+      screen.getByRole("button", { name: /^download cost-and-usage\.csv$/i }),
+    );
+    await user.click(
+      screen.getByRole("button", { name: /^download focus-metadata\.json$/i }),
     );
 
     expect(submitFocusPreview).toHaveBeenCalledWith(
@@ -502,6 +521,11 @@ describe("FOCUS Mapping Preview page delegation", () => {
     expect(fetchPreviewArtifact).toHaveBeenNthCalledWith(
       2,
       "/api/v1/cost-and-usage.csv",
+      expect.any(AbortSignal),
+    );
+    expect(fetchPreviewArtifact).toHaveBeenNthCalledWith(
+      3,
+      "/api/v1/focus-metadata.json",
       expect.any(AbortSignal),
     );
     await waitFor(() => expect(listFocusPreviewRequests).toHaveBeenCalledTimes(2));
@@ -844,11 +868,13 @@ describe("FOCUS Mapping Preview page delegation", () => {
 
     await userEvent.click(await screen.findByRole("button", { name: /download manifest\.json/i }));
     await userEvent.click(screen.getByRole("button", { name: /download cost-and-usage\.csv/i }));
+    await userEvent.click(screen.getByRole("button", { name: /download focus-metadata\.json/i }));
     await userEvent.click(screen.getByRole("button", { name: /download all/i }));
 
     expect(vi.mocked(fetchPreviewArtifact).mock.calls.map(([url]) => url)).toEqual([
       `${currentRevision.detail_url}/manifest`,
       `${currentRevision.detail_url}/files/cost-and-usage.csv`,
+      `${currentRevision.detail_url}/files/focus-metadata.json`,
       `${currentRevision.detail_url}/archive`,
     ]);
     for (const [, signal] of vi.mocked(fetchPreviewArtifact).mock.calls) {
@@ -1167,6 +1193,14 @@ describe("FOCUS Mapping Preview page delegation", () => {
               order: 2,
               download_url: "/api/v1/request-1/files/part-2",
             },
+            {
+              name: "focus-metadata.json",
+              media_type: "application/json",
+              size_bytes: 5,
+              sha256: "d".repeat(64),
+              order: 3,
+              download_url: "/api/v1/request-1/files/focus-metadata.json",
+            },
           ],
           download_all_name: "focus-mapping-preview-request-1.zip",
           download_all_url: "/api/v1/request-1/archive",
@@ -1179,14 +1213,16 @@ describe("FOCUS Mapping Preview page delegation", () => {
     const user = userEvent.setup();
 
     await user.click(await screen.findByRole("button", { name: /download manifest\.json/i }));
-    await user.click(screen.getByRole("button", { name: /download cost-and-usage-part-00001-of-00002\.csv/i }));
-    await user.click(screen.getByRole("button", { name: /download cost-and-usage-part-00002-of-00002\.csv/i }));
+    await user.click(screen.getByRole("button", { name: /^download cost-and-usage-part-00001-of-00002\.csv$/i }));
+    await user.click(screen.getByRole("button", { name: /^download cost-and-usage-part-00002-of-00002\.csv$/i }));
+    await user.click(screen.getByRole("button", { name: /^download focus-metadata\.json$/i }));
     await user.click(screen.getByRole("button", { name: /download all/i }));
 
     expect(vi.mocked(fetchPreviewArtifact).mock.calls.map(([url]) => url)).toEqual([
       "/api/v1/request-1/manifest",
       "/api/v1/request-1/files/part-1",
       "/api/v1/request-1/files/part-2",
+      "/api/v1/request-1/files/focus-metadata.json",
       "/api/v1/request-1/archive",
     ]);
   });

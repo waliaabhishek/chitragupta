@@ -30,6 +30,13 @@
       "order": 1,
       "sha256": "5026b6a1600964c89b3c9af353ca6aa57bcec373c25750592d7c84236d953088",
       "size_bytes": 285
+    },
+    {
+      "media_type": "application/json",
+      "name": "focus-metadata.json",
+      "order": 2,
+      "sha256": "108ede5196375493f2a9c356a1d5b67a8d6ef4715375120fbb5a615b9d6e26da",
+      "size_bytes": 4799
     }
   ],
   "generated_at": "2026-07-04T00:00:00Z",

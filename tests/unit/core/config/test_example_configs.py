@@ -3,6 +3,8 @@ from __future__ import annotations
 import csv
 import hashlib
 import json
+from datetime import UTC, date, datetime
+from decimal import Decimal
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -11,12 +13,23 @@ if TYPE_CHECKING:
 
 from core.config.loader import load_config
 from core.preview.capability import FOCUS_PREVIEW_CAPABILITY
+from core.preview.focus_metadata import build_requested_focus_metadata_artifact
 from core.preview.mapping import (
     FOCUS_1_4_FULL_PROFILE_COLUMNS,
     MAPPING_PROFILE_VERSION,
     PREVIEW_MANIFEST_SCHEMA_VERSION,
     PROFILE_NOT_APPLICABLE_COLUMNS,
+    PreviewDataPackageDraft,
+    PreviewPackageReconciliation,
+    preview_canonical_json,
     preview_manifest_known_gaps,
+)
+from core.preview.models import (
+    PreviewArtifactPayload,
+    PreviewCalculationCoverageEntry,
+    PreviewRequest,
+    PreviewRequestStatus,
+    PreviewSourceSnapshot,
 )
 
 EXAMPLES_DIR = Path(__file__).parents[4] / "examples"
@@ -60,6 +73,8 @@ class TestCCloudExamples:
         request = json.loads((example / "request.json").read_text(encoding="utf-8"))
         manifest = json.loads((example / "sample-output" / "manifest.json").read_text(encoding="utf-8"))
         csv_body = (example / "sample-output" / "cost-and-usage.csv").read_bytes()
+        metadata_body = (example / "sample-output" / "focus-metadata.json").read_bytes()
+        metadata = json.loads(metadata_body)
         csv_rows = list(csv.reader(csv_body.decode().splitlines()))
 
         assert request["column_profile"] == manifest["column_profile"] == "custom"
@@ -79,10 +94,93 @@ class TestCCloudExamples:
         assert manifest["reconciliation"]["difference"] == "0"
         assert manifest["reconciliation"]["quantity_difference"] == "0"
 
-        [csv_metadata] = manifest["files"]
+        [csv_metadata, focus_metadata] = manifest["files"]
         assert csv_metadata["name"] == "cost-and-usage.csv"
         assert csv_metadata["size_bytes"] == len(csv_body)
         assert csv_metadata["sha256"] == hashlib.sha256(csv_body).hexdigest()
+        assert focus_metadata["name"] == "focus-metadata.json"
+        assert focus_metadata["media_type"] == "application/json"
+        assert focus_metadata["order"] == 2
+        assert focus_metadata["size_bytes"] == len(metadata_body)
+        assert focus_metadata["sha256"] == hashlib.sha256(metadata_body).hexdigest()
+        assert metadata_body == (preview_canonical_json(metadata) + "\n").encode()
+        focus = metadata["x_ChitraguptaPreviewMetadata"]
+        assert focus["metadata_conformance_status"] == "non_conforming_preview_metadata"
+        assert focus["conformance_status"] == "non_conforming"
+        assert focus["dataset_artifacts"] == [
+            {
+                "dataset_instance_id": focus["x_ChitraguptaPreviewDatasetInstance"]["dataset_instance_id"],
+                "media_type": "text/csv",
+                "name": "cost-and-usage.csv",
+                "order": 1,
+                "schema_id": focus["x_ChitraguptaPreviewSchema"]["schema_id"],
+            }
+        ]
+        assert [column["column_name"] for column in focus["x_ChitraguptaPreviewSchema"]["columns"]] == list(
+            request["columns"]
+        )
+        assert focus["delivery"]["correction_handling"] == "not_a_correction_series"
+        assert "Schema" not in metadata
+
+        data_payload = PreviewArtifactPayload("cost-and-usage.csv", "text/csv", 1, csv_body)
+        snapshot = PreviewSourceSnapshot(
+            calculation_timestamp=datetime(2026, 7, 3, tzinfo=UTC),
+            calculation_coverage=(
+                PreviewCalculationCoverageEntry(
+                    tracking_date=date(2026, 7, 1),
+                    calculation_id="calculation-1",
+                    calculation_completed_at=datetime(2026, 7, 3, tzinfo=UTC),
+                    calculation_run_id=1,
+                ),
+            ),
+            source_through=datetime(2026, 7, 3, tzinfo=UTC),
+            effective_coverage_start_date=date(2026, 7, 1),
+            effective_coverage_end_date=date(2026, 7, 2),
+            availability_cutoff_end_date=None,
+            monthly_status=None,
+        )
+        preview_request = PreviewRequest(
+            request_id="request-example-001",
+            tenant_name="ccloud-prod",
+            ecosystem="confluent_cloud",
+            tenant_id="org-1",
+            grain="daily",
+            start_date=date(2026, 7, 1),
+            end_date=date(2026, 7, 2),
+            column_profile="custom",
+            status=PreviewRequestStatus.RUNNING,
+            created_at=datetime(2026, 7, 3, tzinfo=UTC),
+            started_at=datetime(2026, 7, 3, tzinfo=UTC),
+            completed_at=None,
+            expires_at=None,
+            source_snapshot=None,
+            diagnostic=None,
+            storage_key=None,
+            package=None,
+            effective_columns=tuple(request["columns"]),
+        )
+        draft = PreviewDataPackageDraft(
+            data_files=(data_payload,),
+            source_records=1,
+            rows=1,
+            reconciliation=PreviewPackageReconciliation(
+                source_records=1,
+                source_cost=Decimal("8"),
+                allocated_cost=Decimal("8"),
+                source_quantity=Decimal("5"),
+                allocated_quantity=Decimal("5"),
+            ),
+            logical_data_sha256=hashlib.sha256(csv_body).hexdigest(),
+        )
+        expected_metadata = build_requested_focus_metadata_artifact(
+            request=preview_request,
+            snapshot=snapshot,
+            draft=draft,
+            data_files=(data_payload,),
+            ready_at=datetime(2026, 7, 4, tzinfo=UTC),
+            expires_at=datetime(2026, 7, 11, tzinfo=UTC),
+        )
+        assert metadata_body == expected_metadata.body
 
 
 def test_ccloud_reference_documents_currency_authority_and_retention_limit() -> None:
