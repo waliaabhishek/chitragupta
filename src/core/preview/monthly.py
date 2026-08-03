@@ -202,9 +202,11 @@ def aggregate_monthly_full_rows(
         financials = PreviewFinancialProjection(
             billed_cost=_decimal_cell(output, "BilledCost"),
             contracted_cost=_decimal_cell(output, "ContractedCost"),
+            contracted_unit_price=_optional_decimal_cell(output, "ContractedUnitPrice"),
             effective_cost=_decimal_cell(output, "EffectiveCost"),
             list_cost=_decimal_cell(output, "ListCost"),
             list_unit_price=_optional_decimal_cell(output, "ListUnitPrice"),
+            pricing_currency_contracted_unit_price=_optional_decimal_cell(output, "PricingCurrencyContractedUnitPrice"),
             pricing_currency_effective_cost=_decimal_cell(output, "PricingCurrencyEffectiveCost"),
             pricing_currency_list_unit_price=_optional_decimal_cell(output, "PricingCurrencyListUnitPrice"),
             pricing_quantity=_optional_decimal_cell(output, "PricingQuantity"),
@@ -466,9 +468,13 @@ def aggregate_monthly_full_rows_bounded(
             financials = PreviewFinancialProjection(
                 billed_cost=_decimal_cell(output, "BilledCost"),
                 contracted_cost=_decimal_cell(output, "ContractedCost"),
+                contracted_unit_price=_optional_decimal_cell(output, "ContractedUnitPrice"),
                 effective_cost=_decimal_cell(output, "EffectiveCost"),
                 list_cost=_decimal_cell(output, "ListCost"),
                 list_unit_price=_optional_decimal_cell(output, "ListUnitPrice"),
+                pricing_currency_contracted_unit_price=_optional_decimal_cell(
+                    output, "PricingCurrencyContractedUnitPrice"
+                ),
                 pricing_currency_effective_cost=_decimal_cell(output, "PricingCurrencyEffectiveCost"),
                 pricing_currency_list_unit_price=_optional_decimal_cell(output, "PricingCurrencyListUnitPrice"),
                 pricing_quantity=_optional_decimal_cell(output, "PricingQuantity"),

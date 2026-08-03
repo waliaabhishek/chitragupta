@@ -10,10 +10,18 @@
     "ChargePeriodStart",
     "ChargePeriodEnd",
     "BilledCost",
+    "ContractedCost",
+    "ContractedUnitPrice",
     "EffectiveCost",
+    "ListCost",
+    "ListUnitPrice",
+    "PricingCurrencyContractedUnitPrice",
+    "PricingCurrencyListUnitPrice",
+    "PricingQuantity",
     "ConsumedQuantity",
     "ConsumedUnit",
-    "AllocatedResourceId"
+    "AllocatedResourceId",
+    "x_ConfluentDiscountAmount"
   ],
   "end_date": "2026-07-02",
   "evidence_coverage": {
@@ -28,15 +36,15 @@
       "media_type": "text/csv",
       "name": "cost-and-usage.csv",
       "order": 1,
-      "sha256": "5026b6a1600964c89b3c9af353ca6aa57bcec373c25750592d7c84236d953088",
-      "size_bytes": 285
+      "sha256": "732c9368400a64b22fa043896c29a3af470cc31e930456829a102b1fd45f3350",
+      "size_bytes": 467
     },
     {
       "media_type": "application/json",
       "name": "focus-metadata.json",
       "order": 2,
-      "sha256": "108ede5196375493f2a9c356a1d5b67a8d6ef4715375120fbb5a615b9d6e26da",
-      "size_bytes": 4799
+      "sha256": "8cd7acc6d63f55c7a862e7aa70688c1c640887870805ab8be98d98a06b66ac6f",
+      "size_bytes": 6666
     }
   ],
   "generated_at": "2026-07-04T00:00:00Z",
@@ -98,9 +106,7 @@
     "CommitmentDiscountType",
     "CommitmentDiscountUnit",
     "CommitmentProgramEligibilityDetails",
-    "ContractApplied",
-    "ContractedUnitPrice",
-    "PricingCurrencyContractedUnitPrice"
+    "ContractApplied"
   ],
   "reconciliation": {
     "allocated_cost": "8",

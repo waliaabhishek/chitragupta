@@ -107,6 +107,37 @@ def test_package_csv_header_exactly_matches_manifest_effective_columns(
     assert len(csv_rows) == 2
     if profile == "full":
         assert csv_rows[1][effective.index("InvoiceIssuerName")] == mapping.CONFLUENT_CLOUD_PARTICIPATING_ENTITY_NAME
+        assert csv_rows[1][effective.index("ContractedUnitPrice")] == "2"
+        assert csv_rows[1][effective.index("PricingCurrencyContractedUnitPrice")] == "2"
+
+
+def test_custom_profile_can_select_contracted_unit_price_defaults_while_summary_stays_compact(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mapping = _mapping()
+    monkeypatch.setattr(mapping, "validate_preview_row", lambda **_kwargs: None)
+    columns = (
+        "BilledCost",
+        "ContractedUnitPrice",
+        "PricingCurrencyContractedUnitPrice",
+        "PricingQuantity",
+    )
+
+    draft = _draft("custom", columns, (_row(),))
+    manifest = _manifest("custom", columns, draft)
+    rows = list(csv.DictReader(io.StringIO(draft.data_files[0].body.decode())))
+
+    assert manifest["effective_columns"] == list(columns)
+    assert rows == [
+        {
+            "BilledCost": "8",
+            "ContractedUnitPrice": "2",
+            "PricingCurrencyContractedUnitPrice": "2",
+            "PricingQuantity": "5",
+        }
+    ]
+    assert "ContractedUnitPrice" not in mapping.FOCUS_1_4_SUMMARY_COLUMNS
+    assert "PricingCurrencyContractedUnitPrice" not in mapping.FOCUS_1_4_SUMMARY_COLUMNS
 
 
 def test_full_summary_and_custom_project_the_same_canonical_hidden_row_order(

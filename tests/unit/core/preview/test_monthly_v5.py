@@ -4,6 +4,7 @@ import hashlib
 from datetime import UTC, datetime
 from decimal import Decimal, getcontext, localcontext
 from importlib import import_module
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -52,9 +53,11 @@ def _row(
         {
             "BilledCost": Decimal(billed),
             "ContractedCost": Decimal(contracted),
+            "ContractedUnitPrice": Decimal("2"),
             "EffectiveCost": Decimal(effective),
             "InvoiceIssuerName": mapping.CONFLUENT_CLOUD_PARTICIPATING_ENTITY_NAME,
             "ListCost": Decimal(list_cost),
+            "PricingCurrencyContractedUnitPrice": Decimal("2"),
             "PricingCurrencyEffectiveCost": Decimal(pricing_cost),
             "PricingQuantity": None if pricing_quantity is None else Decimal(pricing_quantity),
             "ConsumedQuantity": None if consumed_quantity is None else Decimal(consumed_quantity),
@@ -78,12 +81,14 @@ def _row(
     )
     for name, value in dimensions.items():
         (target if name in target else custom)[name] = value
-    financials = mapping.PreviewFinancialProjection(
+    financials = SimpleNamespace(
         billed_cost=Decimal(billed),
         contracted_cost=Decimal(contracted),
+        contracted_unit_price=Decimal("2"),
         effective_cost=Decimal(effective),
         list_cost=Decimal(list_cost),
         list_unit_price=Decimal("2"),
+        pricing_currency_contracted_unit_price=Decimal("2"),
         pricing_currency_effective_cost=Decimal(pricing_cost),
         pricing_currency_list_unit_price=Decimal("2"),
         pricing_quantity=None if pricing_quantity is None else Decimal(pricing_quantity),
@@ -154,13 +159,17 @@ def test_monthly_aggregation_sums_exact_cost_quantity_and_signed_discount(
     values = _values(rows[0])
     assert values["BilledCost"] == Decimal("7.000000000")
     assert values["ContractedCost"] == Decimal("8")
+    assert values["ContractedUnitPrice"] == Decimal("2")
     assert values["EffectiveCost"] == Decimal("7")
     assert values["ListCost"] == Decimal("8")
+    assert values["PricingCurrencyContractedUnitPrice"] == Decimal("2")
     assert values["PricingCurrencyEffectiveCost"] == Decimal("7")
     assert values["PricingQuantity"] == Decimal("10")
     assert values["ConsumedQuantity"] == Decimal("10")
     assert values["x_ConfluentDiscountAmount"] == Decimal("-1.25")
     assert rows[0].financials.billed_cost == values["BilledCost"]
+    assert rows[0].financials.contracted_unit_price == values["ContractedUnitPrice"]
+    assert rows[0].financials.pricing_currency_contracted_unit_price == values["PricingCurrencyContractedUnitPrice"]
     assert rows[0].financials.pricing_quantity == values["PricingQuantity"]
     assert values["ChargePeriodStart"] == datetime(2026, 7, 1, tzinfo=UTC)
     assert values["ChargePeriodEnd"] == datetime(2026, 8, 1, tzinfo=UTC)
@@ -194,9 +203,11 @@ def test_monthly_aggregation_preserves_supported_billing_currency(
         ("AllocatedMethodDetails", '{"target_kind":"identity"}', '{"target_kind":"resource"}'),
         ("x_ChitraguptaAllocationRatio", Decimal("0.5"), Decimal("0.25")),
         ("x_ChitraguptaAllocationMethodVersion", "v1", "v2"),
+        ("ContractedUnitPrice", Decimal("2"), Decimal("3")),
         ("PricingUnit", "GB", "TB"),
         ("ConsumedUnit", "GB", "TB"),
         ("ListUnitPrice", Decimal("2"), Decimal("3")),
+        ("PricingCurrencyContractedUnitPrice", Decimal("2"), Decimal("3")),
         ("Tags", '{"team":"a"}', '{"team":"b"}'),
         ("ChargeCategory", "Usage", "Credit"),
         ("ResourceId", "lkc-1", "lkc-2"),
@@ -232,7 +243,9 @@ def test_monthly_same_compatibility_origin_keeps_distinct_tier_and_price_evidenc
         day=1,
         consumed_quantity="2",
         x_ConfluentTierDimensions='{"tier":"a"}',
+        ContractedUnitPrice=Decimal("2"),
         ListUnitPrice=Decimal("2"),
+        PricingCurrencyContractedUnitPrice=Decimal("2"),
         PricingCurrencyListUnitPrice=Decimal("2"),
         SkuPriceId="price-a",
     )
@@ -240,7 +253,9 @@ def test_monthly_same_compatibility_origin_keeps_distinct_tier_and_price_evidenc
         day=2,
         consumed_quantity="-5",
         x_ConfluentTierDimensions='{"tier":"b"}',
+        ContractedUnitPrice=Decimal("3"),
         ListUnitPrice=Decimal("3"),
+        PricingCurrencyContractedUnitPrice=Decimal("3"),
         PricingCurrencyListUnitPrice=Decimal("3"),
         SkuPriceId="price-b",
     )
@@ -255,15 +270,17 @@ def test_monthly_same_compatibility_origin_keeps_distinct_tier_and_price_evidenc
     assert {
         (
             _values(row)["x_ConfluentTierDimensions"],
+            _values(row)["ContractedUnitPrice"],
             _values(row)["ListUnitPrice"],
+            _values(row)["PricingCurrencyContractedUnitPrice"],
             _values(row)["SkuPriceId"],
             _values(row)["ConsumedQuantity"],
             _values(row)["ConsumedUnit"],
         )
         for row in rows
     } == {
-        ('{"tier":"a"}', Decimal("2"), "price-a", Decimal("2"), "GB"),
-        ('{"tier":"b"}', Decimal("3"), "price-b", Decimal("-5"), "GB"),
+        ('{"tier":"a"}', Decimal("2"), Decimal("2"), Decimal("2"), "price-a", Decimal("2"), "GB"),
+        ('{"tier":"b"}', Decimal("3"), Decimal("3"), Decimal("3"), "price-b", Decimal("-5"), "GB"),
     }
 
 

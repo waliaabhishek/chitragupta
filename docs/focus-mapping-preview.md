@@ -41,6 +41,18 @@ copy the normalized operator-configured `focus_preview.billing_currency` into
 not an inference from each Costs API record. Non-USD scopes remain fail-closed,
 and Preview performs no currency conversion.
 
+For eligible priced Direct-billed PAYG rows, negotiated unit-price discounts do
+not apply: `ContractedUnitPrice` defaults to `ListUnitPrice`, and
+`PricingCurrencyContractedUnitPrice` defaults to
+`PricingCurrencyListUnitPrice`. `ContractedCost` remains equal to `ListCost`.
+Provider discounts are represented by the final `BilledCost` and
+`EffectiveCost` plus `x_ConfluentDiscountAmount`; they are not reclassified as
+negotiated contracted-price savings. Preview copies the persisted provider
+price and quantity without changing their numeric values. Credit and
+promotional rows without `SkuPriceId` keep the contracted and list unit-price
+fields null, while unsupported commercial and source shapes continue to fail
+closed.
+
 `effective_start_date` is required when `focus_preview` is enabled and is
 included in the commercial interval. `effective_end_date` is optional and
 exclusive. When omitted, each operation resolves the exclusive end once from

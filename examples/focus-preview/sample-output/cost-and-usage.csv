@@ -1,2 +1,2 @@
-BillingAccountId,SubAccountId,ResourceId,ResourceName,ServiceName,ChargePeriodStart,ChargePeriodEnd,BilledCost,EffectiveCost,ConsumedQuantity,ConsumedUnit,AllocatedResourceId
-org-1,env-1,lkc-1,Orders,Confluent Cloud Apache Kafka,2026-07-01T00:00:00Z,2026-07-02T00:00:00Z,8,8,5,GB,sa-1
+BillingAccountId,SubAccountId,ResourceId,ResourceName,ServiceName,ChargePeriodStart,ChargePeriodEnd,BilledCost,ContractedCost,ContractedUnitPrice,EffectiveCost,ListCost,ListUnitPrice,PricingCurrencyContractedUnitPrice,PricingCurrencyListUnitPrice,PricingQuantity,ConsumedQuantity,ConsumedUnit,AllocatedResourceId,x_ConfluentDiscountAmount
+org-1,env-1,lkc-1,Orders,Confluent Cloud Apache Kafka,2026-07-01T00:00:00Z,2026-07-02T00:00:00Z,8,10,2,8,10,2,2,2,5,5,GB,sa-1,2

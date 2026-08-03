@@ -115,10 +115,18 @@ uv run chitragupta-preview request \
   --column ChargePeriodStart \
   --column ChargePeriodEnd \
   --column BilledCost \
+  --column ContractedCost \
+  --column ContractedUnitPrice \
   --column EffectiveCost \
+  --column ListCost \
+  --column ListUnitPrice \
+  --column PricingCurrencyContractedUnitPrice \
+  --column PricingCurrencyListUnitPrice \
+  --column PricingQuantity \
   --column ConsumedQuantity \
   --column ConsumedUnit \
   --column AllocatedResourceId \
+  --column x_ConfluentDiscountAmount \
   --output-dir ./focus-preview-output
 ```
 
@@ -159,9 +167,20 @@ date is not applicable to your data.
 
 ## What the sample means
 
-The fictional source charge is USD 8 of Kafka storage for organization `org-1`,
-environment `env-1`, and cluster `lkc-1`. Chitragupta attributes the complete
-charge and 5 GB quantity to service account `sa-1`.
+The fictional source charge is 5 GB of Kafka storage at a provider price of USD
+2 per GB for organization `org-1`, environment `env-1`, and cluster `lkc-1`.
+Its undiscounted cost is USD 10 and a USD 2 provider discount produces a final
+USD 8 charge. Chitragupta attributes the complete charge and quantity to
+service account `sa-1`.
+
+The eligible Direct-billed PAYG profile does not infer negotiated unit-price
+discounts. `ContractedUnitPrice` therefore defaults to `ListUnitPrice` at `2`,
+and `PricingCurrencyContractedUnitPrice` defaults to
+`PricingCurrencyListUnitPrice` at `2`; `ContractedCost` and `ListCost` are both
+`10`. The provider discount remains visible as `BilledCost=8`,
+`EffectiveCost=8`, and `x_ConfluentDiscountAmount=2`, not as negotiated
+contracted-price savings. The projection preserves the provider price and
+quantity values exactly.
 
 [`sample-output/cost-and-usage.csv`](sample-output/cost-and-usage.csv) is the
 selected FOCUS projection. [`sample-output/manifest.json`](sample-output/manifest.json)
@@ -173,7 +192,9 @@ records:
 - mapping and artifact-integrity validation;
 - the CSV byte size and SHA-256 checksum;
 - the current provider-authority gaps; `BillingCurrency` and
-  `InvoiceIssuerName` use eligible-scope mapping authority and are not gaps; and
+  `InvoiceIssuerName` use eligible-scope mapping authority and are not gaps;
+- the current applicability list, which no longer treats the two contracted
+  unit-price columns as unavailable; and
 - the requested package's fixed seven-day download lifecycle.
 
 [`sample-output/focus-metadata.json`](sample-output/focus-metadata.json) is the

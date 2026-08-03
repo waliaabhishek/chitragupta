@@ -574,6 +574,22 @@ per-record field supplied by the Confluent Costs API. Invoice-issuer-assigned
 `InvoiceId` and `InvoiceDetailId` remain unavailable and null; Preview does not
 fabricate them or perform invoice reconciliation.
 
+For eligible priced Direct-billed PAYG rows, the profile applies the
+no-negotiated-unit-price default: `ContractedUnitPrice` equals `ListUnitPrice`,
+and `PricingCurrencyContractedUnitPrice` equals
+`PricingCurrencyListUnitPrice`. Provider discounts remain in the final
+`BilledCost` and `EffectiveCost` values and in
+`x_ConfluentDiscountAmount`; they are not negotiated contracted-price savings.
+The projection preserves provider price and quantity values exactly. Credit and
+promotional rows without `SkuPriceId` keep these unit-price fields null.
+
+This correction changes no endpoint, HTTP status, request or response shape,
+manifest schema version, or Full-profile column order/count. Newly generated
+manifests no longer list `ContractedUnitPrice` or
+`PricingCurrencyContractedUnitPrice` in `profile_not_applicable_columns`.
+Unexpired requested packages generated with the immediately preceding exact
+canonical list remain downloadable; other manifest drift still fails closed.
+
 This endpoint validates tenant existence and the Confluent Cloud ecosystem but
 does not initialize Preview storage or the worker runtime.
 

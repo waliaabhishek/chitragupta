@@ -1202,12 +1202,18 @@ def test_bounded_monthly_grouping_preserves_cells_with_sublinear_python_peak(
         assert [(row.target_values, row.custom_values, row.financials) for row in bounded] == [
             (row.target_values, row.custom_values, row.financials) for row in baseline
         ]
+        contracted_unit_price_index = mapping.FOCUS_1_4_FULL_COLUMNS.index("ContractedUnitPrice")
         consumed_index = mapping.FOCUS_1_4_FULL_COLUMNS.index("ConsumedQuantity")
         unit_index = mapping.FOCUS_1_4_FULL_COLUMNS.index("ConsumedUnit")
         issuer_index = mapping.FOCUS_1_4_FULL_COLUMNS.index("InvoiceIssuerName")
+        pricing_currency_contracted_index = mapping.FOCUS_1_4_FULL_COLUMNS.index("PricingCurrencyContractedUnitPrice")
+        assert bounded[0].target_values[contracted_unit_price_index] == Decimal("2")
         assert bounded[0].target_values[consumed_index] == Decimal("4")
         assert bounded[0].target_values[unit_index] == "GB"
         assert bounded[0].target_values[issuer_index] == mapping.CONFLUENT_CLOUD_PARTICIPATING_ENTITY_NAME
+        assert bounded[0].target_values[pricing_currency_contracted_index] == Decimal("2")
+        assert bounded[0].financials.contracted_unit_price == Decimal("2")
+        assert bounded[0].financials.pricing_currency_contracted_unit_price == Decimal("2")
     finally:
         parity_workspace.close()
 
@@ -1276,7 +1282,13 @@ def test_bounded_monthly_grouping_preserves_supported_billing_currency_and_reval
         workspace.close()
 
     billing_currency_index = mapping.FOCUS_1_4_FULL_COLUMNS.index("BillingCurrency")
+    contracted_unit_price_index = mapping.FOCUS_1_4_FULL_COLUMNS.index("ContractedUnitPrice")
     issuer_index = mapping.FOCUS_1_4_FULL_COLUMNS.index("InvoiceIssuerName")
+    pricing_currency_contracted_index = mapping.FOCUS_1_4_FULL_COLUMNS.index("PricingCurrencyContractedUnitPrice")
     assert [row.target_values[billing_currency_index] for row in rows] == ["USD"]
+    assert [row.target_values[contracted_unit_price_index] for row in rows] == [Decimal("2")]
     assert [row.target_values[issuer_index] for row in rows] == [mapping.CONFLUENT_CLOUD_PARTICIPATING_ENTITY_NAME]
+    assert [row.target_values[pricing_currency_contracted_index] for row in rows] == [Decimal("2")]
+    assert [row.financials.contracted_unit_price for row in rows] == [Decimal("2")]
+    assert [row.financials.pricing_currency_contracted_unit_price for row in rows] == [Decimal("2")]
     assert validated == list(rows)

@@ -242,8 +242,8 @@ def test_real_production_lineage_projects_multiple_origins_actual_portions_and_f
             product="SUPPORT_CLOUD_BASIC",
             line_type="SUPPORT",
             amount="5",
-            price="5",
-            quantity="1",
+            price="2.5",
+            quantity="2",
             unit="MONTH",
             description="Support subscription",
             resource=None,
@@ -360,8 +360,8 @@ def test_real_production_lineage_projects_multiple_origins_actual_portions_and_f
             "source_cost": "18",
             "allocated_cost": "18",
             "difference": "0",
-            "source_quantity": "7",
-            "allocated_quantity": "7",
+            "source_quantity": "8",
+            "allocated_quantity": "8",
             "quantity_difference": "0",
         }
         files = ready["package"]["files"]
@@ -386,12 +386,12 @@ def test_real_production_lineage_projects_multiple_origins_actual_portions_and_f
         assert [len(body) for body in retrieved_parts] == [item["size_bytes"] for item in data_files]
         assert [hashlib.sha256(body).hexdigest() for body in retrieved_parts] == [item["sha256"] for item in data_files]
         assert [hashlib.sha256(body).hexdigest() for body in retrieved_parts] == [
-            "c01969b550db8f8f55a9b83fdb6766c711042358e30cc7709e785fb5023e798d",  # pragma: allowlist secret
-            "ad443b5163606231b74e165f2068f7363bb60b4d1777574e0f08c4665e4bebd6",  # pragma: allowlist secret
-            "4ff2f0197163254ad9f5e3850bd78dd3d9d09dec5f1fbe342f6ad17d532cdc26",  # pragma: allowlist secret
-            "5044621458ca4ddeadac6a96c0f5aff0a2ce8a9c98dc0d1ed778e81e102e3ba5",  # pragma: allowlist secret
-            "abd93997ef6d9c67178ece2bec88b35983270e805b59dfbbf9a86f1cfb6c26e7",  # pragma: allowlist secret
-            "75d2c1bad73239486e05445243bdfb8da64fd8b9037fb8742f2237c908d4dbe8",  # pragma: allowlist secret
+            "d0d55f71c7aa36808081c289979b513c9b148ad3312c703841338ca531237014",  # pragma: allowlist secret
+            "f0e0fc3917606275120b3f0bd16a992fa37a9636c8f99a490082df753bfe89be",  # pragma: allowlist secret
+            "4bfd4fc7aef6afbb7f3b5372f3d9240a9bd7bee857aa12d8bb5bc32a05fea1d9",  # pragma: allowlist secret
+            "ac8c68333ff212a594e923736fa4cc574e73cde8713450a79329a6de302596d3",  # pragma: allowlist secret
+            "8d8e4b77d83eee12253e73ef0279ec40719f6d94d798236cb5a68ee92a853938",  # pragma: allowlist secret
+            "aaa516debec93360114a3f93ddf36f14e3110ad20346f8cdd07bc2e5a2342b57",  # pragma: allowlist secret
         ]
         with backend.create_preview_metadata_read_unit_of_work() as uow:
             persisted = uow.requests.get_for_owner(
@@ -463,6 +463,8 @@ def test_real_production_lineage_projects_multiple_origins_actual_portions_and_f
         support = [row for row in rows if row["x_ChitraguptaSourceCostId"] == "cost-support"]
         assert {row["AllocatedResourceId"] for row in support} == {"sa-1", "user-1"}
         assert {row["BilledCost"] for row in support} == {"2.5"}
+        assert {row["ContractedUnitPrice"] for row in support} == {"2.5"}
+        assert {row["PricingQuantity"] for row in support} == {"1"}
         expected_allocated_fields = {
             ("cost-link", "lkc-1", "Orders", '{"origin":"cluster"}', '{"origin":"cluster"}'),
             ("cost-kafka", "sa-1", "Orders producer", '{"team":"alpha"}', '{"origin":"cluster"}'),
@@ -575,12 +577,12 @@ def test_real_production_lineage_projects_multiple_origins_actual_portions_and_f
             item["sha256"] for item in monthly_data_files
         ]
         assert [hashlib.sha256(body).hexdigest() for body in monthly_parts] == [
-            "524475b460a0e12d9dd073926006439f92fa28457302926191d8c6343702a4db",  # pragma: allowlist secret
-            "c6210b82ed4d83da56aeb681473c5d775001a3a0021f8c9fb559408dbb84d99e",  # pragma: allowlist secret
-            "3640f628985aefd2dd936faa73df2cb177c71327339c5b2e9147ff298e1c0fbc",  # pragma: allowlist secret
-            "56ba62e59aec20175e6faf47960be9702e5518efd79f5c7a17dbac804ef039b3",  # pragma: allowlist secret
-            "164afc511415a4e94fe79c39f19d74599604c2f43d2327026083a34f78db151f",  # pragma: allowlist secret
-            "5b4c681ac6b665756ef560676ab26d900934110ab1082fc8937ff1c06199bb25",  # pragma: allowlist secret
+            "87f18e9a543ae10a20aecad45302b19373847b78adf1e62df1225205e1177d23",  # pragma: allowlist secret
+            "2ba3cc61faa0cc61de8d921fd9b3ae02b271debdf1166fbf62fb5412166a3056",  # pragma: allowlist secret
+            "20b4e0d8730df581fe64c24fb68c5d48540d0107e372af94934c2fda2ea78c30",  # pragma: allowlist secret
+            "5602626116a0cbf23ea1fd5646ebcd0e63404e75a095b91c8b7c219b736c9dc2",  # pragma: allowlist secret
+            "f96e4de733e5aa37632a3772445ffe62693cc9ae9e3f72faed0a34881c359287",  # pragma: allowlist secret
+            "02e59b074b9ac8e10cf03569e59075d43c050bd0ab16ede57c160c08a4c28eff",  # pragma: allowlist secret
         ]
         monthly_full_bytes, monthly_full_rows = _csv_rows(client, monthly_full)
         assert len(monthly_full_rows) == 6
@@ -589,7 +591,7 @@ def test_real_production_lineage_projects_multiple_origins_actual_portions_and_f
         assert {row["InvoiceId"] for row in monthly_full_rows} == {""}
         assert {row["InvoiceDetailId"] for row in monthly_full_rows} == {""}
         assert sum(Decimal(row["BilledCost"]) for row in monthly_full_rows) == Decimal("18")
-        assert sum(Decimal(row["PricingQuantity"]) for row in monthly_full_rows) == Decimal("7")
+        assert sum(Decimal(row["PricingQuantity"]) for row in monthly_full_rows) == Decimal("8")
         assert [
             (row["x_ChitraguptaSourceCostId"], row["AllocatedResourceId"], row["BilledCost"])
             for row in monthly_full_rows

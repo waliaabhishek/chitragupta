@@ -46,6 +46,15 @@ def test_current_allocation_lineage_columns_remain_applicable() -> None:
         assert column in mapping.MAPPED_COLUMNS
 
 
+def test_contracted_unit_price_columns_are_now_applicable_profile_columns() -> None:
+    rules = {rule.column: rule for rule in mapping.FOCUS_1_4_COLUMN_RULES}
+
+    for column in ("ContractedUnitPrice", "PricingCurrencyContractedUnitPrice"):
+        assert rules[column].applicability is mapping.PreviewApplicability.APPLICABLE
+        assert column in mapping.MAPPED_COLUMNS
+        assert column not in mapping.PROFILE_NOT_APPLICABLE_COLUMNS
+
+
 def test_active_applicability_states_and_tableflow_context_remain_unchanged() -> None:
     applicability_values = {item.value for item in mapping.PreviewApplicability}
 

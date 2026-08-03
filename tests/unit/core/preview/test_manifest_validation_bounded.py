@@ -92,6 +92,39 @@ def _set_manifest_path(
     target[path[-1]] = value
 
 
+def _canonical_profile_not_applicable_columns() -> list[str]:
+    mapping = preview_module("mapping")
+    return [
+        column
+        for column in mapping.FOCUS_1_4_FULL_COLUMNS
+        if column
+        in set(mapping.PROFILE_NOT_APPLICABLE_COLUMNS) - {"ContractedUnitPrice", "PricingCurrencyContractedUnitPrice"}
+    ]
+
+
+LEGACY_PROFILE_NOT_APPLICABLE_COLUMNS = (
+    "AvailabilityZone",
+    "CapacityReservationId",
+    "CapacityReservationStatus",
+    "ChargeClass",
+    "CommitmentDiscountCategory",
+    "CommitmentDiscountId",
+    "CommitmentDiscountName",
+    "CommitmentDiscountQuantity",
+    "CommitmentDiscountStatus",
+    "CommitmentDiscountType",
+    "CommitmentDiscountUnit",
+    "CommitmentProgramEligibilityDetails",
+    "ContractApplied",
+    "ContractedUnitPrice",
+    "PricingCurrencyContractedUnitPrice",
+)
+
+
+def _legacy_profile_not_applicable_columns() -> list[str]:
+    return list(LEGACY_PROFILE_NOT_APPLICABLE_COLUMNS)
+
+
 _LEGACY_SELF_CLAIM_BYPASS_TAMPERS = (
     ("schema", ("schema_version",), "chitragupta.preview-manifest.v2"),
     ("package-identity", ("package_type",), "other"),
@@ -220,6 +253,95 @@ def test_requested_manifest_rejects_noncanonical_public_gap_contract(
     try:
         with pytest.raises(service.PreviewArtifactUnavailable):
             runtime.read_manifest_bytes(tampered)
+    finally:
+        runtime.close()
+        backend.dispose()
+
+
+def test_requested_manifest_accepts_new_canonical_contracted_unit_price_applicability_list(
+    tmp_path: Path,
+) -> None:
+    runtime, ready, backend, _executor = _ready_request(tmp_path)
+    assert ready.storage_key is not None
+    manifest_path = tmp_path / "artifacts" / ready.storage_key / "manifest.json"
+    manifest = json.loads(manifest_path.read_bytes())
+    manifest["profile_not_applicable_columns"] = _canonical_profile_not_applicable_columns()
+    body = (json.dumps(manifest, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    validation = preview_module("manifest_validation")
+    try:
+        validation.validate_requested_manifest(_TestArtifactStream(body), ready)
+    finally:
+        runtime.close()
+        backend.dispose()
+
+
+def test_requested_manifest_accepts_exact_legacy_contracted_unit_price_applicability_list(
+    tmp_path: Path,
+) -> None:
+    runtime, ready, backend, _executor = _ready_request(tmp_path)
+    assert ready.storage_key is not None
+    manifest_path = tmp_path / "artifacts" / ready.storage_key / "manifest.json"
+    manifest = json.loads(manifest_path.read_bytes())
+    manifest["profile_not_applicable_columns"] = _legacy_profile_not_applicable_columns()
+    body = (json.dumps(manifest, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    validation = preview_module("manifest_validation")
+    try:
+        validation.validate_requested_manifest(_TestArtifactStream(body), ready)
+    finally:
+        runtime.close()
+        backend.dispose()
+
+
+def test_legacy_contracted_unit_price_applicability_snapshot_is_exact_and_literal() -> None:
+    validation = preview_module("manifest_validation")
+
+    assert validation._LEGACY_PROFILE_NOT_APPLICABLE_COLUMNS == LEGACY_PROFILE_NOT_APPLICABLE_COLUMNS
+
+
+@pytest.mark.parametrize(
+    ("case", "columns"),
+    [
+        (
+            "partial-legacy-single-column",
+            lambda: [
+                column
+                for column in _legacy_profile_not_applicable_columns()
+                if column != "PricingCurrencyContractedUnitPrice"
+            ],
+        ),
+        (
+            "reordered-legacy-tail",
+            lambda: list(reversed(_legacy_profile_not_applicable_columns())),
+        ),
+        (
+            "extra-unrelated-column",
+            lambda: [*_canonical_profile_not_applicable_columns(), "BilledCost"],
+        ),
+        (
+            "missing-unrelated-column",
+            lambda: _canonical_profile_not_applicable_columns()[1:],
+        ),
+    ],
+)
+def test_requested_manifest_rejects_every_other_contracted_unit_price_applicability_drift(
+    tmp_path: Path,
+    case: str,
+    columns: Callable[[], list[str]],
+) -> None:
+    del case
+    runtime, ready, backend, _executor = _ready_request(tmp_path)
+    assert ready.storage_key is not None
+    manifest_path = tmp_path / "artifacts" / ready.storage_key / "manifest.json"
+    manifest = json.loads(manifest_path.read_bytes())
+    manifest["profile_not_applicable_columns"] = columns()
+    body = (json.dumps(manifest, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    validation = preview_module("manifest_validation")
+    try:
+        with pytest.raises(
+            validation.PreviewManifestValidationError,
+            match="stored preview manifest profile_not_applicable_columns is inconsistent",
+        ):
+            validation.validate_requested_manifest(_TestArtifactStream(body), ready)
     finally:
         runtime.close()
         backend.dispose()

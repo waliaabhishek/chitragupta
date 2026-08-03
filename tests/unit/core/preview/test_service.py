@@ -760,6 +760,7 @@ def test_daily_full_package_maps_provider_financial_account_sku_and_invoice_evid
         assert rows[0]["ChargeFrequency"] == "Usage-Based"
         assert rows[0]["ConsumedQuantity"] == rows[0]["PricingQuantity"] == "5"
         assert rows[0]["ConsumedUnit"] == rows[0]["PricingUnit"] == "GB"
+        assert rows[0]["ContractedUnitPrice"] == rows[0]["ListUnitPrice"] == "2"
         assert rows[0]["HostProviderName"] == "AWS"
         assert rows[0]["RegionId"] == "us-east-1"
         assert rows[0]["RegionName"] == ""
@@ -770,6 +771,7 @@ def test_daily_full_package_maps_provider_financial_account_sku_and_invoice_evid
         assert rows[0]["ListUnitPrice"] == "2"
         assert rows[0]["PricingCategory"] == "Standard"
         assert rows[0]["PricingCurrency"] == "USD"
+        assert rows[0]["PricingCurrencyContractedUnitPrice"] == rows[0]["PricingCurrencyListUnitPrice"] == "2"
         assert rows[0]["PricingCurrencyEffectiveCost"] == "8"
         assert rows[0]["PricingCurrencyListUnitPrice"] == "2"
         assert rows[0]["PricingQuantity"] == "5"
@@ -809,6 +811,8 @@ def test_daily_full_package_maps_provider_financial_account_sku_and_invoice_evid
         assert "provider_region_display_name_unavailable" in gap_codes
         assert "derived_sku_identity_not_provider_authoritative" in gap_codes
         assert manifest["source_snapshot"]["source_through"] == "2026-07-03T00:00:00Z"
+        assert "ContractedUnitPrice" not in manifest["profile_not_applicable_columns"]
+        assert "PricingCurrencyContractedUnitPrice" not in manifest["profile_not_applicable_columns"]
         assert manifest["reconciliation"] == {
             "source_cost": "8",
             "allocated_cost": "8",

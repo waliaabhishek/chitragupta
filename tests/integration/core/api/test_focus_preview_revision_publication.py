@@ -773,7 +773,9 @@ def test_periodic_publication_lifecycle_is_visible_through_real_current_api(
         first_file_body = file_response.content
         first_row = next(csv.DictReader(io.StringIO(file_response.text)))
         assert first_row["BillingCurrency"] == "USD"
+        assert first_row["ContractedUnitPrice"] == first_row["ListUnitPrice"] == "2"
         assert first_row["InvoiceIssuerName"] == "Confluent Cloud"
+        assert first_row["PricingCurrencyContractedUnitPrice"] == first_row["PricingCurrencyListUnitPrice"] == "2"
         assert first_row["ServiceProviderName"] == first_row["InvoiceIssuerName"]
         assert first_row["InvoiceId"] == ""
         assert first_row["InvoiceDetailId"] == ""
@@ -819,7 +821,13 @@ def test_periodic_publication_lifecycle_is_visible_through_real_current_api(
         assert first_metadata_ids["recency_id"] != superseded_metadata_ids["recency_id"]
         superseded_row = next(csv.DictReader(io.StringIO(superseded_file.text)))
         assert superseded_row["BillingCurrency"] == "USD"
+        assert superseded_row["ContractedUnitPrice"] == superseded_row["ListUnitPrice"] == "2"
         assert superseded_row["InvoiceIssuerName"] == "Confluent Cloud"
+        assert (
+            superseded_row["PricingCurrencyContractedUnitPrice"]
+            == superseded_row["PricingCurrencyListUnitPrice"]
+            == "2"
+        )
         assert superseded_row["ServiceProviderName"] == superseded_row["InvoiceIssuerName"]
         assert superseded_row["InvoiceId"] == ""
         assert superseded_row["InvoiceDetailId"] == ""

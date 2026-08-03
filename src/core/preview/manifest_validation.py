@@ -36,6 +36,24 @@ from core.preview.models import (
 
 logger = logging.getLogger(__name__)
 _CANONICAL_DECIMAL_PATTERN = re.compile(r"-?(?:0|[1-9][0-9]*)(?:\.[0-9]*[1-9])?")
+# Exact canonical profile_not_applicable_columns emitted at pre-task HEAD 5cced34.
+_LEGACY_PROFILE_NOT_APPLICABLE_COLUMNS = (
+    "AvailabilityZone",
+    "CapacityReservationId",
+    "CapacityReservationStatus",
+    "ChargeClass",
+    "CommitmentDiscountCategory",
+    "CommitmentDiscountId",
+    "CommitmentDiscountName",
+    "CommitmentDiscountQuantity",
+    "CommitmentDiscountStatus",
+    "CommitmentDiscountType",
+    "CommitmentDiscountUnit",
+    "CommitmentProgramEligibilityDetails",
+    "ContractApplied",
+    "ContractedUnitPrice",
+    "PricingCurrencyContractedUnitPrice",
+)
 
 
 class RewindableArtifactStream(Protocol):
@@ -256,6 +274,15 @@ def _require_equal(manifest: Mapping[str, Any], field: str, expected: object) ->
         raise PreviewManifestValidationError(f"stored preview manifest {field} is inconsistent")
 
 
+def _validate_profile_not_applicable_columns(manifest: Mapping[str, Any]) -> None:
+    columns = manifest.get("profile_not_applicable_columns")
+    if columns not in (
+        list(PROFILE_NOT_APPLICABLE_COLUMNS),
+        list(_LEGACY_PROFILE_NOT_APPLICABLE_COLUMNS),
+    ):
+        raise PreviewManifestValidationError("stored preview manifest profile_not_applicable_columns is inconsistent")
+
+
 def _canonical_decimal(value: object) -> Decimal:
     if not isinstance(value, str) or _CANONICAL_DECIMAL_PATTERN.fullmatch(value) is None:
         raise PreviewManifestValidationError("stored preview manifest reconciliation is inconsistent")
@@ -350,11 +377,7 @@ def validate_requested_manifest(
     _require_equal(manifest, "conformance_status", FOCUS_PREVIEW_CAPABILITY.conformance_status)
     _require_equal(manifest, "mapping_profile_version", MAPPING_PROFILE_VERSION)
     _require_equal(manifest, "known_gaps", preview_manifest_known_gaps())
-    _require_equal(
-        manifest,
-        "profile_not_applicable_columns",
-        list(PROFILE_NOT_APPLICABLE_COLUMNS),
-    )
+    _validate_profile_not_applicable_columns(manifest)
 
     snapshot = request.source_snapshot
     if snapshot is None:

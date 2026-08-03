@@ -734,6 +734,123 @@ def test_current_daily_and_monthly_ready_rows_round_trip_through_sqlite_and_api(
     backend.dispose()
 
 
+def test_ready_requested_manifest_accepts_only_exact_legacy_contracted_unit_price_applicability_list(
+    tmp_path: Path,
+) -> None:
+    connection_string = f"sqlite:///{tmp_path / 'legacy-contracted-unit-price-list.db'}"
+    artifact_root = tmp_path / "legacy-contracted-unit-price-list-artifacts"
+    backend = SQLModelBackend(
+        connection_string,
+        CCloudStorageModule(),
+        use_migrations=False,
+        focus_preview_enabled=True,
+    )
+    backend.create_tables()
+    artifact_store = LocalPreviewArtifactStore(artifact_root)
+    request_id = "legacy-contracted-unit-price-list"
+    _persist_ready_request(
+        backend=backend,
+        artifact_store=artifact_store,
+        request_id=request_id,
+        grain="daily",
+        start=date(2026, 7, 1),
+        end=date(2026, 7, 2),
+        profile="full",
+        effective_columns=preview_mapping.FOCUS_1_4_FULL_PROFILE_COLUMNS,
+        created_at=datetime(2026, 7, 19, tzinfo=UTC),
+        effective_end=date(2026, 7, 2),
+        cutoff_end=None,
+        monthly_status=None,
+    )
+    legacy_columns = [
+        column
+        for column in preview_mapping.FOCUS_1_4_FULL_COLUMNS
+        if column
+        in (
+            set(preview_mapping.PROFILE_NOT_APPLICABLE_COLUMNS)
+            | {"ContractedUnitPrice", "PricingCurrencyContractedUnitPrice"}
+        )
+    ]
+    storage_key = ""
+    manifest_before = b""
+    persisted_row_before: tuple[Any, ...]
+    engine = create_engine(connection_string)
+    with engine.begin() as connection:
+        storage_key = str(
+            connection.execute(
+                text("SELECT storage_key FROM preview_requests WHERE request_id = :request_id"),
+                {"request_id": request_id},
+            ).scalar_one()
+        )
+        manifest_path = artifact_root / storage_key / "manifest.json"
+        manifest = json.loads(manifest_path.read_bytes())
+        manifest["profile_not_applicable_columns"] = legacy_columns
+        manifest_before = (json.dumps(manifest, sort_keys=True, separators=(",", ":")) + "\n").encode()
+        manifest_path.write_bytes(manifest_before)
+        connection.execute(
+            text(
+                """
+                UPDATE preview_requests
+                SET manifest_metadata_json = :manifest_metadata
+                WHERE request_id = :request_id
+                """
+            ),
+            {
+                "request_id": request_id,
+                "manifest_metadata": json.dumps(
+                    {
+                        "name": "manifest.json",
+                        "media_type": "application/json",
+                        "size_bytes": len(manifest_before),
+                        "sha256": hashlib.sha256(manifest_before).hexdigest(),
+                        "order": None,
+                    },
+                    separators=(",", ":"),
+                ),
+            },
+        )
+        persisted_row_before = tuple(
+            connection.execute(
+                text("SELECT * FROM preview_requests WHERE request_id = :request_id"),
+                {"request_id": request_id},
+            ).one()
+        )
+    engine.dispose()
+
+    app = create_app(_settings(connection_string, artifact_root))
+    provider = FixedTenantBackendProvider({"production": backend})
+    with (
+        patch("core.preview.service.datetime", _frozen_service_datetime(datetime(2026, 7, 23, tzinfo=UTC))),
+        patch("core.api.app.ApiTenantBackendProvider", return_value=provider),
+        SameThreadApiClient(app) as client,
+    ):
+        manifest_response = client.get(f"/api/v1/tenants/production/focus-preview/requests/{request_id}/manifest")
+        assert manifest_response.status_code == 200
+        assert manifest_response.content == manifest_before
+
+        drifted = json.loads(manifest_before)
+        drifted["profile_not_applicable_columns"] = legacy_columns[:-1]
+        drifted_body = (json.dumps(drifted, sort_keys=True, separators=(",", ":")) + "\n").encode()
+        (artifact_root / storage_key / "manifest.json").write_bytes(drifted_body)
+        drifted_response = client.get(f"/api/v1/tenants/production/focus-preview/requests/{request_id}/manifest")
+        assert drifted_response.status_code == 500
+        assert drifted_response.json() == {"detail": "Stored preview artifact is unavailable"}
+        (artifact_root / storage_key / "manifest.json").write_bytes(manifest_before)
+
+    engine = create_engine(connection_string)
+    with engine.connect() as connection:
+        persisted_row_after = tuple(
+            connection.execute(
+                text("SELECT * FROM preview_requests WHERE request_id = :request_id"),
+                {"request_id": request_id},
+            ).one()
+        )
+    engine.dispose()
+    assert persisted_row_after == persisted_row_before
+    assert (artifact_root / storage_key / "manifest.json").read_bytes() == manifest_before
+    backend.dispose()
+
+
 def test_already_normalized_current_package_is_byte_identical_across_supported_upgrade(
     tmp_path: Path,
 ) -> None:

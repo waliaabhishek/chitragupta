@@ -63,7 +63,11 @@ TARGET_RULE_AUTHORITIES = (
     ("ConsumedUnit", "financial projection", "copy the matching normalized native unit"),
     ("ContractApplied", "none", "not applicable to Direct PAYG"),
     ("ContractedCost", "financial projection", "copy allocated original_amount"),
-    ("ContractedUnitPrice", "none", "not applicable without negotiated pricing"),
+    (
+        "ContractedUnitPrice",
+        "financial projection",
+        "copy ListUnitPrice because negotiated unit-price discounts are not supported in this profile",
+    ),
     ("EffectiveCost", "financial projection", "copy the reconciled allocation amount"),
     ("HostProviderName", "resource.metadata.provider_cloud", "copy the raw provider cloud code unchanged"),
     ("InvoiceDetailId", "none", "remain null under the invoice identity gap"),
@@ -77,7 +81,11 @@ TARGET_RULE_AUTHORITIES = (
     ("ListUnitPrice", "financial projection", "copy native price after exact arithmetic"),
     ("PricingCategory", "mapping profile", "emit Standard when SKU pricing is emitted"),
     ("PricingCurrency", "configured pricing contract", "emit USD without conversion"),
-    ("PricingCurrencyContractedUnitPrice", "none", "not applicable without negotiated pricing"),
+    (
+        "PricingCurrencyContractedUnitPrice",
+        "financial projection",
+        "copy PricingCurrencyListUnitPrice because negotiated unit-price discounts are not supported in this profile",
+    ),
     ("PricingCurrencyEffectiveCost", "financial projection", "copy EffectiveCost in USD"),
     ("PricingCurrencyListUnitPrice", "financial projection", "copy ListUnitPrice in USD"),
     ("PricingQuantity", "financial projection", "copy native quantity when SKU pricing is emitted"),
@@ -298,12 +306,23 @@ ACCEPTED_LINE_TYPE_CLASSIFICATIONS = tuple(
 
 
 def _valid_row_projection(mapping: Any) -> Any:
+    rules = {rule.column: rule for rule in mapping.FOCUS_1_4_COLUMN_RULES}
+    contracted_unit_price = (
+        Decimal("2") if rules["ContractedUnitPrice"].applicability is mapping.PreviewApplicability.APPLICABLE else None
+    )
+    pricing_currency_contracted_unit_price = (
+        Decimal("2")
+        if rules["PricingCurrencyContractedUnitPrice"].applicability is mapping.PreviewApplicability.APPLICABLE
+        else None
+    )
     financials = mapping.PreviewFinancialProjection(
         billed_cost=Decimal("8"),
         contracted_cost=Decimal("10"),
+        contracted_unit_price=contracted_unit_price,
         effective_cost=Decimal("8"),
         list_cost=Decimal("10"),
         list_unit_price=Decimal("2"),
+        pricing_currency_contracted_unit_price=pricing_currency_contracted_unit_price,
         pricing_currency_effective_cost=Decimal("8"),
         pricing_currency_list_unit_price=Decimal("2"),
         pricing_quantity=Decimal("5"),
@@ -342,6 +361,7 @@ def _valid_row_projection(mapping: Any) -> Any:
             "ConsumedQuantity": Decimal("5"),
             "ConsumedUnit": "GB",
             "ContractedCost": Decimal("10"),
+            "ContractedUnitPrice": contracted_unit_price,
             "EffectiveCost": Decimal("8"),
             "HostProviderName": "AWS",
             "InvoiceIssuerName": "Confluent Cloud",
@@ -349,6 +369,7 @@ def _valid_row_projection(mapping: Any) -> Any:
             "ListUnitPrice": Decimal("2"),
             "PricingCategory": "Standard",
             "PricingCurrency": "USD",
+            "PricingCurrencyContractedUnitPrice": pricing_currency_contracted_unit_price,
             "PricingCurrencyEffectiveCost": Decimal("8"),
             "PricingCurrencyListUnitPrice": Decimal("2"),
             "PricingQuantity": Decimal("5"),
@@ -409,6 +430,20 @@ def _valid_row_projection(mapping: Any) -> Any:
                 origin_product_category="KAFKA",
                 portion_ordinal=0,
             ),
+        ),
+    )
+
+
+def _contracted_unit_price_row_projection(mapping: Any) -> Any:
+    row = _valid_row_projection(mapping)
+    row = _replace_target(mapping, row, "ContractedUnitPrice", Decimal("2"))
+    row = _replace_target(mapping, row, "PricingCurrencyContractedUnitPrice", Decimal("2"))
+    return replace(
+        row,
+        financials=replace(
+            row.financials,
+            contracted_unit_price=Decimal("2"),
+            pricing_currency_contracted_unit_price=Decimal("2"),
         ),
     )
 
@@ -761,6 +796,129 @@ def test_nonterminating_persisted_ratio_uses_fixed_precision_for_contracted_and_
     assert row["BilledCost"] == "1"
     assert row["ContractedCost"] == "3.3333333333333333333333333333333333333"
     assert row["ListCost"] == "3.3333333333333333333333333333333333333"
+
+
+@pytest.mark.parametrize(
+    ("amount", "original", "discount"),
+    [
+        ("8", "10", "2"),
+        ("10", "10", "0"),
+    ],
+    ids=("discounted", "undiscounted"),
+)
+def test_project_financials_defaults_contracted_unit_prices_for_eligible_payg_rows(
+    valid_source_evidence: Any,
+    amount: str,
+    original: str,
+    discount: str,
+) -> None:
+    mapping = preview_module("mapping")
+    source = replace(
+        valid_source_evidence,
+        amount=Decimal(amount),
+        original_amount=Decimal(original),
+        discount_amount=Decimal(discount),
+    )
+    classification = mapping.classify_daily_full_source(
+        request_start=REQUEST_START,
+        request_end=REQUEST_END,
+        source=source,
+    )
+    assert isinstance(classification, mapping.AcceptedPreviewSource)
+
+    projected = mapping.project_financials(
+        source=source,
+        semantics=classification.semantics,
+        billed_share=source.amount,
+    )
+
+    assert projected.billed_cost == Decimal(amount)
+    assert projected.effective_cost == Decimal(amount)
+    assert projected.contracted_cost == Decimal(original)
+    assert projected.list_cost == Decimal(original)
+    assert projected.contracted_unit_price == Decimal("2")
+    assert projected.list_unit_price == Decimal("2")
+    assert projected.pricing_currency_contracted_unit_price == Decimal("2")
+    assert projected.pricing_currency_list_unit_price == Decimal("2")
+
+
+def test_project_allocated_financials_keeps_source_unit_prices_while_scaling_cost_and_quantity(
+    valid_source_evidence: Any,
+    valid_allocation_evidence: Any,
+) -> None:
+    mapping = preview_module("mapping")
+    classification = mapping.classify_daily_full_source(
+        request_start=REQUEST_START,
+        request_end=REQUEST_END,
+        source=valid_source_evidence,
+    )
+    assert isinstance(classification, mapping.AcceptedPreviewSource)
+    selected = mapping.SelectedSourceProjection(
+        valid_source_evidence,
+        classification.semantics,
+        mapping.project_financials(
+            source=valid_source_evidence,
+            semantics=classification.semantics,
+            billed_share=valid_source_evidence.amount,
+        ),
+    )
+    allocation = replace(
+        valid_allocation_evidence,
+        allocated_cost=Decimal("4"),
+        allocated_original_cost=Decimal("5"),
+        allocated_quantity=Decimal("2.5"),
+        allocation_ratio=Decimal("0.5"),
+    )
+
+    projected = mapping.project_allocated_financials(
+        selected=selected,
+        allocation=allocation,
+    )
+
+    assert projected.billed_cost == Decimal("4")
+    assert projected.effective_cost == Decimal("4")
+    assert projected.contracted_cost == Decimal("5")
+    assert projected.list_cost == Decimal("5")
+    assert projected.pricing_quantity == Decimal("2.5")
+    assert projected.consumed_quantity == Decimal("2.5")
+    assert projected.contracted_unit_price == Decimal("2")
+    assert projected.list_unit_price == Decimal("2")
+    assert projected.pricing_currency_contracted_unit_price == Decimal("2")
+    assert projected.pricing_currency_list_unit_price == Decimal("2")
+
+
+def test_promotional_allowance_does_not_fabricate_contracted_unit_prices(
+    valid_source_evidence: Any,
+) -> None:
+    mapping = preview_module("mapping")
+    source = replace(
+        valid_source_evidence,
+        native_line_type="PROMO_CREDIT",
+        native_description="Promotional allowance",
+        amount=Decimal("-5"),
+        original_amount=Decimal("-5"),
+        discount_amount=Decimal("0"),
+        price=None,
+        quantity=None,
+        unit=None,
+    )
+    classification = mapping.classify_daily_full_source(
+        request_start=REQUEST_START,
+        request_end=REQUEST_END,
+        source=source,
+    )
+    assert isinstance(classification, mapping.AcceptedPreviewSource)
+
+    projected = mapping.project_financials(
+        source=source,
+        semantics=classification.semantics,
+        billed_share=source.amount,
+    )
+
+    assert projected.contracted_unit_price is None
+    assert projected.list_unit_price is None
+    assert projected.pricing_currency_contracted_unit_price is None
+    assert projected.pricing_currency_list_unit_price is None
 
 
 def test_focus_rule_table_is_the_complete_ordered_65_column_authority() -> None:
@@ -1298,6 +1456,171 @@ def test_validate_preview_row_accepts_the_complete_valid_projection() -> None:
     mapping = preview_module("mapping")
 
     assert _validate(mapping, _valid_row_projection(mapping)) is None
+
+
+@pytest.mark.parametrize(
+    "column",
+    ["ContractedUnitPrice", "PricingCurrencyContractedUnitPrice"],
+)
+def test_validate_preview_row_rejects_missing_contracted_unit_price_fields_for_priced_usage(
+    column: str,
+) -> None:
+    mapping = preview_module("mapping")
+    row = _replace_target(mapping, _contracted_unit_price_row_projection(mapping), column, None)
+
+    with pytest.raises(mapping.PreviewRowValidationError) as caught:
+        _validate(mapping, row)
+
+    assert caught.value.rule_id is mapping.PreviewRowRuleId.DEPENDENT_FIELDS
+    assert caught.value.column == column
+
+
+def test_validate_preview_row_rejects_noncorrection_usage_without_sku_price_identity() -> None:
+    mapping = preview_module("mapping")
+    row = _contracted_unit_price_row_projection(mapping)
+    for column in (
+        "ContractedUnitPrice",
+        "ListUnitPrice",
+        "PricingCategory",
+        "PricingCurrencyContractedUnitPrice",
+        "PricingCurrencyListUnitPrice",
+        "PricingQuantity",
+        "PricingUnit",
+        "ConsumedQuantity",
+        "ConsumedUnit",
+        "SkuId",
+        "SkuMeter",
+        "SkuPriceDetails",
+        "SkuPriceId",
+    ):
+        row = _replace_target(mapping, row, column, None)
+    row = _replace_custom(mapping, row, "x_ChitraguptaSkuComponents", None)
+    row = replace(
+        row,
+        financials=replace(
+            row.financials,
+            contracted_unit_price=None,
+            list_unit_price=None,
+            pricing_currency_contracted_unit_price=None,
+            pricing_currency_list_unit_price=None,
+            pricing_quantity=None,
+            pricing_unit=None,
+            consumed_quantity=None,
+            consumed_unit=None,
+        ),
+    )
+
+    with pytest.raises(mapping.PreviewRowValidationError):
+        _validate(mapping, row)
+
+
+@pytest.mark.parametrize(
+    ("column", "value"),
+    [
+        ("ContractedUnitPrice", Decimal("3")),
+        ("PricingCurrencyContractedUnitPrice", Decimal("3")),
+    ],
+)
+def test_validate_preview_row_rejects_contracted_unit_price_drift_from_no_negotiated_discount_default(
+    column: str,
+    value: Decimal,
+) -> None:
+    mapping = preview_module("mapping")
+    row = _replace_target(mapping, _contracted_unit_price_row_projection(mapping), column, value)
+
+    with pytest.raises(mapping.PreviewRowValidationError) as caught:
+        _validate(mapping, row)
+
+    assert caught.value.rule_id is mapping.PreviewRowRuleId.FINANCIAL_PROJECTION
+    assert caught.value.column == column
+
+
+@pytest.mark.parametrize(
+    ("column", "list_column", "financial_field", "financial_list_field"),
+    [
+        (
+            "ContractedUnitPrice",
+            "ListUnitPrice",
+            "contracted_unit_price",
+            "list_unit_price",
+        ),
+        (
+            "PricingCurrencyContractedUnitPrice",
+            "PricingCurrencyListUnitPrice",
+            "pricing_currency_contracted_unit_price",
+            "pricing_currency_list_unit_price",
+        ),
+    ],
+)
+def test_validate_preview_row_rejects_each_contracted_unit_price_arithmetic_mismatch(
+    column: str,
+    list_column: str,
+    financial_field: str,
+    financial_list_field: str,
+) -> None:
+    mapping = preview_module("mapping")
+    row = _valid_row_projection(mapping)
+    row = _replace_target(mapping, row, column, Decimal("3"))
+    row = _replace_target(mapping, row, list_column, Decimal("3"))
+    row = replace(
+        row,
+        financials=replace(
+            row.financials,
+            **{
+                financial_field: Decimal("3"),
+                financial_list_field: Decimal("3"),
+            },
+        ),
+    )
+
+    with pytest.raises(mapping.PreviewRowValidationError) as caught:
+        _validate(mapping, row)
+
+    assert caught.value.rule_id is mapping.PreviewRowRuleId.FINANCIAL_PROJECTION
+    assert caught.value.column == column
+
+
+def test_refund_projection_preserves_positive_unit_price_and_negative_quantity(
+    valid_source_evidence: Any,
+) -> None:
+    mapping = preview_module("mapping")
+    source = replace(
+        valid_source_evidence,
+        native_description="Refund Kafka storage usage",
+        amount=Decimal("-8"),
+        original_amount=Decimal("-10"),
+        discount_amount=Decimal("-2"),
+        price=Decimal("2"),
+        quantity=Decimal("-5"),
+    )
+    classification = mapping.classify_daily_full_source(
+        request_start=REQUEST_START,
+        request_end=REQUEST_END,
+        source=source,
+    )
+    assert isinstance(classification, mapping.AcceptedPreviewSource)
+
+    projected = mapping.project_financials(
+        source=source,
+        semantics=classification.semantics,
+        billed_share=source.amount,
+    )
+
+    assert projected.contracted_unit_price == Decimal("2")
+    assert projected.pricing_currency_contracted_unit_price == Decimal("2")
+    assert projected.pricing_quantity == Decimal("-5")
+    assert projected.contracted_unit_price * projected.pricing_quantity == projected.contracted_cost
+
+
+def test_validate_preview_row_rejects_tax_rows_instead_of_fabricating_contracted_unit_prices() -> None:
+    mapping = preview_module("mapping")
+    row = _replace_target(mapping, _valid_row_projection(mapping), "ChargeCategory", "Tax")
+
+    with pytest.raises(mapping.PreviewRowValidationError) as caught:
+        _validate(mapping, row)
+
+    assert caught.value.rule_id is mapping.PreviewRowRuleId.ALLOWED_VALUE
+    assert caught.value.column == "ChargeCategory"
 
 
 @pytest.mark.parametrize(

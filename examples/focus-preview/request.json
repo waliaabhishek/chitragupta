@@ -12,9 +12,17 @@
     "ChargePeriodStart",
     "ChargePeriodEnd",
     "BilledCost",
+    "ContractedCost",
+    "ContractedUnitPrice",
     "EffectiveCost",
+    "ListCost",
+    "ListUnitPrice",
+    "PricingCurrencyContractedUnitPrice",
+    "PricingCurrencyListUnitPrice",
+    "PricingQuantity",
     "ConsumedQuantity",
     "ConsumedUnit",
-    "AllocatedResourceId"
+    "AllocatedResourceId",
+    "x_ConfluentDiscountAmount"
   ]
 }

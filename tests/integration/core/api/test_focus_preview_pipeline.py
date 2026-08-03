@@ -1008,8 +1008,8 @@ def test_same_key_tiers_flow_from_provider_capture_through_sidecar_and_canonical
                 }
                 return AllocationResult(
                     rows=[
-                        ChargebackRow(identity_id="sa-1", amount=Decimal("5"), **common),
-                        ChargebackRow(identity_id="UNALLOCATED", amount=Decimal("3"), **common),
+                        ChargebackRow(identity_id="sa-1", amount=Decimal("4.8"), **common),
+                        ChargebackRow(identity_id="UNALLOCATED", amount=Decimal("3.2"), **common),
                     ]
                 )
 
@@ -1187,13 +1187,13 @@ def test_same_key_tiers_flow_from_provider_capture_through_sidecar_and_canonical
     finally:
         engine.dispose()
     assert billing == ("0", "0", "8")
-    assert chargebacks == [("UNALLOCATED", "3"), ("sa-1", "5")]
+    assert chargebacks == [("UNALLOCATED", "3.2"), ("sa-1", "4.8")]
     assert compatibility_count == 2
     assert sidecar == [
         ("provider:tier-a", 0, "6", "3", "6"),
         ("provider:tier-a", 1, "4", "2", "4"),
-        ("provider:tier-b", 0, "-1", "-3", "-5"),
-        ("provider:tier-b", 1, "-1", "-2", "-5"),
+        ("provider:tier-b", 0, "-1.2", "-3", "-6"),
+        ("provider:tier-b", 1, "-0.8", "-2", "-4"),
     ]
 
     def csv_bytes(client: PipelineApiClient, result: dict[str, Any]) -> bytes:
@@ -1226,8 +1226,10 @@ def test_same_key_tiers_flow_from_provider_capture_through_sidecar_and_canonical
             "AllocatedResourceId",
             "BillingCurrency",
             "BilledCost",
+            "ContractedUnitPrice",
             "InvoiceIssuerName",
             "ListCost",
+            "PricingCurrencyContractedUnitPrice",
             "PricingQuantity",
             "ConsumedQuantity",
             "ConsumedUnit",
@@ -1265,7 +1267,9 @@ def test_same_key_tiers_flow_from_provider_capture_through_sidecar_and_canonical
                 '{"tier":"a"}',
                 '{"tier":"b"}',
             }
+            assert {row["ContractedUnitPrice"] for row in rows} == {"2"}
             assert {row["ListUnitPrice"] for row in rows} == {"2"}
+            assert {row["PricingCurrencyContractedUnitPrice"] for row in rows} == {"2"}
             totals: dict[str, Decimal] = {}
             list_totals: dict[str, Decimal] = {}
             consumed_totals: dict[str, Decimal] = {}
@@ -1312,22 +1316,26 @@ def test_same_key_tiers_flow_from_provider_capture_through_sidecar_and_canonical
                 row["x_ChitraguptaSourceCostId"],
                 row["AllocatedResourceId"],
                 row["BillingCurrency"],
+                row["ContractedUnitPrice"],
                 row["ConsumedQuantity"],
                 row["ConsumedUnit"],
                 row["InvoiceIssuerName"],
+                row["PricingCurrencyContractedUnitPrice"],
             )
             for row in custom_rows
         } == {
-            ("tier-a", "sa-1", "USD", "3", "GB", "Confluent Cloud"),
-            ("tier-a", "", "USD", "2", "GB", "Confluent Cloud"),
-            ("tier-b", "sa-1", "USD", "-3", "GB", "Confluent Cloud"),
-            ("tier-b", "", "USD", "-2", "GB", "Confluent Cloud"),
+            ("tier-a", "sa-1", "USD", "2", "3", "GB", "Confluent Cloud", "2"),
+            ("tier-a", "", "USD", "2", "2", "GB", "Confluent Cloud", "2"),
+            ("tier-b", "sa-1", "USD", "2", "-3", "GB", "Confluent Cloud", "2"),
+            ("tier-b", "", "USD", "2", "-2", "GB", "Confluent Cloud", "2"),
         }
         manifests = [manifest_json(client, result) for result in (daily_first, daily_summary, daily_custom, monthly)]
         assert all(manifest["validation"]["rows"] == 4 for manifest in manifests)
         assert all(manifest["reconciliation"] == manifests[0]["reconciliation"] for manifest in manifests[1:])
         for manifest in manifests:
             assert_public_known_gaps(manifest)
+            assert "ContractedUnitPrice" not in manifest["profile_not_applicable_columns"]
+            assert "PricingCurrencyContractedUnitPrice" not in manifest["profile_not_applicable_columns"]
         assert manifests[0]["reconciliation"] == {
             "source_cost": "8",
             "allocated_cost": "8",

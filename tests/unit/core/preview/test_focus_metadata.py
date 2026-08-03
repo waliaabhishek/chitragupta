@@ -321,6 +321,40 @@ def test_requested_multipart_package_appends_metadata_last_and_preserves_data_or
     assert package_files[-1].media_type == "application/json"
 
 
+def test_metadata_marks_contracted_unit_price_columns_as_projected_and_applicable() -> None:
+    request, snapshot, draft, data_files = _requested_case(
+        grain="daily",
+        profile="full",
+        columns=_mapping().FOCUS_1_4_FULL_PROFILE_COLUMNS,
+        snapshot=_snapshot(source_through=datetime(2026, 7, 2, tzinfo=UTC)),
+        rows=(_row(day=1, BillingCurrency="USD"),),
+    )
+    payload = _requested_metadata_payload(
+        request=request,
+        snapshot=snapshot,
+        draft=draft,
+        data_files=data_files,
+        ready_at=datetime(2026, 7, 3, tzinfo=UTC),
+    )
+    columns = {
+        item["column_name"]: item
+        for item in _metadata_root(payload)["x_ChitraguptaPreviewMetadata"]["x_ChitraguptaPreviewSchema"]["columns"]
+    }
+
+    assert columns["ContractedUnitPrice"]["applicability"] == "applicable"
+    assert columns["ContractedUnitPrice"]["source"] == "financial projection"
+    assert (
+        columns["ContractedUnitPrice"]["transformation"]
+        == "copy ListUnitPrice because negotiated unit-price discounts are not supported in this profile"
+    )
+    assert columns["PricingCurrencyContractedUnitPrice"]["applicability"] == "applicable"
+    assert columns["PricingCurrencyContractedUnitPrice"]["source"] == "financial projection"
+    assert (
+        columns["PricingCurrencyContractedUnitPrice"]["transformation"]
+        == "copy PricingCurrencyListUnitPrice because negotiated unit-price discounts are not supported in this profile"
+    )
+
+
 def test_requested_and_revision_delivery_semantics_differ_exactly_by_correction_series() -> None:
     request, snapshot, draft, data_files = _requested_case(
         grain="monthly",

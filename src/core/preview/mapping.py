@@ -323,7 +323,10 @@ _TARGET_RULE_AUTHORITIES = {
     "ConsumedUnit": ("financial projection", "copy the matching normalized native unit"),
     "ContractApplied": ("none", "not applicable to Direct PAYG"),
     "ContractedCost": ("financial projection", "copy allocated original_amount"),
-    "ContractedUnitPrice": ("none", "not applicable without negotiated pricing"),
+    "ContractedUnitPrice": (
+        "financial projection",
+        "copy ListUnitPrice because negotiated unit-price discounts are not supported in this profile",
+    ),
     "EffectiveCost": ("financial projection", "copy the reconciled allocation amount"),
     "HostProviderName": ("resource.metadata.provider_cloud", "copy the raw provider cloud code unchanged"),
     "InvoiceDetailId": ("none", "remain null under the invoice identity gap"),
@@ -336,7 +339,10 @@ _TARGET_RULE_AUTHORITIES = {
     "ListUnitPrice": ("financial projection", "copy native price after exact arithmetic"),
     "PricingCategory": ("mapping profile", "emit Standard when SKU pricing is emitted"),
     "PricingCurrency": ("configured pricing contract", "emit USD without conversion"),
-    "PricingCurrencyContractedUnitPrice": ("none", "not applicable without negotiated pricing"),
+    "PricingCurrencyContractedUnitPrice": (
+        "financial projection",
+        "copy PricingCurrencyListUnitPrice because negotiated unit-price discounts are not supported in this profile",
+    ),
     "PricingCurrencyEffectiveCost": ("financial projection", "copy EffectiveCost in USD"),
     "PricingCurrencyListUnitPrice": ("financial projection", "copy ListUnitPrice in USD"),
     "PricingQuantity": ("financial projection", "copy native quantity when SKU pricing is emitted"),
@@ -412,8 +418,6 @@ _NOT_APPLICABLE = frozenset(
         "CommitmentDiscountUnit",
         "CommitmentProgramEligibilityDetails",
         "ContractApplied",
-        "ContractedUnitPrice",
-        "PricingCurrencyContractedUnitPrice",
     }
 )
 _DECLARED_GAPS = {
@@ -926,9 +930,11 @@ type PreviewSourceClassification = AcceptedPreviewSource | RejectedPreviewSource
 class PreviewFinancialProjection:
     billed_cost: Decimal
     contracted_cost: Decimal
+    contracted_unit_price: Decimal | None
     effective_cost: Decimal
     list_cost: Decimal
     list_unit_price: Decimal | None
+    pricing_currency_contracted_unit_price: Decimal | None
     pricing_currency_effective_cost: Decimal
     pricing_currency_list_unit_price: Decimal | None
     pricing_quantity: Decimal | None
@@ -1282,7 +1288,21 @@ def project_financials(
             if amount >= 0 or not amount.is_finite():
                 raise PreviewFinancialUnsupportedError("promotional allowance sign is unsupported")
             raise PreviewFinancialReconciliationError("promotional allowance arithmetic does not reconcile")
-        return PreviewFinancialProjection(amount, amount, amount, amount, None, amount, None, None, None, None, None)
+        return PreviewFinancialProjection(
+            billed_cost=amount,
+            contracted_cost=amount,
+            contracted_unit_price=None,
+            effective_cost=amount,
+            list_cost=amount,
+            list_unit_price=None,
+            pricing_currency_contracted_unit_price=None,
+            pricing_currency_effective_cost=amount,
+            pricing_currency_list_unit_price=None,
+            pricing_quantity=None,
+            pricing_unit=None,
+            consumed_quantity=None,
+            consumed_unit=None,
+        )
     is_refund_economics = semantics.kind in {PreviewChargeKind.USAGE_REFUND, PreviewChargeKind.SUPPORT_REFUND}
     if is_refund_economics:
         if not (amount < 0 and original < 0 and discount <= 0):
@@ -1308,17 +1328,19 @@ def project_financials(
     consumed_quantity = quantity if semantics.emits_consumption else None
     consumed_unit = unit if semantics.emits_consumption else None
     return PreviewFinancialProjection(
-        amount,
-        original,
-        billed_share,
-        original,
-        price,
-        billed_share,
-        price,
-        quantity,
-        unit,
-        consumed_quantity,
-        consumed_unit,
+        billed_cost=amount,
+        contracted_cost=original,
+        contracted_unit_price=price,
+        effective_cost=billed_share,
+        list_cost=original,
+        list_unit_price=price,
+        pricing_currency_contracted_unit_price=price,
+        pricing_currency_effective_cost=billed_share,
+        pricing_currency_list_unit_price=price,
+        pricing_quantity=quantity,
+        pricing_unit=unit,
+        consumed_quantity=consumed_quantity,
+        consumed_unit=consumed_unit,
     )
 
 
@@ -1355,9 +1377,11 @@ def project_allocated_financials(
     return PreviewFinancialProjection(
         billed_cost=allocation.allocated_cost,
         contracted_cost=list_cost,
+        contracted_unit_price=source.price if emits_pricing else None,
         effective_cost=allocation.allocated_cost,
         list_cost=list_cost,
         list_unit_price=source.price if emits_pricing else None,
+        pricing_currency_contracted_unit_price=source.price if emits_pricing else None,
         pricing_currency_effective_cost=allocation.allocated_cost,
         pricing_currency_list_unit_price=source.price if emits_pricing else None,
         pricing_quantity=allocation.allocated_quantity if emits_pricing else None,
@@ -2134,10 +2158,7 @@ def validate_preview_row(
     if values["RegionName"] is not None:
         raise PreviewRowValidationError(PreviewRowRuleId.GAP_COVERAGE, column="RegionName")
 
-    dependent_groups = (
-        ("ConsumedQuantity", "ConsumedUnit"),
-        ("PricingQuantity", "PricingUnit"),
-    )
+    dependent_groups = (("ConsumedQuantity", "ConsumedUnit"),)
     for left, right in dependent_groups:
         if (values[left] is None) != (values[right] is None):
             missing = left if values[left] is None else right
@@ -2165,16 +2186,19 @@ def validate_preview_row(
             column="AllocatedResourceId",
         )
     sku_columns = ("SkuId", "SkuMeter", "SkuPriceDetails", "SkuPriceId")
-    pricing_is_emitted = any(
-        values[column] is not None
-        for column in (
-            "ListUnitPrice",
-            "PricingCategory",
-            "PricingCurrencyListUnitPrice",
-            "PricingQuantity",
-            "PricingUnit",
-        )
+    priced_unit_fields = (
+        "ContractedUnitPrice",
+        "ListUnitPrice",
+        "PricingCurrencyContractedUnitPrice",
+        "PricingCurrencyListUnitPrice",
+        "PricingQuantity",
+        "PricingUnit",
     )
+    if any(values[column] is not None for column in priced_unit_fields):
+        for column in priced_unit_fields:
+            if values[column] is None:
+                raise PreviewRowValidationError(PreviewRowRuleId.DEPENDENT_FIELDS, column=column)
+    pricing_is_emitted = any(values[column] is not None for column in (*priced_unit_fields, "PricingCategory"))
     if pricing_is_emitted and values["SkuId"] is None:
         raise PreviewRowValidationError(PreviewRowRuleId.DEPENDENT_FIELDS, column="SkuId")
     if any(values[column] is not None for column in sku_columns):
@@ -2186,14 +2210,32 @@ def validate_preview_row(
                 PreviewRowRuleId.DEPENDENT_FIELDS,
                 column="x_ChitraguptaSkuComponents",
             )
+    sku_price_id = values["SkuPriceId"]
+    contracted_unit_price = values["ContractedUnitPrice"]
+    pricing_currency_contracted_unit_price = values["PricingCurrencyContractedUnitPrice"]
+    if sku_price_id is None and (
+        contracted_unit_price is not None or pricing_currency_contracted_unit_price is not None
+    ):
+        column = "ContractedUnitPrice" if contracted_unit_price is not None else "PricingCurrencyContractedUnitPrice"
+        raise PreviewRowValidationError(PreviewRowRuleId.DEPENDENT_FIELDS, column=column)
+    if sku_price_id is not None:
+        for column in ("ContractedUnitPrice", "PricingCurrencyContractedUnitPrice"):
+            if values[column] is None:
+                raise PreviewRowValidationError(PreviewRowRuleId.DEPENDENT_FIELDS, column=column)
+    if values["ChargeCategory"] in {"Usage", "Purchase"} and values["ChargeClass"] != "Correction":
+        for column in ("ContractedUnitPrice", "PricingCurrencyContractedUnitPrice"):
+            if values[column] is None:
+                raise PreviewRowValidationError(PreviewRowRuleId.DEPENDENT_FIELDS, column=column)
 
     financial = row.financials
     expected = {
         "BilledCost": financial.billed_cost,
         "ContractedCost": financial.contracted_cost,
+        "ContractedUnitPrice": financial.contracted_unit_price,
         "EffectiveCost": financial.effective_cost,
         "ListCost": financial.list_cost,
         "ListUnitPrice": financial.list_unit_price,
+        "PricingCurrencyContractedUnitPrice": financial.pricing_currency_contracted_unit_price,
         "PricingCurrencyEffectiveCost": financial.pricing_currency_effective_cost,
         "PricingCurrencyListUnitPrice": financial.pricing_currency_list_unit_price,
         "PricingQuantity": financial.pricing_quantity,
@@ -2204,6 +2246,30 @@ def validate_preview_row(
     for column, expected_value in expected.items():
         if values[column] != expected_value:
             raise PreviewRowValidationError(PreviewRowRuleId.FINANCIAL_PROJECTION, column=column)
+
+    if contracted_unit_price != values["ListUnitPrice"]:
+        raise PreviewRowValidationError(
+            PreviewRowRuleId.FINANCIAL_PROJECTION,
+            column="ContractedUnitPrice",
+        )
+    if pricing_currency_contracted_unit_price != values["PricingCurrencyListUnitPrice"]:
+        raise PreviewRowValidationError(
+            PreviewRowRuleId.FINANCIAL_PROJECTION,
+            column="PricingCurrencyContractedUnitPrice",
+        )
+    pricing_quantity = values["PricingQuantity"]
+    contracted_cost = values["ContractedCost"]
+    if isinstance(pricing_quantity, Decimal) and isinstance(contracted_cost, Decimal):
+        for column in ("ContractedUnitPrice", "PricingCurrencyContractedUnitPrice"):
+            unit_price = values[column]
+            if isinstance(unit_price, Decimal):
+                with localcontext(PREVIEW_DECIMAL_CONTEXT):
+                    reconciles = unit_price * pricing_quantity == contracted_cost
+                if not reconciles:
+                    raise PreviewRowValidationError(
+                        PreviewRowRuleId.FINANCIAL_PROJECTION,
+                        column=column,
+                    )
 
     billing_start = values["BillingPeriodStart"]
     billing_end = values["BillingPeriodEnd"]
@@ -2412,6 +2478,7 @@ def _project_daily_full_row(
             "ConsumedQuantity": financials.consumed_quantity,
             "ConsumedUnit": financials.consumed_unit,
             "ContractedCost": financials.contracted_cost,
+            "ContractedUnitPrice": financials.contracted_unit_price,
             "EffectiveCost": financials.effective_cost,
             "HostProviderName": resource_context.host_provider_code,
             "InvoiceIssuerName": CONFLUENT_CLOUD_PARTICIPATING_ENTITY_NAME,
@@ -2419,6 +2486,7 @@ def _project_daily_full_row(
             "ListUnitPrice": financials.list_unit_price,
             "PricingCategory": "Standard" if semantics.emits_pricing else None,
             "PricingCurrency": "USD",
+            "PricingCurrencyContractedUnitPrice": financials.pricing_currency_contracted_unit_price,
             "PricingCurrencyEffectiveCost": financials.pricing_currency_effective_cost,
             "PricingCurrencyListUnitPrice": financials.pricing_currency_list_unit_price,
             "PricingQuantity": financials.pricing_quantity,
