@@ -65,23 +65,26 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         request_id = uuid.uuid4().hex
         request.state.request_id = request_id
-        started_at = time.perf_counter()
-        logger.debug(
-            "request_started method=%s path=%s%s",
-            request.method,
-            request.url.path,
-            safe_log_context(request_id=request_id, stage="api_request", outcome="started"),
-        )
+        debug_enabled = logger.isEnabledFor(logging.DEBUG)
+        started_at = time.perf_counter() if debug_enabled else None
+        if debug_enabled:
+            logger.debug(
+                "request_started method=%s path=%s%s",
+                request.method,
+                request.url.path,
+                safe_log_context(request_id=request_id, stage="api_request", outcome="started"),
+            )
         response = await call_next(request)
-        elapsed_ms = int((time.perf_counter() - started_at) * 1000)
-        logger.debug(
-            "request_completed method=%s path=%s status=%d elapsed_ms=%d%s",
-            request.method,
-            request.url.path,
-            response.status_code,
-            elapsed_ms,
-            safe_log_context(request_id=request_id, stage="api_request", outcome="completed"),
-        )
+        if debug_enabled and started_at is not None:
+            elapsed_ms = int((time.perf_counter() - started_at) * 1000)
+            logger.debug(
+                "request_completed method=%s path=%s status=%d elapsed_ms=%d%s",
+                request.method,
+                request.url.path,
+                response.status_code,
+                elapsed_ms,
+                safe_log_context(request_id=request_id, stage="api_request", outcome="completed"),
+            )
         return response
 
 

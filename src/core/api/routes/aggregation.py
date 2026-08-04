@@ -103,21 +103,22 @@ async def aggregate_chargebacks(
 
     start_dt, end_dt = resolve_date_range(start_date, end_date, timezone=timezone)
     logged_group_by = _bounded_group_by_log_value(group_by)
-    logger.debug(
-        "aggregation_requested start_date=%s end_date=%s group_by=%s time_bucket=%s%s",
-        start_dt,
-        end_dt,
-        logged_group_by,
-        time_bucket,
-        safe_log_context(
-            tenant_id=tenant_config.tenant_id,
-            ecosystem=tenant_config.ecosystem,
-            request_id=getattr(request.state, "request_id", None),
-            stage="aggregation",
-            operation="aggregate_chargebacks",
-            outcome="started",
-        ),
-    )
+    if logger.isEnabledFor(logging.DEBUG):
+        logger.debug(
+            "aggregation_requested start_date=%s end_date=%s group_by=%s time_bucket=%s%s",
+            start_dt,
+            end_dt,
+            logged_group_by,
+            time_bucket,
+            safe_log_context(
+                tenant_id=tenant_config.tenant_id,
+                ecosystem=tenant_config.ecosystem,
+                request_id=getattr(request.state, "request_id", None),
+                stage="aggregation",
+                operation="aggregate_chargebacks",
+                outcome="started",
+            ),
+        )
 
     rows = uow.chargebacks.aggregate(
         ecosystem=tenant_config.ecosystem,

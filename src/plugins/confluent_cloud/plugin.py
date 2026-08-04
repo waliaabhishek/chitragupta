@@ -119,15 +119,16 @@ class ConfluentCloudPlugin:
         no longer requires cross-handler state sharing — shared context is built
         once here and passed explicitly.
         """
-        logger.debug(
-            "shared_context_started provider=confluent_cloud%s",
-            safe_log_context(
-                tenant_id=tenant_id,
-                stage="shared_context",
-                operation="build_shared_context",
-                outcome="started",
-            ),
-        )
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                "shared_context_started provider=confluent_cloud%s",
+                safe_log_context(
+                    tenant_id=tenant_id,
+                    stage="shared_context",
+                    operation="build_shared_context",
+                    outcome="started",
+                ),
+            )
         from plugins.confluent_cloud.gathering import gather_environments, gather_kafka_clusters
         from plugins.confluent_cloud.shared_context import CCloudSharedContext
 

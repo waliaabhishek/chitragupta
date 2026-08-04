@@ -127,18 +127,19 @@ class CCloudConnection:
 
         for attempt in range(total_attempts):
             attempt_number = attempt + 1
-            logger.debug(
-                "provider_request_started provider=confluent_cloud method=%s path=%s%s",
-                method,
-                safe_path,
-                safe_log_context(
-                    stage="provider_request",
-                    operation="confluent_cloud_request",
-                    outcome="started",
-                    attempt_number=attempt_number,
-                    max_attempts=total_attempts,
-                ),
-            )
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(
+                    "provider_request_started provider=confluent_cloud method=%s path=%s%s",
+                    method,
+                    safe_path,
+                    safe_log_context(
+                        stage="provider_request",
+                        operation="confluent_cloud_request",
+                        outcome="started",
+                        attempt_number=attempt_number,
+                        max_attempts=total_attempts,
+                    ),
+                )
             try:
                 resp = self._client.request(method, url, **kwargs)
             except httpx.TimeoutException as e:
@@ -182,33 +183,35 @@ class CCloudConnection:
             self._last_request_time = time.time()
 
             if resp.status_code == 200:
-                logger.debug(
-                    "provider_request_completed provider=confluent_cloud method=%s path=%s status=%d%s",
-                    method,
-                    safe_path,
-                    resp.status_code,
-                    safe_log_context(
-                        stage="provider_request",
-                        operation="confluent_cloud_request",
-                        outcome="completed",
-                        attempt_number=attempt_number,
-                        max_attempts=total_attempts,
-                    ),
-                )
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug(
+                        "provider_request_completed provider=confluent_cloud method=%s path=%s status=%d%s",
+                        method,
+                        safe_path,
+                        resp.status_code,
+                        safe_log_context(
+                            stage="provider_request",
+                            operation="confluent_cloud_request",
+                            outcome="completed",
+                            attempt_number=attempt_number,
+                            max_attempts=total_attempts,
+                        ),
+                    )
                 return cast("dict[str, Any]", resp.json())
             elif resp.status_code == 404:
-                logger.debug(
-                    "provider_request_completed provider=confluent_cloud method=%s path=%s status=404%s",
-                    method,
-                    safe_path,
-                    safe_log_context(
-                        stage="provider_request",
-                        operation="confluent_cloud_request",
-                        outcome="not_found",
-                        attempt_number=attempt_number,
-                        max_attempts=total_attempts,
-                    ),
-                )
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug(
+                        "provider_request_completed provider=confluent_cloud method=%s path=%s status=404%s",
+                        method,
+                        safe_path,
+                        safe_log_context(
+                            stage="provider_request",
+                            operation="confluent_cloud_request",
+                            outcome="not_found",
+                            attempt_number=attempt_number,
+                            max_attempts=total_attempts,
+                        ),
+                    )
                 return {"data": [], "metadata": {}}
             elif resp.status_code == 429:
                 last_exception = CCloudApiError(429, resp.text)

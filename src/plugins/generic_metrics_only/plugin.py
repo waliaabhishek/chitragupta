@@ -68,15 +68,16 @@ class GenericMetricsOnlyPlugin:
     def build_shared_context(self, tenant_id: str) -> GenericSharedContext:
         if self._config is None:
             raise RuntimeError("Plugin not initialized.")
-        logger.debug(
-            "shared_context_started provider=generic_metrics_only%s",
-            safe_log_context(
-                tenant_id=tenant_id,
-                stage="shared_context",
-                operation="build_shared_context",
-                outcome="started",
-            ),
-        )
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                "shared_context_started provider=generic_metrics_only%s",
+                safe_log_context(
+                    tenant_id=tenant_id,
+                    stage="shared_context",
+                    operation="build_shared_context",
+                    outcome="started",
+                ),
+            )
         cluster = CoreResource(
             ecosystem="generic_metrics_only",
             tenant_id=tenant_id,

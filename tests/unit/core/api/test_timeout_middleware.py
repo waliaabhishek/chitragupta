@@ -131,6 +131,32 @@ class TestRequestTimeoutMiddlewareWiring:
         assert request_id is not None
         assert UUID(hex=request_id).hex == request_id
 
+    def test_request_context_skips_debug_formatting_when_debug_is_disabled(self) -> None:
+        """INFO-level requests must not eagerly build discarded DEBUG context."""
+        from unittest.mock import patch
+
+        from core.api.app import create_app
+
+        settings = AppSettings(
+            api=ApiConfig(request_timeout_seconds=30),
+            tenants={},
+        )
+        app = create_app(settings)
+
+        @app.get("/debug-context")
+        async def debug_context_endpoint() -> dict[str, bool]:
+            return {"ok": True}
+
+        with (
+            patch("core.api.app.logger.isEnabledFor", return_value=False),
+            patch("core.api.app.safe_log_context") as render_context,
+            TestClient(app) as client,
+        ):
+            response = client.get("/debug-context")
+
+        assert response.status_code == 200
+        render_context.assert_not_called()
+
     def test_timeout_log_includes_request_id_and_response_body_stays_unchanged(self) -> None:
         """Timeout conversion must log once with request_id and keep the existing 504 body."""
         from unittest.mock import patch

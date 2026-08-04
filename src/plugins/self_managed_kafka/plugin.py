@@ -144,15 +144,16 @@ class SelfManagedKafkaPlugin:
         if self._config is None:
             raise RuntimeError("Plugin not initialized. Call initialize() first.")
 
-        logger.debug(
-            "shared_context_started provider=self_managed_kafka%s",
-            safe_log_context(
-                tenant_id=tenant_id,
-                stage="shared_context",
-                operation="build_shared_context",
-                outcome="started",
-            ),
-        )
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                "shared_context_started provider=self_managed_kafka%s",
+                safe_log_context(
+                    tenant_id=tenant_id,
+                    stage="shared_context",
+                    operation="build_shared_context",
+                    outcome="started",
+                ),
+            )
 
         from plugins.self_managed_kafka.gathering.prometheus import gather_cluster_resource, run_combined_discovery
         from plugins.self_managed_kafka.shared_context import SMKSharedContext

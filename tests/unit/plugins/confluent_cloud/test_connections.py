@@ -317,6 +317,24 @@ def test_request_logs_lifecycle_and_retry_context_without_url_or_credentials_lea
 
 
 @respx.mock
+def test_request_skips_debug_context_formatting_when_debug_is_disabled() -> None:
+    respx.get("https://api.confluent.cloud/test/endpoint").mock(return_value=_resp({"data": [], "metadata": {}}))
+
+    conn = CCloudConnection(api_key="key123", api_secret=SecretStr("secret456"))
+    try:
+        with (
+            patch("plugins.confluent_cloud.connections.logger.isEnabledFor", return_value=False),
+            patch("plugins.confluent_cloud.connections.safe_log_context") as render_context,
+        ):
+            items = list(conn.get("/test/endpoint"))
+    finally:
+        conn.close()
+
+    assert items == []
+    render_context.assert_not_called()
+
+
+@respx.mock
 def test_request_logs_terminal_failure_without_request_payload_or_credentials_leakage(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
