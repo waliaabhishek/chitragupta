@@ -168,6 +168,32 @@ def _aware(value: datetime) -> datetime:
 
 class TestProductionCostSourceEvidencePipeline:
     @respx.mock
+    def test_focus_preview_refresh_window_uses_expected_half_open_http_bounds(self, tmp_path: Any) -> None:
+        route = respx.get("https://api.confluent.cloud/billing/v1/costs")
+        inside = _cost("inside-window", amount="8.00")
+        inside.update(start_date="2026-07-06", end_date="2026-07-07")
+        route.mock(return_value=_response([inside]))
+        phase, plugin = _phase(days_per_query=30, lookback_days=16, cutoff_days=1)
+        backend, connection_string = _backend(tmp_path, plugin)
+
+        gathered_dates = _gather_billing(phase, backend, datetime(2026, 7, 18, 12, tzinfo=UTC))
+        plan = phase.plan_refresh(datetime(2026, 7, 18, 12, tzinfo=UTC))
+
+        assert plan.refresh_start == datetime(2026, 7, 2, tzinfo=UTC)
+        assert plan.refresh_end == datetime(2026, 7, 17, tzinfo=UTC)
+        assert gathered_dates == {datetime(2026, 7, 6, tzinfo=UTC).date()}
+        assert [
+            (call.request.url.params["start_date"], call.request.url.params["end_date"]) for call in respx.calls
+        ] == [("2026-07-02", "2026-07-17")]
+        row = _source_rows(connection_string)[0]
+        assert (_aware(row.collection_window_start), _aware(row.collection_window_end)) == (
+            datetime(2026, 7, 2, tzinfo=UTC),
+            datetime(2026, 7, 17, tzinfo=UTC),
+        )
+        backend.dispose()
+        plugin.close()
+
+    @respx.mock
     def test_gather_phase_persists_two_native_tiers_and_one_unchanged_aggregate(self, tmp_path: Any) -> None:
         respx.get("https://api.confluent.cloud/billing/v1/costs").mock(
             return_value=_response(

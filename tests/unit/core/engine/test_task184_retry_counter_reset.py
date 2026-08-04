@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Any
 from unittest.mock import MagicMock
@@ -191,6 +191,17 @@ def _make_uow_with_pipeline_state(billing_date: date, chargeback_calculated: boo
     )
     uow.pipeline_state.get.return_value = state
     return uow
+
+
+def _make_replacement_plan() -> Any:
+    from core.engine.orchestrator import GatherPlan
+
+    return GatherPlan(
+        now=datetime(2026, 7, 18, 12, tzinfo=UTC),
+        refresh_start=datetime(2026, 7, 2, tzinfo=UTC),
+        refresh_end=datetime(2026, 7, 17, tzinfo=UTC),
+        should_refresh=True,
+    )
 
 
 # ===========================================================================
@@ -415,64 +426,87 @@ class TestCCloudBillingRepositoryResetAttempts:
 # C. GatherPhase._apply_recalculation_window — mock UoW behavior tests
 # ===========================================================================
 
-_PHASE_NOW = datetime(2026, 2, 22, tzinfo=UTC)
-_BILLING_DATE_IN_WINDOW = (_PHASE_NOW - timedelta(days=2)).date()
-_BILLING_DATE_OUT_WINDOW = (_PHASE_NOW - timedelta(days=10)).date()
+_REPLACEMENT_PLAN = _make_replacement_plan()
+_BILLING_DATE_IN_WINDOW = date(2026, 7, 6)
+_BILLING_DATE_BEFORE_WINDOW = date(2026, 7, 1)
+_BILLING_DATE_AT_WINDOW_END = date(2026, 7, 17)
+_BILLING_DATE_AFTER_WINDOW = date(2026, 7, 18)
 
 
 class TestApplyRecalculationWindowResets:
     """TASK-184 C — _apply_recalculation_window calls reset methods on re-queue."""
 
     def test_recalculation_window_resets_allocation_attempts(self) -> None:
-        """reset_allocation_attempts_by_date called when chargeback_calculated=True and within window."""
-        tc = _make_tenant_config(cutoff_days=5)
+        """Inside-window calculated dates reset allocation attempts."""
+        tc = _make_tenant_config(lookback_days=16, cutoff_days=1)
         phase = _make_gather_phase(tenant_config=tc)
 
         uow = _make_uow_with_pipeline_state(_BILLING_DATE_IN_WINDOW, chargeback_calculated=True)
 
-        phase._apply_recalculation_window(uow, {_BILLING_DATE_IN_WINDOW}, _PHASE_NOW)
+        phase._apply_recalculation_window(uow, {_BILLING_DATE_IN_WINDOW}, _REPLACEMENT_PLAN)
 
         uow.billing.reset_allocation_attempts_by_date.assert_called_once_with(
             ECOSYSTEM, TENANT_ID, _BILLING_DATE_IN_WINDOW
         )
 
     def test_recalculation_window_resets_topic_attribution_attempts(self) -> None:
-        """reset_topic_attribution_attempts_by_date called when chargeback_calculated=True and within window."""
-        tc = _make_tenant_config(cutoff_days=5)
+        """Inside-window calculated dates reset topic-attribution attempts."""
+        tc = _make_tenant_config(lookback_days=16, cutoff_days=1)
         phase = _make_gather_phase(tenant_config=tc)
 
         uow = _make_uow_with_pipeline_state(_BILLING_DATE_IN_WINDOW, chargeback_calculated=True)
 
-        phase._apply_recalculation_window(uow, {_BILLING_DATE_IN_WINDOW}, _PHASE_NOW)
+        phase._apply_recalculation_window(uow, {_BILLING_DATE_IN_WINDOW}, _REPLACEMENT_PLAN)
 
         uow.billing.reset_topic_attribution_attempts_by_date.assert_called_once_with(
             ECOSYSTEM, TENANT_ID, _BILLING_DATE_IN_WINDOW
         )
 
+    def test_recalculation_window_deletes_topic_attributions_inside_interval(self) -> None:
+        """Inside-window calculated dates clear topic-attribution facts."""
+        tc = _make_tenant_config(lookback_days=16, cutoff_days=1)
+        phase = _make_gather_phase(tenant_config=tc)
+
+        uow = _make_uow_with_pipeline_state(_BILLING_DATE_IN_WINDOW, chargeback_calculated=True)
+
+        phase._apply_recalculation_window(uow, {_BILLING_DATE_IN_WINDOW}, _REPLACEMENT_PLAN)
+
+        uow.topic_attributions.delete_by_date.assert_called_once_with(
+            ECOSYSTEM,
+            TENANT_ID,
+            _BILLING_DATE_IN_WINDOW,
+        )
+
     def test_recalculation_window_no_reset_when_not_calculated(self) -> None:
-        """Dates with chargeback_calculated=False do not trigger reset calls."""
-        tc = _make_tenant_config(cutoff_days=5)
+        """Inside-window dates without a calculated state do not trigger reset calls."""
+        tc = _make_tenant_config(lookback_days=16, cutoff_days=1)
         phase = _make_gather_phase(tenant_config=tc)
 
         uow = _make_uow_with_pipeline_state(_BILLING_DATE_IN_WINDOW, chargeback_calculated=False)
 
-        phase._apply_recalculation_window(uow, {_BILLING_DATE_IN_WINDOW}, _PHASE_NOW)
+        phase._apply_recalculation_window(uow, {_BILLING_DATE_IN_WINDOW}, _REPLACEMENT_PLAN)
 
         uow.billing.reset_allocation_attempts_by_date.assert_not_called()
         uow.billing.reset_topic_attribution_attempts_by_date.assert_not_called()
+        uow.topic_attributions.delete_by_date.assert_not_called()
 
-    def test_recalculation_window_no_reset_outside_cutoff(self) -> None:
-        """Dates outside the recalculation window (>cutoff_days old) are not touched."""
-        tc = _make_tenant_config(cutoff_days=5)
+    def test_recalculation_window_no_reset_outside_half_open_interval(self) -> None:
+        """Dates before start, at end, and after end are excluded."""
+        tc = _make_tenant_config(lookback_days=16, cutoff_days=1)
         phase = _make_gather_phase(tenant_config=tc)
 
-        # _BILLING_DATE_OUT_WINDOW is 10 days ago — outside 5-day cutoff
-        uow = _make_uow_with_pipeline_state(_BILLING_DATE_OUT_WINDOW, chargeback_calculated=True)
+        for billing_date in (
+            _BILLING_DATE_BEFORE_WINDOW,
+            _BILLING_DATE_AT_WINDOW_END,
+            _BILLING_DATE_AFTER_WINDOW,
+        ):
+            uow = _make_uow_with_pipeline_state(billing_date, chargeback_calculated=True)
 
-        phase._apply_recalculation_window(uow, {_BILLING_DATE_OUT_WINDOW}, _PHASE_NOW)
+            phase._apply_recalculation_window(uow, {billing_date}, _REPLACEMENT_PLAN)
 
-        uow.billing.reset_allocation_attempts_by_date.assert_not_called()
-        uow.billing.reset_topic_attribution_attempts_by_date.assert_not_called()
+            uow.billing.reset_allocation_attempts_by_date.assert_not_called()
+            uow.billing.reset_topic_attribution_attempts_by_date.assert_not_called()
+            uow.topic_attributions.delete_by_date.assert_not_called()
 
 
 # ===========================================================================

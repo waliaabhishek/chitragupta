@@ -16,6 +16,7 @@ from core.engine.orchestrator import (
     ChargebackOrchestrator,
     GatherFailureThresholdError,
     GatherPhase,
+    GatherPlan,
     GatherResult,
     RetryManager,
 )
@@ -508,6 +509,15 @@ def _make_gather_phase(
     )
 
 
+def _replacement_plan() -> GatherPlan:
+    return GatherPlan(
+        now=datetime(2026, 7, 18, 12, 0, 0, tzinfo=UTC),
+        refresh_start=datetime(2026, 7, 2, 0, 0, 0, tzinfo=UTC),
+        refresh_end=datetime(2026, 7, 17, 0, 0, 0, tzinfo=UTC),
+        should_refresh=True,
+    )
+
+
 # =============================================================================
 # GatherPhase tests
 # =============================================================================
@@ -773,15 +783,56 @@ class TestGatherPhaseDetectEntityDeletions:
 
 
 class TestGatherPhaseApplyRecalculationWindow:
-    def test_calculated_date_within_cutoff_gets_reset_and_chargebacks_deleted(self) -> None:
-        """Dates within recalculation window that are already calculated get reset and rows deleted."""
-        tc = _make_tenant_config(cutoff_days=5)
+    def test_non_preview_final_partial_day_at_refresh_end_date_is_excluded(self) -> None:
+        """A date equal to refresh_end.date() is excluded even when refresh_end carries a time."""
+        tc = _make_tenant_config(lookback_days=16, cutoff_days=1, focus_preview_enabled=False)
         phase = _make_gather_phase(tenant_config=tc)
 
-        # billing_date within recalculation window (>= recalc_cutoff)
-        recalc_cutoff = (NOW - timedelta(days=5)).date()
-        billing_date = (NOW - timedelta(days=2)).date()
-        assert billing_date >= recalc_cutoff
+        plan = GatherPlan(
+            now=datetime(2026, 7, 18, 12, 0, 0, tzinfo=UTC),
+            refresh_start=datetime(2026, 7, 2, 12, 0, 0, tzinfo=UTC),
+            refresh_end=datetime(2026, 7, 17, 12, 0, 0, tzinfo=UTC),
+            should_refresh=True,
+        )
+        final_gathered_date = date_type(2026, 7, 17)
+        outside_date = date_type(2026, 7, 18)
+
+        uow = MockUnitOfWork()
+        final_state = PipelineState(
+            ecosystem=ECOSYSTEM,
+            tenant_id=TENANT_ID,
+            tracking_date=final_gathered_date,
+            billing_gathered=True,
+            resources_gathered=True,
+            chargeback_calculated=True,
+        )
+        outside_state = PipelineState(
+            ecosystem=ECOSYSTEM,
+            tenant_id=TENANT_ID,
+            tracking_date=outside_date,
+            billing_gathered=True,
+            resources_gathered=True,
+            chargeback_calculated=True,
+        )
+        uow.pipeline_state.upsert(final_state)
+        uow.pipeline_state.upsert(outside_state)
+
+        phase._apply_recalculation_window(uow, {final_gathered_date, outside_date}, plan)
+
+        final_state_after = uow.pipeline_state.get(ECOSYSTEM, TENANT_ID, final_gathered_date)
+        outside_state_after = uow.pipeline_state.get(ECOSYSTEM, TENANT_ID, outside_date)
+        assert final_state_after is not None
+        assert outside_state_after is not None
+        assert final_state_after.chargeback_calculated is True
+        assert outside_state_after.chargeback_calculated is True
+
+    def test_calculated_date_inside_replacement_interval_gets_reset_and_chargebacks_deleted(self) -> None:
+        """Inside-window calculated dates get reset and their old rows are deleted."""
+        tc = _make_tenant_config(lookback_days=16, cutoff_days=1)
+        phase = _make_gather_phase(tenant_config=tc)
+
+        plan = _replacement_plan()
+        billing_date = date_type(2026, 7, 6)
 
         uow = MockUnitOfWork()
 
@@ -813,7 +864,7 @@ class TestGatherPhaseApplyRecalculationWindow:
             )
         )
 
-        phase._apply_recalculation_window(uow, {billing_date}, NOW)
+        phase._apply_recalculation_window(uow, {billing_date}, plan)
 
         # State reset to needs recalculation
         state_after = uow.pipeline_state.get(ECOSYSTEM, TENANT_ID, billing_date)
@@ -824,13 +875,13 @@ class TestGatherPhaseApplyRecalculationWindow:
         remaining = uow.chargebacks.find_by_date(ECOSYSTEM, TENANT_ID, billing_date)
         assert remaining == []
 
-    def test_date_beyond_cutoff_not_reset(self) -> None:
-        """Dates outside the recalculation window are not touched."""
-        tc = _make_tenant_config(cutoff_days=5)
+    def test_date_beyond_replacement_interval_not_reset(self) -> None:
+        """Dates outside the half-open gathered interval are not touched."""
+        tc = _make_tenant_config(lookback_days=16, cutoff_days=1)
         phase = _make_gather_phase(tenant_config=tc)
 
-        # billing_date BEFORE recalc_cutoff → not in recalculation window
-        billing_date = (NOW - timedelta(days=10)).date()
+        plan = _replacement_plan()
+        billing_date = date_type(2026, 7, 17)
 
         uow = MockUnitOfWork()
         state = PipelineState(
@@ -843,7 +894,7 @@ class TestGatherPhaseApplyRecalculationWindow:
         )
         uow.pipeline_state.upsert(state)
 
-        phase._apply_recalculation_window(uow, {billing_date}, NOW)
+        phase._apply_recalculation_window(uow, {billing_date}, plan)
 
         # State unchanged
         state_after = uow.pipeline_state.get(ECOSYSTEM, TENANT_ID, billing_date)
@@ -851,13 +902,12 @@ class TestGatherPhaseApplyRecalculationWindow:
         assert state_after.chargeback_calculated is True
 
     def test_topic_attributions_deleted_within_recalculation_window(self) -> None:
-        """Topic attribution rows are deleted when a calculated date falls within the recalculation window."""
-        tc = _make_tenant_config(cutoff_days=5)
+        """Topic attribution rows are deleted when a calculated date falls inside the gathered interval."""
+        tc = _make_tenant_config(lookback_days=16, cutoff_days=1)
         phase = _make_gather_phase(tenant_config=tc)
 
-        recalc_cutoff = (NOW - timedelta(days=5)).date()
-        billing_date = (NOW - timedelta(days=2)).date()
-        assert billing_date >= recalc_cutoff
+        plan = _replacement_plan()
+        billing_date = date_type(2026, 7, 6)
 
         uow = MockUnitOfWork()
 
@@ -887,16 +937,17 @@ class TestGatherPhaseApplyRecalculationWindow:
             )
         )
 
-        phase._apply_recalculation_window(uow, {billing_date}, NOW)
+        phase._apply_recalculation_window(uow, {billing_date}, plan)
 
         uow.topic_attributions.delete_by_date.assert_called_once_with(ECOSYSTEM, TENANT_ID, billing_date)
 
     def test_topic_attributions_not_deleted_outside_recalculation_window(self) -> None:
-        """Topic attribution rows are NOT deleted for dates outside the recalculation window."""
-        tc = _make_tenant_config(cutoff_days=5)
+        """Topic attribution rows are not deleted for dates outside the gathered interval."""
+        tc = _make_tenant_config(lookback_days=16, cutoff_days=1)
         phase = _make_gather_phase(tenant_config=tc)
 
-        billing_date = (NOW - timedelta(days=10)).date()
+        plan = _replacement_plan()
+        billing_date = date_type(2026, 7, 18)
 
         uow = MockUnitOfWork()
         state = PipelineState(
@@ -909,18 +960,17 @@ class TestGatherPhaseApplyRecalculationWindow:
         )
         uow.pipeline_state.upsert(state)
 
-        phase._apply_recalculation_window(uow, {billing_date}, NOW)
+        phase._apply_recalculation_window(uow, {billing_date}, plan)
 
         uow.topic_attributions.delete_by_date.assert_not_called()
 
     def test_first_time_computation_skips_deletion(self) -> None:
         """Neither chargebacks nor topic attributions are deleted when chargeback_calculated is False."""
-        tc = _make_tenant_config(cutoff_days=5)
+        tc = _make_tenant_config(lookback_days=16, cutoff_days=1)
         phase = _make_gather_phase(tenant_config=tc)
 
-        recalc_cutoff = (NOW - timedelta(days=5)).date()
-        billing_date = (NOW - timedelta(days=2)).date()
-        assert billing_date >= recalc_cutoff
+        plan = _replacement_plan()
+        billing_date = date_type(2026, 7, 6)
 
         uow = MockUnitOfWork()
         uow.chargebacks = MagicMock()
@@ -935,7 +985,7 @@ class TestGatherPhaseApplyRecalculationWindow:
         )
         uow.pipeline_state.upsert(state)
 
-        phase._apply_recalculation_window(uow, {billing_date}, NOW)
+        phase._apply_recalculation_window(uow, {billing_date}, plan)
 
         uow.chargebacks.delete_by_date.assert_not_called()
         uow.topic_attributions.delete_by_date.assert_not_called()

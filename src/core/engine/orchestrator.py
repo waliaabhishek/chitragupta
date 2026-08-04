@@ -414,6 +414,11 @@ class GatherPhase:
             should_refresh=self._should_refresh(normalized),
         )
 
+    def _daily_replacement_date_window(self, plan: GatherPlan) -> tuple[date_type, date_type]:
+        refresh_start = _ensure_utc(plan.refresh_start)
+        refresh_end = _ensure_utc(plan.refresh_end)
+        return refresh_start.date(), refresh_end.date()
+
     def accept_refresh(self, plan: GatherPlan) -> None:
         if not plan.should_refresh:
             raise ValueError("cannot accept a throttled gather plan")
@@ -567,7 +572,7 @@ class GatherPhase:
                     exc_info=True,
                 )
 
-        self._apply_recalculation_window(uow, gathered_billing_dates, now)
+        self._apply_recalculation_window(uow, gathered_billing_dates, plan)
         return GatherResult(
             dates_gathered=len(gathered_billing_dates),
             errors=gather_errors,
@@ -892,11 +897,11 @@ class GatherPhase:
         )
 
     def _apply_recalculation_window(
-        self, uow: UnitOfWork, gathered_billing_dates: set[date_type], now: datetime
+        self, uow: UnitOfWork, gathered_billing_dates: set[date_type], plan: GatherPlan
     ) -> None:
-        recalc_cutoff = (now - timedelta(days=self._tenant_config.cutoff_days)).date()
+        replacement_start, replacement_end = self._daily_replacement_date_window(plan)
         for billing_date in gathered_billing_dates:
-            if billing_date >= recalc_cutoff:
+            if replacement_start <= billing_date < replacement_end:
                 existing_state = uow.pipeline_state.get(self._ecosystem, self._tenant_id, billing_date)
                 if existing_state and existing_state.chargeback_calculated:
                     uow.chargebacks.delete_by_date(self._ecosystem, self._tenant_id, billing_date)

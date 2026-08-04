@@ -432,6 +432,12 @@ class MockBillingRepo:
         self._attempts[key] = self._attempts.get(key, 0) + 1
         return self._attempts[key]
 
+    def reset_allocation_attempts_by_date(self, ecosystem: str, tenant_id: str, tracking_date: date) -> int:
+        return 1
+
+    def reset_topic_attribution_attempts_by_date(self, ecosystem: str, tenant_id: str, tracking_date: date) -> int:
+        return 1
+
     def delete_before(self, *args: Any) -> int:
         return 0
 
@@ -1428,30 +1434,39 @@ class TestAllDatesProcessed:
 
 
 class TestRecalculationWindow:
-    def test_recent_dates_recalculated(self) -> None:
+    def test_recent_cutoff_dates_not_recalculated_outside_gather_window(self) -> None:
         handler = MockServiceHandler(resources=[_make_resource()], identities=[_make_identity()])
-        # cutoff_days=5 means recalc_cutoff = NOW - 5 days
-        recent_date = (NOW - timedelta(days=3)).date()
-        line = _make_billing_line(timestamp=datetime(recent_date.year, recent_date.month, recent_date.day, tzinfo=UTC))
+        recent_cutoff_date = (NOW - timedelta(days=3)).date()
+        line = _make_billing_line(
+            timestamp=datetime(recent_cutoff_date.year, recent_cutoff_date.month, recent_cutoff_date.day, tzinfo=UTC)
+        )
         cost_input = MockCostInput([line])
         orch, storage = _create_orchestrator(handler=handler, cost_input=cost_input)
         uow = storage.create_unit_of_work()
+        completed_at = NOW - timedelta(hours=2)
 
-        # Pre-populate state as already calculated
         ps = PipelineState(
             ecosystem=ECOSYSTEM,
             tenant_id=TENANT_ID,
-            tracking_date=recent_date,
+            tracking_date=recent_cutoff_date,
             billing_gathered=True,
             resources_gathered=True,
             chargeback_calculated=True,
+            calculation_id="legacy-recent",
+            calculation_completed_at=completed_at,
         )
-        uow.pipeline_state._data[(ECOSYSTEM, TENANT_ID, recent_date)] = ps
-        # Add a stale chargeback
+        uow.pipeline_state._data[(ECOSYSTEM, TENANT_ID, recent_cutoff_date)] = ps
+        # This date is newer than refresh_end and therefore outside the half-open
+        # replacement interval even though the provider returned it.
         stale = ChargebackRow(
             ecosystem=ECOSYSTEM,
             tenant_id=TENANT_ID,
-            timestamp=datetime(recent_date.year, recent_date.month, recent_date.day, tzinfo=UTC),
+            timestamp=datetime(
+                recent_cutoff_date.year,
+                recent_cutoff_date.month,
+                recent_cutoff_date.day,
+                tzinfo=UTC,
+            ),
             resource_id="cluster-1",
             product_category="kafka",
             product_type="KAFKA_CKU",
@@ -1464,13 +1479,20 @@ class TestRecalculationWindow:
         with patch("core.engine.orchestrator.datetime") as mock_dt:
             mock_dt.now.return_value = NOW
             mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
-            orch.run()
+            result = orch.run()
 
-        # After gather, the stale chargeback ($50) must have been deleted by recalculation window
+        assert result.dates_calculated == 0
         stale_rows = [
-            r for r in uow.chargebacks._data if r.timestamp.date() == recent_date and r.amount == Decimal("50.00")
+            r
+            for r in uow.chargebacks._data
+            if r.timestamp.date() == recent_cutoff_date and r.amount == Decimal("50.00")
         ]
-        assert len(stale_rows) == 0, f"Stale chargeback should have been deleted, found {len(stale_rows)}"
+        assert len(stale_rows) == 1
+        state = uow.pipeline_state.get(ECOSYSTEM, TENANT_ID, recent_cutoff_date)
+        assert state is not None
+        assert state.chargeback_calculated is True
+        assert state.calculation_id == "legacy-recent"
+        assert state.calculation_completed_at == completed_at
 
 
 class TestPipelineRunResult:
@@ -1946,61 +1968,78 @@ class TestOrchestratorInvariants:
             assert max(gather_indices) < min(allocate_indices), "Gather must complete before allocate"
 
     def test_recalculation_window_respects_cutoff(self) -> None:
-        """Dates within cutoff_days get chargeback_calculated reset."""
-        ts_in_cutoff = NOW - timedelta(days=3)  # Within cutoff_days=5
-        ts_outside_cutoff = NOW - timedelta(days=10)  # Outside cutoff_days=5
+        """Only dates inside the gathered half-open interval are recalculated."""
+        reference_now = datetime(2026, 7, 18, 12, 0, 0, tzinfo=UTC)
+        inside_window = datetime(2026, 7, 6, tzinfo=UTC)
+        outside_window = datetime(2026, 7, 18, tzinfo=UTC)
+        inside_completed_at = datetime(2026, 7, 10, 9, 0, 0, tzinfo=UTC)
+        outside_completed_at = datetime(2026, 7, 10, 10, 0, 0, tzinfo=UTC)
 
         handler = MockServiceHandler(
             resources=[_make_resource()],
             identities=[_make_identity()],
         )
         lines = [
-            _make_billing_line(timestamp=ts_in_cutoff),
-            _make_billing_line(timestamp=ts_outside_cutoff),
+            _make_billing_line(timestamp=inside_window),
+            _make_billing_line(timestamp=outside_window),
         ]
         cost_input = MockCostInput(lines)
-        orch, storage = _create_orchestrator(handler=handler, cost_input=cost_input, cutoff_days=5)
-
-        # First run calculates both dates
-        orch.run()
+        storage = MockStorageBackend()
+        orch, storage = _create_orchestrator(
+            handler=handler,
+            cost_input=cost_input,
+            storage=storage,
+            lookback_days=16,
+            cutoff_days=1,
+        )
         uow = storage.create_unit_of_work()
-        state_in = uow.pipeline_state.get(ECOSYSTEM, TENANT_ID, ts_in_cutoff.date())
-        state_out = uow.pipeline_state.get(ECOSYSTEM, TENANT_ID, ts_outside_cutoff.date())
-        assert state_in is not None and state_in.chargeback_calculated
-        assert state_out is not None and state_out.chargeback_calculated
-
-        # Run again — cutoff window date should be recalculated
-        orch2, storage2 = _create_orchestrator(handler=handler, cost_input=cost_input, cutoff_days=5)
-        # Pre-populate storage with calculated state
-        uow2 = storage2.create_unit_of_work()
-        uow2.pipeline_state.upsert(
+        uow.pipeline_state.upsert(
             PipelineState(
                 ecosystem=ECOSYSTEM,
                 tenant_id=TENANT_ID,
-                tracking_date=ts_in_cutoff.date(),
+                tracking_date=inside_window.date(),
                 billing_gathered=True,
                 resources_gathered=True,
                 chargeback_calculated=True,
+                calculation_id="legacy-inside",
+                calculation_completed_at=inside_completed_at,
+                calculation_run_id=None,
             )
         )
-        uow2.pipeline_state.upsert(
+        uow.pipeline_state.upsert(
             PipelineState(
                 ecosystem=ECOSYSTEM,
                 tenant_id=TENANT_ID,
-                tracking_date=ts_outside_cutoff.date(),
+                tracking_date=outside_window.date(),
                 billing_gathered=True,
                 resources_gathered=True,
                 chargeback_calculated=True,
+                calculation_id="legacy-outside",
+                calculation_completed_at=outside_completed_at,
+                calculation_run_id=None,
             )
         )
-        uow2.commit()
+        uow.commit()
 
-        # After run, date within cutoff should have been recalculated
-        # (In production, this would delete old chargebacks and reset the flag)
-        result = orch2.run()
-        # The recalculation logic should have processed the cutoff date
-        # Note: exact behavior depends on orchestrator implementation details
-        assert result is not None  # Basic sanity check
+        with patch("core.engine.orchestrator.datetime") as mock_dt:
+            mock_dt.now.return_value = reference_now
+            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+            result = orch.run()
+
+        assert result.errors == []
+        assert result.dates_calculated == 1
+
+        state_in = uow.pipeline_state.get(ECOSYSTEM, TENANT_ID, inside_window.date())
+        state_out = uow.pipeline_state.get(ECOSYSTEM, TENANT_ID, outside_window.date())
+        assert state_in is not None
+        assert state_in.chargeback_calculated is True
+        assert state_in.calculation_id != "legacy-inside"
+        assert state_in.calculation_completed_at is not None
+        assert state_in.calculation_completed_at != inside_completed_at
+        assert state_out is not None
+        assert state_out.chargeback_calculated is True
+        assert state_out.calculation_id == "legacy-outside"
+        assert state_out.calculation_completed_at == outside_completed_at
 
 
 class TestRefreshThrottle:

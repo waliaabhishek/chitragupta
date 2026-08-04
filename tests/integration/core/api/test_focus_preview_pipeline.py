@@ -438,11 +438,17 @@ class ReplacementCostInput:
 
     def __init__(self, tracking_date: date) -> None:
         self._tracking_date = tracking_date
+        self.gather_calls: list[tuple[datetime, datetime]] = []
+
+    def _tracking_bounds(self) -> tuple[datetime, datetime]:
+        window_start = datetime.combine(self._tracking_date, datetime.min.time(), tzinfo=UTC)
+        return window_start, window_start + timedelta(days=1)
 
     def gather(self, tenant_id: str, start: datetime, end: datetime, uow: Any) -> Iterable[CCloudBillingLineItem]:
-        del start, end
-        window_start = datetime.combine(self._tracking_date, datetime.min.time(), tzinfo=UTC)
-        window_end = window_start + timedelta(days=1)
+        self.gather_calls.append((start, end))
+        window_start, window_end = self._tracking_bounds()
+        if not (start <= window_start < end):
+            return ()
         uow.billing.replace_source_window(
             "confluent_cloud",
             tenant_id,
@@ -514,8 +520,21 @@ class ReplacementCostInput:
         from core.preview.evidence_capture import NativeSourceGatherResult, NativeSourceWindow
         from plugins.confluent_cloud.source_capture import CCloudNativeSourceEvidenceCapture
 
-        tracking_start = datetime.combine(self._tracking_date, datetime.min.time(), tzinfo=UTC)
-        tracking_end = tracking_start + timedelta(days=1)
+        self.gather_calls.append((start, end))
+        tracking_start, tracking_end = self._tracking_bounds()
+        if not (start <= tracking_start < end):
+            return NativeSourceGatherResult(
+                billing_lines=(),
+                capture=CCloudNativeSourceEvidenceCapture(
+                    ecosystem="confluent_cloud",
+                    tenant_id=tenant_id,
+                    refresh_start=start,
+                    refresh_end=end,
+                    windows=(NativeSourceWindow(start, end),),
+                    records=(),
+                ),
+                capture_failure=None,
+            )
         record = CCloudCostSourceRecord(
             ecosystem="confluent_cloud",
             tenant_id=tenant_id,
@@ -2882,8 +2901,11 @@ def test_ordinary_gather_and_calculate_lifecycle_replaces_incomplete_legacy_corr
     monkeypatch.setattr("core.api.app.asyncio.to_thread", to_thread_inline)
     monkeypatch.setattr(anyio.to_thread, "run_sync", run_sync_inline)
     _mock_organization_api()
-    tracking_date = (datetime.now(UTC) - timedelta(days=6)).date()
+    reference_now = datetime(2026, 7, 18, 12, tzinfo=UTC)
+    tracking_date = date(2026, 7, 6)
     tracking_start = datetime.combine(tracking_date, datetime.min.time(), tzinfo=UTC)
+    outside_window_date = date(2026, 7, 17)
+    outside_window_start = datetime.combine(outside_window_date, datetime.min.time(), tzinfo=UTC)
     connection_string = f"sqlite:///{tmp_path / 'replacement.db'}"
     migration = _alembic_config(connection_string)
     command.upgrade(migration, "018")
@@ -2901,13 +2923,17 @@ def test_ordinary_gather_and_calculate_lifecycle_replaces_incomplete_legacy_corr
                 text(f"UPDATE {table} SET timestamp = :tracking_timestamp WHERE timestamp = '2026-07-01 00:00:00'"),
                 {"tracking_timestamp": tracking_timestamp},
             )
+        connection.execute(
+            text("INSERT INTO topic_attribution_facts (timestamp, dimension_id, amount) VALUES (:timestamp, 51, '3')"),
+            {"timestamp": outside_window_start.strftime("%Y-%m-%d %H:%M:%S")},
+        )
     legacy_engine.dispose()
     command.upgrade(migration, "023")
     tenant = TenantConfig(
         ecosystem="confluent_cloud",
         tenant_id="tenant-1",
-        lookback_days=31,
-        cutoff_days=5,
+        lookback_days=16,
+        cutoff_days=1,
         storage=StorageConfig(connection_string=connection_string),
         focus_preview=_focus_preview_block(),
         plugin_settings={
@@ -2924,7 +2950,8 @@ def test_ordinary_gather_and_calculate_lifecycle_replaces_incomplete_legacy_corr
     handler = PreviewPipelineHandler()
     plugin = PreviewPipelinePlugin(handler)
     plugin.initialize(tenant.plugin_settings.model_dump())
-    plugin.cost_input_override = ReplacementCostInput(tracking_date)
+    replacement_cost_input = ReplacementCostInput(tracking_date)
+    plugin.cost_input_override = replacement_cost_input
     registry = MagicMock()
     registry.create.return_value = plugin
     runner = WorkflowRunner(settings, registry)
@@ -2933,16 +2960,36 @@ def test_ordinary_gather_and_calculate_lifecycle_replaces_incomplete_legacy_corr
         assert isinstance(acquired_backend, SQLModelBackend)
         backend = acquired_backend
     with backend.create_unit_of_work() as uow:
-        uow.chargebacks.delete_by_date("confluent_cloud", "tenant-1", tracking_date)
-        uow.topic_attributions.delete_by_date("confluent_cloud", "tenant-1", tracking_date)
-        uow.pipeline_state.mark_needs_recalculation("confluent_cloud", "tenant-1", tracking_date)
-        uow.billing.reset_allocation_attempts_by_date("confluent_cloud", "tenant-1", tracking_date)
-        uow.billing.reset_topic_attribution_attempts_by_date("confluent_cloud", "tenant-1", tracking_date)
+        uow.pipeline_state.mark_chargeback_calculated(
+            "confluent_cloud",
+            "tenant-1",
+            tracking_date,
+            calculation_id="legacy-calculation",
+            calculation_completed_at=tracking_start + timedelta(hours=1),
+            calculation_run_id=None,
+        )
         uow.commit()
     app = create_app(settings, workflow_runner=runner, mode="both")
     client = PipelineApiClient(app, use_lifespan=True)
     try:
-        result = runner.run_tenant("production")
+        with backend.create_read_only_unit_of_work() as uow:
+            topic_rows_before = uow.topic_attributions.find_by_date("confluent_cloud", "tenant-1", tracking_date)
+            outside_window_topic_rows_before = uow.topic_attributions.find_by_date(
+                "confluent_cloud",
+                "tenant-1",
+                outside_window_date,
+            )
+            replaced_before = uow.pipeline_state.get("confluent_cloud", "tenant-1", tracking_date)
+        assert [row.amount for row in topic_rows_before] == [Decimal("8")]
+        assert [row.amount for row in outside_window_topic_rows_before] == [Decimal("3")]
+        assert replaced_before is not None
+        assert replaced_before.calculation_id == "legacy-calculation"
+
+        with patch("core.engine.orchestrator.datetime") as mock_dt:
+            mock_dt.now.return_value = reference_now
+            mock_dt.side_effect = lambda *args, **kwargs: datetime(*args, **kwargs)
+            result = runner.run_tenant("production")
+
         assert result.errors == []
         assert result.dates_calculated == 1
         with backend.create_read_only_unit_of_work() as uow:
@@ -2953,13 +3000,25 @@ def test_ordinary_gather_and_calculate_lifecycle_replaces_incomplete_legacy_corr
                 start=tracking_start,
                 end=tracking_start + timedelta(days=1),
             )
+            topic_rows_after = uow.topic_attributions.find_by_date("confluent_cloud", "tenant-1", tracking_date)
+            outside_window_topic_rows_after = uow.topic_attributions.find_by_date(
+                "confluent_cloud",
+                "tenant-1",
+                outside_window_date,
+            )
         assert replaced is not None
         assert replaced.has_usable_calculation is True
         assert replaced.calculation_id
+        assert replaced.calculation_id != "legacy-calculation"
         assert replaced.calculation_completed_at is not None
         assert replaced.calculation_run_id is not None
         assert total == 1
         assert [row.amount for row in chargebacks] == [Decimal("8")]
+        assert topic_rows_after == []
+        assert [row.amount for row in outside_window_topic_rows_after] == [Decimal("3")]
+        assert replacement_cost_input.gather_calls == [
+            (datetime(2026, 7, 2, tzinfo=UTC), datetime(2026, 7, 17, tzinfo=UTC))
+        ]
 
         ready = _request(client, tracking_date, tracking_date + timedelta(days=1))
         assert ready["status"] == "ready", ready["diagnostic"]
@@ -3021,3 +3080,32 @@ def test_ordinary_gather_and_calculate_lifecycle_replaces_incomplete_legacy_corr
     finally:
         client.close()
         runner.close()
+
+
+def test_replacement_cost_input_out_of_window_native_result_uses_empty_capture() -> None:
+    from core.preview.evidence_capture import NativeSourceWindow
+
+    tracking_date = date(2026, 7, 6)
+    replacement_cost_input = ReplacementCostInput(tracking_date)
+
+    result = replacement_cost_input.gather_with_native_source_evidence(
+        "tenant-1",
+        datetime(2026, 7, 17, tzinfo=UTC),
+        datetime(2026, 7, 18, tzinfo=UTC),
+    )
+
+    assert result.billing_lines == ()
+    assert result.capture_failure is None
+    assert result.capture is not None
+    assert result.capture.refresh_start == datetime(2026, 7, 17, tzinfo=UTC)
+    assert result.capture.refresh_end == datetime(2026, 7, 18, tzinfo=UTC)
+    assert result.capture.windows == (
+        NativeSourceWindow(
+            datetime(2026, 7, 17, tzinfo=UTC),
+            datetime(2026, 7, 18, tzinfo=UTC),
+        ),
+    )
+    assert result.capture.records == ()
+    assert replacement_cost_input.gather_calls == [
+        (datetime(2026, 7, 17, tzinfo=UTC), datetime(2026, 7, 18, tzinfo=UTC))
+    ]
