@@ -222,6 +222,28 @@ def _cost_response(**overrides: object) -> httpx.Response:
     )
 
 
+def _task_254_47_window(*, lookback_days: int, cutoff_days: int, span_days: int) -> tuple[date, date]:
+    reference_date = datetime.now(UTC).date()
+    tracking_age_days = cutoff_days + ((lookback_days - cutoff_days) // 2)
+    start = reference_date - timedelta(days=tracking_age_days)
+    if start.month != (start + timedelta(days=span_days - 1)).month:
+        start -= timedelta(days=span_days)
+    end = start + timedelta(days=span_days)
+    assert reference_date - timedelta(days=lookback_days) <= start
+    assert end <= reference_date - timedelta(days=cutoff_days)
+    assert start.month == (end - timedelta(days=1)).month
+    return start, end
+
+
+def _task_254_47_focus_preview(start: date, end: date) -> dict[str, object]:
+    return {
+        "commercial_profile": "direct_payg",
+        "billing_currency": "USD",
+        "effective_start_date": (start - timedelta(days=1)).isoformat(),
+        "effective_end_date": (end + timedelta(days=1)).isoformat(),
+    }
+
+
 _REAL_BUNDLE_KNOWN_LINE_CASES: tuple[tuple[str, dict[str, object]], ...] = (
     (
         "kafka-rest-produce",
@@ -616,21 +638,34 @@ def _request_month(client: PipelineApiClient, month: str) -> dict[str, Any]:
     raise AssertionError("monthly preview request did not finish")
 
 
-def _legacy_july_first_snapshot(engine: object) -> dict[str, tuple[object, ...]]:
+def _legacy_snapshot(engine: object, tracking_date: date) -> dict[str, tuple[object, ...]]:
+    tracking_iso = tracking_date.isoformat()
+    tracking_timestamp = f"{tracking_iso} 00:00:00"
     statements = {
-        "pipeline_state": "SELECT * FROM pipeline_state WHERE tracking_date = '2026-07-01'",
-        "ccloud_billing": "SELECT * FROM ccloud_billing WHERE timestamp = '2026-07-01 00:00:00'",
+        "pipeline_state": "SELECT * FROM pipeline_state WHERE tracking_date = :tracking_date",
+        "ccloud_billing": "SELECT * FROM ccloud_billing WHERE timestamp = :tracking_timestamp",
         "chargeback_dimensions": "SELECT * FROM chargeback_dimensions WHERE dimension_id = 41",
         "chargeback_facts": (
-            "SELECT * FROM chargeback_facts WHERE dimension_id = 41 AND timestamp = '2026-07-01 00:00:00'"
+            "SELECT * FROM chargeback_facts WHERE dimension_id = 41 AND timestamp = :tracking_timestamp"
         ),
         "topic_attribution_dimensions": "SELECT * FROM topic_attribution_dimensions WHERE dimension_id = 51",
         "topic_attribution_facts": (
-            "SELECT * FROM topic_attribution_facts WHERE dimension_id = 51 AND timestamp = '2026-07-01 00:00:00'"
+            "SELECT * FROM topic_attribution_facts WHERE dimension_id = 51 AND timestamp = :tracking_timestamp"
         ),
     }
     with engine.connect() as connection:  # type: ignore[union-attr]
-        return {name: tuple(connection.execute(text(statement)).one()) for name, statement in statements.items()}
+        return {
+            name: tuple(
+                connection.execute(
+                    text(statement),
+                    {
+                        "tracking_date": tracking_iso,
+                        "tracking_timestamp": tracking_timestamp,
+                    },
+                ).one()
+            )
+            for name, statement in statements.items()
+        }
 
 
 @respx.mock
@@ -646,7 +681,13 @@ def test_mixed_tenants_normal_pipeline_keeps_preview_evidence_enabled_only(
 
     monkeypatch.setattr("core.api.app.asyncio.to_thread", to_thread_inline)
     monkeypatch.setattr(anyio.to_thread, "run_sync", run_sync_inline)
-    costs_route = respx.get("https://api.confluent.cloud/billing/v1/costs").mock(return_value=_cost_response())
+    start_date, end_date = _task_254_47_window(lookback_days=30, cutoff_days=5, span_days=1)
+    costs_route = respx.get("https://api.confluent.cloud/billing/v1/costs").mock(
+        return_value=_cost_response(
+            start_date=start_date.isoformat(),
+            end_date=end_date.isoformat(),
+        )
+    )
 
     def tenant_config(tenant_id: str, *, enabled: bool) -> TenantConfig:
         return TenantConfig(
@@ -655,7 +696,7 @@ def test_mixed_tenants_normal_pipeline_keeps_preview_evidence_enabled_only(
             lookback_days=30,
             cutoff_days=5,
             storage=StorageConfig(connection_string=f"sqlite:///{tmp_path / f'{tenant_id}.db'}"),
-            focus_preview=_focus_preview_block() if enabled else None,
+            focus_preview=_task_254_47_focus_preview(start_date, end_date) if enabled else None,
             plugin_settings={
                 "ccloud_api": {"key": "key", "secret": "secret"},  # pragma: allowlist secret
                 "billing_api": {"days_per_query": 30},
@@ -773,11 +814,11 @@ def test_mixed_tenants_normal_pipeline_keeps_preview_evidence_enabled_only(
     evidence_scope = PreviewEvidenceScope(
         ecosystem="confluent_cloud",
         tenant_id="enabled-id",
-        start=datetime(2026, 7, 1, tzinfo=UTC),
-        end=datetime(2026, 7, 2, tzinfo=UTC),
+        start=datetime.combine(start_date, datetime.min.time(), tzinfo=UTC),
+        end=datetime.combine(end_date, datetime.min.time(), tzinfo=UTC),
     )
     with enabled_backend.create_read_only_unit_of_work() as uow:
-        state = uow.pipeline_state.get("confluent_cloud", "enabled-id", date(2026, 7, 1))
+        state = uow.pipeline_state.get("confluent_cloud", "enabled-id", start_date)
     assert state is not None
     assert state.has_usable_calculation is True
     assert state.calculation_id is not None
@@ -797,7 +838,7 @@ def test_mixed_tenants_normal_pipeline_keeps_preview_evidence_enabled_only(
     app = create_app(settings, workflow_runner=runner, mode="both")
     client = PipelineApiClient(app, use_lifespan=True)
     try:
-        ready = _request(client, date(2026, 7, 1), date(2026, 7, 2))
+        ready = _request(client, start_date, end_date)
         assert ready["status"] == "ready"
         assert costs_route.call_count == 2
         disabled_evidence_uow.assert_not_called()
@@ -1776,6 +1817,9 @@ def test_workflow_runner_provider_calculation_to_preview_mixed_retry_and_unrelat
 
     monkeypatch.setattr("core.api.app.asyncio.to_thread", to_thread_inline)
     monkeypatch.setattr(anyio.to_thread, "run_sync", run_sync_inline)
+    day_a, end_date = _task_254_47_window(lookback_days=31, cutoff_days=5, span_days=3)
+    day_b = day_a + timedelta(days=1)
+    day_c = day_a + timedelta(days=2)
     organization_route = _mock_organization_api()
     environment_route, cluster_route = _mock_provider_inventory_api()
     route = respx.get("https://api.confluent.cloud/billing/v1/costs")
@@ -1784,8 +1828,8 @@ def test_workflow_runner_provider_calculation_to_preview_mixed_retry_and_unrelat
         start = date.fromisoformat(request.url.params["start_date"])
         end = date.fromisoformat(request.url.params["end_date"])
         return (
-            _cost_response()
-            if start <= date(2026, 7, 1) and end >= date(2026, 7, 2)
+            _cost_response(start_date=day_a.isoformat(), end_date=(day_a + timedelta(days=1)).isoformat())
+            if start <= day_a and end >= day_a + timedelta(days=1)
             else httpx.Response(200, json={"data": [], "metadata": {}})
         )
 
@@ -1797,7 +1841,7 @@ def test_workflow_runner_provider_calculation_to_preview_mixed_retry_and_unrelat
         lookback_days=31,
         cutoff_days=5,
         storage=StorageConfig(connection_string=connection_string),
-        focus_preview=_focus_preview_block(),
+        focus_preview=_task_254_47_focus_preview(day_a, end_date),
         plugin_settings={
             "ccloud_api": {"key": "key", "secret": "secret"},  # pragma: allowlist secret
             "billing_api": {"days_per_query": 30},
@@ -1810,7 +1854,7 @@ def test_workflow_runner_provider_calculation_to_preview_mixed_retry_and_unrelat
         tenants={"production": tenant},
     )
     handler = PreviewPipelineHandler()
-    handler.failing_dates = {date(2026, 7, 2), date(2026, 7, 3)}
+    handler.failing_dates = {day_b, day_c}
     plugin = PreviewPipelinePlugin(handler)
     plugin.initialize(tenant.plugin_settings.model_dump())
     plugin.use_provider_inventory = True
@@ -1821,7 +1865,7 @@ def test_workflow_runner_provider_calculation_to_preview_mixed_retry_and_unrelat
     )
     seed_backend.create_tables()
     with seed_backend.create_unit_of_work() as uow:
-        for tracking_date in (date(2026, 7, 2), date(2026, 7, 3)):
+        for tracking_date in (day_b, day_c):
             uow.billing.upsert(
                 CCloudBillingLineItem(
                     ecosystem="confluent_cloud",
@@ -1861,7 +1905,7 @@ def test_workflow_runner_provider_calculation_to_preview_mixed_retry_and_unrelat
     app = create_app(settings, workflow_runner=runner, mode="both")
     client = PipelineApiClient(app, use_lifespan=True, backend=backend)
     try:
-        recoverable_before = _request(client, date(2026, 7, 1), date(2026, 7, 2))
+        recoverable_before = _request(client, day_a, day_a + timedelta(days=1))
         assert recoverable_before["status"] == "failed"
         assert recoverable_before["diagnostic"] == {
             "code": "calculation_unavailable",
@@ -1876,7 +1920,7 @@ def test_workflow_runner_provider_calculation_to_preview_mixed_retry_and_unrelat
         assert len(first.errors) == 2
         with backend.create_read_only_unit_of_work() as uow:
             failed_run = uow.pipeline_runs.get_latest_run("production")
-            committed_a = uow.pipeline_state.get("confluent_cloud", "tenant-1", date(2026, 7, 1))
+            committed_a = uow.pipeline_state.get("confluent_cloud", "tenant-1", day_a)
             organization = uow.resources.get("confluent_cloud", "tenant-1", "11111111-2222-4333-8444-555555555555")
             cluster = uow.resources.get("confluent_cloud", "tenant-1", "lkc-1")
         assert failed_run is not None
@@ -1897,7 +1941,7 @@ def test_workflow_runner_provider_calculation_to_preview_mixed_retry_and_unrelat
         provider_call_count = len(respx.calls)
         route.side_effect = AssertionError("provider access is disabled during Preview")
 
-        a_ready = _request(client, date(2026, 7, 1), date(2026, 7, 2))
+        a_ready = _request(client, day_a, day_a + timedelta(days=1))
         assert a_ready["status"] == "ready"
         assert len(respx.calls) == provider_call_count
         a_entry = a_ready["source_snapshot"]["calculation_coverage"][0]
@@ -1914,16 +1958,18 @@ def test_workflow_runner_provider_calculation_to_preview_mixed_retry_and_unrelat
         assert "provider_billing_currency_field_unavailable" not in {gap["code"] for gap in manifest["known_gaps"]}
         assert manifest["conformance_status"] == "non_conforming"
         row = next(csv.DictReader(io.StringIO(csv_response.text)))
+        billing_period_start = day_a.replace(day=1)
+        billing_period_end = (billing_period_start + timedelta(days=32)).replace(day=1)
         assert row["BillingAccountId"] == "11111111-2222-4333-8444-555555555555"
         assert row["BillingAccountId"] != tenant.tenant_id
         assert row["BillingAccountName"] == "Provider billing organization"
         assert row["BillingCurrency"] == "USD"
-        assert row["BillingPeriodStart"] == "2026-07-01T00:00:00Z"
-        assert row["BillingPeriodEnd"] == "2026-08-01T00:00:00Z"
+        assert row["BillingPeriodStart"] == f"{billing_period_start.isoformat()}T00:00:00Z"
+        assert row["BillingPeriodEnd"] == f"{billing_period_end.isoformat()}T00:00:00Z"
         assert row["HostProviderName"] == "AWS"
         assert row["RegionId"] == "us-east-1"
 
-        abc_failed = _request(client, date(2026, 7, 1), date(2026, 7, 4))
+        abc_failed = _request(client, day_a, end_date)
         assert abc_failed["status"] == "failed"
         assert abc_failed["diagnostic"] == {
             "code": "calculation_coverage_incomplete",
@@ -1931,7 +1977,7 @@ def test_workflow_runner_provider_calculation_to_preview_mixed_retry_and_unrelat
             "retryable": True,
         }
         assert len(respx.calls) == provider_call_count
-        handler.failing_dates.remove(date(2026, 7, 2))
+        handler.failing_dates.remove(day_b)
         from core.storage.backends.sqlmodel import repositories
 
         original_update = repositories.SQLModelPipelineRunRepository.update_run
@@ -1951,13 +1997,13 @@ def test_workflow_runner_provider_calculation_to_preview_mixed_retry_and_unrelat
         assert len(second.errors) == 1
         with backend.create_read_only_unit_of_work() as uow:
             running_run = uow.pipeline_runs.get_latest_run("production")
-            committed_b = uow.pipeline_state.get("confluent_cloud", "tenant-1", date(2026, 7, 2))
+            committed_b = uow.pipeline_state.get("confluent_cloud", "tenant-1", day_b)
         assert running_run is not None
         assert running_run.status == "running"
         assert committed_b is not None
         assert committed_b.has_usable_calculation is True
         assert committed_b.calculation_run_id == running_run.id
-        ab_failed = _request(client, date(2026, 7, 1), date(2026, 7, 3))
+        ab_failed = _request(client, day_a, day_a + timedelta(days=2))
         assert ab_failed["status"] == "failed"
         assert ab_failed["diagnostic"]["code"] == "preview_source_coverage_incomplete"
         assert len(respx.calls) == provider_call_count
@@ -1965,7 +2011,7 @@ def test_workflow_runner_provider_calculation_to_preview_mixed_retry_and_unrelat
         handler.failing_dates.clear()
         third = runner.run_tenant("production")
         assert third.errors == []
-        abc_failed = _request(client, date(2026, 7, 1), date(2026, 7, 4))
+        abc_failed = _request(client, day_a, end_date)
         assert abc_failed["status"] == "failed"
         assert abc_failed["diagnostic"]["code"] == "preview_source_coverage_incomplete"
         assert len(respx.calls) == provider_call_count
@@ -2070,10 +2116,13 @@ def test_provider_tableflow_cost_with_production_topic_discovery_fails_provider_
 
     monkeypatch.setattr("core.api.app.asyncio.to_thread", to_thread_inline)
     monkeypatch.setattr(anyio.to_thread, "run_sync", run_sync_inline)
+    start_date, end_date = _task_254_47_window(lookback_days=31, cutoff_days=5, span_days=1)
     organization_route = _mock_organization_api()
     _mock_provider_inventory_api()
     costs_route = respx.get("https://api.confluent.cloud/billing/v1/costs").mock(
         return_value=_cost_response(
+            start_date=start_date.isoformat(),
+            end_date=end_date.isoformat(),
             product="TABLEFLOW",
             line_type="TABLEFLOW_DATA_PROCESSED",
             description="Tableflow data processed",
@@ -2091,7 +2140,7 @@ def test_provider_tableflow_cost_with_production_topic_discovery_fails_provider_
         lookback_days=31,
         cutoff_days=5,
         storage=StorageConfig(connection_string=connection_string),
-        focus_preview=_focus_preview_block(),
+        focus_preview=_task_254_47_focus_preview(start_date, end_date),
         plugin_settings={
             "ccloud_api": {"key": "key", "secret": "secret"},  # pragma: allowlist secret
             "billing_api": {"days_per_query": 30},
@@ -2135,7 +2184,7 @@ def test_provider_tableflow_cost_with_production_topic_discovery_fails_provider_
         with backend.create_read_only_unit_of_work() as uow:
             topic = uow.resources.get("confluent_cloud", "tenant-1", "lkc-1:topic:orders")
             organization = uow.resources.get("confluent_cloud", "tenant-1", "11111111-2222-4333-8444-555555555555")
-            state = uow.pipeline_state.get("confluent_cloud", "tenant-1", date(2026, 7, 1))
+            state = uow.pipeline_state.get("confluent_cloud", "tenant-1", start_date)
         assert topic is not None
         assert topic.resource_type == "topic"
         assert topic.parent_id == "lkc-1"
@@ -2149,7 +2198,7 @@ def test_provider_tableflow_cost_with_production_topic_discovery_fails_provider_
         assert costs_route.called
         provider_call_count = len(respx.calls)
 
-        initial_failure = _request(client, date(2026, 7, 1), date(2026, 7, 2))
+        initial_failure = _request(client, start_date, end_date)
         assert initial_failure["status"] == "failed"
         assert initial_failure["diagnostic"]["code"] == "preview_provider_context_incomplete"
 
@@ -2168,7 +2217,7 @@ def test_provider_tableflow_cost_with_production_topic_discovery_fails_provider_
             )
             uow.commit()
 
-        failed = _request(client, date(2026, 7, 1), date(2026, 7, 2))
+        failed = _request(client, start_date, end_date)
         assert failed["status"] == "failed"
         assert failed["diagnostic"] == {
             "code": "preview_provider_context_incomplete",
@@ -2239,10 +2288,15 @@ def test_custom_pipeline_allocation_cannot_bypass_native_lineage_scope(
 
     monkeypatch.setattr("core.api.app.asyncio.to_thread", to_thread_inline)
     monkeypatch.setattr(anyio.to_thread, "run_sync", run_sync_inline)
+    start_date, end_date = _task_254_47_window(lookback_days=31, cutoff_days=5, span_days=1)
     _mock_organization_api()
     _mock_provider_inventory_api()
     costs_route = respx.get("https://api.confluent.cloud/billing/v1/costs").mock(
-        return_value=_cost_response(**provider_overrides)
+        return_value=_cost_response(
+            start_date=start_date.isoformat(),
+            end_date=end_date.isoformat(),
+            **provider_overrides,
+        )
     )
     connection_string = f"sqlite:///{tmp_path / 'provider-kind.db'}"
     tenant = TenantConfig(
@@ -2251,7 +2305,7 @@ def test_custom_pipeline_allocation_cannot_bypass_native_lineage_scope(
         lookback_days=31,
         cutoff_days=5,
         storage=StorageConfig(connection_string=connection_string),
-        focus_preview=_focus_preview_block(),
+        focus_preview=_task_254_47_focus_preview(start_date, end_date),
         plugin_settings={
             "ccloud_api": {"key": "key", "secret": "secret"},  # pragma: allowlist secret
             "billing_api": {"days_per_query": 30},
@@ -2291,7 +2345,7 @@ def test_custom_pipeline_allocation_cannot_bypass_native_lineage_scope(
         assert costs_route.called
         provider_call_count = len(respx.calls)
 
-        preview = _request(client, date(2026, 7, 1), date(2026, 7, 2))
+        preview = _request(client, start_date, end_date)
 
         assert preview["status"] == "ready"
         assert len(respx.calls) == provider_call_count
@@ -2411,10 +2465,13 @@ def test_custom_pipeline_and_provider_context_cannot_bypass_promo_lineage_scope(
 
     monkeypatch.setattr("core.api.app.asyncio.to_thread", to_thread_inline)
     monkeypatch.setattr(anyio.to_thread, "run_sync", run_sync_inline)
+    start_date, end_date = _task_254_47_window(lookback_days=31, cutoff_days=5, span_days=1)
     _mock_organization_api()
     _mock_provider_inventory_api()
     costs_route = respx.get("https://api.confluent.cloud/billing/v1/costs").mock(
         return_value=_cost_response(
+            start_date=start_date.isoformat(),
+            end_date=end_date.isoformat(),
             product=native_product,
             line_type="PROMO_CREDIT",
             description=description,
@@ -2436,7 +2493,7 @@ def test_custom_pipeline_and_provider_context_cannot_bypass_promo_lineage_scope(
         lookback_days=31,
         cutoff_days=5,
         storage=StorageConfig(connection_string=connection_string),
-        focus_preview=_focus_preview_block(),
+        focus_preview=_task_254_47_focus_preview(start_date, end_date),
         plugin_settings={
             "ccloud_api": {"key": "key", "secret": "secret"},  # pragma: allowlist secret
             "billing_api": {"days_per_query": 30},
@@ -2480,7 +2537,7 @@ def test_custom_pipeline_and_provider_context_cannot_bypass_promo_lineage_scope(
         assert costs_route.called
         provider_call_count = len(respx.calls)
 
-        preview = _request(client, date(2026, 7, 1), date(2026, 7, 2))
+        preview = _request(client, start_date, end_date)
 
         assert preview["status"] == "ready"
         assert len(respx.calls) == provider_call_count
@@ -2533,6 +2590,7 @@ def test_provider_backed_unsupported_economics_and_semantics_fail_before_artifac
 
     monkeypatch.setattr("core.api.app.asyncio.to_thread", to_thread_inline)
     monkeypatch.setattr(anyio.to_thread, "run_sync", run_sync_inline)
+    start_date, end_date = _task_254_47_window(lookback_days=31, cutoff_days=5, span_days=1)
     _mock_organization_api()
     route = respx.get("https://api.confluent.cloud/billing/v1/costs")
 
@@ -2540,8 +2598,12 @@ def test_provider_backed_unsupported_economics_and_semantics_fail_before_artifac
         start = date.fromisoformat(request.url.params["start_date"])
         end = date.fromisoformat(request.url.params["end_date"])
         return (
-            _cost_response(**provider_overrides)
-            if start <= date(2026, 7, 1) and end >= date(2026, 7, 2)
+            _cost_response(
+                start_date=start_date.isoformat(),
+                end_date=end_date.isoformat(),
+                **provider_overrides,
+            )
+            if start <= start_date and end >= end_date
             else httpx.Response(200, json={"data": [], "metadata": {}})
         )
 
@@ -2553,7 +2615,7 @@ def test_provider_backed_unsupported_economics_and_semantics_fail_before_artifac
         lookback_days=31,
         cutoff_days=5,
         storage=StorageConfig(connection_string=connection_string),
-        focus_preview=_focus_preview_block(),
+        focus_preview=_task_254_47_focus_preview(start_date, end_date),
         plugin_settings={
             "ccloud_api": {"key": "key", "secret": "secret"},  # pragma: allowlist secret
             "billing_api": {"days_per_query": 30},
@@ -2592,7 +2654,7 @@ def test_provider_backed_unsupported_economics_and_semantics_fail_before_artifac
         assert result.dates_calculated == 1
         with backend.create_read_only_unit_of_work() as uow:
             pipeline_run = uow.pipeline_runs.get_latest_run("production")
-            state = uow.pipeline_state.get("confluent_cloud", "tenant-1", date(2026, 7, 1))
+            state = uow.pipeline_state.get("confluent_cloud", "tenant-1", start_date)
         assert pipeline_run is not None
         assert pipeline_run.status == "completed"
         assert pipeline_run.id is not None
@@ -2603,8 +2665,8 @@ def test_provider_backed_unsupported_economics_and_semantics_fail_before_artifac
             scope = PreviewEvidenceScope(
                 ecosystem="confluent_cloud",
                 tenant_id="tenant-1",
-                start=datetime(2026, 7, 1, tzinfo=UTC),
-                end=datetime(2026, 7, 2, tzinfo=UTC),
+                start=datetime.combine(start_date, datetime.min.time(), tzinfo=UTC),
+                end=datetime.combine(end_date, datetime.min.time(), tzinfo=UTC),
             )
             with backend.create_preview_generation_read_unit_of_work() as uow:
                 sources = uow.cost_evidence.find_preview_source_candidates(scope)
@@ -2620,7 +2682,7 @@ def test_provider_backed_unsupported_economics_and_semantics_fail_before_artifac
         provider_calls = len(respx.calls)
         route.side_effect = AssertionError("provider access is disabled during Preview")
 
-        failed = _request(client, date(2026, 7, 1), date(2026, 7, 2))
+        failed = _request(client, start_date, end_date)
         assert failed["status"] == "failed"
         diagnostic = failed["diagnostic"]
         assert diagnostic["code"] == expected_code
@@ -2743,14 +2805,30 @@ def test_migrated_legacy_precedence_uses_real_recoverable_lifecycle_without_muta
 
     monkeypatch.setattr("core.api.app.asyncio.to_thread", to_thread_inline)
     monkeypatch.setattr(anyio.to_thread, "run_sync", run_sync_inline)
+    legacy_date, end_date = _task_254_47_window(lookback_days=31, cutoff_days=5, span_days=3)
+    recoverable_date = legacy_date + timedelta(days=1)
     _mock_organization_api()
     connection_string = f"sqlite:///{tmp_path / 'legacy-precedence.db'}"
     migration = _alembic_config(connection_string)
     command.upgrade(migration, "018")
     _seed_legacy_rows(connection_string)
+    legacy_engine = create_engine(connection_string)
+    legacy_iso = legacy_date.isoformat()
+    legacy_timestamp = f"{legacy_iso} 00:00:00"
+    with legacy_engine.begin() as connection:
+        connection.execute(
+            text("UPDATE pipeline_state SET tracking_date = :tracking_date WHERE tracking_date = '2026-07-01'"),
+            {"tracking_date": legacy_iso},
+        )
+        for table in ("ccloud_billing", "chargeback_facts", "topic_attribution_facts"):
+            connection.execute(
+                text(f"UPDATE {table} SET timestamp = :tracking_timestamp WHERE timestamp = '2026-07-01 00:00:00'"),
+                {"tracking_timestamp": legacy_timestamp},
+            )
+    legacy_engine.dispose()
     command.upgrade(migration, "023")
     snapshot_engine = create_engine(connection_string)
-    legacy_before = _legacy_july_first_snapshot(snapshot_engine)
+    legacy_before = _legacy_snapshot(snapshot_engine, legacy_date)
 
     route = respx.get("https://api.confluent.cloud/billing/v1/costs")
 
@@ -2758,8 +2836,12 @@ def test_migrated_legacy_precedence_uses_real_recoverable_lifecycle_without_muta
         start = date.fromisoformat(request.url.params["start_date"])
         end = date.fromisoformat(request.url.params["end_date"])
         return (
-            _cost_response(id="cost-2", start_date="2026-07-02", end_date="2026-07-03")
-            if start <= date(2026, 7, 2) and end >= date(2026, 7, 3)
+            _cost_response(
+                id="cost-2",
+                start_date=recoverable_date.isoformat(),
+                end_date=(recoverable_date + timedelta(days=1)).isoformat(),
+            )
+            if start <= recoverable_date and end >= recoverable_date + timedelta(days=1)
             else httpx.Response(200, json={"data": [], "metadata": {}})
         )
 
@@ -2770,7 +2852,7 @@ def test_migrated_legacy_precedence_uses_real_recoverable_lifecycle_without_muta
         lookback_days=31,
         cutoff_days=5,
         storage=StorageConfig(connection_string=connection_string),
-        focus_preview=_focus_preview_block(),
+        focus_preview=_task_254_47_focus_preview(legacy_date, end_date),
         plugin_settings={
             "ccloud_api": {"key": "key", "secret": "secret"},  # pragma: allowlist secret
             "billing_api": {"days_per_query": 30},
@@ -2784,7 +2866,7 @@ def test_migrated_legacy_precedence_uses_real_recoverable_lifecycle_without_muta
     )
     handler = PreviewPipelineHandler()
     if not recoverable_succeeds:
-        handler.failing_dates = {date(2026, 7, 2)}
+        handler.failing_dates = {recoverable_date}
     plugin = PreviewPipelinePlugin(handler)
     plugin.initialize(tenant.plugin_settings.model_dump())
     backend = SQLModelBackend(
@@ -2808,21 +2890,25 @@ def test_migrated_legacy_precedence_uses_real_recoverable_lifecycle_without_muta
         assert result.dates_calculated == (1 if recoverable_succeeds else 0)
         assert len(result.errors) == (0 if recoverable_succeeds else 1)
         with backend.create_read_only_unit_of_work() as uow:
-            legacy = uow.pipeline_state.get("confluent_cloud", "tenant-1", date(2026, 7, 1))
-            recoverable = uow.pipeline_state.get("confluent_cloud", "tenant-1", date(2026, 7, 2))
+            legacy = uow.pipeline_state.get("confluent_cloud", "tenant-1", legacy_date)
+            recoverable = uow.pipeline_state.get("confluent_cloud", "tenant-1", recoverable_date)
         assert legacy is not None
         assert legacy.chargeback_calculated is True
         assert legacy.has_usable_calculation is False
         assert recoverable is not None
         assert recoverable.has_usable_calculation is recoverable_succeeds
-        assert _legacy_july_first_snapshot(snapshot_engine) == legacy_before
+        assert _legacy_snapshot(snapshot_engine, legacy_date) == legacy_before
         after_lifecycle = _snapshots(snapshot_engine)
         provider_calls = len(respx.calls)
         route.side_effect = AssertionError("provider access is disabled during Preview")
 
-        requested_ends = (date(2026, 7, 3), date(2026, 7, 4)) if recoverable_succeeds else (date(2026, 7, 3),)
+        requested_ends = (
+            (recoverable_date + timedelta(days=1), end_date)
+            if recoverable_succeeds
+            else (recoverable_date + timedelta(days=1),)
+        )
         for end_date in requested_ends:
-            failed = _request(client, date(2026, 7, 1), end_date)
+            failed = _request(client, legacy_date, end_date)
             assert failed["status"] == "failed"
             assert failed["diagnostic"] == {
                 "code": "preview_evidence_storage_unavailable",
@@ -2836,7 +2922,7 @@ def test_migrated_legacy_precedence_uses_real_recoverable_lifecycle_without_muta
             assert failed["package"] is None
         assert len(respx.calls) == provider_calls
         assert _snapshots(snapshot_engine) == after_lifecycle
-        assert _legacy_july_first_snapshot(snapshot_engine) == legacy_before
+        assert _legacy_snapshot(snapshot_engine, legacy_date) == legacy_before
     finally:
         client.close()
         runner.close()

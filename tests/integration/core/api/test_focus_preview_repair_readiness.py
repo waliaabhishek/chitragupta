@@ -5,8 +5,9 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, date, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 
@@ -22,8 +23,21 @@ from core.preview.models import PreviewDiagnostic
 from core.storage.backends.sqlmodel.unit_of_work import SQLModelBackend
 from plugins.confluent_cloud.storage.module import CCloudStorageModule
 
-if TYPE_CHECKING:
-    import pytest
+_REPAIR_ADMISSION_AT = datetime(2026, 7, 24, tzinfo=UTC)
+
+
+class _RepairAdmissionDatetime(datetime):
+    @classmethod
+    def now(cls, tz: object = None) -> datetime:
+        del tz
+        return _REPAIR_ADMISSION_AT
+
+
+@pytest.fixture(autouse=True)
+def _pin_repair_route_admission(monkeypatch: pytest.MonkeyPatch) -> None:
+    import core.api.routes.focus_preview as focus_preview_route
+
+    monkeypatch.setattr(focus_preview_route, "datetime", _RepairAdmissionDatetime)
 
 
 def _tenant(tmp_path: Path, name: str, *, tenant_id: str | None = None) -> TenantConfig:

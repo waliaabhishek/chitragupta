@@ -20,7 +20,6 @@ from tests.integration.core.api.test_focus_preview_pipeline import (
     PreviewPipelineHandler,
     PreviewPipelinePlugin,
     _cost_response,
-    _focus_preview_block,
     _mock_organization_api,
 )
 from tests.unit.core.preview.test_bounded_artifacts import _install_direct_sqlite_tracker
@@ -35,6 +34,14 @@ RELEASE_HEAD = "ddebea2fe0a8"
 START = date(2026, 6, 1)
 END = date(2026, 7, 1)
 OUTSIDE = date(2026, 5, 31)
+_REPAIR_ADMISSION_AT = datetime(2026, 7, 24, tzinfo=UTC)
+
+
+class _HistoricalRepairAdmissionDatetime(datetime):
+    @classmethod
+    def now(cls, tz: object = None) -> datetime:
+        del tz
+        return _REPAIR_ADMISSION_AT
 
 
 def _seed_release_database(connection_string: str) -> None:
@@ -375,6 +382,9 @@ def test_v210_retained_month_fails_then_production_rest_repair_enables_daily_and
     monkeypatch: pytest.MonkeyPatch,
     request: pytest.FixtureRequest,
 ) -> None:
+    import core.api.routes.focus_preview as focus_preview_route
+
+    monkeypatch.setattr(focus_preview_route, "datetime", _HistoricalRepairAdmissionDatetime)
     direct_sqlite = _install_direct_sqlite_tracker(spooling, monkeypatch)
     request.addfinalizer(direct_sqlite.cleanup)
     connection_string = f"sqlite:///{tmp_path / 'v2.1.0-upgrade.db'}"
@@ -409,7 +419,11 @@ def test_v210_retained_month_fails_then_production_rest_repair_enables_daily_and
         cutoff_days=5,
         retention_days=250,
         storage=StorageConfig(connection_string=connection_string),
-        focus_preview=_focus_preview_block(),
+        focus_preview={
+            "commercial_profile": "direct_payg",
+            "billing_currency": "USD",
+            "effective_start_date": OUTSIDE.isoformat(),
+        },
         plugin_settings={
             "ccloud_api": {"key": "key", "secret": "secret"},  # pragma: allowlist secret
             "billing_api": {"days_per_query": 1},
