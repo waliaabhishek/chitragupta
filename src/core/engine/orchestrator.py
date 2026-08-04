@@ -17,6 +17,7 @@ from core.engine.allocation import AllocationContext, AllocatorRegistry
 from core.engine.allocation_lineage import build_allocation_lineage_capture
 from core.engine.helpers import compute_active_fraction
 from core.engine.loading import load_protocol_callable
+from core.logging_context import safe_exception_context, safe_log_context
 from core.models.chargeback import ChargebackRow, CostType
 from core.models.identity import SENTINEL_IDENTITY_TYPES, CoreIdentity, IdentityResolution, IdentitySet
 from core.models.pipeline import PipelineState
@@ -77,6 +78,19 @@ def _get_ta_config(plugin: EcosystemPlugin) -> OverlayConfig | None:
 
 
 logger = logging.getLogger(__name__)
+
+
+def _safe_database_root_cause(exc: BaseException) -> str:
+    """Classify known database causes without rendering statements or parameters."""
+    origin = getattr(exc, "orig", None)
+    if origin is not None:
+        try:
+            if "UNIQUE constraint failed" in str(origin):
+                return "UNIQUE constraint failed"
+        except BaseException:
+            pass
+        return type(origin).__name__
+    return type(exc).__name__
 
 
 def _new_calculation_id() -> str:
@@ -444,10 +458,16 @@ class GatherPhase:
                     try:
                         self._gather_resources_and_identities(handler, uow, shared_ctx)
                     except Exception as exc:
-                        logger.exception(
-                            "Handler %s gather failed — skipping deletion detection: %s",
-                            handler.service_type,
-                            exc,
+                        logger.warning(
+                            "handler_gather_failed%s",
+                            safe_log_context(
+                                tenant_id=self._tenant_id,
+                                stage="gather",
+                                outcome="deletion_detection_skipped",
+                                retryable=True,
+                                service_type=handler.service_type,
+                                **safe_exception_context(exc),
+                            ),
                         )
                         gather_errors.append(f"Handler {handler.service_type} gather failed: {exc}")
                 self._run_supplemental_gather(uow, datetime.now(UTC), gather_errors)
@@ -496,7 +516,17 @@ class GatherPhase:
                     if resource_ids is not None:
                         observed_declared_resource_ids_by_type[resource_type].update(resource_ids)
             except Exception as exc:
-                logger.exception("Handler %s gather failed: %s", handler.service_type, exc)
+                logger.warning(
+                    "handler_gather_failed%s",
+                    safe_log_context(
+                        tenant_id=self._tenant_id,
+                        stage="gather",
+                        outcome="partial",
+                        retryable=True,
+                        service_type=handler.service_type,
+                        **safe_exception_context(exc),
+                    ),
+                )
                 gather_complete = False
                 gather_errors.append(f"Handler {handler.service_type} gather failed: {exc}")
 
@@ -565,11 +595,16 @@ class GatherPhase:
                         self._tenant_id,
                         billing_date,
                     )
-            except Exception:
+            except Exception as exc:
                 logger.warning(
-                    "Topic discovery failed for tenant=%s — topic_overlay_gathered stays False",
-                    self._tenant_id,
-                    exc_info=True,
+                    "topic_discovery_failed%s",
+                    safe_log_context(
+                        tenant_id=self._tenant_id,
+                        stage="topic_discovery",
+                        outcome="overlay_pending",
+                        retryable=True,
+                        **safe_exception_context(exc),
+                    ),
                 )
 
         self._apply_recalculation_window(uow, gathered_billing_dates, plan)
@@ -642,7 +677,17 @@ class GatherPhase:
                             now,
                         )
             except Exception as exc:
-                logger.exception("Supplemental %s gather failed: %s", resource_type, exc)
+                logger.warning(
+                    "supplemental_gather_failed resource_type=%s%s",
+                    resource_type,
+                    safe_log_context(
+                        tenant_id=self._tenant_id,
+                        stage="supplemental_gather",
+                        outcome="partial",
+                        retryable=True,
+                        **safe_exception_context(exc),
+                    ),
+                )
                 gather_errors.append(f"Supplemental {resource_type} gather failed: {exc}")
 
     def _reconcile_organization_resources(
@@ -1020,8 +1065,21 @@ class CalculatePhase:
                 if capture_lineage:
                     try:
                         lineage_captures.append(build_allocation_lineage_capture(origin=line, rows=tuple(rows)))
-                    except TypeError, ValueError:
+                    except (TypeError, ValueError) as exc:
                         lineage_failure = LineageCaptureFailureReason.CONSTRUCTION_FAILED
+                        logger.warning(
+                            "lineage_capture_failed%s",
+                            safe_log_context(
+                                tenant_id=self._tenant_id,
+                                pipeline_run_id=calculation_run_id,
+                                calculation_id=calculation_id,
+                                tracking_date=tracking_date,
+                                stage="lineage_capture",
+                                outcome="capture_failed",
+                                retryable=False,
+                                **safe_exception_context(exc),
+                            ),
+                        )
             total_rows = uow.chargebacks.upsert_batch(all_rows)
         completed_at = self._completion_time()
         self._mark_success(
@@ -1138,14 +1196,20 @@ class CalculatePhase:
                 try:
                     _, result = future.result()
                     prefetched[key] = result
-                except Exception:
+                except Exception as exc:
                     resource_id, m_start, m_end = key
                     logger.warning(
-                        "Metrics prefetch failed for resource=%s window=[%s, %s] — skipping",
-                        resource_id,
+                        "metrics_prefetch_failed window_start=%s window_end=%s%s",
                         m_start,
                         m_end,
-                        exc_info=True,
+                        safe_log_context(
+                            tenant_id=self._tenant_id,
+                            stage="metrics_prefetch",
+                            outcome="skipped",
+                            retryable=True,
+                            resource_id=resource_id,
+                            **safe_exception_context(exc),
+                        ),
                     )
                     prefetched[key] = {}
                     failed_keys.add(key)
@@ -1298,25 +1362,48 @@ class CalculatePhase:
             try:
                 new_attempts, should_fallback = self._retry_checker.increment_and_check(line)
             except Exception as retry_exc:
-                logger.warning("Failed to persist retry counter: %s", retry_exc)
+                logger.warning(
+                    "allocation_retry_counter_failed%s",
+                    safe_log_context(
+                        tenant_id=self._tenant_id,
+                        stage="allocation_retry_counter",
+                        outcome="failed",
+                        retryable=True,
+                        resource_id=line.resource_id,
+                        product_type=line.product_type,
+                        **safe_exception_context(retry_exc),
+                    ),
+                )
                 raise exc from None
 
             if not should_fallback:
-                logger.exception(
-                    "Billing line %s/%s failed (attempt %d): %s — failing date",
-                    line.resource_id,
-                    line.product_type,
-                    new_attempts,
-                    exc,
+                logger.error(
+                    "allocation_failed%s",
+                    safe_log_context(
+                        tenant_id=self._tenant_id,
+                        stage="allocation",
+                        outcome="date_failed",
+                        retryable=True,
+                        attempt_number=new_attempts,
+                        resource_id=line.resource_id,
+                        product_type=line.product_type,
+                        **safe_exception_context(exc),
+                    ),
                 )
                 raise
 
-            logger.exception(
-                "Billing line %s/%s failed after %d attempts: %s — allocating to UNALLOCATED",
-                line.resource_id,
-                line.product_type,
-                new_attempts,
-                exc,
+            logger.warning(
+                "allocation_fallback_selected%s",
+                safe_log_context(
+                    tenant_id=self._tenant_id,
+                    stage="allocation",
+                    outcome="unallocated",
+                    retryable=False,
+                    attempt_number=new_attempts,
+                    resource_id=line.resource_id,
+                    product_type=line.product_type,
+                    **safe_exception_context(exc),
+                ),
             )
             row = self._allocate_to_unallocated(
                 line, "ALLOCATION_FAILED", f"Failed after {new_attempts} attempts: {exc}", metadata=dimension_metadata
@@ -1757,7 +1844,12 @@ class ChargebackOrchestrator:
             reason=reason,
         )
 
-    def _persist_preview_lineage(self, result: CalculationPhaseResult) -> None:
+    def _persist_preview_lineage(
+        self,
+        result: CalculationPhaseResult,
+        *,
+        calculation_run_id: int | None = None,
+    ) -> None:
         from core.preview.persistence import PreviewEvidenceStorageBackend
 
         if not isinstance(self._storage_backend, PreviewEvidenceStorageBackend):
@@ -1777,24 +1869,57 @@ class ChargebackOrchestrator:
                 evidence_uow.commit()
             return
         except Exception as exc:
-            logger.warning(
-                "Preview allocation lineage persistence failed tenant=%s date=%s error_type=%s",
-                self._tenant_id,
-                result.tracking_date,
-                type(exc).__name__,
-            )
+            persistence_error = exc
+        logger.warning(
+            "lineage_persistence_failed db_root_cause=%s%s",
+            _safe_database_root_cause(persistence_error),
+            safe_log_context(
+                tenant_name=self._tenant_name,
+                tenant_id=result.tenant_id,
+                pipeline_run_id=calculation_run_id,
+                calculation_id=result.calculation_id,
+                tracking_date=result.tracking_date,
+                stage="lineage_persistence",
+                outcome="mark_unavailable",
+                retryable=False,
+                **safe_exception_context(persistence_error),
+            ),
+        )
         try:
             with evidence_backend.create_preview_evidence_unit_of_work() as evidence_uow:
                 evidence_uow.allocation_lineage.mark_calculation_lineage_unavailable(
                     self._lineage_unavailable(result, AllocationLineageUnavailableReason.PERSISTENCE_FAILED)
                 )
                 evidence_uow.commit()
-        except Exception as exc:
             logger.warning(
-                "Preview allocation lineage unavailable marker failed tenant=%s date=%s error_type=%s",
-                self._tenant_id,
-                result.tracking_date,
-                type(exc).__name__,
+                "lineage_fallback_persisted reason=%s%s",
+                AllocationLineageUnavailableReason.PERSISTENCE_FAILED.value,
+                safe_log_context(
+                    tenant_name=self._tenant_name,
+                    tenant_id=result.tenant_id,
+                    pipeline_run_id=calculation_run_id,
+                    calculation_id=result.calculation_id,
+                    tracking_date=result.tracking_date,
+                    stage="lineage_persistence",
+                    outcome="lineage_unavailable",
+                    retryable=False,
+                ),
+            )
+        except Exception as exc:
+            logger.error(
+                "Preview allocation lineage fallback failed primary_error_type=%s%s",
+                type(persistence_error).__name__,
+                safe_log_context(
+                    tenant_name=self._tenant_name,
+                    tenant_id=result.tenant_id,
+                    pipeline_run_id=calculation_run_id,
+                    calculation_id=result.calculation_id,
+                    tracking_date=result.tracking_date,
+                    stage="lineage_persistence",
+                    outcome="fallback_failed",
+                    retryable=False,
+                    **safe_exception_context(exc),
+                ),
             )
 
     def repair_historical_date(self, tracking_date: date_type) -> HistoricalRepairDateResult:
@@ -1860,6 +1985,18 @@ class ChargebackOrchestrator:
         dates_calculated = 0
         chargeback_rows_written = 0
 
+        logger.info(
+            "pipeline_orchestration_started%s",
+            safe_log_context(
+                tenant_name=self._tenant_name,
+                tenant_id=self._tenant_id,
+                pipeline_run_id=calculation_run_id,
+                stage="gather",
+                operation="pipeline_run",
+                outcome="started",
+            ),
+        )
+
         self._report_progress("gathering")
         plan = self._gather_phase.plan_refresh(datetime.now(UTC))
         source_state: PreviewSourceAttempt | SourceAttemptBeginFailure | SourceEvidenceStorageUnavailable | None = None
@@ -1884,6 +2021,19 @@ class ChargebackOrchestrator:
             self._consecutive_gather_failures = 0
             if not gather_result.skipped:
                 self._refresh_preview_organization_authority()
+            logger.info(
+                "gather_completed dates_gathered=%d error_count=%d%s",
+                dates_gathered,
+                len(gather_result.errors),
+                safe_log_context(
+                    tenant_name=self._tenant_name,
+                    tenant_id=self._tenant_id,
+                    pipeline_run_id=calculation_run_id,
+                    stage="gather",
+                    operation="pipeline_run",
+                    outcome="skipped" if gather_result.skipped else "completed",
+                ),
+            )
         except Exception as exc:
             self._abort_preview_source_state(
                 source_state,
@@ -1893,7 +2043,19 @@ class ChargebackOrchestrator:
                     else SourceAttemptFailureReason.GENERIC_GATHER_FAILED
                 ),
             )
-            logger.exception("Gather phase failed for %s: %s", self._tenant_name, exc)
+            logger.error(
+                "gather_failed%s",
+                safe_log_context(
+                    tenant_name=self._tenant_name,
+                    tenant_id=self._tenant_id,
+                    pipeline_run_id=calculation_run_id,
+                    stage="gather",
+                    operation="pipeline_run",
+                    outcome="failed",
+                    retryable=True,
+                    **safe_exception_context(exc),
+                ),
+            )
             errors.append(f"Gather phase failed: {exc}")
             self._consecutive_gather_failures += 1
             if self._consecutive_gather_failures >= self._gather_failure_threshold:
@@ -1925,7 +2087,18 @@ class ChargebackOrchestrator:
 
             tracking_date = pipeline_state.tracking_date
             self._report_progress("calculating", tracking_date)
-            logger.info("Processing billing date: %s", tracking_date)
+            logger.info(
+                "calculation_started%s",
+                safe_log_context(
+                    tenant_name=self._tenant_name,
+                    tenant_id=self._tenant_id,
+                    pipeline_run_id=calculation_run_id,
+                    tracking_date=tracking_date,
+                    stage="calculate",
+                    operation="calculation",
+                    outcome="started",
+                ),
+            )
             start_time = time.time()
             try:
                 calculation_result: CalculationPhaseResult | None = None
@@ -1949,20 +2122,40 @@ class ChargebackOrchestrator:
                     dates_calculated += 1
                     uow.commit()
                 if calculation_result is not None:
-                    self._persist_preview_lineage(calculation_result)
+                    self._persist_preview_lineage(
+                        calculation_result,
+                        calculation_run_id=calculation_run_id,
+                    )
                 elapsed = int(time.time() - start_time)
                 logger.info(
-                    "Processed %d chargeback rows for billing date: %s in %d seconds",
+                    "calculation_completed rows_written=%d elapsed_seconds=%d%s",
                     rows,
-                    tracking_date,
                     elapsed,
+                    safe_log_context(
+                        tenant_name=self._tenant_name,
+                        tenant_id=self._tenant_id,
+                        pipeline_run_id=calculation_run_id,
+                        calculation_id=(calculation_result.calculation_id if calculation_result is not None else None),
+                        tracking_date=tracking_date,
+                        stage="calculate",
+                        operation="calculation",
+                        outcome="completed",
+                    ),
                 )
             except Exception as exc:
-                logger.exception(
-                    "Calculate failed for %s date %s: %s",
-                    self._tenant_name,
-                    tracking_date,
-                    exc,
+                logger.error(
+                    "calculation_failed%s",
+                    safe_log_context(
+                        tenant_name=self._tenant_name,
+                        tenant_id=self._tenant_id,
+                        pipeline_run_id=calculation_run_id,
+                        tracking_date=tracking_date,
+                        stage="calculate",
+                        operation="calculation",
+                        outcome="failed",
+                        retryable=True,
+                        **safe_exception_context(exc),
+                    ),
                 )
                 errors.append(f"Calculate failed for date {tracking_date}: {exc}")
 
@@ -1985,15 +2178,37 @@ class ChargebackOrchestrator:
                         uow.commit()
                     logger.info("Topic attribution: %d rows for date %s", rows, tracking_date)
                 except Exception as exc:
-                    logger.exception(
-                        "Topic overlay failed for %s date %s: %s",
-                        self._tenant_name,
-                        tracking_date,
-                        exc,
+                    logger.error(
+                        "topic_overlay_failed%s",
+                        safe_log_context(
+                            tenant_name=self._tenant_name,
+                            tenant_id=self._tenant_id,
+                            pipeline_run_id=calculation_run_id,
+                            tracking_date=tracking_date,
+                            stage="topic_overlay",
+                            outcome="failed",
+                            retryable=True,
+                            **safe_exception_context(exc),
+                        ),
                     )
                     errors.append(f"Topic overlay failed for date {tracking_date}: {exc}")
 
         self._report_progress(None, None)
+        logger.info(
+            "pipeline_orchestration_completed dates_gathered=%d dates_calculated=%d rows_written=%d error_count=%d%s",
+            dates_gathered,
+            dates_calculated,
+            chargeback_rows_written,
+            len(errors),
+            safe_log_context(
+                tenant_name=self._tenant_name,
+                tenant_id=self._tenant_id,
+                pipeline_run_id=calculation_run_id,
+                stage="pipeline_run",
+                operation="pipeline_run",
+                outcome="completed_with_errors" if errors else "completed",
+            ),
+        )
         return PipelineRunResult(
             tenant_name=self._tenant_name,
             tenant_id=self._tenant_id,

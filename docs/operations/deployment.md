@@ -71,6 +71,69 @@ Pass secrets via environment — never hardcode in YAML:
 docker run -e CCLOUD_API_KEY=... -e CCLOUD_API_SECRET=... chitragupta
 ```
 
+## Operational logging configuration
+
+Use `INFO` as the production baseline. It records bounded lifecycle transitions,
+completion summaries, degraded fallbacks, and terminal failures without
+per-record output.
+
+```yaml
+logging:
+  level: INFO
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+```
+
+During an investigation, enable `DEBUG` only for the boundary involved. These
+settings expose request/provider lifecycle events while leaving the rest of the
+process at `INFO`:
+
+```yaml
+logging:
+  level: INFO
+  per_module_levels:
+    core.api.app: DEBUG
+    core.engine.orchestrator: DEBUG
+    core.metrics.prometheus: DEBUG
+    plugins.confluent_cloud.connections: DEBUG
+```
+
+Return temporary module overrides to their normal level after the incident.
+Global `DEBUG` increases event volume across tenants and providers.
+
+The default message contains canonical `key=value` context such as request,
+pipeline run, calculation, revision, repair, date/month, stage, operation,
+outcome, and retry position when those fields apply. Preserve the full message
+in the log collector so these correlations remain searchable. If the collector
+expects JSON, wrap the already-redacted message rather than attempting to
+reconstruct fields from application objects:
+
+```yaml
+logging:
+  level: INFO
+  format: '{"time":"%(asctime)s","logger":"%(name)s","level":"%(levelname)s","message":"%(message)s"}'
+```
+
+Configure the collector and alerting policy to:
+
+- retain `INFO` events long enough to connect API requests and scheduled runs
+  to later warnings or errors;
+- alert on terminal `ERROR` events and repeated `WARNING` events where
+  `retryable=false` or attempts reach `max_attempts`;
+- group related events by `request_id`, `pipeline_run_id`, `calculation_id`,
+  `revision_id`, or `repair_id`, rather than message text alone;
+- preserve percent-escaped values and `traceback_frames` as emitted;
+- restrict log access because tenant and resource identifiers are operational
+  data even though secrets and raw payloads are excluded.
+
+Do not add credentials, tokens, authentication headers, connection strings,
+provider payloads, database queries or parameters, response bodies, raw URLs
+with query strings, or raw exception messages in sidecar, proxy, or wrapper
+logs. Chitragupta emits sanitized error type, root type/code, and bounded frame
+names instead.
+
+For response procedures and representative event sequences, see
+[Operational logging](troubleshooting.md#operational-logging).
+
 ## API server
 
 The REST API is a FastAPI application served by uvicorn.

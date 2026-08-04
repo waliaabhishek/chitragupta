@@ -9,6 +9,7 @@ from datetime import UTC, date, datetime, timedelta
 from typing import Protocol, runtime_checkable
 
 from core.config.models import TenantConfig  # noqa: TC001 - resolved by runtime protocol tests
+from core.logging_context import safe_exception_context, safe_log_context
 from core.preview.artifacts import (  # noqa: TC001 - resolved by runtime protocol tests
     PreviewArchiveStream,
     PreviewArtifactOwner,
@@ -296,10 +297,15 @@ class PreviewRevisionService:
             self._recover_artifacts(owner=owner, backend=backend)
         except Exception as exc:
             logger.error(
-                "FOCUS Mapping Preview revision publication failed tenant=%s month=%s error_type=%s",
-                tenant_name,
-                eligible_months[0],
-                type(exc).__name__,
+                "FOCUS Mapping Preview revision publication failed%s",
+                safe_log_context(
+                    tenant_name=tenant_name,
+                    month=eligible_months[0],
+                    stage="staging",
+                    outcome="retained_current",
+                    retryable=True,
+                    **safe_exception_context(exc),
+                ),
             )
             return ()
         published: list[PreviewRevision] = []
@@ -307,6 +313,7 @@ class PreviewRevisionService:
         for month in eligible_months:
             draft = None
             generation = None
+            revision_id: str | None = None
             try:
                 interval = canonicalize_monthly_interval(month=month)
                 cutoff_date = (normalized_now - timedelta(days=tenant_config.retention_days)).date()
@@ -447,10 +454,17 @@ class PreviewRevisionService:
                             self._recover_artifacts(owner=owner, backend=backend)
                         except Exception as cleanup_error:
                             logger.error(
-                                "FOCUS Mapping Preview revision candidate cleanup failed "
-                                "publication_error_type=%s cleanup_error_type=%s",
+                                "FOCUS Mapping Preview revision candidate cleanup failed primary_error_type=%s%s",
                                 type(publication_error).__name__,
-                                type(cleanup_error).__name__,
+                                safe_log_context(
+                                    tenant_name=tenant_name,
+                                    revision_id=revision_id,
+                                    month=month,
+                                    stage="publication_cleanup",
+                                    outcome="failed",
+                                    retryable=True,
+                                    **safe_exception_context(cleanup_error),
+                                ),
                             )
                     raise
             except (PreviewGenerationError, PreviewGenerationSpoolLimitError) as exc:
@@ -460,36 +474,63 @@ class PreviewRevisionService:
                     else "preview_generation_spool_limit_exceeded"
                 )
                 logger.warning(
-                    "FOCUS Mapping Preview revision generation skipped tenant=%s month=%s diagnostic_code=%s",
-                    tenant_name,
-                    month,
-                    diagnostic_code,
+                    "FOCUS Mapping Preview revision generation skipped%s",
+                    safe_log_context(
+                        tenant_name=tenant_name,
+                        revision_id=revision_id,
+                        month=month,
+                        stage="revision_generation",
+                        outcome="deferred",
+                        retryable=isinstance(exc, PreviewGenerationError) and exc.diagnostic.retryable,
+                        diagnostic_code=diagnostic_code,
+                        **safe_exception_context(exc),
+                    ),
                 )
             except Exception as exc:
                 logger.error(
-                    "FOCUS Mapping Preview revision publication failed tenant=%s month=%s error_type=%s",
-                    tenant_name,
-                    month,
-                    type(exc).__name__,
+                    "FOCUS Mapping Preview revision publication failed%s",
+                    safe_log_context(
+                        tenant_name=tenant_name,
+                        revision_id=revision_id,
+                        month=month,
+                        stage="revision_publication",
+                        outcome="retained_current",
+                        retryable=True,
+                        **safe_exception_context(exc),
+                    ),
                 )
             finally:
                 if generation is not None:
                     try:
                         generation.close()
-                    except OSError:
-                        logger.exception(
-                            "FOCUS Mapping Preview revision generation workspace cleanup failed tenant=%s month=%s",
-                            tenant_name,
-                            month,
+                    except OSError as exc:
+                        logger.warning(
+                            "FOCUS Mapping Preview revision generation workspace cleanup failed%s",
+                            safe_log_context(
+                                tenant_name=tenant_name,
+                                revision_id=revision_id,
+                                month=month,
+                                stage="generation_cleanup",
+                                outcome="deferred",
+                                retryable=True,
+                                **safe_exception_context(exc),
+                            ),
                         )
                 if draft is not None:
                     try:
                         draft.close()
-                    except OSError:
-                        logger.exception(
-                            "FOCUS Mapping Preview revision draft workspace cleanup failed tenant=%s month=%s",
-                            tenant_name,
-                            month,
+                    except OSError as exc:
+                        logger.warning(
+                            "FOCUS Mapping Preview revision draft workspace cleanup failed%s",
+                            safe_log_context(
+                                tenant_name=tenant_name,
+                                revision_id=revision_id,
+                                month=month,
+                                stage="draft_cleanup",
+                                outcome="deferred",
+                                retryable=True,
+                                **safe_exception_context(exc),
+                            ),
                         )
         return tuple(published)
 
@@ -531,10 +572,15 @@ class PreviewRevisionService:
         try:
             self._recover_artifacts(owner=owner, backend=backend)
         except Exception as exc:
-            logger.error(
-                "FOCUS Mapping Preview revision recovery failed tenant=%s error_type=%s",
-                tenant_name,
-                type(exc).__name__,
+            logger.warning(
+                "FOCUS Mapping Preview revision recovery deferred%s",
+                safe_log_context(
+                    tenant_name=tenant_name,
+                    stage="retention_recovery",
+                    outcome="deferred",
+                    retryable=True,
+                    **safe_exception_context(exc),
+                ),
             )
             return PreviewRevisionCleanupResult(
                 claimed_count=0,
@@ -587,12 +633,16 @@ class PreviewRevisionService:
                     write_uow.commit()
                 deleted_count += 1
             except Exception as exc:
-                logger.error(
-                    "FOCUS Mapping Preview revision retention deferred tenant=%s owner=%s revision_id=%s error_type=%s",
-                    tenant_name,
-                    masked_preview_owner(ecosystem=ecosystem, tenant_id=tenant_id),
-                    candidate.revision_id,
-                    type(exc).__name__,
+                logger.warning(
+                    "FOCUS Mapping Preview revision retention deferred%s",
+                    safe_log_context(
+                        tenant_name=tenant_name,
+                        revision_id=candidate.revision_id,
+                        stage="revision_retention",
+                        outcome="deferred",
+                        retryable=True,
+                        **safe_exception_context(exc),
+                    ),
                 )
                 try:
                     with backend.create_preview_write_unit_of_work() as write_uow:
@@ -604,12 +654,15 @@ class PreviewRevisionService:
                         deferred_count += 1
                 except Exception as defer_error:
                     logger.error(
-                        "FOCUS Mapping Preview revision retention deferral failed tenant=%s owner=%s "
-                        "revision_id=%s error_type=%s",
-                        tenant_name,
-                        masked_preview_owner(ecosystem=ecosystem, tenant_id=tenant_id),
-                        candidate.revision_id,
-                        type(defer_error).__name__,
+                        "FOCUS Mapping Preview revision retention deferral failed%s",
+                        safe_log_context(
+                            tenant_name=tenant_name,
+                            revision_id=candidate.revision_id,
+                            stage="revision_retention_deferral",
+                            outcome="failed",
+                            retryable=True,
+                            **safe_exception_context(defer_error),
+                        ),
                     )
 
         return PreviewRevisionCleanupResult(

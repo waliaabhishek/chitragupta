@@ -15,6 +15,7 @@ from core.emitters.runner import EmitterRunner
 from core.emitters.sources import ChargebackDateSource, ChargebackRowFetcher, RegistryEmitterBuilder
 from core.emitters.wiring import create_auxiliary_prometheus_runners
 from core.engine.orchestrator import ChargebackOrchestrator, GatherFailureThresholdError, PipelineRunResult
+from core.logging_context import safe_exception_context, safe_log_context
 from core.plugin.protocols import OverlayPlugin
 from core.plugin.registry import EcosystemBundle
 from core.storage.tenant_lifecycle import cleanup_orphaned_pipeline_run, prepare_tenant_backend
@@ -98,8 +99,18 @@ class PipelineRunTracker:
             with self._storage.create_unit_of_work() as uow:
                 uow.pipeline_runs.update_run(pipeline_run)
                 uow.commit()
-        except Exception:
-            logger.warning("Failed to %s pipeline run", context, exc_info=True)
+        except Exception as exc:
+            logger.warning(
+                "pipeline_run_persistence_failed%s",
+                safe_log_context(
+                    pipeline_run_id=pipeline_run.id,
+                    stage="pipeline_run_persistence",
+                    operation=context,
+                    outcome="failed",
+                    retryable=True,
+                    **safe_exception_context(exc),
+                ),
+            )
 
     def create(self, tenant_name: str) -> PipelineRun:
         """Create a PipelineRun record with status='running'."""
@@ -355,26 +366,38 @@ class WorkflowRunner:
                     storage.dispose()
                 except BaseException as cleanup_error:
                     logger.error(
-                        "Tenant runtime construction cleanup failed tenant=%s step=storage error_type=%s",
-                        tenant_name,
-                        type(cleanup_error).__name__,
+                        "tenant_runtime_cleanup_failed%s",
+                        safe_log_context(
+                            tenant_name=tenant_name,
+                            stage="runtime_cleanup_storage",
+                            outcome="failed",
+                            **safe_exception_context(cleanup_error),
+                        ),
                     )
                 try:
                     plugin.close()
                 except BaseException as cleanup_error:
                     logger.error(
-                        "Tenant runtime construction cleanup failed tenant=%s step=plugin error_type=%s",
-                        tenant_name,
-                        type(cleanup_error).__name__,
+                        "tenant_runtime_cleanup_failed%s",
+                        safe_log_context(
+                            tenant_name=tenant_name,
+                            stage="runtime_cleanup_plugin",
+                            outcome="failed",
+                            **safe_exception_context(cleanup_error),
+                        ),
                     )
             else:
                 try:
                     plugin.close()
                 except BaseException as cleanup_error:
                     logger.error(
-                        "Tenant runtime construction cleanup failed tenant=%s step=plugin error_type=%s",
-                        tenant_name,
-                        type(cleanup_error).__name__,
+                        "tenant_runtime_cleanup_failed%s",
+                        safe_log_context(
+                            tenant_name=tenant_name,
+                            stage="runtime_cleanup_plugin",
+                            outcome="failed",
+                            **safe_exception_context(cleanup_error),
+                        ),
                     )
             raise
 
@@ -512,7 +535,17 @@ class WorkflowRunner:
             except GatherFailureThresholdError as exc:
                 results[name] = self._mark_tenant_permanently_failed(name, config, exc)
             except Exception as exc:
-                logger.exception("Tenant %s failed: %s", name, exc)
+                logger.error(
+                    "tenant_run_failed%s",
+                    safe_log_context(
+                        tenant_name=name,
+                        tenant_id=config.tenant_id,
+                        stage="pipeline_dispatch",
+                        outcome="failed",
+                        retryable=True,
+                        error_type=type(exc).__name__,
+                    ),
+                )
                 results[name] = PipelineRunResult(
                     tenant_name=name,
                     tenant_id=config.tenant_id,
@@ -569,6 +602,17 @@ class WorkflowRunner:
 
                 pipeline_run = tracker.create(name)
                 runtime.orchestrator._progress_callback = tracker.make_progress_callback(pipeline_run)
+                logger.info(
+                    "pipeline_run_started%s",
+                    safe_log_context(
+                        tenant_name=name,
+                        tenant_id=config.tenant_id,
+                        pipeline_run_id=pipeline_run.id,
+                        stage="pipeline_run",
+                        operation="pipeline_run",
+                        outcome="started",
+                    ),
+                )
 
                 try:
                     result = runtime.orchestrator.run(
@@ -576,6 +620,20 @@ class WorkflowRunner:
                     )  # GatherFailureThresholdError propagates up
                     runtime.last_run_at = datetime.now(UTC)
                     tracker.finalize(pipeline_run, result)
+                    logger.info(
+                        "pipeline_run_completed dates_gathered=%d dates_calculated=%d rows_written=%d%s",
+                        result.dates_gathered,
+                        result.dates_calculated,
+                        result.chargeback_rows_written,
+                        safe_log_context(
+                            tenant_name=name,
+                            tenant_id=config.tenant_id,
+                            pipeline_run_id=pipeline_run.id,
+                            stage="pipeline_run",
+                            operation="pipeline_run",
+                            outcome="completed",
+                        ),
+                    )
 
                     # Post-pipeline hook: emit after successful pipeline commit
                     if config.plugin_settings.emitters:
@@ -608,11 +666,20 @@ class WorkflowRunner:
                         for emitter_runner in emitter_runners:
                             try:
                                 emitter_runner.run(config.tenant_id)
-                            except Exception:
-                                logger.exception(
-                                    "EmitterRunner failed for tenant=%s pipeline=%s — pipeline result unaffected",
-                                    name,
-                                    emitter_runner._pipeline,
+                            except Exception as exc:
+                                logger.warning(
+                                    "emitter_runner_degraded%s",
+                                    safe_log_context(
+                                        tenant_name=name,
+                                        tenant_id=config.tenant_id,
+                                        pipeline_run_id=pipeline_run.id,
+                                        stage="emit",
+                                        operation="emitter_run",
+                                        outcome="pipeline_result_unaffected",
+                                        retryable=True,
+                                        pipeline=emitter_runner._pipeline,
+                                        **safe_exception_context(exc),
+                                    ),
                                 )
 
                     # Post-pipeline hook: emit topic attribution after successful pipeline commit
@@ -640,14 +707,36 @@ class WorkflowRunner:
                                     emitter_builder=RegistryEmitterBuilder(),
                                     pipeline="topic_attribution",
                                 ).run(config.tenant_id)
-                            except Exception:
-                                logger.exception(
-                                    "EmitterRunner (topic_attribution) failed for tenant=%s "
-                                    "— pipeline result unaffected",
-                                    name,
+                            except Exception as exc:
+                                logger.warning(
+                                    "emitter_runner_degraded%s",
+                                    safe_log_context(
+                                        tenant_name=name,
+                                        tenant_id=config.tenant_id,
+                                        pipeline_run_id=pipeline_run.id,
+                                        stage="emit",
+                                        operation="emitter_run",
+                                        outcome="pipeline_result_unaffected",
+                                        retryable=True,
+                                        pipeline="topic_attribution",
+                                        **safe_exception_context(exc),
+                                    ),
                                 )
                     return result
-                except Exception:
+                except Exception as exc:
+                    logger.error(
+                        "pipeline_run_failed%s",
+                        safe_log_context(
+                            tenant_name=name,
+                            tenant_id=config.tenant_id,
+                            pipeline_run_id=pipeline_run.id,
+                            stage="pipeline_run",
+                            operation="pipeline_run",
+                            outcome="failed",
+                            retryable=True,
+                            **safe_exception_context(exc),
+                        ),
+                    )
                     tracker.fail(pipeline_run)
                     raise
             finally:
@@ -1520,9 +1609,16 @@ class WorkflowRunner:
                                 attempted_at=cleanup_now,
                                 error=exc,
                             )
-                            logger.exception(
-                                "Tenant %s: Preview evidence retention cleanup failed",
-                                name,
+                            logger.warning(
+                                "preview_evidence_retention_failed%s",
+                                safe_log_context(
+                                    tenant_name=name,
+                                    stage="preview_evidence_retention",
+                                    operation="retention_cleanup",
+                                    outcome="failed",
+                                    retryable=True,
+                                    **safe_exception_context(exc),
+                                ),
                             )
                 if total_deleted > 0:
                     logger.info(
@@ -1550,12 +1646,29 @@ class WorkflowRunner:
                             attempted_at=cleanup_now,
                             error=exc,
                         )
-                except Exception:
+                except Exception as outcome_error:
                     logger.warning(
-                        "Tenant %s: retention outcome recording runtime acquisition failed",
-                        name,
+                        "retention_outcome_recording_failed%s",
+                        safe_log_context(
+                            tenant_name=name,
+                            stage="retention_outcome",
+                            operation="record_retention_outcome",
+                            outcome="failed",
+                            retryable=True,
+                            **safe_exception_context(outcome_error),
+                        ),
                     )
-            logger.exception("Tenant %s: retention cleanup failed", name)
+            logger.error(
+                "retention_cleanup_failed%s",
+                safe_log_context(
+                    tenant_name=name,
+                    stage="retention_cleanup",
+                    operation="retention_cleanup",
+                    outcome="failed",
+                    retryable=True,
+                    **safe_exception_context(exc),
+                ),
+            )
 
     @staticmethod
     def _record_focus_retention_outcome(
@@ -1701,9 +1814,16 @@ class WorkflowRunner:
                     )
             except Exception as exc:
                 logger.error(
-                    "Tenant %s: scheduled FOCUS Mapping Preview publication failed error_type=%s",
-                    tenant_name,
-                    type(exc).__name__,
+                    "scheduled_preview_publication_failed%s",
+                    safe_log_context(
+                        tenant_name=tenant_name,
+                        month=month,
+                        stage="revision_publication",
+                        operation="scheduled_publication",
+                        outcome="failed",
+                        retryable=True,
+                        **safe_exception_context(exc),
+                    ),
                 )
 
     def _cleanup_preview_revision_retention(self, *, now: datetime) -> None:
@@ -1736,9 +1856,15 @@ class WorkflowRunner:
                         )
                 except Exception as exc:
                     logger.error(
-                        "Tenant %s: FOCUS Mapping Preview revision retention failed error_type=%s",
-                        tenant_name,
-                        type(exc).__name__,
+                        "preview_revision_retention_failed%s",
+                        safe_log_context(
+                            tenant_name=tenant_name,
+                            stage="revision_retention",
+                            operation="retention_cleanup",
+                            outcome="failed",
+                            retryable=True,
+                            **safe_exception_context(exc),
+                        ),
                     )
 
     def run_loop(self, shutdown_event: threading.Event) -> None:
@@ -1776,8 +1902,17 @@ class WorkflowRunner:
                             len(all_tenants),
                             list(failed_set),
                         )
-                except Exception:
-                    logger.exception("Unexpected error in run_loop")
+                except Exception as exc:
+                    logger.error(
+                        "workflow_loop_failed%s",
+                        safe_log_context(
+                            stage="workflow_loop",
+                            operation="run_loop",
+                            outcome="failed",
+                            retryable=True,
+                            **safe_exception_context(exc),
+                        ),
+                    )
 
             # Sleep in small increments to check shutdown_event
             for _ in range(interval):

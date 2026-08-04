@@ -683,14 +683,38 @@ def test_history_and_direct_repository_exceptions_share_exact_storage_503(
     tmp_path: Path,
     operation: str,
     path: str,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     with _client(tmp_path, history=(_revision(),)) as (client, reader):
         reader.failures[operation] = RuntimeError("private database detail")
-        response = client.get(path)
+        with caplog.at_level(logging.ERROR, logger="core.api.routes.focus_preview"):
+            response = client.get(path)
 
     assert response.status_code == 503
     assert response.json() == {"detail": "FOCUS Mapping Preview revision storage is unavailable"}
     assert "private database detail" not in response.text
+    assert "tenant-1" not in response.text
+    assert "tenant-1" not in caplog.text
+    route_messages = [
+        record.getMessage() for record in caplog.records if record.name == "core.api.routes.focus_preview"
+    ]
+    target = next(
+        message
+        for message in route_messages
+        if message.startswith(
+            "FOCUS Mapping Preview revision history read failed"
+            if path.endswith("month=2026-07")
+            else "FOCUS Mapping Preview revision storage read failed"
+        )
+    )
+    assert "tenant_name=new-label" in target
+    assert "owner=" in target
+    assert "request_id=" in target
+    assert "stage=revision_storage" in target
+    assert "outcome=unavailable" in target
+    assert "error_type=RuntimeError" in target
+    if not path.endswith("month=2026-07"):
+        assert "revision_id=revision-1" in target
 
 
 @pytest.mark.parametrize(
@@ -853,7 +877,18 @@ def test_all_corrupt_revision_artifacts_share_one_redacted_500(
     assert "tenant-1" not in response.text
     assert "/tmp/path" not in caplog.text
     assert "tenant-1" not in caplog.text
-    assert "revision-1" not in caplog.text
+    route_message = next(
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "core.api.routes.focus_preview"
+        and record.getMessage().startswith("FOCUS Mapping Preview revision artifact unavailable")
+    )
+    assert "/tmp/path" not in route_message
+    assert "tenant_name=new-label" in route_message
+    assert "owner=" in route_message
+    assert "request_id=" in route_message
+    assert "revision_id=revision-1" in route_message
+    assert "error_type=PreviewRevisionArtifactUnavailableError" in route_message
 
 
 def test_backend_creation_failure_has_exact_storage_503(tmp_path: Path) -> None:
@@ -913,7 +948,7 @@ def test_unexpected_revision_exception_reaches_global_handler_without_storage_cl
         app.state.preview_revision_reader = _Reader(_revision())
         with (
             patch("core.api.routes.focus_preview._current_revision", side_effect=route_error),
-            patch("core.api.exception_handler.logger.exception") as log_exception,
+            patch("core.api.exception_handler.logger.error") as log_error,
             caplog.at_level(logging.ERROR, logger="core.api.routes.focus_preview"),
         ):
             response = client.get("/api/v1/tenants/new-label/focus-preview/revisions/current?month=2026-07")
@@ -923,6 +958,12 @@ def test_unexpected_revision_exception_reaches_global_handler_without_storage_cl
     assert body["detail"] == "Internal server error"
     assert set(body) == {"detail", "error_id"}
     assert str(UUID(body["error_id"])) == body["error_id"]
-    assert log_exception.call_args.kwargs["exc_info"] is route_error
+    log_error.assert_called_once()
+    rendered_call = str(log_error.call_args)
+    assert body["error_id"] in rendered_call
+    assert "request_id=" in rendered_call
+    assert "error_type=RuntimeError" in rendered_call
+    assert "traceback_frames=" in rendered_call
+    assert "private revision route value" not in rendered_call
     assert provider.lease_events == [("enter", "new-label"), ("exit", "new-label")]
     assert "FOCUS Mapping Preview backend creation failed" not in caplog.text

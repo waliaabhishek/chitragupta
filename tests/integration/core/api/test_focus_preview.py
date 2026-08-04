@@ -5,6 +5,7 @@ import hashlib
 import io
 import json
 import logging
+import re
 import time
 import zipfile
 from collections.abc import Callable, Iterator
@@ -218,7 +219,7 @@ class _ExitFailingTenantBackendProvider(FixedTenantBackendProvider):
 
 def _assert_global_500(
     response: httpx.Response,
-    log_exception: MagicMock,
+    log_error: MagicMock,
     expected_error: BaseException,
 ) -> None:
     assert response.status_code == 500
@@ -226,7 +227,13 @@ def _assert_global_500(
     assert body["detail"] == "Internal server error"
     assert set(body) == {"detail", "error_id"}
     assert str(UUID(body["error_id"])) == body["error_id"]
-    assert log_exception.call_args.kwargs["exc_info"] is expected_error
+    log_error.assert_called_once()
+    rendered_call = str(log_error.call_args)
+    assert body["error_id"] in rendered_call
+    assert "request_id=" in rendered_call
+    assert f"error_type={type(expected_error).__name__}" in rendered_call
+    assert "traceback_frames=" in rendered_call
+    assert str(expected_error) not in rendered_call
 
 
 def _body() -> dict[str, str]:
@@ -624,12 +631,12 @@ def test_unexpected_requested_exception_reaches_global_handler_with_identity(
             provider.lease_events.clear()
             with (
                 patch.object(app.state.preview_runtime, "get_request", side_effect=route_error),
-                patch("core.api.exception_handler.logger.exception") as log_exception,
+                patch("core.api.exception_handler.logger.error") as log_error,
                 caplog.at_level(logging.ERROR, logger="core.api.routes.focus_preview"),
             ):
                 response = client.get("/api/v1/tenants/production/focus-preview/requests/request-sentinel")
 
-        _assert_global_500(response, log_exception, route_error)
+        _assert_global_500(response, log_error, route_error)
         assert provider.lease_events == [("enter", "production"), ("exit", "production")]
         assert "FOCUS Mapping Preview backend creation failed" not in caplog.text
     finally:
@@ -681,12 +688,12 @@ def test_lease_cleanup_failure_cannot_mask_requested_route_exception(
             app.state.preview_runtime._backend_provider = provider
             with (
                 patch.object(app.state.preview_runtime, "get_request", side_effect=route_error),
-                patch("core.api.exception_handler.logger.exception") as log_exception,
+                patch("core.api.exception_handler.logger.error") as log_error,
                 caplog.at_level(logging.ERROR, logger="core.api.routes.focus_preview"),
             ):
                 response = client.get("/api/v1/tenants/production/focus-preview/requests/request-sentinel")
 
-        _assert_global_500(response, log_exception, route_error)
+        _assert_global_500(response, log_error, route_error)
         assert provider.lease_events == [("enter", "production"), ("exit", "production")]
         assert (
             "FOCUS Mapping Preview backend lease release failed "
@@ -717,12 +724,12 @@ def test_lease_cleanup_failure_after_success_reaches_global_handler_with_identit
             app.state.backend_provider = provider
             app.state.preview_runtime._backend_provider = provider
             with (
-                patch("core.api.exception_handler.logger.exception") as log_exception,
+                patch("core.api.exception_handler.logger.error") as log_error,
                 caplog.at_level(logging.ERROR, logger="core.api.routes.focus_preview"),
             ):
                 response = client.get("/api/v1/tenants/production/focus-preview/requests")
 
-        _assert_global_500(response, log_exception, cleanup_error)
+        _assert_global_500(response, log_error, cleanup_error)
         assert provider.lease_events == [("enter", "production"), ("exit", "production")]
         assert "FOCUS Mapping Preview backend creation failed" not in caplog.text
         assert "private successful-route cleanup value" not in caplog.text
@@ -868,6 +875,46 @@ def test_primary_api_seam_serializes_safe_diagnostic_correlations_and_no_interna
     assert "storage_key" not in str(body)
     assert body["source_snapshot"] is None
     assert body["package"] is None
+
+
+def test_successful_post_logs_middleware_request_id_in_accepted_event(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    settings = _settings(tmp_path)
+    backend = SQLModelBackend(
+        settings.tenants["production"].storage.connection_string.get_secret_value(),
+        CCloudStorageModule(),
+        use_migrations=False,
+        focus_preview_enabled=True,
+    )
+    backend.create_tables()
+    _seed(backend, source=_source(), aggregate=_aggregate(), allocation=_allocation())
+    app, client = _client(settings)
+    with client:
+        install_backend(app, "production", backend)
+        with caplog.at_level(logging.DEBUG):
+            submitted = client.post("/api/v1/tenants/production/focus-preview/requests", json=_body())
+
+    assert submitted.status_code == 202
+    _assert_target_contract(submitted.json())
+    route_message = next(
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "core.api.routes.focus_preview"
+        and record.getMessage().startswith("FOCUS Mapping Preview request accepted")
+    )
+    started_message = next(
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "core.api.app" and record.getMessage().startswith("request_started")
+    )
+    request_id_match = re.search(r"request_id=([0-9a-f]+)", started_message)
+    assert request_id_match is not None
+    assert f"request_id={request_id_match.group(1)}" in route_message
+    assert "tenant_name=production" in route_message
+    assert "stage=preview_submission" in route_message
+    assert "outcome=accepted" in route_message
 
 
 @pytest.mark.parametrize(

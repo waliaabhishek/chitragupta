@@ -5,12 +5,13 @@ import csv
 import hashlib
 import io
 import json
+import logging
 import time
 from collections.abc import Iterable
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, patch
 
 import anyio.to_thread
@@ -19,6 +20,7 @@ import pytest
 import respx
 from alembic import command
 from sqlalchemy import create_engine, text
+from sqlalchemy.exc import IntegrityError
 
 from core.api.app import create_app
 from core.config.models import ApiConfig, AppSettings, PreviewConfig, StorageConfig, TenantConfig
@@ -44,6 +46,9 @@ from tests.unit.core.storage.test_migration_019_focus_preview import (
     _snapshots,
 )
 from workflow_runner import WorkflowRunner
+
+if TYPE_CHECKING:
+    from core.storage.interface import AllocationLineageRunCapture
 
 
 class PreviewPipelineHandler:
@@ -3080,6 +3085,181 @@ def test_ordinary_gather_and_calculate_lifecycle_replaces_incomplete_legacy_corr
     finally:
         client.close()
         runner.close()
+
+
+@respx.mock
+def test_production_lineage_integrity_error_logs_safe_owner_context_and_persists_unavailable_fallback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from plugins.confluent_cloud.storage.preview_repositories import (
+        SQLModelPreviewAllocationLineageRepository,
+    )
+
+    async def to_thread_inline(function: Any, *args: object, **kwargs: object) -> object:
+        return function(*args, **kwargs)
+
+    async def run_sync_inline(function: Any, *args: object, **_kwargs: object) -> object:
+        return function(*args)
+
+    monkeypatch.setattr("core.api.app.asyncio.to_thread", to_thread_inline)
+    monkeypatch.setattr(anyio.to_thread, "run_sync", run_sync_inline)
+    _mock_organization_api()
+    tracking_date = date(2026, 7, 15)
+    end_date = tracking_date + timedelta(days=1)
+    tracking_start = datetime.combine(tracking_date, datetime.min.time(), tzinfo=UTC)
+    route = respx.get("https://api.confluent.cloud/billing/v1/costs")
+
+    def provider_response(request: httpx.Request) -> httpx.Response:
+        start = date.fromisoformat(request.url.params["start_date"])
+        end = date.fromisoformat(request.url.params["end_date"])
+        return (
+            _cost_response(
+                id="cost-lineage-integrity",
+                start_date=tracking_date.isoformat(),
+                end_date=end_date.isoformat(),
+            )
+            if start <= tracking_date and end >= end_date
+            else httpx.Response(200, json={"data": [], "metadata": {}})
+        )
+
+    route.side_effect = provider_response
+    connection_string = f"sqlite:///{tmp_path / 'lineage-integrity.db'}"
+    tenant = TenantConfig(
+        ecosystem="confluent_cloud",
+        tenant_id="tenant-1",
+        lookback_days=31,
+        cutoff_days=5,
+        storage=StorageConfig(connection_string=connection_string),
+        focus_preview=_task_254_47_focus_preview(tracking_date, end_date),
+        plugin_settings={
+            "ccloud_api": {"key": "key", "secret": "secret"},  # pragma: allowlist secret
+            "billing_api": {"days_per_query": 30},
+            "min_refresh_gap_seconds": 0,
+        },
+    )
+    settings = AppSettings(
+        api=ApiConfig(host="127.0.0.1", port=8080),
+        preview=PreviewConfig(artifact_root=tmp_path / "lineage-integrity-artifacts", max_workers=1),
+        tenants={"production": tenant},
+    )
+    handler = PreviewPipelineHandler()
+    plugin = PreviewPipelinePlugin(handler)
+    runner, backend = _bootstrap_pipeline_runner(settings, tenant, plugin)
+    original_replace = SQLModelPreviewAllocationLineageRepository.replace_calculation_lineage
+    injected = {"raised": False}
+
+    def fail_once(
+        self: SQLModelPreviewAllocationLineageRepository,
+        capture: AllocationLineageRunCapture,
+        *,
+        calculation_completed_at: datetime,
+    ) -> object:
+        if not injected["raised"] and capture.tracking_date == tracking_date:
+            injected["raised"] = True
+            raise IntegrityError(
+                "INSERT INTO ccloud_allocation_lineage_runs VALUES (?, ?, ?)",
+                {
+                    "tenant_id": "tenant-1",
+                    "api_secret": "super-secret",  # pragma: allowlist secret
+                    "tracking_date": tracking_date.isoformat(),
+                },
+                RuntimeError(
+                    "UNIQUE constraint failed: ccloud_allocation_lineage_runs.ecosystem, "
+                    "ccloud_allocation_lineage_runs.tenant_id, ccloud_allocation_lineage_runs.tracking_date"
+                ),
+            )
+        return original_replace(self, capture, calculation_completed_at=calculation_completed_at)
+
+    monkeypatch.setattr(
+        SQLModelPreviewAllocationLineageRepository,
+        "replace_calculation_lineage",
+        fail_once,
+    )
+
+    try:
+        with caplog.at_level(logging.WARNING, logger="core.engine.orchestrator"):
+            result = runner.run_tenant("production")
+        assert injected["raised"] is True
+        assert result.errors == []
+        assert result.dates_calculated == 1
+        with backend.create_read_only_unit_of_work() as uow:
+            pipeline_run = uow.pipeline_runs.get_latest_run("production")
+            state = uow.pipeline_state.get("confluent_cloud", "tenant-1", tracking_date)
+        assert pipeline_run is not None
+        assert pipeline_run.status == "completed"
+        assert pipeline_run.id is not None
+        assert state is not None
+        assert state.has_usable_calculation is True
+        assert state.calculation_run_id == pipeline_run.id
+        with backend.create_read_only_unit_of_work() as uow:
+            chargebacks, total = uow.chargebacks.find_by_filters(
+                "confluent_cloud",
+                "tenant-1",
+                start=tracking_start,
+                end=tracking_start + timedelta(days=1),
+            )
+        assert total == 1
+        assert [row.amount for row in chargebacks] == [Decimal("8")]
+
+        persisted = create_engine(connection_string)
+        try:
+            with persisted.connect() as connection:
+                lineage = connection.execute(
+                    text(
+                        "SELECT capture_status, capture_reason, calculation_id, portion_count "
+                        "FROM ccloud_allocation_lineage_runs "
+                        "WHERE ecosystem = 'confluent_cloud' "
+                        "AND tenant_id = 'tenant-1' "
+                        "AND tracking_date = :tracking_date"
+                    ),
+                    {"tracking_date": tracking_date.isoformat()},
+                ).one()
+            assert lineage.capture_status == "unavailable"
+            assert lineage.capture_reason == "persistence_failed"
+            assert lineage.calculation_id == state.calculation_id
+            assert lineage.portion_count == 0
+        finally:
+            persisted.dispose()
+    finally:
+        runner.close()
+
+    warning_records = [
+        record
+        for record in caplog.records
+        if record.name == "core.engine.orchestrator"
+        and record.levelname == "WARNING"
+        and record.getMessage().startswith(("lineage_persistence_failed", "lineage_fallback_persisted"))
+    ]
+    assert len(warning_records) == 2
+
+    persistence_message = warning_records[0].getMessage()
+    fallback_message = warning_records[1].getMessage()
+
+    assert persistence_message.startswith("lineage_persistence_failed")
+    assert "db_root_cause=UNIQUE constraint failed" in persistence_message
+    assert "stage=lineage_persistence" in persistence_message
+    assert "outcome=mark_unavailable" in persistence_message
+    assert "error_type=IntegrityError" in persistence_message
+    assert "traceback_frames=" in persistence_message
+
+    assert fallback_message.startswith("lineage_fallback_persisted")
+    assert "reason=persistence_failed" in fallback_message
+    assert "stage=lineage_persistence" in fallback_message
+    assert "outcome=lineage_unavailable" in fallback_message
+    assert "db_root_cause=" not in fallback_message
+
+    for message in (persistence_message, fallback_message):
+        assert "tenant_name=production" in message
+        assert f"tracking_date={tracking_date.isoformat()}" in message
+        assert f"calculation_id={state.calculation_id}" in message
+        assert f"pipeline_run_id={pipeline_run.id}" in message
+
+    assert "super-secret" not in caplog.text
+    assert "INSERT INTO ccloud_allocation_lineage_runs" not in caplog.text
+    assert not (tmp_path / "lineage-integrity.db-wal").exists()
+    assert not (tmp_path / "lineage-integrity.db-shm").exists()
 
 
 def test_replacement_cost_input_out_of_window_native_result_uses_empty_capture() -> None:

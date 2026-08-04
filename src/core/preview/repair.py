@@ -10,6 +10,7 @@ from datetime import UTC, date, datetime, time, timedelta
 from enum import StrEnum
 from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable
 
+from core.logging_context import safe_exception_context, safe_log_context
 from core.preview.eligibility import policy_from_tenant_config
 from core.preview.models import PreviewDiagnostic
 from core.time_precision import canonical_utc_second
@@ -445,9 +446,14 @@ class PreviewRepairRuntime:
                     )
             except Exception as exc:
                 logger.error(
-                    "FOCUS Preview repair recovery unavailable tenant=%s error_type=%s",
-                    tenant_name,
-                    type(exc).__name__,
+                    "FOCUS Preview repair recovery unavailable%s",
+                    safe_log_context(
+                        tenant_name=tenant_name,
+                        stage="repair_recovery",
+                        outcome="unavailable",
+                        retryable=True,
+                        **safe_exception_context(exc),
+                    ),
                 )
                 unavailable.add(tenant_name)
                 with self._condition:
@@ -625,9 +631,19 @@ class PreviewRepairRuntime:
             )
         except Exception as exc:
             logger.error(
-                "FOCUS Preview repair worker failed repair_id=%s error_type=%s",
-                repair.repair_id,
-                type(exc).__name__,
+                "FOCUS Preview repair worker failed range=%s/%s%s",
+                repair.start_date,
+                repair.end_date,
+                safe_log_context(
+                    tenant_name=repair.tenant_name,
+                    tenant_id=repair.tenant_id,
+                    repair_id=repair.repair_id,
+                    stage="repair_worker",
+                    outcome="failed",
+                    retryable=True,
+                    diagnostic_code="focus_preview_repair_worker_unavailable",
+                    **safe_exception_context(exc),
+                ),
             )
             self._persist_worker_failure(repair, tenant_config)
         finally:
@@ -696,9 +712,16 @@ class PreviewRepairRuntime:
                         raise PreviewRepairWorkerConflictError("repair worker failure transition conflicted")
         except Exception as recovery_exc:
             logger.error(
-                "FOCUS Preview repair worker failure persistence failed repair_id=%s error_type=%s",
-                repair.repair_id,
-                type(recovery_exc).__name__,
+                "FOCUS Preview repair worker failure persistence failed%s",
+                safe_log_context(
+                    tenant_name=repair.tenant_name,
+                    repair_id=repair.repair_id,
+                    stage="repair_failure_persistence",
+                    outcome="failed",
+                    retryable=True,
+                    diagnostic_code="focus_preview_repair_worker_unavailable",
+                    **safe_exception_context(recovery_exc),
+                ),
             )
 
     def _release_capacity(self) -> None:

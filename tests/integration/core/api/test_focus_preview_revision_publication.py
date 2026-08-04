@@ -1581,7 +1581,9 @@ def test_concurrent_real_publication_deletes_loser_package_and_keeps_winner_read
     observed_now = probe_publisher.publish_eligible_month.call_args.kwargs["now"]
     assert before <= observed_now <= after
     assert observed_now >= probe_now
-    assert "revision publication failed tenant=production month=2026-07" in caplog.text
+    assert "revision publication failed" in caplog.text
+    assert "tenant_name=production" in caplog.text
+    assert "month=2026-07" in caplog.text
     assert "error_type=PreviewRevisionConflictError" in caplog.text
 
     current = reader.get_current(
@@ -2350,9 +2352,13 @@ def test_real_layered_publication_failures_preserve_current_row_and_artifact(
         "source": "diagnostic_code=preview_source_record_malformed",
         "allocation": "diagnostic_code=preview_allocation_lineage_incomplete",
         "row-validation": "diagnostic_code=preview_mapping_validation_failed",
-        "staging": "revision publication failed tenant=production month=2026-07 error_type=NotADirectoryError",
+        "staging": "revision publication failed",
     }[failure_layer]
     assert expected_log in caplog.text
+    if failure_layer == "staging":
+        assert "tenant_name=production" in caplog.text
+        assert "month=2026-07" in caplog.text
+        assert "error_type=NotADirectoryError" in caplog.text
 
     with engine.connect() as connection:
         rows = (
@@ -2377,5 +2383,112 @@ def test_real_layered_publication_failures_preserve_current_row_and_artifact(
         delivered_manifest = client.get(retained.json()["package"]["manifest"]["download_url"])
         assert delivered_manifest.status_code == 200
         assert delivered_manifest.content == current_manifest
+    runner.close()
+    backend.dispose()
+
+
+def test_periodic_publication_staging_failure_logs_single_owner_record_and_retains_current_revision(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from core.preview.artifacts import LocalPreviewArtifactStore
+    from core.preview.generator import PreviewPackageGenerator
+    from core.preview.revisions import PreviewRevisionReadService, PreviewRevisionService
+
+    connection_string = f"sqlite:///{tmp_path / 'publication-staging.db'}"
+    root = tmp_path / "publication-staging-artifacts"
+    tenant = _tenant_config(connection_string)
+    settings = AppSettings(
+        features=FeaturesConfig(enable_periodic_refresh=True, refresh_interval=1),
+        preview=PreviewConfig(artifact_root=root, max_workers=1),
+        tenants={"production": tenant},
+    )
+    backend = SQLModelBackend(
+        connection_string,
+        CCloudStorageModule(),
+        use_migrations=False,
+        focus_preview_enabled=True,
+    )
+    backend.create_tables()
+    _seed_month(backend, billed_cost=Decimal("8"))
+    store = LocalPreviewArtifactStore(root)
+    service = PreviewRevisionService(
+        artifact_store=store,
+        package_generator=PreviewPackageGenerator(max_csv_file_bytes=None),
+        revision_id_factory=lambda: "revision-current",
+    )
+    runner = WorkflowRunner(
+        settings,
+        MagicMock(),
+        revision_manager=service,
+        owned_preview_artifact_store=store,
+    )
+    runner._tenant_runtimes["production"] = TenantRuntime(  # noqa: SLF001
+        tenant_name="production",
+        plugin=MagicMock(),
+        storage=backend,
+        orchestrator=MagicMock(),
+        config_hash=workflow_runner._config_hash(settings.tenants["production"]),  # noqa: SLF001
+        created_at=datetime(2026, 8, 7, tzinfo=UTC),
+    )
+    _run_periodic_cycle(runner, _result(), now=datetime(2026, 8, 7, tzinfo=UTC))
+    reader = PreviewRevisionReadService(artifact_store=store)
+    current = reader.get_current(
+        backend=backend,
+        ecosystem="confluent_cloud",
+        tenant_id="tenant-1",
+        month_start=date(2026, 7, 1),
+    )
+    assert current is not None
+    current_manifest = store.read_manifest(current.package.storage_key, current.package.manifest)
+
+    blocked_root = tmp_path / "publication-staging-preserved"
+    root.rename(blocked_root)
+    root.write_bytes(b"configured staging path is not a directory")
+    caplog.clear()
+    try:
+        with caplog.at_level(logging.ERROR, logger="core.preview.revisions"):
+            _run_periodic_cycle(runner, _result(), now=datetime(2026, 8, 7, tzinfo=UTC))
+    finally:
+        root.unlink()
+        blocked_root.rename(root)
+
+    error_records = [record for record in caplog.records if record.name == "core.preview.revisions"]
+    assert len(error_records) == 1
+    message = error_records[0].getMessage()
+    assert "tenant_name=production" in message
+    assert "month=2026-07" in message
+    assert "revision_id=" not in message
+    assert "stage=staging" in message
+    assert "outcome=retained_current" in message
+    assert "error_type=NotADirectoryError" in message
+    assert str(tmp_path) not in caplog.text
+    assert "publication-staging-artifacts" not in caplog.text
+
+    engine = create_engine(connection_string)
+    with engine.connect() as connection:
+        rows = (
+            connection.execute(
+                text(
+                    "SELECT revision_id, is_current, superseded_by_revision_id "
+                    "FROM preview_revisions ORDER BY revision_id"
+                )
+            )
+            .mappings()
+            .all()
+        )
+    engine.dispose()
+    assert rows == [{"revision_id": "revision-current", "is_current": True, "superseded_by_revision_id": None}]
+
+    app = create_app(settings)
+    with SameThreadApiClient(app) as client:
+        install_backend(app, "production", backend)
+        retained = client.get("/api/v1/tenants/production/focus-preview/revisions/current?month=2026-07")
+        assert retained.status_code == 200
+        assert retained.json()["revision_id"] == "revision-current"
+        delivered_manifest = client.get(retained.json()["package"]["manifest"]["download_url"])
+        assert delivered_manifest.status_code == 200
+        assert delivered_manifest.content == current_manifest
+
     runner.close()
     backend.dispose()

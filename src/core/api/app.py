@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
+import uuid
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 
@@ -12,6 +14,7 @@ from starlette.responses import JSONResponse, Response
 from core.api import API_VERSION
 from core.api.exception_handler import global_exception_handler
 from core.config.models import TenantConfig  # noqa: TC001  # resolved by get_type_hints contract tests
+from core.logging_context import safe_exception_context, safe_log_context
 from core.preview.service import PreviewRuntime
 from core.storage.backend_provider import ApiTenantBackendProvider, TenantBackendProvider
 
@@ -39,11 +42,47 @@ class RequestTimeoutMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         try:
             return await asyncio.wait_for(call_next(request), timeout=float(self.timeout_seconds))
-        except TimeoutError:
+        except TimeoutError as exc:
+            logger.warning(
+                "request_timeout%s",
+                safe_log_context(
+                    request_id=getattr(request.state, "request_id", None),
+                    stage="api_request",
+                    outcome="timeout",
+                    retryable=True,
+                    **safe_exception_context(exc),
+                ),
+            )
             return JSONResponse(
                 {"detail": f"Request exceeded {self.timeout_seconds}s timeout"},
                 status_code=504,
             )
+
+
+class RequestContextMiddleware(BaseHTTPMiddleware):
+    """Attach a process-local request correlation id and log bounded lifecycle events."""
+
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
+        request_id = uuid.uuid4().hex
+        request.state.request_id = request_id
+        started_at = time.perf_counter()
+        logger.debug(
+            "request_started method=%s path=%s%s",
+            request.method,
+            request.url.path,
+            safe_log_context(request_id=request_id, stage="api_request", outcome="started"),
+        )
+        response = await call_next(request)
+        elapsed_ms = int((time.perf_counter() - started_at) * 1000)
+        logger.debug(
+            "request_completed method=%s path=%s status=%d elapsed_ms=%d%s",
+            request.method,
+            request.url.path,
+            response.status_code,
+            elapsed_ms,
+            safe_log_context(request_id=request_id, stage="api_request", outcome="completed"),
+        )
+        return response
 
 
 logger = logging.getLogger(__name__)
@@ -106,7 +145,7 @@ def create_app(
         from core.preview.artifacts import LocalPreviewArtifactStore, preview_artifact_owner
         from core.preview.repair import PreviewRepairRunner, PreviewRepairRuntime
         from core.preview.revisions import PreviewRevisionReadService
-        from core.preview.service import PreviewRuntime
+        from core.preview.service import PreviewRecoveryUnavailable, PreviewRuntime
 
         preview_artifact_store: LocalPreviewArtifactStore | None = None
         preview_runtime: PreviewRuntime | None = None
@@ -152,11 +191,18 @@ def create_app(
                             backend_provider,
                             preview_runtime,
                         )
+                    except PreviewRecoveryUnavailable:
+                        pass
                     except Exception as exc:
                         logger.error(
-                            "FOCUS Mapping Preview owner recovery unavailable tenant=%s error_type=%s",
-                            tenant_name,
-                            type(exc).__name__,
+                            "preview_owner_recovery_unavailable%s",
+                            safe_log_context(
+                                tenant_name=tenant_name,
+                                stage="preview_owner_recovery",
+                                outcome="unavailable",
+                                retryable=True,
+                                **safe_exception_context(exc),
+                            ),
                         )
                 if mode == "both" and isinstance(workflow_runner, PreviewRepairRunner):
                     preview_repair_runtime = PreviewRepairRuntime(
@@ -177,8 +223,17 @@ def create_app(
                     try:
                         with backend_provider.acquire_backend(tenant_name, tenant_config):
                             pass
-                    except Exception:
-                        logger.warning("Failed to prepare backend for %s", tenant_name, exc_info=True)
+                    except Exception as exc:
+                        logger.warning(
+                            "backend_prepare_failed%s",
+                            safe_log_context(
+                                tenant_name=tenant_name,
+                                stage="backend_prepare",
+                                outcome="failed",
+                                retryable=True,
+                                **safe_exception_context(exc),
+                            ),
+                        )
             yield
         except BaseException as exc:
             original_error = exc
@@ -190,9 +245,14 @@ def create_app(
             def record_cleanup_error(step: str, exc: BaseException) -> None:
                 cleanup_errors.append(exc)
                 logger.error(
-                    "Chitragupta API cleanup failed step=%s error_type=%s",
-                    step,
-                    type(exc).__name__,
+                    "api_cleanup_failed%s",
+                    safe_log_context(
+                        stage=step,
+                        operation="api_cleanup",
+                        outcome="failed",
+                        retryable=False,
+                        **safe_exception_context(exc),
+                    ),
                 )
 
             if preview_repair_runtime is not None:
@@ -253,6 +313,7 @@ def create_app(
         RequestTimeoutMiddleware,
         timeout_seconds=settings.api.request_timeout_seconds,
     )
+    app.add_middleware(RequestContextMiddleware)
 
     from core.api.routes import (
         aggregation,

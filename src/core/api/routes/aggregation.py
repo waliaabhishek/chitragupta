@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from core.api.dependencies import get_tenant_config, get_unit_of_work, resolve_date_range
 from core.api.schemas import AggregationBucket, AggregationResponse
 from core.config.models import TenantConfig  # noqa: TC001  # FastAPI evaluates annotations at runtime
+from core.logging_context import safe_log_context
 from core.storage.interface import ReadOnlyUnitOfWork  # noqa: TC001
 from core.utils.tag_validation import is_valid_tag_key
 
@@ -30,6 +31,14 @@ _VALID_GROUP_BY = frozenset(
 )
 
 _VALID_TIME_BUCKETS = frozenset({"hour", "day", "week", "month"})
+_MAX_LOG_FIELD_LENGTH = 160
+
+
+def _bounded_group_by_log_value(group_by: list[str]) -> str:
+    value = ",".join(group_by)
+    if len(value) <= _MAX_LOG_FIELD_LENGTH:
+        return value
+    return f"{value[: _MAX_LOG_FIELD_LENGTH - 3]}..."
 
 
 @router.get(
@@ -52,12 +61,6 @@ async def aggregate_chargebacks(
     resource_id: Annotated[str | None, Query()] = None,
     cost_type: Annotated[str | None, Query()] = None,
 ) -> AggregationResponse:
-    logger.debug(
-        "GET /chargebacks/aggregate tenant=%s group_by=%s time_bucket=%s",
-        tenant_config.tenant_id,
-        group_by,
-        time_bucket,
-    )
     # Parse tag filters from raw query params (FastAPI can't express dynamic tag:{key}={value})
     tag_filters: dict[str, list[str]] = {}
     for param_name, param_value in request.query_params.multi_items():
@@ -99,6 +102,22 @@ async def aggregate_chargebacks(
         raise HTTPException(status_code=400, detail=f"time_bucket must be one of {sorted(_VALID_TIME_BUCKETS)}")
 
     start_dt, end_dt = resolve_date_range(start_date, end_date, timezone=timezone)
+    logged_group_by = _bounded_group_by_log_value(group_by)
+    logger.debug(
+        "aggregation_requested start_date=%s end_date=%s group_by=%s time_bucket=%s%s",
+        start_dt,
+        end_dt,
+        logged_group_by,
+        time_bucket,
+        safe_log_context(
+            tenant_id=tenant_config.tenant_id,
+            ecosystem=tenant_config.ecosystem,
+            request_id=getattr(request.state, "request_id", None),
+            stage="aggregation",
+            operation="aggregate_chargebacks",
+            outcome="started",
+        ),
+    )
 
     rows = uow.chargebacks.aggregate(
         ecosystem=tenant_config.ecosystem,
@@ -132,9 +151,21 @@ async def aggregate_chargebacks(
     total_rows = sum(b.row_count for b in buckets)
 
     logger.info(
-        "Aggregated chargebacks tenant=%s buckets=%d",
-        tenant_config.tenant_id,
+        "aggregation_completed buckets=%d rows=%d start_date=%s end_date=%s group_by=%s time_bucket=%s%s",
         len(buckets),
+        total_rows,
+        start_dt,
+        end_dt,
+        logged_group_by,
+        time_bucket,
+        safe_log_context(
+            tenant_id=tenant_config.tenant_id,
+            ecosystem=tenant_config.ecosystem,
+            request_id=getattr(request.state, "request_id", None),
+            stage="aggregation",
+            operation="aggregate_chargebacks",
+            outcome="completed",
+        ),
     )
     return AggregationResponse(
         buckets=buckets,

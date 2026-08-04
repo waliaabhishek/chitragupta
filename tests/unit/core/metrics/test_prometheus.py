@@ -605,3 +605,33 @@ class TestRequestSemaphore:
             src2._request_semaphore.release()
         finally:
             src1._request_semaphore.release()
+
+    def test_retry_and_exhaustion_logs_context_without_query_leakage(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        mock_post = MagicMock(
+            side_effect=[
+                httpx.TimeoutException("token secret-token timed out"),
+                httpx.TimeoutException("token secret-token timed out"),
+            ]
+        )
+        src, _client = _make_source_with_mock(mock_post, max_retries=2, base_delay=0.0)
+
+        with caplog.at_level(logging.WARNING, logger="core.metrics.prometheus"), pytest.raises(MetricsQueryError):
+            src._post_with_retry(
+                "http://prom:9090/api/v1/query_range",
+                {
+                    "query": 'sum(rate(metric_total{authorization="secret-token"}[5m]))',
+                    "payload": "secret-body",
+                },
+                {"Content-Type": "application/x-www-form-urlencoded"},
+            )
+
+        warning_records = [record for record in caplog.records if record.levelname == "WARNING"]
+        assert len(warning_records) == 2
+        assert all("attempt_number=" in record.getMessage() for record in warning_records)
+        assert all("max_attempts=2" in record.getMessage() for record in warning_records)
+        assert all("retryable=true" in record.getMessage() for record in warning_records)
+        assert "secret-token" not in caplog.text
+        assert "secret-body" not in caplog.text

@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import contextlib
 import logging
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
+from core.logging_context import safe_exception_context, safe_log_context
 from core.metrics.config import create_metrics_source
 from core.metrics.protocol import MetricsQueryError
 from plugins.self_managed_kafka.config import SelfManagedKafkaConfig
@@ -53,6 +53,10 @@ class SelfManagedKafkaPlugin:
         3. Validates principal label availability when identity_source uses Prometheus
         4. Handler with clients and principal availability flag
         """
+        logger.info(
+            "plugin_initialize_started provider=self_managed_kafka%s",
+            safe_log_context(stage="plugin_initialize", operation="initialize", outcome="started"),
+        )
         self._config = SelfManagedKafkaConfig.from_plugin_settings(config)
         self._prometheus_principals_available = True
 
@@ -75,6 +79,10 @@ class SelfManagedKafkaPlugin:
             metrics_source=self._metrics_source,
             admin_client=self._admin_client,
             prometheus_principals_available=self._prometheus_principals_available,
+        )
+        logger.info(
+            "plugin_initialize_completed provider=self_managed_kafka%s",
+            safe_log_context(stage="plugin_initialize", operation="initialize", outcome="completed"),
         )
 
     def _validate_principal_label(self) -> None:
@@ -136,6 +144,16 @@ class SelfManagedKafkaPlugin:
         if self._config is None:
             raise RuntimeError("Plugin not initialized. Call initialize() first.")
 
+        logger.debug(
+            "shared_context_started provider=self_managed_kafka%s",
+            safe_log_context(
+                tenant_id=tenant_id,
+                stage="shared_context",
+                operation="build_shared_context",
+                outcome="started",
+            ),
+        )
+
         from plugins.self_managed_kafka.gathering.prometheus import gather_cluster_resource, run_combined_discovery
         from plugins.self_managed_kafka.shared_context import SMKSharedContext
 
@@ -166,15 +184,37 @@ class SelfManagedKafkaPlugin:
                         step,
                         discovery_window_hours=self._config.discovery_window_hours,
                     )
-                return SMKSharedContext(
+                context = SMKSharedContext(
                     cluster_resource=cluster,
                     discovered_brokers=brokers,
                     discovered_topics=topics,
                     discovered_principals=principals,
                 )
+                logger.info(
+                    "shared_context_completed provider=self_managed_kafka brokers=%d topics=%d principals=%d%s",
+                    len(brokers),
+                    len(topics),
+                    len(principals),
+                    safe_log_context(
+                        tenant_id=tenant_id,
+                        stage="shared_context",
+                        operation="build_shared_context",
+                        outcome="completed",
+                    ),
+                )
+                return context
             except MetricsQueryError:
                 logger.warning("self_managed_kafka: Combined discovery query failed. Discovery sets will be None.")
 
+        logger.info(
+            "shared_context_completed provider=self_managed_kafka%s",
+            safe_log_context(
+                tenant_id=tenant_id,
+                stage="shared_context",
+                operation="build_shared_context",
+                outcome="completed",
+            ),
+        )
         return SMKSharedContext(cluster_resource=cluster)
 
     def get_storage_module(self) -> SelfManagedKafkaStorageModule:
@@ -189,9 +229,19 @@ class SelfManagedKafkaPlugin:
     def close(self) -> None:
         """Clean up resources (AdminClient connection, metrics source)."""
         if self._admin_client is not None:
-            # Best-effort cleanup: suppress all exceptions since we're tearing down.
-            with contextlib.suppress(Exception):
+            try:
                 self._admin_client.close()
+            except Exception as exc:
+                logger.warning(
+                    "plugin_cleanup_failed provider=self_managed_kafka%s",
+                    safe_log_context(
+                        stage="plugin_close",
+                        operation="close_admin_client",
+                        outcome="degraded",
+                        retryable=False,
+                        **safe_exception_context(exc),
+                    ),
+                )
             self._admin_client = None
         if self._metrics_source is not None:
             self._metrics_source.close()

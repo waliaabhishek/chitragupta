@@ -128,3 +128,57 @@ class TestMigrationLoggingPreservation:
         finally:
             root.setLevel(logging.WARNING)
             root.handlers[:] = original_handlers
+
+    def test_create_tables_logs_started_and_completed_without_connection_string(
+        self,
+        backend: SQLModelBackend,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        with (
+            patch("alembic.command.upgrade"),
+            caplog.at_level(
+                logging.INFO,
+                logger="core.storage.backends.sqlmodel.unit_of_work",
+            ),
+        ):
+            backend.create_tables()
+
+        assert "migration_started" in caplog.text
+        assert "migration_completed" in caplog.text
+        assert backend._connection_string not in caplog.text
+
+    def test_create_tables_without_migrations_logs_degraded_path_without_connection_string(
+        self,
+        tmp_path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        degraded = SQLModelBackend(
+            f"sqlite:///{tmp_path / 'degraded.db'}",
+            CoreStorageModule(),
+            use_migrations=False,
+        )
+
+        with caplog.at_level(logging.WARNING, logger="core.storage.backends.sqlmodel.unit_of_work"):
+            degraded.create_tables()
+
+        assert "migration_degraded" in caplog.text
+        assert "direct_table_registration" in caplog.text
+        assert degraded._connection_string not in caplog.text
+        degraded.dispose()
+
+    def test_migration_failure_logs_sanitized_error_context_without_connection_string(
+        self,
+        backend: SQLModelBackend,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        secret = "postgresql://user:secret@example.invalid/db"  # pragma: allowlist secret
+
+        with (
+            patch("alembic.command.upgrade", side_effect=RuntimeError(secret)),
+            caplog.at_level(logging.ERROR, logger="core.storage.backends.sqlmodel.unit_of_work"),
+            pytest.raises(RuntimeError, match=secret),
+        ):
+            backend.create_tables()
+
+        assert "migration_failed" in caplog.text
+        assert secret not in caplog.text

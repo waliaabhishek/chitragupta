@@ -32,6 +32,7 @@ from core.api.schemas import (  # noqa: TC001  # FastAPI evaluates annotations
     FocusPreviewStatusResponse,
 )
 from core.config.models import AppSettings, TenantConfig  # noqa: TC001  # FastAPI evaluates annotations
+from core.logging_context import safe_exception_context, safe_log_context
 from core.preview.artifacts import (  # noqa: TC001 - used by FastAPI route helpers
     PreviewArchiveStream,
     PreviewVerifiedArtifactStream,
@@ -98,6 +99,7 @@ if TYPE_CHECKING:
     from core.storage.interface import StorageBackend
 
 router = APIRouter(prefix="/tenants/{tenant_name}/focus-preview", tags=["focus-preview"])
+_NO_REQUEST = cast("Request", None)
 logger = logging.getLogger(__name__)
 
 
@@ -196,24 +198,47 @@ def _preview_backend(
     tenant_config: TenantConfig,
     *,
     unavailable_detail: str = "FOCUS Mapping Preview storage is unavailable",
+    request_id: str | None = None,
+    stage: str = "storage_acquisition",
+    include_tenant_id: bool = True,
 ) -> Iterator[PreviewStorageBackend]:
     try:
         lease = provider.acquire_backend(tenant_name, tenant_config)
         backend = lease.__enter__()
     except Exception as exc:
+        exception_context = safe_exception_context(exc)
+        exception_context.pop("error_type", None)
         logger.error(
-            "FOCUS Mapping Preview backend creation failed tenant=%s error_type=%s",
+            "FOCUS Mapping Preview backend creation failed tenant=%s error_type=%s%s",
             tenant_name,
             type(exc).__name__,
+            safe_log_context(
+                tenant_name=tenant_name,
+                tenant_id=tenant_config.tenant_id if include_tenant_id else None,
+                request_id=request_id,
+                stage=stage,
+                operation="acquire_preview_storage",
+                outcome="failed",
+                retryable=True,
+                **exception_context,
+            ),
         )
         raise HTTPException(503, detail=unavailable_detail) from None
 
     if not isinstance(backend, PreviewStorageBackend):
         error = HTTPException(503, detail=unavailable_detail)
         logger.error(
-            "FOCUS Mapping Preview backend protocol validation failed tenant=%s backend_type=%s",
-            tenant_name,
+            "FOCUS Mapping Preview backend protocol validation failed backend_type=%s%s",
             type(backend).__name__,
+            safe_log_context(
+                tenant_name=tenant_name,
+                tenant_id=tenant_config.tenant_id if include_tenant_id else None,
+                request_id=request_id,
+                stage=stage,
+                operation="validate_preview_storage",
+                outcome="failed",
+                retryable=True,
+            ),
         )
         _release_preview_backend_lease(lease, tenant_name=tenant_name, preserving=error)
         raise error
@@ -232,6 +257,8 @@ def _repair_backend(
     provider: TenantBackendProvider,
     tenant_name: str,
     tenant_config: TenantConfig,
+    *,
+    request_id: str | None = None,
 ) -> Iterator[PreviewEvidenceStorageBackend]:
     from core.preview.persistence import PreviewEvidenceStorageBackend
     from core.preview.storage_availability import PreviewEvidenceAvailabilityState
@@ -241,9 +268,18 @@ def _repair_backend(
         backend = lease.__enter__()
     except Exception as exc:
         logger.error(
-            "FOCUS Mapping Preview repair backend failed tenant=%s error_type=%s",
+            "FOCUS Mapping Preview repair backend failed tenant=%s error_type=%s%s",
             tenant_name,
             type(exc).__name__,
+            safe_log_context(
+                tenant_name=tenant_name,
+                tenant_id=tenant_config.tenant_id,
+                request_id=request_id,
+                stage="repair_storage_acquisition",
+                outcome="failed",
+                retryable=True,
+                **safe_exception_context(exc),
+            ),
         )
         raise HTTPException(503, detail="FOCUS Mapping Preview repair storage is unavailable") from None
 
@@ -257,9 +293,18 @@ def _repair_backend(
     except Exception as exc:
         error = HTTPException(503, detail="FOCUS Mapping Preview repair storage is unavailable")
         logger.error(
-            "FOCUS Mapping Preview repair backend failed tenant=%s error_type=%s",
+            "FOCUS Mapping Preview repair backend failed tenant=%s error_type=%s%s",
             tenant_name,
             type(exc).__name__,
+            safe_log_context(
+                tenant_name=tenant_name,
+                tenant_id=tenant_config.tenant_id,
+                request_id=request_id,
+                stage="repair_storage_validation",
+                outcome="failed",
+                retryable=True,
+                **safe_exception_context(exc),
+            ),
         )
         _release_preview_backend_lease(lease, tenant_name=tenant_name, preserving=error)
         raise error from None
@@ -283,12 +328,16 @@ def _revision_backend(
     provider: TenantBackendProvider,
     tenant_name: str,
     tenant_config: TenantConfig,
+    request_id: str | None = None,
 ) -> Iterator[PreviewStorageBackend]:
     with _preview_backend(
         provider,
         tenant_name,
         tenant_config,
         unavailable_detail="FOCUS Mapping Preview revision storage is unavailable",
+        request_id=request_id,
+        stage="revision_storage_acquisition",
+        include_tenant_id=False,
     ) as backend:
         yield backend
 
@@ -542,6 +591,7 @@ def _current_revision(
     reader: PreviewRevisionReader,
     revision_id: str | None,
     backend: PreviewStorageBackend,
+    request_id: str | None = None,
 ) -> PreviewRevision:
     tenant_config = scope.tenant_config
     try:
@@ -556,13 +606,24 @@ def _current_revision(
             tenant_name=tenant_name,
             tenant_config=tenant_config,
             error=exc,
+            request_id=request_id,
+            revision_id=revision_id,
         ) from None
     except Exception as exc:
         logger.error(
-            "FOCUS Mapping Preview revision storage read failed tenant=%s owner=%s error_type=%s",
-            tenant_name,
+            "FOCUS Mapping Preview revision storage read failed owner=%s%s",
             masked_preview_owner(ecosystem=tenant_config.ecosystem, tenant_id=tenant_config.tenant_id),
-            type(exc).__name__,
+            safe_log_context(
+                tenant_name=tenant_name,
+                request_id=request_id,
+                revision_id=revision_id,
+                month=scope.interval.start_date.strftime("%Y-%m"),
+                stage="revision_storage_read",
+                operation="read_current_revision",
+                outcome="unavailable",
+                retryable=True,
+                **safe_exception_context(exc),
+            ),
         )
         raise HTTPException(503, detail="FOCUS Mapping Preview revision storage is unavailable") from None
     if revision is None:
@@ -586,12 +647,22 @@ def _revision_artifact_unavailable(
     tenant_name: str,
     tenant_config: TenantConfig,
     error: BaseException,
+    request_id: str | None = None,
+    revision_id: str | None = None,
 ) -> HTTPException:
     logger.error(
-        "FOCUS Mapping Preview revision artifact unavailable tenant=%s owner=%s error_type=%s",
-        tenant_name,
+        "FOCUS Mapping Preview revision artifact unavailable owner=%s%s",
         masked_preview_owner(ecosystem=tenant_config.ecosystem, tenant_id=tenant_config.tenant_id),
-        type(error).__name__,
+        safe_log_context(
+            tenant_name=tenant_name,
+            request_id=request_id,
+            revision_id=revision_id,
+            stage="revision_artifact_read",
+            operation="read_revision_artifact",
+            outcome="unavailable",
+            retryable=True,
+            **safe_exception_context(error),
+        ),
     )
     return HTTPException(500, detail="Stored FOCUS Mapping Preview revision artifact is unavailable")
 
@@ -633,21 +704,37 @@ def _lookup(
 
 
 def _log_ignored_columns(
+    *,
     tenant_name: str,
+    request_id: str | None,
     unknown: tuple[str, ...],
     duplicates: tuple[str, ...],
 ) -> None:
-    for column in unknown:
+    if unknown:
         logger.warning(
-            "FOCUS Mapping Preview ignored unsupported Custom column tenant=%s column=%r",
-            tenant_name,
-            column,
+            "FOCUS Mapping Preview ignored unsupported Custom columns count=%d%s",
+            len(unknown),
+            safe_log_context(
+                tenant_name=tenant_name,
+                request_id=request_id,
+                stage="preview_request_validation",
+                operation="normalize_custom_columns",
+                outcome="ignored_unknown_columns",
+                retryable=False,
+            ),
         )
-    for column in duplicates:
+    if duplicates:
         logger.warning(
-            "FOCUS Mapping Preview ignored duplicate Custom column tenant=%s column=%r",
-            tenant_name,
-            column,
+            "FOCUS Mapping Preview ignored duplicate Custom columns count=%d%s",
+            len(duplicates),
+            safe_log_context(
+                tenant_name=tenant_name,
+                request_id=request_id,
+                stage="preview_request_validation",
+                operation="normalize_custom_columns",
+                outcome="ignored_duplicate_columns",
+                retryable=False,
+            ),
         )
 
 
@@ -715,7 +802,12 @@ def submit_repair(
             }
         raise HTTPException(400, detail=detail) from None
     runtime = _repair_runtime(request)
-    with _repair_backend(provider, tenant_name, tenant_config) as backend:
+    with _repair_backend(
+        provider,
+        tenant_name,
+        tenant_config,
+        request_id=getattr(request.state, "request_id", None),
+    ) as backend:
         workflow_runner = getattr(request.app.state, "workflow_runner", None)
         is_tenant_running = getattr(workflow_runner, "is_tenant_running", None)
         if callable(is_tenant_running) and is_tenant_running(tenant_name):
@@ -760,6 +852,17 @@ def submit_repair(
                 },
             ) from None
     response.headers["Location"] = f"/api/v1/tenants/{tenant_name}/focus-preview/repairs/{repair.repair_id}"
+    logger.info(
+        "FOCUS Mapping Preview repair accepted%s",
+        safe_log_context(
+            tenant_name=tenant_name,
+            tenant_id=tenant_config.tenant_id,
+            request_id=getattr(request.state, "request_id", None),
+            repair_id=repair.repair_id,
+            stage="repair_submission",
+            outcome="accepted",
+        ),
+    )
     return _serialize_repair(repair)
 
 
@@ -769,11 +872,17 @@ def get_repair(
     repair_id: str,
     settings: Annotated[AppSettings, Depends(get_settings)],
     provider: Annotated[TenantBackendProvider, Depends(get_backend_provider)],
+    request: Request = _NO_REQUEST,
 ) -> FocusPreviewRepairResponse:
     tenant_config = _get_preview_tenant(settings, tenant_name)
     _require_focus_preview_enabled(tenant_config)
     with (
-        _repair_backend(provider, tenant_name, tenant_config) as backend,
+        _repair_backend(
+            provider,
+            tenant_name,
+            tenant_config,
+            request_id=getattr(getattr(request, "state", None), "request_id", None),
+        ) as backend,
         backend.create_preview_generation_read_unit_of_work() as uow,
     ):
         repair = uow.repairs.get_for_owner(
@@ -809,11 +918,21 @@ def submit_preview(
             requested_columns=body.columns,
         )
     except PreviewColumnSelectionEmptyError as exc:
-        _log_ignored_columns(tenant_name, exc.ignored_unknown, exc.ignored_duplicates)
+        _log_ignored_columns(
+            tenant_name=tenant_name,
+            request_id=getattr(request.state, "request_id", None),
+            unknown=exc.ignored_unknown,
+            duplicates=exc.ignored_duplicates,
+        )
         raise HTTPException(400, detail=exc.detail) from None
     except PreviewRequestValidationError as exc:
         raise HTTPException(400, detail=exc.detail) from None
-    _log_ignored_columns(tenant_name, selection.ignored_unknown, selection.ignored_duplicates)
+    _log_ignored_columns(
+        tenant_name=tenant_name,
+        request_id=getattr(request.state, "request_id", None),
+        unknown=selection.ignored_unknown,
+        duplicates=selection.ignored_duplicates,
+    )
     _require_focus_preview_enabled(tenant_config)
     runtime = _runtime(request)
     owner = preview_artifact_owner(tenant_name, tenant_config)
@@ -830,7 +949,12 @@ def submit_preview(
         ) from None
     attached = False
     try:
-        with _preview_backend(provider, tenant_name, tenant_config) as backend:
+        with _preview_backend(
+            provider,
+            tenant_name,
+            tenant_config,
+            request_id=getattr(request.state, "request_id", None),
+        ) as backend:
             try:
                 runtime.ensure_owner_recovered(
                     backend=backend,
@@ -861,6 +985,16 @@ def submit_preview(
     finally:
         if not attached:
             reservation.cancel()
+    logger.info(
+        "FOCUS Mapping Preview request accepted%s",
+        safe_log_context(
+            tenant_name=tenant_name,
+            tenant_id=tenant_config.tenant_id,
+            request_id=getattr(request.state, "request_id", None),
+            stage="preview_submission",
+            outcome="accepted",
+        ),
+    )
     return _serialize(preview)
 
 
@@ -876,7 +1010,12 @@ def list_previews(
     tenant_config = _get_preview_tenant(settings, tenant_name)
     _require_focus_preview_enabled(tenant_config)
     runtime = _runtime(request)
-    with _preview_backend(provider, tenant_name, tenant_config) as backend:
+    with _preview_backend(
+        provider,
+        tenant_name,
+        tenant_config,
+        request_id=getattr(getattr(request, "state", None), "request_id", None),
+    ) as backend:
         try:
             runtime.ensure_owner_recovered(
                 backend=backend,
@@ -909,8 +1048,20 @@ def get_current_revision(
 ) -> FocusPreviewRevisionResponse:
     scope = _revision_scope(tenant_name, month, settings)
     reader = _revision_reader(request)
-    with _revision_backend(provider, tenant_name, scope.tenant_config) as backend:
-        revision = _current_revision(tenant_name, scope, reader, revision_id, backend)
+    with _revision_backend(
+        provider,
+        tenant_name,
+        scope.tenant_config,
+        request_id=getattr(request.state, "request_id", None),
+    ) as backend:
+        revision = _current_revision(
+            tenant_name,
+            scope,
+            reader,
+            revision_id,
+            backend,
+            request_id=getattr(request.state, "request_id", None),
+        )
         try:
             return _serialize_revision(revision, tenant_name=tenant_name, reader=reader)
         except Exception as exc:
@@ -918,6 +1069,8 @@ def get_current_revision(
                 tenant_name=tenant_name,
                 tenant_config=scope.tenant_config,
                 error=exc,
+                request_id=getattr(request.state, "request_id", None),
+                revision_id=revision.revision_id,
             ) from None
 
 
@@ -932,8 +1085,20 @@ def get_current_revision_manifest(
 ) -> Response:
     scope = _revision_scope(tenant_name, month, settings)
     reader = _revision_reader(request)
-    with _revision_backend(provider, tenant_name, scope.tenant_config) as backend:
-        revision = _current_revision(tenant_name, scope, reader, revision_id, backend)
+    with _revision_backend(
+        provider,
+        tenant_name,
+        scope.tenant_config,
+        request_id=getattr(request.state, "request_id", None),
+    ) as backend:
+        revision = _current_revision(
+            tenant_name,
+            scope,
+            reader,
+            revision_id,
+            backend,
+            request_id=getattr(request.state, "request_id", None),
+        )
         try:
             stream = reader.open_manifest_stream(revision=revision)
             return _artifact_streaming_response(stream, media_type="application/json")
@@ -942,6 +1107,8 @@ def get_current_revision_manifest(
                 tenant_name=tenant_name,
                 tenant_config=scope.tenant_config,
                 error=exc,
+                request_id=getattr(request.state, "request_id", None),
+                revision_id=revision.revision_id,
             ) from None
 
 
@@ -957,8 +1124,20 @@ def get_current_revision_file(
 ) -> Response:
     scope = _revision_scope(tenant_name, month, settings)
     reader = _revision_reader(request)
-    with _revision_backend(provider, tenant_name, scope.tenant_config) as backend:
-        revision = _current_revision(tenant_name, scope, reader, revision_id, backend)
+    with _revision_backend(
+        provider,
+        tenant_name,
+        scope.tenant_config,
+        request_id=getattr(request.state, "request_id", None),
+    ) as backend:
+        revision = _current_revision(
+            tenant_name,
+            scope,
+            reader,
+            revision_id,
+            backend,
+            request_id=getattr(request.state, "request_id", None),
+        )
         if find_preview_artifact_metadata(revision.package.files, file_name) is None:
             raise HTTPException(404, detail="FOCUS Mapping Preview file not found for current revision")
         try:
@@ -969,6 +1148,8 @@ def get_current_revision_file(
                 tenant_name=tenant_name,
                 tenant_config=scope.tenant_config,
                 error=exc,
+                request_id=getattr(request.state, "request_id", None),
+                revision_id=revision.revision_id,
             ) from None
 
 
@@ -983,8 +1164,20 @@ def get_current_revision_archive(
 ) -> StreamingResponse:
     scope = _revision_scope(tenant_name, month, settings)
     reader = _revision_reader(request)
-    with _revision_backend(provider, tenant_name, scope.tenant_config) as backend:
-        revision = _current_revision(tenant_name, scope, reader, revision_id, backend)
+    with _revision_backend(
+        provider,
+        tenant_name,
+        scope.tenant_config,
+        getattr(getattr(request, "state", None), "request_id", None),
+    ) as backend:
+        revision = _current_revision(
+            tenant_name,
+            scope,
+            reader,
+            revision_id,
+            backend,
+            getattr(getattr(request, "state", None), "request_id", None),
+        )
         try:
             archive = reader.open_archive(revision=revision)
         except Exception as exc:
@@ -992,6 +1185,8 @@ def get_current_revision_archive(
                 tenant_name=tenant_name,
                 tenant_config=scope.tenant_config,
                 error=exc,
+                request_id=getattr(getattr(request, "state", None), "request_id", None),
+                revision_id=revision.revision_id,
             ) from None
 
     def chunks() -> Iterator[bytes]:
@@ -1018,6 +1213,7 @@ def _direct_revision(
     reader: PreviewRevisionReader,
     revision_id: str,
     backend: PreviewStorageBackend,
+    request_id: str | None = None,
 ) -> PreviewRevision:
     try:
         revision = reader.get_for_owner(
@@ -1028,11 +1224,18 @@ def _direct_revision(
         )
     except Exception as exc:
         logger.error(
-            "FOCUS Mapping Preview revision storage read failed tenant=%s owner=%s revision_id=%s error_type=%s",
-            tenant_name,
+            "FOCUS Mapping Preview revision storage read failed owner=%s%s",
             masked_preview_owner(ecosystem=tenant_config.ecosystem, tenant_id=tenant_config.tenant_id),
-            revision_id,
-            type(exc).__name__,
+            safe_log_context(
+                tenant_name=tenant_name,
+                request_id=request_id,
+                revision_id=revision_id,
+                stage="revision_storage_read",
+                operation="read_revision",
+                outcome="unavailable",
+                retryable=True,
+                **safe_exception_context(exc),
+            ),
         )
         raise HTTPException(503, detail="FOCUS Mapping Preview revision storage is unavailable") from None
     if revision is None:
@@ -1053,7 +1256,13 @@ def list_revisions(
     scope = _revision_scope(tenant_name, month, settings)
     reader = _revision_reader(request)
     tenant_config = scope.tenant_config
-    with _revision_backend(provider, tenant_name, tenant_config) as backend:
+    with _revision_backend(
+        provider,
+        tenant_name,
+        tenant_config,
+        request_id=getattr(request.state, "request_id", None),
+    ) as backend:
+        artifact_revision_id: str | None = None
         try:
             page = reader.list_for_owner_month(
                 backend=backend,
@@ -1063,7 +1272,10 @@ def list_revisions(
                 limit=limit,
                 cursor_revision_id=cursor,
             )
-            items = [_serialize_revision_summary(item, tenant_name=tenant_name, reader=reader) for item in page.items]
+            items = []
+            for item in page.items:
+                artifact_revision_id = item.revision_id
+                items.append(_serialize_revision_summary(item, tenant_name=tenant_name, reader=reader))
         except PreviewRevisionCursorError:
             raise HTTPException(400, detail="FOCUS Mapping Preview revision cursor is invalid") from None
         except PreviewRevisionArtifactUnavailableError as exc:
@@ -1071,13 +1283,23 @@ def list_revisions(
                 tenant_name=tenant_name,
                 tenant_config=tenant_config,
                 error=exc,
+                request_id=getattr(request.state, "request_id", None),
+                revision_id=artifact_revision_id,
             ) from None
         except Exception as exc:
             logger.error(
-                "FOCUS Mapping Preview revision history read failed tenant=%s owner=%s error_type=%s",
-                tenant_name,
+                "FOCUS Mapping Preview revision history read failed owner=%s%s",
                 masked_preview_owner(ecosystem=tenant_config.ecosystem, tenant_id=tenant_config.tenant_id),
-                type(exc).__name__,
+                safe_log_context(
+                    tenant_name=tenant_name,
+                    request_id=getattr(request.state, "request_id", None),
+                    month=month,
+                    stage="revision_storage_read",
+                    operation="list_revisions",
+                    outcome="unavailable",
+                    retryable=True,
+                    **safe_exception_context(exc),
+                ),
             )
             raise HTTPException(503, detail="FOCUS Mapping Preview revision storage is unavailable") from None
     return FocusPreviewRevisionListResponse(
@@ -1099,8 +1321,20 @@ def get_revision(
     tenant_config = _get_preview_tenant(settings, tenant_name)
     _require_focus_preview_enabled(tenant_config)
     reader = _revision_reader(request)
-    with _revision_backend(provider, tenant_name, tenant_config) as backend:
-        revision = _direct_revision(tenant_name, tenant_config, reader, revision_id, backend)
+    with _revision_backend(
+        provider,
+        tenant_name,
+        tenant_config,
+        request_id=getattr(request.state, "request_id", None),
+    ) as backend:
+        revision = _direct_revision(
+            tenant_name,
+            tenant_config,
+            reader,
+            revision_id,
+            backend,
+            request_id=getattr(request.state, "request_id", None),
+        )
         try:
             return _serialize_revision(
                 revision,
@@ -1113,6 +1347,8 @@ def get_revision(
                 tenant_name=tenant_name,
                 tenant_config=tenant_config,
                 error=exc,
+                request_id=getattr(request.state, "request_id", None),
+                revision_id=revision_id,
             ) from None
 
 
@@ -1127,8 +1363,20 @@ def get_revision_manifest(
     tenant_config = _get_preview_tenant(settings, tenant_name)
     _require_focus_preview_enabled(tenant_config)
     reader = _revision_reader(request)
-    with _revision_backend(provider, tenant_name, tenant_config) as backend:
-        revision = _direct_revision(tenant_name, tenant_config, reader, revision_id, backend)
+    with _revision_backend(
+        provider,
+        tenant_name,
+        tenant_config,
+        request_id=getattr(request.state, "request_id", None),
+    ) as backend:
+        revision = _direct_revision(
+            tenant_name,
+            tenant_config,
+            reader,
+            revision_id,
+            backend,
+            request_id=getattr(request.state, "request_id", None),
+        )
         try:
             stream = reader.open_manifest_stream(revision=revision)
             return _artifact_streaming_response(stream, media_type="application/json")
@@ -1137,6 +1385,8 @@ def get_revision_manifest(
                 tenant_name=tenant_name,
                 tenant_config=tenant_config,
                 error=exc,
+                request_id=getattr(request.state, "request_id", None),
+                revision_id=revision_id,
             ) from None
 
 
@@ -1152,8 +1402,20 @@ def get_revision_file(
     tenant_config = _get_preview_tenant(settings, tenant_name)
     _require_focus_preview_enabled(tenant_config)
     reader = _revision_reader(request)
-    with _revision_backend(provider, tenant_name, tenant_config) as backend:
-        revision = _direct_revision(tenant_name, tenant_config, reader, revision_id, backend)
+    with _revision_backend(
+        provider,
+        tenant_name,
+        tenant_config,
+        request_id=getattr(request.state, "request_id", None),
+    ) as backend:
+        revision = _direct_revision(
+            tenant_name,
+            tenant_config,
+            reader,
+            revision_id,
+            backend,
+            request_id=getattr(request.state, "request_id", None),
+        )
         try:
             metadata, stream = reader.open_file_stream(revision=revision, file_name=file_name)
             return _artifact_streaming_response(stream, media_type=metadata.media_type)
@@ -1164,6 +1426,8 @@ def get_revision_file(
                 tenant_name=tenant_name,
                 tenant_config=tenant_config,
                 error=exc,
+                request_id=getattr(request.state, "request_id", None),
+                revision_id=revision_id,
             ) from None
 
 
@@ -1178,8 +1442,20 @@ def get_revision_archive(
     tenant_config = _get_preview_tenant(settings, tenant_name)
     _require_focus_preview_enabled(tenant_config)
     reader = _revision_reader(request)
-    with _revision_backend(provider, tenant_name, tenant_config) as backend:
-        revision = _direct_revision(tenant_name, tenant_config, reader, revision_id, backend)
+    with _revision_backend(
+        provider,
+        tenant_name,
+        tenant_config,
+        getattr(getattr(request, "state", None), "request_id", None),
+    ) as backend:
+        revision = _direct_revision(
+            tenant_name,
+            tenant_config,
+            reader,
+            revision_id,
+            backend,
+            getattr(getattr(request, "state", None), "request_id", None),
+        )
         try:
             archive = reader.open_archive(revision=revision)
         except Exception as exc:
@@ -1187,6 +1463,8 @@ def get_revision_archive(
                 tenant_name=tenant_name,
                 tenant_config=tenant_config,
                 error=exc,
+                request_id=getattr(getattr(request, "state", None), "request_id", None),
+                revision_id=revision_id,
             ) from None
 
     def chunks() -> Iterator[bytes]:
@@ -1218,7 +1496,12 @@ def get_preview(
     tenant_config = _get_preview_tenant(settings, tenant_name)
     _require_focus_preview_enabled(tenant_config)
     runtime = _runtime(request)
-    with _preview_backend(provider, tenant_name, tenant_config) as backend:
+    with _preview_backend(
+        provider,
+        tenant_name,
+        tenant_config,
+        request_id=getattr(getattr(request, "state", None), "request_id", None),
+    ) as backend:
         _runtime_value, preview = _lookup(runtime, tenant_name, tenant_config, request_id, backend)
     return _serialize(preview)
 
@@ -1248,7 +1531,12 @@ def get_manifest(
     tenant_config = _get_preview_tenant(settings, tenant_name)
     _require_focus_preview_enabled(tenant_config)
     runtime = _runtime(request)
-    with _preview_backend(provider, tenant_name, tenant_config) as backend:
+    with _preview_backend(
+        provider,
+        tenant_name,
+        tenant_config,
+        request_id=getattr(getattr(request, "state", None), "request_id", None),
+    ) as backend:
         runtime, preview = _lookup(runtime, tenant_name, tenant_config, request_id, backend)
         _require_ready(preview)
         try:
@@ -1270,7 +1558,12 @@ def get_file(
     tenant_config = _get_preview_tenant(settings, tenant_name)
     _require_focus_preview_enabled(tenant_config)
     runtime = _runtime(request)
-    with _preview_backend(provider, tenant_name, tenant_config) as backend:
+    with _preview_backend(
+        provider,
+        tenant_name,
+        tenant_config,
+        request_id=getattr(getattr(request, "state", None), "request_id", None),
+    ) as backend:
         runtime, preview = _lookup(runtime, tenant_name, tenant_config, request_id, backend)
         _require_ready(preview)
         if preview.package is None:
@@ -1315,7 +1608,12 @@ def get_archive(
     tenant_config = _get_preview_tenant(settings, tenant_name)
     _require_focus_preview_enabled(tenant_config)
     runtime = _runtime(request)
-    with _preview_backend(provider, tenant_name, tenant_config) as backend:
+    with _preview_backend(
+        provider,
+        tenant_name,
+        tenant_config,
+        request_id=getattr(getattr(request, "state", None), "request_id", None),
+    ) as backend:
         runtime, preview = _lookup(runtime, tenant_name, tenant_config, request_id, backend)
         _require_ready(preview)
         try:

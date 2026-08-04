@@ -240,9 +240,11 @@ def test_unexpected_scheduler_failure_is_logged_and_persists_redacted_diagnostic
             if record.levelname == "ERROR" and "worker scheduling failed" in record.getMessage().casefold()
         ]
         assert len(records) == 1
-        assert "tenant=production" in records[0].getMessage()
+        assert "tenant_name=production" in records[0].getMessage()
         assert "request_id=request-logged" in records[0].getMessage()
         assert "error_type=RuntimeError" in records[0].getMessage()
+        assert "diagnostic_code=preview_worker_unavailable" in records[0].getMessage()
+        assert "retryable=true" in records[0].getMessage()
         assert records[0].exc_info is None
         assert "scheduler offline" not in caplog.text
         assert "Traceback" not in caplog.text
@@ -288,8 +290,11 @@ def test_unexpected_generation_failure_logs_request_and_leaves_no_package(
             if record.levelname == "ERROR" and queued.request_id in record.getMessage()
         ]
         assert len(records) == 1
-        assert "tenant=production" in records[0].getMessage()
+        assert "tenant_name=production" in records[0].getMessage()
         assert "error_type=OSError" in records[0].getMessage()
+        assert f"request_id={queued.request_id}" in records[0].getMessage()
+        assert "diagnostic_code=preview_generation_failed" in records[0].getMessage()
+        assert "retryable=true" in records[0].getMessage()
         assert records[0].exc_info is None
         assert "disk" not in caplog.text
         assert "Traceback" not in caplog.text

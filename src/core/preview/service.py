@@ -8,6 +8,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING, Literal, Protocol, overload, runtime_checkable
 
+from core.logging_context import safe_exception_context, safe_log_context
 from core.preview.artifacts import (
     PreviewArtifactIntegrityError,
     PreviewArtifactOwner,
@@ -226,11 +227,15 @@ class PreviewRuntime:
                 self._reconcile_finalized(backend=backend, owner=owner)
             except Exception as exc:
                 logger.error(
-                    "FOCUS Mapping Preview owner recovery failed tenant=%s ecosystem=%s tenant_id=%s error_type=%s",
-                    tenant_name,
-                    ecosystem,
-                    tenant_id,
-                    type(exc).__name__,
+                    "FOCUS Mapping Preview owner recovery failed%s",
+                    safe_log_context(
+                        tenant_name=tenant_name,
+                        ecosystem=ecosystem,
+                        stage="preview_owner_recovery",
+                        outcome="unavailable",
+                        retryable=True,
+                        **safe_exception_context(exc),
+                    ),
                 )
                 raise PreviewRecoveryUnavailable("FOCUS Mapping Preview recovery is unavailable") from None
             if startup_recovery_pending and startup_recovery is not None and startup_recovery.protected_count == 0:
@@ -356,9 +361,15 @@ class PreviewRuntime:
                             uow.commit()
                 except Exception as exc:
                     logger.error(
-                        "FOCUS Mapping Preview lease heartbeat failed request_id=%s error_type=%s",
-                        request_id,
-                        type(exc).__name__,
+                        "FOCUS Mapping Preview lease heartbeat failed%s",
+                        safe_log_context(
+                            tenant_name=tenant_name,
+                            request_id=request_id,
+                            stage="lease_heartbeat",
+                            outcome="failed",
+                            retryable=True,
+                            **safe_exception_context(exc),
+                        ),
                     )
                     continue
                 if not renewed:
@@ -433,10 +444,17 @@ class PreviewRuntime:
             while scheduling_error.__cause__ is not None:
                 scheduling_error = scheduling_error.__cause__
             logger.error(
-                "FOCUS Mapping Preview worker scheduling failed tenant=%s request_id=%s error_type=%s",
-                request.tenant_name,
-                request.request_id,
-                type(scheduling_error).__name__,
+                "FOCUS Mapping Preview worker scheduling failed%s",
+                safe_log_context(
+                    tenant_name=request.tenant_name,
+                    tenant_id=request.tenant_id,
+                    request_id=request.request_id,
+                    stage="worker_scheduling",
+                    outcome="failed",
+                    retryable=True,
+                    diagnostic_code="preview_worker_unavailable",
+                    **safe_exception_context(scheduling_error),
+                ),
             )
             diagnostic = PreviewDiagnostic(
                 "preview_worker_unavailable", "FOCUS Mapping Preview worker is unavailable.", True
@@ -494,10 +512,17 @@ class PreviewRuntime:
                 self._run_worker_with_backend(leased_backend, request, policy, owner)
         except Exception as exc:
             logger.error(
-                "FOCUS Mapping Preview backend lease failed tenant=%s request_id=%s error_type=%s",
-                request.tenant_name,
-                request.request_id,
-                type(exc).__name__,
+                "FOCUS Mapping Preview backend lease failed%s",
+                safe_log_context(
+                    tenant_name=request.tenant_name,
+                    tenant_id=request.tenant_id,
+                    request_id=request.request_id,
+                    stage="backend_lease",
+                    outcome="failed",
+                    retryable=True,
+                    diagnostic_code="preview_generation_failed",
+                    **safe_exception_context(exc),
+                ),
             )
             marked_failed = self._mark_failed_with_lease(
                 request,
@@ -612,6 +637,20 @@ class PreviewRuntime:
                     )
                 ) from None
         except PreviewGenerationError as exc:
+            logger.warning(
+                "FOCUS Mapping Preview generation rejected%s",
+                safe_log_context(
+                    tenant_name=request.tenant_name,
+                    tenant_id=request.tenant_id,
+                    request_id=request.request_id,
+                    month=request.start_date.strftime("%Y-%m") if request.grain == "monthly" else None,
+                    stage="preview_generation",
+                    outcome="failed",
+                    retryable=exc.diagnostic.retryable,
+                    diagnostic_code=exc.diagnostic.code,
+                    **safe_exception_context(exc),
+                ),
+            )
             if not self._mark_failed(backend, request.request_id, exc.diagnostic):
                 self._remember_terminalization(
                     request_id=request.request_id,
@@ -631,10 +670,18 @@ class PreviewRuntime:
                 )
         except Exception as exc:
             logger.error(
-                "Unexpected FOCUS Mapping Preview worker failure tenant=%s request_id=%s error_type=%s",
-                request.tenant_name,
-                request.request_id,
-                type(exc).__name__,
+                "Unexpected FOCUS Mapping Preview worker failure%s",
+                safe_log_context(
+                    tenant_name=request.tenant_name,
+                    tenant_id=request.tenant_id,
+                    request_id=request.request_id,
+                    month=request.start_date.strftime("%Y-%m") if request.grain == "monthly" else None,
+                    stage="preview_generation",
+                    outcome="failed",
+                    retryable=failure_diagnostic.retryable,
+                    diagnostic_code=failure_diagnostic.code,
+                    **safe_exception_context(exc),
+                ),
             )
             if ready_committed:
                 with self._recovery_state_lock:
@@ -649,10 +696,17 @@ class PreviewRuntime:
             if draft is not None:
                 try:
                     draft.close()
-                except OSError:
-                    logger.exception(
-                        "FOCUS Mapping Preview generation workspace cleanup failed request_id=%s",
-                        request.request_id,
+                except OSError as exc:
+                    logger.warning(
+                        "FOCUS Mapping Preview generation workspace cleanup failed%s",
+                        safe_log_context(
+                            tenant_name=request.tenant_name,
+                            request_id=request.request_id,
+                            stage="generation_cleanup",
+                            outcome="deferred",
+                            retryable=True,
+                            **safe_exception_context(exc),
+                        ),
                     )
                     with self._recovery_state_lock:
                         self._owner_recovery_pending.add(self._owner_key(owner))
@@ -673,9 +727,16 @@ class PreviewRuntime:
                 return self._mark_failed(leased_backend, request.request_id, diagnostic)
         except Exception as exc:
             logger.error(
-                "FOCUS Mapping Preview failure backend lease failed request_id=%s error_type=%s",
-                request.request_id,
-                type(exc).__name__,
+                "FOCUS Mapping Preview failure backend lease failed%s",
+                safe_log_context(
+                    tenant_name=request.tenant_name,
+                    request_id=request.request_id,
+                    stage="failure_backend_lease",
+                    outcome="failed",
+                    retryable=True,
+                    diagnostic_code=diagnostic.code,
+                    **safe_exception_context(exc),
+                ),
             )
             return False
 
@@ -698,9 +759,15 @@ class PreviewRuntime:
             return True
         except Exception as exc:
             logger.error(
-                "FOCUS Mapping Preview failure persistence failed request_id=%s error_type=%s",
-                request_id,
-                type(exc).__name__,
+                "FOCUS Mapping Preview failure persistence failed%s",
+                safe_log_context(
+                    request_id=request_id,
+                    stage="failure_persistence",
+                    outcome="failed",
+                    retryable=True,
+                    diagnostic_code=diagnostic.code,
+                    **safe_exception_context(exc),
+                ),
             )
             return False
 

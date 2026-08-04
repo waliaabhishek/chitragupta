@@ -131,12 +131,16 @@ def test_all_invalid_custom_logs_every_unknown_before_exact_400(
     assert response.json() == {
         "detail": "Custom column selection must contain at least one supported Full-profile column"
     }
-    assert (
-        caplog.messages.count(
-            "FOCUS Mapping Preview ignored unsupported Custom column tenant=production column='Unknown'"
-        )
-        == 2
-    )
+    messages = [record.getMessage() for record in caplog.records if record.name == route.__name__]
+    assert len(messages) == 1
+    assert "ignored unsupported Custom columns" in messages[0]
+    assert "tenant_name=production" in messages[0]
+    assert "count=2" in messages[0]
+    assert "request_id=" in messages[0]
+    assert "stage=preview_request_validation" in messages[0]
+    assert "outcome=ignored_unknown_columns" in messages[0]
+    assert "retryable=false" in messages[0]
+    assert "Unknown" not in caplog.text
     runtime.assert_not_called()
 
 
@@ -163,10 +167,24 @@ def test_successful_custom_normalization_logs_unknown_and_duplicate_before_runti
         )
 
     assert response.status_code == 503
-    assert [record.getMessage() for record in caplog.records if record.name == route.__name__] == [
-        "FOCUS Mapping Preview ignored unsupported Custom column tenant=production column='Unknown'",
-        "FOCUS Mapping Preview ignored duplicate Custom column tenant=production column='BilledCost'",
-    ]
+    messages = [record.getMessage() for record in caplog.records if record.name == route.__name__]
+    assert len(messages) == 2
+    assert "ignored unsupported Custom columns" in messages[0]
+    assert "tenant_name=production" in messages[0]
+    assert "count=1" in messages[0]
+    assert "request_id=" in messages[0]
+    assert "stage=preview_request_validation" in messages[0]
+    assert "outcome=ignored_unknown_columns" in messages[0]
+    assert "retryable=false" in messages[0]
+    assert "ignored duplicate Custom columns" in messages[1]
+    assert "tenant_name=production" in messages[1]
+    assert "count=1" in messages[1]
+    assert "request_id=" in messages[1]
+    assert "stage=preview_request_validation" in messages[1]
+    assert "outcome=ignored_duplicate_columns" in messages[1]
+    assert "retryable=false" in messages[1]
+    assert "Unknown" not in caplog.text
+    assert "BilledCost" not in caplog.text
 
 
 def test_unexpected_normalization_exception_is_not_converted_to_semantic_400(tmp_path: Path) -> None:

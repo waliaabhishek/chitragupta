@@ -4,6 +4,7 @@ import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from core.logging_context import safe_exception_context, safe_log_context
 from core.preview.eligibility import policy_from_tenant_config
 from core.preview.persistence import PreviewEvidenceStorageBackend
 from core.preview.storage_availability import (
@@ -38,8 +39,17 @@ def cleanup_orphaned_pipeline_run(storage: StorageBackend, tenant_name: str) -> 
                 tenant_name,
                 latest.id,
             )
-    except Exception:
-        logger.warning("Failed to clean up orphaned runs for %s", tenant_name, exc_info=True)
+    except Exception as exc:
+        logger.warning(
+            "orphaned_pipeline_cleanup_failed%s",
+            safe_log_context(
+                tenant_name=tenant_name,
+                stage="pipeline_run_cleanup",
+                outcome="failed",
+                retryable=True,
+                **safe_exception_context(exc),
+            ),
+        )
 
 
 def prepare_tenant_backend(
@@ -81,9 +91,15 @@ def prepare_tenant_backend(
             storage.mark_preview_evidence_bootstrap_unavailable(error_type)
             bootstrap_result = PreviewEvidenceBootstrapUnavailable(error_type)
             logger.warning(
-                "Preview evidence bootstrap unavailable tenant=%s error_type=%s",
-                tenant_name,
-                error_type,
+                "Preview evidence bootstrap unavailable%s",
+                safe_log_context(
+                    tenant_name=tenant_name,
+                    tenant_id=config.tenant_id,
+                    stage="preview_evidence_bootstrap",
+                    outcome="unavailable",
+                    retryable=True,
+                    **safe_exception_context(exc),
+                ),
             )
     cleanup_orphaned_pipeline_run(storage, tenant_name)
     return bootstrap_result

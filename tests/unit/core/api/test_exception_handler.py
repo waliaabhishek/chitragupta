@@ -58,14 +58,37 @@ class TestGlobalExceptionHandler:
 
     def test_traceback_in_logs_not_in_response(self) -> None:
         client = _make_test_client()
-        with patch("core.api.exception_handler.logger") as mock_logger:
+        with patch("core.api.exception_handler.logger.error") as mock_error:
             response = client.get("/test/runtime-error")
         assert response.status_code == 500
         body = response.json()
-        mock_logger.exception.assert_called_once()
-        call_kwargs = mock_logger.exception.call_args
-        assert body["error_id"] in str(call_kwargs)
+        assert body["detail"] == "Internal server error"
+        assert set(body) == {"detail", "error_id"}
+        mock_error.assert_called_once()
+        rendered_call = str(mock_error.call_args)
+        assert body["error_id"] in rendered_call
+        assert "request_id=" in rendered_call
+        assert "error_type=RuntimeError" in rendered_call
+        assert "traceback_frames=" in rendered_call
+        assert "boom" not in rendered_call
         assert "Traceback" not in response.text
+
+    def test_traceback_log_carries_request_id_and_error_id(self) -> None:
+        client = _make_test_client()
+        with patch("core.api.exception_handler.logger.error") as mock_error:
+            response = client.get("/test/runtime-error")
+
+        assert response.status_code == 500
+        payload = response.json()
+        assert payload["detail"] == "Internal server error"
+        assert set(payload) == {"detail", "error_id"}
+        mock_error.assert_called_once()
+        rendered_call = str(mock_error.call_args)
+        assert payload["error_id"] in rendered_call
+        assert "request_id=" in rendered_call
+        assert "error_type=RuntimeError" in rendered_call
+        assert "traceback_frames=" in rendered_call
+        assert "boom" not in rendered_call
 
     def test_error_id_is_valid_uuid(self) -> None:
         client = _make_test_client()

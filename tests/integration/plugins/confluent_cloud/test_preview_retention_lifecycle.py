@@ -245,10 +245,14 @@ def test_preview_evidence_retention_failure_is_visible_and_retry_commits(
     cleanup_now = datetime(2026, 8, 1, 15, 30, tzinfo=UTC)
 
     try:
-        with caplog.at_level(logging.ERROR, logger="workflow_runner"):
+        with caplog.at_level(logging.WARNING, logger="workflow_runner"):
             runner._cleanup_retention(now=cleanup_now)  # noqa: SLF001
 
-        assert "Tenant production: Preview evidence retention cleanup failed" in caplog.messages
+        assert "preview_evidence_retention_failed" in caplog.text
+        assert "tenant_name=production" in caplog.text
+        assert "stage=preview_evidence_retention" in caplog.text
+        assert "operation=retention_cleanup" in caplog.text
+        assert "outcome=failed" in caplog.text
         assert "Tenant production: retention cleanup failed" not in caplog.messages
         assert _counts(connection_string) == {
             "ccloud_billing": 15,
@@ -267,7 +271,7 @@ def test_preview_evidence_retention_failure_is_visible_and_retry_commits(
         runner._cleanup_retention(now=cleanup_now)  # noqa: SLF001
 
         assert calls == 2
-        assert "Tenant production: Preview evidence retention cleanup failed" not in caplog.messages
+        assert "preview_evidence_retention_failed" not in caplog.text
         assert "Tenant production: retention cleanup failed" not in caplog.messages
         assert _counts(connection_string) == {
             "ccloud_billing": 15,
@@ -524,11 +528,11 @@ def test_focus_retention_uses_production_constructed_cached_runtime_for_ordinary
             "ccloud_focus_preview_retention_outcomes": 0,
         }
 
-        with caplog.at_level(logging.ERROR, logger="workflow_runner"):
+        with caplog.at_level(logging.WARNING, logger="workflow_runner"):
             runner._cleanup_retention(now=cleanup_now)  # noqa: SLF001
 
         assert "Tenant production: retention cleanup failed" not in caplog.messages
-        assert "Tenant production: Preview evidence retention cleanup failed" not in caplog.messages
+        assert "preview_evidence_retention_failed" not in caplog.text
         assert runner._tenant_runtimes["production"] is runtime  # noqa: SLF001
         assert len(created_plugins) == 1
         assert plugin.storage_module_calls == 1

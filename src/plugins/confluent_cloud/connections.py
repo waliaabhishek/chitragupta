@@ -11,6 +11,7 @@ from urllib import parse
 import httpx
 from pydantic import SecretStr  # noqa: TC002 - runtime use in get_secret_value()
 
+from core.logging_context import safe_exception_context, safe_log_context
 from plugins.confluent_cloud.exceptions import CCloudApiError, CCloudConnectionError
 
 logger = logging.getLogger(__name__)
@@ -121,39 +122,151 @@ class CCloudConnection:
                 time.sleep(self.request_interval_seconds - elapsed)
 
         last_exception: Exception | None = None
+        safe_path = parse.urlsplit(url).path
+        total_attempts = self.max_retries + 1
 
-        for attempt in range(self.max_retries + 1):
+        for attempt in range(total_attempts):
+            attempt_number = attempt + 1
+            logger.debug(
+                "provider_request_started provider=confluent_cloud method=%s path=%s%s",
+                method,
+                safe_path,
+                safe_log_context(
+                    stage="provider_request",
+                    operation="confluent_cloud_request",
+                    outcome="started",
+                    attempt_number=attempt_number,
+                    max_attempts=total_attempts,
+                ),
+            )
             try:
                 resp = self._client.request(method, url, **kwargs)
             except httpx.TimeoutException as e:
                 last_exception = CCloudApiError(408, f"Request timeout: {e}")
                 wait = self._calculate_backoff(attempt)
-                logger.warning("Timeout on attempt %d, retrying in %.2fs", attempt + 1, wait)
+                if attempt_number < total_attempts:
+                    logger.warning(
+                        "provider_request_retry provider=confluent_cloud method=%s path=%s wait_seconds=%.2f%s",
+                        method,
+                        safe_path,
+                        wait,
+                        safe_log_context(
+                            stage="provider_request",
+                            operation="confluent_cloud_request",
+                            outcome="retry",
+                            retryable=True,
+                            attempt_number=attempt_number,
+                            max_attempts=total_attempts,
+                            **safe_exception_context(e, root_error_code="timeout"),
+                        ),
+                    )
                 time.sleep(wait)
                 continue
             except httpx.RequestError as e:
+                logger.error(
+                    "provider_request_failed provider=confluent_cloud method=%s path=%s%s",
+                    method,
+                    safe_path,
+                    safe_log_context(
+                        stage="provider_request",
+                        operation="confluent_cloud_request",
+                        outcome="failed",
+                        retryable=False,
+                        attempt_number=attempt_number,
+                        max_attempts=total_attempts,
+                        **safe_exception_context(e),
+                    ),
+                )
                 raise CCloudConnectionError(str(e)) from e
 
             self._last_request_time = time.time()
 
             if resp.status_code == 200:
+                logger.debug(
+                    "provider_request_completed provider=confluent_cloud method=%s path=%s status=%d%s",
+                    method,
+                    safe_path,
+                    resp.status_code,
+                    safe_log_context(
+                        stage="provider_request",
+                        operation="confluent_cloud_request",
+                        outcome="completed",
+                        attempt_number=attempt_number,
+                        max_attempts=total_attempts,
+                    ),
+                )
                 return cast("dict[str, Any]", resp.json())
             elif resp.status_code == 404:
-                logger.info("Resource not found: %s", url)
+                logger.debug(
+                    "provider_request_completed provider=confluent_cloud method=%s path=%s status=404%s",
+                    method,
+                    safe_path,
+                    safe_log_context(
+                        stage="provider_request",
+                        operation="confluent_cloud_request",
+                        outcome="not_found",
+                        attempt_number=attempt_number,
+                        max_attempts=total_attempts,
+                    ),
+                )
                 return {"data": [], "metadata": {}}
             elif resp.status_code == 429:
                 last_exception = CCloudApiError(429, resp.text)
                 wait = self._get_rate_limit_wait(resp, attempt)
-                logger.warning("Rate limited on attempt %d, retrying in %.2fs", attempt + 1, wait)
+                if attempt_number < total_attempts:
+                    logger.warning(
+                        "provider_request_retry provider=confluent_cloud method=%s path=%s wait_seconds=%.2f%s",
+                        method,
+                        safe_path,
+                        wait,
+                        safe_log_context(
+                            stage="provider_request",
+                            operation="confluent_cloud_request",
+                            outcome="retry",
+                            retryable=True,
+                            attempt_number=attempt_number,
+                            max_attempts=total_attempts,
+                            root_error_code=resp.status_code,
+                        ),
+                    )
                 time.sleep(wait)
                 continue
             else:
+                logger.error(
+                    "provider_request_failed provider=confluent_cloud method=%s path=%s status=%d%s",
+                    method,
+                    safe_path,
+                    resp.status_code,
+                    safe_log_context(
+                        stage="provider_request",
+                        operation="confluent_cloud_request",
+                        outcome="failed",
+                        retryable=False,
+                        attempt_number=attempt_number,
+                        max_attempts=total_attempts,
+                        root_error_code=resp.status_code,
+                    ),
+                )
                 raise CCloudApiError(resp.status_code, resp.text)
 
         # Max retries exhausted — last_exception is always set since we only
         # reach here after timeout (sets last_exception) or 429 (sets last_exception)
         if last_exception is None:
             raise RuntimeError("Max retries exhausted but no exception was recorded (unreachable)")
+        logger.error(
+            "provider_request_failed provider=confluent_cloud method=%s path=%s%s",
+            method,
+            safe_path,
+            safe_log_context(
+                stage="provider_request",
+                operation="confluent_cloud_request",
+                outcome="failed",
+                retryable=False,
+                attempt_number=total_attempts,
+                max_attempts=total_attempts,
+                **safe_exception_context(last_exception),
+            ),
+        )
         raise last_exception
 
     def _calculate_backoff(self, attempt: int) -> float:

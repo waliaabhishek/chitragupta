@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, date, datetime
@@ -426,7 +427,7 @@ class _UnreadableEvidenceBackend(_UnavailableEvidenceBackend):
 
 def _assert_global_500(
     response: Any,
-    log_exception: Any,
+    log_error: Any,
     expected_error: BaseException,
 ) -> None:
     assert response.status_code == 500
@@ -434,7 +435,13 @@ def _assert_global_500(
     assert body["detail"] == "Internal server error"
     assert set(body) == {"detail", "error_id"}
     assert str(UUID(body["error_id"])) == body["error_id"]
-    assert log_exception.call_args.kwargs["exc_info"] is expected_error
+    log_error.assert_called_once()
+    rendered_call = str(log_error.call_args)
+    assert body["error_id"] in rendered_call
+    assert "request_id=" in rendered_call
+    assert f"error_type={type(expected_error).__name__}" in rendered_call
+    assert "traceback_frames=" in rendered_call
+    assert str(expected_error) not in rendered_call
 
 
 def _valid_repair_body() -> dict[str, str]:
@@ -791,6 +798,42 @@ def test_production_repair_unreadable_evidence_is_exact_storage_503_and_releases
     assert private_value not in caplog.text
 
 
+def test_production_repair_get_entry_failure_logs_production_request_id_and_keeps_exact_storage_503(
+    production_repair_app: tuple[FastAPI, _ProductionRunnerDouble],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    app, runner = production_repair_app
+    private_value = "private repair read acquisition value"
+    sentinel = RuntimeError(private_value)
+    with TestClient(app) as client:
+        runner.clear_lease_observations()
+        runner.next_enter_error = sentinel
+        with caplog.at_level(logging.DEBUG):
+            response = client.get("/api/v1/tenants/enabled/focus-preview/repairs/absent")
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "FOCUS Mapping Preview repair storage is unavailable"}
+    assert runner.acquisitions == ["enabled"]
+    assert runner.lease_events == [("enter", "enabled")]
+    assert runner.exit_exceptions == []
+    route_message = next(
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "core.api.routes.focus_preview"
+        and record.getMessage().startswith("FOCUS Mapping Preview repair backend failed")
+    )
+    started_message = next(
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "core.api.app" and record.getMessage().startswith("request_started")
+    )
+    request_id_match = re.search(r"request_id=([0-9a-f]+)", started_message)
+    assert request_id_match is not None
+    assert f"request_id={request_id_match.group(1)}" in route_message
+    assert private_value not in response.text
+    assert private_value not in caplog.text
+
+
 def test_production_repair_intentional_http_exception_keeps_identity_and_releases(
     production_repair_app: tuple[FastAPI, _ProductionRunnerDouble],
     caplog: pytest.LogCaptureFixture,
@@ -837,7 +880,7 @@ def test_production_repair_unexpected_exception_reaches_global_handler_with_iden
                 "submit",
                 side_effect=sentinel,
             ),
-            patch("core.api.exception_handler.logger.exception") as log_exception,
+            patch("core.api.exception_handler.logger.error") as log_error,
             caplog.at_level(logging.ERROR, logger="core.api.routes.focus_preview"),
         ):
             response = client.post(
@@ -845,7 +888,7 @@ def test_production_repair_unexpected_exception_reaches_global_handler_with_iden
                 json=_valid_repair_body(),
             )
 
-    _assert_global_500(response, log_exception, sentinel)
+    _assert_global_500(response, log_error, sentinel)
     assert runner.lease_events == [
         ("enter", "enabled"),
         ("exit", "enabled"),
@@ -874,7 +917,7 @@ def test_production_repair_exit_failure_cannot_mask_primary_exception(
                 "submit",
                 side_effect=primary_error,
             ),
-            patch("core.api.exception_handler.logger.exception") as log_exception,
+            patch("core.api.exception_handler.logger.error") as log_error,
             caplog.at_level(logging.ERROR, logger="core.api.routes.focus_preview"),
         ):
             response = client.post(
@@ -882,7 +925,7 @@ def test_production_repair_exit_failure_cannot_mask_primary_exception(
                 json=_valid_repair_body(),
             )
 
-    _assert_global_500(response, log_exception, primary_error)
+    _assert_global_500(response, log_error, primary_error)
     assert runner.lease_events == [
         ("enter", "enabled"),
         ("exit", "enabled"),
@@ -909,12 +952,12 @@ def test_production_repair_exit_failure_after_success_reaches_global_handler(
         runner.clear_lease_observations()
         runner.next_exit_error = release_error
         with (
-            patch("core.api.exception_handler.logger.exception") as log_exception,
+            patch("core.api.exception_handler.logger.error") as log_error,
             caplog.at_level(logging.ERROR, logger="core.api.routes.focus_preview"),
         ):
             response = client.get("/api/v1/tenants/enabled/focus-preview/repairs/absent")
 
-    _assert_global_500(response, log_exception, release_error)
+    _assert_global_500(response, log_error, release_error)
     assert runner.lease_events == [
         ("enter", "enabled"),
         ("exit", "enabled"),

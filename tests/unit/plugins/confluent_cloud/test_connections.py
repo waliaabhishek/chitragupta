@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import logging
 from unittest.mock import patch
 
 import httpx
@@ -277,6 +278,99 @@ def test_connection_close():
     with patch.object(conn._client, "close") as mock_close:
         conn.close()
         mock_close.assert_called_once()
+
+
+@respx.mock
+def test_request_logs_lifecycle_and_retry_context_without_url_or_credentials_leakage(
+    caplog: pytest.LogCaptureFixture,
+):
+    route = respx.get("https://api.confluent.cloud/test/endpoint")
+    route.side_effect = [
+        httpx.TimeoutException("api_secret secret456 timed out"),
+        _resp({"data": [], "metadata": {}}),
+    ]
+
+    conn = CCloudConnection(
+        api_key="key123",
+        api_secret=SecretStr("secret456"),
+        base_backoff_seconds=0.001,
+    )
+    try:
+        with caplog.at_level(logging.DEBUG, logger="plugins.confluent_cloud.connections"):
+            items = list(
+                conn.get(
+                    "/test/endpoint",
+                    params={"page_token": "secret-page-token", "include": "sensitive"},
+                )
+            )
+    finally:
+        conn.close()
+
+    assert items == []
+    assert "provider_request_started" in caplog.text
+    assert "provider_request_completed" in caplog.text
+    assert "attempt_number=1" in caplog.text
+    assert "max_attempts=6" in caplog.text
+    assert "secret456" not in caplog.text
+    assert "secret-page-token" not in caplog.text
+    assert "include=sensitive" not in caplog.text
+
+
+@respx.mock
+def test_request_logs_terminal_failure_without_request_payload_or_credentials_leakage(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    respx.get("https://api.confluent.cloud/test/endpoint").mock(
+        side_effect=[httpx.Response(429, text="body=secret-response")] * 2
+    )
+
+    conn = CCloudConnection(
+        api_key="key123",
+        api_secret=SecretStr("secret456"),
+        max_retries=1,
+        base_backoff_seconds=0.001,
+    )
+    try:
+        with (
+            caplog.at_level(logging.DEBUG, logger="plugins.confluent_cloud.connections"),
+            pytest.raises(CCloudApiError) as exc_info,
+        ):
+            list(
+                conn.get(
+                    "/test/endpoint",
+                    params={"page_token": "secret-page-token", "include": "sensitive"},
+                )
+            )
+    finally:
+        conn.close()
+
+    assert exc_info.value.status_code == 429
+    log_messages = [
+        record.getMessage() for record in caplog.records if record.name == "plugins.confluent_cloud.connections"
+    ]
+    started = [message for message in log_messages if message.startswith("provider_request_started")]
+    retries = [message for message in log_messages if message.startswith("provider_request_retry")]
+    failed = [message for message in log_messages if message.startswith("provider_request_failed")]
+
+    assert len(started) == 2
+    assert "attempt_number=1" in started[0]
+    assert "attempt_number=2" in started[1]
+    assert all("max_attempts=2" in message for message in (*started, *retries, *failed))
+    assert len(retries) == 1
+    assert "attempt_number=1" in retries[0]
+    assert len(failed) == 1
+    assert "provider_request_failed provider=confluent_cloud method=GET path=/test/endpoint" in failed[0]
+    assert "stage=provider_request" in failed[0]
+    assert "operation=confluent_cloud_request" in failed[0]
+    assert "outcome=failed" in failed[0]
+    assert "retryable=false" in failed[0]
+    assert "attempt_number=2" in failed[0]
+    assert "error_type=CCloudApiError" in failed[0]
+    assert "root_error_code=429" in failed[0]
+    assert "secret456" not in caplog.text
+    assert "secret-page-token" not in caplog.text
+    assert "include=sensitive" not in caplog.text
+    assert "body=secret-response" not in caplog.text
 
 
 # =============================================================================

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+from uuid import UUID
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
 from core.config.models import ApiConfig, AppSettings
@@ -107,3 +108,57 @@ class TestRequestTimeoutMiddlewareWiring:
         )
         assert timeout_mw is not None
         assert timeout_mw.kwargs.get("timeout_seconds") == 45
+
+    def test_create_app_sets_request_id_on_request_state(self) -> None:
+        """Production create_app must install request correlation before handlers run."""
+        from core.api.app import create_app
+
+        settings = AppSettings(
+            api=ApiConfig(request_timeout_seconds=30),
+            tenants={},
+        )
+        app = create_app(settings)
+
+        @app.get("/request-id")
+        async def request_id_endpoint(request: Request) -> dict[str, str | None]:
+            return {"request_id": getattr(request.state, "request_id", None)}
+
+        with TestClient(app) as client:
+            response = client.get("/request-id")
+
+        assert response.status_code == 200
+        request_id = response.json()["request_id"]
+        assert request_id is not None
+        assert UUID(hex=request_id).hex == request_id
+
+    def test_timeout_log_includes_request_id_and_response_body_stays_unchanged(self) -> None:
+        """Timeout conversion must log once with request_id and keep the existing 504 body."""
+        from unittest.mock import patch
+
+        from core.api.app import create_app
+
+        settings = AppSettings(
+            api=ApiConfig(request_timeout_seconds=1),
+            tenants={},
+        )
+        app = create_app(settings)
+
+        @app.get("/slow")
+        async def slow_endpoint(request: Request) -> dict[str, str]:
+            del request
+            await asyncio.sleep(10)
+            return {"ok": "nope"}  # pragma: no cover
+
+        with (
+            patch("core.api.app.logger.warning") as warning_log,
+            TestClient(
+                app,
+                raise_server_exceptions=False,
+            ) as client,
+        ):
+            response = client.get("/slow")
+
+        assert response.status_code == 504
+        assert response.json() == {"detail": "Request exceeded 1s timeout"}
+        warning_log.assert_called_once()
+        assert "request_id" in str(warning_log.call_args)

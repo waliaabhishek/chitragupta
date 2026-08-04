@@ -49,6 +49,20 @@ class _ControlledExecutor:
         del wait
 
 
+class _FailingRepairRunner:
+    def __init__(self, error: BaseException) -> None:
+        self._error = error
+
+    def run_focus_preview_repair(
+        self,
+        repair_id: str,
+        tenant_name: str,
+        tenant_config: TenantConfig,
+    ) -> None:
+        del repair_id, tenant_name, tenant_config
+        raise self._error
+
+
 def _tenant(
     tmp_path: Path,
     *,
@@ -521,6 +535,32 @@ def test_runtime_recover_fails_queued_and_partially_running_operations(
         assert [item.status.value for item in recovered_running.dates] == ["failed"]
         assert recovered_running.diagnostic is not None
         assert recovered_running.diagnostic.code == "focus_preview_repair_interrupted"
+    finally:
+        runtime.close(wait=True)
+        backend.dispose()
+
+
+def test_worker_failure_logs_single_owner_record_with_retryable_diagnostic(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    tenant, backend, _runner, runtime, executor = _setup(tmp_path, orchestrator=MagicMock())
+    runtime.runner = _FailingRepairRunner(RuntimeError("repair worker secret"))
+    queued = _queue(runtime, backend, tenant)
+    try:
+        with caplog.at_level("ERROR", logger="core.preview.repair"):
+            runtime.schedule(queued, tenant_config=tenant)
+            executor.run_all()
+        failed = _read(backend, queued.repair_id)
+        assert failed.status.value == "failed"
+        assert failed.diagnostic is not None
+        assert failed.diagnostic.code == "focus_preview_repair_worker_unavailable"
+        assert failed.diagnostic.retryable is True
+        records = [record for record in caplog.records if record.levelname == "ERROR"]
+        assert len(records) == 1
+        assert queued.repair_id in records[0].getMessage()
+        assert "retryable=true" in records[0].getMessage()
+        assert "repair worker secret" not in caplog.text
     finally:
         runtime.close(wait=True)
         backend.dispose()

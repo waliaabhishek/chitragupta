@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Self
 from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import Session
 
+from core.logging_context import safe_exception_context, safe_log_context
 from core.storage.backends.sqlmodel.engine import get_or_create_engine, get_or_create_read_only_engine
 from core.storage.backends.sqlmodel.repositories import (
     SQLModelEmissionRepository,
@@ -336,6 +337,16 @@ class SQLModelBackend:
             CoreStorageModule().register_tables(self._engine)
             self._storage_module.register_tables(self._engine)
             issues = ()
+            logger.warning(
+                "migration_degraded storage_module=%s%s",
+                type(self._storage_module).__name__,
+                safe_log_context(
+                    stage="storage_migration",
+                    operation="direct_table_registration",
+                    outcome="direct_table_registration",
+                    retryable=False,
+                ),
+            )
         self._prepare_preview_evidence(issues)
         self._tables_created = True
 
@@ -384,10 +395,34 @@ class SQLModelBackend:
         saved_level = root.level
         saved_handlers = root.handlers[:]
         try:
-            command.upgrade(cfg, "head")
-        finally:
-            root.setLevel(saved_level)
-            root.handlers[:] = saved_handlers
+            logger.info(
+                "migration_started storage_module=%s%s",
+                type(self._storage_module).__name__,
+                safe_log_context(stage="storage_migration", operation="alembic_upgrade", outcome="started"),
+            )
+            try:
+                command.upgrade(cfg, "head")
+            finally:
+                root.setLevel(saved_level)
+                root.handlers[:] = saved_handlers
+        except Exception as exc:
+            logger.error(
+                "migration_failed storage_module=%s%s",
+                type(self._storage_module).__name__,
+                safe_log_context(
+                    stage="storage_migration",
+                    operation="alembic_upgrade",
+                    outcome="failed",
+                    retryable=False,
+                    **safe_exception_context(exc),
+                ),
+            )
+            raise
+        logger.info(
+            "migration_completed storage_module=%s%s",
+            type(self._storage_module).__name__,
+            safe_log_context(stage="storage_migration", operation="alembic_upgrade", outcome="completed"),
+        )
         return collector.snapshot()
 
     def _prepare_preview_evidence(
@@ -429,16 +464,27 @@ class SQLModelBackend:
                     target_revision="032",
                 )
         except (PreviewEvidenceSchemaError, SQLAlchemyError) as exc:
+            issue_kind = (
+                PreviewEvidenceIssueKind.SCHEMA_INCOMPATIBLE
+                if isinstance(exc, PreviewEvidenceSchemaError)
+                else PreviewEvidenceIssueKind.DDL_FAILED
+            )
             issues.append(
                 PreviewEvidenceIssue(
                     revision="032",
-                    kind=(
-                        PreviewEvidenceIssueKind.SCHEMA_INCOMPATIBLE
-                        if isinstance(exc, PreviewEvidenceSchemaError)
-                        else PreviewEvidenceIssueKind.DDL_FAILED
-                    ),
+                    kind=issue_kind,
                     error_type=type(exc).__name__,
                 )
+            )
+            logger.warning(
+                "preview_evidence_prepare_unavailable revision=032 issue_kind=%s%s",
+                issue_kind.value,
+                safe_log_context(
+                    stage="preview_evidence_prepare",
+                    outcome="unavailable",
+                    retryable=False,
+                    **safe_exception_context(exc),
+                ),
             )
         self._preview_evidence_availability = PreviewEvidenceAvailability(
             PreviewEvidenceAvailabilityState.READY if not issues else PreviewEvidenceAvailabilityState.UNAVAILABLE,

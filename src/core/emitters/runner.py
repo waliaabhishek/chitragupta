@@ -16,6 +16,7 @@ from core.emitters.protocols import (
     PipelineRowFetcher,
     RowProvider,
 )
+from core.logging_context import safe_exception_context, safe_log_context
 
 if TYPE_CHECKING:
     from core.config.models import EmitterSpec
@@ -80,6 +81,19 @@ class EmitterRunner:
         if not pending:
             return
 
+        logger.info(
+            "emitter_run_started pending_dates=%d%s",
+            len(pending),
+            safe_log_context(
+                tenant_id=tenant_id,
+                stage="emit",
+                operation="emitter_run",
+                outcome="started",
+                emitter_name=spec.name,
+                pipeline=self._pipeline,
+            ),
+        )
+
         emitter = self._emitter_builder.build(spec)
 
         if spec.aggregation == "monthly":
@@ -102,6 +116,21 @@ class EmitterRunner:
                 outcomes = PerDateDriver(emitter).run(tenant_id, manifest, _row_provider)
 
         self._persist_outcomes(tenant_id, spec.name, outcomes)
+        logger.info(
+            "emitter_run_completed pending_dates=%d emitted=%d failed=%d skipped=%d%s",
+            len(pending),
+            sum(outcome is EmitOutcome.EMITTED for outcome in outcomes.values()),
+            sum(outcome is EmitOutcome.FAILED for outcome in outcomes.values()),
+            sum(outcome is EmitOutcome.SKIPPED for outcome in outcomes.values()),
+            safe_log_context(
+                tenant_id=tenant_id,
+                stage="emit",
+                operation="emitter_run",
+                outcome="completed",
+                emitter_name=spec.name,
+                pipeline=self._pipeline,
+            ),
+        )
 
     def _run_monthly(
         self,
@@ -156,16 +185,40 @@ class EmitterRunner:
                     emitter.emit(tenant_id, month_start, rows)
                     result = emitter.close(tenant_id)
                     outcome = result.outcomes.get(month_start, EmitOutcome.EMITTED)
-                except Exception:
-                    logger.exception("Monthly LifecycleEmitter failed for tenant=%s month=%s", tenant_id, month_start)
+                except Exception as exc:
+                    logger.error(
+                        "monthly_emitter_failed%s",
+                        safe_log_context(
+                            tenant_id=tenant_id,
+                            month=month_start.strftime("%Y-%m"),
+                            stage="emit",
+                            operation="monthly_lifecycle_emit",
+                            outcome="failed",
+                            retryable=True,
+                            emitter_name=type(emitter).__name__,
+                            **safe_exception_context(exc),
+                        ),
+                    )
                     outcome = EmitOutcome.FAILED
             else:
                 # Plain Emitter protocol — __call__(tenant_id, date, rows)
                 try:
                     emitter(tenant_id, month_start, rows)
                     outcome = EmitOutcome.EMITTED
-                except Exception:
-                    logger.exception("Monthly emitter failed for tenant=%s month=%s", tenant_id, month_start)
+                except Exception as exc:
+                    logger.error(
+                        "monthly_emitter_failed%s",
+                        safe_log_context(
+                            tenant_id=tenant_id,
+                            month=month_start.strftime("%Y-%m"),
+                            stage="emit",
+                            operation="monthly_emit",
+                            outcome="failed",
+                            retryable=True,
+                            emitter_name=type(emitter).__name__,
+                            **safe_exception_context(exc),
+                        ),
+                    )
                     outcome = EmitOutcome.FAILED
 
             # Record outcome for ALL chargeback dates in this month group
