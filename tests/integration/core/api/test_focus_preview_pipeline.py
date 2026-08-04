@@ -28,6 +28,7 @@ from core.models.chargeback import ChargebackRow, CostType
 from core.models.identity import CoreIdentity, Identity, IdentityResolution, IdentitySet
 from core.models.pipeline import PipelineState
 from core.models.resource import CoreResource, Resource, ResourceStatus
+from core.plugin.registry import PluginRegistry
 from core.preview.evidence import PreviewEvidenceScope
 from core.storage.backends.sqlmodel.unit_of_work import SQLModelBackend
 from plugins.confluent_cloud import ConfluentCloudPlugin
@@ -42,7 +43,7 @@ from tests.unit.core.storage.test_migration_019_focus_preview import (
     _seed_legacy_rows,
     _snapshots,
 )
-from workflow_runner import TenantRuntime, WorkflowRunner, _config_hash
+from workflow_runner import WorkflowRunner
 
 
 class PreviewPipelineHandler:
@@ -158,6 +159,7 @@ class PreviewPipelinePlugin(ConfluentCloudPlugin):
         super().__init__()
         self._preview_handler = handler
         self.cost_input_override: object | None = None
+        self.metrics_source_override: object | None = None
         self.use_provider_inventory = False
 
     def initialize(self, config: dict[str, Any]) -> None:
@@ -165,6 +167,8 @@ class PreviewPipelinePlugin(ConfluentCloudPlugin):
         assert self._connection is not None
         self._connection.request_interval_seconds = 0
         self._handlers = {"kafka": self._preview_handler}
+        if self.metrics_source_override is not None:
+            self._metrics_source = self.metrics_source_override
 
     def build_shared_context(self, tenant_id: str) -> object | None:
         if self.use_provider_inventory:
@@ -178,6 +182,41 @@ class PreviewPipelinePlugin(ConfluentCloudPlugin):
         if self.cost_input_override is not None:
             return self.cost_input_override
         return super().get_cost_input()
+
+
+def _bootstrap_pipeline_runner(
+    settings: AppSettings,
+    tenant: TenantConfig,
+    plugin: PreviewPipelinePlugin,
+) -> tuple[WorkflowRunner, SQLModelBackend]:
+    registry = PluginRegistry()
+    registry.register(tenant.ecosystem, lambda: plugin)
+    runner = WorkflowRunner(settings, registry)
+    runner.bootstrap_storage()
+    with runner.acquire_backend("production", tenant) as acquired_backend:
+        assert isinstance(acquired_backend, SQLModelBackend)
+        backend = acquired_backend
+    with runner.acquire_backend("production", tenant) as reused_backend:
+        assert reused_backend is backend
+    return runner, backend
+
+
+def _keep_legacy_schema_during_runtime_bootstrap(monkeypatch: pytest.MonkeyPatch) -> None:
+    from core.storage import registry as storage_registry
+
+    create_storage_backend = storage_registry.create_storage_backend
+    create_tables = SQLModelBackend.create_tables
+
+    def create_legacy_backend(*args: Any, **kwargs: Any) -> Any:
+        kwargs["use_migrations"] = False
+        return create_storage_backend(*args, **kwargs)
+
+    def create_legacy_tables(backend: SQLModelBackend) -> None:
+        create_tables(backend)
+        backend.mark_preview_evidence_bootstrap_unavailable("PreviewEvidenceSchemaError")
+
+    monkeypatch.setattr(storage_registry, "create_storage_backend", create_legacy_backend)
+    monkeypatch.setattr(SQLModelBackend, "create_tables", create_legacy_tables)
 
 
 def _focus_preview_block() -> dict[str, object]:
@@ -2042,21 +2081,7 @@ def test_pipeline_organization_binding_conflict_and_original_credential_recovery
     )
     settings = AppSettings(tenants={"production": tenant})
     plugin = PreviewPipelinePlugin(PreviewPipelineHandler())
-    plugin.initialize(tenant.plugin_settings.model_dump())
-    backend = SQLModelBackend(
-        connection_string, plugin.get_storage_module(), use_migrations=False, focus_preview_enabled=True
-    )
-    backend.create_tables()
-    runner = WorkflowRunner(settings, MagicMock())
-    runner._bootstrapped = True
-    runner._tenant_runtimes["production"] = TenantRuntime(
-        tenant_name="production",
-        plugin=plugin,
-        storage=backend,
-        orchestrator=ChargebackOrchestrator("production", tenant, plugin, backend),
-        config_hash=_config_hash(tenant),
-        created_at=datetime.now(UTC),
-    )
+    runner, backend = _bootstrap_pipeline_runner(settings, tenant, plugin)
     original_id = "11111111-2222-4333-8444-555555555555"
     conflicting_id = "99999999-8888-4777-8666-555555555555"
     try:
@@ -2157,27 +2182,12 @@ def test_provider_tableflow_cost_with_production_topic_discovery_fails_provider_
     handler = PreviewPipelineHandler()
     handler.handles_product_types = ("KAFKA_STORAGE", "TABLEFLOW_DATA_PROCESSED")
     plugin = PreviewPipelinePlugin(handler)
-    plugin.initialize(tenant.plugin_settings.model_dump())
     plugin.use_provider_inventory = True
     metrics = MagicMock()
     metrics.query.return_value = {"received_bytes": [MagicMock(labels={"topic": "orders"})]}
-    plugin._metrics_source = metrics
-    backend = SQLModelBackend(
-        connection_string, plugin.get_storage_module(), use_migrations=False, focus_preview_enabled=True
-    )
-    backend.create_tables()
-    orchestrator = ChargebackOrchestrator("production", tenant, plugin, backend)
-    runner = WorkflowRunner(settings, MagicMock())
-    runner._bootstrapped = True
-    runner._tenant_runtimes["production"] = TenantRuntime(
-        tenant_name="production",
-        plugin=plugin,
-        storage=backend,
-        orchestrator=orchestrator,
-        config_hash=_config_hash(tenant),
-        created_at=datetime.now(UTC),
-    )
-    client = PipelineApiClient(create_app(settings), use_lifespan=True, backend=backend)
+    plugin.metrics_source_override = metrics
+    runner, backend = _bootstrap_pipeline_runner(settings, tenant, plugin)
+    client = PipelineApiClient(create_app(settings, workflow_runner=runner, mode="both"), use_lifespan=True)
     try:
         result = runner.run_tenant("production")
         assert result.dates_calculated == 1
@@ -2320,24 +2330,9 @@ def test_custom_pipeline_allocation_cannot_bypass_native_lineage_scope(
     handler = PreviewPipelineHandler()
     handler.handles_product_types = ("KAFKA_STREAMS", "PROMO_CREDIT", "SUPPORT")
     plugin = PreviewPipelinePlugin(handler)
-    plugin.initialize(tenant.plugin_settings.model_dump())
     plugin.use_provider_inventory = True
-    backend = SQLModelBackend(
-        connection_string, plugin.get_storage_module(), use_migrations=False, focus_preview_enabled=True
-    )
-    backend.create_tables()
-    orchestrator = ChargebackOrchestrator("production", tenant, plugin, backend)
-    runner = WorkflowRunner(settings, MagicMock())
-    runner._bootstrapped = True
-    runner._tenant_runtimes["production"] = TenantRuntime(
-        tenant_name="production",
-        plugin=plugin,
-        storage=backend,
-        orchestrator=orchestrator,
-        config_hash=_config_hash(tenant),
-        created_at=datetime.now(UTC),
-    )
-    client = PipelineApiClient(create_app(settings), use_lifespan=True, backend=backend)
+    runner, backend = _bootstrap_pipeline_runner(settings, tenant, plugin)
+    client = PipelineApiClient(create_app(settings, workflow_runner=runner, mode="both"), use_lifespan=True)
     try:
         result = runner.run_tenant("production")
         assert result.errors == []
@@ -2512,24 +2507,9 @@ def test_custom_pipeline_and_provider_context_cannot_bypass_promo_lineage_scope(
         {"kafka_cluster", *(resource.resource_type for resource in extra_resources)}
     )
     plugin = PreviewPipelinePlugin(handler)
-    plugin.initialize(tenant.plugin_settings.model_dump())
     plugin.use_provider_inventory = True
-    backend = SQLModelBackend(
-        connection_string, plugin.get_storage_module(), use_migrations=False, focus_preview_enabled=True
-    )
-    backend.create_tables()
-    orchestrator = ChargebackOrchestrator("production", tenant, plugin, backend)
-    runner = WorkflowRunner(settings, MagicMock())
-    runner._bootstrapped = True
-    runner._tenant_runtimes["production"] = TenantRuntime(
-        tenant_name="production",
-        plugin=plugin,
-        storage=backend,
-        orchestrator=orchestrator,
-        config_hash=_config_hash(tenant),
-        created_at=datetime.now(UTC),
-    )
-    client = PipelineApiClient(create_app(settings), use_lifespan=True, backend=backend)
+    runner, backend = _bootstrap_pipeline_runner(settings, tenant, plugin)
+    client = PipelineApiClient(create_app(settings, workflow_runner=runner, mode="both"), use_lifespan=True)
     try:
         result = runner.run_tenant("production")
         assert result.errors == []
@@ -2630,24 +2610,9 @@ def test_provider_backed_unsupported_economics_and_semantics_fail_before_artifac
     handler = PreviewPipelineHandler()
     handler.handles_product_types = ("KAFKA_STORAGE", "PROMO_CREDIT", "SUPPORT")
     plugin = PreviewPipelinePlugin(handler)
-    plugin.initialize(tenant.plugin_settings.model_dump())
-    backend = SQLModelBackend(
-        connection_string, plugin.get_storage_module(), use_migrations=False, focus_preview_enabled=True
-    )
-    backend.create_tables()
-    orchestrator = ChargebackOrchestrator("production", tenant, plugin, backend)
-    runner = WorkflowRunner(settings, MagicMock())
-    runner._bootstrapped = True
-    runner._tenant_runtimes["production"] = TenantRuntime(
-        tenant_name="production",
-        plugin=plugin,
-        storage=backend,
-        orchestrator=orchestrator,
-        config_hash=_config_hash(tenant),
-        created_at=datetime.now(UTC),
-    )
-    app = create_app(settings)
-    client = PipelineApiClient(app, use_lifespan=True, backend=backend)
+    runner, backend = _bootstrap_pipeline_runner(settings, tenant, plugin)
+    app = create_app(settings, workflow_runner=runner, mode="both")
+    client = PipelineApiClient(app, use_lifespan=True)
     try:
         result = runner.run_tenant("production")
         assert result.errors == []
@@ -2717,6 +2682,7 @@ def test_migrated_legacy_metadata_failure_preserves_data_when_provider_is_unavai
     command.upgrade(migration, "018")
     _seed_legacy_rows(connection_string)
     command.upgrade(migration, "023")
+    _keep_legacy_schema_during_runtime_bootstrap(monkeypatch)
 
     route = respx.get("https://api.confluent.cloud/billing/v1/costs")
     route.mock(return_value=httpx.Response(200, json={"data": [], "metadata": {}}))
@@ -2740,25 +2706,11 @@ def test_migrated_legacy_metadata_failure_preserves_data_when_provider_is_unavai
     )
     handler = PreviewPipelineHandler()
     plugin = PreviewPipelinePlugin(handler)
-    plugin.initialize(tenant.plugin_settings.model_dump())
-    backend = SQLModelBackend(
-        connection_string, plugin.get_storage_module(), use_migrations=False, focus_preview_enabled=True
-    )
     snapshot_engine = create_engine(connection_string)
     before_unavailable_run = _snapshots(snapshot_engine)
-    orchestrator = ChargebackOrchestrator("production", tenant, plugin, backend)
-    runner = WorkflowRunner(settings, MagicMock())
-    runner._bootstrapped = True
-    runner._tenant_runtimes["production"] = TenantRuntime(
-        tenant_name="production",
-        plugin=plugin,
-        storage=backend,
-        orchestrator=orchestrator,
-        config_hash=_config_hash(tenant),
-        created_at=datetime.now(UTC),
-    )
-    app = create_app(settings)
-    client = PipelineApiClient(app, use_lifespan=True, backend=backend)
+    runner, backend = _bootstrap_pipeline_runner(settings, tenant, plugin)
+    app = create_app(settings, workflow_runner=runner, mode="both")
+    client = PipelineApiClient(app, use_lifespan=True)
     try:
         unavailable_result = runner.run_tenant("production")
         assert unavailable_result.errors == []
@@ -2827,6 +2779,7 @@ def test_migrated_legacy_precedence_uses_real_recoverable_lifecycle_without_muta
             )
     legacy_engine.dispose()
     command.upgrade(migration, "023")
+    _keep_legacy_schema_during_runtime_bootstrap(monkeypatch)
     snapshot_engine = create_engine(connection_string)
     legacy_before = _legacy_snapshot(snapshot_engine, legacy_date)
 
@@ -2868,23 +2821,9 @@ def test_migrated_legacy_precedence_uses_real_recoverable_lifecycle_without_muta
     if not recoverable_succeeds:
         handler.failing_dates = {recoverable_date}
     plugin = PreviewPipelinePlugin(handler)
-    plugin.initialize(tenant.plugin_settings.model_dump())
-    backend = SQLModelBackend(
-        connection_string, plugin.get_storage_module(), use_migrations=False, focus_preview_enabled=True
-    )
-    orchestrator = ChargebackOrchestrator("production", tenant, plugin, backend)
-    runner = WorkflowRunner(settings, MagicMock())
-    runner._bootstrapped = True
-    runner._tenant_runtimes["production"] = TenantRuntime(
-        tenant_name="production",
-        plugin=plugin,
-        storage=backend,
-        orchestrator=orchestrator,
-        config_hash=_config_hash(tenant),
-        created_at=datetime.now(UTC),
-    )
-    app = create_app(settings)
-    client = PipelineApiClient(app, use_lifespan=True, backend=backend)
+    runner, backend = _bootstrap_pipeline_runner(settings, tenant, plugin)
+    app = create_app(settings, workflow_runner=runner, mode="both")
+    client = PipelineApiClient(app, use_lifespan=True)
     try:
         result = runner.run_tenant("production")
         assert result.dates_calculated == (1 if recoverable_succeeds else 0)
