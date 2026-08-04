@@ -321,8 +321,7 @@ revision 028. When lineage portions converge, their complete parent run's
 SQLite downgrade from 029 restores the revision-028 zero-fraction text form
 ending in `.000000` before removing the new retention retry column. This is
 only compatibility with revision-028 upsert identity, not a sub-second
-precision contract. PostgreSQL migration behavior and rollback are verified by
-the dedicated real-PostgreSQL CI job.
+precision contract.
 
 Existing API field names, shapes, and semantics remain compatible; affected
 lifecycle timestamp values follow the new UTC whole-second contract. Production

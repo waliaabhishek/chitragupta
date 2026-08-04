@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import logging
+import re
 from unittest.mock import patch
 
 import pytest
 
 from core.storage.backends.sqlmodel.module import CoreStorageModule
 from core.storage.backends.sqlmodel.unit_of_work import SQLModelBackend
+
+ENCODED_POSTGRESQL_URL = (
+    "postgresql+psycopg://user:p%40ss@example.invalid/testdb?options=-csearch_path%3Dtenant"  # pragma: allowlist secret
+)
 
 
 @pytest.fixture()
@@ -95,17 +100,25 @@ class TestMigrationLoggingPreservation:
         and test_root_handlers_preserved to keep each test focused on a single concern.
         """
         captured: list = []
+        encoded_backend = SQLModelBackend(
+            ENCODED_POSTGRESQL_URL,
+            CoreStorageModule(),
+            use_migrations=True,
+        )
 
         def capture_upgrade(cfg, rev) -> None:
             captured.append((cfg, rev))
 
-        with patch("alembic.command.upgrade", side_effect=capture_upgrade):
-            backend._run_migrations()
+        try:
+            with patch("alembic.command.upgrade", side_effect=capture_upgrade):
+                encoded_backend._run_migrations()
+        finally:
+            encoded_backend.dispose()
 
         assert len(captured) == 1
         cfg, rev = captured[0]
         assert rev == "head"
-        assert cfg.get_main_option("sqlalchemy.url") == backend._connection_string
+        assert cfg.get_main_option("sqlalchemy.url") == ENCODED_POSTGRESQL_URL
 
     def test_create_tables_preserves_root_logger(self, backend: SQLModelBackend) -> None:
         """create_tables() preserves root logger state when use_migrations=True."""
@@ -171,12 +184,15 @@ class TestMigrationLoggingPreservation:
         backend: SQLModelBackend,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        secret = "postgresql://user:secret@example.invalid/db"  # pragma: allowlist secret
+        secret = (
+            "postgresql+psycopg://user:p%40ss@example.invalid/db"  # pragma: allowlist secret
+            "?options=-csearch_path%3Dtenant"
+        )
 
         with (
             patch("alembic.command.upgrade", side_effect=RuntimeError(secret)),
             caplog.at_level(logging.ERROR, logger="core.storage.backends.sqlmodel.unit_of_work"),
-            pytest.raises(RuntimeError, match=secret),
+            pytest.raises(RuntimeError, match=re.escape(secret)),
         ):
             backend.create_tables()
 

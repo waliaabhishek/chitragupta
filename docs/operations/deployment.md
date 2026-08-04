@@ -234,6 +234,8 @@ storage:
   connection_string: "postgresql+psycopg2://user:pass@host:5432/dbname"
 ```
 
+Standard URL percent-encoding is supported in `storage.connection_string` for credentials and query values. Use normal single `%` escape sequences in application configuration; do not double `%` signs.
+
 Pass credentials via environment variables to avoid hardcoding secrets:
 
 ```yaml

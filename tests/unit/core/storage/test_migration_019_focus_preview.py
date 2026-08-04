@@ -10,6 +10,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy import inspect as sa_inspect
 
 from core.storage.backends.sqlmodel.unit_of_work import SQLModelBackend
+from core.storage.migrations.config import set_alembic_database_url
 from plugins.confluent_cloud.storage.module import CCloudStorageModule
 
 
@@ -17,13 +18,24 @@ def _alembic_config(connection_string: str, *, preview_enabled: bool = True) -> 
     migrations_dir = Path(__file__).resolve().parents[4] / "src" / "core" / "storage" / "migrations"
     config = Config(str(migrations_dir / "alembic.ini"))
     config.set_main_option("script_location", str(migrations_dir))
-    config.set_main_option("sqlalchemy.url", connection_string)
+    set_alembic_database_url(config, connection_string)
     if preview_enabled:
         availability = importlib.import_module("core.preview.storage_availability")
         config.attributes[availability.CFG_PREVIEW_EVIDENCE_ENABLED] = True
         config.attributes[availability.CFG_PREVIEW_EVIDENCE_MODULE] = CCloudStorageModule()
         config.attributes[availability.CFG_PREVIEW_EVIDENCE_ISSUES] = availability.PreviewEvidenceIssueCollector()
     return config
+
+
+def test_alembic_config_preserves_percent_encoded_postgresql_url_for_task_254_49() -> None:
+    connection_string = (
+        "postgresql+psycopg://user:p%40ss@localhost/testdb?options=-csearch_path%3Dtenant"  # pragma: allowlist secret
+    )
+
+    config = _alembic_config(connection_string, preview_enabled=False)
+
+    assert config.get_main_option("sqlalchemy.url") == connection_string
+    assert config.get_section(config.config_ini_section, {})["sqlalchemy.url"] == connection_string
 
 
 def _seed_legacy_rows(connection_string: str) -> dict[str, list[tuple[object, ...]]]:

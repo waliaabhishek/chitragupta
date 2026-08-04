@@ -365,6 +365,7 @@ class SQLModelBackend:
             PreviewEvidenceIssueCollector,
             PreviewEvidenceIssueKind,
         )
+        from core.storage.migrations.config import set_alembic_database_url
 
         # Locate alembic.ini relative to this package
         migrations_dir = pathlib.Path(__file__).resolve().parent.parent.parent / "migrations"
@@ -372,7 +373,7 @@ class SQLModelBackend:
 
         cfg = Config(str(alembic_ini))
         cfg.set_main_option("script_location", str(migrations_dir))
-        cfg.set_main_option("sqlalchemy.url", self._connection_string)
+        set_alembic_database_url(cfg, self._connection_string)
         collector = PreviewEvidenceIssueCollector()
         module = None
         if self._focus_preview_enabled:
