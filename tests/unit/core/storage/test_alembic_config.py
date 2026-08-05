@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 import pytest
 from alembic.config import Config
 from sqlalchemy import engine_from_config, pool
@@ -17,6 +19,12 @@ def _set_alembic_database_url(config: Config, database_url: str) -> None:
     from core.storage.migrations.config import set_alembic_database_url
 
     set_alembic_database_url(config, database_url)
+
+
+def _apply_database_url_x_argument(config: Config, x_arguments: Mapping[str, str]) -> None:
+    from core.storage.migrations.config import apply_database_url_x_argument
+
+    apply_database_url_x_argument(config, x_arguments)
 
 
 def test_raw_alembic_config_rejects_percent_encoded_url_without_helper() -> None:
@@ -65,6 +73,58 @@ def test_invalid_database_url_still_fails_from_sqlalchemy() -> None:
             prefix="sqlalchemy.",
             poolclass=pool.NullPool,
         )
+
+
+def test_apply_database_url_x_argument_preserves_encoded_url_for_alembic_and_sqlalchemy() -> None:
+    config = Config()
+
+    _apply_database_url_x_argument(config, {"sqlalchemy.url": ENCODED_POSTGRESQL_URL})
+
+    section = config.get_section(config.config_ini_section, {})
+    assert config.get_main_option("sqlalchemy.url") == ENCODED_POSTGRESQL_URL
+    assert section["sqlalchemy.url"] == ENCODED_POSTGRESQL_URL
+
+    engine = engine_from_config(section, prefix="sqlalchemy.", poolclass=pool.NullPool)
+    try:
+        assert engine.url.password == "p@ss"  # pragma: allowlist secret
+        assert engine.url.query["options"] == "-csearch_path=tenant"
+        assert engine.url.render_as_string(hide_password=False) == ENCODED_POSTGRESQL_URL
+    finally:
+        engine.dispose()
+
+
+def test_apply_database_url_x_argument_rejects_blank_override_before_fallback() -> None:
+    config = Config()
+
+    with pytest.raises(
+        ValueError,
+        match="invalid sqlalchemy.url override; provide a non-empty SQLAlchemy database URL",
+    ):
+        _apply_database_url_x_argument(config, {"sqlalchemy.url": ""})
+
+    assert config.get_main_option("sqlalchemy.url") is None
+
+
+def test_apply_database_url_x_argument_rejects_invalid_override_before_fallback() -> None:
+    config = Config()
+
+    with pytest.raises(
+        ValueError,
+        match="invalid sqlalchemy.url override; provide a valid SQLAlchemy database URL",
+    ):
+        _apply_database_url_x_argument(config, {"sqlalchemy.url": "not-a-sqlalchemy-url"})
+
+    assert config.get_main_option("sqlalchemy.url") is None
+
+
+def test_apply_database_url_x_argument_ignores_absent_override() -> None:
+    config = Config()
+    sqlite_url = "sqlite:///tmp/alembic-config-x-argument-absent.db"
+    _set_alembic_database_url(config, sqlite_url)
+
+    _apply_database_url_x_argument(config, {})
+
+    assert config.get_main_option("sqlalchemy.url") == sqlite_url
 
 
 def test_production_migration_bootstrap_uses_helper_for_encoded_url() -> None:

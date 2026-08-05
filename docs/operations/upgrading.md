@@ -109,19 +109,35 @@ the optional Confluent Preview evidence schema. An enabled Confluent Cloud
 tenant prepares that schema online during startup. In a mixed deployment, this
 selection is independent for each tenant database.
 
-If you want to run migrations manually (e.g., to test before starting the engine):
-
-```bash
-uv run alembic -c src/core/storage/migrations/alembic.ini upgrade head
-```
-
-Set the database URL first if it differs from the default:
+If you want to run migrations manually (for example, to test before starting
+the engine), set `CHITRAGUPTA_DATABASE_URL` to the target connection URL and
+supply it explicitly:
 
 ```bash
 uv run alembic -c src/core/storage/migrations/alembic.ini \
-  -x sqlalchemy.url="postgresql+psycopg2://user:pass@host/dbname" \
+  -x sqlalchemy.url="${CHITRAGUPTA_DATABASE_URL}" \
   upgrade head
 ```
+
+The override uses normal SQLAlchemy URL syntax. Percent-encode reserved
+characters in credentials and query values once, using standard single-percent
+URL encoding; do not double percent signs. A blank or invalid override stops
+before Alembic can use the configured default database. The diagnostic
+identifies the invalid `sqlalchemy.url` override without including the supplied
+URL or credentials. Correct the URL and rerun the command.
+
+### PostgreSQL migration compatibility
+
+PostgreSQL 17 is verified through the supported migration chain to head from
+these starting states:
+
+- A fresh database with no Alembic revision.
+- Revision 004, before the billing primary-key change.
+- Revision 005, after the billing primary-key change.
+- Revision 008, before `chargeback_dimensions.env_id` is added.
+
+This verification does not claim compatibility for other PostgreSQL versions
+or for schemas that were altered manually.
 
 ### Migration 019: FOCUS Mapping Preview
 
@@ -248,7 +264,9 @@ selection:
 
 ```bash
 uv run alembic -c src/core/storage/migrations/alembic.ini \
-  -x focus_preview=confluent_cloud upgrade head
+  -x sqlalchemy.url="${CHITRAGUPTA_DATABASE_URL}" \
+  -x focus_preview=confluent_cloud \
+  upgrade head
 ```
 
 Offline SQL generation is not supported for enabled Preview evidence because
@@ -370,7 +388,13 @@ If an upgrade fails or the new version misbehaves:
 
 4. **Start the old version.** It will work with the restored database since the schema matches.
 
-Alembic supports `downgrade` but migration scripts may not always have complete downgrade logic. Restoring from backup is the safer path.
+Restoring from backup remains the preferred rollback path. PostgreSQL 17
+downgrade without identity conflicts is tested through revision 004. A
+downgrade stops before destructive changes if distinct billing rows depend on
+`product_category`, distinct Confluent Cloud billing rows depend on `env_id`,
+or distinct `chargeback_dimensions` rows depend on `env_id`. Restore the
+backup, or reconcile and merge the conflicting rows before retrying the
+downgrade.
 
 ## Configuration compatibility
 

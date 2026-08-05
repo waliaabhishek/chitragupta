@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Verify the PostgreSQL 17 migration chain to head from fresh databases and revisions 004, 005, and 008. Manual Alembic upgrades now target the supplied SQLAlchemy URL, while PostgreSQL downgrades stop before billing or chargeback identities would collapse.
 - Accept valid percent-encoded database URLs in credentials and query values during automatic migrations without changing the URL interpreted by the database driver.
 - Align provider-driven replacement with the actual half-open gather window: corrected billing dates inside `[start, end)` are recalculated, while dates outside that window remain untouched.
 - Populate FOCUS `ContractedUnitPrice` and `PricingCurrencyContractedUnitPrice` from their corresponding list unit prices for eligible priced Direct-billed PAYG Preview rows when negotiated unit-price discounts do not apply. Provider discounts remain represented by `BilledCost`, `EffectiveCost`, and `x_ConfluentDiscountAmount`; provider numeric evidence is preserved, non-priced credit rows remain null, and the mapping profile, endpoints, and generic chargeback export are unchanged.

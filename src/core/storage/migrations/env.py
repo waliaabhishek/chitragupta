@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from logging.config import fileConfig
 
 from alembic import context
@@ -19,19 +20,22 @@ from core.preview.storage_availability import (
     CFG_PREVIEW_EVIDENCE_MODULE,
     PreviewEvidenceIssueCollector,
 )
+from core.storage.migrations.config import apply_database_url_x_argument
 
 logger = logging.getLogger(__name__)
 
 target_metadata = SQLModel.metadata
 
 config = context.config
+x_arguments = context.get_x_argument(as_dictionary=True)
+apply_database_url_x_argument(config, x_arguments)
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 
-def _configure_preview_evidence() -> None:
-    requested = context.get_x_argument(as_dictionary=True).get("focus_preview")
+def _configure_preview_evidence(x_arguments: Mapping[str, str]) -> None:
+    requested = x_arguments.get("focus_preview")
     if requested not in {None, "disabled", "confluent_cloud"}:
         raise ValueError("invalid focus_preview selection; expected 'disabled' or 'confluent_cloud'")
     attributes = config.attributes
@@ -59,7 +63,7 @@ def _configure_preview_evidence() -> None:
     attributes[CFG_PREVIEW_EVIDENCE_ISSUES] = PreviewEvidenceIssueCollector()
 
 
-_configure_preview_evidence()
+_configure_preview_evidence(x_arguments)
 
 
 def run_migrations_offline() -> None:
