@@ -389,10 +389,17 @@ describe("FOCUS Mapping Preview API delegation", () => {
         target_focus_version: "1.4",
         conformance_status: "non_conforming",
       });
-    await expect(fetchPreviewArtifact(
+    const artifact = await fetchPreviewArtifact(
       revisionDetail.package.manifest.download_url,
       controller.signal,
-    )).resolves.toBeInstanceOf(Blob);
+    );
+    expect(typeof artifact.arrayBuffer).toBe("function");
+    expect(typeof artifact.text).toBe("function");
+    expect(artifact.size).toBe(3);
+    expect(await artifact.text()).toBe("{}\n");
+    expect([...new Uint8Array(await artifact.arrayBuffer())]).toEqual([
+      123, 125, 10,
+    ]);
   });
 
   it("rejects non-success revision responses through the shared HTTP guard", async () => {
