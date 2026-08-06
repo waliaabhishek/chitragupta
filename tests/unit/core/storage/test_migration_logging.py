@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import logging
+import re
 from unittest.mock import patch
 
 import pytest
 
 from core.storage.backends.sqlmodel.module import CoreStorageModule
 from core.storage.backends.sqlmodel.unit_of_work import SQLModelBackend
+
+ENCODED_POSTGRESQL_URL = (
+    "postgresql+psycopg://user:p%40ss@example.invalid/testdb?options=-csearch_path%3Dtenant"  # pragma: allowlist secret
+)
 
 
 @pytest.fixture()
@@ -95,17 +100,25 @@ class TestMigrationLoggingPreservation:
         and test_root_handlers_preserved to keep each test focused on a single concern.
         """
         captured: list = []
+        encoded_backend = SQLModelBackend(
+            ENCODED_POSTGRESQL_URL,
+            CoreStorageModule(),
+            use_migrations=True,
+        )
 
         def capture_upgrade(cfg, rev) -> None:
             captured.append((cfg, rev))
 
-        with patch("alembic.command.upgrade", side_effect=capture_upgrade):
-            backend._run_migrations()
+        try:
+            with patch("alembic.command.upgrade", side_effect=capture_upgrade):
+                encoded_backend._run_migrations()
+        finally:
+            encoded_backend.dispose()
 
         assert len(captured) == 1
         cfg, rev = captured[0]
         assert rev == "head"
-        assert cfg.get_main_option("sqlalchemy.url") == backend._connection_string
+        assert cfg.get_main_option("sqlalchemy.url") == ENCODED_POSTGRESQL_URL
 
     def test_create_tables_preserves_root_logger(self, backend: SQLModelBackend) -> None:
         """create_tables() preserves root logger state when use_migrations=True."""
@@ -128,3 +141,60 @@ class TestMigrationLoggingPreservation:
         finally:
             root.setLevel(logging.WARNING)
             root.handlers[:] = original_handlers
+
+    def test_create_tables_logs_started_and_completed_without_connection_string(
+        self,
+        backend: SQLModelBackend,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        with (
+            patch("alembic.command.upgrade"),
+            caplog.at_level(
+                logging.INFO,
+                logger="core.storage.backends.sqlmodel.unit_of_work",
+            ),
+        ):
+            backend.create_tables()
+
+        assert "migration_started" in caplog.text
+        assert "migration_completed" in caplog.text
+        assert backend._connection_string not in caplog.text
+
+    def test_create_tables_without_migrations_logs_degraded_path_without_connection_string(
+        self,
+        tmp_path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        degraded = SQLModelBackend(
+            f"sqlite:///{tmp_path / 'degraded.db'}",
+            CoreStorageModule(),
+            use_migrations=False,
+        )
+
+        with caplog.at_level(logging.WARNING, logger="core.storage.backends.sqlmodel.unit_of_work"):
+            degraded.create_tables()
+
+        assert "migration_degraded" in caplog.text
+        assert "direct_table_registration" in caplog.text
+        assert degraded._connection_string not in caplog.text
+        degraded.dispose()
+
+    def test_migration_failure_logs_sanitized_error_context_without_connection_string(
+        self,
+        backend: SQLModelBackend,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        secret = (
+            "postgresql+psycopg://user:p%40ss@example.invalid/db"  # pragma: allowlist secret
+            "?options=-csearch_path%3Dtenant"
+        )
+
+        with (
+            patch("alembic.command.upgrade", side_effect=RuntimeError(secret)),
+            caplog.at_level(logging.ERROR, logger="core.storage.backends.sqlmodel.unit_of_work"),
+            pytest.raises(RuntimeError, match=re.escape(secret)),
+        ):
+            backend.create_tables()
+
+        assert "migration_failed" in caplog.text
+        assert secret not in caplog.text

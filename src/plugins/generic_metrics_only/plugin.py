@@ -4,6 +4,7 @@ import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from core.logging_context import safe_log_context
 from core.metrics.config import create_metrics_source
 from core.models import CoreResource
 from plugins.generic_metrics_only.config import GenericMetricsOnlyConfig
@@ -31,7 +32,10 @@ class GenericMetricsOnlyPlugin:
         return "generic_metrics_only"
 
     def initialize(self, config: dict[str, Any]) -> None:
-        logger.info("Initializing GenericMetricsOnlyPlugin")
+        logger.info(
+            "plugin_initialize_started provider=generic_metrics_only%s",
+            safe_log_context(stage="plugin_initialize", operation="initialize", outcome="started"),
+        )
         self._config = GenericMetricsOnlyConfig.from_plugin_settings(config)
         self._metrics_source = create_metrics_source(self._config.metrics)
         self._handler = GenericMetricsOnlyHandler(
@@ -39,9 +43,8 @@ class GenericMetricsOnlyPlugin:
             metrics_source=self._metrics_source,
         )
         logger.info(
-            "GenericMetricsOnlyPlugin initialized ecosystem=%s cluster=%s",
-            "generic_metrics_only",
-            self._config.cluster_id,
+            "plugin_initialize_completed provider=generic_metrics_only%s",
+            safe_log_context(stage="plugin_initialize", operation="initialize", outcome="completed"),
         )
 
     def get_service_handlers(self) -> dict[str, ServiceHandler]:
@@ -65,6 +68,16 @@ class GenericMetricsOnlyPlugin:
     def build_shared_context(self, tenant_id: str) -> GenericSharedContext:
         if self._config is None:
             raise RuntimeError("Plugin not initialized.")
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                "shared_context_started provider=generic_metrics_only%s",
+                safe_log_context(
+                    tenant_id=tenant_id,
+                    stage="shared_context",
+                    operation="build_shared_context",
+                    outcome="started",
+                ),
+            )
         cluster = CoreResource(
             ecosystem="generic_metrics_only",
             tenant_id=tenant_id,
@@ -76,6 +89,15 @@ class GenericMetricsOnlyPlugin:
             deleted_at=None,
             last_seen_at=datetime.now(UTC),
             metadata={},
+        )
+        logger.info(
+            "shared_context_completed provider=generic_metrics_only%s",
+            safe_log_context(
+                tenant_id=tenant_id,
+                stage="shared_context",
+                operation="build_shared_context",
+                outcome="completed",
+            ),
         )
         return GenericSharedContext(cluster_resource=cluster)
 

@@ -12,7 +12,7 @@ import pytest
 
 from core.config.models import AppSettings, FeaturesConfig, StorageConfig, TenantConfig
 from core.engine.orchestrator import GatherFailureThresholdError, PipelineRunResult
-from workflow_runner import TenantRuntime, WorkflowRunner
+from workflow_runner import TenantRuntime, WorkflowRunner, _config_hash
 
 
 def _make_settings(
@@ -66,6 +66,9 @@ class TestBootstrapStorage:
         assert len(backends) == 2
         for b in backends:
             b.create_tables.assert_called_once()
+            b.dispose.assert_not_called()
+        runner.close()
+        for b in backends:
             b.dispose.assert_called_once()
 
     @patch("core.storage.registry.create_storage_backend")
@@ -79,6 +82,66 @@ class TestBootstrapStorage:
 
         # Only one backend created — second call is a no-op via _bootstrapped flag
         assert mock_storage.call_count == 1
+
+    @patch("workflow_runner.prepare_tenant_backend")
+    @patch("core.storage.registry.create_storage_backend")
+    def test_runtime_retains_exact_bootstrap_result_across_config_replacement(
+        self,
+        mock_storage: MagicMock,
+        mock_prepare: MagicMock,
+    ) -> None:
+        from core.preview.evidence import PreviewEvidenceBootstrapResult, PreviewEvidenceBootstrapStatus
+
+        first_result = PreviewEvidenceBootstrapResult(
+            status=PreviewEvidenceBootstrapStatus.ALREADY_CURRENT,
+            bootstrapped_windows=0,
+            bootstrapped_rows=0,
+            reason=None,
+        )
+        second_result = PreviewEvidenceBootstrapResult(
+            status=PreviewEvidenceBootstrapStatus.BOOTSTRAPPED,
+            bootstrapped_windows=1,
+            bootstrapped_rows=2,
+            reason=None,
+        )
+        mock_prepare.side_effect = [first_result, second_result]
+        mock_storage.side_effect = [MagicMock(), MagicMock()]
+        original = _make_tenant(tenant_id="tid1", lookback_days=30)
+        replacement = original.model_copy(update={"lookback_days": 60})
+        runner = WorkflowRunner(_make_settings(tenants={"t1": original}), MagicMock())
+
+        first = runner._get_or_create_runtime("t1", original)  # noqa: SLF001
+        second = runner._get_or_create_runtime("t1", replacement)  # noqa: SLF001
+
+        assert first.bootstrap_result is first_result
+        assert second.bootstrap_result is second_result
+        assert first is not second
+        runner.close()
+
+    @patch("workflow_runner.prepare_tenant_backend")
+    @patch("core.storage.registry.create_storage_backend")
+    def test_runtime_retains_typed_bootstrap_unavailability_across_config_replacement(
+        self,
+        mock_storage: MagicMock,
+        mock_prepare: MagicMock,
+    ) -> None:
+        from core.preview.storage_availability import PreviewEvidenceBootstrapUnavailable
+
+        first_unavailable = PreviewEvidenceBootstrapUnavailable("FirstBootstrapError")
+        second_unavailable = PreviewEvidenceBootstrapUnavailable("SecondBootstrapError")
+        mock_prepare.side_effect = [first_unavailable, second_unavailable]
+        mock_storage.side_effect = [MagicMock(), MagicMock()]
+        original = _make_tenant(tenant_id="tid1", lookback_days=30)
+        replacement = original.model_copy(update={"lookback_days": 60})
+        runner = WorkflowRunner(_make_settings(tenants={"t1": original}), MagicMock())
+
+        first = runner._get_or_create_runtime("t1", original)  # noqa: SLF001
+        second = runner._get_or_create_runtime("t1", replacement)  # noqa: SLF001
+
+        assert first.bootstrap_result == first_unavailable
+        assert second.bootstrap_result == second_unavailable
+        assert first is not second
+        runner.close()
 
     @patch("workflow_runner.ChargebackOrchestrator")
     @patch("core.storage.registry.create_storage_backend")
@@ -105,10 +168,11 @@ class TestBootstrapStorage:
         runner = WorkflowRunner(settings, registry)
         runner.run_once()
 
-        # Bootstrap call: create_tables + dispose
-        # _run_tenant: uses cached runtime, does NOT dispose (dispose deferred to close())
+        # Bootstrap creates the persistent runtime used by the worker cycle.
         assert mock_backend.create_tables.call_count == 1
-        assert mock_backend.dispose.call_count == 1  # only from bootstrap
+        assert mock_backend.dispose.call_count == 0
+        runner.close()
+        assert mock_backend.dispose.call_count == 1
 
     @patch("workflow_runner.ChargebackOrchestrator")
     @patch("core.storage.registry.create_storage_backend")
@@ -638,9 +702,7 @@ class TestTd021TenantRuntimeCaching:
         # Plugin and storage (runtime) created only once
         assert registry.create.call_count == 1
         assert mock_orch_cls.call_count == 1
-        # Storage: 1 for bootstrap (auto-bootstrapped by run_once) + 1 for runtime = 2 total
-        # But the runtime storage is the SAME object (cached), so no extra calls on 2nd run_once
-        assert mock_storage.call_count == 2  # bootstrap (disposed) + runtime (persistent)
+        assert mock_storage.call_count == 1
 
     @patch("workflow_runner.ChargebackOrchestrator")
     @patch("core.storage.registry.create_storage_backend")
@@ -976,7 +1038,7 @@ class TestCleanupRetention:
             plugin=MagicMock(),
             storage=mock_backend,
             orchestrator=MagicMock(),
-            config_hash="abc123",
+            config_hash=_config_hash(tenant),
             created_at=datetime.now(UTC),
         )
         runner._tenant_runtimes["t1"] = runtime
@@ -1002,7 +1064,7 @@ class TestCleanupRetention:
             plugin=MagicMock(),
             storage=mock_backend,
             orchestrator=MagicMock(),
-            config_hash="abc123",
+            config_hash=_config_hash(tenant),
             created_at=datetime.now(UTC),
         )
         runner._tenant_runtimes["t1"] = runtime
@@ -1585,7 +1647,7 @@ class TestCleanupRetentionStorageReuse:
             plugin=MagicMock(),
             storage=mock_storage,
             orchestrator=MagicMock(),
-            config_hash="abc123",
+            config_hash=_config_hash(tenant),
             created_at=datetime.now(UTC),
         )
         runner._tenant_runtimes["t1"] = runtime
@@ -1613,7 +1675,7 @@ class TestCleanupRetentionStorageReuse:
             plugin=MagicMock(),
             storage=mock_storage,
             orchestrator=MagicMock(),
-            config_hash="abc123",
+            config_hash=_config_hash(tenant),
             created_at=datetime.now(UTC),
         )
         runner._tenant_runtimes["t1"] = runtime
@@ -1645,7 +1707,7 @@ class TestCleanupRetentionStorageReuse:
             plugin=MagicMock(),
             storage=mock_storage,
             orchestrator=MagicMock(),
-            config_hash="abc123",
+            config_hash=_config_hash(tenant1),
             created_at=datetime.now(UTC),
         )
         runner._tenant_runtimes["t1"] = runtime
@@ -1669,7 +1731,7 @@ class TestCleanupRetentionStorageReuse:
             plugin=MagicMock(),
             storage=mock_storage,
             orchestrator=MagicMock(),
-            config_hash="abc123",
+            config_hash=_config_hash(tenant),
             created_at=datetime.now(UTC),
         )
         runner._tenant_runtimes["t1"] = runtime
@@ -1701,7 +1763,7 @@ class TestCleanupRetentionStorageReuse:
             plugin=MagicMock(),
             storage=mock_storage1,
             orchestrator=MagicMock(),
-            config_hash="abc123",
+            config_hash=_config_hash(tenant1),
             created_at=datetime.now(UTC),
         )
         runtime2 = TenantRuntime(
@@ -1709,7 +1771,7 @@ class TestCleanupRetentionStorageReuse:
             plugin=MagicMock(),
             storage=mock_storage2,
             orchestrator=MagicMock(),
-            config_hash="def456",
+            config_hash=_config_hash(tenant2),
             created_at=datetime.now(UTC),
         )
         runner._tenant_runtimes["t1"] = runtime1
@@ -1957,73 +2019,109 @@ class TestShutdownCheckWiring:
 
 
 # ---------------------------------------------------------------------------
-# Test 7: bootstrap_storage delegates to cleanup_orphaned_runs_for_all_tenants
-# Test 8: cleanup_orphaned_runs_for_all_tenants swallow_errors=True
-# Test 9: cleanup_orphaned_runs_for_all_tenants swallow_errors=False
 # ---------------------------------------------------------------------------
 
 
-class TestCleanupOrphanedRunsForAllTenants:
-    """Tests for the new module-level cleanup_orphaned_runs_for_all_tenants() function."""
+class TestPersistentRuntimeOrphanCleanup:
+    """Bootstrap cleanup uses the same leased runtime backend retained by the runner."""
 
+    @patch("core.storage.tenant_lifecycle.cleanup_orphaned_pipeline_run")
     @patch("core.storage.registry.create_storage_backend")
-    def test_bootstrap_storage_delegates_to_cleanup_function(self, mock_create_storage: MagicMock) -> None:
-        """Test 7: WorkflowRunner.bootstrap_storage() must call
-        cleanup_orphaned_runs_for_all_tenants(settings, swallow_errors=False)."""
-        from workflow_runner import cleanup_orphaned_runs_for_all_tenants  # noqa: F401
-
-        mock_backend = MagicMock()
-        mock_create_storage.return_value = mock_backend
-
+    def test_bootstrap_cleans_each_owner_on_its_persistent_backend(
+        self,
+        mock_create_storage: MagicMock,
+        mock_cleanup: MagicMock,
+    ) -> None:
+        backend = MagicMock()
+        mock_create_storage.return_value = backend
         settings = _make_settings(tenants={"t1": _make_tenant(tenant_id="tid1")})
         runner = WorkflowRunner(settings, MagicMock())
 
-        with patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants") as mock_cleanup:
+        runner.bootstrap_storage()
+
+        mock_cleanup.assert_called_once_with(backend, "t1")
+        assert runner._tenant_runtimes["t1"].storage is backend
+        backend.dispose.assert_not_called()
+
+    @patch("core.storage.registry.create_storage_backend")
+    def test_backend_construction_failure_propagates_without_publishing_runtime(
+        self,
+        mock_create_storage: MagicMock,
+    ) -> None:
+        mock_create_storage.side_effect = RuntimeError("db unavailable")
+        runner = WorkflowRunner(
+            _make_settings(tenants={"t": _make_tenant(tenant_id="tid")}),
+            MagicMock(),
+        )
+
+        with pytest.raises(RuntimeError, match="db unavailable"):
             runner.bootstrap_storage()
 
-        mock_cleanup.assert_called_once_with(settings, swallow_errors=False)
+        assert runner._tenant_runtimes == {}
 
-    def test_swallow_errors_true_does_not_raise_on_storage_failure(self) -> None:
-        """Test 8: When swallow_errors=True, create_tables() raising is caught and NOT re-raised."""
-        from workflow_runner import cleanup_orphaned_runs_for_all_tenants
+    @patch("workflow_runner.prepare_tenant_backend")
+    @patch("core.storage.registry.create_storage_backend")
+    def test_runtime_construction_preserves_original_error_and_attempts_both_cleanup_steps(
+        self,
+        mock_create_storage: MagicMock,
+        mock_prepare: MagicMock,
+    ) -> None:
+        backend = MagicMock()
+        backend.dispose.side_effect = RuntimeError("storage cleanup failed")
+        mock_create_storage.return_value = backend
+        mock_prepare.side_effect = ValueError("original preparation failure")
+        plugin = MagicMock()
+        plugin.close.side_effect = RuntimeError("plugin cleanup failed")
+        registry = MagicMock()
+        registry.create.return_value = plugin
+        runner = WorkflowRunner(
+            _make_settings(tenants={"t": _make_tenant(tenant_id="tid")}),
+            registry,
+        )
 
-        settings = _make_settings(tenants={"t": _make_tenant(tenant_id="tid")})
-        mock_storage = MagicMock()
-        mock_storage.create_tables.side_effect = RuntimeError("db unavailable")
+        with pytest.raises(ValueError, match="original preparation failure"):
+            runner.bootstrap_storage()
 
-        with patch("core.storage.registry.create_storage_backend", return_value=mock_storage):
-            # Must not raise
-            cleanup_orphaned_runs_for_all_tenants(settings, swallow_errors=True)
+        backend.dispose.assert_called_once_with()
+        plugin.close.assert_called_once_with()
+        assert runner._tenant_runtimes == {}
 
-    def test_swallow_errors_false_propagates_exception(self) -> None:
-        """Test 9: When swallow_errors=False, create_tables() raising propagates to caller."""
-        from workflow_runner import cleanup_orphaned_runs_for_all_tenants
+    @patch("core.storage.registry.create_storage_backend")
+    def test_orphan_query_failure_is_preview_independent_and_keeps_runtime(
+        self,
+        mock_create_storage: MagicMock,
+    ) -> None:
+        backend = MagicMock()
+        backend.create_unit_of_work.side_effect = [
+            RuntimeError("query failed"),
+            MagicMock(),
+        ]
+        mock_create_storage.return_value = backend
+        runner = WorkflowRunner(
+            _make_settings(tenants={"t": _make_tenant(tenant_id="tid")}),
+            MagicMock(),
+        )
 
-        settings = _make_settings(tenants={"t": _make_tenant(tenant_id="tid")})
-        mock_storage = MagicMock()
-        mock_storage.create_tables.side_effect = RuntimeError("db unavailable")
+        runner.bootstrap_storage()
 
-        with (
-            patch("core.storage.registry.create_storage_backend", return_value=mock_storage),
-            pytest.raises(RuntimeError, match="db unavailable"),
-        ):
-            cleanup_orphaned_runs_for_all_tenants(settings, swallow_errors=False)
+        assert runner._tenant_runtimes["t"].storage is backend
+        backend.dispose.assert_not_called()
 
-    def test_api_only_startup_cleanup_calls_cleanup_orphaned_runs(self) -> None:
-        """Test 2: cleanup_orphaned_runs_for_all_tenants calls PipelineRunTracker.cleanup_orphaned_runs
-        for each tenant — verifies the delegation chain works end-to-end."""
-        from workflow_runner import PipelineRunTracker, cleanup_orphaned_runs_for_all_tenants
+    @patch("core.storage.registry.create_storage_backend")
+    def test_api_lease_reuses_bootstrapped_worker_backend(
+        self,
+        mock_create_storage: MagicMock,
+    ) -> None:
+        backend = MagicMock()
+        mock_create_storage.return_value = backend
+        tenant = _make_tenant(tenant_id="tid")
+        runner = WorkflowRunner(_make_settings(tenants={"t": tenant}), MagicMock())
+        runner.bootstrap_storage()
 
-        settings = _make_settings(tenants={"t": _make_tenant(tenant_id="tid")})
-        mock_storage = MagicMock()
+        with runner.acquire_backend("t", tenant) as leased:
+            assert leased is backend
 
-        with (
-            patch("core.storage.registry.create_storage_backend", return_value=mock_storage),
-            patch.object(PipelineRunTracker, "cleanup_orphaned_runs") as mock_cleanup,
-        ):
-            cleanup_orphaned_runs_for_all_tenants(settings, swallow_errors=True)
-
-        mock_cleanup.assert_called_once_with("t")
+        mock_create_storage.assert_called_once()
 
 
 class TestPipelineRunTrackerCleanupOrphanedRunsRealDb:
@@ -2110,7 +2208,19 @@ class TestCleanupRetentionTopicAttribution:
         mock_uow.identities.delete_before.return_value = 0
         mock_uow.chargebacks.delete_before.return_value = 0
         mock_uow.topic_attributions.delete_before.return_value = 0
+        mock_uow.pipeline_state.delete_before.return_value = 0
         return mock_backend, mock_uow
+
+    def _make_overlay_plugin(self, overlay_config: Any) -> MagicMock:
+        from core.plugin.protocols import EcosystemPlugin, OverlayPlugin
+        from plugins.confluent_cloud.plugin import ConfluentCloudPlugin
+
+        plugin: MagicMock = MagicMock(spec=ConfluentCloudPlugin)
+        plugin.get_overlay_config.return_value = overlay_config
+        protocol_candidate: object = plugin
+        assert isinstance(protocol_candidate, OverlayPlugin)
+        assert isinstance(protocol_candidate, EcosystemPlugin)
+        return plugin
 
     def _make_tenant_with_ta(self, *, ta_enabled: bool, ta_retention_days: int = 30) -> TenantConfig:
         from core.metrics.config import MetricsConnectionConfig
@@ -2132,7 +2242,10 @@ class TestCleanupRetentionTopicAttribution:
             plugin_settings=plugin_settings,
         )
 
-    def test_calls_topic_attributions_delete_before_when_enabled(self) -> None:
+    def test_calls_topic_attributions_delete_before_when_enabled(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
         from plugins.confluent_cloud.config import TopicAttributionConfig
 
         mock_backend, mock_uow = self._make_mock_backend_with_uow()
@@ -2140,22 +2253,28 @@ class TestCleanupRetentionTopicAttribution:
         settings = _make_settings(tenants={"t1": tenant})
         runner = WorkflowRunner(settings, MagicMock())
         ta_config = TopicAttributionConfig(enabled=True, retention_days=60)
-        plugin = MagicMock()
-        plugin.get_overlay_config = MagicMock(return_value=ta_config)
+        plugin = self._make_overlay_plugin(ta_config)
         runtime = TenantRuntime(
             tenant_name="t1",
             plugin=plugin,
             storage=mock_backend,
             orchestrator=MagicMock(),
-            config_hash="abc123",
+            config_hash=_config_hash(tenant),
             created_at=datetime.now(UTC),
         )
         runner._tenant_runtimes["t1"] = runtime
-        runner._cleanup_retention()
+        with caplog.at_level(logging.ERROR, logger="workflow_runner"):
+            runner._cleanup_retention()
 
+        plugin.get_overlay_config.assert_called_once_with("topic_attribution")
         mock_uow.topic_attributions.delete_before.assert_called_once()
+        mock_uow.commit.assert_called_once_with()
+        assert "Tenant t1: retention cleanup failed" not in caplog.messages
 
-    def test_uses_topic_attribution_retention_days_not_tenant_retention_days(self) -> None:
+    def test_uses_topic_attribution_retention_days_not_tenant_retention_days(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
         """ta_config.retention_days (60) must be used, not config.retention_days (30)."""
         from datetime import timedelta
 
@@ -2166,61 +2285,81 @@ class TestCleanupRetentionTopicAttribution:
         settings = _make_settings(tenants={"t1": tenant})
         runner = WorkflowRunner(settings, MagicMock())
         ta_config = TopicAttributionConfig(enabled=True, retention_days=60)
-        plugin = MagicMock()
-        plugin.get_overlay_config = MagicMock(return_value=ta_config)
+        plugin = self._make_overlay_plugin(ta_config)
         runtime = TenantRuntime(
             tenant_name="t1",
             plugin=plugin,
             storage=mock_backend,
             orchestrator=MagicMock(),
-            config_hash="abc123",
+            config_hash=_config_hash(tenant),
             created_at=datetime.now(UTC),
         )
         runner._tenant_runtimes["t1"] = runtime
-        runner._cleanup_retention()
+        cleanup_now = datetime(2026, 7, 22, 15, 30, tzinfo=UTC)
+        expected_cutoff = cleanup_now - timedelta(days=60)
+        with caplog.at_level(logging.ERROR, logger="workflow_runner"):
+            runner._cleanup_retention(now=cleanup_now)
 
-        call_args = mock_uow.topic_attributions.delete_before.call_args
-        cutoff: datetime = call_args[0][2]  # positional: ecosystem, tenant_id, cutoff
+        plugin.get_overlay_config.assert_called_once_with("topic_attribution")
+        mock_uow.topic_attributions.delete_before.assert_called_once_with(
+            "confluent_cloud",
+            "tid1",
+            expected_cutoff,
+        )
+        mock_uow.commit.assert_called_once_with()
+        assert "Tenant t1: retention cleanup failed" not in caplog.messages
 
-        # cutoff must be approximately now() - 60 days (not 30)
-        expected_approx = datetime.now(UTC) - timedelta(days=60)
-        delta = abs((cutoff - expected_approx).total_seconds())
-        assert delta < 5, f"Expected cutoff ~60 days ago, got {cutoff} (delta={delta}s)"
+    def test_skips_topic_attribution_cleanup_when_overlay_config_disabled(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        from plugins.confluent_cloud.config import TopicAttributionConfig
 
-    def test_skips_topic_attribution_cleanup_when_disabled(self) -> None:
         mock_backend, mock_uow = self._make_mock_backend_with_uow()
         tenant = self._make_tenant_with_ta(ta_enabled=False)
         settings = _make_settings(tenants={"t1": tenant})
         runner = WorkflowRunner(settings, MagicMock())
+        plugin = self._make_overlay_plugin(TopicAttributionConfig(enabled=False, retention_days=60))
         runtime = TenantRuntime(
             tenant_name="t1",
-            plugin=MagicMock(),
+            plugin=plugin,
             storage=mock_backend,
             orchestrator=MagicMock(),
-            config_hash="abc123",
+            config_hash=_config_hash(tenant),
             created_at=datetime.now(UTC),
         )
         runner._tenant_runtimes["t1"] = runtime
-        runner._cleanup_retention()
+        with caplog.at_level(logging.ERROR, logger="workflow_runner"):
+            runner._cleanup_retention()
 
+        plugin.get_overlay_config.assert_called_once_with("topic_attribution")
         mock_uow.topic_attributions.delete_before.assert_not_called()
+        mock_uow.commit.assert_called_once_with()
+        assert "Tenant t1: retention cleanup failed" not in caplog.messages
 
-    def test_skips_topic_attribution_cleanup_when_no_plugin_settings(self) -> None:
-        """Tenants without TopicAttributionConfig must not touch topic_attributions."""
+    def test_skips_topic_attribution_cleanup_when_overlay_config_missing(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Overlay plugins returning no topic-attribution config must not touch topic_attributions."""
         mock_backend, mock_uow = self._make_mock_backend_with_uow()
-        # Use a plain tenant with no topic_attribution in plugin_settings
         tenant = _make_tenant(tenant_id="tid1", retention_days=30)
         settings = _make_settings(tenants={"t1": tenant})
         runner = WorkflowRunner(settings, MagicMock())
+        plugin = self._make_overlay_plugin(None)
         runtime = TenantRuntime(
             tenant_name="t1",
-            plugin=MagicMock(),
+            plugin=plugin,
             storage=mock_backend,
             orchestrator=MagicMock(),
-            config_hash="abc123",
+            config_hash=_config_hash(tenant),
             created_at=datetime.now(UTC),
         )
         runner._tenant_runtimes["t1"] = runtime
-        runner._cleanup_retention()
+        with caplog.at_level(logging.ERROR, logger="workflow_runner"):
+            runner._cleanup_retention()
 
+        plugin.get_overlay_config.assert_called_once_with("topic_attribution")
         mock_uow.topic_attributions.delete_before.assert_not_called()
+        mock_uow.commit.assert_called_once_with()
+        assert "Tenant t1: retention cleanup failed" not in caplog.messages

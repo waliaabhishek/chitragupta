@@ -63,6 +63,11 @@ from core.storage.backends.sqlmodel.tables import (
     PipelineStateTable,
 )
 from core.storage.backends.sqlmodel.tag_joins import TagJoinSpec, build_tag_join_specs
+from core.storage.backends.sqlmodel.time_bounds import exact_utc_half_open_bounds
+from core.storage.backends.sqlmodel.timestamps import (
+    canonical_utc_second,
+    exclusive_utc_second_upper_bound,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -201,6 +206,25 @@ class SQLModelResourceRepository:
         result = resource_to_domain(row) if row else None
         self._resource_cache[key] = result
         return result
+
+    def get_many(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        resource_ids: Sequence[str],
+    ) -> dict[str, Resource]:
+        unique_ids = sorted(set(resource_ids))
+        if not unique_ids:
+            return {}
+        statement = select(ResourceTable).where(
+            col(ResourceTable.ecosystem) == ecosystem,
+            col(ResourceTable.tenant_id) == tenant_id,
+            col(ResourceTable.resource_id).in_(unique_ids),
+        )
+        resources = [resource_to_domain(row) for row in self._session.exec(statement).all()]
+        for resource in resources:
+            self._resource_cache[(ecosystem, tenant_id, resource.resource_id)] = resource
+        return {resource.resource_id: resource for resource in resources}
 
     def find_active_at(
         self,
@@ -424,6 +448,25 @@ class SQLModelIdentityRepository:
         self._identity_cache[key] = result
         return result
 
+    def get_many(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        identity_ids: Sequence[str],
+    ) -> dict[str, Identity]:
+        unique_ids = sorted(set(identity_ids))
+        if not unique_ids:
+            return {}
+        statement = select(IdentityTable).where(
+            col(IdentityTable.ecosystem) == ecosystem,
+            col(IdentityTable.tenant_id) == tenant_id,
+            col(IdentityTable.identity_id).in_(unique_ids),
+        )
+        identities = [identity_to_domain(row) for row in self._session.exec(statement).all()]
+        for identity in identities:
+            self._identity_cache[(ecosystem, tenant_id, identity.identity_id)] = identity
+        return {identity.identity_id: identity for identity in identities}
+
     def find_active_at(
         self,
         ecosystem: str,
@@ -577,7 +620,14 @@ class SQLModelIdentityRepository:
 
 def _billing_pk(line: BillingLineItem) -> tuple[str, str, datetime, str, str, str]:
     """Extract billing table primary key tuple from domain object."""
-    return (line.ecosystem, line.tenant_id, line.timestamp, line.resource_id, line.product_type, line.product_category)
+    return (
+        line.ecosystem,
+        line.tenant_id,
+        canonical_utc_second(line.timestamp),
+        line.resource_id,
+        line.product_type,
+        line.product_category,
+    )
 
 
 class SQLModelBillingRepository:
@@ -605,7 +655,10 @@ class SQLModelBillingRepository:
         return billing_to_domain(merged)
 
     def find_by_date(self, ecosystem: str, tenant_id: str, target_date: date) -> list[BillingLineItem]:
-        start, end = _date_to_range(target_date)
+        start, end = exact_utc_half_open_bounds(
+            self._session,
+            *_date_to_range(target_date),
+        )
         stmt = select(BillingTable).where(
             col(BillingTable.ecosystem) == ecosystem,
             col(BillingTable.tenant_id) == tenant_id,
@@ -615,6 +668,7 @@ class SQLModelBillingRepository:
         return [billing_to_domain(r) for r in self._session.exec(stmt).all()]
 
     def find_by_range(self, ecosystem: str, tenant_id: str, start: datetime, end: datetime) -> list[BillingLineItem]:
+        start, end = exact_utc_half_open_bounds(self._session, start, end)
         stmt = select(BillingTable).where(
             col(BillingTable.ecosystem) == ecosystem,
             col(BillingTable.tenant_id) == tenant_id,
@@ -644,7 +698,10 @@ class SQLModelBillingRepository:
         return self._increment_int_column(line, "topic_attribution_attempts")
 
     def _reset_int_column_by_date(self, ecosystem: str, tenant_id: str, tracking_date: date, attr: str) -> int:
-        start, end = _date_to_range(tracking_date)
+        start, end = exact_utc_half_open_bounds(
+            self._session,
+            *_date_to_range(tracking_date),
+        )
         stmt = (
             update(BillingTable)
             .where(
@@ -678,8 +735,18 @@ class SQLModelBillingRepository:
     ) -> tuple[list[BillingLineItem], int]:
         where: list[Any] = [col(BillingTable.ecosystem) == ecosystem, col(BillingTable.tenant_id) == tenant_id]
         if start is not None:
+            start = exact_utc_half_open_bounds(
+                self._session,
+                start,
+                start,
+            )[0]
             where.append(col(BillingTable.timestamp) >= start)
         if end is not None:
+            end = exact_utc_half_open_bounds(
+                self._session,
+                end,
+                end,
+            )[0]
             where.append(col(BillingTable.timestamp) < end)
         if product_type is not None:
             where.append(col(BillingTable.product_type) == product_type)
@@ -694,6 +761,7 @@ class SQLModelBillingRepository:
         return items, total  # type: ignore[return-value]  # SQLModel returns table types, protocol expects domain types
 
     def delete_before(self, ecosystem: str, tenant_id: str, before: datetime) -> int:
+        before = exclusive_utc_second_upper_bound(before)
         stmt = delete(BillingTable).where(
             col(BillingTable.ecosystem) == ecosystem,
             col(BillingTable.tenant_id) == tenant_id,
@@ -796,7 +864,10 @@ class SQLModelChargebackRepository:
         return [chargeback_to_domain(dim, fact) for dim, fact in results]
 
     def find_by_date(self, ecosystem: str, tenant_id: str, target_date: date) -> list[ChargebackRow]:
-        start, end = _date_to_range(target_date)
+        start, end = exact_utc_half_open_bounds(
+            self._session,
+            *_date_to_range(target_date),
+        )
         return self._query_joined(
             col(ChargebackDimensionTable.ecosystem) == ecosystem,
             col(ChargebackDimensionTable.tenant_id) == tenant_id,
@@ -1026,8 +1097,7 @@ class SQLModelChargebackRepository:
         return items, total
 
     def delete_by_date(self, ecosystem: str, tenant_id: str, target_date: date) -> int:
-        start, end = _date_to_range(target_date)
-
+        start, end = exact_utc_half_open_bounds(self._session, *_date_to_range(target_date))
         dim_subquery = (
             select(ChargebackDimensionTable.dimension_id)
             .where(
@@ -1195,6 +1265,7 @@ class SQLModelChargebackRepository:
             yield from batch
 
     def delete_before(self, ecosystem: str, tenant_id: str, before: datetime) -> int:
+        before = exclusive_utc_second_upper_bound(before)
         dim_subquery = (
             select(ChargebackDimensionTable.dimension_id)
             .where(
@@ -1501,7 +1572,13 @@ class SQLModelPipelineStateRepository:
                 col(PipelineStateTable.tenant_id) == tenant_id,
                 col(PipelineStateTable.tracking_date) == tracking_date,
             )
-            .values(chargeback_calculated=False, topic_attribution_calculated=False)
+            .values(
+                chargeback_calculated=False,
+                topic_attribution_calculated=False,
+                calculation_id=None,
+                calculation_completed_at=None,
+                calculation_run_id=None,
+            )
         )
         self._session.execute(stmt)
 
@@ -1542,7 +1619,20 @@ class SQLModelPipelineStateRepository:
         )
         return [pipeline_state_to_domain(row) for row in self._session.exec(stmt).all()]
 
-    def mark_chargeback_calculated(self, ecosystem: str, tenant_id: str, tracking_date: date) -> None:
+    def mark_chargeback_calculated(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        tracking_date: date,
+        *,
+        calculation_id: str,
+        calculation_completed_at: datetime,
+        calculation_run_id: int | None,
+    ) -> None:
+        if not calculation_id:
+            raise ValueError("calculation_id must not be empty")
+        if calculation_completed_at.tzinfo is None or calculation_completed_at.utcoffset() is None:
+            raise ValueError("calculation_completed_at must be timezone-aware")
         stmt = (
             update(PipelineStateTable)
             .where(
@@ -1550,7 +1640,12 @@ class SQLModelPipelineStateRepository:
                 col(PipelineStateTable.tenant_id) == tenant_id,
                 col(PipelineStateTable.tracking_date) == tracking_date,
             )
-            .values(chargeback_calculated=True)
+            .values(
+                chargeback_calculated=True,
+                calculation_id=calculation_id,
+                calculation_completed_at=calculation_completed_at.astimezone(UTC),
+                calculation_run_id=calculation_run_id,
+            )
         )
         self._session.execute(stmt)
 
@@ -1587,6 +1682,16 @@ class SQLModelPipelineStateRepository:
             col(PipelineStateTable.chargeback_calculated) == True,  # noqa: E712
         )
         return self._session.exec(stmt).one()
+
+    def delete_before(self, ecosystem: str, tenant_id: str, before: date) -> int:
+        result = self._session.execute(
+            delete(PipelineStateTable).where(
+                col(PipelineStateTable.ecosystem) == ecosystem,
+                col(PipelineStateTable.tenant_id) == tenant_id,
+                col(PipelineStateTable.tracking_date) < before,
+            )
+        )
+        return int(getattr(result, "rowcount", 0))
 
 
 # --- PipelineRunRepository ---
@@ -1878,7 +1983,7 @@ class TopicAttributionRepository:
         for row in rows:
             dim = self._get_or_create_dimension(row)
             fact = TopicAttributionFactTable(
-                timestamp=row.timestamp,
+                timestamp=canonical_utc_second(row.timestamp),
                 dimension_id=dim.dimension_id,
                 amount=str(row.amount),
             )
@@ -1937,9 +2042,11 @@ class TopicAttributionRepository:
 
     def delete_by_date(self, ecosystem: str, tenant_id: str, target_date: date) -> int:
         """Delete all facts for a specific date. Returns count deleted."""
-        start = datetime(target_date.year, target_date.month, target_date.day, tzinfo=UTC)
-        end = start + timedelta(days=1)
-
+        start, end = exact_utc_half_open_bounds(
+            self._session,
+            datetime(target_date.year, target_date.month, target_date.day, tzinfo=UTC),
+            datetime(target_date.year, target_date.month, target_date.day, tzinfo=UTC) + timedelta(days=1),
+        )
         dim_ids_stmt = select(TopicAttributionDimensionTable.dimension_id).where(
             col(TopicAttributionDimensionTable.ecosystem) == ecosystem,
             col(TopicAttributionDimensionTable.tenant_id) == tenant_id,
@@ -2296,6 +2403,7 @@ class TopicAttributionRepository:
 
     def delete_before(self, ecosystem: str, tenant_id: str, before: datetime) -> int:
         """Delete fact rows older than cutoff, then prune orphaned dimension rows."""
+        before = exclusive_utc_second_upper_bound(before)
         dim_ids_stmt = select(TopicAttributionDimensionTable.dimension_id).where(
             col(TopicAttributionDimensionTable.ecosystem) == ecosystem,
             col(TopicAttributionDimensionTable.tenant_id) == tenant_id,

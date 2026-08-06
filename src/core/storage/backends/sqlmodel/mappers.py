@@ -22,6 +22,7 @@ from core.storage.backends.sqlmodel.tables import (
     PipelineRunTable,
     PipelineStateTable,
 )
+from core.storage.backends.sqlmodel.timestamps import canonical_utc_second
 
 logger = logging.getLogger(__name__)
 
@@ -152,7 +153,7 @@ def billing_to_table(b: CoreBillingLineItem) -> BillingTable:
     return BillingTable(
         ecosystem=b.ecosystem,
         tenant_id=b.tenant_id,
-        timestamp=ensure_utc_strict(b.timestamp),
+        timestamp=canonical_utc_second(b.timestamp),
         resource_id=b.resource_id,
         product_type=b.product_type,
         product_category=b.product_category,
@@ -202,7 +203,7 @@ def chargeback_to_dimension(row: ChargebackRow) -> ChargebackDimensionTable:
 
 def chargeback_to_fact(row: ChargebackRow, dimension_id: int) -> ChargebackFactTable:
     return ChargebackFactTable(
-        timestamp=ensure_utc_strict(row.timestamp),
+        timestamp=canonical_utc_second(row.timestamp),
         dimension_id=dimension_id,
         amount=str(row.amount),
         tags_json=json.dumps(row.tags),
@@ -239,6 +240,16 @@ def pipeline_state_to_table(p: PipelineState) -> PipelineStateTable:
         billing_gathered=p.billing_gathered,
         resources_gathered=p.resources_gathered,
         chargeback_calculated=p.chargeback_calculated,
+        calculation_id=p.calculation_id,
+        calculation_completed_at=(
+            None
+            if p.calculation_completed_at is None
+            else canonical_utc_second(
+                p.calculation_completed_at,
+                field="calculation_completed_at",
+            )
+        ),
+        calculation_run_id=p.calculation_run_id,
         topic_overlay_gathered=p.topic_overlay_gathered,
         topic_attribution_calculated=p.topic_attribution_calculated,
     )
@@ -252,6 +263,9 @@ def pipeline_state_to_domain(t: PipelineStateTable) -> PipelineState:
         billing_gathered=t.billing_gathered,
         resources_gathered=t.resources_gathered,
         chargeback_calculated=t.chargeback_calculated,
+        calculation_id=t.calculation_id,
+        calculation_completed_at=ensure_utc(t.calculation_completed_at),
+        calculation_run_id=t.calculation_run_id,
         topic_overlay_gathered=t.topic_overlay_gathered,
         topic_attribution_calculated=t.topic_attribution_calculated,
     )

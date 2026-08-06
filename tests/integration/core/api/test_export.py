@@ -59,6 +59,20 @@ class TestExportChargebacks:
         assert "timestamp" in header
         assert "identity_id" in header
 
+    def test_export_with_data_never_leaks_focus_preview_financial_columns(
+        self, app_with_backend: TestClient, in_memory_backend: SQLModelBackend
+    ) -> None:
+        _seed_chargeback(in_memory_backend)
+        response = app_with_backend.post(
+            "/api/v1/tenants/test-tenant/export",
+            json={"start_date": "2026-02-01", "end_date": "2026-02-28"},
+        )
+
+        assert response.status_code == 200
+        header = response.text.strip().split("\n")[0].split(",")
+        assert "ContractedUnitPrice" not in header
+        assert "PricingCurrencyContractedUnitPrice" not in header
+
     def test_export_custom_columns(self, app_with_backend: TestClient, in_memory_backend: SQLModelBackend) -> None:
         _seed_chargeback(in_memory_backend, with_custom_tag=True)
         response = app_with_backend.post(

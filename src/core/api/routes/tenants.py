@@ -6,7 +6,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Request
 
-from core.api.dependencies import get_or_create_backend, get_settings, get_tenant_config, get_unit_of_work
+from core.api.dependencies import get_backend_provider, get_settings, get_tenant_config, get_unit_of_work
 from core.api.schemas import (
     PipelineStateResponse,
     TenantListResponse,
@@ -29,11 +29,12 @@ async def list_tenants(
 ) -> TenantListResponse:
     logger.debug("GET /tenants")
     summaries: list[TenantStatusSummary] = []
+    provider = get_backend_provider(request)
     for tenant_name, tenant_config in settings.tenants.items():
-        backend = get_or_create_backend(
-            request.app.state.backends, tenant_name, tenant_config.storage, tenant_config.ecosystem
-        )
-        with backend.create_read_only_unit_of_work() as uow:
+        with (
+            provider.acquire_backend(tenant_name, tenant_config) as backend,
+            backend.create_read_only_unit_of_work() as uow,
+        ):
             pending = uow.pipeline_state.count_pending(tenant_config.ecosystem, tenant_config.tenant_id)
             calculated = uow.pipeline_state.count_calculated(tenant_config.ecosystem, tenant_config.tenant_id)
             last_date = uow.pipeline_state.get_last_calculated_date(tenant_config.ecosystem, tenant_config.tenant_id)

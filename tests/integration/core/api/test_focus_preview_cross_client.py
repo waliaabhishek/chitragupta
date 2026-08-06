@@ -1,0 +1,170 @@
+from __future__ import annotations
+
+import base64
+import hashlib
+import json
+import os
+import subprocess
+from collections.abc import Callable
+from pathlib import Path
+
+import anyio.to_thread
+import pytest
+
+from core.api.app import create_app
+from core.preview import cli
+from core.storage.backends.sqlmodel.unit_of_work import SQLModelBackend
+from plugins.confluent_cloud.storage.module import CCloudStorageModule
+from tests.integration.core.api.backend_provider import install_backend
+from tests.integration.core.api.test_focus_preview import (
+    SameThreadApiClient,
+    SameThreadCliClient,
+    _aggregate,
+    _allocation,
+    _body,
+    _seed,
+    _settings,
+    _source,
+    _wait_for_terminal,
+)
+
+
+@pytest.fixture(autouse=True)
+def _inline_startup_threads(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def run_inline(function: Callable[..., object], *args: object, **kwargs: object) -> object:
+        return function(*args, **kwargs)
+
+    async def run_sync_inline(function: Callable[..., object], *args: object, **_kwargs: object) -> object:
+        return function(*args)
+
+    monkeypatch.setattr("core.api.app.asyncio.to_thread", run_inline)
+    monkeypatch.setattr(anyio.to_thread, "run_sync", run_sync_inline)
+
+
+def test_one_real_stored_package_has_identical_api_cli_frontend_and_persisted_hashes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    settings = _settings(tmp_path)
+    backend = SQLModelBackend(
+        settings.tenants["production"].storage.connection_string.get_secret_value(),
+        CCloudStorageModule(),
+        use_migrations=False,
+        focus_preview_enabled=True,
+    )
+    backend.create_tables()
+    _seed(backend, source=_source(), aggregate=_aggregate(), allocation=_allocation())
+    app = create_app(settings)
+    output_dir = tmp_path / "cli-output"
+    with SameThreadApiClient(app) as client:
+        install_backend(app, "production", backend)
+        profile_response = client.get("/api/v1/tenants/production/focus-preview/profile")
+        assert profile_response.status_code == 200
+        profile = profile_response.json()
+        submitted = client.post("/api/v1/tenants/production/focus-preview/requests", json=_body())
+        status = _wait_for_terminal(client, submitted.json()["request_id"])
+        assert status["status"] == "ready"
+        package = status["package"]
+        assert package["files"][-1]["name"] == "focus-metadata.json"
+        assert package["files"][-1]["media_type"] == "application/json"
+        artifacts = [package["manifest"], *package["files"]]
+        api_bodies = {artifact["name"]: client.get(artifact["download_url"]).content for artifact in artifacts}
+        archive = client.get(package["download_all_url"])
+        assert archive.status_code == 200
+
+        cli_client = SameThreadCliClient(client)
+        monkeypatch.setattr(cli.httpx, "Client", lambda **_kwargs: cli_client)
+        monkeypatch.setattr(cli.time, "sleep", lambda _seconds: None)
+        assert (
+            cli.main(
+                [
+                    "download",
+                    "--api-url",
+                    "http://testserver/api/v1",
+                    "--tenant",
+                    "production",
+                    status["request_id"],
+                    "--output-dir",
+                    str(output_dir),
+                ]
+            )
+            == 0
+        )
+        capsys.readouterr()
+        assert (
+            cli.main(
+                [
+                    "status",
+                    "--api-url",
+                    "http://testserver/api/v1",
+                    "--tenant",
+                    "production",
+                    status["request_id"],
+                    "--json",
+                ]
+            )
+            == 0
+        )
+        cli_status = json.loads(capsys.readouterr().out)
+
+        with backend.create_preview_metadata_read_unit_of_work() as uow:
+            persisted = uow.requests.get_for_owner(status["request_id"], "confluent_cloud", "tenant-1")
+        assert persisted is not None and persisted.package is not None
+        persisted_metadata = {item.name: item.sha256 for item in (persisted.package.manifest, *persisted.package.files)}
+        expected = {artifact["name"]: artifact["sha256"] for artifact in artifacts}
+        assert persisted_metadata == expected
+        assert {name: hashlib.sha256(body).hexdigest() for name, body in api_bodies.items()} == expected
+        assert {name: hashlib.sha256((output_dir / name).read_bytes()).hexdigest() for name in api_bodies} == expected
+        manifest = json.loads(api_bodies["manifest.json"])
+        metadata = json.loads(api_bodies["focus-metadata.json"])
+        expected_contract = {
+            "target_focus_version": "1.4",
+            "conformance_status": "non_conforming",
+        }
+        assert {field: profile[field] for field in expected_contract} == expected_contract
+        assert {field: status[field] for field in expected_contract} == expected_contract
+        assert {field: cli_status[field] for field in expected_contract} == expected_contract
+        assert {field: manifest[field] for field in expected_contract} == expected_contract
+        assert profile["known_gaps"] == manifest["known_gaps"]
+        assert metadata["x_ChitraguptaPreviewMetadata"]["delivery"]["correction_handling"] == "not_a_correction_series"
+        assert metadata["x_ChitraguptaPreviewMetadata"]["delivery"]["consumer_action"] == (
+            "consume_as_immutable_requested_package"
+        )
+        assert [item["name"] for item in metadata["x_ChitraguptaPreviewMetadata"]["dataset_artifacts"]] == [
+            artifact["name"] for artifact in package["files"][:-1]
+        ]
+
+        response_bodies = {
+            artifact["download_url"]: base64.b64encode(api_bodies[artifact["name"]]).decode() for artifact in artifacts
+        }
+        response_bodies[package["download_all_url"]] = base64.b64encode(archive.content).decode()
+        encoded_fixture = base64.b64encode(
+            json.dumps(
+                {"profile": profile, "status": status, "bodies": response_bodies},
+                sort_keys=True,
+            ).encode()
+        ).decode()
+
+    environment = {
+        **os.environ,
+        "VITE_FOCUS_PREVIEW_CROSS_CLIENT_FIXTURE": encoded_fixture,
+    }
+    completed = subprocess.run(
+        [
+            "npm",
+            "--prefix",
+            "frontend",
+            "test",
+            "--",
+            "--coverage.enabled=false",
+            "src/api/focusPreview.crossClient.test.ts",
+        ],
+        cwd=Path(__file__).parents[4],
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    backend.dispose()

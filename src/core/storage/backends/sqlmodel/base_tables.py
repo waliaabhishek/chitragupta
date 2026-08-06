@@ -6,6 +6,8 @@ from datetime import datetime
 from sqlalchemy import Column, DateTime
 from sqlmodel import Field, SQLModel
 
+from core.storage.backends.sqlmodel.timestamps import UTCSecondDateTime
+
 logger = logging.getLogger(__name__)
 
 
@@ -59,7 +61,7 @@ class BillingTable(SQLModel, table=True):
 
     ecosystem: str = Field(primary_key=True)
     tenant_id: str = Field(primary_key=True)
-    timestamp: datetime = Field(sa_column=Column(DateTime(timezone=True), primary_key=True))
+    timestamp: datetime = Field(sa_column=Column(UTCSecondDateTime(), primary_key=True))
     resource_id: str = Field(primary_key=True)
     product_type: str = Field(primary_key=True)
     product_category: str = Field(primary_key=True)

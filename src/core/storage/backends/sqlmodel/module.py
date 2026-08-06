@@ -42,6 +42,11 @@ class CoreStorageModule:
 
     def register_tables(self, engine: Engine) -> None:
         """Ensure core tables are created (idempotent)."""
+        from core.preview.persistence import (
+            PreviewArtifactFileTable,
+            PreviewRequestTable,
+            PreviewRevisionTable,
+        )
         from core.storage.backends.sqlmodel.base_tables import BillingTable, IdentityTable, ResourceTable
         from core.storage.backends.sqlmodel.tables import (
             ChargebackDimensionTable,
@@ -66,5 +71,8 @@ class CoreStorageModule:
             EmissionRecordTable.__table__,  # type: ignore[attr-defined]  # SQLModel tables have __table__ at runtime via SQLAlchemy metaclass
             TopicAttributionDimensionTable.__table__,  # type: ignore[attr-defined]  # SQLModel tables have __table__ at runtime via SQLAlchemy metaclass
             TopicAttributionFactTable.__table__,  # type: ignore[attr-defined]  # SQLModel tables have __table__ at runtime via SQLAlchemy metaclass
+            PreviewRequestTable.__table__,  # type: ignore[attr-defined]
+            PreviewRevisionTable.__table__,  # type: ignore[attr-defined]
+            PreviewArtifactFileTable.__table__,  # type: ignore[attr-defined]
         ]
         SQLModel.metadata.create_all(engine, tables=core_tables)

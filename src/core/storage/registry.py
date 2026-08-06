@@ -16,6 +16,7 @@ def create_storage_backend(
     *,
     storage_module: StorageModule | None = None,
     use_migrations: bool = True,
+    focus_preview_enabled: bool = False,
 ) -> StorageBackend:
     """Create a storage backend from config.
 
@@ -44,4 +45,5 @@ def create_storage_backend(
         config.connection_string.get_secret_value(),
         module,
         use_migrations=use_migrations,
+        focus_preview_enabled=focus_preview_enabled,
     )

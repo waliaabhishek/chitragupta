@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from unittest.mock import MagicMock
 
 import pytest
@@ -203,6 +204,33 @@ class TestPluginClose:
 
         mock_admin.close.assert_called_once()
         assert plugin._admin_client is None
+
+    def test_close_logs_single_warning_and_continues_cleanup_when_admin_close_fails(
+        self,
+        base_settings,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        from plugins.self_managed_kafka.plugin import SelfManagedKafkaPlugin
+
+        plugin = SelfManagedKafkaPlugin()
+        plugin.initialize(base_settings)
+        failing_admin = MagicMock()
+        failing_admin.close.side_effect = OSError("secret")
+        metrics_source = MagicMock()
+        plugin._admin_client = failing_admin
+        plugin._metrics_source = metrics_source
+
+        with caplog.at_level(logging.WARNING, logger="plugins.self_managed_kafka.plugin"):
+            plugin.close()
+
+        assert plugin._admin_client is None
+        assert plugin._metrics_source is None
+        metrics_source.close.assert_called_once()
+        warning_records = [record for record in caplog.records if record.levelname == "WARNING"]
+        assert len(warning_records) == 1
+        assert "plugin_close" in warning_records[0].getMessage()
+        assert "error_type=OSError" in warning_records[0].getMessage()
+        assert "secret" not in caplog.text
 
 
 class TestPluginInjectsDependencies:

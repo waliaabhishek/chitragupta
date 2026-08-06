@@ -305,6 +305,12 @@ function makeTenantReadiness(
     permanent_failure: null,
     topic_attribution_status: "enabled",
     topic_attribution_error: null,
+    focus_preview_state: "ready",
+    focus_preview_completed_repair_dates: null,
+    focus_preview_total_repair_dates: null,
+    focus_preview_message: null,
+    focus_preview_ordinary_retention: null,
+    focus_preview_evidence_retention: null,
     ...overrides,
   };
 }

@@ -4,18 +4,15 @@ import logging
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta, tzinfo
-from typing import TYPE_CHECKING, Annotated, cast
+from typing import Annotated, cast
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import Depends, HTTPException, Path, Request
 
 from core.config.models import AppSettings, TenantConfig  # noqa: TC001  # FastAPI evaluates annotations at runtime
+from core.storage.backend_provider import TenantBackendProvider  # noqa: TC001
 from core.storage.interface import ReadOnlyUnitOfWork, StorageBackend, UnitOfWork  # noqa: TC001
-from core.storage.registry import create_storage_backend
-from plugins.storage_modules import get_storage_module_for_ecosystem
 
-if TYPE_CHECKING:
-    from core.config.models import StorageConfig
 logger = logging.getLogger(__name__)
 
 
@@ -87,31 +84,22 @@ def get_tenant_config(
     return settings.tenants[tenant_name]
 
 
-def get_or_create_backend(
-    backends: dict[str, StorageBackend], tenant_name: str, storage_config: StorageConfig, ecosystem: str
-) -> StorageBackend:
-    """Get cached backend or create and cache a new one."""
-    if tenant_name not in backends:
-        storage_module = get_storage_module_for_ecosystem(ecosystem)
-        backend = create_storage_backend(storage_config, storage_module=storage_module, use_migrations=False)
-        backend.create_tables()
-        backends[tenant_name] = backend
-    return backends[tenant_name]
+def get_backend_provider(request: Request) -> TenantBackendProvider:
+    provider = getattr(request.app.state, "backend_provider", None)
+    if not isinstance(provider, TenantBackendProvider):
+        raise HTTPException(status_code=503, detail="Storage backend provider is unavailable")
+    return provider
 
 
 def get_storage_backend(
     request: Request,
     tenant_name: Annotated[str, Path(description="Tenant name from config")],
     tenant_config: Annotated[TenantConfig, Depends(get_tenant_config)],
-) -> StorageBackend:
-    """Get or create shared storage backend for tenant (cached in app.state)."""
-    # Lazy-init backends dict
-    if not hasattr(request.app.state, "backends"):
-        request.app.state.backends = {}
-
-    return get_or_create_backend(
-        request.app.state.backends, tenant_name, tenant_config.storage, tenant_config.ecosystem
-    )
+) -> Iterator[StorageBackend]:
+    """Lease the tenant backend for the complete request dependency lifetime."""
+    provider = get_backend_provider(request)
+    with provider.acquire_backend(tenant_name, tenant_config) as backend:
+        yield backend
 
 
 def get_unit_of_work(

@@ -18,6 +18,25 @@ from plugins.confluent_cloud.crn import parse_ccloud_crn
 logger = logging.getLogger(__name__)
 
 
+def gather_organizations(
+    conn: CCloudConnection,
+    ecosystem: str,
+    tenant_id: str,
+) -> Iterable[Resource]:
+    """Gather provider-issued organization records used as billing accounts."""
+    for item in conn.get("/org/v2/organizations"):
+        yield CoreResource(
+            ecosystem=ecosystem,
+            tenant_id=tenant_id,
+            resource_id=item["id"],
+            resource_type="organization",
+            display_name=item.get("display_name"),
+            status=ResourceStatus.ACTIVE,
+            last_seen_at=datetime.now(UTC),
+            metadata={},
+        )
+
+
 def _parse_iso_datetime(value: str | None) -> datetime | None:
     """Parse ISO 8601 datetime string to UTC-aware datetime.
 
@@ -88,8 +107,10 @@ def gather_kafka_clusters(
             metadata_obj = item.get("metadata", {})
 
             # Normalize cloud/region to lowercase (per design decision)
-            cloud = (spec.get("cloud") or "").lower().strip()
-            region = (spec.get("region") or "").lower().strip()
+            provider_cloud = spec.get("cloud") or ""
+            provider_region = spec.get("region") or ""
+            cloud = provider_cloud.strip().lower()
+            region = provider_region.strip().lower()
 
             yield CoreResource(
                 ecosystem=ecosystem,
@@ -105,6 +126,8 @@ def gather_kafka_clusters(
                     "bootstrap_url": spec.get("kafka_bootstrap_endpoint"),
                     "cloud": cloud,
                     "region": region,
+                    "provider_cloud": provider_cloud,
+                    "provider_region": provider_region,
                 },
             )
 
@@ -183,8 +206,10 @@ def gather_schema_registries(
             metadata_obj = item.get("metadata", {})
 
             # Normalize cloud/region to lowercase
-            cloud = (spec.get("cloud") or "").lower().strip()
-            region = (spec.get("region") or "").lower().strip()
+            provider_cloud = spec.get("cloud") or ""
+            provider_region = spec.get("region") or ""
+            cloud = provider_cloud.strip().lower()
+            region = provider_region.strip().lower()
 
             yield CoreResource(
                 ecosystem=ecosystem,
@@ -200,6 +225,8 @@ def gather_schema_registries(
                     "http_endpoint": spec.get("http_endpoint"),
                     "cloud": cloud,
                     "region": region,
+                    "provider_cloud": provider_cloud,
+                    "provider_region": provider_region,
                     "crn": metadata_obj.get("resource_name"),
                 },
             )
@@ -266,8 +293,10 @@ def gather_flink_compute_pools(
             metadata_obj = item.get("metadata", {})
 
             # Normalize cloud and region: lowercase + strip (standard for all string matching)
-            cloud = (spec.get("cloud") or "").lower().strip()
-            region = (spec.get("region") or "").lower().strip()
+            provider_cloud = spec.get("cloud") or ""
+            provider_region = spec.get("region") or ""
+            cloud = provider_cloud.strip().lower()
+            region = provider_region.strip().lower()
 
             # Allocatable only if we have credentials for this region
             is_allocatable = region in flink_regions
@@ -285,6 +314,8 @@ def gather_flink_compute_pools(
                 metadata={
                     "cloud": cloud,
                     "region": region,
+                    "provider_cloud": provider_cloud,
+                    "provider_region": provider_region,
                     "is_allocatable": is_allocatable,
                     "crn": metadata_obj.get("resource_name"),
                 },

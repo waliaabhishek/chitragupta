@@ -30,6 +30,7 @@ dev = [
     "respx>=0.21.0",
     "types-cachetools>=5.0",
     "pre-commit>=4.0",
+    "psycopg[binary]>=3.2",
 ]
 docs = [
     "mkdocs-material>=9.5",
@@ -43,6 +44,7 @@ docs = [
 
 [project.scripts]
 chitragupta = "main:main"
+chitragupta-preview = "core.preview.cli:main"
 
 [tool.hatch.version]
 source = "vcs"
@@ -59,9 +61,6 @@ filterwarnings = [
     # temporarily disagrees with the SQLModel metadata.  Harmless and
     # unfixable without abandoning batch_alter_table.
     "ignore:Table '_alembic_tmp_:sqlalchemy.exc.SAWarning",
-    # In-memory SQLite connections in tests may be GC'd before explicit
-    # dispose(); harmless for :memory: databases.
-    "ignore:unclosed database:ResourceWarning",
 ]
 
 [tool.ruff]

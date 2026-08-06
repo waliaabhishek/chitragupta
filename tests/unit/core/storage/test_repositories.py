@@ -1084,11 +1084,22 @@ class TestPipelineStateRepository:
         repo = SQLModelPipelineStateRepository(session)
         repo.upsert(self._make_state())
         session.commit()
-        repo.mark_chargeback_calculated("eco", "t1", date(2026, 1, 15))
+        calculation_completed_at = datetime(2026, 1, 16, 2, 30, tzinfo=UTC)
+        repo.mark_chargeback_calculated(
+            "eco",
+            "t1",
+            date(2026, 1, 15),
+            calculation_id="calculation-1",
+            calculation_completed_at=calculation_completed_at,
+            calculation_run_id=None,
+        )
         session.commit()
         got = repo.get("eco", "t1", date(2026, 1, 15))
         assert got is not None
         assert got.chargeback_calculated is True
+        assert got.calculation_id == "calculation-1"
+        assert got.calculation_completed_at == calculation_completed_at
+        assert got.calculation_run_id is None
 
     def test_count_pending(self, session: Session) -> None:
         repo = SQLModelPipelineStateRepository(session)

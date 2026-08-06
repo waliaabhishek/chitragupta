@@ -3,22 +3,52 @@ from __future__ import annotations
 import calendar
 import logging
 import time
-from collections.abc import Callable, Sequence
+import uuid
+from collections.abc import Callable, Iterable, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from datetime import date as date_type
 from decimal import Decimal
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from core.engine.allocation import AllocationContext, AllocatorRegistry
+from core.engine.allocation_lineage import build_allocation_lineage_capture
 from core.engine.helpers import compute_active_fraction
 from core.engine.loading import load_protocol_callable
+from core.logging_context import safe_exception_context, safe_log_context
 from core.models.chargeback import ChargebackRow, CostType
 from core.models.identity import SENTINEL_IDENTITY_TYPES, CoreIdentity, IdentityResolution, IdentitySet
 from core.models.pipeline import PipelineState
-from core.plugin.protocols import OverlayPlugin, TopicDiscoveryPlugin
+from core.plugin.protocols import (
+    OverlayPlugin,
+    PreviewOrganizationGatherer,
+    SupplementalResourceGatherer,
+    TopicDiscoveryPlugin,
+)
 from core.plugin.registry import EcosystemBundle
+from core.preview.evidence import (
+    AllocationLineageRunStatus,
+    AllocationLineageUnavailableReason,
+    AllocationLineageUnavailableRun,
+    PreviewSourceAttempt,
+    SourceAttemptFailureReason,
+    SourceAttemptFinalStatus,
+    SourceAttemptStatus,
+)
+from core.preview.evidence_capture import (
+    NativeSourceEvidenceCapture,
+    NativeSourceEvidenceCostInput,
+    SourceAttemptBeginFailure,
+    SourceCaptureFailure,
+    SourceEvidenceStorageUnavailable,
+)
+from core.preview.organization_authority import (
+    OrganizationAuthorityFailureReason,
+    OrganizationAuthorityFinalStatus,
+)
+from core.storage.interface import AllocationLineageRunCapture
 
 if TYPE_CHECKING:
     from core.config.models import PluginSettingsBase, TenantConfig
@@ -50,8 +80,78 @@ def _get_ta_config(plugin: EcosystemPlugin) -> OverlayConfig | None:
 logger = logging.getLogger(__name__)
 
 
+def _safe_database_root_cause(exc: BaseException) -> str:
+    """Classify known database causes without rendering statements or parameters."""
+    origin = getattr(exc, "orig", None)
+    if origin is not None:
+        try:
+            if "UNIQUE constraint failed" in str(origin):
+                return "UNIQUE constraint failed"
+        except BaseException:
+            pass
+        return type(origin).__name__
+    return type(exc).__name__
+
+
+def _new_calculation_id() -> str:
+    return str(uuid.uuid4())
+
+
+def _calculation_utc_now() -> datetime:
+    return datetime.now(UTC)
+
+
 class GatherFailureThresholdError(Exception):
     """Raised when consecutive gather failures exceed threshold."""
+
+
+class LineageCaptureFailureReason(StrEnum):
+    CONSTRUCTION_FAILED = "construction_failed"
+
+
+@dataclass(frozen=True)
+class CalculationPhaseResult:
+    ecosystem: str
+    tenant_id: str
+    tracking_date: date_type
+    rows_written: int
+    calculation_id: str
+    calculation_completed_at: datetime
+    lineage_capture: AllocationLineageRunCapture | None
+    lineage_failure: LineageCaptureFailureReason | None
+
+    def __post_init__(self) -> None:
+        if not self.ecosystem.strip() or not self.tenant_id.strip() or not self.calculation_id.strip():
+            raise ValueError("calculation identity must not be blank")
+        if (
+            self.rows_written < 0
+            or self.calculation_completed_at.tzinfo is None
+            or self.calculation_completed_at.utcoffset() is None
+        ):
+            raise ValueError("invalid calculation result")
+        if (self.lineage_capture is None) == (self.lineage_failure is None):
+            raise ValueError("calculation result requires exactly one lineage outcome")
+        if self.lineage_failure is not None and not isinstance(self.lineage_failure, LineageCaptureFailureReason):
+            raise ValueError("calculation result has an invalid lineage failure")
+        capture = self.lineage_capture
+        if capture is not None and (
+            capture.ecosystem != self.ecosystem
+            or capture.tenant_id != self.tenant_id
+            or capture.tracking_date != self.tracking_date
+            or capture.calculation_id != self.calculation_id
+        ):
+            raise ValueError("lineage capture identity does not match calculation")
+
+
+@dataclass(frozen=True)
+class HistoricalRepairDateResult:
+    source_capture: NativeSourceEvidenceCapture
+    calculation: CalculationPhaseResult
+    billing_rows_written: int
+
+
+class HistoricalRepairProviderSourceError(RuntimeError):
+    """Historical provider data or its native capture was unavailable."""
 
 
 _DEFAULT_GRANULARITY_DURATION: dict[str, timedelta] = {
@@ -106,6 +206,13 @@ class PipelineRunResult:
     fatal: bool = False  # True when tenant is permanently failed
 
 
+class SourceGatherDisposition(StrEnum):
+    NOT_ATTEMPTED = "not_attempted"
+    ATTEMPTED = "attempted"
+    BEGIN_FAILED = "begin_failed"
+    STORAGE_UNAVAILABLE = "storage_unavailable"
+
+
 @dataclass
 class GatherResult:
     """Result from a single GatherPhase.run() call."""
@@ -113,6 +220,95 @@ class GatherResult:
     dates_gathered: int
     errors: list[str]
     skipped: bool = False  # True when throttled — no gather performed
+    source_disposition: SourceGatherDisposition = SourceGatherDisposition.NOT_ATTEMPTED
+    source_refresh_token: str | None = None
+    source_attempt_sequence: int | None = None
+    source_capture: NativeSourceEvidenceCapture | None = None
+    source_failure: SourceCaptureFailure | None = None
+
+    def __post_init__(self) -> None:
+        if self.skipped and (
+            self.dates_gathered != 0
+            or self.errors
+            or self.source_disposition is not SourceGatherDisposition.NOT_ATTEMPTED
+            or self.source_refresh_token is not None
+            or self.source_attempt_sequence is not None
+            or self.source_capture is not None
+            or self.source_failure is not None
+        ):
+            raise ValueError("skipped gather result must have an empty not-attempted outcome")
+        BillingGatherResult(
+            dates=frozenset(),
+            source_disposition=self.source_disposition,
+            source_refresh_token=self.source_refresh_token,
+            source_attempt_sequence=self.source_attempt_sequence,
+            source_capture=self.source_capture,
+            source_failure=self.source_failure,
+        )
+
+
+@dataclass(frozen=True)
+class GatherPlan:
+    now: datetime
+    refresh_start: datetime
+    refresh_end: datetime
+    should_refresh: bool
+
+    def __post_init__(self) -> None:
+        if not all(
+            value.tzinfo is not None and value.utcoffset() is not None
+            for value in (
+                self.now,
+                self.refresh_start,
+                self.refresh_end,
+            )
+        ):
+            raise ValueError("gather plan timestamps must be timezone-aware")
+        if self.refresh_start >= self.refresh_end:
+            raise ValueError("gather plan bounds must be ordered")
+
+
+class PreviewOrganizationBindingConflictError(RuntimeError):
+    """A provider organization observation conflicts with the immutable binding."""
+
+
+@dataclass(frozen=True)
+class BillingGatherResult:
+    dates: frozenset[date_type]
+    source_disposition: SourceGatherDisposition = SourceGatherDisposition.NOT_ATTEMPTED
+    source_refresh_token: str | None = None
+    source_attempt_sequence: int | None = None
+    source_capture: NativeSourceEvidenceCapture | None = None
+    source_failure: SourceCaptureFailure | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.source_disposition, SourceGatherDisposition):
+            raise ValueError("invalid source gather disposition")
+        if self.source_failure is not None and not isinstance(self.source_failure, SourceCaptureFailure):
+            raise ValueError("invalid source gather failure")
+        payload_empty = (
+            self.source_refresh_token is None
+            and self.source_attempt_sequence is None
+            and self.source_capture is None
+            and self.source_failure is None
+        )
+        if self.source_disposition in {
+            SourceGatherDisposition.NOT_ATTEMPTED,
+            SourceGatherDisposition.STORAGE_UNAVAILABLE,
+        }:
+            if not payload_empty:
+                raise ValueError("source gather disposition cannot carry source payload")
+            return
+        if not self.source_refresh_token or not self.source_attempt_sequence or self.source_attempt_sequence <= 0:
+            raise ValueError("attempted source gather requires durable attempt identity")
+        if self.source_disposition is SourceGatherDisposition.BEGIN_FAILED:
+            if self.source_capture is not None or self.source_failure is not SourceCaptureFailure.ATTEMPT_BEGIN_FAILED:
+                raise ValueError("begin-failed source gather requires its closed failure")
+            return
+        if (self.source_capture is None) == (self.source_failure is None):
+            raise ValueError("attempted source gather requires exactly one capture outcome")
+        if self.source_failure is SourceCaptureFailure.ATTEMPT_BEGIN_FAILED:
+            raise ValueError("attempted source gather cannot carry begin failure")
 
 
 class RetryChecker(Protocol):
@@ -179,7 +375,16 @@ class GatherPhase:
         ta_config = _get_ta_config(bundle.plugin)
         self._topic_attribution_enabled: bool = bool(ta_config and ta_config.enabled)
 
-    def run(self, uow: UnitOfWork | None = None) -> GatherResult:
+    def run(
+        self,
+        uow: UnitOfWork | None = None,
+        *,
+        plan: GatherPlan | None = None,
+        source_attempt: PreviewSourceAttempt
+        | SourceAttemptBeginFailure
+        | SourceEvidenceStorageUnavailable
+        | None = None,
+    ) -> GatherResult:
         """Execute full gather cycle.
 
         When called without uow (new path): runs Phase 1 (build_shared_context) +
@@ -188,8 +393,50 @@ class GatherPhase:
         detection and billing. Caller owns UoW lifecycle (open + commit).
         """
         if uow is None:
+            if plan is not None or source_attempt is not None:
+                raise ValueError("resource-only gather does not accept a plan or source state")
             return self._run_gather_only()
-        return self._run_full(uow)
+        if plan is None:
+            if source_attempt is not None:
+                raise ValueError("source state requires an explicit gather plan")
+            effective_plan = self.plan_refresh(datetime.now(UTC))
+            accept_direct_refresh = True
+        else:
+            effective_plan = plan
+            accept_direct_refresh = False
+        if not effective_plan.should_refresh:
+            return GatherResult(dates_gathered=0, errors=[], skipped=True)
+        result = self._run_full(uow, plan=effective_plan, source_attempt=source_attempt)
+        if accept_direct_refresh:
+            self.accept_refresh(effective_plan)
+        return result
+
+    def plan_refresh(self, now: datetime) -> GatherPlan:
+        normalized = _ensure_utc(now)
+        raw_start = normalized - timedelta(days=self._tenant_config.lookback_days)
+        raw_end = normalized - timedelta(days=self._tenant_config.cutoff_days)
+        if self._tenant_config.focus_preview_enabled:
+            start = datetime(raw_start.year, raw_start.month, raw_start.day, tzinfo=UTC)
+            end = datetime(raw_end.year, raw_end.month, raw_end.day, tzinfo=UTC)
+        else:
+            start = raw_start
+            end = raw_end
+        return GatherPlan(
+            now=normalized,
+            refresh_start=start,
+            refresh_end=end,
+            should_refresh=self._should_refresh(normalized),
+        )
+
+    def _daily_replacement_date_window(self, plan: GatherPlan) -> tuple[date_type, date_type]:
+        refresh_start = _ensure_utc(plan.refresh_start)
+        refresh_end = _ensure_utc(plan.refresh_end)
+        return refresh_start.date(), refresh_end.date()
+
+    def accept_refresh(self, plan: GatherPlan) -> None:
+        if not plan.should_refresh:
+            raise ValueError("cannot accept a throttled gather plan")
+        self._last_resource_gather_at = plan.now
 
     def _run_gather_only(self) -> GatherResult:
         """Phase 1 + Phase 2 gather only. Used when run() called without uow.
@@ -211,28 +458,47 @@ class GatherPhase:
                     try:
                         self._gather_resources_and_identities(handler, uow, shared_ctx)
                     except Exception as exc:
-                        logger.exception(
-                            "Handler %s gather failed — skipping deletion detection: %s",
-                            handler.service_type,
-                            exc,
+                        logger.warning(
+                            "handler_gather_failed%s",
+                            safe_log_context(
+                                tenant_id=self._tenant_id,
+                                stage="gather",
+                                outcome="deletion_detection_skipped",
+                                retryable=True,
+                                service_type=handler.service_type,
+                                **safe_exception_context(exc),
+                            ),
                         )
                         gather_errors.append(f"Handler {handler.service_type} gather failed: {exc}")
+                self._run_supplemental_gather(uow, datetime.now(UTC), gather_errors)
 
         return GatherResult(dates_gathered=0, errors=gather_errors)
 
-    def _run_full(self, uow: UnitOfWork) -> GatherResult:
+    def _run_full(
+        self,
+        uow: UnitOfWork,
+        *,
+        plan: GatherPlan,
+        source_attempt: PreviewSourceAttempt | SourceAttemptBeginFailure | SourceEvidenceStorageUnavailable | None,
+    ) -> GatherResult:
         """Full gather cycle with deletion detection and billing. Caller owns UoW."""
-        now = datetime.now(UTC)
+        if not plan.should_refresh:
+            raise ValueError("throttled gather plan cannot execute")
+        now = plan.now
 
-        if not self._should_refresh(now):
-            assert self._last_resource_gather_at is not None  # guaranteed by _should_refresh logic
-            logger.debug(
-                "Skipping resource/billing refresh — last gather was %s ago",
-                now - self._last_resource_gather_at,
-            )
-            return GatherResult(dates_gathered=0, errors=[], skipped=True)
-
-        all_gathered_resource_ids: set[str] = set()
+        handlers = tuple(self._bundle.handlers.items())
+        declared_handlers_by_type: dict[str, set[str]] = {}
+        successful_handlers_by_type: dict[str, set[str]] = {}
+        observed_declared_resource_ids_by_type: dict[str, set[str]] = {}
+        for handler_name, handler in handlers:
+            for resource_type in dict.fromkeys(handler.gathered_resource_types):
+                declaring_handlers = declared_handlers_by_type.get(resource_type)
+                if declaring_handlers is None:
+                    declaring_handlers = set()
+                    declared_handlers_by_type[resource_type] = declaring_handlers
+                    successful_handlers_by_type[resource_type] = set()
+                    observed_declared_resource_ids_by_type[resource_type] = set()
+                declaring_handlers.add(handler_name)
         all_gathered_identity_ids: set[str] = set()
         gather_complete = True
         gather_errors: list[str] = []
@@ -240,28 +506,72 @@ class GatherPhase:
         # Phase 1: Build shared context once for all handlers.
         shared_ctx = self._bundle.plugin.build_shared_context(self._tenant_id)
 
-        for handler in self._bundle.handlers.values():
+        for handler_name, handler in handlers:
             try:
-                r_ids, i_ids = self._gather_resources_and_identities(handler, uow, shared_ctx)
-                all_gathered_resource_ids.update(r_ids)
+                handler_ids_by_type, i_ids = self._gather_resources_and_identities(handler, uow, shared_ctx)
                 all_gathered_identity_ids.update(i_ids)
+                for resource_type in dict.fromkeys(handler.gathered_resource_types):
+                    successful_handlers_by_type[resource_type].add(handler_name)
+                    resource_ids = handler_ids_by_type.get(resource_type)
+                    if resource_ids is not None:
+                        observed_declared_resource_ids_by_type[resource_type].update(resource_ids)
             except Exception as exc:
-                logger.exception("Handler %s gather failed: %s", handler.service_type, exc)
+                logger.warning(
+                    "handler_gather_failed%s",
+                    safe_log_context(
+                        tenant_id=self._tenant_id,
+                        stage="gather",
+                        outcome="partial",
+                        retryable=True,
+                        service_type=handler.service_type,
+                        **safe_exception_context(exc),
+                    ),
+                )
                 gather_complete = False
                 gather_errors.append(f"Handler {handler.service_type} gather failed: {exc}")
 
+        resource_ids_by_type = {
+            resource_type: observed_declared_resource_ids_by_type[resource_type]
+            for resource_type, declaring_handlers in declared_handlers_by_type.items()
+            if successful_handlers_by_type[resource_type] == declaring_handlers
+        }
+
+        # Supplemental inventory is isolated from ordinary handler completion,
+        # billing readiness, and billing-resource deletion detection.
+        self._run_supplemental_gather(uow, now, gather_errors)
+
+        excluded_resource_types = (
+            self._bundle.plugin.supplemental_resource_types
+            if isinstance(self._bundle.plugin, SupplementalResourceGatherer)
+            else ()
+        )
+        if resource_ids_by_type:
+            for resource_type in sorted(resource_ids_by_type):
+                self._detect_resource_deletions(
+                    uow.resources,
+                    resource_ids_by_type[resource_type],
+                    now,
+                    (resource_type,),
+                    excluded_resource_types,
+                    counter_name=f"resources:{resource_type}",
+                )
+            self._zero_gather_counters["resources"] = max(
+                (count for name, count in self._zero_gather_counters.items() if name.startswith("resources:")),
+                default=0,
+            )
         if gather_complete:
             self._detect_deletions(
                 uow,
                 now,
-                all_gathered_resource_ids,
+                set(),
                 all_gathered_identity_ids,
-                gathered_resource_types=self._bundle.billing_resource_types,
+                (),
             )
         else:
-            logger.warning("Skipping deletion detection — incomplete gather for %s", self._tenant_id)
+            logger.warning("Skipping identity deletion detection — incomplete gather for %s", self._tenant_id)
 
-        gathered_billing_dates = self._gather_billing(uow, now)
+        billing_result = self._gather_billing(uow, plan, source_attempt=source_attempt)
+        gathered_billing_dates = set(billing_result.dates)
 
         for billing_date in gathered_billing_dates:
             _ensure_pipeline_state(uow, self._ecosystem, self._tenant_id, billing_date)
@@ -285,37 +595,172 @@ class GatherPhase:
                         self._tenant_id,
                         billing_date,
                     )
-            except Exception:
+            except Exception as exc:
                 logger.warning(
-                    "Topic discovery failed for tenant=%s — topic_overlay_gathered stays False",
-                    self._tenant_id,
-                    exc_info=True,
+                    "topic_discovery_failed%s",
+                    safe_log_context(
+                        tenant_id=self._tenant_id,
+                        stage="topic_discovery",
+                        outcome="overlay_pending",
+                        retryable=True,
+                        **safe_exception_context(exc),
+                    ),
                 )
 
-        self._apply_recalculation_window(uow, gathered_billing_dates, now)
-        self._last_resource_gather_at = now
-
-        return GatherResult(dates_gathered=len(gathered_billing_dates), errors=gather_errors)
+        self._apply_recalculation_window(uow, gathered_billing_dates, plan)
+        return GatherResult(
+            dates_gathered=len(gathered_billing_dates),
+            errors=gather_errors,
+            source_disposition=billing_result.source_disposition,
+            source_refresh_token=billing_result.source_refresh_token,
+            source_attempt_sequence=billing_result.source_attempt_sequence,
+            source_capture=billing_result.source_capture,
+            source_failure=billing_result.source_failure,
+        )
 
     def _should_refresh(self, now: datetime) -> bool:
         return self._last_resource_gather_at is None or (now - self._last_resource_gather_at) >= self._min_refresh_gap
 
     def _gather_resources_and_identities(
         self, handler: ServiceHandler, uow: UnitOfWork, shared_ctx: object | None = None
-    ) -> tuple[set[str], set[str]]:
-        gathered_resource_ids: set[str] = set()
+    ) -> tuple[dict[str, set[str]], set[str]]:
+        gathered_resource_ids_by_type: dict[str, set[str]] = {}
         gathered_identity_ids: set[str] = set()
         for resource in handler.gather_resources(self._tenant_id, uow, shared_ctx):
             if resource.created_at is not None:
                 resource = replace(resource, created_at=_ensure_utc(resource.created_at))  # type: ignore[type-var]  # runtime objects are dataclasses behind Resource Protocol
             uow.resources.upsert(resource)
-            gathered_resource_ids.add(resource.resource_id)
+            resource_ids = gathered_resource_ids_by_type.get(resource.resource_type)
+            if resource_ids is None:
+                resource_ids = set()
+                gathered_resource_ids_by_type[resource.resource_type] = resource_ids
+            resource_ids.add(resource.resource_id)
         for identity in handler.gather_identities(self._tenant_id, uow):
             if identity.created_at is not None:
                 identity = replace(identity, created_at=_ensure_utc(identity.created_at))  # type: ignore[type-var]  # runtime objects are dataclasses behind Identity Protocol
             uow.identities.upsert(identity)
             gathered_identity_ids.add(identity.identity_id)
-        return gathered_resource_ids, gathered_identity_ids
+        return gathered_resource_ids_by_type, gathered_identity_ids
+
+    def _run_supplemental_gather(
+        self,
+        uow: UnitOfWork,
+        now: datetime,
+        gather_errors: list[str],
+    ) -> None:
+        plugin = self._bundle.plugin
+        if not isinstance(plugin, SupplementalResourceGatherer):
+            return
+        for resource_type in plugin.supplemental_resource_types:
+            if resource_type == "organization":
+                continue
+            try:
+                resources = list(plugin.gather_supplemental_resources(self._tenant_id, resource_type, uow))
+                if any(resource.resource_type != resource_type for resource in resources):
+                    raise ValueError(f"supplemental {resource_type} gather returned another resource type")
+                for resource in resources:
+                    uow.resources.upsert(resource)
+                observed_ids = {resource.resource_id for resource in resources}
+                active, _ = uow.resources.find_active_at(
+                    self._ecosystem,
+                    self._tenant_id,
+                    now,
+                    resource_type=resource_type,
+                    count=False,
+                )
+                for existing in active:
+                    if existing.resource_type == resource_type and existing.resource_id not in observed_ids:
+                        uow.resources.mark_deleted(
+                            self._ecosystem,
+                            self._tenant_id,
+                            existing.resource_id,
+                            now,
+                        )
+            except Exception as exc:
+                logger.warning(
+                    "supplemental_gather_failed resource_type=%s%s",
+                    resource_type,
+                    safe_log_context(
+                        tenant_id=self._tenant_id,
+                        stage="supplemental_gather",
+                        outcome="partial",
+                        retryable=True,
+                        **safe_exception_context(exc),
+                    ),
+                )
+                gather_errors.append(f"Supplemental {resource_type} gather failed: {exc}")
+
+    def _reconcile_organization_resources(
+        self,
+        uow: UnitOfWork,
+        observed: Sequence[Resource],
+        now: datetime,
+    ) -> None:
+        """Persist one immutable provider organization binding per tenant partition."""
+        active, _ = uow.resources.find_active_at(
+            self._ecosystem,
+            self._tenant_id,
+            now,
+            resource_type="organization",
+            count=False,
+        )
+        active_organizations = [resource for resource in active if resource.resource_type == "organization"]
+        bound = [
+            resource
+            for resource in active_organizations
+            if resource.metadata.get("organization_binding_state") == "bound"
+        ]
+        legacy_unclassified = [
+            resource for resource in active_organizations if "organization_binding_state" not in resource.metadata
+        ]
+        if len(bound) > 1:
+            raise PreviewOrganizationBindingConflictError("multiple provider organization bindings are active")
+        observed_by_id = {resource.resource_id: resource for resource in observed if resource.resource_id.strip()}
+        bound_id = bound[0].resource_id if bound else None
+        if len(observed) != 1 or len(observed_by_id) != 1:
+            for resource in observed_by_id.values():
+                state = "bound" if resource.resource_id == bound_id else "conflicting_observation"
+                uow.resources.upsert(
+                    replace(  # type: ignore[type-var]  # runtime Resource implementations are dataclasses
+                        resource,
+                        metadata={**resource.metadata, "organization_binding_state": state},
+                    )
+                )
+            raise ValueError("provider organization acquisition must return exactly one nonblank ID")
+        observed_id, resource = next(iter(observed_by_id.items()))
+        if bound_id is not None and observed_id != bound_id:
+            uow.resources.upsert(
+                replace(  # type: ignore[type-var]  # runtime Resource implementations are dataclasses
+                    resource, metadata={**resource.metadata, "organization_binding_state": "conflicting_observation"}
+                )
+            )
+            raise PreviewOrganizationBindingConflictError(
+                "provider organization observation conflicts with the immutable binding"
+            )
+        if (
+            not bound
+            and legacy_unclassified
+            and (len(active_organizations) != 1 or observed_id != legacy_unclassified[0].resource_id)
+        ):
+            if observed_id not in {item.resource_id for item in legacy_unclassified}:
+                uow.resources.upsert(
+                    replace(  # type: ignore[type-var]  # runtime Resource implementations are dataclasses
+                        resource,
+                        metadata={**resource.metadata, "organization_binding_state": "conflicting_observation"},
+                    )
+                )
+            raise PreviewOrganizationBindingConflictError(
+                "provider organization observation conflicts with legacy organization state"
+            )
+        uow.resources.upsert(
+            replace(  # type: ignore[type-var]  # runtime Resource implementations are dataclasses
+                resource,
+                metadata={**resource.metadata, "organization_binding_state": "bound"},
+            )
+        )
+        for existing in active_organizations:
+            if existing.resource_id != observed_id:
+                uow.resources.mark_deleted(self._ecosystem, self._tenant_id, existing.resource_id, now)
 
     def _run_deletion_scan(
         self,
@@ -332,6 +777,7 @@ class GatherPhase:
         then pass the results here along with id_getter and mark_fn closures.
         """
         threshold = self._tenant_config.zero_gather_deletion_threshold
+        self._zero_gather_counters.setdefault(entity_name, 0)
         if not gathered_ids and active_entities:
             self._zero_gather_counters[entity_name] += 1
             consecutive = self._zero_gather_counters[entity_name]
@@ -367,6 +813,8 @@ class GatherPhase:
         gathered_ids: set[str],
         now: datetime,
         resource_types: Sequence[str],
+        excluded_resource_types: Sequence[str] = (),
+        counter_name: str = "resources",
     ) -> None:
         """Deletion detection scoped to billing-relevant resource types.
 
@@ -380,10 +828,17 @@ class GatherPhase:
             resource_type=resource_types,
             count=False,
         )
+        if excluded_resource_types:
+            active_resources = [
+                resource
+                for resource in active_resources
+                if resource.resource_type not in excluded_resource_types
+                and (not resource_types or resource.resource_type in resource_types)
+            ]
         self._run_deletion_scan(
             active_resources,
             gathered_ids,
-            "resources",
+            counter_name,
             now,
             id_getter=lambda r: r.resource_id,
             mark_fn=lambda rid, ts: repo.mark_deleted(self._ecosystem, self._tenant_id, rid, ts),
@@ -414,27 +869,84 @@ class GatherPhase:
         gathered_resource_ids: set[str],
         gathered_identity_ids: set[str],
         gathered_resource_types: Sequence[str],
+        excluded_resource_types: Sequence[str] = (),
     ) -> None:
-        self._detect_resource_deletions(uow.resources, gathered_resource_ids, now, gathered_resource_types)
+        if gathered_resource_types:
+            self._detect_resource_deletions(
+                uow.resources,
+                gathered_resource_ids,
+                now,
+                gathered_resource_types,
+                excluded_resource_types,
+            )
         self._detect_entity_deletions(uow.identities, gathered_identity_ids, "identities", lambda i: i.identity_id, now)
 
-    def _gather_billing(self, uow: UnitOfWork, now: datetime) -> set[date_type]:
-        start = now - timedelta(days=self._tenant_config.lookback_days)
-        end = now - timedelta(days=self._tenant_config.cutoff_days)
+    def _gather_billing(
+        self,
+        uow: UnitOfWork,
+        plan: GatherPlan,
+        *,
+        source_attempt: PreviewSourceAttempt | SourceAttemptBeginFailure | SourceEvidenceStorageUnavailable | None,
+    ) -> BillingGatherResult:
+        start = plan.refresh_start
+        end = plan.refresh_end
         cost_input = self._bundle.plugin.get_cost_input()
         gathered: set[date_type] = set()
-        for line in cost_input.gather(self._tenant_id, start, end, uow):
+        source_capture = None
+        source_failure = None
+        lines: Iterable[BillingLineItem]
+        if isinstance(source_attempt, PreviewSourceAttempt) and isinstance(cost_input, NativeSourceEvidenceCostInput):
+            native_result = cost_input.gather_with_native_source_evidence(self._tenant_id, start, end)
+            lines = native_result.billing_lines
+            source_capture = native_result.capture
+            source_failure = native_result.capture_failure
+        else:
+            lines = cost_input.gather(self._tenant_id, start, end, uow)
+            if isinstance(source_attempt, PreviewSourceAttempt):
+                source_failure = SourceCaptureFailure.CAPABILITY_UNAVAILABLE
+        for line in lines:
             line = replace(line, timestamp=_ensure_utc(line.timestamp))  # type: ignore[type-var]  # runtime objects are dataclasses behind BillingLineItem Protocol
             uow.billing.upsert(line)
             gathered.add(line.timestamp.date())
-        return gathered
+        if source_attempt is None:
+            return BillingGatherResult(dates=frozenset(gathered))
+        if isinstance(source_attempt, SourceEvidenceStorageUnavailable):
+            return BillingGatherResult(
+                dates=frozenset(gathered),
+                source_disposition=SourceGatherDisposition.STORAGE_UNAVAILABLE,
+            )
+        if isinstance(source_attempt, SourceAttemptBeginFailure):
+            from core.preview.persistence import PreviewSourceAttemptFallbackUnitOfWork
+
+            if not isinstance(uow, PreviewSourceAttemptFallbackUnitOfWork):
+                raise RuntimeError("source attempt fallback storage is unavailable")
+            fallback = uow.source_attempt_fallback.ensure_begin_failed(
+                source_attempt,
+                completed_at=datetime.now(UTC),
+            )
+            return BillingGatherResult(
+                dates=frozenset(gathered),
+                source_disposition=SourceGatherDisposition.BEGIN_FAILED,
+                source_refresh_token=source_attempt.refresh_token,
+                source_attempt_sequence=fallback.attempt_sequence,
+                source_capture=None,
+                source_failure=SourceCaptureFailure.ATTEMPT_BEGIN_FAILED,
+            )
+        return BillingGatherResult(
+            dates=frozenset(gathered),
+            source_disposition=SourceGatherDisposition.ATTEMPTED,
+            source_refresh_token=source_attempt.refresh_token,
+            source_attempt_sequence=source_attempt.attempt_sequence,
+            source_capture=source_capture,
+            source_failure=source_failure,
+        )
 
     def _apply_recalculation_window(
-        self, uow: UnitOfWork, gathered_billing_dates: set[date_type], now: datetime
+        self, uow: UnitOfWork, gathered_billing_dates: set[date_type], plan: GatherPlan
     ) -> None:
-        recalc_cutoff = (now - timedelta(days=self._tenant_config.cutoff_days)).date()
+        replacement_start, replacement_end = self._daily_replacement_date_window(plan)
         for billing_date in gathered_billing_dates:
-            if billing_date >= recalc_cutoff:
+            if replacement_start <= billing_date < replacement_end:
                 existing_state = uow.pipeline_state.get(self._ecosystem, self._tenant_id, billing_date)
                 if existing_state and existing_state.chargeback_calculated:
                     uow.chargebacks.delete_by_date(self._ecosystem, self._tenant_id, billing_date)
@@ -461,6 +973,9 @@ class CalculatePhase:
         metrics_step: timedelta,
         extra_granularity_durations: dict[str, timedelta] | None = None,
         metrics_prefetch_workers: int = 4,
+        *,
+        calculation_id_factory: Callable[[], str] = _new_calculation_id,
+        calculation_clock: Callable[[], datetime] = _calculation_utc_now,
     ) -> None:
         self._ecosystem = ecosystem
         self._tenant_id = tenant_id
@@ -472,41 +987,155 @@ class CalculatePhase:
         self._allocator_params = allocator_params
         self._metrics_step = metrics_step
         self._metrics_prefetch_workers = metrics_prefetch_workers
+        self._calculation_id_factory = calculation_id_factory
+        self._calculation_clock = calculation_clock
         self._merged_granularity_durations: dict[str, timedelta] = {
             **_DEFAULT_GRANULARITY_DURATION,
             **(extra_granularity_durations or {}),
         }
 
-    def run(self, uow: UnitOfWork, tracking_date: date_type) -> int:
+    def run(
+        self,
+        uow: UnitOfWork,
+        tracking_date: date_type,
+        *,
+        calculation_run_id: int | None = None,
+    ) -> int:
         """Calculate chargebacks for a single date. Returns rows written."""
+        result = self._calculate(
+            uow,
+            tracking_date,
+            calculation_run_id=calculation_run_id,
+            capture_lineage=False,
+        )
+        assert isinstance(result, int)
+        return result
+
+    def run_with_lineage_capture(
+        self,
+        uow: UnitOfWork,
+        tracking_date: date_type,
+        *,
+        calculation_run_id: int | None = None,
+    ) -> CalculationPhaseResult:
+        """Calculate normally and return Preview lineage without persisting it."""
+        result = self._calculate(
+            uow,
+            tracking_date,
+            calculation_run_id=calculation_run_id,
+            capture_lineage=True,
+        )
+        assert isinstance(result, CalculationPhaseResult)
+        return result
+
+    def _calculate(
+        self,
+        uow: UnitOfWork,
+        tracking_date: date_type,
+        *,
+        calculation_run_id: int | None,
+        capture_lineage: bool,
+    ) -> int | CalculationPhaseResult:
+        calculation_id = self._calculation_id_factory()
+        if not calculation_id:
+            raise ValueError("calculation_id must not be empty")
         billing_lines = uow.billing.find_by_date(self._ecosystem, self._tenant_id, tracking_date)
-
+        lineage_captures = []
+        lineage_failure = None
         if not billing_lines:
-            uow.pipeline_state.mark_chargeback_calculated(self._ecosystem, self._tenant_id, tracking_date)
-            return 0
-
-        line_window_cache = self._compute_line_window_cache(billing_lines)
-        billing_windows = self._compute_billing_windows(billing_lines, line_window_cache)
-        prefetched_metrics, failed_metric_keys = self._prefetch_metrics(billing_lines, line_window_cache)
-        tenant_period_cache = self._build_tenant_period_cache(uow, billing_windows)
-        resource_cache = self._build_resource_cache(uow, billing_windows)
-
-        all_rows: list[ChargebackRow] = []
-        for line in billing_lines:
-            rows = self._collect_billing_line_rows(
-                line,
-                uow,
-                prefetched_metrics,
-                failed_metric_keys,
-                tenant_period_cache,
-                resource_cache,
-                line_window_cache,
+            total_rows = 0
+        else:
+            line_window_cache = self._compute_line_window_cache(billing_lines)
+            billing_windows = self._compute_billing_windows(billing_lines, line_window_cache)
+            prefetched_metrics, failed_metric_keys = self._prefetch_metrics(billing_lines, line_window_cache)
+            tenant_period_cache = self._build_tenant_period_cache(uow, billing_windows)
+            resource_cache = self._build_resource_cache(uow, billing_windows)
+            all_rows: list[ChargebackRow] = []
+            for line in billing_lines:
+                rows = self._collect_billing_line_rows(
+                    line,
+                    uow,
+                    prefetched_metrics,
+                    failed_metric_keys,
+                    tenant_period_cache,
+                    resource_cache,
+                    line_window_cache,
+                )
+                all_rows.extend(rows)
+                if capture_lineage:
+                    try:
+                        lineage_captures.append(build_allocation_lineage_capture(origin=line, rows=tuple(rows)))
+                    except (TypeError, ValueError) as exc:
+                        lineage_failure = LineageCaptureFailureReason.CONSTRUCTION_FAILED
+                        logger.warning(
+                            "lineage_capture_failed%s",
+                            safe_log_context(
+                                tenant_id=self._tenant_id,
+                                pipeline_run_id=calculation_run_id,
+                                calculation_id=calculation_id,
+                                tracking_date=tracking_date,
+                                stage="lineage_capture",
+                                outcome="capture_failed",
+                                retryable=False,
+                                **safe_exception_context(exc),
+                            ),
+                        )
+            total_rows = uow.chargebacks.upsert_batch(all_rows)
+        completed_at = self._completion_time()
+        self._mark_success(
+            uow,
+            tracking_date,
+            calculation_run_id,
+            calculation_id=calculation_id,
+            completed_at=completed_at,
+        )
+        if not capture_lineage:
+            return total_rows
+        capture = (
+            None
+            if lineage_failure is not None
+            else AllocationLineageRunCapture(
+                ecosystem=self._ecosystem,
+                tenant_id=self._tenant_id,
+                tracking_date=tracking_date,
+                calculation_id=calculation_id,
+                captures=tuple(lineage_captures),
             )
-            all_rows.extend(rows)
+        )
+        return CalculationPhaseResult(
+            ecosystem=self._ecosystem,
+            tenant_id=self._tenant_id,
+            tracking_date=tracking_date,
+            rows_written=total_rows,
+            calculation_id=calculation_id,
+            calculation_completed_at=completed_at,
+            lineage_capture=capture,
+            lineage_failure=lineage_failure,
+        )
 
-        total_rows = uow.chargebacks.upsert_batch(all_rows)
-        uow.pipeline_state.mark_chargeback_calculated(self._ecosystem, self._tenant_id, tracking_date)
-        return total_rows
+    def _completion_time(self) -> datetime:
+        completed_at = self._calculation_clock()
+        if completed_at.tzinfo is None or completed_at.utcoffset() is None:
+            raise ValueError("calculation completion time must be timezone-aware")
+        return completed_at.astimezone(UTC)
+
+    def _mark_success(
+        self,
+        uow: UnitOfWork,
+        tracking_date: date_type,
+        calculation_run_id: int | None,
+        *,
+        calculation_id: str,
+        completed_at: datetime,
+    ) -> None:
+        uow.pipeline_state.mark_chargeback_calculated(
+            self._ecosystem,
+            self._tenant_id,
+            tracking_date,
+            calculation_id=calculation_id,
+            calculation_completed_at=completed_at,
+            calculation_run_id=calculation_run_id,
+        )
 
     def _compute_line_window_cache(
         self, billing_lines: list[BillingLineItem]
@@ -567,14 +1196,20 @@ class CalculatePhase:
                 try:
                     _, result = future.result()
                     prefetched[key] = result
-                except Exception:
+                except Exception as exc:
                     resource_id, m_start, m_end = key
                     logger.warning(
-                        "Metrics prefetch failed for resource=%s window=[%s, %s] — skipping",
-                        resource_id,
+                        "metrics_prefetch_failed window_start=%s window_end=%s%s",
                         m_start,
                         m_end,
-                        exc_info=True,
+                        safe_log_context(
+                            tenant_id=self._tenant_id,
+                            stage="metrics_prefetch",
+                            outcome="skipped",
+                            retryable=True,
+                            resource_id=resource_id,
+                            **safe_exception_context(exc),
+                        ),
                     )
                     prefetched[key] = {}
                     failed_keys.add(key)
@@ -727,25 +1362,48 @@ class CalculatePhase:
             try:
                 new_attempts, should_fallback = self._retry_checker.increment_and_check(line)
             except Exception as retry_exc:
-                logger.warning("Failed to persist retry counter: %s", retry_exc)
+                logger.warning(
+                    "allocation_retry_counter_failed%s",
+                    safe_log_context(
+                        tenant_id=self._tenant_id,
+                        stage="allocation_retry_counter",
+                        outcome="failed",
+                        retryable=True,
+                        resource_id=line.resource_id,
+                        product_type=line.product_type,
+                        **safe_exception_context(retry_exc),
+                    ),
+                )
                 raise exc from None
 
             if not should_fallback:
-                logger.exception(
-                    "Billing line %s/%s failed (attempt %d): %s — failing date",
-                    line.resource_id,
-                    line.product_type,
-                    new_attempts,
-                    exc,
+                logger.error(
+                    "allocation_failed%s",
+                    safe_log_context(
+                        tenant_id=self._tenant_id,
+                        stage="allocation",
+                        outcome="date_failed",
+                        retryable=True,
+                        attempt_number=new_attempts,
+                        resource_id=line.resource_id,
+                        product_type=line.product_type,
+                        **safe_exception_context(exc),
+                    ),
                 )
                 raise
 
-            logger.exception(
-                "Billing line %s/%s failed after %d attempts: %s — allocating to UNALLOCATED",
-                line.resource_id,
-                line.product_type,
-                new_attempts,
-                exc,
+            logger.warning(
+                "allocation_fallback_selected%s",
+                safe_log_context(
+                    tenant_id=self._tenant_id,
+                    stage="allocation",
+                    outcome="unallocated",
+                    retryable=False,
+                    attempt_number=new_attempts,
+                    resource_id=line.resource_id,
+                    product_type=line.product_type,
+                    **safe_exception_context(exc),
+                ),
             )
             row = self._allocate_to_unallocated(
                 line, "ALLOCATION_FAILED", f"Failed after {new_attempts} attempts: {exc}", metadata=dimension_metadata
@@ -910,30 +1568,494 @@ class ChargebackOrchestrator:
         )
         return uow.chargebacks.upsert_batch(rows)
 
-    def _calculate_date(self, uow: UnitOfWork, tracking_date: date_type) -> int:
+    def _calculate_date(
+        self,
+        uow: UnitOfWork,
+        tracking_date: date_type,
+        *,
+        calculation_run_id: int | None = None,
+    ) -> int:
         """Backward-compatible wrapper — delegates to CalculatePhase.run()."""
-        return self._calculate_phase.run(uow, tracking_date)
+        if calculation_run_id is None:
+            return self._calculate_phase.run(uow, tracking_date)
+        return self._calculate_phase.run(uow, tracking_date, calculation_run_id=calculation_run_id)
 
     def _report_progress(self, stage: str | None, current_date: date_type | None = None) -> None:
         if self._progress_callback is not None:
             self._progress_callback(stage, current_date)
 
-    def run(self) -> PipelineRunResult:
+    def _prepare_preview_source_state(
+        self,
+        plan: GatherPlan,
+    ) -> PreviewSourceAttempt | SourceAttemptBeginFailure | SourceEvidenceStorageUnavailable | None:
+        if not self._tenant_config.focus_preview_enabled:
+            return None
+        from core.preview.persistence import PreviewEvidenceStorageBackend
+        from core.preview.storage_availability import PreviewEvidenceAvailabilityState
+
+        if (
+            not isinstance(self._storage_backend, PreviewEvidenceStorageBackend)
+            or self._storage_backend.preview_evidence_availability.state is not PreviewEvidenceAvailabilityState.READY
+        ):
+            return SourceEvidenceStorageUnavailable(
+                ecosystem=self._ecosystem,
+                tenant_id=self._tenant_id,
+                refresh_start=plan.refresh_start,
+                refresh_end=plan.refresh_end,
+            )
+        token = str(uuid.uuid4())
+        try:
+            with self._storage_backend.create_preview_evidence_unit_of_work() as evidence_uow:
+                attempt = evidence_uow.source_readiness.begin_attempt(
+                    self._ecosystem,
+                    self._tenant_id,
+                    token,
+                    plan.refresh_start,
+                    plan.refresh_end,
+                    plan.now,
+                )
+                evidence_uow.commit()
+            return attempt
+        except Exception as exc:
+            logger.warning(
+                "Preview source attempt begin failed tenant=%s error_type=%s",
+                self._tenant_id,
+                type(exc).__name__,
+            )
+            return SourceAttemptBeginFailure(
+                refresh_token=token,
+                ecosystem=self._ecosystem,
+                tenant_id=self._tenant_id,
+                refresh_start=plan.refresh_start,
+                refresh_end=plan.refresh_end,
+                started_at=plan.now,
+            )
+
+    def _finalize_preview_source_failure(
+        self,
+        attempt_sequence: int,
+        *,
+        status: SourceAttemptFinalStatus,
+        reason: SourceAttemptFailureReason,
+    ) -> None:
+        from core.preview.persistence import PreviewEvidenceStorageBackend
+
+        if not isinstance(self._storage_backend, PreviewEvidenceStorageBackend):
+            return
+        try:
+            with self._storage_backend.create_preview_evidence_unit_of_work() as evidence_uow:
+                evidence_uow.source_readiness.finalize_attempt(
+                    attempt_sequence,
+                    status,
+                    completed_at=datetime.now(UTC),
+                    reason=reason,
+                )
+                evidence_uow.commit()
+        except Exception as exc:
+            logger.warning(
+                "Preview source attempt finalization failed tenant=%s error_type=%s",
+                self._tenant_id,
+                type(exc).__name__,
+            )
+
+    def _persist_preview_source_capture(self, result: GatherResult) -> None:
+        if result.source_disposition is not SourceGatherDisposition.ATTEMPTED:
+            return
+        assert result.source_attempt_sequence is not None
+        if result.source_capture is None:
+            assert result.source_failure is not None
+            reason = {
+                SourceCaptureFailure.CONSTRUCTION_FAILED: SourceAttemptFailureReason.CONSTRUCTION_FAILED,
+                SourceCaptureFailure.CAPABILITY_UNAVAILABLE: SourceAttemptFailureReason.CAPABILITY_UNAVAILABLE,
+                SourceCaptureFailure.ATTEMPT_BEGIN_FAILED: SourceAttemptFailureReason.ATTEMPT_BEGIN_FAILED,
+            }[result.source_failure]
+            self._finalize_preview_source_failure(
+                result.source_attempt_sequence,
+                status=SourceAttemptFinalStatus.FAILED,
+                reason=reason,
+            )
+            return
+        from core.preview.persistence import PreviewEvidenceStorageBackend
+
+        if not isinstance(self._storage_backend, PreviewEvidenceStorageBackend):
+            return
+        try:
+            with self._storage_backend.create_preview_evidence_unit_of_work() as evidence_uow:
+                result.source_capture.persist(
+                    evidence_uow.source_windows,
+                    evidence_uow.source_readiness,
+                    attempt_sequence=result.source_attempt_sequence,
+                    captured_at=datetime.now(UTC),
+                )
+                evidence_uow.commit()
+        except Exception as exc:
+            logger.warning(
+                "Preview source capture persistence failed tenant=%s error_type=%s",
+                self._tenant_id,
+                type(exc).__name__,
+            )
+            self._finalize_preview_source_failure(
+                result.source_attempt_sequence,
+                status=SourceAttemptFinalStatus.FAILED,
+                reason=SourceAttemptFailureReason.PERSISTENCE_FAILED,
+            )
+
+    def _abort_preview_source_state(
+        self,
+        source_state: PreviewSourceAttempt | SourceAttemptBeginFailure | SourceEvidenceStorageUnavailable | None,
+        *,
+        reason: SourceAttemptFailureReason,
+    ) -> None:
+        from core.preview.persistence import PreviewEvidenceStorageBackend
+
+        if not isinstance(self._storage_backend, PreviewEvidenceStorageBackend):
+            return
+        try:
+            with self._storage_backend.create_preview_evidence_unit_of_work() as evidence_uow:
+                attempt: PreviewSourceAttempt | None
+                if isinstance(source_state, PreviewSourceAttempt):
+                    attempt = source_state
+                elif isinstance(source_state, SourceAttemptBeginFailure):
+                    attempt = evidence_uow.source_readiness.get_by_token(
+                        source_state.ecosystem,
+                        source_state.tenant_id,
+                        source_state.refresh_token,
+                    )
+                    if attempt is None or attempt.status is not SourceAttemptStatus.PENDING:
+                        return
+                else:
+                    return
+                evidence_uow.source_readiness.finalize_attempt(
+                    attempt.attempt_sequence,
+                    SourceAttemptFinalStatus.ABORTED,
+                    completed_at=datetime.now(UTC),
+                    reason=reason,
+                )
+                evidence_uow.commit()
+        except Exception as exc:
+            logger.warning(
+                "Preview source attempt abort failed tenant=%s error_type=%s",
+                self._tenant_id,
+                type(exc).__name__,
+            )
+
+    def _refresh_preview_organization_authority(self) -> None:
+        if not self._tenant_config.focus_preview_enabled:
+            return
+        from core.preview.persistence import PreviewEvidenceStorageBackend
+
+        if not isinstance(self._storage_backend, PreviewEvidenceStorageBackend):
+            return
+        evidence_backend = self._storage_backend
+        started_at = datetime.now(UTC)
+        try:
+            with evidence_backend.create_preview_evidence_unit_of_work() as evidence_uow:
+                attempt = evidence_uow.organization_authority.begin(self._ecosystem, self._tenant_id, started_at)
+                evidence_uow.commit()
+        except Exception as exc:
+            logger.warning(
+                "Preview organization authority begin failed tenant=%s error_type=%s",
+                self._tenant_id,
+                type(exc).__name__,
+            )
+            return
+
+        status = OrganizationAuthorityFinalStatus.UNAVAILABLE
+        reason: OrganizationAuthorityFailureReason | None = OrganizationAuthorityFailureReason.CAPABILITY_UNAVAILABLE
+        organization_id = None
+        plugin = self._bundle.plugin
+        if isinstance(plugin, PreviewOrganizationGatherer):
+            try:
+                resources = plugin.gather_preview_organizations(self._tenant_id)
+            except Exception as exc:
+                reason = OrganizationAuthorityFailureReason.PROVIDER_ERROR
+                logger.warning(
+                    "Preview organization provider call failed tenant=%s error_type=%s",
+                    self._tenant_id,
+                    type(exc).__name__,
+                )
+            else:
+                valid = tuple(resource for resource in resources if resource.resource_id.strip())
+                if len(resources) > 1:
+                    status = OrganizationAuthorityFinalStatus.CONFLICTING
+                    reason = OrganizationAuthorityFailureReason.INVALID_CARDINALITY
+                elif len(valid) != 1:
+                    reason = OrganizationAuthorityFailureReason.INVALID_CARDINALITY
+                else:
+                    binding_conflict = False
+                    try:
+                        with self._storage_backend.create_unit_of_work() as resource_uow:
+                            try:
+                                self._gather_phase._reconcile_organization_resources(
+                                    resource_uow, valid, datetime.now(UTC)
+                                )
+                            except PreviewOrganizationBindingConflictError:
+                                binding_conflict = True
+                            resource_uow.commit()
+                    except Exception as exc:
+                        reason = OrganizationAuthorityFailureReason.RESOURCE_PERSISTENCE_FAILED
+                        logger.warning(
+                            "Preview organization resource persistence failed tenant=%s error_type=%s",
+                            self._tenant_id,
+                            type(exc).__name__,
+                        )
+                    else:
+                        if binding_conflict:
+                            status = OrganizationAuthorityFinalStatus.CONFLICTING
+                            reason = OrganizationAuthorityFailureReason.BINDING_CONFLICT
+                        else:
+                            status = OrganizationAuthorityFinalStatus.AVAILABLE
+                            reason = None
+                            organization_id = valid[0].resource_id
+        completed_at = datetime.now(UTC)
+        for finalize_attempt in range(2):
+            try:
+                with evidence_backend.create_preview_evidence_unit_of_work() as evidence_uow:
+                    evidence_uow.organization_authority.finalize(
+                        attempt.attempt_sequence,
+                        status,
+                        completed_at=completed_at,
+                        organization_id=organization_id,
+                        reason=reason,
+                    )
+                    evidence_uow.commit()
+                break
+            except Exception as exc:
+                if finalize_attempt == 0:
+                    continue
+                logger.warning(
+                    "Preview organization authority finalization failed tenant=%s error_type=%s",
+                    self._tenant_id,
+                    type(exc).__name__,
+                )
+
+    def _lineage_unavailable(
+        self,
+        result: CalculationPhaseResult,
+        reason: AllocationLineageUnavailableReason,
+    ) -> AllocationLineageUnavailableRun:
+        return AllocationLineageUnavailableRun(
+            ecosystem=result.ecosystem,
+            tenant_id=result.tenant_id,
+            tracking_date=result.tracking_date,
+            calculation_id=result.calculation_id,
+            calculation_completed_at=result.calculation_completed_at,
+            status=AllocationLineageRunStatus.UNAVAILABLE,
+            reason=reason,
+        )
+
+    def _persist_preview_lineage(
+        self,
+        result: CalculationPhaseResult,
+        *,
+        calculation_run_id: int | None = None,
+    ) -> None:
+        from core.preview.persistence import PreviewEvidenceStorageBackend
+
+        if not isinstance(self._storage_backend, PreviewEvidenceStorageBackend):
+            return
+        evidence_backend = self._storage_backend
+        try:
+            with evidence_backend.create_preview_evidence_unit_of_work() as evidence_uow:
+                if result.lineage_capture is not None:
+                    evidence_uow.allocation_lineage.replace_calculation_lineage(
+                        result.lineage_capture,
+                        calculation_completed_at=result.calculation_completed_at,
+                    )
+                else:
+                    evidence_uow.allocation_lineage.mark_calculation_lineage_unavailable(
+                        self._lineage_unavailable(result, AllocationLineageUnavailableReason.CAPTURE_FAILED)
+                    )
+                evidence_uow.commit()
+            return
+        except Exception as exc:
+            persistence_error = exc
+        logger.warning(
+            "lineage_persistence_failed db_root_cause=%s%s",
+            _safe_database_root_cause(persistence_error),
+            safe_log_context(
+                tenant_name=self._tenant_name,
+                tenant_id=result.tenant_id,
+                pipeline_run_id=calculation_run_id,
+                calculation_id=result.calculation_id,
+                tracking_date=result.tracking_date,
+                stage="lineage_persistence",
+                outcome="mark_unavailable",
+                retryable=False,
+                **safe_exception_context(persistence_error),
+            ),
+        )
+        try:
+            with evidence_backend.create_preview_evidence_unit_of_work() as evidence_uow:
+                evidence_uow.allocation_lineage.mark_calculation_lineage_unavailable(
+                    self._lineage_unavailable(result, AllocationLineageUnavailableReason.PERSISTENCE_FAILED)
+                )
+                evidence_uow.commit()
+            logger.warning(
+                "lineage_fallback_persisted reason=%s%s",
+                AllocationLineageUnavailableReason.PERSISTENCE_FAILED.value,
+                safe_log_context(
+                    tenant_name=self._tenant_name,
+                    tenant_id=result.tenant_id,
+                    pipeline_run_id=calculation_run_id,
+                    calculation_id=result.calculation_id,
+                    tracking_date=result.tracking_date,
+                    stage="lineage_persistence",
+                    outcome="lineage_unavailable",
+                    retryable=False,
+                ),
+            )
+        except Exception as exc:
+            logger.error(
+                "Preview allocation lineage fallback failed primary_error_type=%s%s",
+                type(persistence_error).__name__,
+                safe_log_context(
+                    tenant_name=self._tenant_name,
+                    tenant_id=result.tenant_id,
+                    pipeline_run_id=calculation_run_id,
+                    calculation_id=result.calculation_id,
+                    tracking_date=result.tracking_date,
+                    stage="lineage_persistence",
+                    outcome="fallback_failed",
+                    retryable=False,
+                    **safe_exception_context(exc),
+                ),
+            )
+
+    def repair_historical_date(self, tracking_date: date_type) -> HistoricalRepairDateResult:
+        from core.storage.interface import HistoricalRepairBillingWriter
+
+        start = datetime.combine(tracking_date, datetime.min.time(), tzinfo=UTC)
+        end = start + timedelta(days=1)
+        cost_input = self._bundle.plugin.get_cost_input()
+        if not isinstance(cost_input, NativeSourceEvidenceCostInput):
+            raise HistoricalRepairProviderSourceError("historical provider source capture is unavailable")
+        try:
+            native = cost_input.gather_with_native_source_evidence(self._tenant_id, start, end)
+        except Exception as exc:
+            raise HistoricalRepairProviderSourceError("historical provider source acquisition failed") from exc
+        if native.capture is None:
+            raise HistoricalRepairProviderSourceError("historical provider source capture is unavailable")
+        with self._storage_backend.create_unit_of_work() as uow:
+            billing = uow.billing
+            if not isinstance(billing, HistoricalRepairBillingWriter):
+                raise RuntimeError("historical repair billing replacement is unavailable")
+            billing_rows_written = billing.replace_for_date(
+                self._ecosystem,
+                self._tenant_id,
+                tracking_date,
+                native.billing_lines,
+            )
+            uow.chargebacks.delete_by_date(self._ecosystem, self._tenant_id, tracking_date)
+            uow.topic_attributions.delete_by_date(
+                self._ecosystem,
+                self._tenant_id,
+                tracking_date,
+            )
+            uow.pipeline_state.mark_needs_recalculation(
+                self._ecosystem,
+                self._tenant_id,
+                tracking_date,
+            )
+            billing.reset_allocation_attempts_by_date(
+                self._ecosystem,
+                self._tenant_id,
+                tracking_date,
+            )
+            billing.reset_topic_attribution_attempts_by_date(
+                self._ecosystem,
+                self._tenant_id,
+                tracking_date,
+            )
+            calculation = self._calculate_phase.run_with_lineage_capture(
+                uow,
+                tracking_date,
+                calculation_run_id=None,
+            )
+            uow.commit()
+        return HistoricalRepairDateResult(
+            source_capture=native.capture,
+            calculation=calculation,
+            billing_rows_written=billing_rows_written,
+        )
+
+    def run(self, *, calculation_run_id: int | None = None) -> PipelineRunResult:
         errors: list[str] = []
         dates_gathered = 0
         dates_calculated = 0
         chargeback_rows_written = 0
 
+        logger.info(
+            "pipeline_orchestration_started%s",
+            safe_log_context(
+                tenant_name=self._tenant_name,
+                tenant_id=self._tenant_id,
+                pipeline_run_id=calculation_run_id,
+                stage="gather",
+                operation="pipeline_run",
+                outcome="started",
+            ),
+        )
+
         self._report_progress("gathering")
+        plan = self._gather_phase.plan_refresh(datetime.now(UTC))
+        source_state: PreviewSourceAttempt | SourceAttemptBeginFailure | SourceEvidenceStorageUnavailable | None = None
+        gather_completed = False
         try:
-            with self._storage_backend.create_unit_of_work() as uow:
-                gather_result = self._gather_phase.run(uow)
-                dates_gathered = gather_result.dates_gathered
-                errors.extend(gather_result.errors)
-                uow.commit()
+            if plan.should_refresh:
+                source_state = self._prepare_preview_source_state(plan)
+                with self._storage_backend.create_unit_of_work() as uow:
+                    gather_result = self._gather_phase.run(
+                        uow,
+                        plan=plan,
+                        source_attempt=source_state,
+                    )
+                    dates_gathered = gather_result.dates_gathered
+                    errors.extend(gather_result.errors)
+                    gather_completed = True
+                    uow.commit()
+                self._gather_phase.accept_refresh(plan)
+                self._persist_preview_source_capture(gather_result)
+            else:
+                gather_result = GatherResult(dates_gathered=0, errors=[], skipped=True)
             self._consecutive_gather_failures = 0
+            if not gather_result.skipped:
+                self._refresh_preview_organization_authority()
+            logger.info(
+                "gather_completed dates_gathered=%d error_count=%d%s",
+                dates_gathered,
+                len(gather_result.errors),
+                safe_log_context(
+                    tenant_name=self._tenant_name,
+                    tenant_id=self._tenant_id,
+                    pipeline_run_id=calculation_run_id,
+                    stage="gather",
+                    operation="pipeline_run",
+                    outcome="skipped" if gather_result.skipped else "completed",
+                ),
+            )
         except Exception as exc:
-            logger.exception("Gather phase failed for %s: %s", self._tenant_name, exc)
+            self._abort_preview_source_state(
+                source_state,
+                reason=(
+                    SourceAttemptFailureReason.GENERIC_COMMIT_FAILED
+                    if gather_completed
+                    else SourceAttemptFailureReason.GENERIC_GATHER_FAILED
+                ),
+            )
+            logger.error(
+                "gather_failed%s",
+                safe_log_context(
+                    tenant_name=self._tenant_name,
+                    tenant_id=self._tenant_id,
+                    pipeline_run_id=calculation_run_id,
+                    stage="gather",
+                    operation="pipeline_run",
+                    outcome="failed",
+                    retryable=True,
+                    **safe_exception_context(exc),
+                ),
+            )
             errors.append(f"Gather phase failed: {exc}")
             self._consecutive_gather_failures += 1
             if self._consecutive_gather_failures >= self._gather_failure_threshold:
@@ -965,27 +2087,75 @@ class ChargebackOrchestrator:
 
             tracking_date = pipeline_state.tracking_date
             self._report_progress("calculating", tracking_date)
-            logger.info("Processing billing date: %s", tracking_date)
+            logger.info(
+                "calculation_started%s",
+                safe_log_context(
+                    tenant_name=self._tenant_name,
+                    tenant_id=self._tenant_id,
+                    pipeline_run_id=calculation_run_id,
+                    tracking_date=tracking_date,
+                    stage="calculate",
+                    operation="calculation",
+                    outcome="started",
+                ),
+            )
             start_time = time.time()
             try:
+                calculation_result: CalculationPhaseResult | None = None
                 with self._storage_backend.create_unit_of_work() as uow:
-                    rows = self._calculate_phase.run(uow, tracking_date)
+                    if self._tenant_config.focus_preview_enabled:
+                        calculation_result = self._calculate_phase.run_with_lineage_capture(
+                            uow,
+                            tracking_date,
+                            calculation_run_id=calculation_run_id,
+                        )
+                        rows = calculation_result.rows_written
+                    elif calculation_run_id is None:
+                        rows = self._calculate_phase.run(uow, tracking_date)
+                    else:
+                        rows = self._calculate_phase.run(
+                            uow,
+                            tracking_date,
+                            calculation_run_id=calculation_run_id,
+                        )
                     chargeback_rows_written += rows
                     dates_calculated += 1
                     uow.commit()
+                if calculation_result is not None:
+                    self._persist_preview_lineage(
+                        calculation_result,
+                        calculation_run_id=calculation_run_id,
+                    )
                 elapsed = int(time.time() - start_time)
                 logger.info(
-                    "Processed %d chargeback rows for billing date: %s in %d seconds",
+                    "calculation_completed rows_written=%d elapsed_seconds=%d%s",
                     rows,
-                    tracking_date,
                     elapsed,
+                    safe_log_context(
+                        tenant_name=self._tenant_name,
+                        tenant_id=self._tenant_id,
+                        pipeline_run_id=calculation_run_id,
+                        calculation_id=(calculation_result.calculation_id if calculation_result is not None else None),
+                        tracking_date=tracking_date,
+                        stage="calculate",
+                        operation="calculation",
+                        outcome="completed",
+                    ),
                 )
             except Exception as exc:
-                logger.exception(
-                    "Calculate failed for %s date %s: %s",
-                    self._tenant_name,
-                    tracking_date,
-                    exc,
+                logger.error(
+                    "calculation_failed%s",
+                    safe_log_context(
+                        tenant_name=self._tenant_name,
+                        tenant_id=self._tenant_id,
+                        pipeline_run_id=calculation_run_id,
+                        tracking_date=tracking_date,
+                        stage="calculate",
+                        operation="calculation",
+                        outcome="failed",
+                        retryable=True,
+                        **safe_exception_context(exc),
+                    ),
                 )
                 errors.append(f"Calculate failed for date {tracking_date}: {exc}")
 
@@ -1008,15 +2178,37 @@ class ChargebackOrchestrator:
                         uow.commit()
                     logger.info("Topic attribution: %d rows for date %s", rows, tracking_date)
                 except Exception as exc:
-                    logger.exception(
-                        "Topic overlay failed for %s date %s: %s",
-                        self._tenant_name,
-                        tracking_date,
-                        exc,
+                    logger.error(
+                        "topic_overlay_failed%s",
+                        safe_log_context(
+                            tenant_name=self._tenant_name,
+                            tenant_id=self._tenant_id,
+                            pipeline_run_id=calculation_run_id,
+                            tracking_date=tracking_date,
+                            stage="topic_overlay",
+                            outcome="failed",
+                            retryable=True,
+                            **safe_exception_context(exc),
+                        ),
                     )
                     errors.append(f"Topic overlay failed for date {tracking_date}: {exc}")
 
         self._report_progress(None, None)
+        logger.info(
+            "pipeline_orchestration_completed dates_gathered=%d dates_calculated=%d rows_written=%d error_count=%d%s",
+            dates_gathered,
+            dates_calculated,
+            chargeback_rows_written,
+            len(errors),
+            safe_log_context(
+                tenant_name=self._tenant_name,
+                tenant_id=self._tenant_id,
+                pipeline_run_id=calculation_run_id,
+                stage="pipeline_run",
+                operation="pipeline_run",
+                outcome="completed_with_errors" if errors else "completed",
+            ),
+        )
         return PipelineRunResult(
             tenant_name=self._tenant_name,
             tenant_id=self._tenant_id,

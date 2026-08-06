@@ -1,13 +1,68 @@
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING
+import logging
+import time
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
 
 from fastapi.testclient import TestClient  # noqa: TC002
 
 if TYPE_CHECKING:
+    from core.engine.orchestrator import PipelineRunResult
+    from core.metrics.protocol import MetricsSource
+    from core.plugin.protocols import CostAllocator, CostInput, ServiceHandler, StorageModule
     from core.storage.backends.sqlmodel.unit_of_work import SQLModelBackend
+
+
+class _NoopCostInput:
+    def gather(self, tenant_id: str, start: datetime, end: datetime, uow: Any) -> tuple[object, ...]:
+        del tenant_id, start, end, uow
+        return ()
+
+
+class _TypedNoopPlugin:
+    @property
+    def ecosystem(self) -> str:
+        return "confluent_cloud"
+
+    def initialize(self, config: dict[str, Any]) -> None:
+        del config
+
+    def get_service_handlers(self) -> dict[str, ServiceHandler]:
+        return {}
+
+    def get_cost_input(self) -> CostInput:
+        return _NoopCostInput()
+
+    def get_metrics_source(self) -> MetricsSource | None:
+        return None
+
+    def get_fallback_allocator(self) -> CostAllocator | None:
+        return None
+
+    def build_shared_context(self, tenant_id: str) -> object | None:
+        del tenant_id
+        return None
+
+    def get_storage_module(self) -> StorageModule:
+        from core.storage.backends.sqlmodel.module import CoreStorageModule
+
+        return CoreStorageModule()
+
+    def close(self) -> None:
+        return None
+
+
+class _FailingOrchestrator:
+    def __init__(self, error: BaseException) -> None:
+        self._error = error
+        self._progress_callback: Any = None
+
+    def run(self, *, calculation_run_id: int | None = None) -> PipelineRunResult:
+        del calculation_run_id
+        raise self._error
 
 
 class TestTriggerPipeline:
@@ -36,6 +91,77 @@ class TestTriggerPipeline:
         response = app_with_backend.post("/api/v1/tenants/test-tenant/pipeline/run")
         assert response.status_code == 409
         assert "already running" in response.json()["detail"]
+
+    def test_trigger_pipeline_background_failure_logs_once_at_workflow_runner_owner(
+        self,
+        settings_with_tenant,
+        in_memory_backend: SQLModelBackend,
+        monkeypatch,
+        caplog,
+    ) -> None:
+        from core.api.app import create_app
+        from core.plugin.registry import PluginRegistry
+        from tests.integration.core.api.backend_provider import install_backend
+        from workflow_runner import TenantRuntime, WorkflowRunner, _config_hash
+
+        async def to_thread_inline(function, *args, **kwargs):
+            return function(*args, **kwargs)
+
+        monkeypatch.setattr("core.api.routes.pipeline.asyncio.to_thread", to_thread_inline)
+
+        runner = WorkflowRunner(settings_with_tenant, PluginRegistry())
+        runner._bootstrapped = True  # noqa: SLF001
+        orchestrator = _FailingOrchestrator(RuntimeError("background failure"))
+        runner._tenant_runtimes["test-tenant"] = TenantRuntime(  # noqa: SLF001
+            tenant_name="test-tenant",
+            plugin=_TypedNoopPlugin(),
+            storage=in_memory_backend,
+            orchestrator=orchestrator,
+            config_hash=_config_hash(settings_with_tenant.tenants["test-tenant"]),
+            created_at=datetime(2026, 3, 1, tzinfo=UTC),
+        )
+
+        app = create_app(settings_with_tenant, workflow_runner=runner, mode="both")
+        with TestClient(app) as client, caplog.at_level(logging.INFO):
+            install_backend(app, "test-tenant", in_memory_backend)
+            response = client.post("/api/v1/tenants/test-tenant/pipeline/run")
+            task = client.app.state.pipeline_tasks["test-tenant"]
+            deadline = time.monotonic() + 2.0
+            while not task.done() and time.monotonic() < deadline:
+                time.sleep(0.01)
+
+        assert response.status_code == 202
+        assert task.done() is True
+        with in_memory_backend.create_read_only_unit_of_work() as uow:
+            run = uow.pipeline_runs.get_latest_run("test-tenant")
+        assert run is not None
+        assert run.status == "failed"
+        assert run.error_message == "Unhandled exception — see logs"
+        owner_records = [
+            record
+            for record in caplog.records
+            if record.name == "workflow_runner" and record.getMessage().startswith("pipeline_run_failed")
+        ]
+        assert len(owner_records) == 1
+        assert owner_records[0].exc_info is None
+        assert "traceback_frames=" in owner_records[0].getMessage()
+        route_completion_records = [
+            record
+            for record in caplog.records
+            if record.name == "core.api.routes.pipeline"
+            and record.getMessage().startswith("pipeline_background_completed")
+        ]
+        assert len(route_completion_records) == 1
+        route_message = route_completion_records[0].getMessage()
+        assert route_completion_records[0].exc_info is None
+        assert "tenant_name=test-tenant" in route_message
+        assert "request_id=" in route_message
+        assert "stage=pipeline_dispatch" in route_message
+        assert "operation=pipeline_run" in route_message
+        assert "outcome=failed" in route_message
+        assert "traceback_frames=" not in route_message
+        assert "error_type=" not in route_message
+        assert "background failure" not in route_message
 
 
 class TestPipelineStatus:

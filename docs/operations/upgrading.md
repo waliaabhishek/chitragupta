@@ -16,6 +16,11 @@ cp data/chargeback.db-shm data/chargeback.db-shm.bak 2>/dev/null
 
 If you have multiple tenants, back up each tenant's database.
 
+If the deployment has generated FOCUS Mapping Preview packages, also back up
+the configured `preview.artifact_root`. The database contains request/package
+metadata, while immutable manifest and CSV bytes live under that filesystem
+root. A usable restore requires the matching database and artifact-root backup.
+
 ### PostgreSQL
 
 ```bash
@@ -98,19 +103,266 @@ curl http://localhost:8080/health
 
 Migrations run automatically on startup. When the engine calls `bootstrap_storage()`, it executes `alembic upgrade head` against each tenant's database. No manual migration step is needed.
 
-If you want to run migrations manually (e.g., to test before starting the engine):
+Preview evidence migrations are selected per tenant. A tenant without
+`focus_preview` runs the ordinary migration chain without creating or repairing
+the optional Confluent Preview evidence schema. An enabled Confluent Cloud
+tenant prepares that schema online during startup. In a mixed deployment, this
+selection is independent for each tenant database.
 
-```bash
-uv run alembic -c src/core/storage/migrations/alembic.ini upgrade head
-```
-
-Set the database URL first if it differs from the default:
+If you want to run migrations manually (for example, to test before starting
+the engine), set `CHITRAGUPTA_DATABASE_URL` to the target connection URL and
+supply it explicitly:
 
 ```bash
 uv run alembic -c src/core/storage/migrations/alembic.ini \
-  -x sqlalchemy.url="postgresql+psycopg2://user:pass@host/dbname" \
+  -x sqlalchemy.url="${CHITRAGUPTA_DATABASE_URL}" \
   upgrade head
 ```
+
+The override uses normal SQLAlchemy URL syntax. Percent-encode reserved
+characters in credentials and query values once, using standard single-percent
+URL encoding; do not double percent signs. A blank or invalid override stops
+before Alembic can use the configured default database. The diagnostic
+identifies the invalid `sqlalchemy.url` override without including the supplied
+URL or credentials. Correct the URL and rerun the command.
+
+### PostgreSQL migration compatibility
+
+PostgreSQL 17 is verified through the supported migration chain to head from
+these starting states:
+
+- A fresh database with no Alembic revision.
+- Revision 004, before the billing primary-key change.
+- Revision 005, after the billing primary-key change.
+- Revision 008, before `chargeback_dimensions.env_id` is added.
+
+This verification does not claim compatibility for other PostgreSQL versions
+or for schemas that were altered manually.
+
+### Migration 019: FOCUS Mapping Preview
+
+Migration 019 adds the `preview_requests` table and nullable per-date
+`calculation_id`, `calculation_completed_at`, and `calculation_run_id` fields to
+`pipeline_state`, plus their indexes and optional run foreign key.
+
+The migration is additive and performs no data-repair update or backfill.
+Existing calculated dates therefore retain null correlation metadata and remain
+unchanged. A Preview request covering such a date fails with
+`calculation_metadata_unavailable` and `retryable=false`. Migration 027 adds an
+explicit repair operation for dates that are still inside the complete
+eligibility and retained-data interval. The migration itself never creates
+correlation metadata, source evidence, or allocation lineage from legacy rows.
+
+### Migration 020: Preview eligibility diagnostics
+
+Migration 020 adds nullable
+`preview_requests.diagnostic_source_correlation_ids_json`. Existing Preview
+requests and per-date calculation metadata are preserved. A legacy null value is
+read as an empty public correlation list, and downgrading removes only the new
+column.
+
+The related tenant `focus_preview` configuration is additive and optional. An
+existing configuration still loads without it, but new Preview requests fail
+closed with `preview_commercial_profile_unavailable` until the operator declares
+`commercial_profile: direct_payg` and a containing effective interval.
+`billing_currency` defaults to normalized `USD`; non-USD fails Preview with no
+currency conversion. Confluent's Costs API does not provide per-record ISO
+currency. Eligible rows use the normalized configured value as billing-scope
+authority for `BillingCurrency`, not as a value inferred from each provider
+record.
+
+Do not increase `lookback_days` in an attempt to recover absent Preview history.
+Its maximum remains 364 and it defines acquisition/recalculation eligibility,
+not retention, archival history, or guaranteed reconstruction from billing and
+Metrics APIs.
+
+### Migrations 021–022: allocation lineage and report profiles
+
+Migration 021 associates retained Confluent Cost source rows with their billing
+origins and adds persisted calculation-lineage runs and portions. Existing rows
+are not guessed or financially rewritten. When Preview is enabled, valid legacy
+source rows are assigned local evidence authority from their retained values;
+this bootstrap does not call Confluent Cloud. Unreadable or inconsistent legacy
+evidence makes Preview unavailable or fail closed without preventing generic
+chargeback access. A later ordinary gather/calculation can establish new
+current evidence.
+
+Migration 022 adds effective-column and evidence-coverage fields used by Daily
+and Monthly Full/Summary/Custom requests. Existing Daily/Full requests retain
+their original immutable package behavior.
+
+### Migration 023: package expiry and worker leases
+
+Migration 023 adds `expires_at`, `worker_id`, and `lease_expires_at` to Preview
+requests plus owner-scoped expiry, recovery, and lease indexes. Existing ready
+and expired requests with a completion timestamp are backfilled to expire seven
+days after completion; queued, running, and failed requests keep null expiry.
+
+On startup, the API cleans interrupted staging directories and reconciles
+interrupted requests through persisted worker leases. Live leases remain
+protected. Ready packages at or beyond their expiry become unavailable before
+filesystem cleanup.
+
+The new process setting `preview.max_csv_file_bytes` is optional and defaults to
+null, so existing configuration remains valid. Set it only when deterministic
+multi-part CSV output is required. Back up the artifact root before upgrade and
+verify that it remains mounted at the same configured path after restart.
+
+### Migration 024: published monthly revisions
+
+Migration 024 adds storage for immutable published Monthly Full revisions and
+enforces one current revision per configured storage owner and UTC month. It
+does not convert requested Preview packages or backfill revision rows. The first
+successful periodic cycle after upgrade evaluates every eligible month in the
+current acquisition/effective window. It publishes only settlement-ready months
+whose source-arrival threshold and configured acquisition cutoff have passed and
+whose complete full-month calculation, source coverage, reconciliation, and
+mapping validation produce a Settled result.
+
+Existing persisted Provisional revisions are not deleted or rewritten by the
+upgrade. They remain available under the existing supersession and retention
+rules. The first valid Settled revision supersedes a current Provisional revision
+through the ordinary replacement transaction, even when logical report content
+is unchanged.
+
+Before upgrading, back up each tenant database and the matching
+`preview.artifact_root` together. Restoring only one side can leave revision
+metadata without its immutable manifest/CSV bytes, or bytes without their
+current metadata. Automatic publication requires periodic refresh; existing
+run-once and ad-hoc request behavior is unchanged, including on-demand
+Provisional packages for active or otherwise incomplete months.
+
+### Migration 025: revision history retention
+
+Migration 025 adds pending-cleanup state and indexes for visible revision
+history, newly due revisions, and cleanup retries. It preserves the existing
+one-current-revision constraint. The migration does not backfill, hide, or
+delete any revision or package by itself.
+
+After the upgrade, scheduled periodic cycles apply the tenant billing-data
+`retention_days` cutoff to published revisions. Revisions for an out-of-policy
+month become unavailable before package deletion; failed deletions remain
+pending and retry after later cycles or restarts. Requested ad-hoc Preview
+packages retain their independent seven-day expiry.
+
+Before this upgrade, stop writers and take a coordinated backup of every tenant
+database and its matching Preview packages. Restore both sides from the same
+backup if rollback is required. Restoring only the database or only the packages
+can leave retained revision metadata and immutable package bytes inconsistent.
+
+### Migration 026: opt-in Preview evidence
+
+Migration 026 adds the source-attempt/readiness and organization-authority
+metadata used to prove that package generation is reading the newest successful
+provider evidence. Automatic startup enables this migration work only for an
+enabled Confluent Cloud tenant. Disabled tenants do not require the optional
+tables, indexes, repositories, or writable Preview artifact root.
+
+Direct Alembic commands default to Preview disabled. To prepare an enabled
+Confluent Cloud database manually, use an online connection and the explicit
+selection:
+
+```bash
+uv run alembic -c src/core/storage/migrations/alembic.ini \
+  -x sqlalchemy.url="${CHITRAGUPTA_DATABASE_URL}" \
+  -x focus_preview=confluent_cloud \
+  upgrade head
+```
+
+Offline SQL generation is not supported for enabled Preview evidence because
+the migration requires a live connection to inspect, prepare, and repair the
+optional schema. Run the command above against the database instead. Retained
+legacy-row bootstrap is separate: it runs when the enabled tenant's backend is
+initialized during application startup, not inside the migration hook. A
+Preview-only schema or bootstrap failure leaves generic billing and chargeback
+storage usable, but new Preview generation—including header-only output—fails
+closed until the evidence problem is repaired and the pipeline runs
+successfully.
+
+### Migration 027: retained historical repair
+
+Migration 027 adds durable repair operations, per-date results, and source
+readiness history for Preview-enabled Confluent Cloud tenants. It does not
+modify existing billing, chargebacks, pipeline state, source evidence, or
+lineage during upgrade.
+
+Use repair when retained dates upgraded from an earlier release still have
+`calculation_metadata_unavailable` or lack native source/allocation evidence.
+Repair is an explicit asynchronous REST operation available for submission only
+in `both` mode. Submit an inclusive-start/exclusive-end UTC range contained in
+the intersection of the tenant's `focus_preview` effective interval,
+`lookback_days`, `cutoff_days`, and complete `retention_days` interval. The
+operator must still have valid Confluent Cloud billing credentials, provider
+history for every selected date, and historical metrics required by the
+configured allocators. Retention and lookback configuration do not guarantee
+that those external inputs remain available.
+
+For every selected date, repair replaces that tenant/date's billing from the
+authoritative provider response, including an authoritative empty response, and
+runs the canonical calculation and evidence path. It never copies or infers
+calculation identifiers, timestamps, source records, or lineage from legacy
+aggregates. Expected date failures are stored with a stage and diagnostic while
+later dates continue. `daily_validated` means Daily validation passed and the
+date is waiting for validation of a wholly selected UTC month.
+
+Repair changes billing, chargebacks, pipeline state, and therefore generic
+exports only inside the selected tenant/date range. Dates and tenants outside
+that range are preserved. The operation creates no requested package or
+published revision. After every needed date succeeds, submit the normal Daily
+or Monthly Preview request.
+
+Interrupted operations are durably marked failed and are not resumed
+automatically. Retrying submits a new repair operation; exact-date replacement
+makes the same bounded retry deterministic without duplicate current lineage.
+API-only deployments can read retained repair status but return 503 for new
+submissions. Disabled tenants cannot submit or read repair operations.
+
+### Migration 029: canonical UTC-second timestamps
+
+Migration 029 establishes one persistence contract for financial-period keys
+and Preview lifecycle state on SQLite and PostgreSQL: values are UTC and stored
+at whole-second precision. It covers the in-scope billing, chargeback,
+topic-allocation, source-evidence, calculation-lineage, Preview
+request/revision/repair scalar timestamps, plus the named timestamps in
+persisted request coverage and revision source-snapshot JSON.
+
+The migration requires an online database connection because it preflights all
+supported tables before changing data. Offline `--sql` upgrade or downgrade
+fails with an instruction to run against the database. During preflight,
+logically identical records that collapse to the same canonical natural key are
+converged deterministically. Conflicting payloads, invalid timestamps, naive
+JSON timestamps, or unsafe allocation-lineage parent state abort the transaction
+with the affected table/key and repair guidance; the database remains at
+revision 028. When lineage portions converge, their complete parent run's
+`portion_count` is recalculated from the canonical survivors.
+
+SQLite downgrade from 029 restores the revision-028 zero-fraction text form
+ending in `.000000` before removing the new retention retry column. This is
+only compatibility with revision-028 upsert identity, not a sub-second
+precision contract.
+
+Existing API field names, shapes, and semantics remain compatible; affected
+lifecycle timestamp values follow the new UTC whole-second contract. Production
+manifest timestamps already emitted at whole-second precision keep their
+formatting. Immutable artifact bytes, storage keys, financial values,
+correlations, and totals are unchanged. Canonical duplicate convergence
+prevents one logical financial origin from being processed twice.
+
+## FOCUS Mapping Preview compatibility
+
+Existing Preview configuration and previously published requested packages and
+monthly revisions remain compatible after this upgrade. The new capacity and
+generation-spool settings are additive and use their documented defaults when
+omitted.
+
+Requested and scheduled generation now share process-local running and queued
+limits. The per-generation spool ceiling defaults to 2 GiB. Review disk sizing
+before increasing `preview.max_workers`, because each running generation can
+use its complete configured ceiling.
+
+Keep each tenant database and its matching `preview.artifact_root` together
+during backup, restore, or storage moves. Restore both from the same point in
+time so package metadata and immutable package bytes remain consistent.
 
 ## Rollback
 
@@ -136,7 +388,13 @@ If an upgrade fails or the new version misbehaves:
 
 4. **Start the old version.** It will work with the restored database since the schema matches.
 
-Alembic supports `downgrade` but migration scripts may not always have complete downgrade logic. Restoring from backup is the safer path.
+Restoring from backup remains the preferred rollback path. PostgreSQL 17
+downgrade without identity conflicts is tested through revision 004. A
+downgrade stops before destructive changes if distinct billing rows depend on
+`product_category`, distinct Confluent Cloud billing rows depend on `env_id`,
+or distinct `chargeback_dimensions` rows depend on `env_id`. Restore the
+backup, or reconcile and merge the conflicting rows before retrying the
+downgrade.
 
 ## Configuration compatibility
 

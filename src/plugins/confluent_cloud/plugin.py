@@ -5,6 +5,7 @@ from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
+from core.logging_context import safe_exception_context, safe_log_context
 from core.metrics.config import create_metrics_source
 from plugins.confluent_cloud.config import CCloudPluginConfig
 from plugins.confluent_cloud.connections import CCloudConnection
@@ -42,7 +43,10 @@ class ConfluentCloudPlugin:
 
     def initialize(self, config: dict[str, Any]) -> None:
         """Initialize plugin with validated config."""
-        logger.info("Initializing ConfluentCloudPlugin")
+        logger.info(
+            "plugin_initialize_started provider=confluent_cloud%s",
+            safe_log_context(stage="plugin_initialize", operation="initialize", outcome="started"),
+        )
         self._config = CCloudPluginConfig.from_plugin_settings(config)
         self._connection = CCloudConnection(
             api_key=self._config.ccloud_api.key,
@@ -66,9 +70,10 @@ class ConfluentCloudPlugin:
             self._metrics_source = create_metrics_source(self._config.metrics)
 
         logger.info(
-            "ConfluentCloudPlugin initialized handlers=%s metrics_enabled=%s",
-            list(self._handlers),
+            "plugin_initialize_completed provider=confluent_cloud handler_count=%d metrics_enabled=%s%s",
+            len(self._handlers),
             self._metrics_source is not None,
+            safe_log_context(stage="plugin_initialize", operation="initialize", outcome="completed"),
         )
 
     def get_service_handlers(self) -> dict[str, ServiceHandler]:
@@ -84,6 +89,14 @@ class ConfluentCloudPlugin:
             raise RuntimeError("Plugin not initialized. Call initialize() first.")
         logger.debug("get_cost_input building CCloudBillingCostInput")
         return CCloudBillingCostInput(self._connection, self._config)
+
+    def gather_preview_organizations(self, tenant_id: str) -> tuple[Resource, ...]:
+        """Gather organization authority for enabled Preview tenants."""
+        if self._connection is None:
+            raise RuntimeError("Plugin not initialized. Call initialize() first.")
+        from plugins.confluent_cloud.gathering import gather_organizations
+
+        return tuple(gather_organizations(self._connection, self.ecosystem, tenant_id))
 
     def get_metrics_source(self) -> MetricsSource | None:
         """Return metrics source if configured, None otherwise."""
@@ -106,7 +119,16 @@ class ConfluentCloudPlugin:
         no longer requires cross-handler state sharing — shared context is built
         once here and passed explicitly.
         """
-        logger.debug("Building shared context for tenant=%s", tenant_id)
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                "shared_context_started provider=confluent_cloud%s",
+                safe_log_context(
+                    tenant_id=tenant_id,
+                    stage="shared_context",
+                    operation="build_shared_context",
+                    outcome="started",
+                ),
+            )
         from plugins.confluent_cloud.gathering import gather_environments, gather_kafka_clusters
         from plugins.confluent_cloud.shared_context import CCloudSharedContext
 
@@ -117,10 +139,15 @@ class ConfluentCloudPlugin:
         env_ids = [r.resource_id for r in env_resources]
         cluster_resources = list(gather_kafka_clusters(self._connection, self.ecosystem, tenant_id, env_ids))
         logger.info(
-            "Shared context built tenant=%s envs=%d clusters=%d",
-            tenant_id,
+            "shared_context_completed provider=confluent_cloud environments=%d clusters=%d%s",
             len(env_resources),
             len(cluster_resources),
+            safe_log_context(
+                tenant_id=tenant_id,
+                stage="shared_context",
+                operation="build_shared_context",
+                outcome="completed",
+            ),
         )
         return CCloudSharedContext(
             environment_resources=tuple(env_resources),
@@ -157,11 +184,17 @@ class ConfluentCloudPlugin:
                     end=end,
                     resource_id_filter=cluster_id,
                 )
-            except Exception:
+            except Exception as exc:
                 logger.warning(
-                    "Topic discovery failed for cluster=%s — skipping",
-                    cluster_id,
-                    exc_info=True,
+                    "topic_discovery_failed provider=confluent_cloud%s",
+                    safe_log_context(
+                        tenant_id=tenant_id,
+                        stage="topic_discovery",
+                        outcome="skipped",
+                        retryable=True,
+                        resource_id=cluster_id,
+                        **safe_exception_context(exc),
+                    ),
                 )
                 continue
 

@@ -6,6 +6,8 @@ from datetime import UTC, date, datetime
 from sqlalchemy import Column, Date, DateTime, Index, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
+from core.storage.backends.sqlmodel.timestamps import UTCSecondDateTime
+
 logger = logging.getLogger(__name__)
 
 # Alias to avoid name clash in EmissionRecordTable where the field is also named 'date'
@@ -48,7 +50,7 @@ class ChargebackFactTable(SQLModel, table=True):
     __tablename__ = "chargeback_facts"
     __table_args__ = (Index("ix_chargeback_facts_dimension_timestamp", "dimension_id", "timestamp"),)
 
-    timestamp: datetime = Field(sa_column=Column(DateTime(timezone=True), primary_key=True))
+    timestamp: datetime = Field(sa_column=Column(UTCSecondDateTime(), primary_key=True))
     dimension_id: int = Field(primary_key=True, foreign_key="chargeback_dimensions.dimension_id")
     amount: str = ""
     tags_json: str = Field(default="[]")
@@ -56,6 +58,17 @@ class ChargebackFactTable(SQLModel, table=True):
 
 class PipelineStateTable(SQLModel, table=True):
     __tablename__ = "pipeline_state"
+    __table_args__ = (
+        Index(
+            "ix_pipeline_state_preview_coverage",
+            "ecosystem",
+            "tenant_id",
+            "tracking_date",
+            "chargeback_calculated",
+            "calculation_id",
+            "calculation_completed_at",
+        ),
+    )
 
     ecosystem: str = Field(primary_key=True)
     tenant_id: str = Field(primary_key=True)
@@ -63,6 +76,9 @@ class PipelineStateTable(SQLModel, table=True):
     billing_gathered: bool = False
     resources_gathered: bool = False
     chargeback_calculated: bool = False
+    calculation_id: str | None = None
+    calculation_completed_at: datetime | None = Field(default=None, sa_column=Column(UTCSecondDateTime()))
+    calculation_run_id: int | None = Field(default=None, foreign_key="pipeline_runs.id")
     topic_overlay_gathered: bool = False
     topic_attribution_calculated: bool = False
 
@@ -103,7 +119,7 @@ class TopicAttributionFactTable(SQLModel, table=True):
     __tablename__ = "topic_attribution_facts"
     __table_args__ = (Index("ix_topic_attr_facts_dim_ts", "dimension_id", "timestamp"),)
 
-    timestamp: datetime = Field(sa_column=Column(DateTime(timezone=True), primary_key=True))
+    timestamp: datetime = Field(sa_column=Column(UTCSecondDateTime(), primary_key=True))
     dimension_id: int = Field(
         primary_key=True,
         foreign_key="topic_attribution_dimensions.dimension_id",

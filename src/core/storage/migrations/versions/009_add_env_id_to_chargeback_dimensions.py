@@ -16,6 +16,19 @@ down_revision = "008"
 branch_labels = None
 depends_on = None
 
+_CHARGEBACK_UNIQUE_008 = (
+    "ecosystem",
+    "tenant_id",
+    "resource_id",
+    "product_category",
+    "product_type",
+    "identity_id",
+    "cost_type",
+    "allocation_method",
+    "allocation_detail",
+)
+_CHARGEBACK_UNIQUE_009 = (*_CHARGEBACK_UNIQUE_008, "env_id")
+
 
 def upgrade() -> None:
     # 1. Add env_id column with default empty string (non-nullable)
@@ -41,6 +54,15 @@ def upgrade() -> None:
         WHERE ecosystem = 'confluent_cloud'
     """)
     )
+
+    if conn.dialect.name != "sqlite":
+        op.drop_constraint("uq_chargeback_dimensions", "chargeback_dimensions", type_="unique")
+        op.create_unique_constraint(
+            "uq_chargeback_dimensions",
+            "chargeback_dimensions",
+            list(_CHARGEBACK_UNIQUE_009),
+        )
+        return
 
     # 3. Rebuild unique constraint to include env_id.
     #    SQLite does not support ALTER CONSTRAINT, so we recreate via table copy.
@@ -93,6 +115,31 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     conn = op.get_bind()
+    if conn.dialect.name != "sqlite":
+        collapse = conn.execute(
+            sa.text("""
+                SELECT 1
+                FROM chargeback_dimensions
+                GROUP BY ecosystem, tenant_id, resource_id, product_category, product_type,
+                         identity_id, cost_type, allocation_method, allocation_detail
+                HAVING COUNT(*) > 1
+                LIMIT 1
+            """)
+        ).first()
+        if collapse is not None:
+            raise RuntimeError(
+                "migration 009 downgrade cannot remove chargeback_dimensions.env_id because rows "
+                "differ only by env_id; downgrade aborted before constraint or column changes"
+            )
+        op.drop_constraint("uq_chargeback_dimensions", "chargeback_dimensions", type_="unique")
+        op.create_unique_constraint(
+            "uq_chargeback_dimensions",
+            "chargeback_dimensions",
+            list(_CHARGEBACK_UNIQUE_008),
+        )
+        op.drop_column("chargeback_dimensions", "env_id")
+        return
+
     conn.execute(
         sa.text("""
         CREATE TABLE chargeback_dimensions_old (

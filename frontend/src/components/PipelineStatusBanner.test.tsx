@@ -30,6 +30,12 @@ function makeTenant(overrides: Partial<TenantReadiness> = {}): TenantReadiness {
     permanent_failure: null,
     topic_attribution_status: "disabled",
     topic_attribution_error: null,
+    focus_preview_state: "ready",
+    focus_preview_completed_repair_dates: null,
+    focus_preview_total_repair_dates: null,
+    focus_preview_message: null,
+    focus_preview_ordinary_retention: null,
+    focus_preview_evidence_retention: null,
     ...overrides,
   };
 }
@@ -213,5 +219,90 @@ describe("PipelineStatusBanner — pipeline running stage text (GAP-100 verifica
     expect(
       screen.getByText(/Calculating chargebacks for 2026-03-14/i),
     ).toBeInTheDocument();
+  });
+});
+
+describe("PipelineStatusBanner — FOCUS repair remains feature-scoped", () => {
+  it.each(["upgrading", "degraded", "unavailable"] as const)(
+    "does not render a global banner for repair-only %s",
+    (focusState) => {
+      mockUseTenant.mockReturnValue({
+        ...baseTenantContext,
+        currentTenant: {
+          tenant_name: "acme",
+          tenant_id: "t-001",
+          ecosystem: "ccloud",
+          dates_pending: 0,
+          dates_calculated: 10,
+          last_calculated_date: null,
+          topic_attribution_status: "disabled",
+          topic_attribution_error: null,
+        },
+      });
+      mockUseReadiness.mockReturnValue({
+        appStatus: "ready" as AppStatus,
+        readiness: makeReadiness({
+          status: "ready",
+          tenants: [
+            makeTenant({
+              focus_preview_state: focusState,
+              focus_preview_completed_repair_dates: 2,
+              focus_preview_total_repair_dates: 3,
+              focus_preview_message: "Feature-scoped repair state.",
+            }),
+          ],
+        }),
+      });
+
+      const { container } = render(<PipelineStatusBanner />);
+
+      expect(container.firstChild).toBeNull();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    },
+  );
+
+  it("does not render a global banner for retention-only degraded preview state", () => {
+    mockUseTenant.mockReturnValue({
+      ...baseTenantContext,
+      currentTenant: {
+        tenant_name: "acme",
+        tenant_id: "t-001",
+        ecosystem: "ccloud",
+        dates_pending: 0,
+        dates_calculated: 10,
+        last_calculated_date: null,
+        topic_attribution_status: "disabled",
+        topic_attribution_error: null,
+      },
+    });
+    mockUseReadiness.mockReturnValue({
+      appStatus: "ready" as AppStatus,
+      readiness: makeReadiness({
+        tenants: [
+          makeTenant({
+            focus_preview_state: "degraded",
+            focus_preview_completed_repair_dates: null,
+            focus_preview_total_repair_dates: null,
+            focus_preview_message:
+              "Retention cleanup needs attention. Review the latest retention outcome and worker logs; existing valid Preview data remains available.",
+            focus_preview_ordinary_retention: {
+              attempted_at: "2026-07-30T23:25:01Z",
+              status: "failure",
+              diagnostic: {
+                code: "focus_preview_ordinary_retention_failed",
+                message:
+                  "Ordinary tenant retention cleanup failed. Review worker logs and restore tenant storage; existing valid Preview data remains available.",
+                error_type: "OperationalError",
+              },
+            },
+            focus_preview_evidence_retention: null,
+          }),
+        ],
+      }),
+    });
+
+    const { container } = render(<PipelineStatusBanner />);
+
+    expect(container).toBeEmptyDOMElement();
   });
 });

@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterator, Sequence
+from dataclasses import dataclass
 from datetime import date, datetime
+from decimal import Decimal
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Protocol, Self, runtime_checkable
 
 if TYPE_CHECKING:
@@ -26,6 +29,71 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+class AllocationTargetKind(StrEnum):
+    IDENTITY = "identity"
+    RESOURCE = "resource"
+    UNALLOCATED = "unallocated"
+
+
+class LineageCaptureStatus(StrEnum):
+    COMPLETE = "complete"
+    INVALID = "invalid"
+
+
+class LineageCaptureReason(StrEnum):
+    NO_PORTIONS = "no_portions"
+    ZERO_ORIGIN_COST = "zero_origin_cost"
+    INVALID_ROW_COST = "invalid_row_cost"
+    INVALID_METHOD = "invalid_method"
+    INVALID_METADATA = "invalid_metadata"
+    INVALID_RATIO = "invalid_ratio"
+    INVALID_QUANTITY = "invalid_quantity"
+
+
+@dataclass(frozen=True)
+class AllocationLineageFact:
+    portion_ordinal: int
+    target_kind: AllocationTargetKind
+    target_id: str | None
+    allocated_cost: Decimal
+    allocated_quantity: Decimal
+    allocation_ratio: Decimal
+    method_id: str
+    method_version: str
+    method_details_json: str
+
+
+@dataclass(frozen=True)
+class AllocationLineageCapture:
+    origin_timestamp: datetime
+    origin_env_id: str
+    origin_resource_id: str
+    origin_product_type: str
+    origin_product_category: str
+    status: LineageCaptureStatus
+    reason: LineageCaptureReason | None
+    facts: tuple[AllocationLineageFact, ...]
+
+
+@dataclass(frozen=True)
+class AllocationLineageRunCapture:
+    ecosystem: str
+    tenant_id: str
+    tracking_date: date
+    calculation_id: str
+    captures: tuple[AllocationLineageCapture, ...]
+
+
+@runtime_checkable
+class AllocationLineageRepository(Protocol):
+    def replace_calculation_lineage(
+        self,
+        run: AllocationLineageRunCapture,
+        *,
+        calculation_completed_at: datetime,
+    ) -> None: ...
+
+
 @runtime_checkable
 class ResourceRepository(Protocol):
     """Repository for resource persistence with temporal query support."""
@@ -33,6 +101,13 @@ class ResourceRepository(Protocol):
     def upsert(self, resource: Resource) -> Resource: ...
 
     def get(self, ecosystem: str, tenant_id: str, resource_id: str) -> Resource | None: ...
+
+    def get_many(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        resource_ids: Sequence[str],
+    ) -> dict[str, Resource]: ...
 
     def find_active_at(
         self,
@@ -143,6 +218,13 @@ class IdentityRepository(Protocol):
     def upsert(self, identity: Identity) -> Identity: ...
 
     def get(self, ecosystem: str, tenant_id: str, identity_id: str) -> Identity | None: ...
+
+    def get_many(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        identity_ids: Sequence[str],
+    ) -> dict[str, Identity]: ...
 
     def find_active_at(
         self,
@@ -271,6 +353,21 @@ class BillingRepository(Protocol):
         offset: int = 0,
     ) -> tuple[list[BillingLineItem], int]:
         """Returns (items, total_count). Filters applied at SQL level."""
+        ...
+
+
+@runtime_checkable
+class HistoricalRepairBillingWriter(Protocol):
+    """Exact owner/date replacement used by explicit historical repair."""
+
+    def replace_for_date(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        tracking_date: date,
+        lines: Sequence[BillingLineItem],
+    ) -> int:
+        """Replace one owner's billing rows for one UTC date."""
         ...
 
 
@@ -528,7 +625,16 @@ class PipelineStateRepository(Protocol):
         """Resets chargeback_calculated=False for the given date (for recalculation window)."""
         ...
 
-    def mark_chargeback_calculated(self, ecosystem: str, tenant_id: str, tracking_date: date) -> None: ...
+    def mark_chargeback_calculated(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        tracking_date: date,
+        *,
+        calculation_id: str,
+        calculation_completed_at: datetime,
+        calculation_run_id: int | None,
+    ) -> None: ...
 
     def mark_topic_overlay_gathered(self, ecosystem: str, tenant_id: str, tracking_date: date) -> None:
         """Sets topic_overlay_gathered=True for the given date."""
@@ -555,6 +661,10 @@ class PipelineStateRepository(Protocol):
 
     def get_last_calculated_date(self, ecosystem: str, tenant_id: str) -> date | None:
         """Return the most recent tracking_date where chargeback_calculated=True, or None."""
+        ...
+
+    def delete_before(self, ecosystem: str, tenant_id: str, before: date) -> int:
+        """Delete owner-scoped calculation state before the date boundary."""
         ...
 
 

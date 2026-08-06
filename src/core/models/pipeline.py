@@ -20,8 +20,15 @@ class PipelineState:
     billing_gathered: bool = False
     resources_gathered: bool = False
     chargeback_calculated: bool = False
+    calculation_id: str | None = None
+    calculation_completed_at: datetime | None = None
+    calculation_run_id: int | None = None
     topic_overlay_gathered: bool = False
     topic_attribution_calculated: bool = False
+
+    @property
+    def has_usable_calculation(self) -> bool:
+        return self.chargeback_calculated and bool(self.calculation_id) and self.calculation_completed_at is not None
 
 
 @dataclass

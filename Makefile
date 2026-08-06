@@ -51,7 +51,7 @@ test:
 	uv run pytest --cov=src --cov-report=term-missing
 
 lint:
-	uv run ruff check src tests
+	uv run ruff check
 
 format:
 	uv run ruff format src tests

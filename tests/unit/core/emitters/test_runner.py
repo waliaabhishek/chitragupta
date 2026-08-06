@@ -303,6 +303,28 @@ class TestEmitterRunnerFailedEmission:
         # Must not raise
         runner.run(TENANT_ID)
 
+    def test_run_logs_bounded_summary_without_per_date_info(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        from core.emitters.registry import register
+
+        register("mock-emitter", lambda **_: lambda tenant_id, dt, rows: None)
+
+        dates = [date(2025, 1, 5), date(2025, 1, 6)]
+        storage = MockStorageBackendForRunner(dates)
+        runner = _make_runner(storage, [_make_spec()])
+
+        with caplog.at_level("INFO", logger="core.emitters.runner"):
+            runner.run(TENANT_ID)
+
+        info_records = [record for record in caplog.records if record.levelname == "INFO"]
+        assert len(info_records) == 2
+        assert "emitter_name=mock-emitter" in caplog.text
+        assert "pending_dates=2" in caplog.text
+        assert "date=2025-01-05" not in caplog.text
+        assert "date=2025-01-06" not in caplog.text
+
 
 # ---------- Case 5: Crash recovery / idempotent re-emit ----------
 

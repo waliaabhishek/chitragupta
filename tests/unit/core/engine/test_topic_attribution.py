@@ -7,6 +7,12 @@ from unittest.mock import MagicMock
 import pytest
 
 
+def _billing_result(*dates: date):
+    from core.engine.orchestrator import BillingGatherResult
+
+    return BillingGatherResult(frozenset(dates))
+
+
 def _make_config(**overrides):
     from plugins.confluent_cloud.config import TopicAttributionConfig
 
@@ -226,45 +232,53 @@ class TestTopicAttributionPipelineStateFlags:
 
     def test_mark_needs_recalculation_resets_topic_attribution_calculated(self) -> None:
         """mark_needs_recalculation() → topic_attribution_calculated=False, topic_overlay_gathered stays True."""
+        from sqlalchemy import event
         from sqlmodel import Session, SQLModel, create_engine
 
         from core.storage.backends.sqlmodel.repositories import SQLModelPipelineStateRepository
         from core.storage.backends.sqlmodel.tables import PipelineStateTable
 
         engine = create_engine("sqlite://", echo=False)
-        SQLModel.metadata.create_all(engine)
+        connection_closed = MagicMock()
+        event.listen(engine, "close", connection_closed)
+        try:
+            SQLModel.metadata.create_all(engine)
 
-        with Session(engine) as session:
-            # Insert a pipeline state with both flags True
-            ps = PipelineStateTable(
-                ecosystem="eco",
-                tenant_id="t1",
-                tracking_date=date(2026, 1, 1),
-                billing_gathered=True,
-                resources_gathered=True,
-                chargeback_calculated=True,
-                topic_overlay_gathered=True,
-                topic_attribution_calculated=True,
-            )
-            session.add(ps)
-            session.commit()
-
-            repo = SQLModelPipelineStateRepository(session)
-            repo.mark_needs_recalculation("eco", "t1", date(2026, 1, 1))
-            session.commit()
-
-            from sqlmodel import select
-
-            result = session.exec(
-                select(PipelineStateTable).where(
-                    PipelineStateTable.ecosystem == "eco",
-                    PipelineStateTable.tenant_id == "t1",
+            with Session(engine) as session:
+                # Insert a pipeline state with both flags True
+                ps = PipelineStateTable(
+                    ecosystem="eco",
+                    tenant_id="t1",
+                    tracking_date=date(2026, 1, 1),
+                    billing_gathered=True,
+                    resources_gathered=True,
+                    chargeback_calculated=True,
+                    topic_overlay_gathered=True,
+                    topic_attribution_calculated=True,
                 )
-            ).first()
+                session.add(ps)
+                session.commit()
 
-            assert result is not None
-            assert result.topic_attribution_calculated is False
-            assert result.topic_overlay_gathered is True  # unchanged
+                repo = SQLModelPipelineStateRepository(session)
+                repo.mark_needs_recalculation("eco", "t1", date(2026, 1, 1))
+                session.commit()
+
+                from sqlmodel import select
+
+                result = session.exec(
+                    select(PipelineStateTable).where(
+                        PipelineStateTable.ecosystem == "eco",
+                        PipelineStateTable.tenant_id == "t1",
+                    )
+                ).first()
+
+                assert result is not None
+                assert result.topic_attribution_calculated is False
+                assert result.topic_overlay_gathered is True  # unchanged
+        finally:
+            engine.dispose(close=True)
+
+        connection_closed.assert_called_once()
 
     def test_pipeline_state_to_domain_maps_new_fields(self) -> None:
         """pipeline_state_to_domain maps topic_overlay_gathered and topic_attribution_calculated."""
@@ -387,12 +401,12 @@ class TestGatherPhaseTopicDiscovery:
         # _gather_billing returns a date so the discovery block is triggered;
         # _detect_deletions patched to avoid find_active_at unpack errors.
         with (
-            patch.object(phase, "_gather_billing", return_value={billing_date}),
+            patch.object(phase, "_gather_billing", return_value=_billing_result(billing_date)),
             patch.object(phase, "_gather_resources_and_identities", return_value=(set(), set())),
             patch.object(phase, "_apply_recalculation_window"),
             patch.object(phase, "_detect_deletions"),
         ):
-            phase._run_full(mock_uow)
+            phase.run(mock_uow, plan=phase.plan_refresh(datetime(2026, 1, 31, tzinfo=UTC)))
 
         mock_plugin.gather_topic_resources.assert_called_once_with("t1", [])
         mock_uow.resources.upsert.assert_called_once_with(discovered)
@@ -436,12 +450,12 @@ class TestGatherPhaseTopicDiscovery:
 
         mock_uow = MagicMock()
         with (
-            patch.object(phase, "_gather_billing", return_value={date(2026, 1, 1)}),
+            patch.object(phase, "_gather_billing", return_value=_billing_result(date(2026, 1, 1))),
             patch.object(phase, "_gather_resources_and_identities", return_value=(set(), set())),
             patch.object(phase, "_apply_recalculation_window"),
             patch.object(phase, "_detect_deletions"),
         ):
-            phase._run_full(mock_uow)
+            phase.run(mock_uow, plan=phase.plan_refresh(datetime(2026, 1, 31, tzinfo=UTC)))
 
         mock_plugin.gather_topic_resources.assert_not_called()
 
@@ -1197,12 +1211,12 @@ class TestGatherPhaseEmptyTopicList:
         billing_date = date(2026, 1, 1)
 
         with (
-            patch.object(phase, "_gather_billing", return_value={billing_date}),
+            patch.object(phase, "_gather_billing", return_value=_billing_result(billing_date)),
             patch.object(phase, "_gather_resources_and_identities", return_value=(set(), set())),
             patch.object(phase, "_apply_recalculation_window"),
             patch.object(phase, "_detect_deletions"),
         ):
-            phase._run_full(mock_uow)
+            phase.run(mock_uow, plan=phase.plan_refresh(datetime(2026, 1, 31, tzinfo=UTC)))
 
         mock_uow.pipeline_state.mark_topic_overlay_gathered.assert_called_once_with(
             "eco",
@@ -1219,12 +1233,12 @@ class TestGatherPhaseEmptyTopicList:
         billing_date = date(2026, 1, 1)
 
         with (
-            patch.object(phase, "_gather_billing", return_value={billing_date}),
+            patch.object(phase, "_gather_billing", return_value=_billing_result(billing_date)),
             patch.object(phase, "_gather_resources_and_identities", return_value=(set(), set())),
             patch.object(phase, "_apply_recalculation_window"),
             patch.object(phase, "_detect_deletions"),
         ):
-            phase._run_full(mock_uow)
+            phase.run(mock_uow, plan=phase.plan_refresh(datetime(2026, 1, 31, tzinfo=UTC)))
 
         mock_uow.resources.upsert.assert_not_called()
 
@@ -1237,12 +1251,12 @@ class TestGatherPhaseEmptyTopicList:
         billing_date = date(2026, 1, 1)
 
         with (
-            patch.object(phase, "_gather_billing", return_value={billing_date}),
+            patch.object(phase, "_gather_billing", return_value=_billing_result(billing_date)),
             patch.object(phase, "_gather_resources_and_identities", return_value=(set(), set())),
             patch.object(phase, "_apply_recalculation_window"),
             patch.object(phase, "_detect_deletions"),
         ):
-            phase._run_full(mock_uow)
+            phase.run(mock_uow, plan=phase.plan_refresh(datetime(2026, 1, 31, tzinfo=UTC)))
 
         mock_uow.pipeline_state.mark_topic_overlay_gathered.assert_not_called()
 

@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import TYPE_CHECKING
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -19,6 +19,7 @@ from core.models.pipeline import PipelineState
 from core.models.resource import CoreResource, Resource, ResourceStatus
 from core.storage.backends.sqlmodel.module import CoreStorageModule
 from core.storage.backends.sqlmodel.unit_of_work import SQLModelBackend
+from tests.integration.core.api.backend_provider import install_backend
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -59,8 +60,8 @@ def app_with_ccloud_backend(
 ) -> Iterator[TestClient]:
     """Create a test app backed by CCloudStorageModule — exercises CCloudChargebackRepository."""
     app = create_app(settings_with_tenant)
-    with patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"), TestClient(app) as client:
-        app.state.backends["test-tenant"] = in_memory_ccloud_backend
+    with TestClient(app) as client:
+        install_backend(app, "test-tenant", in_memory_ccloud_backend)
         yield client
 
 
@@ -86,9 +87,9 @@ def settings_with_tenant(tenant_config: TenantConfig) -> AppSettings:
 def app_with_backend(settings_with_tenant: AppSettings, in_memory_backend: SQLModelBackend) -> Iterator[TestClient]:
     """Create a test app with a pre-initialized backend."""
     app = create_app(settings_with_tenant)
-    with patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"), TestClient(app) as client:
+    with TestClient(app) as client:
         # After lifespan runs, inject our test backend
-        app.state.backends["test-tenant"] = in_memory_backend
+        install_backend(app, "test-tenant", in_memory_backend)
         yield client
 
 
@@ -105,8 +106,8 @@ def app_with_mock_runner(
 ) -> Iterator[TestClient]:
     """App with a mock WorkflowRunner — allows trigger endpoint to accept requests."""
     app = create_app(settings_with_tenant, workflow_runner=mock_workflow_runner)
-    with patch("workflow_runner.cleanup_orphaned_runs_for_all_tenants"), TestClient(app) as client:
-        app.state.backends["test-tenant"] = in_memory_backend
+    with TestClient(app) as client:
+        install_backend(app, "test-tenant", in_memory_backend)
         yield client
 
 

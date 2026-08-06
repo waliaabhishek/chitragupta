@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 from core.emitters.models import EmitManifest, EmitOutcome
 from core.emitters.protocols import RowProvider  # module-level import — safe with PEP 695  # noqa: TC001
+from core.logging_context import safe_exception_context, safe_log_context
 
 if TYPE_CHECKING:
     from core.emitters.protocols import LifecycleEmitter
@@ -35,12 +36,19 @@ class PerDateDriver:
             try:
                 self._emitter(tenant_id, dt, rows)
                 outcomes[dt] = EmitOutcome.EMITTED
-            except Exception:
-                logger.exception(
-                    "PerDateDriver: emitter %r failed for tenant=%s date=%s",
-                    self._emitter,
-                    tenant_id,
-                    dt,
+            except Exception as exc:
+                logger.error(
+                    "emitter_date_failed%s",
+                    safe_log_context(
+                        tenant_id=tenant_id,
+                        tracking_date=dt,
+                        stage="emit",
+                        operation="per_date_emit",
+                        outcome="failed",
+                        retryable=True,
+                        emitter_name=type(self._emitter).__name__,
+                        **safe_exception_context(exc),
+                    ),
                 )
                 outcomes[dt] = EmitOutcome.FAILED
         return outcomes
@@ -60,8 +68,18 @@ class LifecycleDriver:
     ) -> dict[date, EmitOutcome]:
         try:
             self._emitter.open(tenant_id, manifest)
-        except Exception:
-            logger.exception("LifecycleDriver: open() failed for tenant=%s", tenant_id)
+        except Exception as exc:
+            logger.error(
+                "emitter_open_failed%s",
+                safe_log_context(
+                    tenant_id=tenant_id,
+                    stage="emit_open",
+                    outcome="failed",
+                    retryable=True,
+                    emitter_name=type(self._emitter).__name__,
+                    **safe_exception_context(exc),
+                ),
+            )
             return {d: EmitOutcome.FAILED for d in manifest.pending_dates}
 
         for dt in manifest.pending_dates:
@@ -70,16 +88,33 @@ class LifecycleDriver:
                 continue
             try:
                 self._emitter.emit(tenant_id, dt, rows)
-            except Exception:
-                logger.exception(
-                    "LifecycleDriver: emit() failed for tenant=%s date=%s",
-                    tenant_id,
-                    dt,
+            except Exception as exc:
+                logger.error(
+                    "emitter_date_failed%s",
+                    safe_log_context(
+                        tenant_id=tenant_id,
+                        tracking_date=dt,
+                        stage="emit",
+                        outcome="failed",
+                        retryable=True,
+                        emitter_name=type(self._emitter).__name__,
+                        **safe_exception_context(exc),
+                    ),
                 )
 
         try:
             result = self._emitter.close(tenant_id)
             return result.outcomes
-        except Exception:
-            logger.exception("LifecycleDriver: close() failed for tenant=%s", tenant_id)
+        except Exception as exc:
+            logger.error(
+                "emitter_close_failed%s",
+                safe_log_context(
+                    tenant_id=tenant_id,
+                    stage="emit_close",
+                    outcome="failed",
+                    retryable=True,
+                    emitter_name=type(self._emitter).__name__,
+                    **safe_exception_context(exc),
+                ),
+            )
             return {d: EmitOutcome.FAILED for d in manifest.pending_dates}

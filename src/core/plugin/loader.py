@@ -8,12 +8,25 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from core.config.models import AppSettings  # noqa: TC001 - public helper annotations are runtime-resolvable
+from core.plugin.registry import PluginRegistry  # noqa: TC001 - public helper annotations are runtime-resolvable
+
 if TYPE_CHECKING:
     from types import ModuleType
 
     from core.plugin.protocols import EcosystemPlugin
 
 logger = logging.getLogger(__name__)
+_DEFAULT_PLUGINS_PATH = Path(__file__).resolve().parents[2] / "plugins"
+
+
+def build_plugin_registry(settings: AppSettings) -> PluginRegistry:
+    """Build the canonical plugin registry for one resolved application config."""
+    plugins_path = _DEFAULT_PLUGINS_PATH if settings.plugins_path is None else Path.cwd() / settings.plugins_path
+    registry = PluginRegistry()
+    for ecosystem, factory in discover_plugins(plugins_path):
+        registry.register(ecosystem, factory)
+    return registry
 
 
 def _import_plugin_module(entry: Path, plugins_path: Path, *, on_sys_path: bool | None = None) -> ModuleType:

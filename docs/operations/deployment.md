@@ -2,11 +2,11 @@
 
 ## Run modes
 
-| `--mode` | Use case |
-|---|---|
-| `worker` | Background pipeline only. API served separately. |
-| `api` | REST API only. No pipeline. Query existing data. |
-| `both` | Pipeline + API in one process. Simplest deployment. |
+| `--mode` | General behavior | FOCUS Mapping Preview |
+|---|---|---|
+| `worker` | Background pipeline only. API served separately. | Runs scheduled monthly publication and revision retention. Exposes no Preview HTTP routes. |
+| `api` | REST API only. No periodic pipeline. | Serves ad-hoc requests, history, revisions, and downloads. Does not publish scheduled revisions. |
+| `both` | Pipeline + API in one process. Simplest deployment. | Serves the same Preview HTTP contract as `api` and runs scheduled publication and retention. |
 
 ## Systemd unit (worker)
 
@@ -71,6 +71,69 @@ Pass secrets via environment — never hardcode in YAML:
 docker run -e CCLOUD_API_KEY=... -e CCLOUD_API_SECRET=... chitragupta
 ```
 
+## Operational logging configuration
+
+Use `INFO` as the production baseline. It records bounded lifecycle transitions,
+completion summaries, degraded fallbacks, and terminal failures without
+per-record output.
+
+```yaml
+logging:
+  level: INFO
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+```
+
+During an investigation, enable `DEBUG` only for the boundary involved. These
+settings expose request/provider lifecycle events while leaving the rest of the
+process at `INFO`:
+
+```yaml
+logging:
+  level: INFO
+  per_module_levels:
+    core.api.app: DEBUG
+    core.engine.orchestrator: DEBUG
+    core.metrics.prometheus: DEBUG
+    plugins.confluent_cloud.connections: DEBUG
+```
+
+Return temporary module overrides to their normal level after the incident.
+Global `DEBUG` increases event volume across tenants and providers.
+
+The default message contains canonical `key=value` context such as request,
+pipeline run, calculation, revision, repair, date/month, stage, operation,
+outcome, and retry position when those fields apply. Preserve the full message
+in the log collector so these correlations remain searchable. If the collector
+expects JSON, wrap the already-redacted message rather than attempting to
+reconstruct fields from application objects:
+
+```yaml
+logging:
+  level: INFO
+  format: '{"time":"%(asctime)s","logger":"%(name)s","level":"%(levelname)s","message":"%(message)s"}'
+```
+
+Configure the collector and alerting policy to:
+
+- retain `INFO` events long enough to connect API requests and scheduled runs
+  to later warnings or errors;
+- alert on terminal `ERROR` events and repeated `WARNING` events where
+  `retryable=false` or attempts reach `max_attempts`;
+- group related events by `request_id`, `pipeline_run_id`, `calculation_id`,
+  `revision_id`, or `repair_id`, rather than message text alone;
+- preserve percent-escaped values and `traceback_frames` as emitted;
+- restrict log access because tenant and resource identifiers are operational
+  data even though secrets and raw payloads are excluded.
+
+Do not add credentials, tokens, authentication headers, connection strings,
+provider payloads, database queries or parameters, response bodies, raw URLs
+with query strings, or raw exception messages in sidecar, proxy, or wrapper
+logs. Chitragupta emits sanitized error type, root type/code, and bounded frame
+names instead.
+
+For response procedures and representative event sequences, see
+[Operational logging](troubleshooting.md#operational-logging).
+
 ## API server
 
 The REST API is a FastAPI application served by uvicorn.
@@ -85,6 +148,65 @@ api:
 ```
 
 Health endpoint: `GET /health` — returns `{"status": "ok", "version": "..."}`
+
+### FOCUS Mapping Preview boundary
+
+FOCUS Mapping Preview is opt-in per tenant. When no tenant has a
+`focus_preview` block, API and worker startup do not create or access
+`preview.artifact_root`, initialize Preview recovery, gather Preview
+organization authority, or require Preview evidence/lineage storage. The
+ordinary pipeline, emitters, and generic export keep their existing deployment
+requirements.
+
+Chitragupta does not provide Preview-specific users, roles, API keys, or
+tokens. Protect the complete
+`/api/v1/tenants/{tenant_name}/focus-preview` prefix with the deployment's
+existing authenticated reverse proxy or API gateway, and configure credentials
+at that external boundary.
+
+Do not expose `preview.artifact_root` as a static directory or public volume.
+Preview downloads must go through the API so artifact identity and checksums
+are verified before delivery. When `api` and `worker` run separately, configure
+both with the same tenant database and the same durable artifact root. Use a
+database deployment suitable for the expected process and write concurrency.
+
+### Preview capacity and storage sizing
+
+Preview generation limits are process-local. In `both` mode, requested packages
+and scheduled tenant-month publication share one bounded scheduler. In split
+mode, the API process enforces its requested-generation limits and the worker
+process enforces its scheduled-generation limits independently. Every
+additional API or worker replica has its own configured running and queued
+capacity; replicas do not combine their counters into a distributed limit.
+
+`preview.max_generation_spool_bytes` defaults to 2 GiB for each running
+generation. Reserve at least:
+
+```text
+preview.max_workers × preview.max_generation_spool_bytes
+```
+
+of temporary-disk headroom per process, in addition to retained immutable
+packages, the tenant database, filesystem metadata, and operating-system safety
+margin. The defaults therefore permit up to 4 GiB of concurrent generation
+temporary-disk use in one process. Split API and worker processes or multiple
+replicas can each consume that amount. Place `preview.artifact_root` on storage
+sized for the sum of all processes that share it.
+
+Generation and artifact delivery are bounded so package size does not require
+equivalent process memory. Operators must still budget ordinary application and
+API memory in addition to the temporary-disk calculation above.
+
+Use the queue defaults for burst absorption. Both queue limits may instead be
+set to zero to require immediate starts; requested submissions then return
+retryable HTTP 429 when no slot is available, and scheduled tenant-months defer
+to a later periodic cycle.
+
+Mixed deployments are supported. Only enabled tenants use the shared Preview
+artifact root and evidence schema; disabled tenants do not acquire Preview
+organization/source/lineage data. An enabled tenant's Preview storage,
+bootstrap, or evidence failure is reported through Preview diagnostics while
+generic chargeback collection and calculation continue.
 
 ## Storage
 
@@ -111,6 +233,8 @@ storage:
   backend: sqlmodel
   connection_string: "postgresql+psycopg2://user:pass@host:5432/dbname"
 ```
+
+Standard URL percent-encoding is supported in `storage.connection_string` for credentials and query values. Use normal single `%` escape sequences in application configuration; do not double `%` signs.
 
 Pass credentials via environment variables to avoid hardcoding secrets:
 

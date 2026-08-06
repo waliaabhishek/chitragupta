@@ -12,6 +12,7 @@ from core.models.identity import CoreIdentity
 from core.models.resource import CoreResource, ResourceStatus
 from core.storage.backends.sqlmodel.module import CoreStorageModule
 from core.storage.backends.sqlmodel.unit_of_work import SQLModelBackend  # noqa: TC001
+from tests.integration.core.api.backend_provider import install_backend
 
 
 class TestInventorySummary:
@@ -249,8 +250,8 @@ class TestInventorySummary:
             )
             app = create_app(settings)
             with TestClient(app) as client:
-                app.state.backends["tenant-a"] = backend_a
-                app.state.backends["tenant-b"] = backend_b
+                install_backend(app, "tenant-a", backend_a)
+                install_backend(app, "tenant-b", backend_b)
 
                 response = client.get("/api/v1/tenants/tenant-b/inventory/summary")
                 assert response.status_code == 200

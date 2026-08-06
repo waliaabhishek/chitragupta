@@ -5,7 +5,6 @@ import logging
 import signal
 import sys
 import threading
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from core.api import get_version
@@ -14,7 +13,7 @@ from core.emitters.registry import register as register_emitter
 from core.emitters.runner import EmitterRunner
 from core.emitters.sources import ChargebackDateSource, ChargebackRowFetcher, RegistryEmitterBuilder
 from core.emitters.wiring import create_auxiliary_prometheus_runners
-from core.plugin.loader import discover_plugins
+from core.plugin.loader import build_plugin_registry
 from core.plugin.registry import EcosystemBundle, PluginRegistry
 from core.storage.registry import create_storage_backend
 from emitters.csv_emitter import make_csv_emitter
@@ -30,8 +29,8 @@ register_emitter("prometheus", make_prometheus_emitter)
 
 if TYPE_CHECKING:
     from core.config.models import AppSettings, StorageConfig
+    from core.plugin.protocols import StorageModule
     from core.storage.interface import StorageBackend
-_DEFAULT_PLUGINS_PATH = Path(__file__).parent / "plugins"
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -93,23 +92,58 @@ def setup_logging(settings: AppSettings) -> None:
         logging.getLogger(module).setLevel(level)
 
 
-def _build_storage(storage_config: StorageConfig) -> StorageBackend:
+def _build_storage(
+    storage_config: StorageConfig,
+    *,
+    storage_module: StorageModule | None = None,
+    focus_preview_enabled: bool = False,
+) -> StorageBackend:
     """Create a storage backend from a StorageConfig. Extracted for testability."""
-    return create_storage_backend(storage_config)
+    return create_storage_backend(
+        storage_config,
+        storage_module=storage_module,
+        focus_preview_enabled=focus_preview_enabled,
+    )
 
 
 def _build_registry(settings: AppSettings) -> PluginRegistry:
-    """Resolve plugins path from settings and build a populated PluginRegistry."""
-    plugins_path = _DEFAULT_PLUGINS_PATH if settings.plugins_path is None else Path.cwd() / settings.plugins_path
-    registry = PluginRegistry()
-    for ecosystem, factory in discover_plugins(plugins_path):
-        registry.register(ecosystem, factory)
-    return registry
+    """Delegate application plugin discovery to the canonical loader helper."""
+    return build_plugin_registry(settings)
 
 
 def _create_runner(settings: AppSettings) -> WorkflowRunner:
     """Create a WorkflowRunner with all plugins discovered from configured plugins path."""
-    return WorkflowRunner(settings, _build_registry(settings))
+    from core.preview.artifacts import LocalPreviewArtifactStore
+    from core.preview.capacity import PreviewGenerationScheduler
+    from core.preview.generator import PreviewPackageGenerator
+    from core.preview.revisions import PreviewRevisionService
+
+    artifact_store = None
+    revision_manager = None
+    preview_generation_scheduler = None
+    if settings.focus_preview_enabled:
+        artifact_store = LocalPreviewArtifactStore(settings.preview.artifact_root)
+        package_generator = PreviewPackageGenerator(
+            max_csv_file_bytes=settings.preview.max_csv_file_bytes,
+            max_generation_spool_bytes=settings.preview.max_generation_spool_bytes,
+        )
+        revision_manager = PreviewRevisionService(
+            artifact_store=artifact_store,
+            package_generator=package_generator,
+        )
+        preview_generation_scheduler = PreviewGenerationScheduler(
+            max_workers=settings.preview.max_workers,
+            max_queued_generations=settings.preview.max_queued_generations,
+            max_running_generations_per_tenant=(settings.preview.max_running_generations_per_tenant),
+            max_queued_generations_per_tenant=(settings.preview.max_queued_generations_per_tenant),
+        )
+    return WorkflowRunner(
+        settings,
+        _build_registry(settings),
+        revision_manager=revision_manager,
+        owned_preview_artifact_store=artifact_store,
+        preview_generation_scheduler=preview_generation_scheduler,
+    )
 
 
 def _validate_plugin_configs(settings: AppSettings) -> None:
@@ -147,7 +181,8 @@ def run_api(settings: AppSettings, runner: WorkflowRunner | None = None, mode: s
 
     from core.api.app import create_app
 
-    app = create_app(settings, workflow_runner=runner, mode=mode)
+    registry = None if runner is not None else _build_registry(settings)
+    app = create_app(settings, workflow_runner=runner, mode=mode, plugin_registry=registry)
     uvicorn.run(
         app,
         host=settings.api.host,
@@ -160,7 +195,7 @@ def run_api(settings: AppSettings, runner: WorkflowRunner | None = None, mode: s
     )
 
 
-def run_worker(
+def _run_worker_execution(
     settings: AppSettings,
     *,
     run_once: bool = False,
@@ -229,6 +264,27 @@ def run_worker(
     logger.info("Chargeback engine worker stopped.")
 
 
+def run_worker(
+    settings: AppSettings,
+    *,
+    run_once: bool = False,
+    runner: WorkflowRunner | None = None,
+    shutdown_event: threading.Event | None = None,
+) -> None:
+    owns_runner = runner is None
+    active_runner = _create_runner(settings) if runner is None else runner
+    try:
+        _run_worker_execution(
+            settings,
+            run_once=run_once,
+            runner=active_runner,
+            shutdown_event=shutdown_event,
+        )
+    finally:
+        if owns_runner:
+            active_runner.close()
+
+
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
     # --version is handled by argparse (prints and exits before reaching here)
@@ -267,40 +323,70 @@ def main(argv: list[str] | None = None) -> None:
 
     if args.emit_once:
         registry = _build_registry(settings)
-        for _tenant_name, tenant_config in settings.tenants.items():
-            storage = _build_storage(tenant_config.storage)
-            storage.create_tables()
-
+        for tenant_name, tenant_config in settings.tenants.items():
             plugin = registry.create(tenant_config.ecosystem)
-            plugin.initialize(tenant_config.plugin_settings.model_dump())
-            billing_types = EcosystemBundle.build(plugin).billing_resource_types
-            plugin.close()
-
-            chargeback_date_source = ChargebackDateSource(storage)
-            prometheus_specs = [s for s in tenant_config.plugin_settings.emitters if s.type == "prometheus"]
-
-            runners = [
-                EmitterRunner(
-                    ecosystem=tenant_config.ecosystem,
-                    storage_backend=storage,
-                    emitter_specs=tenant_config.plugin_settings.emitters,
-                    date_source=chargeback_date_source,
-                    row_fetcher=ChargebackRowFetcher(storage),
-                    emitter_builder=RegistryEmitterBuilder(),
-                    pipeline="chargeback",
-                    chargeback_granularity=tenant_config.plugin_settings.chargeback_granularity,
-                ),
-            ]
-            if prometheus_specs:
-                runners += create_auxiliary_prometheus_runners(
-                    ecosystem=tenant_config.ecosystem,
-                    storage_backend=storage,
-                    prometheus_specs=prometheus_specs,
-                    date_source=chargeback_date_source,
-                    resource_types=billing_types,
+            storage = None
+            original_error: BaseException | None = None
+            try:
+                plugin.initialize(tenant_config.plugin_settings.model_dump())
+                storage = _build_storage(
+                    tenant_config.storage,
+                    storage_module=plugin.get_storage_module(),
+                    focus_preview_enabled=tenant_config.focus_preview_enabled,
                 )
-            for emitter_runner in runners:
-                emitter_runner.run(tenant_config.tenant_id)
+                storage.create_tables()
+                billing_types = EcosystemBundle.build(plugin).billing_resource_types
+                chargeback_date_source = ChargebackDateSource(storage)
+                prometheus_specs = [s for s in tenant_config.plugin_settings.emitters if s.type == "prometheus"]
+
+                runners = [
+                    EmitterRunner(
+                        ecosystem=tenant_config.ecosystem,
+                        storage_backend=storage,
+                        emitter_specs=tenant_config.plugin_settings.emitters,
+                        date_source=chargeback_date_source,
+                        row_fetcher=ChargebackRowFetcher(storage),
+                        emitter_builder=RegistryEmitterBuilder(),
+                        pipeline="chargeback",
+                        chargeback_granularity=tenant_config.plugin_settings.chargeback_granularity,
+                    ),
+                ]
+                if prometheus_specs:
+                    runners += create_auxiliary_prometheus_runners(
+                        ecosystem=tenant_config.ecosystem,
+                        storage_backend=storage,
+                        prometheus_specs=prometheus_specs,
+                        date_source=chargeback_date_source,
+                        resource_types=billing_types,
+                    )
+                for emitter_runner in runners:
+                    emitter_runner.run(tenant_config.tenant_id)
+            except BaseException as exc:
+                original_error = exc
+                raise
+            finally:
+                cleanup_errors: list[BaseException] = []
+                if storage is not None:
+                    try:
+                        storage.dispose()
+                    except BaseException as exc:
+                        cleanup_errors.append(exc)
+                        logger.error(
+                            "Emit-once cleanup failed tenant=%s step=storage error_type=%s",
+                            tenant_name,
+                            type(exc).__name__,
+                        )
+                try:
+                    plugin.close()
+                except BaseException as exc:
+                    cleanup_errors.append(exc)
+                    logger.error(
+                        "Emit-once cleanup failed tenant=%s step=plugin error_type=%s",
+                        tenant_name,
+                        type(exc).__name__,
+                    )
+                if cleanup_errors and original_error is None:
+                    raise cleanup_errors[0]
         return
 
     mode = args.mode

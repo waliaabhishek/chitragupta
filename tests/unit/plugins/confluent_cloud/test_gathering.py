@@ -11,6 +11,67 @@ from core.models import CoreResource, ResourceStatus
 from plugins.confluent_cloud.connections import CCloudConnection
 
 
+class TestGatherOrganizations:
+    """Provider organization IDs are persisted as billing-account authority."""
+
+    @respx.mock
+    def test_gather_organizations_maps_provider_id_and_optional_name(self) -> None:
+        from plugins.confluent_cloud.gathering import gather_organizations
+
+        route = respx.get("https://api.confluent.cloud/org/v2/organizations").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "data": [
+                        {
+                            "id": "11111111-2222-4333-8444-555555555555",
+                            "display_name": "Provider billing organization",
+                        }
+                    ],
+                    "metadata": {},
+                },
+            )
+        )
+        conn = CCloudConnection(api_key="k", api_secret=SecretStr("s"), request_interval_seconds=0)
+
+        organizations = list(gather_organizations(conn, "confluent_cloud", "tenant-partition"))
+
+        assert route.call_count == 1
+        assert len(organizations) == 1
+        organization = organizations[0]
+        assert organization.ecosystem == "confluent_cloud"
+        assert organization.tenant_id == "tenant-partition"
+        assert organization.resource_id == "11111111-2222-4333-8444-555555555555"
+        assert organization.resource_type == "organization"
+        assert organization.display_name == "Provider billing organization"
+        assert organization.metadata == {}
+
+    @respx.mock
+    def test_gather_organizations_preserves_valid_and_blank_ids_for_authority_validation(self) -> None:
+        from plugins.confluent_cloud.gathering import gather_organizations
+
+        respx.get("https://api.confluent.cloud/org/v2/organizations").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "data": [
+                        {"id": "11111111-2222-4333-8444-555555555555", "display_name": "Valid"},
+                        {"id": "", "display_name": "Blank"},
+                    ],
+                    "metadata": {},
+                },
+            )
+        )
+        conn = CCloudConnection(api_key="k", api_secret=SecretStr("s"), request_interval_seconds=0)
+
+        organizations = list(gather_organizations(conn, "confluent_cloud", "tenant-partition"))
+
+        assert [organization.resource_id for organization in organizations] == [
+            "11111111-2222-4333-8444-555555555555",
+            "",
+        ]
+
+
 class TestGatherEnvironments:
     """Tests for gather_environments()."""
 
@@ -108,8 +169,8 @@ class TestGatherKafkaClusters:
                                 "display_name": "prod-cluster",
                                 "environment": {"id": "env-abc"},
                                 "kafka_bootstrap_endpoint": "pkc-123.us-east-1.aws.confluent.cloud:9092",
-                                "cloud": "AWS",
-                                "region": "us-east-1",
+                                "cloud": "  AWS  ",
+                                "region": " us-east-1 ",
                             },
                             "metadata": {
                                 "created_at": "2024-01-15T10:30:00Z",
@@ -135,6 +196,8 @@ class TestGatherKafkaClusters:
         assert clusters[0].metadata["bootstrap_url"] == "pkc-123.us-east-1.aws.confluent.cloud:9092"
         assert clusters[0].metadata["cloud"] == "aws"  # Normalized to lowercase
         assert clusters[0].metadata["region"] == "us-east-1"
+        assert clusters[0].metadata["provider_cloud"] == "  AWS  "
+        assert clusters[0].metadata["provider_region"] == " us-east-1 "
 
     @respx.mock
     def test_gather_kafka_clusters_multiple_envs(self):
@@ -453,8 +516,8 @@ class TestGatherSchemaRegistries:
                             "spec": {
                                 "display_name": "my-sr",
                                 "environment": {"id": "env-abc"},
-                                "cloud": "AWS",
-                                "region": "us-east-1",
+                                "cloud": "  AWS  ",
+                                "region": " us-east-1 ",
                                 "http_endpoint": "https://psrc-123.us-east-1.aws.confluent.cloud",
                             },
                             "metadata": {
@@ -479,6 +542,8 @@ class TestGatherSchemaRegistries:
         assert srs[0].metadata["http_endpoint"] == "https://psrc-123.us-east-1.aws.confluent.cloud"
         assert srs[0].metadata["cloud"] == "aws"  # Normalized
         assert srs[0].metadata["region"] == "us-east-1"
+        assert srs[0].metadata["provider_cloud"] == "  AWS  "
+        assert srs[0].metadata["provider_region"] == " us-east-1 "
 
     @respx.mock
     def test_gather_schema_registries_empty(self):
@@ -608,6 +673,8 @@ class TestGatherFlinkComputePools:
         assert pools[0].metadata["is_allocatable"] is True
         assert pools[0].metadata["cloud"] == "aws"
         assert pools[0].metadata["region"] == "us-east-1"
+        assert pools[0].metadata["provider_cloud"] == "aws"
+        assert pools[0].metadata["provider_region"] == "us-east-1"
 
     @respx.mock
     def test_gather_flink_compute_pools_normalizes_region_cloud(self):
@@ -644,6 +711,8 @@ class TestGatherFlinkComputePools:
         assert pools[0].metadata["region"] == "us-east-1"
         # Allocatability check should match after normalization
         assert pools[0].metadata["is_allocatable"] is True
+        assert pools[0].metadata["provider_cloud"] == "  AWS  "
+        assert pools[0].metadata["provider_region"] == " US-EAST-1 "
 
     @respx.mock
     def test_gather_flink_compute_pools_not_allocatable(self):

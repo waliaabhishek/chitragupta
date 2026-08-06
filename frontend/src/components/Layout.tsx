@@ -24,7 +24,7 @@ import {
 } from "antd";
 import { useState } from "react";
 import { useNavigate, useLocation } from "react-router";
-import { useTenant } from "../providers/TenantContext";
+import { useReadiness, useTenant } from "../providers/TenantContext";
 import { useResourceLinks } from "../providers/ResourceLinkContext";
 import { PipelineStatusBanner } from "./PipelineStatusBanner";
 import { TenantSelector } from "./TenantSelector";
@@ -58,6 +58,7 @@ export function AppLayout({
   const navigate = useNavigate();
   const location = useLocation();
   const { currentTenant } = useTenant();
+  const { readiness } = useReadiness();
   const { enabled: deepLinksEnabled, setEnabled: setDeepLinksEnabled } =
     useResourceLinks();
   const {
@@ -69,6 +70,16 @@ export function AppLayout({
   const taStatus = currentTenant?.topic_attribution_status ?? "disabled";
   const topicAttributionEnabled = taStatus === "enabled";
   const topicAttributionConfigError = taStatus === "config_error";
+  const focusPreviewState = readiness?.tenants.find(
+    (tenant) => tenant.tenant_name === currentTenant?.tenant_name,
+  )?.focus_preview_state;
+  const focusPreviewBadge = {
+    disabled: "Not configured",
+    upgrading: "Upgrading",
+    degraded: "Needs retry",
+    unavailable: "Unavailable",
+    ready: null,
+  }[focusPreviewState ?? "ready"];
   const menuItems = [
     {
       key: "/dashboard",
@@ -158,6 +169,27 @@ export function AppLayout({
       key: "/pipeline",
       icon: <ThunderboltOutlined />,
       label: "Pipeline",
+      disabled: tenantRequired,
+    },
+    {
+      key: "/focus-preview",
+      icon: <DollarOutlined />,
+      label: focusPreviewBadge ? (
+        <span>
+          FOCUS Mapping Preview{" "}
+          <Badge
+            count={focusPreviewBadge}
+            style={{
+              backgroundColor: "#f0f0f0",
+              color: "#595959",
+              fontSize: 10,
+              boxShadow: "none",
+            }}
+          />
+        </span>
+      ) : (
+        "FOCUS Mapping Preview"
+      ),
       disabled: tenantRequired,
     },
   ];

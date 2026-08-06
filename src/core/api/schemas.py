@@ -3,11 +3,15 @@ from __future__ import annotations
 import logging
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from core.models.counts import TypeStatusCounts  # noqa: TC001
+from core.preview.capability import (  # noqa: TC001  # Pydantic resolves these response annotations
+    PreviewConformanceStatus,
+    PreviewTargetFocusVersion,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +61,199 @@ class PipelineStateResponse(BaseModel):
     chargeback_calculated: bool
     topic_overlay_gathered: bool = False
     topic_attribution_calculated: bool = False
+
+
+class _FocusPreviewColumnSelectionBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    column_profile: Literal["full", "summary", "custom"] = "full"
+    columns: list[str] | None = None
+
+
+class FocusPreviewDailyRequestBody(_FocusPreviewColumnSelectionBody):
+    grain: Literal["daily"]
+    start_date: date
+    end_date: date
+
+
+class FocusPreviewMonthlyRequestBody(_FocusPreviewColumnSelectionBody):
+    grain: Literal["monthly"]
+    month: str
+
+
+FocusPreviewRequestBody = Annotated[
+    FocusPreviewDailyRequestBody | FocusPreviewMonthlyRequestBody,
+    Field(discriminator="grain"),
+]
+
+
+class FocusPreviewDiagnosticResponse(BaseModel):
+    code: str
+    message: str
+    retryable: bool
+    source_correlation_ids: list[str] = Field(default_factory=list, exclude_if=lambda value: not value)
+
+
+class FocusPreviewRepairRequestBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    start_date: date
+    end_date: date
+
+
+class FocusPreviewRepairDateResponse(BaseModel):
+    tracking_date: date
+    status: Literal["queued", "running", "daily_validated", "succeeded", "failed"]
+    started_at: datetime | None
+    completed_at: datetime | None
+    calculation_id: str | None
+    calculation_completed_at: datetime | None
+    rows_written: int | None
+    failure_stage: (
+        Literal[
+            "retained_state",
+            "provider_source",
+            "calculation",
+            "evidence",
+            "preview_validation",
+            "worker",
+        ]
+        | None
+    )
+    diagnostic: FocusPreviewDiagnosticResponse | None
+
+
+class FocusPreviewRepairResponse(BaseModel):
+    repair_id: str
+    tenant_name: str
+    start_date: date
+    end_date: date
+    status: Literal["queued", "running", "completed", "completed_with_failures", "failed"]
+    created_at: datetime
+    started_at: datetime | None
+    completed_at: datetime | None
+    diagnostic: FocusPreviewDiagnosticResponse | None
+    dates: list[FocusPreviewRepairDateResponse]
+
+
+class FocusPreviewCalculationCoverageEntryResponse(BaseModel):
+    tracking_date: date
+    calculation_id: str
+    calculation_completed_at: datetime
+    calculation_run_id: int | None
+
+
+class FocusPreviewSourceSnapshotResponse(BaseModel):
+    calculation_timestamp: datetime | None
+    calculation_coverage: list[FocusPreviewCalculationCoverageEntryResponse]
+    source_through: datetime | None
+    effective_coverage_start_date: date
+    effective_coverage_end_date: date
+    evidence_through_date: date | None
+    availability_cutoff_end_date: date | None
+    monthly_status: Literal["provisional", "settled"] | None
+
+
+class FocusPreviewKnownGapResponse(BaseModel):
+    code: str
+    description: str
+    columns: list[str]
+
+
+class FocusPreviewProfileResponse(BaseModel):
+    mapping_profile_version: str
+    target_focus_version: PreviewTargetFocusVersion
+    conformance_status: PreviewConformanceStatus
+    full_columns: list[str]
+    summary_columns: list[str]
+    known_gaps: list[FocusPreviewKnownGapResponse]
+
+
+class FocusPreviewArtifactResponse(BaseModel):
+    name: str
+    media_type: str
+    size_bytes: int
+    sha256: str
+    order: int | None = Field(default=None, exclude_if=lambda value: value is None)
+    download_url: str
+
+
+class FocusPreviewPackageResponse(BaseModel):
+    manifest: FocusPreviewArtifactResponse
+    files: list[FocusPreviewArtifactResponse]
+    download_all_name: str
+    download_all_url: str
+
+
+class FocusPreviewResponse(BaseModel):
+    request_id: str
+    tenant_name: str
+    target_focus_version: PreviewTargetFocusVersion
+    conformance_status: PreviewConformanceStatus
+    grain: Literal["daily", "monthly"]
+    start_date: date
+    end_date: date
+    month: str | None
+    column_profile: Literal["full", "summary", "custom"]
+    effective_columns: list[str]
+    status: Literal["queued", "running", "ready", "failed", "expired"]
+    created_at: datetime
+    started_at: datetime | None
+    completed_at: datetime | None
+    expires_at: datetime | None
+    diagnostic: FocusPreviewDiagnosticResponse | None
+    source_snapshot: FocusPreviewSourceSnapshotResponse | None
+    package: FocusPreviewPackageResponse | None
+
+
+FocusPreviewStatusResponse = FocusPreviewResponse
+
+
+class FocusPreviewRevisionValidationSummaryResponse(BaseModel):
+    status: Literal["passed"]
+    mapping_profile_version: str
+    source_records: int
+    rows: int
+    mapping_errors: Literal[0]
+    artifact_integrity: Literal["passed"]
+
+
+class FocusPreviewRevisionSummaryResponse(BaseModel):
+    revision_id: str
+    tenant_name: str
+    target_focus_version: PreviewTargetFocusVersion
+    conformance_status: PreviewConformanceStatus
+    month: str
+    start_date: date
+    end_date: date
+    monthly_status: Literal["provisional", "settled"]
+    published_at: datetime
+    supersedes_revision_id: str | None
+    superseded_by_revision_id: str | None
+    lifecycle: Literal["current", "superseded"]
+    material_sha256: str
+    source_snapshot: FocusPreviewSourceSnapshotResponse
+    validation: FocusPreviewRevisionValidationSummaryResponse
+    replacement_semantics: Literal["complete_replacement"]
+    consumer_action: Literal["replace_do_not_aggregate"]
+    detail_url: str
+
+
+class FocusPreviewRevisionResponse(FocusPreviewRevisionSummaryResponse):
+    self_url: str
+    package: FocusPreviewPackageResponse
+
+
+class FocusPreviewRevisionListResponse(BaseModel):
+    items: list[FocusPreviewRevisionSummaryResponse]
+    next_cursor: str | None
+    replacement_semantics: Literal["complete_replacement"]
+    consumer_action: Literal["replace_do_not_aggregate"]
+
+
+class FocusPreviewRequestListResponse(BaseModel):
+    items: list[FocusPreviewResponse]
+    next_cursor: str | None
 
 
 class TenantStatusDetailResponse(BaseModel):
@@ -363,6 +560,22 @@ class HealthResponse(BaseModel):
 # --- Readiness ---
 
 
+class FocusPreviewRetentionDiagnosticResponse(BaseModel):
+    """Redaction-safe diagnostic for a failed retention cleanup."""
+
+    code: str
+    message: str
+    error_type: str
+
+
+class FocusPreviewRetentionOutcomeResponse(BaseModel):
+    """Latest durable outcome for one FOCUS Preview retention path."""
+
+    attempted_at: datetime
+    status: Literal["success", "failure"]
+    diagnostic: FocusPreviewRetentionDiagnosticResponse | None
+
+
 class TenantReadiness(BaseModel):
     """Per-tenant readiness state for the readiness endpoint."""
 
@@ -377,6 +590,18 @@ class TenantReadiness(BaseModel):
     permanent_failure: str | None
     topic_attribution_status: Literal["disabled", "enabled", "config_error"]
     topic_attribution_error: str | None = None
+    focus_preview_state: Literal[
+        "disabled",
+        "ready",
+        "upgrading",
+        "degraded",
+        "unavailable",
+    ]
+    focus_preview_completed_repair_dates: int | None
+    focus_preview_total_repair_dates: int | None
+    focus_preview_message: str | None
+    focus_preview_ordinary_retention: FocusPreviewRetentionOutcomeResponse | None
+    focus_preview_evidence_retention: FocusPreviewRetentionOutcomeResponse | None
 
 
 class ReadinessResponse(BaseModel):

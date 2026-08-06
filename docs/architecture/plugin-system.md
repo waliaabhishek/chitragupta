@@ -17,6 +17,7 @@ Runtime-checkable protocols:
 | `IdentityResolver` | Standalone callable override for identity resolution per product type |
 | `TopicDiscoveryPlugin` | Gather topic resources from Prometheus for topic attribution (CCloud only) |
 | `OverlayPlugin` | Provide overlay-specific config (e.g., topic attribution) to core code |
+| `SupplementalResourceGatherer` | Acquire isolated resource authorities outside ordinary handler ownership |
 
 ## Plugin discovery
 
@@ -55,6 +56,30 @@ def handles_product_types(self) -> Sequence[str]: ...
 The orchestrator routes each `BillingLineItem.product_type` to the matching handler.
 When no handler matches, `plugin.get_fallback_allocator()` is called. CCloud's fallback
 logs a warning and allocates the cost to UNALLOCATED.
+
+Handler resource declarations also bound deletion authority. For each declared
+resource type, the orchestrator records every declaring handler and scans for
+deletions only when all of them completed successfully. Resources yielded under
+a type the handler did not declare are still eligible for persistence but never
+make that type deletion-authoritative. This prevents a successful overlapping
+handler from deleting inventory omitted by a failed peer.
+
+Confluent Cloud implements `SupplementalResourceGatherer` for the
+`organization` resource type. It calls `GET /org/v2/organizations` separately
+from ordinary shared-context/handler gathering and persists one immutable
+provider organization binding per tenant partition. Missing, multiple, changed,
+or conflicting provider IDs remain isolated organization errors; they do not
+become ordinary handler success or deletion evidence. Supplemental resource
+types are excluded from ordinary handler deletion scans and reconcile through
+their own per-type path.
+
+FOCUS Mapping Preview does not change global handler or allocator policy.
+`KAFKA_REST_PRODUCE`, `KAFKA_STREAMS`, `CONNECT_NUM_RECORDS`,
+`USM_CONNECTED_NODE`, and `PROMO_CREDIT` do not have dedicated handlers.
+Cluster Linking continues through the default handler and existing allocator.
+Preview consumes the persisted output of that ordinary chargeback dispatch; it
+does not introduce alternate handlers, reconstruct billing rows, or recalculate
+allocation ratios.
 
 ## ResolveContext
 
@@ -108,6 +133,15 @@ Provides overlay-specific configuration (e.g., `TopicAttributionConfig`) to core
 | `self_managed_kafka` | No | No |
 | `generic_metrics_only` | No | No |
 
+Confluent Cloud's storage module also exposes the optional
+`AllocationLineageRepository` capability on its chargeback repository.
+`CalculatePhase` uses that capability to persist one calculation envelope and
+the actual output portions keyed to each existing `CCloudBillingLineItem` origin.
+Repositories without the capability retain the ordinary calculation path
+unchanged. This storage extension records calculation evidence only; it does not
+change handler selection, allocator behavior, chargeback output, or generic CSV
+export. Migration 021 owns the Confluent source-association and lineage tables.
+
 ## Lifecycle
 
 1. `plugin.initialize(config)` — validate config, create clients
@@ -117,5 +151,6 @@ Provides overlay-specific configuration (e.g., `TopicAttributionConfig`) to core
 5. `plugin.get_storage_module()` → StorageModule (custom table schemas, e.g. CCloud billing with `env_id` in PK)
 6. `plugin.get_fallback_allocator()` → CostAllocator or None (handles unknown product types)
 7. `plugin.build_shared_context(tenant_id)` → shared state accessible to all handlers
-8. Per billing date: gather → detect deletions → allocate → commit → emit
-9. `plugin.close()` — clean up connections
+8. `plugin.gather_supplemental_resources(...)` → isolated authorities when the plugin implements `SupplementalResourceGatherer`
+9. Per billing date: gather → per-type deletion reconciliation → allocate → optionally persist actual lineage → commit → emit
+10. `plugin.close()` — clean up connections

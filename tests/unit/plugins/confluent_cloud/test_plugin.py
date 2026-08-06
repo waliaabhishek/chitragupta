@@ -147,6 +147,17 @@ def test_plugin_conforms_to_protocol():
     assert isinstance(plugin, EcosystemPlugin)
 
 
+def test_plugin_exposes_organization_through_the_dedicated_preview_contract() -> None:
+    from core.plugin.protocols import PreviewOrganizationGatherer
+    from plugins.confluent_cloud import ConfluentCloudPlugin
+
+    plugin = ConfluentCloudPlugin()
+    plugin.initialize({"ccloud_api": {"key": "k", "secret": "s"}})
+
+    assert isinstance(plugin, PreviewOrganizationGatherer)
+    assert not hasattr(plugin, "supplemental_resource_types")
+
+
 def test_plugin_creates_connection():
     from plugins.confluent_cloud import ConfluentCloudPlugin
 

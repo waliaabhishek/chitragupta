@@ -37,6 +37,8 @@ export default defineConfig({
         "src/pages/tags/**/*.{ts,tsx}",
         "src/utils/aggregation.ts",
         "src/components/explorer/**/*.{ts,tsx}",
+        "src/api/focusPreview.ts",
+        "src/pages/focusPreview/index.tsx",
       ],
       exclude: [
         "src/components/explorer/renderers/types.ts",

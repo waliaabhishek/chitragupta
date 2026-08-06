@@ -22,6 +22,88 @@ Vendor Billing API
     → Sum of all ChargebackRows = $100.00 (guaranteed)
 ```
 
+#### Native Confluent source evidence
+
+Confluent Cloud ingestion also persists each Cost API row as a
+`CCloudCostSourceRecord`. This is an additive evidence path, stored separately
+from the `BillingLineItem` aggregates used by the allocation engine. It retains
+the source period bounds; amount, original amount, discount amount, price,
+quantity, and unit; product and line type; description and network-access type;
+tier dimensions; resource and environment references; collection window; and
+raw payload.
+
+Each source row remains independently addressable:
+
+- A unique native Cost API ID becomes a stable `provider:` source identity.
+- Rows without a usable native ID receive a deterministic `composite:v1:`
+  identity; colliding native IDs receive deterministic collision identities.
+- Tier rows keep their own source identities, prices, quantities, amounts, and
+  tier dimensions even when they contribute to the same aggregate
+  `BillingLineItem`.
+
+The source record's `malformed` flag describes evidence quality; it does not by
+itself mean that allocation receives a malformed compatibility sentinel. A row
+with a missing source ID, missing native-only field, or invalid tier dimensions
+can still produce a normal aggregate `BillingLineItem` while its source record
+preserves the available native fields and raw payload with structured
+diagnostics. Of the new source-shape decisions, only a non-object `resource` or
+nested `environment` is deliberately routed through the existing
+`malformed_billing_*` aggregate compatibility sentinel. Other pre-existing
+aggregate mapping failures retain their existing compatibility behavior.
+
+Source evidence is replaced by the normalized logical gather window, independent
+of how that window is split into HTTP requests. A successful refresh replaces
+dated rows inside the window and replaces the overlapping scope of undated
+sentinels while preserving evidence outside it. A successful empty response
+therefore clears evidence for the refreshed window.
+
+Retention follows the evidence's usable time rather than always following its
+compatibility aggregate. A dated source record uses `source_period_start` as
+both its allocation and retention timestamp. An undated source record uses
+`evidence_scope_end` for retention, even though its compatibility aggregate may
+use the Unix epoch sentinel timestamp. This divergence is intentional: normal
+aggregate cleanup can remove the epoch-dated compatibility row without
+prematurely deleting source evidence whose collection scope is still inside the
+retention period.
+
+This evidence path does not change downstream allocation: the engine continues
+to consume the same aggregated `BillingLineItem` values. Existing generic CSV
+emission and export behavior also remains unchanged; native source rows are not
+substituted into those aggregate-oriented outputs.
+
+#### FOCUS Preview tier authority
+
+FOCUS Preview keeps the generic compatibility aggregation and allocation path
+unchanged, but does not treat a tier-collapsed `BillingLineItem` as pricing
+authority. Retained native Cost records remain the authority for each tier's
+identity, price, quantity, billed cost, and original cost.
+
+A Preview-only exact-source allocation sidecar associates each retained native
+Cost record with the unchanged compatibility allocation portions. It
+deterministically apportions exact signed billed cost, quantity, and original
+cost across those portions. Each native source row reconciles independently,
+and the exact-source columns also reconcile to the compatibility portions.
+Zero-net signed quantity uses a deterministic shared bridge so positive and
+negative native quantities remain traceable while every compatibility quantity
+column remains zero.
+
+Daily and Monthly Preview generation therefore preserve distinct tier origins
+and their pricing evidence. Monthly rows combine only when the complete
+approved row-grain identity, including tier, pricing, Allocation Target,
+SKU-component, and tag evidence, matches.
+
+For accepted metered Usage and Usage refunds, the exact-source sidecar's
+persisted allocated quantity is the shared authority for `PricingQuantity` and
+`ConsumedQuantity` on each portion. `PricingUnit` and `ConsumedUnit` share the
+retained normalized Billing API unit. Purchase/Support, Support refunds, and
+Credit rows keep consumed quantity and unit null. Each tier retains its own
+identity, quantity, and unit.
+
+Preview publication fails closed when exact-source evidence is malformed,
+missing, ambiguous, or does not reconcile. The affected scope produces no
+partial package. This Preview-specific evidence does not change generic billing
+aggregation, allocation results, chargeback behavior, or generic CSV output.
+
 ### Constructed (Self-Managed Kafka, Generic Metrics)
 
 There is no billing API. The engine *constructs* billing lines by:

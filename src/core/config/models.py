@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+import re
+from datetime import date
 from pathlib import Path
 from typing import Any, Literal
 
@@ -55,6 +57,53 @@ class ApiConfig(BaseModel):
 class StorageConfig(BaseModel):
     backend: str = "sqlmodel"
     connection_string: SecretStr = Field(default=SecretStr("sqlite:///data/chargeback.db"))
+
+
+class PreviewConfig(BaseModel):
+    artifact_root: Path = Path("data/focus-preview")
+    max_workers: int = Field(default=2, gt=0, le=16, strict=True)
+    max_queued_repairs: int = Field(default=8, ge=0, strict=True)
+    max_queued_generations: int = Field(default=8, ge=0, strict=True)
+    max_running_generations_per_tenant: int = Field(default=1, gt=0, strict=True)
+    max_queued_generations_per_tenant: int = Field(default=2, ge=0, strict=True)
+    max_generation_spool_bytes: int = Field(default=2_147_483_648, gt=0, strict=True)
+    max_csv_file_bytes: int | None = Field(default=None, gt=0, strict=True)
+
+    @model_validator(mode="after")
+    def validate_capacity_limits(self) -> PreviewConfig:
+        if self.max_running_generations_per_tenant > self.max_workers:
+            raise ValueError("preview per-tenant running limit must not exceed max_workers")
+
+        global_queued = self.max_queued_generations
+        tenant_queued = self.max_queued_generations_per_tenant
+        if (global_queued == 0) != (tenant_queued == 0):
+            raise ValueError("preview global and per-tenant queued limits must both be zero or both be positive")
+        if global_queued > 0 and tenant_queued >= global_queued:
+            raise ValueError("preview per-tenant queued limit must be lower than the global queued limit")
+        return self
+
+
+class FocusPreviewTenantConfig(BaseModel):
+    commercial_profile: Literal["direct_payg"]
+    billing_currency: str = "USD"
+    effective_start_date: date
+    effective_end_date: date | None = None
+
+    @field_validator("billing_currency", mode="before")
+    @classmethod
+    def normalize_billing_currency(cls, value: object) -> str:
+        if not isinstance(value, str):
+            raise ValueError("focus_preview.billing_currency must be a three-letter currency code")
+        normalized = value.strip().upper()
+        if re.fullmatch(r"[A-Z]{3}", normalized) is None:
+            raise ValueError("focus_preview.billing_currency must be a three-letter currency code")
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_effective_interval(self) -> FocusPreviewTenantConfig:
+        if self.effective_end_date is not None and self.effective_start_date >= self.effective_end_date:
+            raise ValueError("focus_preview.effective_start_date must be before effective_end_date")
+        return self
 
 
 class EmitterSpec(BaseModel):
@@ -150,6 +199,11 @@ class TenantConfig(BaseModel):
     metrics_prefetch_workers: int = Field(default=4, ge=1, le=20)
     storage: StorageConfig = Field(default_factory=StorageConfig)
     plugin_settings: PluginSettingsBase = Field(default_factory=PluginSettingsBase)
+    focus_preview: FocusPreviewTenantConfig | None = None
+
+    @property
+    def focus_preview_enabled(self) -> bool:
+        return self.ecosystem == "confluent_cloud" and self.focus_preview is not None
 
     @model_validator(mode="after")
     def validate_lookback_gt_cutoff(self) -> TenantConfig:
@@ -162,6 +216,7 @@ class AppSettings(BaseModel):
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     features: FeaturesConfig = Field(default_factory=FeaturesConfig)
     api: ApiConfig = Field(default_factory=ApiConfig)
+    preview: PreviewConfig = Field(default_factory=PreviewConfig)
     tenants: dict[str, TenantConfig] = Field(default_factory=dict)
     plugins_path: Path | None = Field(
         default=None,
@@ -172,6 +227,10 @@ class AppSettings(BaseModel):
             "Defaults to the 'plugins/' sibling of the src/ package root."
         ),
     )
+
+    @property
+    def focus_preview_enabled(self) -> bool:
+        return any(tenant.focus_preview_enabled for tenant in self.tenants.values())
 
     @model_validator(mode="after")
     def validate_unique_connection_strings(self) -> AppSettings:

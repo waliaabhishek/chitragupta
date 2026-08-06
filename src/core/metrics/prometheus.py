@@ -15,6 +15,7 @@ from urllib.parse import urljoin
 
 import httpx
 
+from core.logging_context import safe_exception_context, safe_log_context
 from core.metrics.protocol import MetricsQueryError
 from core.models.metrics import MetricQuery, MetricRow  # noqa: TC001 — used at runtime in _parse_response
 
@@ -251,18 +252,31 @@ class PrometheusMetricsSource:
                         return resp.text
 
                     logger.warning(
-                        "Prometheus returned %s, attempt %s/%s",
+                        "prometheus_request_retry status=%s%s",
                         resp.status_code,
-                        attempt + 1,
-                        self._config.max_retries,
+                        safe_log_context(
+                            stage="metrics_request",
+                            operation="prometheus_query",
+                            outcome="retry",
+                            retryable=True,
+                            attempt_number=attempt + 1,
+                            max_attempts=self._config.max_retries,
+                            root_error_code=resp.status_code,
+                        ),
                     )
                 except httpx.RequestError as exc:
                     last_exc = exc
                     logger.warning(
-                        "Request error: %s, attempt %s/%s",
-                        exc,
-                        attempt + 1,
-                        self._config.max_retries,
+                        "prometheus_request_retry%s",
+                        safe_log_context(
+                            stage="metrics_request",
+                            operation="prometheus_query",
+                            outcome="retry",
+                            retryable=True,
+                            attempt_number=attempt + 1,
+                            max_attempts=self._config.max_retries,
+                            **safe_exception_context(exc),
+                        ),
                     )
 
                 attempt += 1

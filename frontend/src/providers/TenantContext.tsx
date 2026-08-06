@@ -198,8 +198,11 @@ export function TenantProvider({
         // ready
         setAppStatus("ready");
         setIsLoading(false);
-        const anyRunning = data.tenants.some((t) => t.pipeline_running);
-        const interval = anyRunning ? 5000 : 15000;
+        const anyActiveWork = data.tenants.some(
+          (t) =>
+            t.pipeline_running || t.focus_preview_state === "upgrading",
+        );
+        const interval = anyActiveWork ? 5000 : 15000;
         pollRef.current = setTimeout(() => {
           void poll();
         }, interval);
