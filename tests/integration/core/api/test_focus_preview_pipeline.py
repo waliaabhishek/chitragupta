@@ -8,7 +8,7 @@ import json
 import logging
 import time
 from collections.abc import Iterable
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta, tzinfo
 from decimal import Decimal
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -48,6 +48,8 @@ from tests.unit.core.storage.test_migration_019_focus_preview import (
 from workflow_runner import WorkflowRunner
 
 if TYPE_CHECKING:
+    from fastapi import FastAPI
+
     from core.storage.interface import AllocationLineageRunCapture
 
 
@@ -286,6 +288,29 @@ def _task_254_47_focus_preview(start: date, end: date) -> dict[str, object]:
         "effective_start_date": (start - timedelta(days=1)).isoformat(),
         "effective_end_date": (end + timedelta(days=1)).isoformat(),
     }
+
+
+def _pin_preview_runtime_and_package_clock(app: FastAPI, scenario_at: datetime) -> None:
+    def clock() -> datetime:
+        return scenario_at
+
+    runtime = app.state.preview_runtime
+    runtime._clock = clock
+    runtime._package_generator._clock = clock
+
+
+def _pin_orchestrator_clock(
+    monkeypatch: pytest.MonkeyPatch,
+    scenario_at: datetime,
+) -> None:
+    class _ScenarioDatetime(datetime):
+        @classmethod
+        def now(cls, tz: tzinfo | None = None) -> datetime:
+            if tz is None:
+                return scenario_at.replace(tzinfo=None)
+            return scenario_at.astimezone(tz)
+
+    monkeypatch.setattr("core.engine.orchestrator.datetime", _ScenarioDatetime)
 
 
 _REAL_BUNDLE_KNOWN_LINE_CASES: tuple[tuple[str, dict[str, object]], ...] = (
@@ -1183,6 +1208,7 @@ def test_same_key_tiers_flow_from_provider_capture_through_sidecar_and_canonical
     )
     backend.create_tables()
     orchestrator = ChargebackOrchestrator("production", tenant, plugin, backend)
+    _pin_orchestrator_clock(monkeypatch, datetime(2026, 7, 26, 9, tzinfo=UTC))
     gathered = gather_billing_with_source_evidence(
         orchestrator,
         backend,
@@ -1317,7 +1343,7 @@ def test_same_key_tiers_flow_from_provider_capture_through_sidecar_and_canonical
     app = create_app(settings)
     client = PipelineApiClient(app, use_lifespan=True, backend=backend)
     try:
-        app.state.preview_runtime._clock = lambda: datetime(2026, 7, 26, 12, tzinfo=UTC)
+        _pin_preview_runtime_and_package_clock(app, datetime(2026, 7, 26, 12, tzinfo=UTC))
         daily_first = _request(client, date(2026, 7, 1), date(2026, 7, 2))
         daily_second = _request(client, date(2026, 7, 1), date(2026, 7, 2))
         daily_summary = _request(
@@ -1546,6 +1572,7 @@ def test_real_calculate_unknown_allocator_publishes_daily_and_monthly_known_plus
     )
     backend.create_tables()
     orchestrator = ChargebackOrchestrator("production", tenant, plugin, backend)
+    _pin_orchestrator_clock(monkeypatch, datetime(2026, 7, 26, 9, tzinfo=UTC))
     gathered = gather_billing_with_source_evidence(
         orchestrator,
         backend,
@@ -1626,7 +1653,7 @@ def test_real_calculate_unknown_allocator_publishes_daily_and_monthly_known_plus
     app = create_app(settings)
     client = PipelineApiClient(app, use_lifespan=True, backend=backend)
     try:
-        app.state.preview_runtime._clock = lambda: datetime(2026, 7, 26, 12, tzinfo=UTC)
+        _pin_preview_runtime_and_package_clock(app, datetime(2026, 7, 26, 12, tzinfo=UTC))
         export_request = {"start_date": "2026-07-01", "end_date": "2026-07-02"}
         generic_before = client.post("/api/v1/tenants/production/export", json=export_request)
         assert generic_before.status_code == 200
@@ -1751,6 +1778,7 @@ def test_real_bundle_known_native_lines_retain_current_mapping_and_context_behav
     )
     backend.create_tables()
     orchestrator = ChargebackOrchestrator("production", tenant, plugin, backend)
+    _pin_orchestrator_clock(monkeypatch, datetime(2026, 7, 3, tzinfo=UTC))
     tracking_date = date(2026, 7, 1)
     gathered_dates = gather_billing_with_source_evidence(
         orchestrator,
@@ -1814,6 +1842,7 @@ def test_real_bundle_known_native_lines_retain_current_mapping_and_context_behav
     app = create_app(settings)
     client = PipelineApiClient(app, use_lifespan=True, backend=backend)
     try:
+        _pin_preview_runtime_and_package_clock(app, datetime(2026, 7, 3, 12, tzinfo=UTC))
         failed = _request(client, tracking_date, date(2026, 7, 2))
 
         if provider_overrides["product"] in {
@@ -3106,8 +3135,11 @@ def test_production_lineage_integrity_error_logs_safe_owner_context_and_persists
     monkeypatch.setattr("core.api.app.asyncio.to_thread", to_thread_inline)
     monkeypatch.setattr(anyio.to_thread, "run_sync", run_sync_inline)
     _mock_organization_api()
-    tracking_date = date(2026, 7, 15)
-    end_date = tracking_date + timedelta(days=1)
+    tracking_date, end_date = _task_254_47_window(
+        lookback_days=31,
+        cutoff_days=5,
+        span_days=1,
+    )
     tracking_start = datetime.combine(tracking_date, datetime.min.time(), tzinfo=UTC)
     route = respx.get("https://api.confluent.cloud/billing/v1/costs")
 

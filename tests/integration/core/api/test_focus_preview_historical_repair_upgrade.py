@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import time
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta, tzinfo
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
@@ -21,6 +21,7 @@ from tests.integration.core.api.test_focus_preview_pipeline import (
     PreviewPipelinePlugin,
     _cost_response,
     _mock_organization_api,
+    _pin_preview_runtime_and_package_clock,
 )
 from tests.unit.core.preview.test_bounded_artifacts import _install_direct_sqlite_tracker
 from tests.unit.core.storage.test_migration_019_focus_preview import _alembic_config
@@ -42,6 +43,31 @@ class _HistoricalRepairAdmissionDatetime(datetime):
     def now(cls, tz: object = None) -> datetime:
         del tz
         return _REPAIR_ADMISSION_AT
+
+
+def _pin_historical_repair_worker_clock(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    scenario_at: datetime,
+) -> None:
+    import core.preview.generator as preview_generator
+    import workflow_runner
+
+    class _HistoricalRepairWorkflowDatetime(datetime):
+        @classmethod
+        def now(cls, tz: tzinfo | None = None) -> datetime:
+            if tz is None:
+                return scenario_at.replace(tzinfo=None)
+            return scenario_at.astimezone(tz)
+
+    original_generator = preview_generator.PreviewPackageGenerator
+
+    def controlled_generator(**kwargs: Any) -> Any:
+        kwargs.setdefault("clock", lambda: scenario_at)
+        return original_generator(**kwargs)
+
+    monkeypatch.setattr(workflow_runner, "datetime", _HistoricalRepairWorkflowDatetime)
+    monkeypatch.setattr(preview_generator, "PreviewPackageGenerator", controlled_generator)
 
 
 def _seed_release_database(connection_string: str) -> None:
@@ -467,6 +493,11 @@ def test_v210_retained_month_fails_then_production_rest_repair_enables_daily_and
     client = PipelineApiClient(app, use_lifespan=True, backend=backend)
     repair_id = ""
     try:
+        _pin_preview_runtime_and_package_clock(app, _REPAIR_ADMISSION_AT)
+        _pin_historical_repair_worker_clock(
+            monkeypatch,
+            scenario_at=_REPAIR_ADMISSION_AT,
+        )
         outside_export_request = {
             "start_date": OUTSIDE.isoformat(),
             "end_date": OUTSIDE.isoformat(),

@@ -68,6 +68,28 @@ def _inline_mocked_startup_cleanup(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(anyio.to_thread, "run_sync", run_sync_inline)
 
 
+def _pin_preview_runtime_clock(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    startup_at: datetime,
+    clock_at: datetime | None = None,
+    lease_owner_id: str = "task-254-52-runtime",
+) -> None:
+    service = import_module("core.preview.service")
+    original_runtime_init = service.PreviewRuntime.__init__
+
+    def controlled_runtime_init(runtime: object, **kwargs: Any) -> None:
+        original_runtime_init(
+            runtime,
+            **kwargs,
+            startup_at=startup_at,
+            clock=lambda: clock_at or startup_at,
+            lease_owner_id=lease_owner_id,
+        )
+
+    monkeypatch.setattr(service.PreviewRuntime, "__init__", controlled_runtime_init)
+
+
 class SameThreadApiClient:
     """Drive ASGI and lifespan on one loop; avoids the sandbox's broken cross-thread portal."""
 
@@ -1688,6 +1710,7 @@ def test_recent_request_missing_and_foreign_cursors_share_exact_400(tmp_path: Pa
 
 def test_real_startup_cleans_staging_and_fails_strictly_older_pending_rows(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     settings = _settings(tmp_path)
     backend = SQLModelBackend(
@@ -1717,6 +1740,8 @@ def test_real_startup_cleans_staging_and_fails_strictly_older_pending_rows(
     )
     staging.mkdir(parents=True)
 
+    startup_at = datetime(2026, 7, 20, 12, 0, 0, tzinfo=UTC)
+    _pin_preview_runtime_clock(monkeypatch, startup_at=startup_at)
     app = create_app(settings)
     with SameThreadApiClient(app) as client:
         recent = client.get("/api/v1/tenants/production/focus-preview/requests?limit=20")
@@ -1770,6 +1795,8 @@ def test_transient_startup_recovery_failure_blocks_then_later_route_retries(
         "fail_interrupted_before",
         transient,
     )
+    startup_at = datetime(2026, 7, 20, 12, 0, 0, tzinfo=UTC)
+    _pin_preview_runtime_clock(monkeypatch, startup_at=startup_at)
     app = create_app(settings)
     with SameThreadApiClient(app) as client:
         blocked = client.get("/api/v1/tenants/production/focus-preview/requests?limit=20")
@@ -1853,6 +1880,8 @@ def test_real_lifespan_isolates_recovery_for_distinct_sqlite_backends_with_share
         "fail_interrupted_before",
         transient,
     )
+    startup_at = datetime(2026, 7, 20, 12, 0, 0, tzinfo=UTC)
+    _pin_preview_runtime_clock(monkeypatch, startup_at=startup_at)
     app = create_app(settings)
     with SameThreadApiClient(app) as client:
         assert calls == {"tenant-a": 1, "tenant-b": 1}

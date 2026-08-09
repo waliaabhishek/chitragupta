@@ -27,6 +27,7 @@ from tests.integration.core.api.backend_provider import install_backend
 from tests.integration.core.api.preview_pipeline_helpers import calculate_with_lineage, persist_source_capture
 from tests.integration.core.api.test_focus_preview import SameThreadApiClient
 from tests.integration.core.api.test_focus_preview_allocation_lineage import _seed_context
+from tests.integration.core.api.test_focus_preview_pipeline import _pin_preview_runtime_and_package_clock
 from tests.unit.core.preview.test_service import ControlledExecutor, _aggregate, _source
 
 
@@ -283,7 +284,7 @@ def test_settled_monthly_positive_sources_use_real_calculate_lineage_and_persist
             install_backend(app, "production", backend)
             app.state.preview_runtime._scheduler._executor = executor
             app.state.preview_runtime._scheduler._shutdown_executor = False
-            app.state.preview_runtime._clock = lambda: datetime(2026, 8, 4, tzinfo=UTC)
+            _pin_preview_runtime_and_package_clock(app, datetime(2026, 8, 4, tzinfo=UTC))
             ready = _submit(
                 client,
                 executor,

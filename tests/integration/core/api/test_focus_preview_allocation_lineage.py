@@ -32,7 +32,12 @@ from tests.integration.core.api.preview_pipeline_helpers import (
     calculate_with_lineage,
     gather_billing_with_source_evidence,
 )
-from tests.integration.core.api.test_focus_preview_pipeline import PipelineApiClient, _request
+from tests.integration.core.api.test_focus_preview_pipeline import (
+    PipelineApiClient,
+    _pin_orchestrator_clock,
+    _pin_preview_runtime_and_package_clock,
+    _request,
+)
 
 if TYPE_CHECKING:
     import pytest
@@ -276,6 +281,7 @@ def test_real_production_lineage_projects_multiple_origins_actual_portions_and_f
     backend.create_tables()
     origin_tag_id, identity_tag_id, _user_tag_id = _seed_context(backend)
     orchestrator = ChargebackOrchestrator("production", tenant, plugin, backend)
+    _pin_orchestrator_clock(monkeypatch, datetime(2026, 7, 5, tzinfo=UTC))
 
     assert gather_billing_with_source_evidence(
         orchestrator,
@@ -340,6 +346,7 @@ def test_real_production_lineage_projects_multiple_origins_actual_portions_and_f
     app = create_app(settings)
     client = PipelineApiClient(app, use_lifespan=True, backend=backend)
     try:
+        _pin_preview_runtime_and_package_clock(app, datetime(2026, 7, 5, tzinfo=UTC))
         ready = _request(client, date(2026, 7, 1), date(2026, 7, 4))
         assert ready["status"] == "ready"
         assert cost_route.call_count == 1
@@ -525,7 +532,7 @@ def test_real_production_lineage_projects_multiple_origins_actual_portions_and_f
             daily_bytes, _daily_rows = _csv_rows(client, daily_profile)
             assert next(csv.reader(io.StringIO(daily_bytes.decode()))) == profile_columns[profile]
 
-        app.state.preview_runtime._clock = lambda: datetime(2026, 7, 4, tzinfo=UTC)
+        _pin_preview_runtime_and_package_clock(app, datetime(2026, 7, 4, tzinfo=UTC))
         for profile in ("full", "summary", "custom"):
             body = {"grain": "monthly", "month": "2026-07", "column_profile": profile}
             if profile == "custom":
@@ -544,7 +551,7 @@ def test_real_production_lineage_projects_multiple_origins_actual_portions_and_f
             assert next(csv.reader(io.StringIO(monthly_bytes.decode()))) == profile_columns[profile]
             if profile in {"full", "custom"}:
                 assert sum(Decimal(row["BilledCost"]) for row in monthly_rows) == Decimal("16")
-        app.state.preview_runtime._clock = lambda: datetime(2026, 7, 5, tzinfo=UTC)
+        _pin_preview_runtime_and_package_clock(app, datetime(2026, 7, 5, tzinfo=UTC))
         monthly_full = _profile_request(
             client,
             {"grain": "monthly", "month": "2026-07", "column_profile": "full"},

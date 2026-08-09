@@ -161,12 +161,13 @@ def storage() -> SQLModelBackend:
 class TestEndToEndPipeline:
     def test_full_gather_calculate(self, storage: SQLModelBackend) -> None:
         """End-to-end: gather populates DB, calculate produces chargeback rows."""
+        scenario_now = datetime.now(UTC).replace(microsecond=0)
         resource = CoreResource(
             ecosystem=ECOSYSTEM,
             tenant_id=TENANT_ID,
             resource_id="cluster-1",
             resource_type="kafka_cluster",
-            created_at=NOW - timedelta(days=30),
+            created_at=scenario_now - timedelta(days=30),
         )
         identity = CoreIdentity(
             ecosystem=ECOSYSTEM,
@@ -179,7 +180,7 @@ class TestEndToEndPipeline:
         handler.set_resources([resource])
         handler.set_identities([identity])
 
-        billing_ts = NOW - timedelta(days=10)
+        billing_ts = scenario_now - timedelta(days=10)
         line = CoreBillingLineItem(
             ecosystem=ECOSYSTEM,
             tenant_id=TENANT_ID,
@@ -208,11 +209,16 @@ class TestEndToEndPipeline:
 
         # Verify data persisted in real DB
         with storage.create_unit_of_work() as uow:
-            resources, _ = uow.resources.find_active_at(ECOSYSTEM, TENANT_ID, NOW, resource_type="kafka_cluster")
+            resources, _ = uow.resources.find_active_at(
+                ECOSYSTEM,
+                TENANT_ID,
+                scenario_now,
+                resource_type="kafka_cluster",
+            )
             resource_ids = {r.resource_id for r in resources}
             assert "cluster-1" in resource_ids
 
-            identities, _ = uow.identities.find_active_at(ECOSYSTEM, TENANT_ID, NOW)
+            identities, _ = uow.identities.find_active_at(ECOSYSTEM, TENANT_ID, scenario_now)
             identity_ids = {i.identity_id for i in identities}
             assert "user-1" in identity_ids
             assert "UNALLOCATED" in identity_ids

@@ -1,11 +1,14 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   clearTimezoneFromStorage,
   loadTimezoneFromStorage,
   saveTimezoneToStorage,
+  thirtyDaysAgoStr,
+  todayStr,
 } from "./dateFilterStorage";
 
 afterEach(() => {
+  vi.useRealTimers();
   localStorage.clear();
 });
 
@@ -34,5 +37,21 @@ describe("timezone storage helpers", () => {
     saveTimezoneToStorage("Asia/Tokyo");
     clearTimezoneFromStorage();
     expect(loadTimezoneFromStorage()).toBeNull();
+  });
+});
+
+describe("date default helpers", () => {
+  it("todayStr returns the current UTC ISO date at a year boundary", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2035-01-01T00:30:00.000Z"));
+
+    expect(todayStr()).toBe("2035-01-01");
+  });
+
+  it("thirtyDaysAgoStr subtracts thirty days across a UTC month and year boundary", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2035-01-01T12:00:00.000Z"));
+
+    expect(thirtyDaysAgoStr()).toBe("2034-12-02");
   });
 });

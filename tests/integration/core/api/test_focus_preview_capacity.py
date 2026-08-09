@@ -227,28 +227,28 @@ def test_scheduled_publication_defers_under_real_scheduler_saturation_then_reacq
         work_id="blocking-request",
         run=lambda: (started.set(), release.wait(timeout=5)),
     )
+    cycle_at = datetime(2026, 8, 7, tzinfo=UTC)
     try:
         assert started.wait(timeout=5)
         runner._publish_scheduled_revisions(  # noqa: SLF001
             {"production": MagicMock(errors=[], already_running=False, fatal=False)},
-            now=datetime(2026, 8, 7, tzinfo=UTC),
+            now=cycle_at,
         )
         manager.publish_eligible_month.assert_not_called()
         assert scheduler.snapshot().global_queued == 0
 
         release.set()
         scheduler.wait_idle()
-        before = datetime.now(UTC)
         runner._publish_scheduled_revisions(  # noqa: SLF001
             {"production": MagicMock(errors=[], already_running=False, fatal=False)},
-            now=datetime(2026, 8, 7, tzinfo=UTC),
+            now=cycle_at,
         )
         scheduler.wait_idle()
 
         call = manager.publish_eligible_month.call_args
         assert call.kwargs["backend"] is backend
         assert call.kwargs["month"] == "2026-07"
-        assert call.kwargs["now"] >= before
+        assert call.kwargs["now"] == cycle_at
     finally:
         release.set()
         runner.close()
