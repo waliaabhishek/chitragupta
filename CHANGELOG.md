@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Update vulnerable frontend and documentation dependencies: brace-expansion 1.1.18/2.1.4/5.0.9, js-yaml 4.3.1, PostCSS 8.5.26, React Router 7.18.2, undici 7.29.0, PyMdown Extensions 11.0.1, and Click 8.4.2.
 - Verify the PostgreSQL 17 migration chain to head from fresh databases and revisions 004, 005, and 008. Manual Alembic upgrades now target the supplied SQLAlchemy URL, while PostgreSQL downgrades stop before billing or chargeback identities would collapse.
 - Accept valid percent-encoded database URLs in credentials and query values during automatic migrations without changing the URL interpreted by the database driver.
 - Align provider-driven replacement with the actual half-open gather window: corrected billing dates inside `[start, end)` are recalculated, while dates outside that window remain untouched.

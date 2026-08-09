@@ -36,10 +36,9 @@ docs = [
     "mkdocs-material>=9.5",
     "mike>=2.0",
     "git-cliff>=2.0",
-    # Guard: pymdown-extensions==10.21 has a regression where pymdownx.superfences
-    # silently fails to parse fenced code blocks, leaving them as inline <p><code>
-    # with collapsed newlines. Fixed in 10.21.2.
-    "pymdown-extensions>=10.21.2",
+    # Guard: 11.0.1 includes the fenced-code regression fix plus later
+    # path-containment and regex-backtracking security fixes.
+    "pymdown-extensions>=11.0.1",
 ]
 
 [project.scripts]
