@@ -72,99 +72,19 @@ preview:
 
 Both queue limits must be zero together or both positive. When positive,
 `max_queued_generations_per_tenant` must be lower than
-`max_queued_generations`. Setting both to zero disables waiting: a requested
-generation receives HTTP 429 unless it can start immediately, while an eligible
-scheduled tenant-month is deferred to a later periodic cycle. Requested and
-scheduled work share the same process-local running and waiting limits, with
-fair capacity across tenants.
-
-Historical repair uses a separate admission bound: at most
-`preview.max_workers` repairs run and at most
-`preview.max_queued_repairs` repairs wait in each process. A full repair limit
-returns retryable HTTP 429 before a repair is created. Generation and repair
-limits are independent, replicas have independent limits, and only one repair
-may be active per tenant.
-
-Scheduled current monthly revisions are discovered by the ordinary periodic
-worker:
-
-```yaml
-features:
-  enable_periodic_refresh: true
-  refresh_interval: 1800
-```
-
-After each successful periodic tenant cycle, Preview evaluates settlement-ready
-Monthly Full revisions and admits each eligible tenant-month independently to
-the shared generation scheduler. Full capacity defers that month without
-creating a revision or changing the current pointer; a later cycle reevaluates
-it. Automatic publication starts with a validated Settled revision; active and
-otherwise incomplete months remain available through ad-hoc requests.
-Disabling periodic refresh disables automatic revision publication; run-once
-and ad-hoc request execution do not replace it.
+`max_queued_generations`. Setting both to zero disables generation waiting.
+Generation and repair admission are independent, and all capacity limits apply
+per process rather than across replicas.
 
 The artifact root must be on durable storage and writable by both the API and
 periodic worker. If they run separately, mount and configure the same path in
-both processes. The database stores request and artifact metadata; artifact
-bytes remain under this root and are served through the Preview API. The REST
-API has no built-in authentication. Put the complete Preview route prefix,
-including request history, status, manifest, file, and archive routes, behind an
-authenticated reverse proxy or API gateway. Changing the root does not move
-existing packages.
+both processes. Changing the root does not move existing packages.
 
-`lookback_days`, `cutoff_days`, and the tenant's `focus_preview` effective dates
-bound the calendar months considered for publication. Automatic generation also
-waits at least 72 hours after month end and requires the acquisition cutoff to
-cover the complete month. These remain acquisition and eligibility controls, not
-revision-history retention. Changing only `preview.max_csv_file_bytes` changes
-physical partitioning and does not trigger a replacement.
-
-Confluent Cloud tenants can optionally declare the commercial contract required
-for Preview:
-
-```yaml
-tenants:
-  production:
-    focus_preview:
-      commercial_profile: direct_payg
-      billing_currency: USD       # optional; defaults to normalized USD
-      effective_start_date: 2026-01-01
-      # effective_end_date: 2027-01-01  # optional fixed exclusive override
-```
-
-| Field | Type | Default | Constraints | Description |
-|---|---|---|---|---|
-| `focus_preview` | mapping | absent | Confluent Cloud only | Optional block. Absence remains valid application configuration but every Preview request fails closed. |
-| `focus_preview.commercial_profile` | string | required in block | `direct_payg` | Declares the supported Direct-billed PAYG arrangement. |
-| `focus_preview.billing_currency` | string | `USD` | three ASCII letters | Normalized uppercase and emitted as `BillingCurrency` for eligible rows. Non-USD loads but Preview fails without conversion. |
-| `focus_preview.effective_start_date` | date | required in block | before an explicit end | Inclusive start of the commercial declaration. |
-| `focus_preview.effective_end_date` | date | omitted | after start when supplied | Optional exclusive end. Omission resolves an end per operation from its UTC anchor date; an explicit value is a fixed hard override. |
-
-For an omitted end, an ad-hoc request uses its UTC creation date, one scheduled
-publication cycle uses its cycle timestamp's UTC date for discovery and
-generation, and a repair uses its durable UTC creation date throughout
-processing and restart. These resolved ends do not widen `lookback_days`,
-`cutoff_days`, `retention_days`, or calculation, source, allocation-lineage,
-reconciliation, and mapping evidence requirements.
-
-Confluent's Costs API does not supply a per-record ISO currency value. Eligible
-rows copy the normalized operator-configured USD scope into `BillingCurrency`;
-the value is scope authority, not per-record inference. Non-USD remains
-fail-closed and Preview performs no conversion. See the
-[Confluent Cloud reference](ccloud-reference.md#focus-mapping-preview-eligibility)
-for the fail-closed rules and retention boundary.
-
-Historical repair has no separate eligibility override. Its bounded UTC range
-must fit within the intersection of the commercial interval resolved at the
-repair's durable creation time, the current `lookback_days` and `cutoff_days`
-acquisition window, and the complete `retention_days` interval. Submission is
-REST-only and requires `both` mode; `api` mode can read retained status but
-cannot execute repair. Valid Confluent Cloud billing credentials, retained
-provider history, and any historical metrics required by the configured
-allocation paths must still be available.
-
-See [FOCUS Mapping Preview](../focus-mapping-preview.md) for the complete setup,
-request, download, package, expiry, and customization workflow.
+Tenant eligibility fields are Confluent Cloud-specific. See the
+[Confluent Cloud configuration reference](ccloud-reference.md#focus-mapping-preview-eligibility)
+for their exact defaults and validation rules. See
+[FOCUS Mapping Preview](../focus-mapping-preview.md) for the user workflow,
+publication behavior, repairs, and package lifecycle.
 
 ## Emitters
 

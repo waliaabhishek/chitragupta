@@ -39,58 +39,28 @@ tenants:       # Required — one entry per managed tenant
     plugin_settings: ...
 ```
 
-For Confluent Cloud FOCUS Mapping Preview, the optional tenant block is:
-
-```yaml
-focus_preview:
-  commercial_profile: direct_payg
-  billing_currency: USD       # optional; defaults to normalized USD
-  effective_start_date: 2026-01-01
-  effective_end_date: 2027-01-01
-```
-
-Omitting the block leaves configuration valid but makes Preview fail closed.
-Only `direct_payg` with a request contained in the half-open effective interval
-is supported. Eligible rows copy the normalized operator-configured USD value
-into FOCUS `BillingCurrency`. Confluent's Costs API does not provide per-record
-ISO currency, so the value is scope authority rather than per-record inference.
-Non-USD values remain fail-closed and are not converted. See the
-[Confluent Cloud reference](../configuration/ccloud-reference.md#focus-mapping-preview-eligibility).
-
-Preview's process-wide package settings are separate from the tenant block:
+FOCUS Mapping Preview needs a durable process-wide artifact root and an
+optional Confluent Cloud tenant eligibility block:
 
 ```yaml
 preview:
   artifact_root: /var/lib/chitragupta/focus-preview
-  max_workers: 2
-  max_queued_repairs: 8
-  max_csv_file_bytes: null
+
+tenants:
+  production:
+    focus_preview:
+      commercial_profile: direct_payg
+      effective_start_date: 2026-01-01
 ```
 
-The artifact root must be durable and writable by the API and periodic worker;
-separate processes must use the same mounted path. `max_csv_file_bytes` is
-either null for one CSV or a positive byte ceiling for deterministic
-row-boundary parts. `max_workers` also bounds running historical repairs, while
-`max_queued_repairs` bounds additional waiting repairs per process. Zero
-disables repair waiting. See
-[FOCUS Mapping Preview](../focus-mapping-preview.md) for the complete user
-workflow and supported customization boundary.
-
-To publish current Settled Monthly Full revisions automatically, keep the
-ordinary worker in periodic mode:
-
-```yaml
-features:
-  enable_periodic_refresh: true
-  refresh_interval: 1800
-```
-
-Publication follows successful periodic cycles. Run-once execution and ad-hoc
-Preview requests never publish revisions. Eligible months are bounded by
-`lookback_days`, `cutoff_days`, and the `focus_preview` effective interval.
-Automatic generation waits at least 72 hours after month end and until the
-acquisition cutoff covers the complete month; active and otherwise incomplete
-months remain available through on-demand Provisional requests.
+Omit `focus_preview` to leave the feature disabled for that tenant. The artifact
+root must be writable by the API and worker; separate processes must share the
+same mounted path. See the
+[configuration reference](../configuration/index.md#focus-mapping-preview) for
+all process settings, the
+[Confluent Cloud reference](../configuration/ccloud-reference.md#focus-mapping-preview-eligibility)
+for tenant fields, and [FOCUS Mapping Preview](../focus-mapping-preview.md) for
+the complete workflow.
 
 Tenant `lookback_days` is capped at 364 and controls acquisition/recalculation,
 not retention or guaranteed historical reconstruction.

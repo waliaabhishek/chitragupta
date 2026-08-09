@@ -125,36 +125,14 @@ tenant return HTTP 409 with
 disabled-tenant organization, source-evidence, or allocation-lineage work is
 performed.
 
-The process-wide Preview settings are:
-
-| Setting | Default | Valid values | Effect |
-|---|---:|---|---|
-| `preview.artifact_root` | `data/focus-preview` | Writable local path | Stores immutable requested packages and published monthly revisions. Changing it does not move existing packages. |
-| `preview.max_workers` | `2` | 1–16 | Process-local running-generation limit shared by requested packages and scheduled publication; also the separate repair-runtime worker count. |
-| `preview.max_queued_repairs` | `8` | Zero or a positive integer | Maximum historical repairs waiting across all tenants in one process. Zero permits only repairs that can occupy a running position. |
-| `preview.max_queued_generations` | `8` | Zero or a positive integer | Maximum requested and scheduled generations waiting across all tenants in one process. |
-| `preview.max_running_generations_per_tenant` | `1` | Positive and no greater than `max_workers` | Running-generation limit for one tenant. |
-| `preview.max_queued_generations_per_tenant` | `2` | Zero or a positive integer | Waiting-generation limit for one tenant. |
-| `preview.max_generation_spool_bytes` | `2147483648` (2 GiB) | Positive integer | Hard temporary-disk ceiling for one running generation. |
-| `preview.max_csv_file_bytes` | `null` | `null` or a positive integer | `null` produces one CSV. A byte limit splits output into deterministic parts without splitting rows. |
-
-The global and per-tenant queue limits must both be zero or both be positive.
-When positive, the per-tenant queue limit must be lower than the global queue
-limit. Zero disables waiting: an ad-hoc request must start immediately or
-returns retryable HTTP 429, while a scheduled month is deferred. Positive
-queues provide fair capacity across tenants. Limits are per application
-process, not distributed across replicas.
-
-Historical repair has a separate process-local admission bound:
-`preview.max_workers` repairs can run and `preview.max_queued_repairs`
-additional repairs can wait. The existing one-active-repair-per-tenant rule
-still applies. A full repair limit returns retryable HTTP 429 before creating a
-repair. Generation and repair limits are independent, so admitted repair and
-package-generation work can run concurrently. Replicas have independent
-limits.
-
-See the [Confluent Cloud configuration reference](configuration/ccloud-reference.md)
-for the remaining collection and allocation settings.
+The `preview` settings are process-local. Requested and scheduled package
+generation share generation capacity; historical repair has a separate waiting
+queue. Configure the artifact root for durable shared storage and size worker,
+queue, spool, and CSV-part limits for each process. See the
+[Preview configuration reference](configuration/index.md#focus-mapping-preview)
+for exact fields, defaults, and validation rules, and the
+[Confluent Cloud configuration reference](configuration/ccloud-reference.md#focus-mapping-preview-eligibility)
+for tenant eligibility fields.
 
 ## 2. Gather and calculate source data
 
