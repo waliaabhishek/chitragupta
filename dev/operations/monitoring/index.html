@@ -718,6 +718,33 @@
   
   
   
+    <li class="md-nav__item">
+      <a href="../../focus-mapping-preview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FOCUS Mapping Preview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
     
     
       
@@ -748,7 +775,7 @@
         
           
         
-        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
         
           
           <div class="md-nav__link md-nav__container">
@@ -770,14 +797,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="">
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -946,7 +973,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" checked>
         
           
           <div class="md-nav__link md-nav__container">
@@ -968,14 +995,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="">
+              <label class="md-nav__link " for="__nav_6" id="__nav_6_label" tabindex="">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="true">
-          <label class="md-nav__title" for="__nav_5">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_6">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -1174,6 +1201,17 @@
     <span class="md-ellipsis">
       
         Metrics to collect from logs
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#monitoring-focus-mapping-preview-capacity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Monitoring FOCUS Mapping Preview capacity
       
     </span>
   </a>
@@ -1459,6 +1497,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#monitoring-focus-mapping-preview-capacity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Monitoring FOCUS Mapping Preview capacity
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1522,6 +1571,14 @@ use a format string like:</p>
 <td><code>ALERT: All N tenant(s) have been permanently suspended</code></td>
 <td>All tenants failed — engine is idle</td>
 </tr>
+<tr>
+<td><code>FOCUS Mapping Preview revision generation skipped tenant=... month=... diagnostic_code=preview_generation_spool_limit_exceeded</code></td>
+<td>A scheduled revision exceeded its per-generation spool ceiling; no revision was published.</td>
+</tr>
+<tr>
+<td><code>FOCUS Mapping Preview revision publication failed ...</code></td>
+<td>Scheduled publication failed and left the current revision unchanged.</td>
+</tr>
 </tbody>
 </table>
 <h2 id="api-health-check">API health check<a class="headerlink" href="#api-health-check" title="Permanent link">&para;</a></h2>
@@ -1545,12 +1602,77 @@ use a format string like:</p>
 <a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a>        &quot;pipeline_current_date&quot;: null,
 <a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a>        &quot;last_run_status&quot;: &quot;completed&quot;,
 <a id="__codelineno-4-15" name="__codelineno-4-15" href="#__codelineno-4-15"></a>        &quot;last_run_at&quot;: &quot;2026-03-17T12:00:00Z&quot;,
-<a id="__codelineno-4-16" name="__codelineno-4-16" href="#__codelineno-4-16"></a>        &quot;permanent_failure&quot;: null
-<a id="__codelineno-4-17" name="__codelineno-4-17" href="#__codelineno-4-17"></a>      }
-<a id="__codelineno-4-18" name="__codelineno-4-18" href="#__codelineno-4-18"></a>    ]
-<a id="__codelineno-4-19" name="__codelineno-4-19" href="#__codelineno-4-19"></a>  }
+<a id="__codelineno-4-16" name="__codelineno-4-16" href="#__codelineno-4-16"></a>        &quot;permanent_failure&quot;: null,
+<a id="__codelineno-4-17" name="__codelineno-4-17" href="#__codelineno-4-17"></a>        &quot;focus_preview_state&quot;: &quot;degraded&quot;,
+<a id="__codelineno-4-18" name="__codelineno-4-18" href="#__codelineno-4-18"></a>        &quot;focus_preview_completed_repair_dates&quot;: 12,
+<a id="__codelineno-4-19" name="__codelineno-4-19" href="#__codelineno-4-19"></a>        &quot;focus_preview_total_repair_dates&quot;: 31,
+<a id="__codelineno-4-20" name="__codelineno-4-20" href="#__codelineno-4-20"></a>        &quot;focus_preview_message&quot;: &quot;Retention cleanup needs attention while historical repair is in progress. Existing valid Preview data remains available.&quot;,
+<a id="__codelineno-4-21" name="__codelineno-4-21" href="#__codelineno-4-21"></a>        &quot;focus_preview_ordinary_retention&quot;: {
+<a id="__codelineno-4-22" name="__codelineno-4-22" href="#__codelineno-4-22"></a>          &quot;attempted_at&quot;: &quot;2026-03-17T12:05:00Z&quot;,
+<a id="__codelineno-4-23" name="__codelineno-4-23" href="#__codelineno-4-23"></a>          &quot;status&quot;: &quot;failure&quot;,
+<a id="__codelineno-4-24" name="__codelineno-4-24" href="#__codelineno-4-24"></a>          &quot;diagnostic&quot;: {
+<a id="__codelineno-4-25" name="__codelineno-4-25" href="#__codelineno-4-25"></a>            &quot;code&quot;: &quot;focus_preview_ordinary_retention_failed&quot;,
+<a id="__codelineno-4-26" name="__codelineno-4-26" href="#__codelineno-4-26"></a>            &quot;message&quot;: &quot;Ordinary tenant retention cleanup failed. Review worker logs and restore tenant storage; existing valid Preview data remains available.&quot;,
+<a id="__codelineno-4-27" name="__codelineno-4-27" href="#__codelineno-4-27"></a>            &quot;error_type&quot;: &quot;OperationalError&quot;
+<a id="__codelineno-4-28" name="__codelineno-4-28" href="#__codelineno-4-28"></a>          }
+<a id="__codelineno-4-29" name="__codelineno-4-29" href="#__codelineno-4-29"></a>        },
+<a id="__codelineno-4-30" name="__codelineno-4-30" href="#__codelineno-4-30"></a>        &quot;focus_preview_evidence_retention&quot;: {
+<a id="__codelineno-4-31" name="__codelineno-4-31" href="#__codelineno-4-31"></a>          &quot;attempted_at&quot;: &quot;2026-03-16T12:05:00Z&quot;,
+<a id="__codelineno-4-32" name="__codelineno-4-32" href="#__codelineno-4-32"></a>          &quot;status&quot;: &quot;success&quot;,
+<a id="__codelineno-4-33" name="__codelineno-4-33" href="#__codelineno-4-33"></a>          &quot;diagnostic&quot;: null
+<a id="__codelineno-4-34" name="__codelineno-4-34" href="#__codelineno-4-34"></a>        }
+<a id="__codelineno-4-35" name="__codelineno-4-35" href="#__codelineno-4-35"></a>      }
+<a id="__codelineno-4-36" name="__codelineno-4-36" href="#__codelineno-4-36"></a>    ]
+<a id="__codelineno-4-37" name="__codelineno-4-37" href="#__codelineno-4-37"></a>  }
 </code></pre></div>
 <p>Response is TTL-cached for 2 seconds.</p>
+<p>FOCUS Preview readiness is tenant-scoped:</p>
+<table>
+<thead>
+<tr>
+<th>State</th>
+<th>Operational meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>disabled</code></td>
+<td>Preview is not configured for the tenant.</td>
+</tr>
+<tr>
+<td><code>ready</code></td>
+<td>Preview is available and no repair or retention cause needs attention.</td>
+</tr>
+<tr>
+<td><code>upgrading</code></td>
+<td>A historical repair is queued or running. Existing valid Preview data remains available.</td>
+</tr>
+<tr>
+<td><code>degraded</code></td>
+<td>Historical repair or either retention cleanup needs attention. Use repair progress and the two structured retention outcomes to identify each cause.</td>
+</tr>
+<tr>
+<td><code>unavailable</code></td>
+<td>Preview readiness or storage cannot be determined safely. Restore Preview availability before retrying.</td>
+</tr>
+</tbody>
+</table>
+<p>The completed and total fields are <strong>Date progress</strong>. Succeeded and failed
+dates both count once terminal, so the ratio is not data-volume or success
+progress.</p>
+<p>Monitor <code>focus_preview_ordinary_retention</code> and
+<code>focus_preview_evidence_retention</code> separately. Each is null until an outcome is
+available; otherwise <code>attempted_at</code>, <code>status</code>, and <code>diagnostic</code> describe the
+latest recorded attempt. On failure, alert on the diagnostic code and use its
+operator-facing message with worker logs. A later success clears the diagnostic
+only for that cleanup kind. The other retention outcome and repair progress
+remain visible, so multiple causes are not collapsed into one status.</p>
+<p>An <code>upgrading</code>, <code>degraded</code>, or <code>unavailable</code> Preview state does not change
+generic application readiness or unrelated tenant features. Existing valid
+Preview packages and revisions remain available during retention degradation.
+The web client polls readiness every five seconds while any tenant is
+<code>upgrading</code> and returns to the normal fifteen-second cadence after terminal
+state.</p>
 <h2 id="pipeline-status">Pipeline status<a class="headerlink" href="#pipeline-status" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>GET /api/v1/tenants/{tenant_name}/pipeline/status
 <a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>→ {
@@ -1596,6 +1718,33 @@ that tenant. Manual operator intervention (fix config + restart) is required.</p
 <li><code>errors</code> list per run — content identifies root cause</li>
 <li>Pipeline run duration — set alerts if &gt; <code>tenant_execution_timeout_seconds</code></li>
 </ul>
+<h2 id="monitoring-focus-mapping-preview-capacity">Monitoring FOCUS Mapping Preview capacity<a class="headerlink" href="#monitoring-focus-mapping-preview-capacity" title="Permanent link">&para;</a></h2>
+<p>Track HTTP 429 responses with
+<code>detail.code=preview_capacity_exhausted</code> on request submission. Sustained 429s
+mean the process-local running or queued generation limit is full. No request is
+created, so clients must submit again later.</p>
+<p>Also track failed request diagnostics by code, especially
+<code>preview_generation_spool_limit_exceeded</code>. That diagnostic is non-retryable for
+the same configured spool limit. Compare artifact-root free space with
+<code>preview.max_workers × preview.max_generation_spool_bytes</code>, then include
+retained package size and filesystem safety margin.</p>
+<p>Scheduled capacity deferral intentionally creates no revision or success event.
+Monitor settlement-ready months that remain without a current revision across
+later periodic cycles, together with worker-cycle completion and the revision
+generation/publication log messages above. Repeated absence while ad-hoc
+requests saturate capacity indicates that process limits or replica sizing need
+tuning.</p>
+<p>Track repair-submission HTTP 429 responses separately by
+<code>detail.code=focus_preview_repair_capacity_exhausted</code>. The rejected attempt
+created no repair. Sustained responses mean the per-process running limit
+(<code>preview.max_workers</code>) and waiting limit (<code>preview.max_queued_repairs</code>) are
+full. Wait for current work to finish or adjust process sizing and limits;
+replicas have independent repair capacity.</p>
+<p>After restart, interrupted repair work becomes <code>degraded</code> and is not resumed
+automatically. Monitor a tenant that remains <code>unavailable</code>: its next repair
+submission retries recovery before admission. A repeated
+<code>FOCUS Mapping Preview repair worker is unavailable</code> response means recovery
+still cannot complete, and no new repair was created.</p>
 
 
 

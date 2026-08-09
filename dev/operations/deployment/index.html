@@ -718,6 +718,33 @@
   
   
   
+    <li class="md-nav__item">
+      <a href="../../focus-mapping-preview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FOCUS Mapping Preview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
     
     
       
@@ -748,7 +775,7 @@
         
           
         
-        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
         
           
           <div class="md-nav__link md-nav__container">
@@ -770,14 +797,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="">
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -946,7 +973,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" checked>
         
           
           <div class="md-nav__link md-nav__container">
@@ -968,14 +995,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="">
+              <label class="md-nav__link " for="__nav_6" id="__nav_6_label" tabindex="">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="true">
-          <label class="md-nav__title" for="__nav_5">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_6">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -1126,6 +1153,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#operational-logging-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Operational logging configuration
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#api-server" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1133,6 +1171,34 @@
       
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="API server">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#focus-mapping-preview-boundary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FOCUS Mapping Preview boundary
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#preview-capacity-and-storage-sizing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Preview capacity and storage sizing
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -1489,6 +1555,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#operational-logging-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Operational logging configuration
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#api-server" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1496,6 +1573,34 @@
       
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="API server">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#focus-mapping-preview-boundary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FOCUS Mapping Preview boundary
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#preview-capacity-and-storage-sizing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Preview capacity and storage sizing
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -1597,21 +1702,25 @@
 <thead>
 <tr>
 <th><code>--mode</code></th>
-<th>Use case</th>
+<th>General behavior</th>
+<th>FOCUS Mapping Preview</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>worker</code></td>
 <td>Background pipeline only. API served separately.</td>
+<td>Runs scheduled monthly publication and revision retention. Exposes no Preview HTTP routes.</td>
 </tr>
 <tr>
 <td><code>api</code></td>
-<td>REST API only. No pipeline. Query existing data.</td>
+<td>REST API only. No periodic pipeline.</td>
+<td>Serves ad-hoc requests, history, revisions, and downloads. Does not publish scheduled revisions.</td>
 </tr>
 <tr>
 <td><code>both</code></td>
 <td>Pipeline + API in one process. Simplest deployment.</td>
+<td>Serves the same Preview HTTP contract as <code>api</code> and runs scheduled publication and retention.</td>
 </tr>
 </tbody>
 </table>
@@ -1679,42 +1788,139 @@
 <p>Pass secrets via environment — never hardcode in YAML:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>docker<span class="w"> </span>run<span class="w"> </span>-e<span class="w"> </span><span class="nv">CCLOUD_API_KEY</span><span class="o">=</span>...<span class="w"> </span>-e<span class="w"> </span><span class="nv">CCLOUD_API_SECRET</span><span class="o">=</span>...<span class="w"> </span>chitragupta
 </code></pre></div>
+<h2 id="operational-logging-configuration">Operational logging configuration<a class="headerlink" href="#operational-logging-configuration" title="Permanent link">&para;</a></h2>
+<p>Use <code>INFO</code> as the production baseline. It records bounded lifecycle transitions,
+completion summaries, degraded fallbacks, and terminal failures without
+per-record output.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nt">logging</span><span class="p">:</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span><span class="nt">level</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">INFO</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">  </span><span class="nt">format</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;%(asctime)s</span><span class="nv"> </span><span class="s">-</span><span class="nv"> </span><span class="s">%(name)s</span><span class="nv"> </span><span class="s">-</span><span class="nv"> </span><span class="s">%(levelname)s</span><span class="nv"> </span><span class="s">-</span><span class="nv"> </span><span class="s">%(message)s&quot;</span>
+</code></pre></div>
+<p>During an investigation, enable <code>DEBUG</code> only for the boundary involved. These
+settings expose request/provider lifecycle events while leaving the rest of the
+process at <code>INFO</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="nt">logging</span><span class="p">:</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span><span class="nt">level</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">INFO</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">  </span><span class="nt">per_module_levels</span><span class="p">:</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">    </span><span class="nt">core.api.app</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">DEBUG</span>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">    </span><span class="nt">core.engine.orchestrator</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">DEBUG</span>
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="w">    </span><span class="nt">core.metrics.prometheus</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">DEBUG</span>
+<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="w">    </span><span class="nt">plugins.confluent_cloud.connections</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">DEBUG</span>
+</code></pre></div>
+<p>Return temporary module overrides to their normal level after the incident.
+Global <code>DEBUG</code> increases event volume across tenants and providers.</p>
+<p>The default message contains canonical <code>key=value</code> context such as request,
+pipeline run, calculation, revision, repair, date/month, stage, operation,
+outcome, and retry position when those fields apply. Preserve the full message
+in the log collector so these correlations remain searchable. If the collector
+expects JSON, wrap the already-redacted message rather than attempting to
+reconstruct fields from application objects:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="nt">logging</span><span class="p">:</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="w">  </span><span class="nt">level</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">INFO</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="w">  </span><span class="nt">format</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;{&quot;time&quot;:&quot;%(asctime)s&quot;,&quot;logger&quot;:&quot;%(name)s&quot;,&quot;level&quot;:&quot;%(levelname)s&quot;,&quot;message&quot;:&quot;%(message)s&quot;}&#39;</span>
+</code></pre></div>
+<p>Configure the collector and alerting policy to:</p>
+<ul>
+<li>retain <code>INFO</code> events long enough to connect API requests and scheduled runs
+  to later warnings or errors;</li>
+<li>alert on terminal <code>ERROR</code> events and repeated <code>WARNING</code> events where
+  <code>retryable=false</code> or attempts reach <code>max_attempts</code>;</li>
+<li>group related events by <code>request_id</code>, <code>pipeline_run_id</code>, <code>calculation_id</code>,
+  <code>revision_id</code>, or <code>repair_id</code>, rather than message text alone;</li>
+<li>preserve percent-escaped values and <code>traceback_frames</code> as emitted;</li>
+<li>restrict log access because tenant and resource identifiers are operational
+  data even though secrets and raw payloads are excluded.</li>
+</ul>
+<p>Do not add credentials, tokens, authentication headers, connection strings,
+provider payloads, database queries or parameters, response bodies, raw URLs
+with query strings, or raw exception messages in sidecar, proxy, or wrapper
+logs. Chitragupta emits sanitized error type, root type/code, and bounded frame
+names instead.</p>
+<p>For response procedures and representative event sequences, see
+<a href="../troubleshooting/#operational-logging">Operational logging</a>.</p>
 <h2 id="api-server">API server<a class="headerlink" href="#api-server" title="Permanent link">&para;</a></h2>
 <p>The REST API is a FastAPI application served by uvicorn.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nt">api</span><span class="p">:</span>
-<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span><span class="nt">host</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.0.0.0</span>
-<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">  </span><span class="nt">port</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">8080</span>
-<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">  </span><span class="nt">enable_cors</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
-<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="w">  </span><span class="nt">cors_origins</span><span class="p">:</span>
-<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="s">&quot;https://your-dashboard.example.com&quot;</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="nt">api</span><span class="p">:</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="w">  </span><span class="nt">host</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.0.0.0</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="w">  </span><span class="nt">port</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">8080</span>
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="w">  </span><span class="nt">enable_cors</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="w">  </span><span class="nt">cors_origins</span><span class="p">:</span>
+<a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="s">&quot;https://your-dashboard.example.com&quot;</span>
 </code></pre></div>
 <p>Health endpoint: <code>GET /health</code> — returns <code>{"status": "ok", "version": "..."}</code></p>
+<h3 id="focus-mapping-preview-boundary">FOCUS Mapping Preview boundary<a class="headerlink" href="#focus-mapping-preview-boundary" title="Permanent link">&para;</a></h3>
+<p>FOCUS Mapping Preview is opt-in per tenant. When no tenant has a
+<code>focus_preview</code> block, API and worker startup do not create or access
+<code>preview.artifact_root</code>, initialize Preview recovery, gather Preview
+organization authority, or require Preview evidence/lineage storage. The
+ordinary pipeline, emitters, and generic export keep their existing deployment
+requirements.</p>
+<p>Chitragupta does not provide Preview-specific users, roles, API keys, or
+tokens. Protect the complete
+<code>/api/v1/tenants/{tenant_name}/focus-preview</code> prefix with the deployment's
+existing authenticated reverse proxy or API gateway, and configure credentials
+at that external boundary.</p>
+<p>Do not expose <code>preview.artifact_root</code> as a static directory or public volume.
+Preview downloads must go through the API so artifact identity and checksums
+are verified before delivery. When <code>api</code> and <code>worker</code> run separately, configure
+both with the same tenant database and the same durable artifact root. Use a
+database deployment suitable for the expected process and write concurrency.</p>
+<h3 id="preview-capacity-and-storage-sizing">Preview capacity and storage sizing<a class="headerlink" href="#preview-capacity-and-storage-sizing" title="Permanent link">&para;</a></h3>
+<p>Preview generation limits are process-local. In <code>both</code> mode, requested packages
+and scheduled tenant-month publication share one bounded scheduler. In split
+mode, the API process enforces its requested-generation limits and the worker
+process enforces its scheduled-generation limits independently. Every
+additional API or worker replica has its own configured running and queued
+capacity; replicas do not combine their counters into a distributed limit.</p>
+<p><code>preview.max_generation_spool_bytes</code> defaults to 2 GiB for each running
+generation. Reserve at least:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>preview.max_workers × preview.max_generation_spool_bytes
+</code></pre></div>
+<p>of temporary-disk headroom per process, in addition to retained immutable
+packages, the tenant database, filesystem metadata, and operating-system safety
+margin. The defaults therefore permit up to 4 GiB of concurrent generation
+temporary-disk use in one process. Split API and worker processes or multiple
+replicas can each consume that amount. Place <code>preview.artifact_root</code> on storage
+sized for the sum of all processes that share it.</p>
+<p>Generation and artifact delivery are bounded so package size does not require
+equivalent process memory. Operators must still budget ordinary application and
+API memory in addition to the temporary-disk calculation above.</p>
+<p>Use the queue defaults for burst absorption. Both queue limits may instead be
+set to zero to require immediate starts; requested submissions then return
+retryable HTTP 429 when no slot is available, and scheduled tenant-months defer
+to a later periodic cycle.</p>
+<p>Mixed deployments are supported. Only enabled tenants use the shared Preview
+artifact root and evidence schema; disabled tenants do not acquire Preview
+organization/source/lineage data. An enabled tenant's Preview storage,
+bootstrap, or evidence failure is reported through Preview diagnostics while
+generic chargeback collection and calculation continue.</p>
 <h2 id="storage">Storage<a class="headerlink" href="#storage" title="Permanent link">&para;</a></h2>
 <h3 id="sqlite-default">SQLite (default)<a class="headerlink" href="#sqlite-default" title="Permanent link">&para;</a></h3>
 <p>SQLite works well for single-instance deployments with moderate volume:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="nt">storage</span><span class="p">:</span>
-<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span><span class="nt">backend</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">sqlmodel</span>
-<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">  </span><span class="nt">connection_string</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;sqlite:////app/data/tenant-name.db&quot;</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="nt">storage</span><span class="p">:</span>
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="w">  </span><span class="nt">backend</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">sqlmodel</span>
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="w">  </span><span class="nt">connection_string</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;sqlite:////app/data/tenant-name.db&quot;</span>
 </code></pre></div>
 <h3 id="postgresql">PostgreSQL<a class="headerlink" href="#postgresql" title="Permanent link">&para;</a></h3>
 <p>Use PostgreSQL for multi-instance deployments or high-volume/concurrent-access scenarios where SQLite's single-writer lock becomes a bottleneck.</p>
 <p><strong>Driver:</strong> Requires <code>psycopg2</code>. Install via <code>uv add psycopg2-binary</code> (or <code>psycopg2</code> if you prefer building from source with <code>libpq-dev</code>).</p>
 <p><strong>Connection string format:</strong></p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="nt">storage</span><span class="p">:</span>
-<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="w">  </span><span class="nt">backend</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">sqlmodel</span>
-<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="w">  </span><span class="nt">connection_string</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;postgresql+psycopg2://user:pass@host:5432/dbname&quot;</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="nt">storage</span><span class="p">:</span>
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="w">  </span><span class="nt">backend</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">sqlmodel</span>
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="w">  </span><span class="nt">connection_string</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;postgresql+psycopg2://user:pass@host:5432/dbname&quot;</span>
 </code></pre></div>
+<p>Standard URL percent-encoding is supported in <code>storage.connection_string</code> for credentials and query values. Use normal single <code>%</code> escape sequences in application configuration; do not double <code>%</code> signs.</p>
 <p>Pass credentials via environment variables to avoid hardcoding secrets:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="w">  </span><span class="nt">connection_string</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;postgresql+psycopg2://${PG_USER}:${PG_PASS}@${PG_HOST}:5432/dbname&quot;</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="w">  </span><span class="nt">connection_string</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;postgresql+psycopg2://${PG_USER}:${PG_PASS}@${PG_HOST}:5432/dbname&quot;</span>
 </code></pre></div>
 <p><strong>One database per tenant.</strong> Each tenant's <code>connection_string</code> must point to a separate PostgreSQL database. Tables are created automatically on first run — no manual migration needed.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="nt">tenants</span><span class="p">:</span>
-<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="w">  </span><span class="nt">prod-org</span><span class="p">:</span>
-<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="w">    </span><span class="nt">storage</span><span class="p">:</span>
-<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="w">      </span><span class="nt">connection_string</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;postgresql+psycopg2://${PG_USER}:${PG_PASS}@pg:5432/chargeback_prod_org&quot;</span>
-<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="w">  </span><span class="nt">staging-org</span><span class="p">:</span>
-<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="w">    </span><span class="nt">storage</span><span class="p">:</span>
-<a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a><span class="w">      </span><span class="nt">connection_string</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;postgresql+psycopg2://${PG_USER}:${PG_PASS}@pg:5432/chargeback_staging_org&quot;</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="nt">tenants</span><span class="p">:</span>
+<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="w">  </span><span class="nt">prod-org</span><span class="p">:</span>
+<a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a><span class="w">    </span><span class="nt">storage</span><span class="p">:</span>
+<a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a><span class="w">      </span><span class="nt">connection_string</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;postgresql+psycopg2://${PG_USER}:${PG_PASS}@pg:5432/chargeback_prod_org&quot;</span>
+<a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a><span class="w">  </span><span class="nt">staging-org</span><span class="p">:</span>
+<a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a><span class="w">    </span><span class="nt">storage</span><span class="p">:</span>
+<a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a><span class="w">      </span><span class="nt">connection_string</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;postgresql+psycopg2://${PG_USER}:${PG_PASS}@pg:5432/chargeback_staging_org&quot;</span>
 </code></pre></div>
 <h3 id="when-to-choose-postgresql-over-sqlite">When to choose PostgreSQL over SQLite<a class="headerlink" href="#when-to-choose-postgresql-over-sqlite" title="Permanent link">&para;</a></h3>
 <table>
@@ -1756,7 +1962,7 @@
 <p><strong>Rule of thumb:</strong> Start with SQLite. Switch to PostgreSQL when you need multiple application instances or observe lock contention under write-heavy workloads.</p>
 <h2 id="prometheus-collector-script">Prometheus collector script<a class="headerlink" href="#prometheus-collector-script" title="Permanent link">&para;</a></h2>
 <p>When using the <a href="../../configuration/#prometheus-emitter">Prometheus emitter</a>, chargeback data is held in memory and served at <code>/metrics</code>. To persist it into a Prometheus TSDB (for long-term retention and historical queries), use the bundled collector script:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>examples/shared/scripts/collector.sh
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>examples/shared/scripts/collector.sh
 </code></pre></div>
 <p>The script scrapes <code>/metrics</code> in OpenMetrics format and writes TSDB blocks via <code>promtool tsdb create-blocks-from openmetrics</code>. It requires <code>promtool</code> on <code>PATH</code> (ships with the Prometheus distribution).</p>
 <p><strong>Required environment variables:</strong></p>

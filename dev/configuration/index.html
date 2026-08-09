@@ -718,6 +718,33 @@
   
   
   
+    <li class="md-nav__item">
+      <a href="../focus-mapping-preview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FOCUS Mapping Preview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
     
     
       
@@ -748,7 +775,7 @@
         
           
         
-        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
         
           
           <div class="md-nav__link md-nav__container">
@@ -770,14 +797,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="">
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -946,7 +973,7 @@
         
           
         
-        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
         
           
           <div class="md-nav__link md-nav__container">
@@ -968,14 +995,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="">
+              <label class="md-nav__link " for="__nav_6" id="__nav_6_label" tabindex="">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_5">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -1248,6 +1275,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#focus-mapping-preview" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FOCUS Mapping Preview
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#emitters" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1329,6 +1367,7 @@ the guide explains <em>when and why</em> to use them.</p>
 <h2 id="model-hierarchy">Model hierarchy<a class="headerlink" href="#model-hierarchy" title="Permanent link">&para;</a></h2>
 <pre class="mermaid"><code>graph TD
     A[AppSettings] --&gt; B[TenantConfig]
+    A --&gt; P[PreviewConfig]
     B --&gt; C[StorageConfig]
     B --&gt; D[PluginSettingsBase]
     D --&gt; E[CCloudPluginConfig]
@@ -1389,7 +1428,7 @@ the guide explains <em>when and why</em> to use them.</p>
 <td><code>lookback_days</code></td>
 <td>int</td>
 <td>200</td>
-<td>Days of billing history to fetch</td>
+<td>Provider acquisition/recalculation window in days (1–364 and greater than <code>cutoff_days</code>); not retention or guaranteed reconstructability</td>
 </tr>
 <tr>
 <td><code>cutoff_days</code></td>
@@ -1411,23 +1450,226 @@ the guide explains <em>when and why</em> to use them.</p>
 </tr>
 </tbody>
 </table>
+<h2 id="focus-mapping-preview">FOCUS Mapping Preview<a class="headerlink" href="#focus-mapping-preview" title="Permanent link">&para;</a></h2>
+<p>Preview artifact storage, worker concurrency, and CSV part sizing are
+process-wide settings, not tenant settings:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nt">preview</span><span class="p">:</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="nt">artifact_root</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/var/lib/chitragupta/focus-preview</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">  </span><span class="nt">max_workers</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">2</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">  </span><span class="nt">max_queued_repairs</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">8</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">  </span><span class="nt">max_queued_generations</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">8</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="w">  </span><span class="nt">max_running_generations_per_tenant</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1</span>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="w">  </span><span class="nt">max_queued_generations_per_tenant</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">2</span>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="w">  </span><span class="nt">max_generation_spool_bytes</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">2147483648</span>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="w">  </span><span class="nt">max_csv_file_bytes</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">null</span>
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Default</th>
+<th>Constraints</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>preview.artifact_root</code></td>
+<td>path</td>
+<td><code>data/focus-preview</code></td>
+<td>writable directory</td>
+<td>Durable local root for immutable Preview packages. Relative paths resolve from the process working directory.</td>
+</tr>
+<tr>
+<td><code>preview.max_workers</code></td>
+<td>int</td>
+<td><code>2</code></td>
+<td>1–16</td>
+<td>Process-local running-generation limit shared by requested packages and scheduled publication. It also remains the worker count for the separate historical-repair runtime.</td>
+</tr>
+<tr>
+<td><code>preview.max_queued_repairs</code></td>
+<td>int</td>
+<td><code>8</code></td>
+<td>zero or positive</td>
+<td>Process-local maximum historical repairs waiting across all tenants. Zero disables waiting but still permits a repair that can start immediately.</td>
+</tr>
+<tr>
+<td><code>preview.max_queued_generations</code></td>
+<td>int</td>
+<td><code>8</code></td>
+<td>zero or positive</td>
+<td>Process-local maximum waiting requested and scheduled generations across all tenants.</td>
+</tr>
+<tr>
+<td><code>preview.max_running_generations_per_tenant</code></td>
+<td>int</td>
+<td><code>1</code></td>
+<td>positive and no greater than <code>max_workers</code></td>
+<td>Maximum running generations for one tenant.</td>
+</tr>
+<tr>
+<td><code>preview.max_queued_generations_per_tenant</code></td>
+<td>int</td>
+<td><code>2</code></td>
+<td>zero or positive</td>
+<td>Maximum waiting generations for one tenant.</td>
+</tr>
+<tr>
+<td><code>preview.max_generation_spool_bytes</code></td>
+<td>int</td>
+<td><code>2147483648</code> (2 GiB)</td>
+<td>positive</td>
+<td>Hard temporary-disk ceiling for one running generation.</td>
+</tr>
+<tr>
+<td><code>preview.max_csv_file_bytes</code></td>
+<td>int or null</td>
+<td><code>null</code></td>
+<td>positive integer or null</td>
+<td>Maximum bytes per CSV part, including its repeated header and LF record terminators. <code>null</code> emits one <code>cost-and-usage.csv</code>; a positive value enables deterministic row-boundary partitioning.</td>
+</tr>
+</tbody>
+</table>
+<p>Both queue limits must be zero together or both positive. When positive,
+<code>max_queued_generations_per_tenant</code> must be lower than
+<code>max_queued_generations</code>. Setting both to zero disables waiting: a requested
+generation receives HTTP 429 unless it can start immediately, while an eligible
+scheduled tenant-month is deferred to a later periodic cycle. Requested and
+scheduled work share the same process-local running and waiting limits, with
+fair capacity across tenants.</p>
+<p>Historical repair uses a separate admission bound: at most
+<code>preview.max_workers</code> repairs run and at most
+<code>preview.max_queued_repairs</code> repairs wait in each process. A full repair limit
+returns retryable HTTP 429 before a repair is created. Generation and repair
+limits are independent, replicas have independent limits, and only one repair
+may be active per tenant.</p>
+<p>Scheduled current monthly revisions are discovered by the ordinary periodic
+worker:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">features</span><span class="p">:</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">enable_periodic_refresh</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">  </span><span class="nt">refresh_interval</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1800</span>
+</code></pre></div>
+<p>After each successful periodic tenant cycle, Preview evaluates settlement-ready
+Monthly Full revisions and admits each eligible tenant-month independently to
+the shared generation scheduler. Full capacity defers that month without
+creating a revision or changing the current pointer; a later cycle reevaluates
+it. Automatic publication starts with a validated Settled revision; active and
+otherwise incomplete months remain available through ad-hoc requests.
+Disabling periodic refresh disables automatic revision publication; run-once
+and ad-hoc request execution do not replace it.</p>
+<p>The artifact root must be on durable storage and writable by both the API and
+periodic worker. If they run separately, mount and configure the same path in
+both processes. The database stores request and artifact metadata; artifact
+bytes remain under this root and are served through the Preview API. The REST
+API has no built-in authentication. Put the complete Preview route prefix,
+including request history, status, manifest, file, and archive routes, behind an
+authenticated reverse proxy or API gateway. Changing the root does not move
+existing packages.</p>
+<p><code>lookback_days</code>, <code>cutoff_days</code>, and the tenant's <code>focus_preview</code> effective dates
+bound the calendar months considered for publication. Automatic generation also
+waits at least 72 hours after month end and requires the acquisition cutoff to
+cover the complete month. These remain acquisition and eligibility controls, not
+revision-history retention. Changing only <code>preview.max_csv_file_bytes</code> changes
+physical partitioning and does not trigger a replacement.</p>
+<p>Confluent Cloud tenants can optionally declare the commercial contract required
+for Preview:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nt">tenants</span><span class="p">:</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="nt">production</span><span class="p">:</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">    </span><span class="nt">focus_preview</span><span class="p">:</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">      </span><span class="nt">commercial_profile</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">direct_payg</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="w">      </span><span class="nt">billing_currency</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">USD</span><span class="w">       </span><span class="c1"># optional; defaults to normalized USD</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="w">      </span><span class="nt">effective_start_date</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">2026-01-01</span>
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="w">      </span><span class="c1"># effective_end_date: 2027-01-01  # optional fixed exclusive override</span>
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Default</th>
+<th>Constraints</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>focus_preview</code></td>
+<td>mapping</td>
+<td>absent</td>
+<td>Confluent Cloud only</td>
+<td>Optional block. Absence remains valid application configuration but every Preview request fails closed.</td>
+</tr>
+<tr>
+<td><code>focus_preview.commercial_profile</code></td>
+<td>string</td>
+<td>required in block</td>
+<td><code>direct_payg</code></td>
+<td>Declares the supported Direct-billed PAYG arrangement.</td>
+</tr>
+<tr>
+<td><code>focus_preview.billing_currency</code></td>
+<td>string</td>
+<td><code>USD</code></td>
+<td>three ASCII letters</td>
+<td>Normalized uppercase and emitted as <code>BillingCurrency</code> for eligible rows. Non-USD loads but Preview fails without conversion.</td>
+</tr>
+<tr>
+<td><code>focus_preview.effective_start_date</code></td>
+<td>date</td>
+<td>required in block</td>
+<td>before an explicit end</td>
+<td>Inclusive start of the commercial declaration.</td>
+</tr>
+<tr>
+<td><code>focus_preview.effective_end_date</code></td>
+<td>date</td>
+<td>omitted</td>
+<td>after start when supplied</td>
+<td>Optional exclusive end. Omission resolves an end per operation from its UTC anchor date; an explicit value is a fixed hard override.</td>
+</tr>
+</tbody>
+</table>
+<p>For an omitted end, an ad-hoc request uses its UTC creation date, one scheduled
+publication cycle uses its cycle timestamp's UTC date for discovery and
+generation, and a repair uses its durable UTC creation date throughout
+processing and restart. These resolved ends do not widen <code>lookback_days</code>,
+<code>cutoff_days</code>, <code>retention_days</code>, or calculation, source, allocation-lineage,
+reconciliation, and mapping evidence requirements.</p>
+<p>Confluent's Costs API does not supply a per-record ISO currency value. Eligible
+rows copy the normalized operator-configured USD scope into <code>BillingCurrency</code>;
+the value is scope authority, not per-record inference. Non-USD remains
+fail-closed and Preview performs no conversion. See the
+<a href="ccloud-reference/#focus-mapping-preview-eligibility">Confluent Cloud reference</a>
+for the fail-closed rules and retention boundary.</p>
+<p>Historical repair has no separate eligibility override. Its bounded UTC range
+must fit within the intersection of the commercial interval resolved at the
+repair's durable creation time, the current <code>lookback_days</code> and <code>cutoff_days</code>
+acquisition window, and the complete <code>retention_days</code> interval. Submission is
+REST-only and requires <code>both</code> mode; <code>api</code> mode can read retained status but
+cannot execute repair. Valid Confluent Cloud billing credentials, retained
+provider history, and any historical metrics required by the configured
+allocation paths must still be available.</p>
+<p>See <a href="../focus-mapping-preview/">FOCUS Mapping Preview</a> for the complete setup,
+request, download, package, expiry, and customization workflow.</p>
 <h2 id="emitters">Emitters<a class="headerlink" href="#emitters" title="Permanent link">&para;</a></h2>
 <p>Emitters receive the final chargeback rows after each billing date is calculated and write them to one or more destinations. Each tenant can configure multiple emitters under <code>plugin_settings.emitters</code>.</p>
 <h3 id="csv-emitter">CSV emitter<a class="headerlink" href="#csv-emitter" title="Permanent link">&para;</a></h3>
 <p>Writes one CSV file per billing date into a local directory.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nt">emitters</span><span class="p">:</span>
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">csv</span>
-<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">    </span><span class="nt">aggregation</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">daily</span><span class="w">        </span><span class="c1"># optional — coarsen before writing</span>
-<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">    </span><span class="nt">params</span><span class="p">:</span>
-<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">      </span><span class="nt">output_dir</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/app/output/chargebacks</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nt">emitters</span><span class="p">:</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">csv</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">    </span><span class="nt">aggregation</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">daily</span><span class="w">        </span><span class="c1"># optional — coarsen before writing</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">    </span><span class="nt">params</span><span class="p">:</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">      </span><span class="nt">output_dir</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/app/output/chargebacks</span>
 </code></pre></div>
 <h3 id="prometheus-emitter">Prometheus emitter<a class="headerlink" href="#prometheus-emitter" title="Permanent link">&para;</a></h3>
 <p>Exposes chargeback and supporting data as Prometheus/OpenMetrics gauge metrics on an HTTP server. Useful for scraping with Prometheus or backfilling a TSDB using the bundled collector script.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">emitters</span><span class="p">:</span>
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">prometheus</span>
-<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">    </span><span class="nt">aggregation</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">daily</span>
-<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">    </span><span class="nt">params</span><span class="p">:</span>
-<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">      </span><span class="nt">port</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">9090</span><span class="w">              </span><span class="c1"># port for the /metrics HTTP endpoint (default: 8000)</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nt">emitters</span><span class="p">:</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">prometheus</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">    </span><span class="nt">aggregation</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">daily</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">    </span><span class="nt">params</span><span class="p">:</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="w">      </span><span class="nt">port</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">9090</span><span class="w">              </span><span class="c1"># port for the /metrics HTTP endpoint (default: 8000)</span>
 </code></pre></div>
 <p><strong>Metric families exposed:</strong></p>
 <table>

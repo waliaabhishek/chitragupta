@@ -693,6 +693,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#focus-mapping-preview-eligibility" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FOCUS Mapping Preview eligibility
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#plugin_settings-fields-ccloud" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -892,6 +903,33 @@
   
   
   
+    <li class="md-nav__item">
+      <a href="../../focus-mapping-preview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FOCUS Mapping Preview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
     
     
       
@@ -922,7 +960,7 @@
         
           
         
-        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
         
           
           <div class="md-nav__link md-nav__container">
@@ -944,14 +982,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="">
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -1120,7 +1158,7 @@
         
           
         
-        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
         
           
           <div class="md-nav__link md-nav__container">
@@ -1142,14 +1180,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="">
+              <label class="md-nav__link " for="__nav_6" id="__nav_6_label" tabindex="">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_5">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -1422,6 +1460,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#focus-mapping-preview-eligibility" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FOCUS Mapping Preview eligibility
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#plugin_settings-fields-ccloud" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1546,45 +1595,57 @@ full field reference.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nt">ecosystem</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">confluent_cloud</span>
 </code></pre></div>
 <h2 id="full-example">Full example<a class="headerlink" href="#full-example" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">tenants</span><span class="p">:</span>
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">my-ccloud-org</span><span class="p">:</span>
-<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">    </span><span class="nt">ecosystem</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">confluent_cloud</span>
-<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">    </span><span class="nt">tenant_id</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">my-ccloud-org</span><span class="w">       </span><span class="c1"># internal partition key (not the CCloud org ID)</span>
-<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">    </span><span class="nt">lookback_days</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">200</span>
-<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">    </span><span class="nt">cutoff_days</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">5</span>
-<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="w">    </span><span class="nt">retention_days</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">250</span>
-<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="w">    </span><span class="nt">storage</span><span class="p">:</span>
-<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="w">      </span><span class="nt">connection_string</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;sqlite:///data/ccloud.db&quot;</span>
-<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="w">    </span><span class="nt">plugin_settings</span><span class="p">:</span>
-<a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="w">      </span><span class="nt">ccloud_api</span><span class="p">:</span>
-<a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="w">        </span><span class="nt">key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${CCLOUD_API_KEY}</span>
-<a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="w">        </span><span class="nt">secret</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${CCLOUD_API_SECRET}</span>
-<a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a><span class="w">      </span><span class="nt">billing_api</span><span class="p">:</span>
-<a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a><span class="w">        </span><span class="nt">days_per_query</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">15</span>
-<a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a><span class="w">      </span><span class="nt">metrics</span><span class="p">:</span>
-<a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a><span class="w">        </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">prometheus</span>
-<a id="__codelineno-1-18" name="__codelineno-1-18" href="#__codelineno-1-18"></a><span class="w">        </span><span class="nt">url</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">https://api.telemetry.confluent.cloud</span>
-<a id="__codelineno-1-19" name="__codelineno-1-19" href="#__codelineno-1-19"></a><span class="w">        </span><span class="nt">auth_type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">basic</span>
-<a id="__codelineno-1-20" name="__codelineno-1-20" href="#__codelineno-1-20"></a><span class="w">        </span><span class="nt">username</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${METRICS_API_KEY}</span>
-<a id="__codelineno-1-21" name="__codelineno-1-21" href="#__codelineno-1-21"></a><span class="w">        </span><span class="nt">password</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${METRICS_API_SECRET}</span>
-<a id="__codelineno-1-22" name="__codelineno-1-22" href="#__codelineno-1-22"></a><span class="w">      </span><span class="nt">flink</span><span class="p">:</span>
-<a id="__codelineno-1-23" name="__codelineno-1-23" href="#__codelineno-1-23"></a><span class="w">        </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">region_id</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">us-east-1</span>
-<a id="__codelineno-1-24" name="__codelineno-1-24" href="#__codelineno-1-24"></a><span class="w">          </span><span class="nt">key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${FLINK_API_KEY}</span>
-<a id="__codelineno-1-25" name="__codelineno-1-25" href="#__codelineno-1-25"></a><span class="w">          </span><span class="nt">secret</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${FLINK_API_SECRET}</span>
-<a id="__codelineno-1-26" name="__codelineno-1-26" href="#__codelineno-1-26"></a><span class="w">      </span><span class="nt">emitters</span><span class="p">:</span>
-<a id="__codelineno-1-27" name="__codelineno-1-27" href="#__codelineno-1-27"></a><span class="w">        </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">csv</span>
-<a id="__codelineno-1-28" name="__codelineno-1-28" href="#__codelineno-1-28"></a><span class="w">          </span><span class="nt">aggregation</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">daily</span>
-<a id="__codelineno-1-29" name="__codelineno-1-29" href="#__codelineno-1-29"></a><span class="w">          </span><span class="nt">params</span><span class="p">:</span>
-<a id="__codelineno-1-30" name="__codelineno-1-30" href="#__codelineno-1-30"></a><span class="w">            </span><span class="nt">output_dir</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">./output</span>
-<a id="__codelineno-1-31" name="__codelineno-1-31" href="#__codelineno-1-31"></a><span class="w">      </span><span class="nt">chargeback_granularity</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">daily</span>
-<a id="__codelineno-1-32" name="__codelineno-1-32" href="#__codelineno-1-32"></a><span class="w">      </span><span class="nt">topic_attribution</span><span class="p">:</span>
-<a id="__codelineno-1-33" name="__codelineno-1-33" href="#__codelineno-1-33"></a><span class="w">        </span><span class="nt">enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
-<a id="__codelineno-1-34" name="__codelineno-1-34" href="#__codelineno-1-34"></a><span class="w">        </span><span class="nt">exclude_topic_patterns</span><span class="p">:</span>
-<a id="__codelineno-1-35" name="__codelineno-1-35" href="#__codelineno-1-35"></a><span class="w">          </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="s">&quot;__consumer_offsets&quot;</span>
-<a id="__codelineno-1-36" name="__codelineno-1-36" href="#__codelineno-1-36"></a><span class="w">          </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="s">&quot;_schemas&quot;</span>
-<a id="__codelineno-1-37" name="__codelineno-1-37" href="#__codelineno-1-37"></a><span class="w">          </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="s">&quot;_confluent-*&quot;</span>
-<a id="__codelineno-1-38" name="__codelineno-1-38" href="#__codelineno-1-38"></a><span class="w">        </span><span class="nt">missing_metrics_behavior</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">even_split</span>
-<a id="__codelineno-1-39" name="__codelineno-1-39" href="#__codelineno-1-39"></a><span class="w">        </span><span class="nt">retention_days</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">90</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">preview</span><span class="p">:</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">artifact_root</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/var/lib/chitragupta/focus-preview</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">  </span><span class="nt">max_workers</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">2</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">  </span><span class="nt">max_queued_repairs</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">8</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">  </span><span class="nt">max_csv_file_bytes</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">null</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="nt">tenants</span><span class="p">:</span>
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="w">  </span><span class="nt">my-ccloud-org</span><span class="p">:</span>
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="w">    </span><span class="nt">ecosystem</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">confluent_cloud</span>
+<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="w">    </span><span class="nt">tenant_id</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">my-ccloud-org</span><span class="w">       </span><span class="c1"># internal partition key (not the CCloud org ID)</span>
+<a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="w">    </span><span class="nt">lookback_days</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">200</span>
+<a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="w">    </span><span class="nt">cutoff_days</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">5</span>
+<a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="w">    </span><span class="nt">retention_days</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">250</span>
+<a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a><span class="w">    </span><span class="nt">focus_preview</span><span class="p">:</span>
+<a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a><span class="w">      </span><span class="nt">commercial_profile</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">direct_payg</span>
+<a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a><span class="w">      </span><span class="nt">billing_currency</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">USD</span>
+<a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a><span class="w">      </span><span class="nt">effective_start_date</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">2026-01-01</span>
+<a id="__codelineno-1-18" name="__codelineno-1-18" href="#__codelineno-1-18"></a><span class="w">      </span><span class="c1"># Optional fixed exclusive override:</span>
+<a id="__codelineno-1-19" name="__codelineno-1-19" href="#__codelineno-1-19"></a><span class="w">      </span><span class="c1"># effective_end_date: 2027-01-01</span>
+<a id="__codelineno-1-20" name="__codelineno-1-20" href="#__codelineno-1-20"></a><span class="w">    </span><span class="nt">storage</span><span class="p">:</span>
+<a id="__codelineno-1-21" name="__codelineno-1-21" href="#__codelineno-1-21"></a><span class="w">      </span><span class="nt">connection_string</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;sqlite:///data/ccloud.db&quot;</span>
+<a id="__codelineno-1-22" name="__codelineno-1-22" href="#__codelineno-1-22"></a><span class="w">    </span><span class="nt">plugin_settings</span><span class="p">:</span>
+<a id="__codelineno-1-23" name="__codelineno-1-23" href="#__codelineno-1-23"></a><span class="w">      </span><span class="nt">ccloud_api</span><span class="p">:</span>
+<a id="__codelineno-1-24" name="__codelineno-1-24" href="#__codelineno-1-24"></a><span class="w">        </span><span class="nt">key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${CCLOUD_API_KEY}</span>
+<a id="__codelineno-1-25" name="__codelineno-1-25" href="#__codelineno-1-25"></a><span class="w">        </span><span class="nt">secret</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${CCLOUD_API_SECRET}</span>
+<a id="__codelineno-1-26" name="__codelineno-1-26" href="#__codelineno-1-26"></a><span class="w">      </span><span class="nt">billing_api</span><span class="p">:</span>
+<a id="__codelineno-1-27" name="__codelineno-1-27" href="#__codelineno-1-27"></a><span class="w">        </span><span class="nt">days_per_query</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">15</span>
+<a id="__codelineno-1-28" name="__codelineno-1-28" href="#__codelineno-1-28"></a><span class="w">      </span><span class="nt">metrics</span><span class="p">:</span>
+<a id="__codelineno-1-29" name="__codelineno-1-29" href="#__codelineno-1-29"></a><span class="w">        </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">prometheus</span>
+<a id="__codelineno-1-30" name="__codelineno-1-30" href="#__codelineno-1-30"></a><span class="w">        </span><span class="nt">url</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">https://api.telemetry.confluent.cloud</span>
+<a id="__codelineno-1-31" name="__codelineno-1-31" href="#__codelineno-1-31"></a><span class="w">        </span><span class="nt">auth_type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">basic</span>
+<a id="__codelineno-1-32" name="__codelineno-1-32" href="#__codelineno-1-32"></a><span class="w">        </span><span class="nt">username</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${METRICS_API_KEY}</span>
+<a id="__codelineno-1-33" name="__codelineno-1-33" href="#__codelineno-1-33"></a><span class="w">        </span><span class="nt">password</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${METRICS_API_SECRET}</span>
+<a id="__codelineno-1-34" name="__codelineno-1-34" href="#__codelineno-1-34"></a><span class="w">      </span><span class="nt">flink</span><span class="p">:</span>
+<a id="__codelineno-1-35" name="__codelineno-1-35" href="#__codelineno-1-35"></a><span class="w">        </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">region_id</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">us-east-1</span>
+<a id="__codelineno-1-36" name="__codelineno-1-36" href="#__codelineno-1-36"></a><span class="w">          </span><span class="nt">key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${FLINK_API_KEY}</span>
+<a id="__codelineno-1-37" name="__codelineno-1-37" href="#__codelineno-1-37"></a><span class="w">          </span><span class="nt">secret</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${FLINK_API_SECRET}</span>
+<a id="__codelineno-1-38" name="__codelineno-1-38" href="#__codelineno-1-38"></a><span class="w">      </span><span class="nt">emitters</span><span class="p">:</span>
+<a id="__codelineno-1-39" name="__codelineno-1-39" href="#__codelineno-1-39"></a><span class="w">        </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">csv</span>
+<a id="__codelineno-1-40" name="__codelineno-1-40" href="#__codelineno-1-40"></a><span class="w">          </span><span class="nt">aggregation</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">daily</span>
+<a id="__codelineno-1-41" name="__codelineno-1-41" href="#__codelineno-1-41"></a><span class="w">          </span><span class="nt">params</span><span class="p">:</span>
+<a id="__codelineno-1-42" name="__codelineno-1-42" href="#__codelineno-1-42"></a><span class="w">            </span><span class="nt">output_dir</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">./output</span>
+<a id="__codelineno-1-43" name="__codelineno-1-43" href="#__codelineno-1-43"></a><span class="w">      </span><span class="nt">chargeback_granularity</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">daily</span>
+<a id="__codelineno-1-44" name="__codelineno-1-44" href="#__codelineno-1-44"></a><span class="w">      </span><span class="nt">topic_attribution</span><span class="p">:</span>
+<a id="__codelineno-1-45" name="__codelineno-1-45" href="#__codelineno-1-45"></a><span class="w">        </span><span class="nt">enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<a id="__codelineno-1-46" name="__codelineno-1-46" href="#__codelineno-1-46"></a><span class="w">        </span><span class="nt">exclude_topic_patterns</span><span class="p">:</span>
+<a id="__codelineno-1-47" name="__codelineno-1-47" href="#__codelineno-1-47"></a><span class="w">          </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="s">&quot;__consumer_offsets&quot;</span>
+<a id="__codelineno-1-48" name="__codelineno-1-48" href="#__codelineno-1-48"></a><span class="w">          </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="s">&quot;_schemas&quot;</span>
+<a id="__codelineno-1-49" name="__codelineno-1-49" href="#__codelineno-1-49"></a><span class="w">          </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="s">&quot;_confluent-*&quot;</span>
+<a id="__codelineno-1-50" name="__codelineno-1-50" href="#__codelineno-1-50"></a><span class="w">        </span><span class="nt">missing_metrics_behavior</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">even_split</span>
+<a id="__codelineno-1-51" name="__codelineno-1-51" href="#__codelineno-1-51"></a><span class="w">        </span><span class="nt">retention_days</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">90</span>
 </code></pre></div>
 <h2 id="tenantconfig-fields">TenantConfig fields<a class="headerlink" href="#tenantconfig-fields" title="Permanent link">&para;</a></h2>
 <table>
@@ -1613,7 +1674,7 @@ full field reference.</p>
 <td><code>lookback_days</code></td>
 <td>int</td>
 <td>200</td>
-<td>Days of billing history to fetch (max 364). Must be &gt; <code>cutoff_days</code>.</td>
+<td>Provider acquisition/recalculation window (max 364). Must be &gt; <code>cutoff_days</code>; it is not retention or a reconstruction guarantee.</td>
 </tr>
 <tr>
 <td><code>cutoff_days</code></td>
@@ -1663,8 +1724,134 @@ full field reference.</p>
 <td>-1</td>
 <td>Mark resources deleted after N zero-gather cycles (-1 = disabled)</td>
 </tr>
+<tr>
+<td><code>focus_preview</code></td>
+<td>mapping</td>
+<td>absent</td>
+<td>Optional Preview eligibility declaration. Absence loads successfully but Preview requests fail closed.</td>
+</tr>
+<tr>
+<td><code>focus_preview.commercial_profile</code></td>
+<td>string</td>
+<td>required in block</td>
+<td>Must be <code>direct_payg</code>.</td>
+</tr>
+<tr>
+<td><code>focus_preview.billing_currency</code></td>
+<td>string</td>
+<td><code>USD</code></td>
+<td>Three-letter code normalized to uppercase. Only USD is currently eligible.</td>
+</tr>
+<tr>
+<td><code>focus_preview.effective_start_date</code></td>
+<td>date</td>
+<td>required in block</td>
+<td>Inclusive start of the commercial declaration.</td>
+</tr>
+<tr>
+<td><code>focus_preview.effective_end_date</code></td>
+<td>date</td>
+<td>omitted</td>
+<td>Optional exclusive end; when supplied, it must be after the start and is a fixed hard override.</td>
+</tr>
 </tbody>
 </table>
+<h2 id="focus-mapping-preview-eligibility">FOCUS Mapping Preview eligibility<a class="headerlink" href="#focus-mapping-preview-eligibility" title="Permanent link">&para;</a></h2>
+<p><code>focus_preview</code> is optional to preserve existing application configurations.
+Omitting it disables Preview for that tenant. Preview routes return HTTP 409
+with <code>preview_commercial_profile_unavailable</code> before opening Preview runtime,
+artifact, or evidence storage. The tenant continues normal billing collection,
+chargeback calculation, generic export, and emission without Preview-specific
+organization, raw-source, allocation-lineage, or retention work. When supplied,
+<code>focus_preview.commercial_profile</code> is required and must be <code>direct_payg</code>.
+<code>focus_preview.effective_start_date</code> is required and inclusive.
+<code>focus_preview.effective_end_date</code> is optional and exclusive. When it is
+omitted, each operation resolves the exclusive end once from its own UTC anchor:
+an ad-hoc request's creation time, a scheduled publication cycle's timestamp,
+or a repair's durable creation time. Queue delay, processing, restart, or
+crossing UTC midnight does not change that operation's resolved end. When an
+explicit end is configured, it remains the fixed exclusive hard override.</p>
+<p>The resolved commercial interval does not configure or widen acquisition,
+<code>lookback_days</code>, <code>cutoff_days</code>, or <code>retention_days</code>. Complete persisted
+calculation, source, allocation-lineage, reconciliation, and mapping evidence
+remains required and fail-closed.</p>
+<p><code>focus_preview.billing_currency</code> defaults to <code>USD</code>. Values such as <code>usd</code> or
+<code>USD</code> normalize to <code>USD</code>; malformed or non-string values fail configuration
+loading. A valid non-USD code loads so the request can return the stable
+<code>preview_billing_currency_unsupported</code> diagnostic, but Preview performs no
+relabeling. There is no currency conversion of stored monetary values.</p>
+<p>The Confluent Costs API does not return a per-record ISO currency value. The USD
+setting is therefore an explicit customer/operator contract for the supported
+Direct-billed PAYG scope, not provider-supplied record evidence. Compatibility
+aggregate currency is not treated as commercial authority. Eligible rows copy
+the normalized setting into FOCUS <code>BillingCurrency</code>; the value applies to the
+configured scope and is not inferred from individual Costs API records. Non-USD
+scopes remain fail-closed, and Preview performs no relabeling or conversion.</p>
+<p><code>lookback_days</code> remains capped at 364 because it controls current provider
+acquisition and recalculation. <code>lookback_days</code> is not retention, archival
+history, or a promise that billing and Metrics API inputs still exist for
+reconstruction. <code>retention_days</code> is separate but does not introduce a
+multi-year completed-chargeback archive.</p>
+<p>Historical repair has no separate YAML override and does not widen these
+boundaries. A repair interval must fit completely inside the intersection of
+the commercial interval resolved at its durable UTC creation time, current
+lookback/cutoff window, and retained-data interval. New repair submission is
+available only through REST in <code>both</code> mode. API-only deployments can read a
+retained operation but cannot execute one; disabled tenants create no repair
+infrastructure.</p>
+<p>Repair uses <code>ccloud_api</code> credentials to reacquire authoritative Costs API
+history for each selected date and may use historical Telemetry, Prometheus, or
+Flink metrics through the configured canonical allocation path. Valid current
+credentials do not guarantee that the provider or metrics systems still retain
+the requested history. Missing history or allocation authority becomes a
+durable date diagnostic rather than inferred legacy evidence.</p>
+<p>Source-related failures can expose at most 20 sorted, unique, tenant-scoped
+<code>src:v1:&lt;64 lowercase hex&gt;</code> correlation values. They are safe lookup handles,
+not provider IDs, raw fields, secrets, or storage paths. All commercial,
+currency, calculation, source, and reconciliation failures are fail-closed and
+produce no Preview package.</p>
+<p>Enabled and disabled tenants can share one deployment. The ordinary pipeline
+captures source evidence, allocation lineage, and Confluent organization
+authority only for enabled tenants. Preview requests and scheduled revisions
+reuse that persisted evidence and do not make provider calls. Preview-only
+capture, schema, or authority failures do not change generic chargeback results.</p>
+<p>The top-level Preview capacity settings apply per process. Requested packages
+and scheduled tenant-month publication share <code>preview.max_workers</code>,
+<code>preview.max_queued_generations</code>,
+<code>preview.max_running_generations_per_tenant</code>, and
+<code>preview.max_queued_generations_per_tenant</code>. A full scheduler rejects a
+requested package with retryable HTTP 429 and defers scheduled publication to a
+later periodic cycle. <code>preview.max_generation_spool_bytes</code> defaults to 2 GiB
+per running generation and bounds its temporary disk use.</p>
+<p>Historical repair is separately bounded to <code>preview.max_workers</code> running
+repairs and <code>preview.max_queued_repairs</code> waiting repairs per process.
+<code>max_queued_repairs</code> defaults to <code>8</code>; zero disables waiting. A full repair limit
+returns retryable HTTP 429 before a repair is created. Only one repair may be
+active per tenant. Repair and generation capacity are independent, and each
+replica has its own limits.</p>
+<p><code>preview.max_csv_file_bytes</code> controls only physical CSV part boundaries.
+Request grain and Full/Summary/Custom profiles control report shape. FOCUS field
+mappings, charge classification, Summary membership, manifest schema, and
+package lifetime are code-owned and have no YAML override. See
+<a href="../../focus-mapping-preview/">FOCUS Mapping Preview</a> for capacity validation,
+request, and download examples.</p>
+<p>When <code>features.enable_periodic_refresh</code> is enabled, each successful periodic
+tenant cycle also evaluates settlement-ready Monthly Full revisions. Candidate
+months must be inside both the acquisition window and this tenant's effective
+interval, at least 72 hours past month end, and fully covered by the configured
+acquisition cutoff. The initial pass publishes only validated Settled revisions,
+including a settlement-ready header-only no-cost month. Active and otherwise
+incomplete months remain available as on-demand Provisional packages.
+<code>cutoff_days</code> is an acquisition and settlement-readiness control, not a
+revision-retention setting.</p>
+<p>The configured <code>tenant_id</code> remains the stable storage owner for current-revision
+isolation. It is not emitted as <code>BillingAccountId</code>; the mapped report continues
+to use the provider organization identity gathered through the ordinary
+inventory pipeline. Allocator and identity-resolution configuration take effect
+after either an ordinary recalculation or an explicit historical repair
+persists a new calculated result. Preview package generation itself remains
+read-only. Persisted tag, resource, and identity inventory evidence is refreshed
+only by the ordinary pipeline.</p>
 <h2 id="plugin_settings-fields-ccloud">plugin_settings fields (CCloud)<a class="headerlink" href="#plugin_settings-fields-ccloud" title="Permanent link">&para;</a></h2>
 <table>
 <thead>

@@ -716,6 +716,33 @@
       
   
   
+  
+  
+    <li class="md-nav__item">
+      <a href="../../focus-mapping-preview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FOCUS Mapping Preview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
     
   
   
@@ -748,7 +775,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" checked>
         
           
           <div class="md-nav__link md-nav__container">
@@ -770,14 +797,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="">
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
-          <label class="md-nav__title" for="__nav_4">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_5">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -928,6 +955,28 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#historical-focus-repair-write-path" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Historical FOCUS repair write path
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#focus-mapping-preview-read-path" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FOCUS Mapping Preview read path
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#concurrency" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1048,7 +1097,7 @@
         
           
         
-        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
         
           
           <div class="md-nav__link md-nav__container">
@@ -1070,14 +1119,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="">
+              <label class="md-nav__link " for="__nav_6" id="__nav_6_label" tabindex="">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_5">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -1361,6 +1410,28 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#historical-focus-repair-write-path" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Historical FOCUS repair write path
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#focus-mapping-preview-read-path" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FOCUS Mapping Preview read path
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#concurrency" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1440,13 +1511,18 @@
 <ol>
 <li>
 <p><strong>Gather billing</strong> — <code>CostInput.gather(tenant_id, start, end, uow)</code>
-   Returns <code>BillingLineItem</code> objects. CCloud fetches from billing API. Self-managed/generic
-   constructs from YAML cost model + Prometheus.</p>
+   returns <code>BillingLineItem</code> objects. CCloud fetches from the billing API.
+   Self-managed/generic constructs from the YAML cost model and Prometheus.
+   For a Preview-enabled Confluent tenant, the same provider pass also captures
+   native source evidence; disabled tenants use the ordinary streaming path and
+   create no Preview source evidence.</p>
 </li>
 <li>
 <p><strong>Gather resources</strong> — <code>handler.gather_resources(tenant_id, uow)</code>
-   Discovers infrastructure resources (clusters, topics, connectors, etc.).
-   Stored in <code>resources</code> table.</p>
+   discovers ordinary infrastructure resources. For a Preview-enabled
+   Confluent tenant, a separate isolated gather acquires the organization used
+   as Preview billing-account authority. Disabled tenants do not call that
+   endpoint.</p>
 </li>
 <li>
 <p><strong>Gather identities</strong> — <code>handler.gather_identities(tenant_id, uow)</code>
@@ -1454,10 +1530,13 @@
    Stored in <code>identities</code> table.</p>
 </li>
 <li>
-<p><strong>Detect deletions</strong> — <code>_detect_entity_deletions()</code>
-   Compares gathered entity IDs against previously active entities. Marks missing ones
-   with <code>deleted_at</code> timestamp. Skipped if any handler gather failed. A consecutive
-   zero-gather safety threshold prevents bulk deletion from transient API failures.</p>
+<p><strong>Detect deletions</strong> — resource deletion authority is tracked per declared
+   resource type. A type is scanned only when every handler declaring that type
+   succeeded; IDs yielded under an undeclared type may be persisted but are
+   never deletion authority. Identity deletion remains skipped after any
+   handler failure. Supplemental organization reconciliation is isolated from
+   both paths. Consecutive zero-gather thresholds prevent transient bulk
+   deletion.</p>
 </li>
 <li>
 <p><strong>Fetch metrics</strong> — <code>metrics_source.query_range(...)</code> per handler
@@ -1474,7 +1553,9 @@
    UNALLOCATED identity used for unresolved costs.</p>
 </li>
 <li>
-<p><strong>Commit</strong> — <code>ChargebackRow</code> records written to storage.</p>
+<p><strong>Commit</strong> — <code>ChargebackRow</code> records are written to storage. Enabled tenants
+   also persist the allocation lineage needed by Preview; disabled tenants do
+   not require lineage repositories or tables.</p>
 </li>
 </ol>
 <p>The pipeline loop ends at step 8. Topic overlay (step 9) is a separate pass over completed dates.</p>
@@ -1531,7 +1612,7 @@
 </tr>
 <tr>
 <td><code>pipeline_state</code></td>
-<td>Per-date progress flags: <code>billing_gathered</code>, <code>resources_gathered</code>, <code>chargeback_calculated</code>, <code>topic_overlay_gathered</code>, <code>topic_attribution_calculated</code></td>
+<td>Per-date progress flags plus the successful chargeback calculation ID, completion time, and optional owning-run provenance used by Preview</td>
 </tr>
 <tr>
 <td><code>topic_attribution_dimensions</code></td>
@@ -1544,6 +1625,18 @@
 <tr>
 <td><code>pipeline_runs</code></td>
 <td>Audit trail: run start/end, status, rows written, errors</td>
+</tr>
+<tr>
+<td><code>preview_requests</code></td>
+<td>Tenant-scoped Daily/Monthly scope, effective columns and evidence coverage, status/expiry/worker lease, diagnostics, source snapshot, and public artifact metadata (never server paths)</td>
+</tr>
+<tr>
+<td><code>ccloud_focus_preview_repairs</code></td>
+<td>Durable owner/range repair operation state and operation diagnostic for enabled Confluent Cloud tenants</td>
+</tr>
+<tr>
+<td><code>ccloud_focus_preview_repair_dates</code></td>
+<td>Ordered per-date repair status, calculation result, failure stage, and diagnostic</td>
 </tr>
 <tr>
 <td><code>custom_tags</code></td>
@@ -1561,9 +1654,205 @@
 phase only processes dates where billing and resources are gathered but chargebacks not
 yet calculated. When new billing data arrives for recent dates, the recalculation window
 re-clears the <code>chargeback_calculated</code> flag so those dates get reprocessed.</p>
+<p>The calculate phase writes <code>calculation_id</code>, <code>calculation_completed_at</code>, and
+optional <code>calculation_run_id</code> in the same per-date transaction as the chargeback
+rows. Preview uses the per-date identity and completion time as success authority;
+the global <code>pipeline_runs</code> status is audit provenance and does not invalidate a
+date that already committed.</p>
+<h2 id="historical-focus-repair-write-path">Historical FOCUS repair write path<a class="headerlink" href="#historical-focus-repair-write-path" title="Permanent link">&para;</a></h2>
+<pre class="mermaid"><code>flowchart LR
+    POST[REST POST repair in both mode] --&gt; POLICY[Validate enabled tenant and bounded UTC policy]
+    POLICY --&gt; STATUS[(Durable operation and date statuses)]
+    STATUS --&gt; DATE[Process each date; continue after expected failures]
+    DATE --&gt; PROVIDER[Authoritative provider acquisition]
+    PROVIDER --&gt; REPLACE[Exact tenant/date billing replacement]
+    REPLACE --&gt; CALC[Canonical calculation]
+    CALC --&gt; EVIDENCE[Atomic source readiness and lineage evidence]
+    EVIDENCE --&gt; DAILY[Daily Full validation]
+    DAILY --&gt; MONTH[Whole-month Full validation when fully selected]
+    MONTH --&gt; STATUS
+    STATUS --&gt; GET[REST GET status]
+    STATUS -. no artifact .-&gt; NORMAL[Normal Daily/Monthly request after success]</code></pre>
+<p>Repair is separate from package generation. It is REST-only, asynchronous, and
+can be submitted only in <code>both</code> mode for a Preview-enabled Confluent Cloud
+tenant. The half-open UTC range must fit the intersection of the configured
+effective, lookback, cutoff, and complete retention intervals. Provider billing
+credentials, retained Costs API history, and historical metrics needed by the
+canonical allocators must remain available.</p>
+<p>Each date's authoritative result replaces only its owner/date billing scope,
+including an authoritative empty result. Canonical calculation then establishes
+one consistent calculation identity, chargeback result, pipeline state, native
+source evidence, and allocation lineage. Nothing is fabricated from legacy
+aggregate rows. Expected date failures persist a stage and diagnostic and do not
+stop later dates. Full-month dates remain <code>daily_validated</code> after Daily success
+until Monthly validation atomically makes them terminal.</p>
+<p>The target tenant is exclusively claimed for the operation; other tenants keep
+running. Selected billing, chargebacks, and generic export results may change,
+while dates and tenants outside the range are preserved. The repair path does
+not run emitters, topic attribution, scheduled publication, retention, or
+artifact persistence. It creates no requested package or revision. Startup
+recovery marks interrupted unfinished work failed rather than resuming provider
+calls; a retry is a new deterministic exact-date replacement operation.</p>
+<h2 id="focus-mapping-preview-read-path">FOCUS Mapping Preview read path<a class="headerlink" href="#focus-mapping-preview-read-path" title="Permanent link">&para;</a></h2>
+<pre class="mermaid"><code>flowchart LR
+    REQ[Daily/Monthly request + profile] --&gt; CAN[Canonical bounds and effective columns]
+    PS[(Persisted pipeline state)] --&gt; PR[Preview read transaction]
+    SRC[(Raw Cost source evidence)] --&gt; PR
+    BILL[(Billing origins)] --&gt; PR
+    LINE[(Calculation lineage runs and portions)] --&gt; PR
+    ORG[(Persisted provider organization)] --&gt; PR
+    CAN --&gt; PR
+    PR --&gt; READY[Classify and validate effective evidence]
+    READY --&gt; MAP[Reconcile and map Full rows]
+    MAP --&gt; MONTH[Optional Monthly aggregation]
+    MONTH --&gt; PROJ[Full, Summary, or Custom projection]
+    PROJ --&gt; PART[Canonical CSV and optional byte-limited parts]
+    PART --&gt; ART[(Atomic local artifact package)]
+    ART --&gt; META[(Preview request and checksum metadata)]
+    META --&gt; API[Preview API; external authentication required]
+    ART --&gt; API
+    API --&gt; UI[Web UI]
+    API --&gt; CLI[Remote CLI]
+    API --&gt; ZIP[Deterministic Download All stream]
+    CALC --&gt; SCHED[Successful periodic cycle]
+    SCHED --&gt; REV[Validate eligible Monthly Full revisions]
+    REV --&gt; HISTORY[(Immutable revision history and atomic current pointer)]
+    HISTORY --&gt; CAPI[Current and retained revision API]
+    HISTORY --&gt; RET[Periodic billing-scope retention]</code></pre>
+<p>Package generation is read-only with respect to collected business data. It
+does not call a provider, start a gather/calculation run, or infer missing
+historical calculation metadata. Migrated calculated dates without usable
+correlation remain unchanged and produce a non-retryable metadata diagnostic
+until the ordinary lifecycle or explicit repair establishes current
+authoritative evidence.</p>
+<p>This read path exists only for tenants with <code>focus_preview</code> enabled. Disabled
+tenants do not initialize Preview artifacts/evidence or acquire organization,
+source, or lineage authority. Mixed deployments keep these boundaries per
+tenant. A Preview-specific acquisition, schema, or retention failure fails
+Preview closed without changing an otherwise successful generic chargeback
+result.</p>
+<p>At submission, Preview canonicalizes either explicit Daily bounds or one
+<code>YYYY-MM</code> Monthly interval, resolves Full/Summary/Custom effective columns, and
+samples <code>created_at</code> once to derive an immutable policy
+from tenant <code>focus_preview</code> configuration plus <code>lookback_days</code>/<code>cutoff_days</code>.
+The worker first resolves the evidence interval. For Monthly, this classifies
+future, provisional, or settlement-candidate state from immutable submission
+time and the acquisition cutoff. A future month fails with the cutoff diagnostic
+before calculation lookup. An empty provisional interval skips calculation
+lookup and source/enrichment content reads, but still requires usable Preview
+evidence storage, rejects a newer failed or pending source attempt, and checks
+Direct-billed PAYG/configured-USD eligibility before producing a header-only
+package. For a
+nonempty interval, Daily and Monthly both check calculation correlation and
+complete coverage before commercial eligibility, then apply the complete
+streamed structural/classification/financial source issue precedence.
+Keyed TABLEFLOW provider-context rejection then precedes complete
+source/aggregate coverage and the one-source-per-billing-origin cardinality
+gate. Global aggregate currency and source equality checks precede complete
+lineage run/portion structure; every origin is structurally valid before any
+allocation cost/quantity total is reconciled. Billing-account,
+resource/identity/environment, and separate tag enrichment follow. The mapping
+path builds and validates complete Full rows before optional Monthly
+aggregation. Monthly sums additive measures but retains allocation ratio/method,
+target, classification, tier, pricing, tags, SKU, and provenance as grouping
+dimensions. Full/Summary/Custom projection then selects output columns without
+changing hidden row identity or reconciliation. Canonical row serialization
+then produces one CSV by default or deterministic row-boundary parts when
+<code>preview.max_csv_file_bytes</code> is configured. Data files are staged and fsynced
+before one ready timestamp is chosen; the manifest and final directory are then
+published atomically before the request is marked ready. Iterator order does
+not change diagnostic precedence. All
+nonempty evidence reads occur in one read-only transaction. Daily retains its
+existing calculation-before-commercial diagnostic precedence.</p>
+<p>Monthly requested bounds always cover the complete UTC calendar month. The
+effective evidence end is frozen from request creation time and the acquisition
+cutoff. A month is provisional until full-month evidence is available and the
+72-hour post-month minimum has elapsed; a longer configured cutoff delays
+settlement. Preview reads existing daily calculations and persisted allocation
+lineage only: it does not call the provider, rerun allocation, or derive a
+replacement allocation ratio.</p>
+<p>The persisted <code>CCloudBillingLineItem</code> is the sole allocation origin. During the
+ordinary calculation transaction, <code>CalculatePhase</code> stores lineage for the
+actual output portions keyed back to that existing billing row. Raw Cost rows
+remain source/classification/coverage evidence with a lossless association to
+the billing key. The lineage path does not reconstruct billing from chargebacks,
+redistribute costs, create a residual portion, or alter allocation policy.
+Valid legacy raw-source rows without a billing association can receive local
+authority from their retained values when an enabled tenant starts; this does
+not call the provider or alter financial values. Unreadable, ambiguous, or
+inconsistent legacy evidence remains fail-closed. A later ordinary
+regather/calculation or explicit retained-date repair can establish new current
+evidence.</p>
+<p>Older Daily/Full rows retain their original requested coverage and immutable
+stored artifacts; new requests persist their exact effective columns and
+evidence coverage.</p>
+<p>After a successful periodic pipeline cycle, the worker separately evaluates
+eligible calendar months for scheduled publication. Before constructing a
+request or projecting a package, it excludes active months, months less than
+72 hours past their end, and months whose configured acquisition cutoff does not
+cover the complete month. Settlement-ready months use the same persisted
+calculation, source, allocation-lineage, enrichment, mapping, and reconciliation
+path as Monthly Full generation. The initial pass publishes only validated
+Settled revisions, including a settlement-ready valid header-only month. Later
+publication is driven by changed logical projected content or mapping semantics
+and produces another Settled replacement. Physical CSV partitioning alone is not
+material.</p>
+<p>Data files and the revision manifest become immutable before the database
+current pointer changes. Replacing a revision and linking its superseded
+revision are one transaction. Any generation, validation, artifact, persistence,
+or concurrent-publication failure leaves the prior current revision unchanged.
+The read path exposes one current revision per configured storage owner and UTC
+month plus newest-first retained history. Current manifest, file, and archive
+URLs carry a revision guard so a replacement between metadata discovery and
+download returns a retryable conflict instead of serving mixed revisions.
+Direct retained-revision URLs are immutable and expose the same validated
+manifest, files, and archive. History metadata records whether a revision is
+current or superseded, its predecessor/successor relationship, source freshness,
+and its validation summary. Revisions are complete replacements and are never
+intended to be aggregated.</p>
+<p>Expected failures travel through the initialized diagnostic path and atomically
+mark the request failed without a source snapshot or package. Source diagnostics
+can persist up to 20 sorted, unique, opaque tenant-scoped correlations; raw
+provider identities and payload fields never enter the public diagnostic.</p>
+<p>Confluent's Costs API currently omits per-record ISO currency. Configured/default
+USD establishes the eligible commercial contract and is copied into mapped
+<code>BillingCurrency</code> as billing-scope authority, not provider-record evidence.
+Non-USD remains fail-closed, and no currency conversion occurs.
+The maximum 364-day <code>lookback_days</code> is an acquisition/recalculation boundary,
+not retention or a reconstruction promise.</p>
+<p>Ready request metadata contains public manifest/file names, sizes, hashes, and
+API URLs but never the storage key or filesystem path. The API verifies stored
+bytes before serving the manifest or an individual file and builds Download All
+as a bounded deterministic ZIP stream. Chitragupta provides no built-in REST
+authentication; deployments must protect the entire Preview route prefix with
+an authenticated reverse proxy or API gateway. UI and CLI clients consume
+API-owned bytes and never run mapping or allocation logic.</p>
+<p>Requested packages expire exactly seven days after ready publication. At the
+cutoff, the database transition blocks all downloads before the artifact
+directory is removed. Expired request and source-snapshot metadata remain
+visible in recent history, while <code>package</code> becomes null. This fixed package
+lifecycle is independent of tenant and topic-attribution retention.</p>
+<p>Published revision retention follows the tenant billing-data <code>retention_days</code>
+calendar cutoff instead. Periodic cleanup first hides every revision for an
+out-of-policy month, then removes its immutable package and finally its metadata.
+Failed package removal remains pending and is retried on later periodic cycles,
+including after restart. Current revisions are protected only while their month
+remains inside the retention window. Ad-hoc requested packages continue to use
+their separate fixed seven-day lifecycle.</p>
+<p>All accepted native line types can consume persisted lineage. Multiple billing
+origins and their actual identity/resource/<code>UNALLOCATED</code> portions are supported;
+<code>UNALLOCATED</code> projects null allocated fields. Origin and target tags are loaded
+separately at package time and become immutable stored bytes. Provider-null
+promotional allowances and signed refunds preserve their native source and
+financial semantics. TABLEFLOW provider context and multiple native/tier source
+rows under one billing origin remain fail-closed. Complete semantic mapping is
+not a conformance claim.</p>
 <h2 id="concurrency">Concurrency<a class="headerlink" href="#concurrency" title="Permanent link">&para;</a></h2>
 <p>Multiple tenants run concurrently (bounded by <code>features.max_parallel_tenants</code>).
-One orchestrator per tenant. Thread-safe via per-tenant <code>TenantRuntime</code> isolation.</p>
+One orchestrator runs per tenant. Ordinary pipeline, repair, publication, and
+retention work serialize for the same tenant; repair does not introduce a
+global lock, so other tenants continue through per-tenant <code>TenantRuntime</code>
+isolation.</p>
 
 
 
