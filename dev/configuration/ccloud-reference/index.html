@@ -1757,101 +1757,20 @@ full field reference.</p>
 </tbody>
 </table>
 <h2 id="focus-mapping-preview-eligibility">FOCUS Mapping Preview eligibility<a class="headerlink" href="#focus-mapping-preview-eligibility" title="Permanent link">&para;</a></h2>
-<p><code>focus_preview</code> is optional to preserve existing application configurations.
-Omitting it disables Preview for that tenant. Preview routes return HTTP 409
-with <code>preview_commercial_profile_unavailable</code> before opening Preview runtime,
-artifact, or evidence storage. The tenant continues normal billing collection,
-chargeback calculation, generic export, and emission without Preview-specific
-organization, raw-source, allocation-lineage, or retention work. When supplied,
-<code>focus_preview.commercial_profile</code> is required and must be <code>direct_payg</code>.
-<code>focus_preview.effective_start_date</code> is required and inclusive.
-<code>focus_preview.effective_end_date</code> is optional and exclusive. When it is
-omitted, each operation resolves the exclusive end once from its own UTC anchor:
-an ad-hoc request's creation time, a scheduled publication cycle's timestamp,
-or a repair's durable creation time. Queue delay, processing, restart, or
-crossing UTC midnight does not change that operation's resolved end. When an
-explicit end is configured, it remains the fixed exclusive hard override.</p>
-<p>The resolved commercial interval does not configure or widen acquisition,
-<code>lookback_days</code>, <code>cutoff_days</code>, or <code>retention_days</code>. Complete persisted
-calculation, source, allocation-lineage, reconciliation, and mapping evidence
-remains required and fail-closed.</p>
-<p><code>focus_preview.billing_currency</code> defaults to <code>USD</code>. Values such as <code>usd</code> or
-<code>USD</code> normalize to <code>USD</code>; malformed or non-string values fail configuration
-loading. A valid non-USD code loads so the request can return the stable
-<code>preview_billing_currency_unsupported</code> diagnostic, but Preview performs no
-relabeling. There is no currency conversion of stored monetary values.</p>
-<p>The Confluent Costs API does not return a per-record ISO currency value. The USD
-setting is therefore an explicit customer/operator contract for the supported
-Direct-billed PAYG scope, not provider-supplied record evidence. Compatibility
-aggregate currency is not treated as commercial authority. Eligible rows copy
-the normalized setting into FOCUS <code>BillingCurrency</code>; the value applies to the
-configured scope and is not inferred from individual Costs API records. Non-USD
-scopes remain fail-closed, and Preview performs no relabeling or conversion.</p>
-<p><code>lookback_days</code> remains capped at 364 because it controls current provider
-acquisition and recalculation. <code>lookback_days</code> is not retention, archival
-history, or a promise that billing and Metrics API inputs still exist for
-reconstruction. <code>retention_days</code> is separate but does not introduce a
-multi-year completed-chargeback archive.</p>
-<p>Historical repair has no separate YAML override and does not widen these
-boundaries. A repair interval must fit completely inside the intersection of
-the commercial interval resolved at its durable UTC creation time, current
-lookback/cutoff window, and retained-data interval. New repair submission is
-available only through REST in <code>both</code> mode. API-only deployments can read a
-retained operation but cannot execute one; disabled tenants create no repair
-infrastructure.</p>
-<p>Repair uses <code>ccloud_api</code> credentials to reacquire authoritative Costs API
-history for each selected date and may use historical Telemetry, Prometheus, or
-Flink metrics through the configured canonical allocation path. Valid current
-credentials do not guarantee that the provider or metrics systems still retain
-the requested history. Missing history or allocation authority becomes a
-durable date diagnostic rather than inferred legacy evidence.</p>
-<p>Source-related failures can expose at most 20 sorted, unique, tenant-scoped
-<code>src:v1:&lt;64 lowercase hex&gt;</code> correlation values. They are safe lookup handles,
-not provider IDs, raw fields, secrets, or storage paths. All commercial,
-currency, calculation, source, and reconciliation failures are fail-closed and
-produce no Preview package.</p>
-<p>Enabled and disabled tenants can share one deployment. The ordinary pipeline
-captures source evidence, allocation lineage, and Confluent organization
-authority only for enabled tenants. Preview requests and scheduled revisions
-reuse that persisted evidence and do not make provider calls. Preview-only
-capture, schema, or authority failures do not change generic chargeback results.</p>
-<p>The top-level Preview capacity settings apply per process. Requested packages
-and scheduled tenant-month publication share <code>preview.max_workers</code>,
-<code>preview.max_queued_generations</code>,
-<code>preview.max_running_generations_per_tenant</code>, and
-<code>preview.max_queued_generations_per_tenant</code>. A full scheduler rejects a
-requested package with retryable HTTP 429 and defers scheduled publication to a
-later periodic cycle. <code>preview.max_generation_spool_bytes</code> defaults to 2 GiB
-per running generation and bounds its temporary disk use.</p>
-<p>Historical repair is separately bounded to <code>preview.max_workers</code> running
-repairs and <code>preview.max_queued_repairs</code> waiting repairs per process.
-<code>max_queued_repairs</code> defaults to <code>8</code>; zero disables waiting. A full repair limit
-returns retryable HTTP 429 before a repair is created. Only one repair may be
-active per tenant. Repair and generation capacity are independent, and each
-replica has its own limits.</p>
-<p><code>preview.max_csv_file_bytes</code> controls only physical CSV part boundaries.
-Request grain and Full/Summary/Custom profiles control report shape. FOCUS field
-mappings, charge classification, Summary membership, manifest schema, and
-package lifetime are code-owned and have no YAML override. See
-<a href="../../focus-mapping-preview/">FOCUS Mapping Preview</a> for capacity validation,
-request, and download examples.</p>
-<p>When <code>features.enable_periodic_refresh</code> is enabled, each successful periodic
-tenant cycle also evaluates settlement-ready Monthly Full revisions. Candidate
-months must be inside both the acquisition window and this tenant's effective
-interval, at least 72 hours past month end, and fully covered by the configured
-acquisition cutoff. The initial pass publishes only validated Settled revisions,
-including a settlement-ready header-only no-cost month. Active and otherwise
-incomplete months remain available as on-demand Provisional packages.
-<code>cutoff_days</code> is an acquisition and settlement-readiness control, not a
-revision-retention setting.</p>
-<p>The configured <code>tenant_id</code> remains the stable storage owner for current-revision
-isolation. It is not emitted as <code>BillingAccountId</code>; the mapped report continues
-to use the provider organization identity gathered through the ordinary
-inventory pipeline. Allocator and identity-resolution configuration take effect
-after either an ordinary recalculation or an explicit historical repair
-persists a new calculated result. Preview package generation itself remains
-read-only. Persisted tag, resource, and identity inventory evidence is refreshed
-only by the ordinary pipeline.</p>
+<p>Omit <code>focus_preview</code> to leave Preview disabled for this tenant. When the block
+is present, <code>commercial_profile</code> must be <code>direct_payg</code> and
+<code>effective_start_date</code> is required. <code>effective_end_date</code> is exclusive; omit it
+to resolve the end from each operation's UTC anchor, or set it to enforce a
+fixed commercial end date.</p>
+<p><code>billing_currency</code> defaults to <code>USD</code> and is normalized to uppercase. Non-USD
+codes load successfully but are not eligible for Preview, and Chitragupta does
+not convert stored monetary values. The effective interval declares commercial
+eligibility; it does not change <code>lookback_days</code>, <code>cutoff_days</code>, or
+<code>retention_days</code>.</p>
+<p>See the <a href="../#focus-mapping-preview">process-wide Preview settings</a> for
+storage and capacity configuration. See
+<a href="../../focus-mapping-preview/">FOCUS Mapping Preview</a> for eligibility behavior,
+data requirements, repairs, publication, requests, and downloads.</p>
 <h2 id="plugin_settings-fields-ccloud">plugin_settings fields (CCloud)<a class="headerlink" href="#plugin_settings-fields-ccloud" title="Permanent link">&para;</a></h2>
 <table>
 <thead>

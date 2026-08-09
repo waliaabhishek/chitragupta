@@ -1806,82 +1806,14 @@ tenant return HTTP 409 with
 <code>preview_commercial_profile_unavailable</code> before opening Preview storage. No
 disabled-tenant organization, source-evidence, or allocation-lineage work is
 performed.</p>
-<p>The process-wide Preview settings are:</p>
-<table>
-<thead>
-<tr>
-<th>Setting</th>
-<th style="text-align: right;">Default</th>
-<th>Valid values</th>
-<th>Effect</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>preview.artifact_root</code></td>
-<td style="text-align: right;"><code>data/focus-preview</code></td>
-<td>Writable local path</td>
-<td>Stores immutable requested packages and published monthly revisions. Changing it does not move existing packages.</td>
-</tr>
-<tr>
-<td><code>preview.max_workers</code></td>
-<td style="text-align: right;"><code>2</code></td>
-<td>1–16</td>
-<td>Process-local running-generation limit shared by requested packages and scheduled publication; also the separate repair-runtime worker count.</td>
-</tr>
-<tr>
-<td><code>preview.max_queued_repairs</code></td>
-<td style="text-align: right;"><code>8</code></td>
-<td>Zero or a positive integer</td>
-<td>Maximum historical repairs waiting across all tenants in one process. Zero permits only repairs that can occupy a running position.</td>
-</tr>
-<tr>
-<td><code>preview.max_queued_generations</code></td>
-<td style="text-align: right;"><code>8</code></td>
-<td>Zero or a positive integer</td>
-<td>Maximum requested and scheduled generations waiting across all tenants in one process.</td>
-</tr>
-<tr>
-<td><code>preview.max_running_generations_per_tenant</code></td>
-<td style="text-align: right;"><code>1</code></td>
-<td>Positive and no greater than <code>max_workers</code></td>
-<td>Running-generation limit for one tenant.</td>
-</tr>
-<tr>
-<td><code>preview.max_queued_generations_per_tenant</code></td>
-<td style="text-align: right;"><code>2</code></td>
-<td>Zero or a positive integer</td>
-<td>Waiting-generation limit for one tenant.</td>
-</tr>
-<tr>
-<td><code>preview.max_generation_spool_bytes</code></td>
-<td style="text-align: right;"><code>2147483648</code> (2 GiB)</td>
-<td>Positive integer</td>
-<td>Hard temporary-disk ceiling for one running generation.</td>
-</tr>
-<tr>
-<td><code>preview.max_csv_file_bytes</code></td>
-<td style="text-align: right;"><code>null</code></td>
-<td><code>null</code> or a positive integer</td>
-<td><code>null</code> produces one CSV. A byte limit splits output into deterministic parts without splitting rows.</td>
-</tr>
-</tbody>
-</table>
-<p>The global and per-tenant queue limits must both be zero or both be positive.
-When positive, the per-tenant queue limit must be lower than the global queue
-limit. Zero disables waiting: an ad-hoc request must start immediately or
-returns retryable HTTP 429, while a scheduled month is deferred. Positive
-queues provide fair capacity across tenants. Limits are per application
-process, not distributed across replicas.</p>
-<p>Historical repair has a separate process-local admission bound:
-<code>preview.max_workers</code> repairs can run and <code>preview.max_queued_repairs</code>
-additional repairs can wait. The existing one-active-repair-per-tenant rule
-still applies. A full repair limit returns retryable HTTP 429 before creating a
-repair. Generation and repair limits are independent, so admitted repair and
-package-generation work can run concurrently. Replicas have independent
-limits.</p>
-<p>See the <a href="../configuration/ccloud-reference/">Confluent Cloud configuration reference</a>
-for the remaining collection and allocation settings.</p>
+<p>The <code>preview</code> settings are process-local. Requested and scheduled package
+generation share generation capacity; historical repair has a separate waiting
+queue. Configure the artifact root for durable shared storage and size worker,
+queue, spool, and CSV-part limits for each process. See the
+<a href="../configuration/#focus-mapping-preview">Preview configuration reference</a>
+for exact fields, defaults, and validation rules, and the
+<a href="../configuration/ccloud-reference/#focus-mapping-preview-eligibility">Confluent Cloud configuration reference</a>
+for tenant eligibility fields.</p>
 <h2 id="2-gather-and-calculate-source-data">2. Gather and calculate source data<a class="headerlink" href="#2-gather-and-calculate-source-data" title="Permanent link">&para;</a></h2>
 <p>Run the worker before requesting output:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>src/main.py<span class="w"> </span>--config-file<span class="w"> </span>config.yaml<span class="w"> </span>--run-once

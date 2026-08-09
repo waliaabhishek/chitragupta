@@ -1469,47 +1469,25 @@ as the config file. Variables already in the environment take precedence.</p>
 <a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="w">    </span><span class="nt">storage</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">...</span>
 <a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="w">    </span><span class="nt">plugin_settings</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">...</span>
 </code></pre></div>
-<p>For Confluent Cloud FOCUS Mapping Preview, the optional tenant block is:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nt">focus_preview</span><span class="p">:</span>
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="nt">commercial_profile</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">direct_payg</span>
-<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">  </span><span class="nt">billing_currency</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">USD</span><span class="w">       </span><span class="c1"># optional; defaults to normalized USD</span>
-<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">  </span><span class="nt">effective_start_date</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">2026-01-01</span>
-<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="w">  </span><span class="nt">effective_end_date</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">2027-01-01</span>
+<p>FOCUS Mapping Preview needs a durable process-wide artifact root and an
+optional Confluent Cloud tenant eligibility block:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nt">preview</span><span class="p">:</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="nt">artifact_root</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/var/lib/chitragupta/focus-preview</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="nt">tenants</span><span class="p">:</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="w">  </span><span class="nt">production</span><span class="p">:</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="w">    </span><span class="nt">focus_preview</span><span class="p">:</span>
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="w">      </span><span class="nt">commercial_profile</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">direct_payg</span>
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="w">      </span><span class="nt">effective_start_date</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">2026-01-01</span>
 </code></pre></div>
-<p>Omitting the block leaves configuration valid but makes Preview fail closed.
-Only <code>direct_payg</code> with a request contained in the half-open effective interval
-is supported. Eligible rows copy the normalized operator-configured USD value
-into FOCUS <code>BillingCurrency</code>. Confluent's Costs API does not provide per-record
-ISO currency, so the value is scope authority rather than per-record inference.
-Non-USD values remain fail-closed and are not converted. See the
-<a href="../../configuration/ccloud-reference/#focus-mapping-preview-eligibility">Confluent Cloud reference</a>.</p>
-<p>Preview's process-wide package settings are separate from the tenant block:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nt">preview</span><span class="p">:</span>
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span><span class="nt">artifact_root</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/var/lib/chitragupta/focus-preview</span>
-<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span><span class="nt">max_workers</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">2</span>
-<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">  </span><span class="nt">max_queued_repairs</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">8</span>
-<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">  </span><span class="nt">max_csv_file_bytes</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">null</span>
-</code></pre></div>
-<p>The artifact root must be durable and writable by the API and periodic worker;
-separate processes must use the same mounted path. <code>max_csv_file_bytes</code> is
-either null for one CSV or a positive byte ceiling for deterministic
-row-boundary parts. <code>max_workers</code> also bounds running historical repairs, while
-<code>max_queued_repairs</code> bounds additional waiting repairs per process. Zero
-disables repair waiting. See
-<a href="../../focus-mapping-preview/">FOCUS Mapping Preview</a> for the complete user
-workflow and supported customization boundary.</p>
-<p>To publish current Settled Monthly Full revisions automatically, keep the
-ordinary worker in periodic mode:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nt">features</span><span class="p">:</span>
-<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span><span class="nt">enable_periodic_refresh</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
-<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">  </span><span class="nt">refresh_interval</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1800</span>
-</code></pre></div>
-<p>Publication follows successful periodic cycles. Run-once execution and ad-hoc
-Preview requests never publish revisions. Eligible months are bounded by
-<code>lookback_days</code>, <code>cutoff_days</code>, and the <code>focus_preview</code> effective interval.
-Automatic generation waits at least 72 hours after month end and until the
-acquisition cutoff covers the complete month; active and otherwise incomplete
-months remain available through on-demand Provisional requests.</p>
+<p>Omit <code>focus_preview</code> to leave the feature disabled for that tenant. The artifact
+root must be writable by the API and worker; separate processes must share the
+same mounted path. See the
+<a href="../../configuration/#focus-mapping-preview">configuration reference</a> for
+all process settings, the
+<a href="../../configuration/ccloud-reference/#focus-mapping-preview-eligibility">Confluent Cloud reference</a>
+for tenant fields, and <a href="../../focus-mapping-preview/">FOCUS Mapping Preview</a> for
+the complete workflow.</p>
 <p>Tenant <code>lookback_days</code> is capped at 364 and controls acquisition/recalculation,
 not retention or guaranteed historical reconstruction.</p>
 <h2 id="tenant-isolation">Tenant isolation<a class="headerlink" href="#tenant-isolation" title="Permanent link">&para;</a></h2>
