@@ -46,35 +46,39 @@ contracts, and operations pages focused on deployment and runtime actions.
 
 ## Release Process
 
-1. Ensure all commits on `main` for this release use the type prefixes above.
-2. Generate and commit the updated changelog (pass `--tag` so commits are assigned to the version, not `[Unreleased]`):
+1. Ensure `main` is clean, current, and passing CI, and that all commits for the
+   release use the type prefixes above.
+2. Preview the release notes. For a stable release, compare with the previous
+   stable tag so changes from ignored release-candidate tags are included:
    ```bash
-   uv sync --group docs
-   uv run git-cliff --config cliff.toml --tag vX.Y.Z --output CHANGELOG.md
-   git add CHANGELOG.md
-   git commit -m "Docs: Update CHANGELOG.md for vX.Y.Z"
-   git push origin main
+   previous_stable=$(git describe --tags --abbrev=0 --first-parent \
+     --match 'v[0-9]*.[0-9]*.[0-9]*' --exclude '*-*' --exclude '*.rc*' HEAD)
+   uv run git-cliff --config cliff.toml --tag vX.Y.Z --strip header \
+     "${previous_stable}..HEAD"
    ```
 3. Tag and push:
    ```bash
    git tag vX.Y.Z
    git push origin vX.Y.Z
    ```
-4. The `docs.yml` workflow runs automatically:
-   - Generates release notes for this tag (git-cliff `--latest`)
-   - Creates a GitHub Release with the generated notes as body
-   - Deploys the versioned MkDocs site via `mike`
+4. The `release.yml` workflow reruns CI, publishes the versioned backend and
+   frontend images, and creates the GitHub release. Stable tags also publish
+   `latest`, create `release/vX.Y.Z`, and update `CHANGELOG.md` on `main`.
+5. For stable tags, `docs.yml` deploys the versioned MkDocs site and moves the
+   `latest` alias. Pushes to `main` update the `dev` documentation version.
 
-Pre-release tags (e.g. `v1.0.0-rc.1`) are automatically marked as pre-release on GitHub.
+Pre-release tags (for example, `v1.0.0-rc1`) are marked as prereleases and do
+not update `latest`, create a stable release branch, update `CHANGELOG.md`, or
+deploy versioned documentation.
 
 ## Local Changelog Preview
 
 ```bash
 uv sync --group docs
 
-# Preview what the next release notes would look like
-uv run git-cliff --config cliff.toml --unreleased
+# Preview changes since the most recent tag (the prerelease behavior)
+uv run git-cliff --config cliff.toml --latest --strip header
 
-# Regenerate full CHANGELOG.md for a specific version (use before tagging)
+# Generate the complete changelog for a specific version without editing it by hand
 uv run git-cliff --config cliff.toml --tag vX.Y.Z --output CHANGELOG.md
 ```

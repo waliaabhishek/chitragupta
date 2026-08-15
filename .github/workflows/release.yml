@@ -113,8 +113,29 @@ jobs:
           git checkout ${{ github.ref_name }}
 
       - name: Generate release notes
+        shell: bash
         run: |
-          uv run git-cliff --config cliff.toml --latest --strip header --output release-notes.md
+          release_tag="${{ github.ref_name }}"
+          if [[ "$release_tag" == *-* ]]; then
+            uv run git-cliff --config cliff.toml --latest --strip header --output release-notes.md
+          else
+            previous_stable="$(
+              git describe \
+                --tags \
+                --abbrev=0 \
+                --first-parent \
+                --match 'v[0-9]*.[0-9]*.[0-9]*' \
+                --exclude '*-*' \
+                --exclude '*.rc*' \
+                "${release_tag}^"
+            )"
+            uv run git-cliff \
+              --config cliff.toml \
+              --tag "$release_tag" \
+              --strip header \
+              --output release-notes.md \
+              "${previous_stable}..${release_tag}"
+          fi
           printf '\n## Docker Images\n\n```bash\ndocker pull ghcr.io/${{ github.repository_owner }}/chitragupta:${{ github.ref_name }}\ndocker pull ghcr.io/${{ github.repository_owner }}/chitragupta-ui:${{ github.ref_name }}\n```\n\nPin in your `.env`:\n```\nCHITRAGUPTA_VERSION=${{ github.ref_name }}\n```\n\n## Compatibility\n\n- **Grafana**: 12.4.0\n- **Required plugin**: `frser-sqlite-datasource`\n' >> release-notes.md
 
       - name: Create GitHub Release
