@@ -1,0 +1,44 @@
+version: 1
+topics:
+  - name: shared-topic
+    profile: steady_low
+  - name: shared-topic-high
+    profile: steady_high
+  - name: shared-topic-over-quota
+    profile: over_quota
+topic_config:
+  partitions: 1
+  retention_ms: 1800000
+  retention_bytes_per_partition: 33554432
+rates_bytes_per_second:
+  steady_low: 8192
+  steady_high: 65536
+  over_quota: 131072
+runtime:
+  record_size_bytes: 1024
+  producer_batch_seconds: 30
+  producer_buffer_memory_bytes: 1048576
+  producer_delivery_timeout_ms: 300000
+  producer_max_block_ms: 300000
+  consumer_records_per_run: 4096
+  consumer_timeout_ms: 30000
+quota_profiles:
+  - profile: steady_low
+    scope: user
+    user: user-only
+    client_id: steady-low
+    group: shared-group-low
+    quota_limit_bytes_per_second: 16384
+  - profile: steady_high
+    scope: client-id
+    user: client-only-user
+    client_id: client-only
+    group: shared-group-high
+    quota_limit_bytes_per_second: 131072
+  - profile: over_quota
+    scope: user-client
+    user: shared-user
+    client_id: shared-client
+    group: shared-group
+    quota_limit_bytes_per_second: 16384
+    over_quota: true

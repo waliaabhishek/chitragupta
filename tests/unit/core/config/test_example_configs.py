@@ -186,3 +186,55 @@ class TestCCloudExamples:
 class TestSelfManagedExamples:
     def test_self_managed_full(self, monkeypatch: pytest.MonkeyPatch) -> None:
         _load(EXAMPLES_DIR / "self-managed-full" / "config.yaml", PROM_ENV, monkeypatch)
+
+
+class TestSelfManagedKafkaTelemetryLabExample:
+    LAB_DIR = EXAMPLES_DIR / "self-managed-kafka-telemetry-lab"
+
+    def test_lab_example_contains_required_assets(self) -> None:
+        required_paths = (
+            self.LAB_DIR / "README.md",
+            self.LAB_DIR / ".gitignore",
+            self.LAB_DIR / ".env.example",
+            self.LAB_DIR / "docker-compose.yml",
+            self.LAB_DIR / "contracts" / "metric-contract.yaml",
+            self.LAB_DIR / "jmx" / "kafka-jmx.yml",
+            self.LAB_DIR / "prometheus" / "prometheus.yml.template",
+            self.LAB_DIR / "workloads" / "workloads.yaml",
+            self.LAB_DIR / "scripts" / "lab.sh",
+            self.LAB_DIR / "scripts" / "generate_local_config.py",
+            self.LAB_DIR / "scripts" / "setup_kafka.sh",
+            self.LAB_DIR / "scripts" / "workload.sh",
+            self.LAB_DIR / "scripts" / "JmxDump.java",
+            self.LAB_DIR / "scripts" / "capture_evidence.py",
+            self.LAB_DIR / "scripts" / "validate_evidence.py",
+        )
+
+        missing = [str(path.relative_to(self.LAB_DIR)) for path in required_paths if not path.exists()]
+
+        assert not missing, f"Missing lab assets: {missing}"
+
+    def test_lab_readme_documents_standalone_lifecycle_commands(self) -> None:
+        readme_path = self.LAB_DIR / "README.md"
+        assert readme_path.exists(), f"Expected {readme_path} to exist"
+
+        source = readme_path.read_text(encoding="utf-8")
+
+        assert "local-only" in source or "local only" in source
+        assert "docker-compose" in source
+        assert "docker compose" not in source
+
+        for command in (
+            "./scripts/lab.sh prereq",
+            "./scripts/lab.sh start",
+            "./scripts/lab.sh ready",
+            "./scripts/lab.sh workload start",
+            "./scripts/lab.sh workload stop",
+            "./scripts/lab.sh workload status",
+            "./scripts/lab.sh validate --window 5m",
+            "./scripts/lab.sh evidence",
+            "./scripts/lab.sh stop",
+            "./scripts/lab.sh cleanup",
+            "./scripts/lab.sh validate --window 5m --require-recreated-state",
+        ):
+            assert command in source, f"Expected README to document `{command}`"

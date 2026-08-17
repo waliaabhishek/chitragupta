@@ -1,0 +1,156 @@
+{
+  "series_names": [
+    "kafka_server_brokertopicmetrics_bytesin_total",
+    "kafka_server_brokertopicmetrics_bytesout_total",
+    "kafka_log_log_size",
+    "kafka_server_quota_byte_rate",
+    "kafka_server_quota_throttle_time_ms",
+    "up",
+    "jmx_scrape_error"
+  ],
+  "cluster_labels": [
+    "lab_cluster",
+    "kafka_cluster_id"
+  ],
+  "failure_categories": [
+    "missing_metric",
+    "missing_label",
+    "wrong_type",
+    "quota_scope",
+    "throttle_observation",
+    "rate_distinction",
+    "target_health",
+    "cluster_selector",
+    "high_cardinality",
+    "evidence_stale"
+  ],
+  "quota_scopes": [
+    "user",
+    "client-id",
+    "user-client"
+  ],
+  "workload_rates": {
+    "steady_low": 8192,
+    "steady_high": 65536,
+    "over_quota": 131072,
+    "quota_limit": 16384
+  },
+  "completion_evidence": [
+    "raw-jmx-cluster-a.jsonl",
+    "raw-jmx-cluster-b.jsonl",
+    "exporter-cluster-a.metrics",
+    "exporter-cluster-b.metrics",
+    "prometheus-targets.json",
+    "prometheus-metadata.json",
+    "prometheus-query-results.json",
+    "quota-descriptions.json",
+    "topic-descriptions.json",
+    "cluster-id-comparison.json",
+    "clean-restart-manifest.json",
+    "footprint.json",
+    "cleanup-result.json",
+    "validator-result.json"
+  ],
+  "documented_commands": [
+    "prereq",
+    "start",
+    "ready",
+    "workload",
+    "validate",
+    "evidence",
+    "stop",
+    "cleanup"
+  ],
+  "exit_contract": {
+    "2": "prereq_failed:",
+    "3": "config_generation_failed:",
+    "4": "kafka_setup_failed:",
+    "5": "workload_failed:",
+    "6": "evidence_capture_failed:",
+    "7": "validation_failed:",
+    "8": "cleanup_failed:"
+  },
+  "overlap_names": {
+    "topic": "shared-topic",
+    "user": "shared-user",
+    "client_id": "shared-client",
+    "group": "shared-group"
+  },
+  "raw_mbeans": [
+    {
+      "object_name": "kafka.server:type=BrokerTopicMetrics,name=BytesInPerSec,topic=shared-topic",
+      "attribute": "Count",
+      "series": "kafka_server_brokertopicmetrics_bytesin_total"
+    },
+    {
+      "object_name": "kafka.server:type=BrokerTopicMetrics,name=BytesOutPerSec,topic=shared-topic",
+      "attribute": "Count",
+      "series": "kafka_server_brokertopicmetrics_bytesout_total"
+    },
+    {
+      "object_name": "kafka.log:type=Log,name=Size,topic=shared-topic,partition=0",
+      "attribute": "Value",
+      "series": "kafka_log_log_size"
+    },
+    {
+      "object_name": "kafka.server:type=Produce,user=user-only",
+      "attribute": "byte-rate",
+      "series": "kafka_server_quota_byte_rate"
+    },
+    {
+      "object_name": "kafka.server:type=Produce,user=user-only",
+      "attribute": "throttle-time",
+      "series": "kafka_server_quota_throttle_time_ms"
+    },
+    {
+      "object_name": "kafka.server:type=Fetch,user=user-only",
+      "attribute": "byte-rate",
+      "series": "kafka_server_quota_byte_rate"
+    },
+    {
+      "object_name": "kafka.server:type=Fetch,user=user-only",
+      "attribute": "throttle-time",
+      "series": "kafka_server_quota_throttle_time_ms"
+    },
+    {
+      "object_name": "kafka.server:type=Produce,client-id=client-only",
+      "attribute": "byte-rate",
+      "series": "kafka_server_quota_byte_rate"
+    },
+    {
+      "object_name": "kafka.server:type=Produce,client-id=client-only",
+      "attribute": "throttle-time",
+      "series": "kafka_server_quota_throttle_time_ms"
+    },
+    {
+      "object_name": "kafka.server:type=Fetch,client-id=client-only",
+      "attribute": "byte-rate",
+      "series": "kafka_server_quota_byte_rate"
+    },
+    {
+      "object_name": "kafka.server:type=Fetch,client-id=client-only",
+      "attribute": "throttle-time",
+      "series": "kafka_server_quota_throttle_time_ms"
+    },
+    {
+      "object_name": "kafka.server:type=Produce,user=shared-user,client-id=shared-client",
+      "attribute": "byte-rate",
+      "series": "kafka_server_quota_byte_rate"
+    },
+    {
+      "object_name": "kafka.server:type=Produce,user=shared-user,client-id=shared-client",
+      "attribute": "throttle-time",
+      "series": "kafka_server_quota_throttle_time_ms"
+    },
+    {
+      "object_name": "kafka.server:type=Fetch,user=shared-user,client-id=shared-client",
+      "attribute": "byte-rate",
+      "series": "kafka_server_quota_byte_rate"
+    },
+    {
+      "object_name": "kafka.server:type=Fetch,user=shared-user,client-id=shared-client",
+      "attribute": "throttle-time",
+      "series": "kafka_server_quota_throttle_time_ms"
+    }
+  ]
+}
